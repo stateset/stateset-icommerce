@@ -57,7 +57,7 @@ final class StateSetTests: XCTestCase {
         var orderId = ""
         do {
             let first = try StateSetCommerce(dbPath: path)
-            let c = try first.customers.create(email: "persist@example.com", firstName: "Per", lastName: "Sist")
+            let c = try first.customers.create(email: "persist@example.com", firstName: "Per", lastName: "Sistence")
             let o = try first.orders.create(customerId: c.id, items: [
                 CreateOrderItem(productId: c.id, sku: "P-1", name: "Persisted", quantity: 3, unitPrice: dec("0.10")),
             ])

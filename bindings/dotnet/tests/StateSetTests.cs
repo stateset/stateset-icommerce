@@ -34,7 +34,7 @@ public sealed class StateSetTests : IDisposable
             string customerId, orderId;
             using (var first = new StateSetCommerce(path))
             {
-                var customer = first.Customers.Create("persist@example.com", "Per", "Sist");
+                var customer = first.Customers.Create("persist@example.com", "Per", "Sistence");
                 var order = first.Orders.Create(customer.Id, new[]
                 {
                     new CreateOrderItem { ProductId = customer.Id, Sku = "P-1", Name = "Persisted", Quantity = 3, UnitPrice = 0.10m },
