@@ -5,13 +5,13 @@
 
 Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/tool-tiers.js` (tiers).
 
-**942 tools** across **88 domains**, plus 15 agentic runtime tools.
+**944 tools** across **88 domains**, plus 15 agentic runtime tools.
 
 ## Stability tiers
 
 | Tier | Tools | Meaning |
 | --- | ---: | --- |
-| core | 202 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
+| core | 204 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
 | extended | 491 | Real, specialised domains (finance, manufacturing, WMS, B2B, engagement). Opt in with `--profile` or `--domains`. |
 | experimental | 264 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete. Only `--profile all`, a curated profile naming the domain, or `--domains`. |
 
@@ -19,10 +19,10 @@ Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/t
 
 | Profile | Tools | Domains |
 | --- | ---: | --- |
-| all | 957 | every domain |
-| core (default) | 202 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain |
+| all | 959 | every domain |
+| core (default) | 204 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain |
 | operations | 195 | inventory, manufacturing, shipments, suppliers, warranties, warehouse, receiving, fulfillment, quality, lots, serials, cycle-counts, transfer-orders, production-batches, supplier-skus, inbound-shipments, backorders, vendor-returns |
-| finance | 134 | payments, invoices, treasury, accounts-payable, accounts-receivable, cost-accounting, credit, general-ledger, fixed-assets, revenue-recognition, prepayments, vendor-credits, payment-obligations |
+| finance | 136 | payments, invoices, treasury, accounts-payable, accounts-receivable, cost-accounting, credit, general-ledger, fixed-assets, revenue-recognition, prepayments, vendor-credits, payment-obligations |
 | agents | 251 | agent-runtime, agent-cards, agent-receipt, a2a, a2a-platform, a2a-automation, a2a-observability, a2a-intelligence, x402, stablecoin, erc8004, treasury, payment-obligations, proofs, audit, policies |
 
 `core` is exactly the core tier, agentic runtime tools included. The curated profiles
@@ -46,7 +46,7 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | [subscriptions](#subscriptions) | extended | 17 |
 | [sync](#sync) | experimental | 20 |
 | [manufacturing](#manufacturing) | extended | 11 |
-| [payments](#payments) | core | 19 |
+| [payments](#payments) | core | 21 |
 | [stablecoin](#stablecoin) | experimental | 4 |
 | [treasury](#treasury) | experimental | 6 |
 | [erc8004](#erc8004) | experimental | 5 |
@@ -441,6 +441,8 @@ Tier: **core**
 | `get_payment` | core | read | Get a payment by ID. |
 | `create_payment` | core | write | Create a payment for an order. |
 | `complete_payment` | core | write | Mark a payment as completed. |
+| `capture_payment` | core | write | Capture a payment for an exact amount, which may be less than the authorized amount (a partial capture). The captured amount is recorded exactly and bounds every later refund; capturing more than authorized, zero, or a different amount than an earlier capture is refused. |
+| `record_lost_chargeback` | core | write | Record a lost chargeback on a disputed payment. amount is the disputed amount the card network reversed; omit it for the whole remaining captured balance. A partial loss writes a chargeback_lost refund row and leaves the payment partially_refunded. |
 | `mark_failed_payment` | core | write | Mark a payment as failed with a required reason and optional failure code. |
 | `cancel_payment` | core | delete | Cancel a payment before settlement is finalized. |
 | `create_refund` | core | write | Create a refund for a payment. |

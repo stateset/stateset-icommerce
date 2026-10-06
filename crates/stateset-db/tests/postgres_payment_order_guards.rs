@@ -585,20 +585,18 @@ async fn postgres_forced_cancel_voids_in_flight_payments_and_leaves_settled_ones
     assert_eq!(status(&db, settled.id.into_uuid()).await, PaymentTransactionStatus::Completed);
     assert_eq!(open_ids(&db, order_id).await, vec![settled.id.into_uuid()]);
 
-    let event = db
-        .kernel_outbox()
-        .pending_async(500)
-        .await
-        .expect("pending")
-        .into_iter()
-        .find(|e| {
-            e.event_type == "orders.updated.v1"
-                && e.aggregate_id == order_id.to_string()
-                && e.payload["status_after"] == "cancelled"
-        })
-        .expect("orders.updated.v1 for the cancel");
-    assert_eq!(event.payload["void_payments"], true);
-    let voided: Vec<String> = event.payload["voided_payment_ids"]
+    // Look the fact up by aggregate: a window over the shared outbox
+    // (`pending_async(500)`) misses it once other suites' events fill the window.
+    let payload: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM kernel_outbox WHERE event_type = 'orders.updated.v1' \
+         AND aggregate_id = $1 AND payload->>'status_after' = 'cancelled'",
+    )
+    .bind(order_id.to_string())
+    .fetch_one(db.pool())
+    .await
+    .expect("orders.updated.v1 for the cancel");
+    assert_eq!(payload["void_payments"], true);
+    let voided: Vec<String> = payload["voided_payment_ids"]
         .as_array()
         .expect("array")
         .iter()
@@ -607,12 +605,9 @@ async fn postgres_forced_cancel_voids_in_flight_payments_and_leaves_settled_ones
     assert_eq!(voided.len(), 2);
     assert!(voided.contains(&in_flight.id.to_string()));
     assert!(voided.contains(&processing.id.to_string()));
-    assert_eq!(
-        event.payload["outstanding_payment_ids"],
-        serde_json::json!([settled.id.to_string()])
-    );
+    assert_eq!(payload["outstanding_payment_ids"], serde_json::json!([settled.id.to_string()]));
     let outstanding: Decimal =
-        event.payload["outstanding_captured"].as_str().expect("string money").parse().unwrap();
+        payload["outstanding_captured"].as_str().expect("string money").parse().unwrap();
     assert_eq!(outstanding, dec!(60));
 
     let refund = db

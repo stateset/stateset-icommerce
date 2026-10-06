@@ -839,3 +839,94 @@ describe('payment intent provider lifecycle', () => {
     assert.equal(second.webhook.idempotent, true);
   });
 });
+
+// ============================================================================
+// capture_payment / record_lost_chargeback
+// ============================================================================
+
+describe('capture_payment', () => {
+  const tool = findTool(paymentTools, 'capture_payment');
+
+  it('is a write tool that previews without --apply', async () => {
+    assert.equal(tool.permission, 'write');
+    let called = false;
+    const result = await tool.handler({
+      commerce: makePaymentCommerce({
+        markCaptured: async () => {
+          called = true;
+        },
+      }),
+      params: { paymentId: 'pay_001', amount: '60.00' },
+      allowApply: false,
+    });
+    assert.equal(result.success, false);
+    assert.ok(result.hint);
+    assert.equal(called, false);
+  });
+
+  it('passes the exact amount string to markCaptured', async () => {
+    const seen = [];
+    const result = await tool.handler({
+      commerce: makePaymentCommerce({
+        markCaptured: async (id, amount) => {
+          seen.push([id, amount]);
+          return { ...mockPayment, status: 'completed', capturedAmountExact: amount };
+        },
+      }),
+      params: { paymentId: 'pay_001', amount: '60.25' },
+      allowApply: true,
+    });
+    assert.equal(result.success, true);
+    assert.deepEqual(seen, [['pay_001', '60.25']]);
+    assert.equal(result.payment.capturedAmountExact, '60.25');
+  });
+
+  it('refuses cleanly on a binding without markCaptured', async () => {
+    const result = await tool.handler({
+      commerce: makePaymentCommerce(),
+      params: { paymentId: 'pay_001', amount: '1.00' },
+      allowApply: true,
+    });
+    assert.equal(result.success, false);
+    assert.ok(result.error);
+  });
+});
+
+describe('record_lost_chargeback', () => {
+  const tool = findTool(paymentTools, 'record_lost_chargeback');
+
+  it('forwards an optional exact disputed amount', async () => {
+    const seen = [];
+    const commerce = makePaymentCommerce({
+      recordLostChargeback: async (id, amount) => {
+        seen.push([id, amount]);
+        return { ...mockPayment, status: amount ? 'partially_refunded' : 'refunded' };
+      },
+    });
+    const partial = await tool.handler({
+      commerce,
+      params: { paymentId: 'pay_001', amount: '35.50' },
+      allowApply: true,
+    });
+    assert.equal(partial.payment.status, 'partially_refunded');
+    const full = await tool.handler({
+      commerce,
+      params: { paymentId: 'pay_001' },
+      allowApply: true,
+    });
+    assert.equal(full.payment.status, 'refunded');
+    assert.deepEqual(seen, [
+      ['pay_001', '35.50'],
+      ['pay_001', undefined],
+    ]);
+  });
+
+  it('previews without --apply', async () => {
+    const result = await tool.handler({
+      commerce: makePaymentCommerce(),
+      params: { paymentId: 'pay_001' },
+      allowApply: false,
+    });
+    assert.equal(result.success, false);
+  });
+});

@@ -850,7 +850,8 @@ fn payment_and_refund_reject_excess_currency_scale_without_writes() {
         conn.query_row("SELECT COUNT(*) FROM refunds", [], |row| row.get(0)).unwrap();
     let events: i64 =
         conn.query_row("SELECT COUNT(*) FROM kernel_outbox", [], |row| row.get(0)).unwrap();
-    assert_eq!((payments, refunds, events), (1, 0, 1));
+    // payments.created + payments.captured; the refused writes added nothing.
+    assert_eq!((payments, refunds, events), (1, 0, 2));
 }
 
 fn inventory_command(

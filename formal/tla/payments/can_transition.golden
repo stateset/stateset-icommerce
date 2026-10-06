@@ -1,8 +1,8 @@
 completed -> disputed
 completed -> partially_refunded
 completed -> refunded
-disputed -> cancelled
 disputed -> completed
+disputed -> partially_refunded
 disputed -> refunded
 partially_refunded -> disputed
 partially_refunded -> refunded

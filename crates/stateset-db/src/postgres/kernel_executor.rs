@@ -799,7 +799,7 @@ impl PgKernelExecutor {
 
         let row = sqlx::query_as::<_, PaymentRow>(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-                    amount, currency, amount_refunded, external_id, idempotency_key, processor,
+                    amount, currency, amount_refunded, captured_amount, external_id, idempotency_key, processor,
                     card_brand, card_last4, card_exp_month, card_exp_year, billing_email, billing_name,
                     billing_address, description, failure_reason, failure_code, metadata, paid_at,
                     version, created_at, updated_at
@@ -875,7 +875,7 @@ impl PgKernelExecutor {
 
         let payment_row = sqlx::query_as::<_, PaymentRow>(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-                    amount, currency, amount_refunded, external_id, idempotency_key, processor,
+                    amount, currency, amount_refunded, captured_amount, external_id, idempotency_key, processor,
                     card_brand, card_last4, card_exp_month, card_exp_year, billing_email, billing_name,
                     billing_address, description, failure_reason, failure_code, metadata, paid_at,
                     version, created_at, updated_at
@@ -3636,7 +3636,7 @@ impl PgKernelExecutor {
         }
         let payment_row = sqlx::query_as::<_, PaymentRow>(
             "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-                    amount, currency, amount_refunded, external_id, idempotency_key, processor,
+                    amount, currency, amount_refunded, captured_amount, external_id, idempotency_key, processor,
                     card_brand, card_last4, card_exp_month, card_exp_year, billing_email, billing_name,
                     billing_address, description, failure_reason, failure_code, metadata, paid_at,
                     version, created_at, updated_at FROM payments WHERE id = $1",
@@ -4793,7 +4793,7 @@ impl PgKernelExecutor {
             mark_completed_pg(step.as_mut(), payment_id, Utc::now()).await?;
             let row = sqlx::query_as::<_, PaymentRow>(
                 "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
-                        amount, currency, amount_refunded, external_id, idempotency_key, processor,
+                        amount, currency, amount_refunded, captured_amount, external_id, idempotency_key, processor,
                         card_brand, card_last4, card_exp_month, card_exp_year, billing_email, billing_name,
                         billing_address, description, failure_reason, failure_code, metadata, paid_at,
                         version, created_at, updated_at

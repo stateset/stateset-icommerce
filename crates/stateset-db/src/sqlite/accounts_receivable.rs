@@ -1546,7 +1546,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             // payment can never be applied beyond its own value.
             let payment_id_str = input.payment_id.to_string();
             let payment_amount_str: String = match tx.query_row(
-                "SELECT amount FROM payments WHERE id = ?1",
+                "SELECT COALESCE(captured_amount, amount) FROM payments WHERE id = ?1",
                 params![payment_id_str],
                 |row| row.get(0),
             ) {

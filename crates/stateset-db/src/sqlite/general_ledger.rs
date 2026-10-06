@@ -1667,7 +1667,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             // The payment date is `paid_at` (nullable) falling back to
             // `created_at`, stored as full RFC3339 timestamps.
             let (amount_str, payment_date): (String, String) = tx.query_row(
-                "SELECT amount, COALESCE(paid_at, created_at) FROM payments WHERE id = ?1",
+                "SELECT COALESCE(captured_amount, amount), COALESCE(paid_at, created_at) FROM payments WHERE id = ?1",
                 params![payment_id.to_string()],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;

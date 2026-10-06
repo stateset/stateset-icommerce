@@ -238,5 +238,13 @@ Ok(
             None,
             0,
         ),
+        (
+            28,
+            "captured_amount",
+            "TEXT",
+            0,
+            None,
+            0,
+        ),
     ],
 )

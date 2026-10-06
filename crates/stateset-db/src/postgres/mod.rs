@@ -547,6 +547,12 @@ impl PostgresDatabase {
         // state after 099), so a fresh Postgres store stops charging zero
         // tax. Skipped on a store that already has any tax rate.
         migrations.push(("105_seed_tax_rates", include_str!("migrations/105_seed_tax_rates.sql")));
+        // What a payment actually captured, apart from what it authorized,
+        // so a partial capture is recorded exactly and bounds its refunds.
+        migrations.push((
+            "106_payment_captured_amount",
+            include_str!("migrations/106_payment_captured_amount.sql"),
+        ));
 
         migrations
     }

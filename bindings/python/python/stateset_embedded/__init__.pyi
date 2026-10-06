@@ -2010,6 +2010,7 @@ class Payment:
     amount_exact: str
     amount_refunded: float
     amount_refunded_exact: str
+    captured_amount_exact: Optional[str]
     currency: str
     status: str
     payment_method: str
@@ -2061,6 +2062,8 @@ class Payments:
     def list(self) -> List[Payment]: ...
 
     def complete(self, id: str) -> Payment: ...
+    def mark_captured(self, id: str, amount: str) -> Payment: ...
+    def record_lost_chargeback(self, id: str, amount: Optional[str] = None) -> Payment: ...
 
     def mark_failed(self, id: str, reason: str, code: Optional[str] = None) -> Payment: ...
 

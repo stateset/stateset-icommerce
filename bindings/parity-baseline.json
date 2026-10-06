@@ -490,8 +490,10 @@
         "get_refund",
         "get_refunds",
         "list",
+        "mark_captured",
         "mark_completed",
-        "mark_failed"
+        "mark_failed",
+        "record_lost_chargeback"
       ],
       "prepayments": [
         "apply",
@@ -1291,8 +1293,10 @@
         "get_refund",
         "get_refunds",
         "list",
+        "mark_captured",
         "mark_completed",
-        "mark_failed"
+        "mark_failed",
+        "record_lost_chargeback"
       ],
       "prepayments": [
         "apply",
@@ -2377,7 +2381,9 @@
         "count",
         "fail_refund",
         "get_refund",
-        "get_refunds"
+        "get_refunds",
+        "mark_captured",
+        "record_lost_chargeback"
       ],
       "prepayments": [
         "apply",

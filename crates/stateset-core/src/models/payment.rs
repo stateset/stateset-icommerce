@@ -61,7 +61,13 @@ impl PaymentTransactionStatus {
                 matches!(next, Self::Refunded | Self::PartiallyRefunded | Self::Disputed)
             }
             Self::PartiallyRefunded => matches!(next, Self::Refunded | Self::Disputed),
-            Self::Disputed => matches!(next, Self::Completed | Self::Refunded | Self::Cancelled),
+            // A dispute holds captured money: it resolves won (`Completed`) or
+            // lost, in full (`Refunded`) or in part (`PartiallyRefunded`).
+            // It can never be `Cancelled` — that would release the order-total
+            // slice the contested capture is still consuming.
+            Self::Disputed => {
+                matches!(next, Self::Completed | Self::Refunded | Self::PartiallyRefunded)
+            }
             Self::Failed | Self::Cancelled | Self::Refunded => false,
         }
     }
@@ -105,9 +111,14 @@ impl PaymentTransactionStatus {
     /// record it in the same transaction as the status write: a completed
     /// refund-ledger row for the remaining balance, stamped with
     /// [`LOST_CHARGEBACK_REFUND_REASON`] (a reversal forced by the network,
-    /// not a refund the merchant issued), `amount_refunded = amount`, and the
-    /// order's payment status re-derived from the ledger (full order lost ->
-    /// `refunded`, part of it -> `partially_refunded`).
+    /// not a refund the merchant issued), `amount_refunded` = the captured
+    /// amount, and the order's payment status re-derived from the ledger
+    /// (full order lost -> `refunded`, part of it -> `partially_refunded`).
+    ///
+    /// A dispute lost for only PART of the payment is not a status flip: it
+    /// is `PaymentRepository::record_lost_chargeback` with the disputed
+    /// amount, which writes the same kind of ledger row for that amount and
+    /// moves the payment to `PartiallyRefunded`.
     #[must_use]
     pub const fn is_lost_chargeback(self, next: Self) -> bool {
         matches!((self, next), (Self::Disputed, Self::Refunded))
@@ -317,6 +328,14 @@ pub struct Payment {
     pub currency: CurrencyCode,
     /// Amount refunded
     pub amount_refunded: Decimal,
+    /// Amount actually captured, when it has been recorded.
+    ///
+    /// `amount` is what was authorized; a processor may capture less (a
+    /// partial capture), and only what it captured can ever be refunded.
+    /// `None` until the payment is captured: a payment still in flight
+    /// reserves its full `amount`. See [`Self::captured`].
+    #[serde(default)]
+    pub captured_amount: Option<Decimal>,
     /// External payment processor ID (e.g., Stripe payment intent ID)
     pub external_id: Option<String>,
     /// Idempotency key for safely retrying payment creation
@@ -378,10 +397,45 @@ pub struct Payment {
 }
 
 impl Payment {
-    /// The amount of this payment that has not yet been refunded.
+    /// The money this payment holds against its order: the recorded
+    /// [`Self::captured_amount`] once captured, otherwise the authorized
+    /// `amount` (an in-flight payment reserves all of it).
+    #[must_use]
+    pub fn captured(&self) -> Decimal {
+        self.captured_amount.unwrap_or(self.amount)
+    }
+
+    /// The amount of this payment that has not yet been refunded: what was
+    /// captured (not what was authorized) minus what was refunded.
     #[must_use]
     pub fn refundable_remaining(&self) -> Decimal {
-        self.amount - self.amount_refunded
+        self.captured() - self.amount_refunded
+    }
+
+    /// Validate an amount to capture against this payment: positive, no finer
+    /// than the currency's minor unit, and at most the authorized `amount`
+    /// (a capture may be partial, never more than was held).
+    ///
+    /// # Errors
+    ///
+    /// [`crate::CommerceError::ValidationError`] for a non-positive or
+    /// over-authorized amount, [`crate::CommerceError::MoneyScaleExceedsCurrency`]
+    /// for an amount finer than the currency allows.
+    pub fn validate_capture_amount(&self, amount: Decimal) -> crate::Result<Decimal> {
+        use crate::CommerceError;
+        if amount <= Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Capture amount must be greater than zero".into(),
+            ));
+        }
+        validate_money_scale(self.currency, amount)?;
+        if amount > self.amount {
+            return Err(CommerceError::ValidationError(format!(
+                "Capture amount {amount} exceeds the authorized amount {}",
+                self.amount
+            )));
+        }
+        Ok(amount)
     }
 
     /// Check that a `create` request replayed under this payment's idempotency
@@ -517,7 +571,7 @@ impl Payment {
         if amount > remaining {
             return Err(CommerceError::RefundExceedsCaptured {
                 payment_id: self.id.into_uuid(),
-                captured: self.amount.to_string(),
+                captured: self.captured().to_string(),
                 already_refunded: self.amount_refunded.to_string(),
                 requested: amount.to_string(),
             });
@@ -972,7 +1026,51 @@ mod tests {
         // Disputed transitions
         assert!(Disputed.can_transition_to(Completed));
         assert!(Disputed.can_transition_to(Refunded));
-        assert!(Disputed.can_transition_to(Cancelled));
+        // A partially lost chargeback leaves the rest of the capture standing.
+        assert!(Disputed.can_transition_to(PartiallyRefunded));
+    }
+
+    #[test]
+    fn disputed_payment_cannot_be_cancelled() {
+        use PaymentTransactionStatus::*;
+        // The dispute holds captured money; it must be resolved (won ->
+        // Completed, lost -> Refunded / PartiallyRefunded) first.
+        assert!(!Disputed.can_transition_to(Cancelled));
+        assert!(!Disputed.can_transition_to(Failed));
+    }
+
+    #[test]
+    fn refund_bound_is_the_captured_amount_not_the_authorized_amount() {
+        use rust_decimal_macros::dec;
+        let mut payment =
+            payment_for_refund(PaymentTransactionStatus::Completed, dec!(100), dec!(0));
+        payment.captured_amount = Some(dec!(60));
+        assert_eq!(payment.captured(), dec!(60));
+        assert_eq!(payment.refundable_remaining(), dec!(60));
+        assert_eq!(payment.validate_refund(None).unwrap(), dec!(60));
+        let err = payment.validate_refund(Some(dec!(60.01))).expect_err("over captured");
+        match err {
+            crate::CommerceError::RefundExceedsCaptured { captured, .. } => {
+                assert_eq!(captured, "60");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        // Not yet captured (no recorded capture): the authorized amount stands in.
+        payment.captured_amount = None;
+        assert_eq!(payment.captured(), dec!(100));
+    }
+
+    #[test]
+    fn validate_capture_amount_bounds() {
+        use rust_decimal_macros::dec;
+        let payment = payment_for_refund(PaymentTransactionStatus::Processing, dec!(100), dec!(0));
+        assert_eq!(payment.validate_capture_amount(dec!(100)).unwrap(), dec!(100));
+        assert_eq!(payment.validate_capture_amount(dec!(0.01)).unwrap(), dec!(0.01));
+        assert!(payment.validate_capture_amount(dec!(0)).is_err());
+        assert!(payment.validate_capture_amount(dec!(-1)).is_err());
+        assert!(payment.validate_capture_amount(dec!(100.01)).is_err());
+        // Finer than the currency's minor unit.
+        assert!(payment.validate_capture_amount(dec!(10.001)).is_err());
     }
 
     #[test]
@@ -1081,6 +1179,7 @@ mod tests {
             amount,
             currency: CurrencyCode::default(),
             amount_refunded,
+            captured_amount: None,
             external_id: None,
             idempotency_key: None,
             processor: None,

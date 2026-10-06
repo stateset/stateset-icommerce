@@ -117,7 +117,7 @@ fn ensure_total_covers_captures_in_tx(
     if open.is_empty() {
         return Ok(());
     }
-    let captured: Decimal = open.iter().map(|p| p.amount - p.amount_refunded).sum();
+    let captured: Decimal = open.iter().map(stateset_core::Payment::refundable_remaining).sum();
     let (raw_total, raw_currency): (String, String) = tx.query_row(
         "SELECT total_amount, currency FROM orders WHERE id = ?",
         [id.to_string()],
@@ -1402,7 +1402,7 @@ impl SqliteOrderRepository {
                 let open = open_captures_for_order_conn(tx, &id.to_string())?;
                 if !open.is_empty() && !input.void_payments {
                     let outstanding: Decimal =
-                        open.iter().map(|p| p.amount - p.amount_refunded).sum();
+                        open.iter().map(stateset_core::Payment::refundable_remaining).sum();
                     let currency = open[0].currency;
                     return Err(to_sql_err(CommerceError::ValidationError(format!(
                         "order {id} cannot be cancelled: {} payment(s) still hold {outstanding} {currency}; \
@@ -1418,7 +1418,7 @@ impl SqliteOrderRepository {
                     let outstanding: Vec<_> =
                         open.iter().filter(|p| !voided.contains(&p.id.into_uuid())).collect();
                     cancel_money.outstanding_captured =
-                        outstanding.iter().map(|p| p.amount - p.amount_refunded).sum();
+                        outstanding.iter().map(|p| p.refundable_remaining()).sum();
                     cancel_money.outstanding_payment_ids =
                         outstanding.iter().map(|p| p.id.into_uuid()).collect();
                 }

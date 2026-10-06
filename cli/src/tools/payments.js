@@ -120,6 +120,56 @@ export const paymentTools = [
   },
 
   {
+    name: 'capture_payment',
+    description:
+      'Capture a payment for an exact amount, which may be less than the authorized amount (a partial capture). The captured amount is recorded exactly and bounds every later refund; capturing more than authorized, zero, or a different amount than an earlier capture is refused.',
+    inputSchema: {
+      paymentId: z.string().min(1).describe('Payment ID'),
+      amount: exactPositiveAmount.describe('Exact decimal amount actually captured'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Capture payment', params);
+      }
+      if (typeof commerce.payments.markCaptured !== 'function') {
+        return {
+          success: false,
+          error: 'This @stateset/embedded build cannot record a partial capture (markCaptured).',
+        };
+      }
+      const payment = await commerce.payments.markCaptured(params.paymentId, params.amount);
+      return { success: true, message: 'Payment captured', payment };
+    },
+  },
+
+  {
+    name: 'record_lost_chargeback',
+    description:
+      'Record a lost chargeback on a disputed payment. amount is the disputed amount the card network reversed; omit it for the whole remaining captured balance. A partial loss writes a chargeback_lost refund row and leaves the payment partially_refunded.',
+    inputSchema: {
+      paymentId: z.string().min(1).describe('Disputed payment ID'),
+      amount: exactPositiveAmount
+        .optional()
+        .describe('Exact decimal disputed amount; omit for the whole remaining balance'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Record lost chargeback', params);
+      }
+      if (typeof commerce.payments.recordLostChargeback !== 'function') {
+        return {
+          success: false,
+          error: 'This @stateset/embedded build cannot record a lost chargeback.',
+        };
+      }
+      const payment = await commerce.payments.recordLostChargeback(params.paymentId, params.amount);
+      return { success: true, message: 'Lost chargeback recorded', payment };
+    },
+  },
+
+  {
     name: 'mark_failed_payment',
     description: 'Mark a payment as failed with a required reason and optional failure code.',
     inputSchema: {

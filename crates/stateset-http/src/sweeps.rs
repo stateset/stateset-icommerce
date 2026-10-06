@@ -22,15 +22,23 @@
 //! so the background runner lives on its own OS thread with its own
 //! single-threaded runtime, and the on-demand run is dispatched to the
 //! blocking pool. Neither can stall an axum worker.
+//!
+//! A third, opt-in sweep settles refunds a payment processor left pending
+//! ([`RefundReconciliationSweep`], registered through
+//! [`spawn_background_sweeps_with`] /
+//! `ServerBuilder::with_refund_reconciliation`). It needs a processor to ask,
+//! so it only runs when one is configured.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
-use stateset_embedded::Commerce;
+use stateset_embedded::{Commerce, PaymentProvider};
+use stateset_jobs::job::BoxFuture;
 use stateset_jobs::{
-    FnReservationSweeper, FnTraceabilitySweeper, InMemoryJobStore, JobError, JobRunner,
-    JobRunnerHandle, ReservationSweepJob, Scheduler, TraceabilitySweepJob,
+    BackoffStrategy, FnReservationSweeper, FnTraceabilitySweeper, InMemoryJobStore, JobContext,
+    JobDefinition, JobError, JobHandler, JobOutput, JobRunner, JobRunnerHandle,
+    ReservationSweepJob, Schedule, Scheduler, TraceabilitySweepJob,
 };
 
 use crate::error::HttpError;
@@ -41,6 +49,9 @@ pub const RESERVATION_SWEEP_JOB: &str = "reservation_sweep";
 /// Registered name of the traceability sweep (lot expiry, lot and serial
 /// reservations).
 pub const TRACEABILITY_SWEEP_JOB: &str = "traceability_sweep";
+
+/// Registered name of the pending-refund reconciliation sweep.
+pub const REFUND_RECONCILIATION_JOB: &str = "refund_reconciliation";
 
 /// Name of the OS thread the background runner uses.
 const SWEEP_THREAD_NAME: &str = "stateset-sweeps";
@@ -151,6 +162,115 @@ pub fn sweep_scheduler(
     Ok(scheduler)
 }
 
+/// Settle refunds a payment processor left pending: every pass asks the
+/// processor about up to `batch_size` in-flight refunds that carry its id
+/// (`Payments::reconcile_pending_refunds`), completing the settled ones and
+/// failing (releasing) the failed ones.
+///
+/// Safe to run from several processes at once: the lookups are read-only
+/// and each completion / failure is a guarded write that lands exactly once.
+#[derive(Clone)]
+pub struct RefundReconciliationSweep {
+    provider: Arc<dyn PaymentProvider + Send + Sync>,
+    interval: Duration,
+    batch_size: u32,
+}
+
+impl std::fmt::Debug for RefundReconciliationSweep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RefundReconciliationSweep")
+            .field("provider", &self.provider.name())
+            .field("interval", &self.interval)
+            .field("batch_size", &self.batch_size)
+            .finish()
+    }
+}
+
+impl RefundReconciliationSweep {
+    /// Default gap between passes.
+    pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(300);
+    /// Default refunds examined per pass.
+    pub const DEFAULT_BATCH_SIZE: u32 = 100;
+
+    /// Reconcile against `provider` every [`Self::DEFAULT_INTERVAL`].
+    #[must_use]
+    pub fn new(provider: Arc<dyn PaymentProvider + Send + Sync>) -> Self {
+        Self { provider, interval: Self::DEFAULT_INTERVAL, batch_size: Self::DEFAULT_BATCH_SIZE }
+    }
+
+    /// Override the gap between passes.
+    #[must_use]
+    pub const fn with_interval(mut self, interval: Duration) -> Self {
+        self.interval = interval;
+        self
+    }
+
+    /// Override how many refunds one pass examines (at least 1).
+    #[must_use]
+    pub fn with_batch_size(mut self, batch_size: u32) -> Self {
+        self.batch_size = batch_size.max(1);
+        self
+    }
+
+    /// The gap between passes.
+    #[must_use]
+    pub const fn interval(&self) -> Duration {
+        self.interval
+    }
+
+    /// The job definition for this sweep against `commerce`.
+    #[must_use]
+    pub fn to_definition(&self, commerce: &Arc<Commerce>) -> JobDefinition {
+        JobDefinition::new(
+            REFUND_RECONCILIATION_JOB,
+            Schedule::Interval(self.interval),
+            Box::new(RefundReconciliationJob {
+                commerce: Arc::clone(commerce),
+                sweep: self.clone(),
+            }),
+        )
+        .with_timeout(Duration::from_secs(300))
+        .with_max_retries(1)
+        .with_retry_backoff(BackoffStrategy::fixed(Duration::from_secs(60)))
+    }
+}
+
+/// The [`JobHandler`] behind [`RefundReconciliationSweep`].
+struct RefundReconciliationJob {
+    commerce: Arc<Commerce>,
+    sweep: RefundReconciliationSweep,
+}
+
+impl JobHandler for RefundReconciliationJob {
+    fn execute<'a>(&'a self, _ctx: &'a JobContext) -> BoxFuture<'a, Result<JobOutput, JobError>> {
+        let commerce = Arc::clone(&self.commerce);
+        let provider = Arc::clone(&self.sweep.provider);
+        let batch_size = self.sweep.batch_size;
+        Box::pin(async move {
+            // Processor lookups are blocking HTTP calls: keep them off the
+            // runner's async thread.
+            let report = tokio::task::spawn_blocking(move || {
+                commerce.payments().reconcile_pending_refunds(provider.as_ref(), batch_size)
+            })
+            .await
+            .map_err(|e| JobError::ExecutionFailed(format!("refund reconciliation task: {e}")))?
+            .map_err(|e| JobError::ExecutionFailed(e.to_string()))?;
+            let data = serde_json::json!({
+                "refunds_examined": report.examined,
+                "refunds_completed": report.completed.len(),
+                "refunds_failed": report.failed.len(),
+                "refunds_still_pending": report.still_pending,
+                "errors": report.errors,
+            });
+            Ok(JobOutput::with_data("refund reconciliation completed", data))
+        })
+    }
+
+    fn name(&self) -> &'static str {
+        REFUND_RECONCILIATION_JOB
+    }
+}
+
 /// Start both sweeps in the background on a dedicated thread.
 ///
 /// The returned handle keeps the loop alive; call
@@ -165,7 +285,25 @@ pub fn spawn_background_sweeps(
     commerce: &Arc<Commerce>,
     config: SweepConfig,
 ) -> Result<JobRunnerHandle, JobError> {
-    let scheduler = sweep_scheduler(commerce, config)?;
+    spawn_background_sweeps_with(commerce, config, None)
+}
+
+/// [`spawn_background_sweeps`], plus the pending-refund reconciliation sweep
+/// when `refunds` is configured.
+///
+/// # Errors
+///
+/// Returns [`JobError`] if a schedule is invalid or the thread could not be
+/// started.
+pub fn spawn_background_sweeps_with(
+    commerce: &Arc<Commerce>,
+    config: SweepConfig,
+    refunds: Option<&RefundReconciliationSweep>,
+) -> Result<JobRunnerHandle, JobError> {
+    let mut scheduler = sweep_scheduler(commerce, config)?;
+    if let Some(refunds) = refunds {
+        scheduler.register(refunds.to_definition(commerce))?;
+    }
     JobRunner::new(scheduler)
         .with_tick_interval(config.tick_interval)
         .spawn_on_dedicated_thread(SWEEP_THREAD_NAME)
@@ -269,6 +407,58 @@ mod tests {
         );
         let _ = reservation;
         commerce
+    }
+
+    /// A captured payment with one refund the processor left pending.
+    fn commerce_with_pending_refund() -> (Arc<Commerce>, uuid::Uuid) {
+        use stateset_embedded::{CreatePayment, MockPaymentProvider, ProviderDecision};
+        let commerce = Arc::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let payment = commerce
+            .payments()
+            .create(CreatePayment { amount: dec!(25.00), ..Default::default() })
+            .expect("payment");
+        let mock = MockPaymentProvider::new(vec![
+            ProviderDecision::Captured { reference: "pi_sweep".into(), amount: None },
+            ProviderDecision::Pending { reference: "re_sweep".into() },
+        ]);
+        commerce
+            .payments()
+            .capture_with_provider(payment.id, &mock, None, Some("pm".into()))
+            .expect("capture");
+        commerce
+            .payments()
+            .refund_with_provider(payment.id, &mock, Some(dec!(10.00)), None)
+            .expect("pending refund");
+        let refund = commerce.payments().get_refunds(payment.id).expect("refunds")[0].id;
+        (commerce, refund)
+    }
+
+    #[tokio::test]
+    async fn refund_reconciliation_sweep_settles_a_pending_refund() {
+        use stateset_embedded::{MockPaymentProvider, ProviderDecision, RefundStatus};
+        let (commerce, refund_id) = commerce_with_pending_refund();
+        let provider = Arc::new(MockPaymentProvider::new(vec![ProviderDecision::Captured {
+            reference: "re_sweep".into(),
+            amount: None,
+        }]));
+        let sweep = RefundReconciliationSweep::new(provider.clone());
+        let mut scheduler = sweep_scheduler(&commerce, SweepConfig::default()).expect("scheduler");
+        scheduler.register(sweep.to_definition(&commerce)).expect("register");
+        let mut runner = JobRunner::new(scheduler);
+
+        let output =
+            runner.run_now(REFUND_RECONCILIATION_JOB, Utc::now()).await.expect("sweep ran");
+        let data = output.data.expect("data");
+        assert_eq!(data["refunds_examined"], 1);
+        assert_eq!(data["refunds_completed"], 1);
+        assert_eq!(provider.calls(), vec!["refund_status:re_sweep".to_string()]);
+        let refund = commerce.payments().get_refund(refund_id).expect("get").expect("refund");
+        assert_eq!(refund.status, RefundStatus::Completed);
+
+        // A second pass has nothing left to do.
+        let output =
+            runner.run_now(REFUND_RECONCILIATION_JOB, Utc::now()).await.expect("sweep ran");
+        assert_eq!(output.data.expect("data")["refunds_examined"], 0);
     }
 
     #[test]

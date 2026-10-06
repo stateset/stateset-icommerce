@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 975,
+  "totalTools": 977,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 957
+      "count": 959
     },
     {
       "name": "stateset-scaffold",
@@ -219,7 +219,7 @@
     },
     {
       "name": "payments",
-      "count": 19
+      "count": 21
     },
     {
       "name": "policies",
@@ -397,14 +397,14 @@
     },
     {
       "name": "write",
-      "count": 427
+      "count": 429
     }
   ],
   "permissionCounts": {
     "admin": 47,
     "delete": 21,
     "read": 480,
-    "write": 427
+    "write": 429
   },
   "tools": [
     {
@@ -2872,6 +2872,15 @@
       "qualifiedName": "mcp__stateset-commerce__cancel_work_order",
       "policyDomain": "manufacturing",
       "permission": "delete"
+    },
+    {
+      "name": "capture_payment",
+      "description": "Capture a payment for an exact amount, which may be less than the authorized amount (a partial capture). The captured amount is recorded exactly and bounds every later refund; capturing more than authorized, zero, or a different amount than an earlier capture is refused.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__capture_payment",
+      "policyDomain": "payments",
+      "permission": "write"
     },
     {
       "name": "capture_payment_intent",
@@ -7524,6 +7533,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__record_invoice_payment",
       "policyDomain": "invoices",
+      "permission": "write"
+    },
+    {
+      "name": "record_lost_chargeback",
+      "description": "Record a lost chargeback on a disputed payment. amount is the disputed amount the card network reversed; omit it for the whole remaining captured balance. A partial loss writes a chargeback_lost refund row and leaves the payment partially_refunded.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__record_lost_chargeback",
+      "policyDomain": "payments",
       "permission": "write"
     },
     {

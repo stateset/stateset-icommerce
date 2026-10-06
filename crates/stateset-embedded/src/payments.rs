@@ -46,6 +46,30 @@ use stateset_observability::Metrics;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// What one [`Payments::reconcile_pending_refunds`] pass did.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct RefundReconciliation {
+    /// In-flight refunds looked at.
+    pub examined: u32,
+    /// Refunds the processor reported settled, now `completed`.
+    pub completed: Vec<Uuid>,
+    /// Refunds the processor reported failed, now `failed` (reservation released).
+    pub failed: Vec<Uuid>,
+    /// Refunds the processor still reports pending.
+    pub still_pending: u32,
+    /// Refunds that could not be reconciled this pass, with the reason.
+    pub errors: Vec<RefundReconciliationError>,
+}
+
+/// One refund a reconciliation pass could not settle.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct RefundReconciliationError {
+    /// The engine refund id.
+    pub refund_id: Uuid,
+    /// Why it was not reconciled.
+    pub message: String,
+}
+
 /// Payment operations for transaction processing and refunds
 pub struct Payments {
     db: Arc<dyn Database>,
@@ -156,6 +180,47 @@ impl Payments {
         Ok(payment)
     }
 
+    /// Mark a payment captured for `captured_amount`, which may be less than
+    /// the authorized amount (a partial capture). The captured amount is
+    /// recorded exactly; refunds are bounded by it and the payment holds only
+    /// that much of its order's total.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use stateset_embedded::{Commerce, PaymentId};
+    /// # use rust_decimal_macros::dec;
+    /// # let commerce = Commerce::new("./store.db")?;
+    /// # let payment_id = PaymentId::new();
+    /// // Authorized 100.00, shipped only part of the order: capture 60.00.
+    /// let payment = commerce.payments().mark_captured(payment_id, dec!(60.00))?;
+    /// assert_eq!(payment.captured_amount, Some(dec!(60.00)));
+    /// # Ok::<(), stateset_embedded::CommerceError>(())
+    /// ```
+    #[tracing::instrument(skip(self), fields(payment_id = %id, captured = %captured_amount))]
+    pub fn mark_captured(&self, id: PaymentId, captured_amount: Decimal) -> Result<Payment> {
+        tracing::info!("marking payment as captured");
+        let payment = self.db.payments().mark_captured(id, captured_amount)?;
+        self.metrics.record_payment_completed(
+            &payment.id.to_string(),
+            payment.captured().to_f64().unwrap_or(0.0),
+        );
+        Ok(payment)
+    }
+
+    /// Record a lost chargeback on a `Disputed` payment for `amount` (`None`
+    /// = the whole remaining captured balance). A partial loss writes a
+    /// `chargeback_lost` refund row for the disputed amount and leaves the
+    /// payment `PartiallyRefunded`; the whole balance is the same as the
+    /// `Disputed -> Refunded` status write.
+    pub fn record_lost_chargeback(
+        &self,
+        id: PaymentId,
+        amount: Option<Decimal>,
+    ) -> Result<Payment> {
+        self.db.payments().record_lost_chargeback(id, amount)
+    }
+
     /// Mark payment as failed
     ///
     /// # Arguments
@@ -226,9 +291,11 @@ impl Payments {
 
     /// Move previously held funds through an upstream processor.
     ///
-    /// The second half of real card capture. `amount` must be `None` or the
-    /// full payment amount: the payment row has no captured-amount column, so
-    /// a partial capture would record money that never moved and is refused.
+    /// The second half of real card capture. `amount` caps a partial capture
+    /// (`None` = the full payment amount); it is validated before going
+    /// upstream (positive, minor-unit, at most the authorized amount). The
+    /// payment records exactly what the processor reports as captured
+    /// (`captured_amount`), which then bounds every refund.
     /// The upstream reference recorded at authorize time is reused; when the
     /// payment has none yet (record-only row), `authorize_with_provider` runs
     /// first with `payment_method`, and capture only follows a hold —
@@ -247,12 +314,12 @@ impl Payments {
             .payments()
             .get(id)?
             .ok_or_else(|| CommerceError::Payment(PaymentError::NotFound(id.into())))?;
-        if amount.is_some_and(|amount| amount != payment.amount) {
-            return Err(CommerceError::ValidationError(format!(
-                "partial capture is not supported: capture amount must equal the payment amount {}",
-                payment.amount
-            )));
-        }
+        // Validate before going upstream: a capture the engine cannot record
+        // must never move money.
+        let amount = match amount {
+            Some(amount) => Some(payment.validate_capture_amount(amount)?),
+            None => None,
+        };
         let reference = match payment.external_id.clone() {
             Some(reference) => reference,
             None => match self.authorize_with_provider(id, provider, payment_method)? {
@@ -262,8 +329,11 @@ impl Payments {
                 other => return Ok(other),
             },
         };
-        let decision = provider.capture(&reference, amount, &payment.currency.to_string())?;
-        self.persist_provider_decision(id, &decision)?;
+        // Ask for exactly the full amount when it is the full amount, so a
+        // processor without partial capture is never sent a cap it ignores.
+        let requested = amount.filter(|amount| *amount != payment.amount);
+        let decision = provider.capture(&reference, requested, &payment.currency.to_string())?;
+        self.persist_capture_decision(id, &decision, amount)?;
         Ok(decision)
     }
 
@@ -307,8 +377,13 @@ impl Payments {
                 Ok(ProviderDecision::Declined { code, message })
             }
             // Accepted but not settled: leave the engine refund pending until
-            // the processor confirms, so nothing reads as refunded early.
-            Ok(pending @ ProviderDecision::Pending { .. }) => Ok(pending),
+            // the processor confirms, so nothing reads as refunded early, and
+            // keep the processor's refund id so `refresh_refund_status` /
+            // `reconcile_pending_refunds` can settle it later.
+            Ok(ProviderDecision::Pending { reference: upstream }) => {
+                self.db.payments().set_refund_external_id(refund.id, &upstream)?;
+                Ok(ProviderDecision::Pending { reference: upstream })
+            }
             Ok(decision) => {
                 self.db.payments().complete_refund(refund.id)?;
                 Ok(decision)
@@ -320,21 +395,115 @@ impl Payments {
         }
     }
 
-    /// Persist one provider outcome onto the payment row.
+    /// Ask the processor where a pending refund stands and settle the engine
+    /// refund to match: `Captured` (settled) completes it — it now counts
+    /// toward the payment's refunded total and the order's payment status —
+    /// `Declined` fails it and releases its reservation, `Pending` leaves it.
+    ///
+    /// Idempotent and safe to run from several sweeps at once: a refund that
+    /// is already terminal is returned as-is without asking the processor,
+    /// the lookup is read-only, and the completion / failure writes are
+    /// guarded in the database (a refund folds into its payment exactly
+    /// once; a completed refund cannot be failed, nor a failed one
+    /// completed). The refund must carry the processor's id (recorded by
+    /// [`Self::refund_with_provider`] when it went pending).
     #[cfg(feature = "events")]
-    fn persist_provider_decision(&self, id: PaymentId, decision: &ProviderDecision) -> Result<()> {
+    pub fn refresh_refund_status(
+        &self,
+        refund_id: Uuid,
+        provider: &dyn PaymentProvider,
+    ) -> Result<Refund> {
+        let refund = self.db.payments().get_refund(refund_id)?.ok_or(CommerceError::NotFound)?;
+        if refund.status.is_terminal() {
+            return Ok(refund);
+        }
+        let reference = refund.external_id.clone().ok_or_else(|| {
+            CommerceError::ValidationError(format!(
+                "refund {refund_id} has no processor reference to reconcile against"
+            ))
+        })?;
+        match provider.refund_status(&reference)? {
+            ProviderDecision::Captured { .. } => self.db.payments().complete_refund(refund_id),
+            ProviderDecision::Declined { code, message } => {
+                self.db.payments().fail_refund(refund_id, &format!("{code}: {message}"))
+            }
+            ProviderDecision::Pending { .. } | ProviderDecision::RequiresAction { .. } => {
+                Ok(refund)
+            }
+            ProviderDecision::Authorized { reference } => Err(CommerceError::ExternalServiceError(
+                format!("provider reported refund {reference} as an authorization"),
+            )),
+        }
+    }
+
+    /// Reconcile up to `limit` in-flight refunds that carry a processor
+    /// reference (oldest first) with [`Self::refresh_refund_status`]. One
+    /// refund's failure (an outage, a contradictory answer) is reported in
+    /// [`RefundReconciliation::errors`] and does not stop the rest.
+    #[cfg(feature = "events")]
+    pub fn reconcile_pending_refunds(
+        &self,
+        provider: &dyn PaymentProvider,
+        limit: u32,
+    ) -> Result<RefundReconciliation> {
+        let mut report = RefundReconciliation::default();
+        for refund in self.db.payments().list_in_flight_refunds(limit)? {
+            report.examined += 1;
+            match self.refresh_refund_status(refund.id, provider) {
+                Ok(after) => match after.status {
+                    stateset_core::RefundStatus::Completed => report.completed.push(after.id),
+                    stateset_core::RefundStatus::Failed
+                    | stateset_core::RefundStatus::Cancelled => report.failed.push(after.id),
+                    _ => report.still_pending += 1,
+                },
+                Err(e) => report.errors.push(RefundReconciliationError {
+                    refund_id: refund.id,
+                    message: e.to_string(),
+                }),
+            }
+        }
+        Ok(report)
+    }
+
+    /// Persist a capture outcome: a `Captured` decision records exactly what
+    /// the processor reports as moved (falling back to the amount asked for,
+    /// then to the full amount); anything else goes through
+    /// [`Self::persist_provider_decision`].
+    #[cfg(feature = "events")]
+    fn persist_capture_decision(
+        &self,
+        id: PaymentId,
+        decision: &ProviderDecision,
+        requested: Option<Decimal>,
+    ) -> Result<()> {
         match decision {
-            ProviderDecision::Authorized { reference }
-            | ProviderDecision::Captured { reference } => {
+            ProviderDecision::Captured { reference, amount } => {
                 self.db.payments().update(
                     id,
                     UpdatePayment { external_id: Some(reference.clone()), ..Default::default() },
                 )?;
-                if matches!(decision, ProviderDecision::Captured { .. }) {
-                    self.mark_completed(id)?;
-                } else {
-                    self.mark_processing(id)?;
+                match amount.or(requested) {
+                    Some(captured) => self.mark_captured(id, captured).map(|_| ()),
+                    None => self.mark_completed(id).map(|_| ()),
                 }
+            }
+            other => self.persist_provider_decision(id, other),
+        }
+    }
+
+    /// Persist one provider outcome onto the payment row.
+    #[cfg(feature = "events")]
+    fn persist_provider_decision(&self, id: PaymentId, decision: &ProviderDecision) -> Result<()> {
+        match decision {
+            ProviderDecision::Captured { .. } => {
+                return self.persist_capture_decision(id, decision, None);
+            }
+            ProviderDecision::Authorized { reference } => {
+                self.db.payments().update(
+                    id,
+                    UpdatePayment { external_id: Some(reference.clone()), ..Default::default() },
+                )?;
+                self.mark_processing(id)?;
             }
             ProviderDecision::RequiresAction { reference, .. }
             | ProviderDecision::Pending { reference } => {

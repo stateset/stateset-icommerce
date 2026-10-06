@@ -126,8 +126,11 @@ pub fn plan_order_transition(
     let mut outstanding_capture_ids = Vec::new();
     if cancelling && !snapshot.open_captures.is_empty() {
         if !void_payments {
-            let outstanding: Decimal =
-                snapshot.open_captures.iter().map(|p| p.amount - p.amount_refunded).sum();
+            let outstanding: Decimal = snapshot
+                .open_captures
+                .iter()
+                .map(stateset_core::Payment::refundable_remaining)
+                .sum();
             let currency = snapshot.open_captures[0].currency;
             return reject(GuardRejection::never(
                 "commerce.order.captured_money_outstanding",

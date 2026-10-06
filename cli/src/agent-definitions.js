@@ -687,6 +687,8 @@ If --apply is not set, write operations show a preview instead of executing.`,
       'mcp__stateset-commerce__get_payment',
       'mcp__stateset-commerce__create_payment',
       'mcp__stateset-commerce__complete_payment',
+      'mcp__stateset-commerce__capture_payment',
+      'mcp__stateset-commerce__record_lost_chargeback',
       'mcp__stateset-commerce__mark_failed_payment',
       'mcp__stateset-commerce__cancel_payment',
       'mcp__stateset-commerce__create_refund',
@@ -729,6 +731,8 @@ pending → processing → completed → refunded
 - get_payment - Get payment details
 - create_payment - Create payment for order (requires --apply)
 - complete_payment - Mark payment as completed (requires --apply)
+- capture_payment - Capture an exact amount, possibly less than authorized (requires --apply)
+- record_lost_chargeback - Record a full or partial lost dispute on a disputed payment (requires --apply)
 - mark_failed_payment - Mark payment as failed with reason (requires --apply)
 - cancel_payment - Cancel unsettled payment (requires --apply)
 - create_refund - Process refund (requires --apply)

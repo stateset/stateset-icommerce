@@ -49,6 +49,11 @@ pub enum ProviderDecision {
     Captured {
         /// Upstream object id.
         reference: String,
+        /// Exact-decimal major units the processor reports as moved (Stripe:
+        /// a `PaymentIntent`'s `amount_received`, a refund's `amount`), when
+        /// it reports one. A capture records exactly this amount — less than
+        /// authorized is a partial capture. `None` means "what was asked".
+        amount: Option<Decimal>,
     },
     /// The processor accepted the request but the outcome is not final yet
     /// (e.g. a Stripe refund in `pending` for an ACH or bank-debit payment).
@@ -100,7 +105,43 @@ pub trait PaymentProvider {
         currency: &str,
         idempotency_key: &str,
     ) -> Result<ProviderDecision>;
+    /// Look up the current state of a refund the processor previously left
+    /// [`ProviderDecision::Pending`]; `refund_reference` is the id it
+    /// returned then (e.g. a Stripe `re_...`). Read-only and safe to repeat.
+    /// `Captured` = settled, `Declined` = failed/cancelled, `Pending` = not
+    /// final yet.
+    ///
+    /// The default refuses: a provider that cannot look refunds up cannot
+    /// have them reconciled.
+    fn refund_status(&self, refund_reference: &str) -> Result<ProviderDecision> {
+        Err(CommerceError::ExternalServiceError(format!(
+            "{} cannot look up refund {refund_reference}",
+            self.name()
+        )))
+    }
 }
+
+/// Convert the processor's minor units back to exact major units (the
+/// inverse of [`minor_units`]), using the same currency exponents.
+pub fn from_minor_units(minor: i64, currency: &str) -> Decimal {
+    let code = currency.to_lowercase();
+    let scale = if ZERO_DECIMAL_CURRENCIES.contains(&code.as_str()) {
+        0
+    } else if THREE_DECIMAL_CURRENCIES.contains(&code.as_str()) {
+        3
+    } else {
+        2
+    };
+    Decimal::new(minor, scale)
+}
+
+/// Currencies with no minor unit.
+const ZERO_DECIMAL_CURRENCIES: &[&str] = &[
+    "bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg", "rwf", "ugx", "uyi", "vnd",
+    "vuv", "xaf", "xof", "xpf",
+];
+/// Currencies whose minor unit is 1/1000.
+const THREE_DECIMAL_CURRENCIES: &[&str] = &["bhd", "jod", "kwd", "omr", "tnd"];
 
 /// Convert major units to the processor's minor units.
 ///
@@ -109,11 +150,8 @@ pub trait PaymentProvider {
 /// An amount finer than the currency's minor unit is rejected rather than
 /// rounded: the engine never charges a different amount than it recorded.
 pub fn minor_units(amount: Decimal, currency: &str) -> Result<i64> {
-    const ZERO_DECIMAL: &[&str] = &[
-        "bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg", "rwf", "ugx", "uyi", "vnd",
-        "vuv", "xaf", "xof", "xpf",
-    ];
-    const THREE_DECIMAL: &[&str] = &["bhd", "jod", "kwd", "omr", "tnd"];
+    const ZERO_DECIMAL: &[&str] = ZERO_DECIMAL_CURRENCIES;
+    const THREE_DECIMAL: &[&str] = THREE_DECIMAL_CURRENCIES;
     let code = currency.to_lowercase();
     if amount < Decimal::ZERO {
         return Err(CommerceError::ValidationError("charge amount is negative".into()));
@@ -150,6 +188,11 @@ pub fn minor_units(amount: Decimal, currency: &str) -> Result<i64> {
 struct StripeIntent {
     id: String,
     status: String,
+    /// Minor units actually captured (`succeeded` intents).
+    #[serde(default)]
+    amount_received: Option<i64>,
+    #[serde(default)]
+    currency: Option<String>,
     #[serde(default)]
     next_action: Option<StripeNextAction>,
     #[serde(default)]
@@ -191,6 +234,10 @@ struct StripeErrorEnvelope {
 struct StripeRefund {
     id: String,
     status: String,
+    #[serde(default)]
+    amount: Option<i64>,
+    #[serde(default)]
+    currency: Option<String>,
     #[serde(default)]
     failure_reason: Option<String>,
 }
@@ -271,6 +318,29 @@ impl StripeProvider {
         Ok(StripeReply::Body(text))
     }
 
+    fn get(&self, path: &str) -> Result<String> {
+        let response = self
+            .client
+            .get(format!("{}{path}", self.base_url))
+            .basic_auth(&self.api_key, Option::<&str>::None)
+            .send()
+            .map_err(|e| CommerceError::ExternalServiceError(format!("stripe request: {e}")))?;
+        let status = response.status();
+        let text = response
+            .text()
+            .map_err(|e| CommerceError::ExternalServiceError(format!("stripe read: {e}")))?;
+        if !status.is_success() {
+            let message = serde_json::from_str::<StripeErrorEnvelope>(&text)
+                .ok()
+                .and_then(|env| env.error.message)
+                .unwrap_or_else(|| text.chars().take(300).collect());
+            return Err(CommerceError::ExternalServiceError(format!(
+                "stripe {path} failed ({status}): {message}"
+            )));
+        }
+        Ok(text)
+    }
+
     fn intent_decision(reply: StripeReply) -> Result<ProviderDecision> {
         match reply {
             StripeReply::Declined { code, message } => {
@@ -289,7 +359,13 @@ impl StripeProvider {
     /// the processor; `failed` / `canceled` are declines.
     fn refund_decision(reference: &str, refund: StripeRefund) -> ProviderDecision {
         match refund.status.as_str() {
-            "succeeded" => ProviderDecision::Captured { reference: reference.to_string() },
+            "succeeded" => ProviderDecision::Captured {
+                reference: reference.to_string(),
+                amount: match (refund.amount, refund.currency.as_deref()) {
+                    (Some(minor), Some(currency)) => Some(from_minor_units(minor, currency)),
+                    _ => None,
+                },
+            },
             "pending" | "requires_action" => ProviderDecision::Pending { reference: refund.id },
             other => ProviderDecision::Declined {
                 code: refund.failure_reason.unwrap_or_else(|| format!("refund_{other}")),
@@ -301,7 +377,15 @@ impl StripeProvider {
     fn decide(intent: StripeIntent) -> ProviderDecision {
         match intent.status.as_str() {
             "requires_capture" => ProviderDecision::Authorized { reference: intent.id },
-            "succeeded" => ProviderDecision::Captured { reference: intent.id },
+            // `amount_received` is what actually moved: less than the hold
+            // on a partial capture, and recorded exactly as such.
+            "succeeded" => ProviderDecision::Captured {
+                amount: match (intent.amount_received, intent.currency.as_deref()) {
+                    (Some(minor), Some(currency)) => Some(from_minor_units(minor, currency)),
+                    _ => None,
+                },
+                reference: intent.id,
+            },
             "requires_action" | "requires_source_action" => {
                 let action_url = intent.next_action.as_ref().and_then(|action| {
                     if action.kind == "redirect_to_url" {
@@ -395,6 +479,22 @@ impl PaymentProvider for StripeProvider {
             }
         }
     }
+
+    fn refund_status(&self, refund_reference: &str) -> Result<ProviderDecision> {
+        if refund_reference.is_empty()
+            || !refund_reference.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return Err(CommerceError::ValidationError(format!(
+                "not a stripe refund id: {refund_reference:?}"
+            )));
+        }
+        let text = self.get(&format!("/v1/refunds/{refund_reference}"))?;
+        let refund: StripeRefund = serde_json::from_str(&text)
+            .map_err(|e| CommerceError::ExternalServiceError(format!("stripe decode: {e}")))?;
+        // A settled refund reports its own id here: the lookup is by refund.
+        let id = refund.id.clone();
+        Ok(Self::refund_decision(&id, refund))
+    }
 }
 
 // ============================================================================
@@ -416,7 +516,8 @@ impl MockPaymentProvider {
     }
 
     /// What was called, in order (`"authorize:<amount>:<cur>:<key>"`,
-    /// `"capture:<ref>:<amount>:<cur>"`, `"refund:<ref>:<amount>:<cur>:<key>"`).
+    /// `"capture:<ref>:<amount>:<cur>"`, `"refund:<ref>:<amount>:<cur>:<key>"`,
+    /// `"refund_status:<refund ref>"`).
     pub fn calls(&self) -> Vec<String> {
         self.calls.lock().expect("mock calls").clone()
     }
@@ -471,6 +572,10 @@ impl PaymentProvider for MockPaymentProvider {
             amount.map(|a| a.to_string()).unwrap_or_default()
         )))
     }
+
+    fn refund_status(&self, refund_reference: &str) -> Result<ProviderDecision> {
+        Ok(self.next(format!("refund_status:{refund_reference}")))
+    }
 }
 
 #[cfg(test)]
@@ -505,7 +610,7 @@ mod tests {
                 "pi_1",
                 refund(r#"{"id":"re_1","status":"succeeded"}"#)
             ),
-            ProviderDecision::Captured { reference: "pi_1".into() }
+            ProviderDecision::Captured { reference: "pi_1".into(), amount: None }
         );
         assert_eq!(
             StripeProvider::refund_decision("pi_1", refund(r#"{"id":"re_2","status":"pending"}"#)),
@@ -648,10 +753,114 @@ mod tests {
     }
 
     #[test]
+    fn stripe_partial_capture_reports_amount_received_exactly() {
+        let intent = StripeProvider::decide(
+            serde_json::from_str(
+                r#"{"id":"pi_7","status":"succeeded","amount":10000,"amount_received":6025,"currency":"usd"}"#,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            intent,
+            ProviderDecision::Captured { reference: "pi_7".into(), amount: Some(dec!(60.25)) }
+        );
+        let yen = StripeProvider::decide(
+            serde_json::from_str(
+                r#"{"id":"pi_8","status":"succeeded","amount_received":1500,"currency":"jpy"}"#,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            yen,
+            ProviderDecision::Captured { reference: "pi_8".into(), amount: Some(dec!(1500)) }
+        );
+    }
+
+    #[test]
+    fn minor_units_round_trip() {
+        for (amount, currency) in [(dec!(19.99), "usd"), (dec!(2000), "jpy"), (dec!(12.340), "kwd")]
+        {
+            let minor = minor_units(amount, currency).unwrap();
+            assert_eq!(from_minor_units(minor, currency), amount);
+        }
+    }
+
+    /// Serve one canned response and report the request line it received.
+    fn one_shot_server_capturing(
+        body: &'static str,
+    ) -> (String, std::sync::mpsc::Receiver<String>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 8192];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                let _ = tx.send(request.lines().next().unwrap_or_default().to_string());
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        (format!("http://{addr}"), rx)
+    }
+
+    #[test]
+    fn stripe_refund_status_looks_the_refund_up_by_id() {
+        let (base, request) = one_shot_server_capturing(
+            r#"{"id":"re_9","object":"refund","status":"succeeded","amount":500,"currency":"usd"}"#,
+        );
+        let provider = StripeProvider::new("sk_test_x").unwrap().with_base_url(base);
+        assert_eq!(
+            provider.refund_status("re_9").unwrap(),
+            ProviderDecision::Captured { reference: "re_9".into(), amount: Some(dec!(5)) }
+        );
+        assert_eq!(request.recv().unwrap(), "GET /v1/refunds/re_9 HTTP/1.1");
+        // Never interpolates an arbitrary string into the path.
+        assert!(matches!(
+            provider.refund_status("re_9/../charges"),
+            Err(CommerceError::ValidationError(_))
+        ));
+    }
+
+    #[test]
+    fn default_refund_status_refuses() {
+        struct NoLookup;
+        impl PaymentProvider for NoLookup {
+            fn name(&self) -> &'static str {
+                "nolookup"
+            }
+            fn authorize(&self, _: &ProviderCharge) -> Result<ProviderDecision> {
+                unreachable!()
+            }
+            fn capture(&self, _: &str, _: Option<Decimal>, _: &str) -> Result<ProviderDecision> {
+                unreachable!()
+            }
+            fn refund(
+                &self,
+                _: &str,
+                _: Option<Decimal>,
+                _: &str,
+                _: &str,
+            ) -> Result<ProviderDecision> {
+                unreachable!()
+            }
+        }
+        assert!(matches!(
+            NoLookup.refund_status("re_1"),
+            Err(CommerceError::ExternalServiceError(_))
+        ));
+    }
+
+    #[test]
     fn mock_replays_script_in_order() {
         let mock = MockPaymentProvider::new(vec![
             ProviderDecision::Authorized { reference: "pi_mock".into() },
-            ProviderDecision::Captured { reference: "pi_mock".into() },
+            ProviderDecision::Captured { reference: "pi_mock".into(), amount: None },
         ]);
         let charge = ProviderCharge {
             amount: dec!(10),

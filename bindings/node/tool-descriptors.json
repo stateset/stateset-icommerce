@@ -285,7 +285,7 @@
         "className": "X402"
       }
     ],
-    "toolCount": 766,
+    "toolCount": 768,
     "readOnlyCount": 385,
     "readOnlyPrefixes": [
       "calculate",
@@ -21818,6 +21818,37 @@
       }
     },
     {
+      "name": "payments.markCaptured",
+      "module": "payments",
+      "className": "Payments",
+      "method": "markCaptured",
+      "description": "Capture a payment for an exact amount, which may be less than the authorized amount (a partial capture). The captured amount bounds every later refund.",
+      "signature": "markCaptured(id: string, amount: string): Promise<PaymentOutput>",
+      "returnType": "Promise<PaymentOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "amount"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "amount"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "payments.markCompleted",
       "module": "payments",
       "className": "Payments",
@@ -21877,6 +21908,39 @@
         "required": [
           "id",
           "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "payments.recordLostChargeback",
+      "module": "payments",
+      "className": "Payments",
+      "method": "recordLostChargeback",
+      "description": "Record a lost chargeback on a disputed payment. `amount` (exact decimal) is the disputed amount the network reversed; omit it for the whole remaining captured balance. A partial loss leaves the payment `partially_refunded` with a `chargeback_lost` refund row.",
+      "signature": "recordLostChargeback(id: string, amount?: string | undefined | null): Promise<PaymentOutput>",
+      "returnType": "Promise<PaymentOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "amount"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "amount": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id"
         ],
         "additionalProperties": false
       }

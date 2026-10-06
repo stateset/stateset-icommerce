@@ -1609,6 +1609,23 @@ Class `Payments`.
 
   Types: [`PaymentOutput`](#paymentoutput)
 
+- **`markCaptured(id: string, amount: string): Promise<PaymentOutput>`**
+
+  Capture a payment for an exact amount, which may be less than the
+  authorized amount (a partial capture). The captured amount bounds
+  every later refund.
+
+  Types: [`PaymentOutput`](#paymentoutput)
+
+- **`recordLostChargeback(id: string, amount?: string | undefined | null): Promise<PaymentOutput>`**
+
+  Record a lost chargeback on a disputed payment. `amount` (exact
+  decimal) is the disputed amount the network reversed; omit it for the
+  whole remaining captured balance. A partial loss leaves the payment
+  `partially_refunded` with a `chargeback_lost` refund row.
+
+  Types: [`PaymentOutput`](#paymentoutput)
+
 - **`markFailed(id: string, reason: string, code?: string | undefined | null): Promise<PaymentOutput>`**
 
   Types: [`PaymentOutput`](#paymentoutput)
@@ -10676,6 +10693,7 @@ One of: `'pending'`, `'scheduled'`, `'partially_paid'`, `'paid'`, `'cancelled'`.
 | `amountExact` | `string` | Exact base-10 amount. Prefer this field for all calculations. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `amountRefunded` | `number` | **Deprecated.** Use the `amountRefundedExact` twin; float money will be removed in 2.0. |
 | `amountRefundedExact` | `string` | Exact base-10 total of COMPLETED refunds. A refund only counts here once `completeRefund` settles it; pending refunds are not included. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `capturedAmountExact?` | `string` | Exact base-10 amount actually captured; `null` until the payment is captured. May be less than `amountExact` (a partial capture), and bounds every refund. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `currency` | `string` |  |
 | `status` | `PaymentTransactionStatus` | Types: [`PaymentTransactionStatus`](#paymenttransactionstatus) |
 | `version` | `number` |  |
