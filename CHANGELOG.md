@@ -6,6 +6,58 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- Warranties sold against an order now belong to that order's customer, on
+  both backends and in the atomic batch. A nil `customer_id` takes the order's
+  customer, a different explicit one is refused (`ValidationError`), and an
+  unknown order is `OrderNotFound`. `POST /api/v1/warranties` takes only
+  `order_id` and used to store a random customer id (`CustomerId::default()`
+  is a fresh id), so the buyer got 404 on their own warranty.
+
+### Added
+
+- `stateset-http`: object-level authorization for **customer-scoped
+  principals**. `ServerBuilder::add_bearer_auth_for_customer(token, actor,
+  customer_uuid)` issues a token whose actor may only read and mutate records
+  owned by that customer (customers, orders, carts, payments, returns,
+  shipments, subscriptions, reviews, wishlists, store credits, invoices,
+  warranties, loyalty accounts). `with_customer_principal(actor,
+  customer_uuid)` does the same for an actor established by a trusted gateway.
+  Lists are filtered to the customer before pagination, creates are bound to
+  the customer, and another customer's record is reported as `404` (identical
+  to a missing id, so no enumeration oracle). Operator principals are
+  unaffected.
+- Every HTTP route is classified in a reviewed table
+  (`crates/stateset-http/src/route_policy.rs`, rendered in
+  `docs/src/security/http-authz.md`). Tests fail if a route is not classified
+  or the doc drifts. A table-driven test drives every route as one customer
+  against another's records.
+- `stateset-authz`: `Action::Destructive`, which requires the `Delete`
+  permission level.
+
+### Changed
+
+- **BEHAVIOUR CHANGE (`stateset-http` authorization):** the role check now
+  takes each route's action from the route table instead of guessing it from
+  the URL's last segment. Migration notes:
+  - Money-moving and irreversible verbs are now `destructive` and need the
+    `Delete` level (the built-in `operator` role or above): void, reverse,
+    write-off, charge, settle, refund, dispose, scrap, unapply, GL period
+    close/lock/reopen, `POST /gl/close-month`, AP payment-run processing,
+    depreciation posting, and store-credit adjust/apply. Most of these were
+    checked as a plain `create` before, so a role with only `Write` could
+    perform them. Grant such roles `Delete` on the resource if they must keep
+    doing so. A few command verbs (for example `submit`, `post`, `release`)
+    move from `create` to `execute`, which needs the same `Write` level.
+  - A matched route whose method has no table row (for example `HEAD`) still
+    fails closed with 403. Requests that match no route now get the router's
+    `404` instead of being role-checked first.
+  - When customer principals are configured, enforcement is always on. An
+    invalid binding (a customer id that is not a UUID, or an actor bound to
+    two customers), or principals with nothing to establish the actor, makes
+    every `/api/v1` call fail with 500 instead of running unenforced.
+
 ## [1.37.0] - 2026-10-01
 
 ### Added

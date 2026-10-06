@@ -507,6 +507,9 @@ impl PgWarrantyRepository {
                 .map(|months| start_date + chrono::Duration::days(months as i64 * 30))
         });
 
+        let customer_id =
+            input.resolve_customer(order_customer(&self.pool, input.order_id).await?)?;
+
         sqlx::query(
             "INSERT INTO warranties (id, warranty_number, customer_id, order_id, order_item_id,
              product_id, sku, serial_number, status, warranty_type, provider, coverage_description,
@@ -516,7 +519,7 @@ impl PgWarrantyRepository {
         )
         .bind(id)
         .bind(&warranty_number)
-        .bind(input.customer_id.into_uuid())
+        .bind(customer_id.into_uuid())
         .bind(input.order_id.map(|oid| oid.into_uuid()))
         .bind(input.order_item_id.map(|oid| oid.into_uuid()))
         .bind(input.product_id.map(|pid| pid.into_uuid()))
@@ -1334,6 +1337,8 @@ impl PgWarrantyRepository {
 
             let status = WarrantyStatus::Active;
             let warranty_type = input.warranty_type.unwrap_or_default();
+            let customer_id =
+                input.resolve_customer(order_customer(tx.as_mut(), input.order_id).await?)?;
 
             sqlx::query(
                 "INSERT INTO warranties (id, warranty_number, customer_id, order_id, order_item_id,
@@ -1344,7 +1349,7 @@ impl PgWarrantyRepository {
             )
             .bind(id)
             .bind(&warranty_number)
-            .bind(input.customer_id.into_uuid())
+            .bind(customer_id.into_uuid())
             .bind(input.order_id.map(|oid| oid.into_uuid()))
             .bind(input.order_item_id.map(|oid| oid.into_uuid()))
             .bind(input.product_id.map(|pid| pid.into_uuid()))
@@ -1373,7 +1378,7 @@ impl PgWarrantyRepository {
             warranties.push(Warranty {
                 id: WarrantyId::from(id),
                 warranty_number,
-                customer_id: input.customer_id,
+                customer_id,
                 order_id: input.order_id,
                 order_item_id: input.order_item_id,
                 product_id: input.product_id,
@@ -1559,6 +1564,27 @@ impl PgWarrantyRepository {
         }
         Ok(warranties)
     }
+}
+
+/// The customer of `order_id` (`None` when no order is named): a warranty
+/// sold against an order belongs to that order's customer
+/// ([`CreateWarranty::resolve_customer`]).
+async fn order_customer<'e, E>(
+    executor: E,
+    order_id: Option<stateset_core::OrderId>,
+) -> Result<Option<stateset_core::CustomerId>>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    let Some(order_id) = order_id else { return Ok(None) };
+    let owner: Option<Uuid> = sqlx::query_scalar("SELECT customer_id FROM orders WHERE id = $1")
+        .bind(order_id.into_uuid())
+        .fetch_optional(executor)
+        .await
+        .map_err(map_db_error)?;
+    owner
+        .map(|owner| Some(owner.into()))
+        .ok_or_else(|| CommerceError::OrderNotFound(order_id.into_uuid()))
 }
 
 impl WarrantyRepository for PgWarrantyRepository {

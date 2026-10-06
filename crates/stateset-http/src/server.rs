@@ -1,19 +1,21 @@
 //! Server builder for configuring and running the HTTP service.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt,
     net::{IpAddr, SocketAddr},
     path::PathBuf,
 };
 
-use axum::Router;
+use axum::{Router, middleware::from_fn_with_state};
 use stateset_authz::AuthzEngine;
 use stateset_embedded::Commerce;
+use stateset_primitives::CustomerId;
 use uuid::Uuid;
 
 use crate::error::HttpError;
 use crate::middleware::{self, AuthzConfig, BearerAuthBinding, RateLimitConfig};
+use crate::ownership::{OwnershipConfig, enforce_ownership};
 use crate::routes::{self, DEFAULT_REQUEST_BODY_LIMIT_BYTES};
 use crate::state::{AppState, IpCidr, MetricsHeaderLimits};
 use crate::sweeps::{SweepConfig, spawn_background_sweeps};
@@ -145,6 +147,9 @@ pub struct ServerBuilder {
     rate_limit: Option<RateLimitConfig>,
     require_idempotency_keys: bool,
     background_sweeps: Option<SweepConfig>,
+    /// Operator-configured `(actor id, customer id)` bindings that make an
+    /// actor a customer-scoped principal.
+    customer_principals: Vec<(String, String)>,
 }
 
 impl fmt::Debug for ServerBuilder {
@@ -172,6 +177,7 @@ impl fmt::Debug for ServerBuilder {
             .field("rate_limit", &self.rate_limit)
             .field("require_idempotency_keys", &self.require_idempotency_keys)
             .field("background_sweeps", &self.background_sweeps)
+            .field("customer_principals", &self.customer_principals.len())
             .finish()
     }
 }
@@ -207,9 +213,50 @@ impl ServerBuilder {
         None
     }
 
+    /// Validate the customer-principal bindings and return them keyed by actor.
+    fn customer_principal_map(&self) -> Result<HashMap<String, CustomerId>, String> {
+        let mut map = HashMap::with_capacity(self.customer_principals.len());
+        for (actor_id, customer_id) in &self.customer_principals {
+            if !middleware::is_valid_actor_id(actor_id) {
+                return Err("customer principal actor ID is invalid".to_string());
+            }
+            let customer =
+                customer_id.trim().parse::<Uuid>().map(CustomerId::from).map_err(|_| {
+                    format!("customer principal for actor '{actor_id}' is not a customer UUID")
+                })?;
+            match map.insert(actor_id.trim().to_owned(), customer) {
+                Some(previous) if previous != customer => {
+                    return Err(format!("actor '{actor_id}' is bound to more than one customer"));
+                }
+                _ => {}
+            }
+        }
+        Ok(map)
+    }
+
+    fn customer_principal_error(&self) -> Option<String> {
+        if self.customer_principals.is_empty() {
+            return None;
+        }
+        if let Err(message) = self.customer_principal_map() {
+            return Some(message);
+        }
+        if self.api_bearer_bindings().is_empty() && !self.trust_actor_headers_for_authz {
+            return Some(
+                "customer-scoped principals require actor-bound API authentication or explicitly \
+                 trusted x-actor-id headers"
+                    .to_string(),
+            );
+        }
+        None
+    }
+
     fn api_auth_error(&self) -> Option<String> {
         if let Some(message) = self.tenant_routing_auth_error() {
             return Some(message.to_string());
+        }
+        if let Some(message) = self.customer_principal_error() {
+            return Some(message);
         }
         let bindings = self.api_bearer_bindings();
         if bindings.is_empty() {
@@ -286,6 +333,7 @@ impl ServerBuilder {
             // SKU keeps counting holds that timed out long ago, so the server
             // runs both built-in sweeps unless an operator turns them off.
             background_sweeps: Some(SweepConfig::default()),
+            customer_principals: Vec::new(),
         }
     }
 
@@ -710,6 +758,46 @@ impl ServerBuilder {
         self
     }
 
+    /// Add a bearer token for a **customer-scoped principal**: the token is
+    /// bound to `actor_id`, and that actor may only read and mutate records
+    /// owned by `customer_id` (a customer UUID).
+    ///
+    /// Customer-scoped principals are refused on operator-only routes and on
+    /// every destructive operation, see another customer's records as `404`,
+    /// have list endpoints filtered to their own records, and cannot create a
+    /// record for another customer. The binding is server-side
+    /// configuration: no request header can select or widen it. See
+    /// `docs/src/security/http-authz.md` for the per-route classification.
+    ///
+    /// When an authz engine is configured, the actor also needs a role there;
+    /// ownership narrows what that role allows, it never widens it.
+    #[must_use]
+    pub fn add_bearer_auth_for_customer(
+        mut self,
+        token: impl Into<String>,
+        actor_id: impl Into<String>,
+        customer_id: impl Into<String>,
+    ) -> Self {
+        let actor_id = actor_id.into();
+        self.customer_principals.push((actor_id.clone(), customer_id.into()));
+        self.push_bearer_auth_binding(token, None, Some(actor_id));
+        self
+    }
+
+    /// Make `actor_id` a customer-scoped principal for `customer_id` without
+    /// issuing a token — for actors established by an actor-bound token
+    /// configured elsewhere, or by a trusted gateway's `x-actor-id` header
+    /// (see [`Self::trust_actor_headers_for_authz`]).
+    #[must_use]
+    pub fn with_customer_principal(
+        mut self,
+        actor_id: impl Into<String>,
+        customer_id: impl Into<String>,
+    ) -> Self {
+        self.customer_principals.push((actor_id.into(), customer_id.into()));
+        self
+    }
+
     /// Enable per-tenant storage using `<base_dir>/<tenant>.db`.
     #[must_use]
     pub fn with_tenant_db_dir(mut self, base_dir: impl Into<PathBuf>) -> Self {
@@ -920,6 +1008,19 @@ impl ServerBuilder {
         let auth_config = if auth_bindings.is_empty() { None } else { Some(auth_bindings) };
         let trust_actor_headers_for_authz = self.trust_actor_headers_for_authz;
         let authz_allow_unmapped_routes = self.authz_allow_unmapped_routes;
+        // Object-level authorization for customer-scoped principals. Layered
+        // innermost (after authentication and the role check) so it sees the
+        // authenticated actor; a configuration error is surfaced through
+        // `misconfigured_auth_message` instead.
+        let ownership = match self.customer_principal_map() {
+            Ok(map) if !map.is_empty() => Some(OwnershipConfig::new(
+                self.state.clone(),
+                map,
+                trust_actor_headers_for_authz,
+                self.max_request_body_bytes,
+            )),
+            _ => None,
+        };
         let authz_config = self.authz_config.map(|config| {
             let config = if trust_actor_headers_for_authz {
                 config.with_trusted_actor_headers()
@@ -934,9 +1035,12 @@ impl ServerBuilder {
         let idempotency_layer = crate::idempotency::IdempotencyLayer::new()
             .with_required_keys(self.require_idempotency_keys)
             .with_app_state(self.state.clone());
-        let router =
+        let mut router =
             routes::api_router_with_idempotency(self.max_request_body_bytes, idempotency_layer)
                 .with_state(self.state);
+        if let Some(ownership) = ownership {
+            router = router.layer(from_fn_with_state(ownership, enforce_ownership));
+        }
         middleware::apply_middleware(
             router,
             self.enable_cors,
