@@ -768,10 +768,10 @@ mod tests {
         let reply = call(
             &engine,
             "customers.create",
-            json!({"input": {"email": "a@example.com", "first_name": "A", "last_name": "B", "frist_name": "x"}}),
+            json!({"input": {"email": "a@example.com", "first_name": "A", "last_name": "B", "not_a_field": "x"}}),
         );
         assert_eq!(reply["error"]["kind"], json!("validation"));
-        assert!(reply["error"]["message"].as_str().unwrap_or_default().contains("frist_name"));
+        assert!(reply["error"]["message"].as_str().unwrap_or_default().contains("not_a_field"));
     }
 
     #[test]

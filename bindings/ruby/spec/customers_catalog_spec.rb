@@ -41,8 +41,8 @@ RSpec.describe 'customers, products and inventory' do
 
     it 'refuses an unknown keyword instead of dropping it' do
       expect do
-        commerce.customers.create(email: unique_email, first_name: 'A', last_name: 'B', frist_name: 'typo')
-      end.to raise_error(StateSet::ValidationError, /frist_name/)
+        commerce.customers.create(email: unique_email, first_name: 'A', last_name: 'B', not_a_field: 'typo')
+      end.to raise_error(StateSet::ValidationError, /not_a_field/)
     end
   end
 
