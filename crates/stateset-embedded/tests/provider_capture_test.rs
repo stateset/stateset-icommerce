@@ -19,7 +19,7 @@ fn customer(commerce: &Commerce) -> CustomerId {
         .create(CreateCustomer {
             email: format!("cap-{}@example.com", Uuid::new_v4()),
             first_name: "Cap".into(),
-            last_name: "Ture".into(),
+            last_name: "Turing".into(),
             ..Default::default()
         })
         .expect("customer")
