@@ -197,7 +197,6 @@ required_version_snippets=(
   "docs/src/guides/async-vs-sync.md|stateset-embedded = \"${workspace_version}\""
   "docs/src/guides/async-vs-sync.md|stateset-embedded = { version = \"${workspace_version}\", features = [\"postgres\"] }"
   "docs/src/guides/async-vs-sync.md|stateset-embedded = { version = \"${workspace_version}\", features = [\"sqlite\", \"postgres\"] }"
-  "docs/src/api/swift.md|from: \"${workspace_version}\""
   "docs/src/advanced/deployment.md|image: stateset/icommerce:${workspace_version}"
   "docs/src/trust-foundation.md|The current workspace release line is \`${workspace_version}\`."
   "bindings/java/README.md|<version>${workspace_version}</version>"
@@ -209,14 +208,13 @@ required_version_snippets=(
   "examples/go/basic_usage.go|// Then run with: go run basic_usage.go"
   "examples/kotlin/BasicUsage.kt|* Run with: ./gradlew run"
   "examples/kotlin/BasicUsage.kt|* Or build a jar: ./gradlew jar && java -jar build/libs/kotlin-${workspace_version}.jar"
-  "examples/swift/BasicUsage.swift|* Run with: swift run"
-  "bindings/swift/README.md|from: \"${workspace_version}\""
+  "examples/swift-basic/BasicUsage.swift|swift run -Xlinker -L../../target/release"
   "bindings/ruby/spec/commerce_spec.rb|expect(StateSet::VERSION).to eq('${workspace_version}')"
   "examples/README.md|java -jar build/libs/kotlin-${workspace_version}.jar"
   "examples/ruby/Gemfile|gem 'stateset_embedded', '~> ${workspace_version}'"
   "examples/kotlin/build.gradle.kts|version = \"${workspace_version}\""
   "examples/kotlin/build.gradle.kts|implementation(\"com.stateset:embedded-kotlin:${workspace_version}\")"
-  "examples/dotnet/BasicUsage.csproj|<PackageReference Include=\"StateSet.Embedded\" Version=\"${workspace_version}\" />"
+  "examples/dotnet/BasicUsage.csproj|<ProjectReference Include=\"../../bindings/dotnet/dotnet/StateSet/StateSet.csproj\" />"
   "examples/node/package.json|\"version\": \"${workspace_version}\""
   "packages/create-stateset-app/templates/storefront/package.json|\"@stateset/embedded\": \"^${workspace_version}\""
   "packages/create-stateset-app/package.json|\"version\": \"${workspace_version}\""
@@ -233,8 +231,8 @@ done
 
 disallowed_snippets=(
   "examples/README.md|swiftc -I ../bindings/swift/Sources -L ../target/release -lstateset_swift BasicUsage.swift -o basic_usage"
-  "examples/swift/BasicUsage.swift|#!/usr/bin/env swift"
-  "examples/swift/BasicUsage.swift|* Run with: swift BasicUsage.swift"
+  "examples/swift-basic/BasicUsage.swift|#!/usr/bin/env swift"
+  "examples/swift-basic/BasicUsage.swift|* Run with: swift BasicUsage.swift"
   "examples/kotlin/BasicUsage.kt|* Run with: kotlinc BasicUsage.kt -include-runtime -d BasicUsage.jar && java -jar BasicUsage.jar"
 )
 

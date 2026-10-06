@@ -36,12 +36,12 @@ inventory this builds on is [Binding API Inventory](binding-api-inventory.md).
 | Node.js | traced: #[napi] methods -> engine calls | yes | 742/1223 | 60.7% | reference |
 | Python | traced: #[pymethods] methods -> engine calls | yes | 593/1223 | 48.5% | 79.2% |
 | Go | traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls | yes | 80/1223 | 6.5% | 10.8% |
-| .NET | native reach: engine calls anywhere in the Rust layer | no | 48/1223 | 3.9% | 6.3% |
+| .NET | native reach: engine calls anywhere in the Rust layer | no | 101/1223 | 8.3% | 11.6% |
 | Java | native reach: engine calls anywhere in the Rust layer | no | 77/1223 | 6.3% | 9.6% |
 | Kotlin | native reach: engine calls anywhere in the Rust layer | no | 61/1223 | 5% | 8% |
 | PHP | native reach: engine calls anywhere in the Rust layer | no | 178/1223 | 14.6% | 21.7% |
 | Ruby | native reach: engine calls anywhere in the Rust layer | no | 0/1223 | 0% | 0% |
-| Swift | native reach: engine calls anywhere in the Rust layer | no | 51/1223 | 4.2% | 6.9% |
+| Swift | native reach: engine calls anywhere in the Rust layer | no | 101/1223 | 8.3% | 11.6% |
 | WASM | native reach: engine calls anywhere in the Rust layer | no | 0/1223 | 0% | 0% |
 
 Coverage is exposed / (engine methods − exempt). Parity vs Node is the share of Node-exposed engine
@@ -51,8 +51,8 @@ methods the binding also exposes.
 
 | Binding | Host methods | Name-matched | Coverage | Unmatched host methods |
 | --- | --- | --- | --- | --- |
-| .NET | 245 | 220/1223 | 18% | 7 |
-| Swift | 71 | 71/1223 | 5.8% | 0 |
+| .NET | 96 | 95/1223 | 7.8% | 1 |
+| Swift | 82 | 76/1223 | 6.2% | 6 |
 | WASM | 148 | 134/1223 | 11% | 14 |
 
 ## Per-domain matrix
@@ -62,58 +62,58 @@ Cells are exposed / applicable engine methods.
 | Domain | Engine methods | Exempt | Node.js | Python | Go | .NET | Java | Kotlin | PHP | Ruby | Swift | WASM |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `commerce` | 21 | 4 | 8/17 | 4/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 |
-| `accounts_payable` | 38 | 0 | 13/38 | 8/38 | 0/38 | 2/38 | 3/38 | 3/38 | 4/38 | 0/38 | 3/38 | 0/38 |
-| `accounts_receivable` | 28 | 0 | 8/28 | 3/28 | 0/28 | 2/28 | 3/28 | 2/28 | 3/28 | 0/28 | 2/28 | 0/28 |
+| `accounts_payable` | 38 | 0 | 13/38 | 8/38 | 0/38 | 0/38 | 3/38 | 3/38 | 4/38 | 0/38 | 0/38 | 0/38 |
+| `accounts_receivable` | 28 | 0 | 8/28 | 3/28 | 0/28 | 0/28 | 3/28 | 2/28 | 3/28 | 0/28 | 0/28 | 0/28 |
 | `activity_logs` | 5 | 0 | 5/5 | 5/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 |
 | `agent` | 4 | 4 | exempt | exempt | exempt | exempt | exempt | exempt | exempt | exempt | exempt | exempt |
-| `analytics` | 14 | 0 | 14/14 | 14/14 | 3/14 | 3/14 | 1/14 | 3/14 | 1/14 | 0/14 | 3/14 | 0/14 |
-| `backorder` | 21 | 0 | 21/21 | 7/21 | 0/21 | 2/21 | 4/21 | 2/21 | 5/21 | 0/21 | 2/21 | 0/21 |
+| `analytics` | 14 | 0 | 14/14 | 14/14 | 3/14 | 0/14 | 1/14 | 3/14 | 1/14 | 0/14 | 0/14 | 0/14 |
+| `backorder` | 21 | 0 | 21/21 | 7/21 | 0/21 | 0/21 | 4/21 | 2/21 | 5/21 | 0/21 | 0/21 | 0/21 |
 | `bom` | 13 | 0 | 7/13 | 7/13 | 6/13 | 0/13 | 0/13 | 0/13 | 9/13 | 0/13 | 0/13 | 0/13 |
-| `carts` | 33 | 0 | 32/33 | 32/33 | 3/33 | 3/33 | 4/33 | 3/33 | 5/33 | 0/33 | 3/33 | 0/33 |
+| `carts` | 33 | 0 | 32/33 | 32/33 | 3/33 | 22/33 | 4/33 | 3/33 | 5/33 | 0/33 | 22/33 | 0/33 |
 | `channels` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
 | `companies` | 11 | 0 | 11/11 | 11/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 |
-| `cost_accounting` | 27 | 0 | 5/27 | 5/27 | 0/27 | 2/27 | 3/27 | 2/27 | 3/27 | 0/27 | 2/27 | 0/27 |
-| `credit` | 29 | 0 | 9/29 | 5/29 | 0/29 | 1/29 | 3/29 | 2/29 | 3/29 | 0/29 | 2/29 | 0/29 |
+| `cost_accounting` | 27 | 0 | 5/27 | 5/27 | 0/27 | 0/27 | 3/27 | 2/27 | 3/27 | 0/27 | 0/27 | 0/27 |
+| `credit` | 29 | 0 | 9/29 | 5/29 | 0/29 | 0/29 | 3/29 | 2/29 | 3/29 | 0/29 | 0/29 | 0/29 |
 | `currency` | 16 | 0 | 15/16 | 15/16 | 4/16 | 0/16 | 0/16 | 0/16 | 7/16 | 0/16 | 0/16 | 0/16 |
 | `custom_objects` | 12 | 0 | 12/12 | 12/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 |
-| `customers` | 14 | 0 | 13/14 | 5/14 | 4/14 | 4/14 | 5/14 | 4/14 | 5/14 | 0/14 | 4/14 | 0/14 |
+| `customers` | 14 | 0 | 13/14 | 5/14 | 4/14 | 7/14 | 5/14 | 4/14 | 5/14 | 0/14 | 7/14 | 0/14 |
 | `edi_documents` | 6 | 0 | 5/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 |
 | `erc8004` | 26 | 0 | 17/26 | 17/26 | 0/26 | 0/26 | 0/26 | 0/26 | 0/26 | 0/26 | 0/26 | 0/26 |
 | `fixed_assets` | 11 | 0 | 11/11 | 11/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 |
 | `fraud` | 11 | 0 | 11/11 | 11/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 |
 | `fulfillment` | 46 | 0 | 14/46 | 6/46 | 0/46 | 0/46 | 3/46 | 0/46 | 4/46 | 0/46 | 0/46 | 0/46 |
-| `general_ledger` | 44 | 0 | 18/44 | 12/44 | 0/44 | 2/44 | 3/44 | 2/44 | 5/44 | 0/44 | 2/44 | 0/44 |
+| `general_ledger` | 44 | 0 | 18/44 | 12/44 | 0/44 | 0/44 | 3/44 | 2/44 | 5/44 | 0/44 | 0/44 | 0/44 |
 | `gift_cards` | 10 | 0 | 10/10 | 10/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 |
 | `inbound_shipments` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
 | `integration_field_mappings` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
 | `integration_mappings` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
-| `inventory` | 16 | 0 | 6/16 | 6/16 | 3/16 | 3/16 | 8/16 | 3/16 | 8/16 | 0/16 | 3/16 | 0/16 |
+| `inventory` | 16 | 0 | 6/16 | 6/16 | 3/16 | 10/16 | 8/16 | 3/16 | 8/16 | 0/16 | 10/16 | 0/16 |
 | `invoices` | 21 | 0 | 8/21 | 8/21 | 7/21 | 0/21 | 0/21 | 0/21 | 10/21 | 0/21 | 0/21 | 0/21 |
 | `kernel_audit` | 3 | 0 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 |
-| `lots` | 35 | 0 | 12/35 | 6/35 | 0/35 | 2/35 | 4/35 | 2/35 | 5/35 | 0/35 | 2/35 | 0/35 |
+| `lots` | 35 | 0 | 12/35 | 6/35 | 0/35 | 0/35 | 4/35 | 2/35 | 5/35 | 0/35 | 0/35 | 0/35 |
 | `loyalty` | 14 | 0 | 14/14 | 14/14 | 0/14 | 0/14 | 0/14 | 0/14 | 0/14 | 0/14 | 0/14 | 0/14 |
 | `maintenance` | 10 | 0 | 7/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 |
-| `orders` | 18 | 0 | 10/18 | 8/18 | 5/18 | 4/18 | 8/18 | 6/18 | 8/18 | 0/18 | 4/18 | 0/18 |
+| `orders` | 18 | 0 | 10/18 | 8/18 | 5/18 | 10/18 | 8/18 | 6/18 | 8/18 | 0/18 | 10/18 | 0/18 |
 | `payment_obligations` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
-| `payments` | 26 | 0 | 12/26 | 11/26 | 6/26 | 1/26 | 1/26 | 3/26 | 1/26 | 0/26 | 1/26 | 0/26 |
+| `payments` | 26 | 0 | 12/26 | 11/26 | 6/26 | 14/26 | 1/26 | 3/26 | 1/26 | 0/26 | 14/26 | 0/26 |
 | `prepayments` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
 | `price_levels` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
 | `price_schedules` | 10 | 0 | 10/10 | 10/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 |
 | `print_stations` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
 | `production_batches` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
-| `products` | 17 | 0 | 16/17 | 6/17 | 4/17 | 3/17 | 4/17 | 3/17 | 5/17 | 0/17 | 3/17 | 0/17 |
+| `products` | 17 | 0 | 16/17 | 6/17 | 4/17 | 13/17 | 4/17 | 3/17 | 5/17 | 0/17 | 13/17 | 0/17 |
 | `promotions` | 19 | 0 | 19/19 | 17/19 | 0/19 | 0/19 | 0/19 | 0/19 | 9/19 | 0/19 | 0/19 | 0/19 |
 | `purchase_orders` | 26 | 0 | 11/26 | 11/26 | 10/26 | 0/26 | 0/26 | 0/26 | 11/26 | 0/26 | 0/26 | 0/26 |
 | `purgatory` | 7 | 0 | 7/7 | 7/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 |
-| `quality` | 33 | 0 | 17/33 | 10/33 | 0/33 | 1/33 | 4/33 | 2/33 | 4/33 | 0/33 | 2/33 | 0/33 |
+| `quality` | 33 | 0 | 17/33 | 10/33 | 0/33 | 0/33 | 4/33 | 2/33 | 4/33 | 0/33 | 0/33 | 0/33 |
 | `receiving` | 24 | 0 | 10/24 | 5/24 | 0/24 | 0/24 | 4/24 | 0/24 | 4/24 | 0/24 | 0/24 | 0/24 |
-| `returns` | 15 | 0 | 13/15 | 6/15 | 6/15 | 2/15 | 6/15 | 6/15 | 5/15 | 0/15 | 2/15 | 0/15 |
+| `returns` | 15 | 0 | 13/15 | 6/15 | 6/15 | 12/15 | 6/15 | 6/15 | 5/15 | 0/15 | 12/15 | 0/15 |
 | `revenue_recognition` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
 | `reviews` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
 | `search_config` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
 | `segments` | 11 | 0 | 10/11 | 10/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 |
-| `serials` | 36 | 0 | 9/36 | 4/36 | 0/36 | 2/36 | 3/36 | 2/36 | 4/36 | 0/36 | 2/36 | 0/36 |
-| `shipments` | 25 | 0 | 10/25 | 7/25 | 6/25 | 6/25 | 0/25 | 8/25 | 9/25 | 0/25 | 6/25 | 0/25 |
+| `serials` | 36 | 0 | 9/36 | 4/36 | 0/36 | 0/36 | 3/36 | 2/36 | 4/36 | 0/36 | 0/36 | 0/36 |
+| `shipments` | 25 | 0 | 10/25 | 7/25 | 6/25 | 13/25 | 0/25 | 8/25 | 9/25 | 0/25 | 13/25 | 0/25 |
 | `shipping_zones` | 12 | 0 | 12/12 | 12/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 |
 | `stock_snapshots` | 6 | 0 | 6/6 | 6/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 |
 | `store_credits` | 7 | 0 | 7/7 | 7/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 |
@@ -126,7 +126,7 @@ Cells are exposed / applicable engine methods.
 | `vector` | 22 | 0 | 15/22 | 9/22 | 0/22 | 0/22 | 0/22 | 0/22 | 0/22 | 0/22 | 0/22 | 0/22 |
 | `vendor_credits` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
 | `vendor_returns` | 7 | 0 | 7/7 | 7/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 |
-| `warehouse` | 52 | 0 | 17/52 | 12/52 | 0/52 | 3/52 | 3/52 | 3/52 | 4/52 | 0/52 | 3/52 | 0/52 |
+| `warehouse` | 52 | 0 | 17/52 | 12/52 | 0/52 | 0/52 | 3/52 | 3/52 | 4/52 | 0/52 | 0/52 | 0/52 |
 | `warranties` | 24 | 0 | 8/24 | 8/24 | 7/24 | 0/24 | 0/24 | 0/24 | 9/24 | 0/24 | 0/24 | 0/24 |
 | `wishlists` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
 | `work_orders` | 23 | 0 | 7/23 | 7/23 | 6/23 | 0/23 | 0/23 | 0/23 | 9/23 | 0/23 | 0/23 | 0/23 |
@@ -290,13 +290,13 @@ None found.
 
 | Binding | Host method |
 | --- | --- |
-| .NET | `AccountsReceivableApi.ListReceivables` |
-| .NET | `CostAccountingApi.ListCostEntries` |
-| .NET | `CreditApi.GetCreditLimit` |
-| .NET | `CreditApi.SetCreditLimit` |
-| .NET | `FulfillmentApi.ListPickLists` |
-| .NET | `SerialsApi.ListSerials` |
-| .NET | `SerialsApi.RegisterSerial` |
+| .NET | `CartsApi.UpdateItemQuantity` |
+| Swift | `CartsAPI.items` |
+| Swift | `CartsAPI.updateItemQuantity` |
+| Swift | `InventoryAPI.item` |
+| Swift | `PaymentsAPI.refunds` |
+| Swift | `ProductsAPI.variant` |
+| Swift | `ProductsAPI.variants` |
 | WASM | `Orders.getItems` |
 | WASM | `Promotions.countCoupons` |
 | WASM | `Promotions.countPromotions` |

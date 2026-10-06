@@ -146,13 +146,15 @@ java -jar build/libs/kotlin-1.37.0.jar
 ### Swift
 
 ```bash
-cd examples/swift
-swift run
+cargo build -p stateset-swift --release
+cd examples/swift-basic
+LD_LIBRARY_PATH=../../target/release swift run -Xlinker -L../../target/release   # DYLD_LIBRARY_PATH on macOS
 ```
 
 ### C# / .NET
 
 ```bash
+cargo build -p stateset-dotnet --release
 cd examples/dotnet
 dotnet run
 ```

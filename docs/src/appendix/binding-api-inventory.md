@@ -34,7 +34,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 
 | Language | Ecosystem | Package | Version | Coverage | Summary |
 | --- | --- | --- | --- | --- | --- |
-| .NET | NuGet | `StateSet.Embedded` | `1.37.0` | `detailed` | 245 API methods |
+| .NET | NuGet | `StateSet.Embedded` | `1.37.0` | `detailed` | 96 API methods |
 | Go | Go modules | `github.com/stateset/stateset-icommerce/bindings/go/stateset` | — | `detailed` | 81 API methods |
 | Java | Maven | `com.stateset:embedded` | `1.37.0` | `package-manifest` | manifest coverage |
 | Kotlin | Maven | `com.stateset:embedded-kotlin` | `1.37.0` | `package-manifest` | manifest coverage |
@@ -42,7 +42,7 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 | PHP | Composer | `stateset/embedded` | `1.37.0` | `package-manifest` | manifest coverage |
 | Python | PyPI | `stateset-embedded` | `1.37.0` | `detailed` | 257 public symbols |
 | Ruby | RubyGems | `stateset_embedded` | `1.37.0` | `package-manifest` | manifest coverage |
-| Swift | SwiftPM | `StateSet` | — | `detailed` | 71 API methods |
+| Swift | SwiftPM | `StateSet` | — | `detailed` | 82 API methods |
 | WASM | npm | `@stateset/embedded-wasm` | `1.37.0` | `package-manifest` | manifest coverage |
 
 ## Node.js Exports
@@ -258,414 +258,190 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 
 | Metric | Value |
 | --- | --- |
-| Public types | 112 |
-| API types | 31 |
-| Facade properties | 31 |
-| API methods | 245 |
-| Target frameworks | `net6.0`, `net7.0`, `net8.0` |
+| Public types | 60 |
+| API types | 8 |
+| Facade properties | 8 |
+| API methods | 96 |
+| Target frameworks |  |
 
 ## .NET Public Types
 
 | Type |
 | --- |
-| `AccountsPayableApi` |
-| `AccountsReceivableApi` |
-| `AnalyticsApi` |
-| `ApAgingSummary` |
-| `ArAgingSummary` |
-| `Backorder` |
-| `BackordersApi` |
-| `BackorderSummary` |
-| `BalanceSheet` |
-| `Bill` |
-| `BillOfMaterials` |
-| `BomApi` |
-| `BomComponent` |
-| `BomStatus` |
+| `AddCartItem` |
+| `Address` |
 | `Cart` |
+| `CartAddress` |
+| `CartItem` |
+| `CartPaymentStatus` |
 | `CartsApi` |
-| `ClaimResolution` |
-| `ClaimStatus` |
-| `ConversionResult` |
-| `CostAccountingApi` |
-| `Coupon` |
-| `CreditAccount` |
-| `CreditApi` |
-| `CreditCheck` |
-| `CreditMemo` |
-| `CurrencyApi` |
-| `CurrencyCode` |
+| `CartStatus` |
+| `CheckoutResult` |
+| `CreateOrderItem` |
+| `CreateProductVariant` |
+| `CreateReturnItem` |
+| `CreateShipmentItem` |
 | `Customer` |
 | `CustomersApi` |
-| `ExchangeRate` |
-| `FulfillmentApi` |
-| `GeneralLedgerApi` |
-| `GlAccount` |
-| `IncomeStatement` |
-| `Inspection` |
+| `CustomerStatus` |
+| `FulfillmentStatus` |
 | `InventoryApi` |
 | `InventoryItem` |
-| `Invoice` |
-| `InvoiceItem` |
-| `InvoicesApi` |
-| `InvoiceStatus` |
-| `ItemCost` |
-| `JournalEntry` |
-| `Location` |
-| `Lot` |
-| `LotsApi` |
-| `Ncr` |
+| `InventoryReservation` |
+| `InventoryTransaction` |
+| `ItemCondition` |
+| `LocationStock` |
 | `Order` |
 | `OrderItem` |
+| `OrderPaymentStatus` |
 | `OrdersApi` |
 | `OrderStatus` |
 | `Payment` |
 | `PaymentMethod` |
 | `PaymentsApi` |
-| `PickTask` |
+| `PaymentStatus` |
 | `Product` |
 | `ProductsApi` |
+| `ProductStatus` |
+| `ProductType` |
 | `ProductVariant` |
-| `Promotion` |
-| `PromotionsApi` |
-| `PurchaseOrder` |
-| `PurchaseOrderItem` |
-| `PurchaseOrdersApi` |
-| `PurchaseOrderStatus` |
-| `QualityApi` |
-| `QualityHold` |
-| `Receipt` |
-| `ReceivingApi` |
 | `Refund` |
 | `RefundStatus` |
+| `ReservationStatus` |
 | `Return` |
+| `ReturnDisposition` |
+| `ReturnItem` |
 | `ReturnReason` |
 | `ReturnsApi` |
 | `ReturnStatus` |
-| `SalesSummary` |
-| `Serial` |
-| `SerialsApi` |
 | `Shipment` |
+| `ShipmentItem` |
 | `ShipmentsApi` |
 | `ShipmentStatus` |
 | `ShippingCarrier` |
+| `ShippingMethod` |
 | `StateSetCommerce` |
+| `StateSetErrorCode` |
 | `StateSetException` |
+| `StateSetNotFoundException` |
+| `StateSetValidationException` |
 | `StockLevel` |
-| `StoreCurrencySettings` |
-| `Subscription` |
-| `SubscriptionPlan` |
-| `SubscriptionsApi` |
-| `Supplier` |
-| `SuppliersApi` |
-| `TaxApi` |
-| `TaxCalculation` |
-| `TaxExemption` |
-| `TaxJurisdiction` |
-| `TaxRate` |
-| `TaxSettings` |
-| `TimePeriod` |
-| `TopCustomer` |
-| `TopProduct` |
-| `TrialBalance` |
-| `Warehouse` |
-| `WarehouseApi` |
-| `WarrantiesApi` |
-| `Warranty` |
-| `WarrantyClaim` |
-| `WarrantyStatus` |
-| `WarrantyType` |
-| `Wave` |
-| `WorkOrder` |
-| `WorkOrderPriority` |
-| `WorkOrdersApi` |
-| `WorkOrderStatus` |
+| `UpdateCustomer` |
+| `UpdateProduct` |
 
 ## .NET Facade Properties
 
 | Property | Type |
 | --- | --- |
-| `AccountsPayable` | `AccountsPayableApi` |
-| `AccountsReceivable` | `AccountsReceivableApi` |
-| `Analytics` | `AnalyticsApi` |
-| `Backorders` | `BackordersApi` |
-| `Bom` | `BomApi` |
 | `Carts` | `CartsApi` |
-| `CostAccounting` | `CostAccountingApi` |
-| `Credit` | `CreditApi` |
-| `Currency` | `CurrencyApi` |
 | `Customers` | `CustomersApi` |
-| `Fulfillment` | `FulfillmentApi` |
-| `GeneralLedger` | `GeneralLedgerApi` |
 | `Inventory` | `InventoryApi` |
-| `Invoices` | `InvoicesApi` |
-| `Lots` | `LotsApi` |
 | `Orders` | `OrdersApi` |
 | `Payments` | `PaymentsApi` |
 | `Products` | `ProductsApi` |
-| `Promotions` | `PromotionsApi` |
-| `PurchaseOrders` | `PurchaseOrdersApi` |
-| `Quality` | `QualityApi` |
-| `Receiving` | `ReceivingApi` |
 | `Returns` | `ReturnsApi` |
-| `Serials` | `SerialsApi` |
 | `Shipments` | `ShipmentsApi` |
-| `Subscriptions` | `SubscriptionsApi` |
-| `Suppliers` | `SuppliersApi` |
-| `Tax` | `TaxApi` |
-| `Warehouse` | `WarehouseApi` |
-| `Warranties` | `WarrantiesApi` |
-| `WorkOrders` | `WorkOrdersApi` |
 
 ## .NET API Methods
 
 | API type | Method |
 | --- | --- |
-| `AccountsPayableApi` | `ApproveBill` |
-| `AccountsPayableApi` | `CancelBill` |
-| `AccountsPayableApi` | `CreateBill` |
-| `AccountsPayableApi` | `GetAgingSummary` |
-| `AccountsPayableApi` | `GetBill` |
-| `AccountsPayableApi` | `GetBillByNumber` |
-| `AccountsPayableApi` | `GetBillsDueSoon` |
-| `AccountsPayableApi` | `GetOverdueBills` |
-| `AccountsPayableApi` | `GetTotalOutstanding` |
-| `AccountsPayableApi` | `ListBills` |
-| `AccountsReceivableApi` | `CreateCreditMemo` |
-| `AccountsReceivableApi` | `GetAgingSummary` |
-| `AccountsReceivableApi` | `GetCreditMemo` |
-| `AccountsReceivableApi` | `GetDso` |
-| `AccountsReceivableApi` | `GetTotalOutstanding` |
-| `AccountsReceivableApi` | `GetUnappliedCredits` |
-| `AccountsReceivableApi` | `ListCreditMemos` |
-| `AccountsReceivableApi` | `ListReceivables` |
-| `AccountsReceivableApi` | `VoidCreditMemo` |
-| `AnalyticsApi` | `GetSalesSummary` |
-| `AnalyticsApi` | `GetTopCustomers` |
-| `AnalyticsApi` | `GetTopProducts` |
-| `AnalyticsApi` | `SalesSummary` |
-| `AnalyticsApi` | `TopCustomers` |
-| `AnalyticsApi` | `TopProducts` |
-| `BackordersApi` | `CancelBackorder` |
-| `BackordersApi` | `CountPending` |
-| `BackordersApi` | `CreateBackorder` |
-| `BackordersApi` | `GetBackorder` |
-| `BackordersApi` | `GetBackorderByNumber` |
-| `BackordersApi` | `GetBackordersForOrder` |
-| `BackordersApi` | `GetBackordersForSku` |
-| `BackordersApi` | `GetOverdueBackorders` |
-| `BackordersApi` | `GetSummary` |
-| `BackordersApi` | `ListBackorders` |
-| `BomApi` | `Activate` |
-| `BomApi` | `AddComponent` |
-| `BomApi` | `Create` |
-| `BomApi` | `Get` |
-| `BomApi` | `GetComponents` |
-| `BomApi` | `List` |
+| `CartsApi` | `Abandon` |
 | `CartsApi` | `AddItem` |
+| `CartsApi` | `ApplyDiscount` |
+| `CartsApi` | `BeginCheckout` |
+| `CartsApi` | `Cancel` |
+| `CartsApi` | `ClearItems` |
+| `CartsApi` | `Complete` |
 | `CartsApi` | `Create` |
 | `CartsApi` | `Get` |
-| `CostAccountingApi` | `GetItemCost` |
-| `CostAccountingApi` | `GetTotalInventoryValue` |
-| `CostAccountingApi` | `ListCostEntries` |
-| `CostAccountingApi` | `ListItemCosts` |
-| `CostAccountingApi` | `SetItemCost` |
-| `CostAccountingApi` | `UpdateAverageCost` |
-| `CreditApi` | `AdjustCreditLimit` |
-| `CreditApi` | `CheckCredit` |
-| `CreditApi` | `CreateCreditAccount` |
-| `CreditApi` | `GetCreditAccount` |
-| `CreditApi` | `GetCreditAccountByCustomer` |
-| `CreditApi` | `GetCreditLimit` |
-| `CreditApi` | `GetOverLimitCustomers` |
-| `CreditApi` | `ListCreditAccounts` |
-| `CreditApi` | `ReactivateCreditAccount` |
-| `CreditApi` | `SetCreditLimit` |
-| `CreditApi` | `SuspendCreditAccount` |
-| `CurrencyApi` | `Convert` |
-| `CurrencyApi` | `GetRate` |
-| `CurrencyApi` | `GetSettings` |
-| `CurrencyApi` | `SetRate` |
+| `CartsApi` | `GetItems` |
+| `CartsApi` | `List` |
+| `CartsApi` | `MarkReadyForPayment` |
+| `CartsApi` | `Recalculate` |
+| `CartsApi` | `RemoveDiscount` |
+| `CartsApi` | `RemoveItem` |
+| `CartsApi` | `SetBillingAddress` |
+| `CartsApi` | `SetPayment` |
+| `CartsApi` | `SetShipping` |
+| `CartsApi` | `SetShippingAddress` |
+| `CartsApi` | `UpdateItemQuantity` |
 | `CustomersApi` | `Count` |
 | `CustomersApi` | `Create` |
 | `CustomersApi` | `Delete` |
 | `CustomersApi` | `Get` |
+| `CustomersApi` | `GetByEmail` |
 | `CustomersApi` | `List` |
-| `FulfillmentApi` | `AssignPick` |
-| `FulfillmentApi` | `CancelPick` |
-| `FulfillmentApi` | `CancelWave` |
-| `FulfillmentApi` | `CompleteWave` |
-| `FulfillmentApi` | `CreateWave` |
-| `FulfillmentApi` | `GetPick` |
-| `FulfillmentApi` | `GetWave` |
-| `FulfillmentApi` | `IsOrderReadyToPack` |
-| `FulfillmentApi` | `IsOrderReadyToShip` |
-| `FulfillmentApi` | `ListPickLists` |
-| `FulfillmentApi` | `ListPicks` |
-| `FulfillmentApi` | `ListWaves` |
-| `FulfillmentApi` | `ReleaseWave` |
-| `FulfillmentApi` | `StartPick` |
-| `GeneralLedgerApi` | `CreateAccount` |
-| `GeneralLedgerApi` | `GetAccount` |
-| `GeneralLedgerApi` | `GetAccountBalance` |
-| `GeneralLedgerApi` | `GetAccountByNumber` |
-| `GeneralLedgerApi` | `GetBalanceSheet` |
-| `GeneralLedgerApi` | `GetIncomeStatement` |
-| `GeneralLedgerApi` | `GetJournalEntry` |
-| `GeneralLedgerApi` | `GetTrialBalance` |
-| `GeneralLedgerApi` | `InitializeChartOfAccounts` |
-| `GeneralLedgerApi` | `ListAccounts` |
-| `GeneralLedgerApi` | `ListJournalEntries` |
-| `GeneralLedgerApi` | `PostJournalEntry` |
-| `GeneralLedgerApi` | `VoidJournalEntry` |
+| `CustomersApi` | `Update` |
 | `InventoryApi` | `Adjust` |
+| `InventoryApi` | `ConfirmReservation` |
 | `InventoryApi` | `CreateItem` |
-| `InventoryApi` | `GetLevel` |
-| `InvoicesApi` | `Create` |
-| `InvoicesApi` | `Get` |
-| `InvoicesApi` | `GetOverdue` |
-| `InvoicesApi` | `List` |
-| `InvoicesApi` | `RecordPayment` |
-| `InvoicesApi` | `Send` |
-| `InvoicesApi` | `Void` |
-| `LotsApi` | `Create` |
-| `LotsApi` | `CreateLot` |
-| `LotsApi` | `Get` |
-| `LotsApi` | `GetActiveLots` |
-| `LotsApi` | `GetByNumber` |
-| `LotsApi` | `GetExpiredLots` |
-| `LotsApi` | `GetExpiringLots` |
-| `LotsApi` | `GetQuarantined` |
-| `LotsApi` | `List` |
-| `LotsApi` | `ListLots` |
-| `LotsApi` | `Quarantine` |
-| `LotsApi` | `ReleaseQuarantine` |
+| `InventoryApi` | `GetItem` |
+| `InventoryApi` | `GetReservation` |
+| `InventoryApi` | `GetStock` |
+| `InventoryApi` | `HasStock` |
+| `InventoryApi` | `List` |
+| `InventoryApi` | `ReleaseReservation` |
+| `InventoryApi` | `Reserve` |
 | `OrdersApi` | `Cancel` |
+| `OrdersApi` | `Count` |
 | `OrdersApi` | `Create` |
+| `OrdersApi` | `Deliver` |
 | `OrdersApi` | `Get` |
+| `OrdersApi` | `GetByNumber` |
 | `OrdersApi` | `List` |
+| `OrdersApi` | `ListForCustomer` |
 | `OrdersApi` | `Ship` |
 | `OrdersApi` | `UpdateStatus` |
+| `PaymentsApi` | `Cancel` |
 | `PaymentsApi` | `Complete` |
+| `PaymentsApi` | `CompleteRefund` |
 | `PaymentsApi` | `Create` |
 | `PaymentsApi` | `Fail` |
+| `PaymentsApi` | `FailRefund` |
+| `PaymentsApi` | `ForOrder` |
 | `PaymentsApi` | `Get` |
+| `PaymentsApi` | `GetRefund` |
+| `PaymentsApi` | `GetRefunds` |
 | `PaymentsApi` | `List` |
+| `PaymentsApi` | `MarkProcessing` |
 | `PaymentsApi` | `Refund` |
+| `ProductsApi` | `Activate` |
+| `ProductsApi` | `AddVariant` |
+| `ProductsApi` | `Archive` |
+| `ProductsApi` | `Count` |
 | `ProductsApi` | `Create` |
+| `ProductsApi` | `Delete` |
 | `ProductsApi` | `Get` |
+| `ProductsApi` | `GetBySlug` |
+| `ProductsApi` | `GetVariantBySku` |
+| `ProductsApi` | `GetVariants` |
 | `ProductsApi` | `List` |
-| `PromotionsApi` | `Activate` |
-| `PromotionsApi` | `Create` |
-| `PromotionsApi` | `CreateCoupon` |
-| `PromotionsApi` | `Deactivate` |
-| `PromotionsApi` | `Delete` |
-| `PromotionsApi` | `Get` |
-| `PromotionsApi` | `GetActive` |
-| `PromotionsApi` | `GetByCode` |
-| `PromotionsApi` | `GetCouponByCode` |
-| `PromotionsApi` | `List` |
-| `PromotionsApi` | `ValidateCoupon` |
-| `PurchaseOrdersApi` | `Approve` |
-| `PurchaseOrdersApi` | `Cancel` |
-| `PurchaseOrdersApi` | `Create` |
-| `PurchaseOrdersApi` | `Get` |
-| `PurchaseOrdersApi` | `List` |
-| `PurchaseOrdersApi` | `Send` |
-| `PurchaseOrdersApi` | `Submit` |
-| `QualityApi` | `CloseNcr` |
-| `QualityApi` | `CompleteInspection` |
-| `QualityApi` | `CreateHold` |
-| `QualityApi` | `CreateInspection` |
-| `QualityApi` | `CreateNcr` |
-| `QualityApi` | `GetActiveHolds` |
-| `QualityApi` | `GetHold` |
-| `QualityApi` | `GetInspection` |
-| `QualityApi` | `GetNcr` |
-| `QualityApi` | `ListHolds` |
-| `QualityApi` | `ListInspections` |
-| `QualityApi` | `ListNcrs` |
-| `QualityApi` | `ReleaseHold` |
-| `QualityApi` | `StartInspection` |
-| `ReceivingApi` | `CancelReceipt` |
-| `ReceivingApi` | `CompleteReceiving` |
-| `ReceivingApi` | `CreateReceipt` |
-| `ReceivingApi` | `CreateReceiptFromPo` |
-| `ReceivingApi` | `GetReceipt` |
-| `ReceivingApi` | `GetReceiptByNumber` |
-| `ReceivingApi` | `ListReceipts` |
-| `ReceivingApi` | `StartReceiving` |
+| `ProductsApi` | `Search` |
+| `ProductsApi` | `Update` |
+| `ReturnsApi` | `AddTracking` |
 | `ReturnsApi` | `Approve` |
+| `ReturnsApi` | `Cancel` |
 | `ReturnsApi` | `Complete` |
 | `ReturnsApi` | `Create` |
 | `ReturnsApi` | `Get` |
 | `ReturnsApi` | `List` |
+| `ReturnsApi` | `ListForOrder` |
+| `ReturnsApi` | `MarkReceived` |
 | `ReturnsApi` | `Reject` |
-| `SerialsApi` | `Create` |
-| `SerialsApi` | `Get` |
-| `SerialsApi` | `GetAvailable` |
-| `SerialsApi` | `GetBySerial` |
-| `SerialsApi` | `IsAvailable` |
-| `SerialsApi` | `List` |
-| `SerialsApi` | `ListSerials` |
-| `SerialsApi` | `MarkSold` |
-| `SerialsApi` | `Quarantine` |
-| `SerialsApi` | `RegisterSerial` |
+| `ReturnsApi` | `SetItemDisposition` |
 | `ShipmentsApi` | `Cancel` |
 | `ShipmentsApi` | `Create` |
 | `ShipmentsApi` | `Deliver` |
+| `ShipmentsApi` | `ForOrder` |
 | `ShipmentsApi` | `Get` |
+| `ShipmentsApi` | `GetByTracking` |
 | `ShipmentsApi` | `List` |
+| `ShipmentsApi` | `MarkInTransit` |
+| `ShipmentsApi` | `MarkOutForDelivery` |
+| `ShipmentsApi` | `MarkProcessing` |
+| `ShipmentsApi` | `MarkReady` |
 | `ShipmentsApi` | `Ship` |
-| `SubscriptionsApi` | `ActivatePlan` |
-| `SubscriptionsApi` | `ArchivePlan` |
-| `SubscriptionsApi` | `Cancel` |
-| `SubscriptionsApi` | `CreatePlan` |
-| `SubscriptionsApi` | `Get` |
-| `SubscriptionsApi` | `GetPlan` |
-| `SubscriptionsApi` | `List` |
-| `SubscriptionsApi` | `ListPlans` |
-| `SubscriptionsApi` | `Pause` |
-| `SubscriptionsApi` | `Resume` |
-| `SubscriptionsApi` | `Subscribe` |
-| `SuppliersApi` | `Create` |
-| `SuppliersApi` | `Get` |
-| `SuppliersApi` | `List` |
-| `TaxApi` | `Calculate` |
-| `TaxApi` | `CreateExemption` |
-| `TaxApi` | `CreateJurisdiction` |
-| `TaxApi` | `CreateRate` |
-| `TaxApi` | `CustomerIsExempt` |
-| `TaxApi` | `GetCustomerExemptions` |
-| `TaxApi` | `GetEffectiveRate` |
-| `TaxApi` | `GetJurisdiction` |
-| `TaxApi` | `GetRate` |
-| `TaxApi` | `GetSettings` |
-| `TaxApi` | `ListJurisdictions` |
-| `TaxApi` | `ListRates` |
-| `TaxApi` | `SetEnabled` |
-| `WarehouseApi` | `CreateLocation` |
-| `WarehouseApi` | `CreateWarehouse` |
-| `WarehouseApi` | `GetLocation` |
-| `WarehouseApi` | `GetPickableLocations` |
-| `WarehouseApi` | `GetTotalAvailable` |
-| `WarehouseApi` | `GetWarehouse` |
-| `WarehouseApi` | `GetWarehouseByCode` |
-| `WarehouseApi` | `ListLocations` |
-| `WarehouseApi` | `ListWarehouses` |
-| `WarrantiesApi` | `ApproveClaim` |
-| `WarrantiesApi` | `CompleteClaim` |
-| `WarrantiesApi` | `Create` |
-| `WarrantiesApi` | `CreateClaim` |
-| `WarrantiesApi` | `DenyClaim` |
-| `WarrantiesApi` | `Get` |
-| `WarrantiesApi` | `List` |
-| `WorkOrdersApi` | `Cancel` |
-| `WorkOrdersApi` | `Complete` |
-| `WorkOrdersApi` | `Create` |
-| `WorkOrdersApi` | `Get` |
-| `WorkOrdersApi` | `List` |
-| `WorkOrdersApi` | `Start` |
 
 ## Python Helper Modules
 
@@ -944,198 +720,171 @@ Machine-readable output lives at `artifacts/compatibility/binding-api-inventory.
 
 | Metric | Value |
 | --- | --- |
-| Public types | 73 |
-| API types | 31 |
-| Facade properties | 31 |
-| API methods | 71 |
-| Targets | `StateSet`, `StateSetC`, `StateSetTests` |
+| Public types | 58 |
+| API types | 8 |
+| Facade properties | 8 |
+| API methods | 82 |
+| Targets | `StateSet`, `StateSetTests` |
 
 ## Swift Public Types
 
 | Type |
 | --- |
-| `AccountsPayableAPI` |
-| `AccountsReceivableAPI` |
-| `AnalyticsAPI` |
-| `BackordersAPI` |
-| `BOMAPI` |
+| `AddCartItem` |
+| `Address` |
 | `Cart` |
+| `CartAddress` |
 | `CartItem` |
+| `CartPaymentStatus` |
 | `CartsAPI` |
-| `ConversionResult` |
-| `CostAccountingAPI` |
-| `Coupon` |
-| `CreditAPI` |
-| `Currency` |
-| `CurrencyAPI` |
+| `CartStatus` |
+| `CheckoutResult` |
+| `Code` |
+| `CreateOrderItem` |
+| `CreateProductVariant` |
+| `CreateReturnItem` |
+| `CreateShipmentItem` |
 | `Customer` |
 | `CustomersAPI` |
-| `ExchangeRate` |
-| `FulfillmentAPI` |
-| `GeneralLedgerAPI` |
-| `GlAccount` |
+| `CustomerStatus` |
+| `DecimalString` |
+| `FulfillmentStatus` |
 | `InventoryAPI` |
 | `InventoryItem` |
-| `InvoicesAPI` |
-| `Location` |
-| `LotsAPI` |
+| `InventoryReservation` |
+| `InventoryTransaction` |
+| `ItemCondition` |
+| `LocationStock` |
+| `OptionalDecimalString` |
 | `Order` |
 | `OrderItem` |
+| `OrderPaymentStatus` |
 | `OrdersAPI` |
 | `OrderStatus` |
 | `Payment` |
 | `PaymentMethod` |
 | `PaymentsAPI` |
+| `PaymentStatus` |
 | `Product` |
 | `ProductsAPI` |
+| `ProductStatus` |
+| `ProductType` |
 | `ProductVariant` |
-| `Promotion` |
-| `PromotionsAPI` |
-| `PurchaseOrdersAPI` |
-| `QualityAPI` |
-| `ReceivingAPI` |
 | `Refund` |
 | `RefundStatus` |
+| `ReservationStatus` |
 | `Return` |
+| `ReturnDisposition` |
+| `ReturnItem` |
 | `ReturnReason` |
 | `ReturnsAPI` |
 | `ReturnStatus` |
-| `SalesSummary` |
-| `SerialsAPI` |
 | `Shipment` |
+| `ShipmentItem` |
 | `ShipmentsAPI` |
 | `ShipmentStatus` |
 | `ShippingCarrier` |
+| `ShippingMethod` |
 | `StateSetCommerce` |
 | `StateSetError` |
 | `StockLevel` |
-| `StoreCurrencySettings` |
-| `Subscription` |
-| `SubscriptionPlan` |
-| `SubscriptionsAPI` |
-| `SuppliersAPI` |
-| `TaxAPI` |
-| `TaxCalculation` |
-| `TaxExemption` |
-| `TaxJurisdiction` |
-| `TaxRate` |
-| `TaxSettings` |
-| `TimePeriod` |
-| `TopCustomer` |
-| `TopProduct` |
-| `Warehouse` |
-| `WarehouseAPI` |
-| `WarrantiesAPI` |
-| `WorkOrdersAPI` |
 
 ## Swift Facade Properties
 
 | Property | Type |
 | --- | --- |
-| `accountsPayable` | `AccountsPayableAPI` |
-| `accountsReceivable` | `AccountsReceivableAPI` |
-| `analytics` | `AnalyticsAPI` |
-| `backorders` | `BackordersAPI` |
-| `bom` | `BOMAPI` |
 | `carts` | `CartsAPI` |
-| `costAccounting` | `CostAccountingAPI` |
-| `credit` | `CreditAPI` |
-| `currency` | `CurrencyAPI` |
 | `customers` | `CustomersAPI` |
-| `fulfillment` | `FulfillmentAPI` |
-| `generalLedger` | `GeneralLedgerAPI` |
 | `inventory` | `InventoryAPI` |
-| `invoices` | `InvoicesAPI` |
-| `lots` | `LotsAPI` |
 | `orders` | `OrdersAPI` |
 | `payments` | `PaymentsAPI` |
 | `products` | `ProductsAPI` |
-| `promotions` | `PromotionsAPI` |
-| `purchaseOrders` | `PurchaseOrdersAPI` |
-| `quality` | `QualityAPI` |
-| `receiving` | `ReceivingAPI` |
 | `returns` | `ReturnsAPI` |
-| `serials` | `SerialsAPI` |
 | `shipments` | `ShipmentsAPI` |
-| `subscriptions` | `SubscriptionsAPI` |
-| `suppliers` | `SuppliersAPI` |
-| `tax` | `TaxAPI` |
-| `warehouse` | `WarehouseAPI` |
-| `warranties` | `WarrantiesAPI` |
-| `workOrders` | `WorkOrdersAPI` |
 
 ## Swift API Methods
 
 | API type | Method |
 | --- | --- |
-| `AnalyticsAPI` | `salesSummary` |
-| `AnalyticsAPI` | `topCustomers` |
-| `AnalyticsAPI` | `topProducts` |
+| `CartsAPI` | `abandon` |
+| `CartsAPI` | `addItem` |
+| `CartsAPI` | `applyDiscount` |
+| `CartsAPI` | `cancel` |
+| `CartsAPI` | `clearItems` |
+| `CartsAPI` | `complete` |
 | `CartsAPI` | `create` |
-| `CurrencyAPI` | `convert` |
-| `CurrencyAPI` | `getRate` |
-| `CurrencyAPI` | `getSettings` |
-| `CurrencyAPI` | `setRate` |
+| `CartsAPI` | `get` |
+| `CartsAPI` | `items` |
+| `CartsAPI` | `list` |
+| `CartsAPI` | `recalculate` |
+| `CartsAPI` | `removeItem` |
+| `CartsAPI` | `setBillingAddress` |
+| `CartsAPI` | `setPayment` |
+| `CartsAPI` | `setShipping` |
+| `CartsAPI` | `setShippingAddress` |
+| `CartsAPI` | `updateItemQuantity` |
+| `CustomersAPI` | `count` |
 | `CustomersAPI` | `create` |
 | `CustomersAPI` | `delete` |
 | `CustomersAPI` | `get` |
 | `CustomersAPI` | `list` |
-| `GeneralLedgerAPI` | `createAccount` |
-| `GeneralLedgerAPI` | `listAccounts` |
+| `CustomersAPI` | `update` |
 | `InventoryAPI` | `adjust` |
+| `InventoryAPI` | `confirmReservation` |
 | `InventoryAPI` | `createItem` |
-| `InventoryAPI` | `getLevel` |
+| `InventoryAPI` | `getStock` |
+| `InventoryAPI` | `hasStock` |
+| `InventoryAPI` | `item` |
+| `InventoryAPI` | `list` |
+| `InventoryAPI` | `releaseReservation` |
+| `InventoryAPI` | `reserve` |
 | `OrdersAPI` | `cancel` |
+| `OrdersAPI` | `count` |
 | `OrdersAPI` | `create` |
+| `OrdersAPI` | `deliver` |
 | `OrdersAPI` | `get` |
 | `OrdersAPI` | `list` |
 | `OrdersAPI` | `ship` |
 | `OrdersAPI` | `updateStatus` |
+| `PaymentsAPI` | `cancel` |
+| `PaymentsAPI` | `complete` |
+| `PaymentsAPI` | `completeRefund` |
 | `PaymentsAPI` | `create` |
+| `PaymentsAPI` | `fail` |
+| `PaymentsAPI` | `failRefund` |
 | `PaymentsAPI` | `get` |
 | `PaymentsAPI` | `list` |
+| `PaymentsAPI` | `markProcessing` |
+| `PaymentsAPI` | `refund` |
+| `PaymentsAPI` | `refunds` |
+| `ProductsAPI` | `activate` |
+| `ProductsAPI` | `addVariant` |
+| `ProductsAPI` | `archive` |
+| `ProductsAPI` | `count` |
 | `ProductsAPI` | `create` |
+| `ProductsAPI` | `delete` |
 | `ProductsAPI` | `get` |
 | `ProductsAPI` | `list` |
-| `PromotionsAPI` | `activate` |
-| `PromotionsAPI` | `create` |
-| `PromotionsAPI` | `createCoupon` |
-| `PromotionsAPI` | `deactivate` |
-| `PromotionsAPI` | `delete` |
-| `PromotionsAPI` | `get` |
-| `PromotionsAPI` | `getActive` |
-| `PromotionsAPI` | `getByCode` |
-| `PromotionsAPI` | `getCouponByCode` |
-| `PromotionsAPI` | `list` |
-| `PromotionsAPI` | `validateCoupon` |
+| `ProductsAPI` | `search` |
+| `ProductsAPI` | `variant` |
+| `ProductsAPI` | `variants` |
+| `ReturnsAPI` | `addTracking` |
 | `ReturnsAPI` | `approve` |
+| `ReturnsAPI` | `cancel` |
 | `ReturnsAPI` | `complete` |
 | `ReturnsAPI` | `create` |
 | `ReturnsAPI` | `get` |
 | `ReturnsAPI` | `list` |
+| `ReturnsAPI` | `markReceived` |
 | `ReturnsAPI` | `reject` |
+| `ReturnsAPI` | `setItemDisposition` |
 | `ShipmentsAPI` | `cancel` |
 | `ShipmentsAPI` | `create` |
 | `ShipmentsAPI` | `deliver` |
 | `ShipmentsAPI` | `get` |
 | `ShipmentsAPI` | `list` |
+| `ShipmentsAPI` | `markInTransit` |
+| `ShipmentsAPI` | `markOutForDelivery` |
+| `ShipmentsAPI` | `markProcessing` |
+| `ShipmentsAPI` | `markReady` |
 | `ShipmentsAPI` | `ship` |
-| `SubscriptionsAPI` | `activatePlan` |
-| `SubscriptionsAPI` | `archivePlan` |
-| `SubscriptionsAPI` | `cancel` |
-| `SubscriptionsAPI` | `createPlan` |
-| `SubscriptionsAPI` | `get` |
-| `SubscriptionsAPI` | `getPlan` |
-| `SubscriptionsAPI` | `list` |
-| `SubscriptionsAPI` | `listPlans` |
-| `SubscriptionsAPI` | `pause` |
-| `SubscriptionsAPI` | `resume` |
-| `SubscriptionsAPI` | `subscribe` |
-| `TaxAPI` | `calculate` |
-| `TaxAPI` | `getEffectiveRate` |
-| `TaxAPI` | `getSettings` |
-| `TaxAPI` | `setEnabled` |
-| `WarehouseAPI` | `createWarehouse` |
-| `WarehouseAPI` | `getWarehouse` |
-| `WarehouseAPI` | `getWarehouseByCode` |
-| `WarehouseAPI` | `listWarehouses` |

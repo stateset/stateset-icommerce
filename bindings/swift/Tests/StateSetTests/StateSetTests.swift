@@ -1,6 +1,9 @@
+import Foundation
 import XCTest
 @testable import StateSet
 
+/// End-to-end tests against the REAL Rust engine through the C ABI. There is
+/// no Swift-side store: if the native library is missing, nothing links.
 final class StateSetTests: XCTestCase {
     var commerce: StateSetCommerce!
 
@@ -8,480 +11,309 @@ final class StateSetTests: XCTestCase {
         commerce = try StateSetCommerce(dbPath: ":memory:")
     }
 
-    override func tearDownWithError() throws {
-        commerce.close()
+    override func tearDown() {
+        commerce?.close()
         commerce = nil
     }
 
-    // MARK: - API Availability Tests
+    private func dec(_ s: String) -> Decimal { Decimal(string: s, locale: Locale(identifier: "en_US_POSIX"))! }
 
-    func testAllAPIsAvailable() {
-        XCTAssertNotNil(commerce.customers)
-        XCTAssertNotNil(commerce.products)
-        XCTAssertNotNil(commerce.orders)
-        XCTAssertNotNil(commerce.inventory)
-        XCTAssertNotNil(commerce.carts)
-        XCTAssertNotNil(commerce.returns)
-        XCTAssertNotNil(commerce.payments)
-        XCTAssertNotNil(commerce.analytics)
-        XCTAssertNotNil(commerce.shipments)
-        XCTAssertNotNil(commerce.warranties)
-        XCTAssertNotNil(commerce.suppliers)
-        XCTAssertNotNil(commerce.purchaseOrders)
-        XCTAssertNotNil(commerce.invoices)
-        XCTAssertNotNil(commerce.bom)
-        XCTAssertNotNil(commerce.workOrders)
-        XCTAssertNotNil(commerce.currency)
-        XCTAssertNotNil(commerce.subscriptions)
-        XCTAssertNotNil(commerce.promotions)
-        XCTAssertNotNil(commerce.tax)
-        XCTAssertNotNil(commerce.quality)
-        XCTAssertNotNil(commerce.lots)
-        XCTAssertNotNil(commerce.serials)
-        XCTAssertNotNil(commerce.warehouse)
-        XCTAssertNotNil(commerce.receiving)
-        XCTAssertNotNil(commerce.fulfillment)
-        XCTAssertNotNil(commerce.accountsPayable)
-        XCTAssertNotNil(commerce.accountsReceivable)
-        XCTAssertNotNil(commerce.costAccounting)
-        XCTAssertNotNil(commerce.credit)
-        XCTAssertNotNil(commerce.backorders)
-        XCTAssertNotNil(commerce.generalLedger)
+    private func newCustomer(_ email: String = "alice@example.com") throws -> Customer {
+        try commerce.customers.create(email: email, firstName: "Alice", lastName: "Smith")
     }
 
-    // MARK: - Customer Tests
-
-    func testCreateCustomer() throws {
-        let customer = try commerce.customers.create(
-            email: "test@example.com",
-            firstName: "Test",
-            lastName: "User"
-        )
-
-        XCTAssertFalse(customer.id.isEmpty)
-        XCTAssertEqual(customer.email, "test@example.com")
-        XCTAssertEqual(customer.firstName, "Test")
-        XCTAssertEqual(customer.lastName, "User")
+    private func line(_ c: Customer, _ sku: String, _ qty: Int32, _ price: String) -> CreateOrderItem {
+        CreateOrderItem(productId: c.id, sku: sku, name: sku, quantity: qty, unitPrice: dec(price))
     }
 
-    func testGetCustomer() throws {
-        let created = try commerce.customers.create(
-            email: "get@example.com",
-            firstName: "Get",
-            lastName: "Test"
-        )
-
-        let retrieved = try commerce.customers.get(id: created.id)
-        XCTAssertNotNil(retrieved)
-        XCTAssertEqual(retrieved?.id, created.id)
-        XCTAssertEqual(retrieved?.email, "get@example.com")
+    private func deliveredOrder(_ c: Customer, sku: String, qty: Int32 = 1) throws -> Order {
+        let order = try commerce.orders.create(customerId: c.id, items: [line(c, sku, qty, "15.00")])
+        _ = try commerce.orders.updateStatus(id: order.id, status: .confirmed)
+        _ = try commerce.orders.ship(id: order.id)
+        return try commerce.orders.deliver(id: order.id)
     }
 
-    func testListCustomers() throws {
-        _ = try commerce.customers.create(
-            email: "list1@example.com",
-            firstName: "List",
-            lastName: "One"
-        )
-        _ = try commerce.customers.create(
-            email: "list2@example.com",
-            firstName: "List",
-            lastName: "Two"
-        )
-
-        let customers = try commerce.customers.list()
-        XCTAssertGreaterThanOrEqual(customers.count, 2)
+    private func assertEngineError(_ code: StateSetError.Code? = nil, _ body: () throws -> Void,
+                                   file: StaticString = #filePath, line: UInt = #line) {
+        do {
+            try body()
+            XCTFail("expected the engine to refuse", file: file, line: line)
+        } catch let e as StateSetError {
+            if let code = code { XCTAssertEqual(e.code, code, e.message, file: file, line: line) }
+        } catch {
+            XCTFail("unexpected error \(error)", file: file, line: line)
+        }
     }
 
-    func testDeleteCustomer() throws {
-        let customer = try commerce.customers.create(
-            email: "delete@example.com",
-            firstName: "Delete",
-            lastName: "Me"
-        )
+    // MARK: - Proof that this is not an in-memory fake
 
-        let deleted = try commerce.customers.delete(id: customer.id)
-        XCTAssertTrue(deleted)
+    func testDataPersistsAcrossInstancesOnTheSameFile() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("stateset-swift-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("store.db").path
 
-        let retrieved = try commerce.customers.get(id: customer.id)
-        XCTAssertNil(retrieved)
+        var customerId = ""
+        var orderId = ""
+        do {
+            let first = try StateSetCommerce(dbPath: path)
+            let c = try first.customers.create(email: "persist@example.com", firstName: "Per", lastName: "Sistence")
+            let o = try first.orders.create(customerId: c.id, items: [
+                CreateOrderItem(productId: c.id, sku: "P-1", name: "Persisted", quantity: 3, unitPrice: dec("0.10")),
+            ])
+            customerId = c.id
+            orderId = o.id
+            first.close()
+        }
+
+        let size = try FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber
+        XCTAssertGreaterThan(size?.intValue ?? 0, 0, "the SQLite file must exist and be non-empty")
+
+        let second = try StateSetCommerce(dbPath: path)
+        defer { second.close() }
+        XCTAssertEqual(try second.customers.get(id: customerId)?.email, "persist@example.com")
+        let order = try XCTUnwrap(second.orders.get(id: orderId))
+        XCTAssertEqual(order.totalAmount, dec("0.30"))
+        XCTAssertEqual(try second.customers.list().count, 1)
     }
 
-    // MARK: - Product Tests
-
-    func testCreateProduct() throws {
-        let product = try commerce.products.create(
-            name: "Test Product",
-            sku: "TEST-001",
-            price: 29.99,
-            description: "A test product"
-        )
-
-        XCTAssertFalse(product.id.isEmpty)
-        XCTAssertEqual(product.name, "Test Product")
-        XCTAssertEqual(product.sku, "TEST-001")
+    func testSeparateInMemoryStoresDoNotShareData() throws {
+        _ = try newCustomer()
+        let other = try StateSetCommerce(dbPath: ":memory:")
+        defer { other.close() }
+        XCTAssertEqual(try other.customers.count(), 0)
+        XCTAssertEqual(try commerce.customers.count(), 1)
     }
 
-    func testListProducts() throws {
-        _ = try commerce.products.create(
-            name: "Product A",
-            sku: "PROD-A",
-            price: 10.00
-        )
-        _ = try commerce.products.create(
-            name: "Product B",
-            sku: "PROD-B",
-            price: 20.00
-        )
-
-        let products = try commerce.products.list()
-        XCTAssertGreaterThanOrEqual(products.count, 2)
+    func testNativeSurfaceReportsVersionsAndMethods() throws {
+        let v = try commerce.version()
+        XCTAssertEqual(v["json_api_version"] as? Int, 1)
+        XCTAssertEqual(v["abi_version"] as? Int, 1)
+        let methods = try commerce.nativeMethodNames()
+        XCTAssertTrue(methods.contains("orders.create"))
+        XCTAssertTrue(methods.contains("payments.create_refund"))
     }
 
-    // MARK: - Inventory Tests
+    // MARK: - Customers
 
-    func testCreateInventoryItem() throws {
-        let item = try commerce.inventory.createItem(
-            sku: "INV-001",
-            name: "Inventory Item",
-            initialQuantity: 100
-        )
-
-        XCTAssertEqual(item.sku, "INV-001")
+    func testCustomerCrud() throws {
+        let c = try commerce.customers.create(email: "bob@example.com", firstName: "Bob", lastName: "Jones",
+                                              phone: "+15550001")
+        XCTAssertFalse(c.id.isEmpty)
+        XCTAssertEqual(c.status, .active)
+        XCTAssertEqual(c.fullName, "Bob Jones")
+        XCTAssertEqual(try commerce.customers.get(id: c.id)?.id, c.id)
+        XCTAssertEqual(try commerce.customers.get(email: "bob@example.com")?.id, c.id)
+        XCTAssertEqual(try commerce.customers.update(id: c.id, firstName: "Robert").firstName, "Robert")
+        XCTAssertEqual(try commerce.customers.count(), 1)
+        try commerce.customers.delete(id: c.id)
+        let after = try commerce.customers.get(id: c.id)
+        XCTAssertTrue(after == nil || after?.status == .deleted)
     }
 
-    func testAdjustInventory() throws {
-        _ = try commerce.inventory.createItem(
-            sku: "ADJ-001",
-            name: "Adjust Test",
-            initialQuantity: 50
-        )
-
-        let adjusted = try commerce.inventory.adjust(
-            sku: "ADJ-001",
-            quantityDelta: 10,
-            reason: "Received shipment"
-        )
-        XCTAssertTrue(adjusted)
-
-        let level = try commerce.inventory.getLevel(sku: "ADJ-001")
-        XCTAssertNotNil(level)
-        XCTAssertEqual(level?.available, 60)
+    func testDuplicateEmailIsRefused() throws {
+        _ = try newCustomer("dup@example.com")
+        assertEngineError(.invalidArgument) { _ = try self.newCustomer("dup@example.com") }
     }
 
-    // MARK: - Order Tests
-
-    func testCreateOrder() throws {
-        let customer = try commerce.customers.create(
-            email: "order@example.com",
-            firstName: "Order",
-            lastName: "Test"
-        )
-
-        let order = try commerce.orders.create(
-            customerId: customer.id,
-            items: [
-                OrderItem(sku: "TEST-SKU", name: "Test Item", quantity: 2, unitPrice: 19.99)
-            ],
-            currency: "USD"
-        )
-
-        XCTAssertFalse(order.id.isEmpty)
-        XCTAssertEqual(order.customerId, customer.id)
+    func testLookupsOfMissingEntitiesReturnNil() throws {
+        let id = UUID().uuidString.lowercased()
+        XCTAssertNil(try commerce.customers.get(id: id))
+        XCTAssertNil(try commerce.orders.get(id: id))
+        XCTAssertNil(try commerce.products.get(id: id))
+        XCTAssertNil(try commerce.carts.get(id: id))
+        XCTAssertNil(try commerce.payments.get(id: id))
+        XCTAssertNil(try commerce.returns.get(id: id))
+        XCTAssertNil(try commerce.shipments.get(id: id))
+        XCTAssertNil(try commerce.inventory.getStock(sku: "NO-SUCH-SKU"))
     }
 
-    func testOrderLifecycle() throws {
-        let customer = try commerce.customers.create(
-            email: "lifecycle@example.com",
-            firstName: "Lifecycle",
-            lastName: "Test"
-        )
-
-        let order = try commerce.orders.create(
-            customerId: customer.id,
-            items: [
-                OrderItem(sku: "LIFE-001", name: "Lifecycle Item", quantity: 1, unitPrice: 49.99)
-            ]
-        )
-
-        // Ship order
-        let shipped = try commerce.orders.ship(id: order.id)
-        XCTAssertEqual(shipped.status, "shipped")
+    func testMalformedIdsAreRefusedNotCoerced() {
+        assertEngineError(.invalidArgument) { _ = try self.commerce.orders.get(id: "not-a-uuid") }
     }
 
-    // MARK: - Returns Tests
+    func testMutatingAMissingEntityThrowsNotFound() {
+        assertEngineError(.notFound) { _ = try self.commerce.orders.cancel(id: UUID().uuidString) }
+    }
+
+    func testClosedInstanceRefusesCalls() throws {
+        let c = try StateSetCommerce(dbPath: ":memory:")
+        c.close()
+        c.close()
+        assertEngineError { _ = try c.customers.list() }
+    }
+
+    // MARK: - Products
+
+    func testProductWithExactDecimalPrice() throws {
+        let p = try commerce.products.create(name: "Premium Widget", sku: "WIDGET-001", price: dec("29.99"),
+                                             description: "A widget")
+        let variant = try XCTUnwrap(commerce.products.variant(sku: "WIDGET-001"))
+        XCTAssertEqual(variant.price, dec("29.99"))
+        XCTAssertEqual(variant.productId, p.id)
+        _ = try commerce.products.addVariant(productId: p.id,
+                                             variant: CreateProductVariant(sku: "WIDGET-002", price: dec("31.50")))
+        XCTAssertEqual(try commerce.products.variants(productId: p.id).count, 2)
+        XCTAssertEqual(try commerce.products.search("Premium").count, 0) // active products only
+        XCTAssertEqual(try commerce.products.activate(id: p.id).status, .active)
+        XCTAssertEqual(try commerce.products.search("Premium").count, 1)
+    }
+
+    func testNegativePriceIsRefused() {
+        assertEngineError { _ = try self.commerce.products.create(name: "Bad", sku: "BAD-1", price: self.dec("-1")) }
+    }
+
+    // MARK: - Inventory
+
+    func testInventoryAdjustAndReserve() throws {
+        _ = try commerce.inventory.createItem(sku: "INV-1", name: "Bolt", initialQuantity: 100)
+        XCTAssertEqual(try commerce.inventory.getStock(sku: "INV-1")?.totalOnHand, 100)
+        let tx = try commerce.inventory.adjust(sku: "INV-1", quantityDelta: dec("-5.5"), reason: "damaged")
+        XCTAssertEqual(tx.quantity, dec("-5.5"))
+        XCTAssertEqual(try commerce.inventory.getStock(sku: "INV-1")?.totalOnHand, dec("94.5"))
+
+        let res = try commerce.inventory.reserve(sku: "INV-1", quantity: 10, referenceType: "order", referenceId: "O-1")
+        XCTAssertEqual(try commerce.inventory.getStock(sku: "INV-1")?.totalAvailable, dec("84.5"))
+        XCTAssertTrue(try commerce.inventory.hasStock(sku: "INV-1", quantity: dec("84.5")))
+        XCTAssertFalse(try commerce.inventory.hasStock(sku: "INV-1", quantity: dec("84.6")))
+        try commerce.inventory.releaseReservation(id: res.id)
+        XCTAssertEqual(try commerce.inventory.getStock(sku: "INV-1")?.totalAvailable, dec("94.5"))
+    }
+
+    func testOverReservationIsRefused() throws {
+        _ = try commerce.inventory.createItem(sku: "INV-2", name: "Nut", initialQuantity: 1)
+        assertEngineError {
+            _ = try self.commerce.inventory.reserve(sku: "INV-2", quantity: 2, referenceType: "order", referenceId: "X")
+        }
+    }
+
+    // MARK: - Orders
+
+    func testOrderTotalsAreExactDecimals() throws {
+        let c = try newCustomer()
+        let order = try commerce.orders.create(customerId: c.id, items: [line(c, "A", 3, "0.10"), line(c, "B", 1, "19.99")])
+        XCTAssertEqual(order.totalAmount, dec("20.29"))
+        XCTAssertEqual(order.items.count, 2)
+        XCTAssertEqual(order.currency, "USD")
+        XCTAssertEqual(order.status, .pending)
+        XCTAssertEqual(try commerce.orders.get(orderNumber: order.orderNumber)?.id, order.id)
+        XCTAssertEqual(try commerce.orders.list(customerId: c.id).count, 1)
+    }
+
+    func testOrderLifecycleFollowsTheEngineStateMachine() throws {
+        let c = try newCustomer()
+        var order = try commerce.orders.create(customerId: c.id, items: [line(c, "A", 1, "10")])
+        order = try commerce.orders.updateStatus(id: order.id, status: .confirmed)
+        order = try commerce.orders.ship(id: order.id, trackingNumber: "1Z999")
+        XCTAssertEqual(order.status, .shipped)
+        XCTAssertEqual(order.trackingNumber, "1Z999")
+        order = try commerce.orders.deliver(id: order.id)
+        XCTAssertEqual(order.status, .delivered)
+        let id = order.id
+        assertEngineError { _ = try self.commerce.orders.cancel(id: id) }
+    }
+
+    func testExplicitCurrencyIsValidated() throws {
+        let c = try newCustomer()
+        XCTAssertEqual(try commerce.orders.create(customerId: c.id, items: [line(c, "A", 1, "1")], currency: "eur").currency,
+                       "EUR")
+        assertEngineError(.invalidArgument) {
+            _ = try self.commerce.orders.create(customerId: c.id, items: [self.line(c, "A", 1, "1")], currency: "EURO")
+        }
+    }
+
+    // MARK: - Carts / checkout
+
+    private let addr = CartAddress(firstName: "Alice", lastName: "Smith", line1: "1 Main St", city: "Austin",
+                                   postalCode: "78701", country: "US", state: "TX")
+
+    func testCartCheckoutCreatesARealOrder() throws {
+        let c = try newCustomer()
+        _ = try commerce.inventory.createItem(sku: "CART-1", name: "Mug", initialQuantity: 10)
+        let cart = try commerce.carts.create(customerId: c.id, customerEmail: c.email)
+        XCTAssertEqual(cart.status, .active)
+        let item = try commerce.carts.addItem(cartId: cart.id, sku: "CART-1", name: "Mug", quantity: 2,
+                                              unitPrice: dec("12.50"))
+        XCTAssertEqual(item.total, dec("25.00"))
+        try commerce.carts.setShipping(cartId: cart.id, address: addr, method: "standard", amount: dec("5.00"))
+        try commerce.carts.setPayment(cartId: cart.id, paymentMethod: "credit_card", paymentToken: "tok_test")
+        let result = try commerce.carts.complete(cartId: cart.id)
+        let order = try XCTUnwrap(commerce.orders.get(id: result.orderId))
+        XCTAssertEqual(order.totalAmount, result.totalCharged)
+        XCTAssertEqual(try commerce.carts.get(id: cart.id)?.status, .completed)
+    }
+
+    // MARK: - Payments / refunds
+
+    func testPaymentAndPartialRefund() throws {
+        let c = try newCustomer()
+        let order = try commerce.orders.create(customerId: c.id, items: [line(c, "A", 1, "100")])
+        var payment = try commerce.payments.create(orderId: order.id, amount: dec("100.00"), customerId: c.id)
+        XCTAssertEqual(payment.status, .pending)
+        payment = try commerce.payments.complete(id: payment.id)
+        XCTAssertEqual(payment.status, .completed)
+        let refund = try commerce.payments.refund(paymentId: payment.id, amount: dec("30.01"), reason: "partial")
+        XCTAssertEqual(refund.amount, dec("30.01"))
+        _ = try commerce.payments.completeRefund(id: refund.id)
+        XCTAssertEqual(try commerce.payments.get(id: payment.id)?.amountRefunded, dec("30.01"))
+        let pid = payment.id
+        assertEngineError { _ = try self.commerce.payments.refund(paymentId: pid, amount: self.dec("70.00")) }
+        XCTAssertEqual(try commerce.payments.list(orderId: order.id).count, 1)
+    }
+
+    // MARK: - Returns
 
     func testReturnLifecycle() throws {
-        let customer = try commerce.customers.create(
-            email: "returns@example.com",
-            firstName: "Return",
-            lastName: "Test"
-        )
-
-        let order = try commerce.orders.create(
-            customerId: customer.id,
-            items: [
-                OrderItem(sku: "RET-001", name: "Return Item", quantity: 1, unitPrice: 19.99)
-            ],
-            currency: "USD"
-        )
-
-        let ret = try commerce.returns.create(orderId: order.id, reason: .defective)
-        XCTAssertFalse(ret.id.isEmpty)
-        XCTAssertEqual(ret.orderId, order.id)
-        XCTAssertEqual(ret.reason, ReturnReason.defective.rawValue)
-
-        let approved = try commerce.returns.approve(id: ret.id)
-        XCTAssertEqual(approved.id, ret.id)
-
-        let fetched = try commerce.returns.get(id: ret.id)
-        XCTAssertNotNil(fetched)
-
-        let list = try commerce.returns.list()
-        XCTAssertGreaterThanOrEqual(list.count, 1)
+        let c = try newCustomer()
+        let order = try deliveredOrder(c, sku: "R-1", qty: 2)
+        let ret = try commerce.returns.create(orderId: order.id, reason: .defective,
+                                              items: [CreateReturnItem(orderItemId: order.items[0].id, quantity: 1,
+                                                                       condition: .damaged)],
+                                              reasonDetails: "cracked")
+        XCTAssertEqual(ret.status, .requested)
+        XCTAssertEqual(try commerce.returns.approve(id: ret.id).status, .approved)
+        XCTAssertEqual(try commerce.returns.addTracking(id: ret.id, trackingNumber: "RT-1").trackingNumber, "RT-1")
+        XCTAssertEqual(try commerce.returns.markReceived(id: ret.id).status, .received)
+        let rid = ret.id
+        assertEngineError { _ = try self.commerce.returns.complete(id: rid) } // items need a disposition first
+        let item = try commerce.returns.setItemDisposition(id: ret.id, itemId: ret.items[0].id, disposition: .scrap)
+        XCTAssertEqual(item.disposition, .scrap)
+        XCTAssertEqual(try commerce.returns.complete(id: ret.id).status, .completed)
+        XCTAssertEqual(try commerce.returns.list(orderId: order.id).count, 1)
     }
 
-    // MARK: - Payments Tests
+    // MARK: - Shipments
 
-    func testCreatePayment() throws {
-        let customer = try commerce.customers.create(
-            email: "payments@example.com",
-            firstName: "Payment",
-            lastName: "Test"
-        )
-
-        let order = try commerce.orders.create(
-            customerId: customer.id,
-            items: [
-                OrderItem(sku: "PAY-001", name: "Payment Item", quantity: 1, unitPrice: 49.99)
-            ],
-            currency: "USD"
-        )
-
-        let payment = try commerce.payments.create(
-            orderId: order.id,
-            amount: 49.99,
-            currency: "USD",
-            method: .creditCard
-        )
-        XCTAssertFalse(payment.id.isEmpty)
-        XCTAssertEqual(payment.orderId, order.id)
-
-        let fetched = try commerce.payments.get(id: payment.id)
-        XCTAssertNotNil(fetched)
-
-        let list = try commerce.payments.list()
-        XCTAssertGreaterThanOrEqual(list.count, 1)
+    func testShipmentLifecycle() throws {
+        let c = try newCustomer()
+        let order = try commerce.orders.create(customerId: c.id, items: [line(c, "S-1", 1, "15")])
+        _ = try commerce.orders.updateStatus(id: order.id, status: .confirmed)
+        var s = try commerce.shipments.create(orderId: order.id, recipientName: "Alice Smith",
+                                              shippingAddress: "1 Main St, Austin TX", carrier: .ups,
+                                              method: .ground, shippingCost: dec("7.25"))
+        XCTAssertEqual(s.status, .pending)
+        XCTAssertEqual(s.carrier, .ups)
+        XCTAssertEqual(s.shippingCost, dec("7.25"))
+        let sid = s.id
+        assertEngineError(.invalidArgument) { _ = try self.commerce.shipments.ship(id: sid) } // pending -> shipped is illegal
+        XCTAssertEqual(try commerce.shipments.markProcessing(id: s.id).status, .processing)
+        XCTAssertEqual(try commerce.shipments.markReady(id: s.id).status, .readyToShip)
+        s = try commerce.shipments.ship(id: s.id, trackingNumber: "1ZTRACK")
+        XCTAssertEqual(s.status, .shipped)
+        XCTAssertEqual(try commerce.shipments.get(trackingNumber: "1ZTRACK")?.id, s.id)
+        XCTAssertEqual(try commerce.shipments.markInTransit(id: s.id).status, .inTransit)
+        XCTAssertEqual(try commerce.shipments.markOutForDelivery(id: s.id).status, .outForDelivery)
+        XCTAssertEqual(try commerce.shipments.deliver(id: s.id).status, .delivered)
+        XCTAssertEqual(try commerce.shipments.list(orderId: order.id).count, 1)
     }
 
-    // MARK: - Shipments Tests
+    // MARK: - Concurrency
 
-    func testCreateShipment() throws {
-        let customer = try commerce.customers.create(
-            email: "shipments@example.com",
-            firstName: "Ship",
-            lastName: "Test"
-        )
-
-        let order = try commerce.orders.create(
-            customerId: customer.id,
-            items: [
-                OrderItem(sku: "SHIP-001", name: "Ship Item", quantity: 1, unitPrice: 15.00)
-            ],
-            currency: "USD"
-        )
-
-        let shipment = try commerce.shipments.create(
-            orderId: order.id,
-            recipientName: "Ship Test",
-            shippingAddress: "123 Main St, City, ST 12345",
-            carrier: "ups"
-        )
-
-        XCTAssertFalse(shipment.id.isEmpty)
-        XCTAssertEqual(shipment.orderId, order.id)
-
-        let fetched = try commerce.shipments.get(id: shipment.id)
-        XCTAssertNotNil(fetched)
-
-        let shipped = try commerce.shipments.ship(id: shipment.id, trackingNumber: "1Z999AA10123456784")
-        XCTAssertEqual(shipped.status, "shipped")
-
-        let delivered = try commerce.shipments.deliver(id: shipment.id)
-        XCTAssertEqual(delivered.status, "delivered")
-
-        let order2 = try commerce.orders.create(
-            customerId: customer.id,
-            items: [
-                OrderItem(sku: "SHIP-002", name: "Ship Item 2", quantity: 1, unitPrice: 9.00)
-            ],
-            currency: "USD"
-        )
-
-        let toCancel = try commerce.shipments.create(
-            orderId: order2.id,
-            recipientName: "Ship Test",
-            shippingAddress: "456 Market St, City, ST 12345",
-            carrier: "ups"
-        )
-
-        let cancelled = try commerce.shipments.cancel(id: toCancel.id)
-        XCTAssertEqual(cancelled.status, "cancelled")
-
-        let list = try commerce.shipments.list()
-        XCTAssertGreaterThanOrEqual(list.count, 1)
-    }
-
-    // MARK: - Cart Tests
-
-    func testCreateCart() throws {
-        let cart = try commerce.carts.create(currency: "USD")
-
-        XCTAssertFalse(cart.id.isEmpty)
-        XCTAssertEqual(cart.currency, "USD")
-    }
-
-    // MARK: - Analytics Tests
-
-    func testSalesSummary() throws {
-        let summary = try commerce.analytics.salesSummary()
-        XCTAssertNotNil(summary)
-    }
-
-    // MARK: - Currency Tests
-
-    func testSetExchangeRate() throws {
-        let rate = try commerce.currency.setRate(
-            from: .usd,
-            to: .eur,
-            rate: 0.85
-        )
-
-        XCTAssertEqual(rate.fromCurrency, "USD")
-        XCTAssertEqual(rate.toCurrency, "EUR")
-        XCTAssertEqual(rate.rate, 0.85)
-    }
-
-    func testConvertCurrency() throws {
-        _ = try commerce.currency.setRate(from: .usd, to: .eur, rate: 0.85)
-
-        let result = try commerce.currency.convert(
-            amount: 100.0,
-            from: .usd,
-            to: .eur
-        )
-
-        XCTAssertEqual(result.convertedAmount, 85.0, accuracy: 0.01)
-    }
-
-    // MARK: - Subscription Tests
-
-    func testCreateSubscriptionPlan() throws {
-        let plan = try commerce.subscriptions.createPlan(
-            code: "BASIC",
-            name: "Basic Plan",
-            interval: "month",
-            intervalCount: 1,
-            price: 9.99,
-            currency: "USD"
-        )
-
-        XCTAssertFalse(plan.id.isEmpty)
-        XCTAssertEqual(plan.code, "BASIC")
-    }
-
-    func testListSubscriptionPlans() throws {
-        _ = try commerce.subscriptions.createPlan(
-            code: "LIST-PLAN",
-            name: "List Plan",
-            interval: "month",
-            intervalCount: 1,
-            price: 19.99
-        )
-
-        let plans = try commerce.subscriptions.listPlans()
-        XCTAssertGreaterThanOrEqual(plans.count, 1)
-    }
-
-    // MARK: - Promotion Tests
-
-    func testCreatePromotion() throws {
-        let promo = try commerce.promotions.create(
-            code: "TEST20",
-            name: "Test Discount",
-            discountType: "percentage",
-            discountValue: 20.0
-        )
-
-        XCTAssertFalse(promo.id.isEmpty)
-        XCTAssertEqual(promo.code, "TEST20")
-    }
-
-    func testGetActivePromotions() throws {
-        let promo = try commerce.promotions.create(
-            code: "ACTIVE10",
-            name: "Active Promo",
-            discountType: "percentage",
-            discountValue: 10.0
-        )
-        _ = try commerce.promotions.activate(id: promo.id)
-
-        let active = try commerce.promotions.getActive()
-        XCTAssertGreaterThanOrEqual(active.count, 1)
-    }
-
-    // MARK: - Tax Tests
-
-    func testGetTaxSettings() throws {
-        let settings = try commerce.tax.getSettings()
-        XCTAssertNotNil(settings)
-    }
-
-    // MARK: - Warehouse Tests
-
-    func testCreateWarehouse() throws {
-        let warehouse = try commerce.warehouse.createWarehouse(
-            code: "WH-TEST",
-            name: "Test Warehouse",
-            warehouseType: "distribution"
-        )
-
-        XCTAssertEqual(warehouse.code, "WH-TEST")
-        XCTAssertEqual(warehouse.name, "Test Warehouse")
-    }
-
-    func testListWarehouses() throws {
-        _ = try commerce.warehouse.createWarehouse(
-            code: "WH-LIST",
-            name: "List Warehouse"
-        )
-
-        let warehouses = try commerce.warehouse.listWarehouses()
-        XCTAssertGreaterThanOrEqual(warehouses.count, 1)
-    }
-
-    // MARK: - General Ledger Tests
-
-    func testCreateGlAccount() throws {
-        let account = try commerce.generalLedger.createAccount(
-            accountNumber: "1000",
-            name: "Cash",
-            accountType: "asset"
-        )
-
-        XCTAssertFalse(account.id.isEmpty)
-        XCTAssertEqual(account.accountNumber, "1000")
-        XCTAssertEqual(account.name, "Cash")
-    }
-
-    func testListGlAccounts() throws {
-        _ = try commerce.generalLedger.createAccount(
-            accountNumber: "2000",
-            name: "Accounts Payable",
-            accountType: "liability"
-        )
-
-        let accounts = try commerce.generalLedger.listAccounts()
-        XCTAssertGreaterThanOrEqual(accounts.count, 1)
+    func testConcurrentCallsOnOneHandle() throws {
+        let commerce = self.commerce!
+        DispatchQueue.concurrentPerform(iterations: 16) { i in
+            _ = try? commerce.customers.create(email: "p\(i)@example.com", firstName: "P", lastName: "\(i)")
+        }
+        XCTAssertEqual(try commerce.customers.count(), 16)
     }
 }

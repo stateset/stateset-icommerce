@@ -1,151 +1,44 @@
-/**
- * StateSet iCommerce - C# / .NET Example
- *
- * Demonstrates the full commerce workflow:
- * - Customer creation
- * - Product catalog management
- * - Inventory tracking
- * - Order processing
- * - Analytics
- *
- * Run with: dotnet run
- */
+// StateSet Embedded Commerce - .NET example.
+//
+// Build the native engine first, then run:
+//   cargo build -p stateset-dotnet --release
+//   cd examples/dotnet && dotnet run
+//
+// Everything below runs inside the Rust engine and is written to
+// example-store.db; run it twice and the second run sees the first run's data.
 
-using StateSet;
+using StateSet.Embedded;
 
-Console.WriteLine("=== StateSet iCommerce - C# Example ===");
-Console.WriteLine();
+using var commerce = new StateSetCommerce("example-store.db");
 
-// Initialize commerce with in-memory database
-using var commerce = new StateSetCommerce(":memory:");
-Console.WriteLine("✓ Commerce initialized");
-Console.WriteLine();
+Console.WriteLine("=== StateSet Embedded Commerce (.NET) ===\n");
 
-// 1. Create a customer
-Console.WriteLine("1. Creating customer...");
-var customer = commerce.Customers.Create(
-    email: "alice@example.com",
-    firstName: "Alice",
-    lastName: "Smith",
-    phone: "+1-555-0123"
-);
-Console.WriteLine($"   Created customer: {customer.FirstName} {customer.LastName} ({customer.Email})");
+var email = $"alice+{Guid.NewGuid():N}@example.com";
+var customer = commerce.Customers.Create(email, "Alice", "Smith", phone: "+1-555-0123");
+Console.WriteLine($"Customer: {customer.FullName} <{customer.Email}>");
 
-// 2. Create products
-Console.WriteLine();
-Console.WriteLine("2. Creating products...");
-var widget = commerce.Products.Create(
-    name: "Premium Widget",
-    sku: "WIDGET-001",
-    price: 29.99m,
-    description: "A high-quality widget for all your needs"
-);
-Console.WriteLine($"   Created product: {widget.Name} ({widget.Id})");
+var widgetSku = $"WIDGET-{Guid.NewGuid():N}"[..15];
+var widget = commerce.Products.Create($"Premium Widget {widgetSku}", widgetSku, 29.99m, "A high-quality widget");
+commerce.Products.Activate(widget.Id);
+commerce.Inventory.CreateItem(widgetSku, "Premium Widget", initialQuantity: 100m);
+Console.WriteLine($"Product: {widget.Name} ({widgetSku}), stock {commerce.Inventory.GetStock(widgetSku)!.TotalOnHand}");
 
-var gadget = commerce.Products.Create(
-    name: "Super Gadget",
-    sku: "GADGET-001",
-    price: 49.99m,
-    description: "An amazing gadget"
-);
-Console.WriteLine($"   Created product: {gadget.Name} ({gadget.Id})");
+var order = commerce.Orders.Create(customer.Id, new[]
+{
+    new CreateOrderItem { ProductId = widget.Id, Sku = widgetSku, Name = "Premium Widget", Quantity = 3, UnitPrice = 29.99m },
+});
+Console.WriteLine($"Order {order.OrderNumber}: {order.TotalAmount} {order.Currency} ({order.Status})");
 
-// 3. Create inventory
-Console.WriteLine();
-Console.WriteLine("3. Setting up inventory...");
-commerce.Inventory.CreateItem(
-    sku: "WIDGET-001",
-    name: "Premium Widget",
-    initialQuantity: 100
-);
-Console.WriteLine("   Created inventory for WIDGET-001 (100 units)");
-
-commerce.Inventory.CreateItem(
-    sku: "GADGET-001",
-    name: "Super Gadget",
-    initialQuantity: 50
-);
-Console.WriteLine("   Created inventory for GADGET-001 (50 units)");
-
-// Check stock
-var widgetStock = commerce.Inventory.GetStock("WIDGET-001");
-Console.WriteLine($"   Stock check WIDGET-001: {widgetStock?.TotalAvailable} available");
-
-// 4. Create an order
-Console.WriteLine();
-Console.WriteLine("4. Creating order...");
-var order = commerce.Orders.Create(
-    customerId: customer.Id,
-    items: new[]
-    {
-        new OrderItem
-        {
-            ProductId = widget.Id,
-            Sku = "WIDGET-001",
-            Name = "Premium Widget",
-            Quantity = 2,
-            UnitPrice = "29.99"
-        },
-        new OrderItem
-        {
-            ProductId = gadget.Id,
-            Sku = "GADGET-001",
-            Name = "Super Gadget",
-            Quantity = 1,
-            UnitPrice = "49.99"
-        }
-    },
-    currency: "USD"
-);
-Console.WriteLine($"   Created order {order.OrderNumber} (total: ${order.TotalAmount})");
-
-// 5. Process the order
-Console.WriteLine();
-Console.WriteLine("5. Processing order...");
-
-// Update order status
 order = commerce.Orders.UpdateStatus(order.Id, OrderStatus.Confirmed);
-Console.WriteLine($"   Order status: {order.Status}");
+var payment = commerce.Payments.Create(order.Id, order.TotalAmount, customerId: customer.Id);
+payment = commerce.Payments.Complete(payment.Id);
+Console.WriteLine($"Payment {payment.PaymentNumber}: {payment.Amount} {payment.Status}");
 
-// Adjust inventory (fulfill)
-commerce.Inventory.Adjust("WIDGET-001", -2, "Order fulfillment");
-commerce.Inventory.Adjust("GADGET-001", -1, "Order fulfillment");
-Console.WriteLine("   Inventory adjusted");
+commerce.Inventory.Adjust(widgetSku, -3m, "order fulfillment");
+order = commerce.Orders.Ship(order.Id, "1Z999AA10123456784");
+Console.WriteLine($"Shipped with tracking {order.TrackingNumber}; stock now {commerce.Inventory.GetStock(widgetSku)!.TotalOnHand}");
 
-// Ship the order
-order = commerce.Orders.UpdateStatus(order.Id, OrderStatus.Shipped);
-Console.WriteLine($"   Order shipped (status: {order.Status})");
+var refund = commerce.Payments.Refund(payment.Id, 10.00m, "goodwill credit");
+Console.WriteLine($"Refund {refund.RefundNumber}: {refund.Amount}");
 
-// 6. Check final inventory
-Console.WriteLine();
-Console.WriteLine("6. Final inventory check...");
-var finalWidgetStock = commerce.Inventory.GetStock("WIDGET-001");
-Console.WriteLine($"   WIDGET-001: {finalWidgetStock?.TotalAvailable} available (was 100)");
-
-var finalGadgetStock = commerce.Inventory.GetStock("GADGET-001");
-Console.WriteLine($"   GADGET-001: {finalGadgetStock?.TotalAvailable} available (was 50)");
-
-// 7. Analytics
-Console.WriteLine();
-Console.WriteLine("7. Analytics...");
-var salesSummary = commerce.Analytics.GetSalesSummary(TimePeriod.Today);
-Console.WriteLine($"   Revenue: ${salesSummary.TotalRevenue}");
-Console.WriteLine($"   Orders: {salesSummary.OrderCount}");
-Console.WriteLine($"   AOV: ${salesSummary.AverageOrderValue}");
-
-// Get top products
-var topProducts = commerce.Analytics.GetTopProducts(TimePeriod.Month, 5);
-Console.WriteLine($"   Top products: {topProducts.Count}");
-
-// 8. Summary
-Console.WriteLine();
-Console.WriteLine("=== Summary ===");
-var customers = commerce.Customers.List();
-var products = commerce.Products.List();
-var orders = commerce.Orders.List();
-Console.WriteLine($"Customers: {customers.Count}");
-Console.WriteLine($"Products: {products.Count}");
-Console.WriteLine($"Orders: {orders.Count}");
-
-Console.WriteLine();
-Console.WriteLine("✓ Example completed successfully!");
+Console.WriteLine($"\nStore now holds {commerce.Customers.Count()} customers and {commerce.Orders.Count()} orders.");

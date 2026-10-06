@@ -1035,10 +1035,13 @@ jobs:
         run: cargo build -p stateset-dotnet --release
 
       - name: Test
+        # The suite drives the real Rust engine over P/Invoke (no managed
+        # fake) and includes a reopen-the-file persistence test.
         working-directory: bindings/dotnet/tests
         env:
           LD_LIBRARY_PATH: ${{ github.workspace }}/target/release
-        run: dotnet test
+          STATESET_NATIVE_LIB: ${{ github.workspace }}/target/release/libstateset_dotnet.so
+        run: dotnet test --logger "console;verbosity=normal"
 
   jvm-bindings:
     name: JVM Bindings
@@ -1106,7 +1109,37 @@ jobs:
         env:
           LIBRARY_PATH: ${{ github.workspace }}/target/release
           DYLD_LIBRARY_PATH: ${{ github.workspace }}/target/release
-        run: swift test
+        run: swift test -Xlinker -L${{ github.workspace }}/target/release
+
+  swift-bindings-linux:
+    name: Swift Bindings (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container: swift:6.0-jammy
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends curl ca-certificates pkg-config gcc libc6-dev
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build Swift native library
+        run: cargo build -p stateset-swift --release
+
+      - name: Test
+        # Drives the real engine through the C ABI, including a
+        # reopen-the-file persistence test.
+        # (${{ github.workspace }} is the host path in container jobs; use
+        # $GITHUB_WORKSPACE, which is the in-container one.)
+        working-directory: bindings/swift
+        run: |
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/target/release"
+          swift test -Xlinker -L"$GITHUB_WORKSPACE/target/release"
 
   wasm-bindings:
     name: WASM Bindings
@@ -1477,6 +1510,7 @@ jobs:
       - dotnet-bindings
       - jvm-bindings
       - swift-bindings
+      - swift-bindings-linux
       - wasm-bindings
       - coverage
       - php-bindings

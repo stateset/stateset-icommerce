@@ -1,216 +1,113 @@
 # StateSet .NET Binding
 
-**The SQLite of Commerce** - Embedded commerce engine for .NET applications.
+The StateSet commerce engine (the Rust `stateset-embedded` crate) for .NET,
+running in-process over P/Invoke and persisting to a local SQLite file.
 
-[![NuGet](https://img.shields.io/nuget/v/StateSet.Embedded.svg)](https://www.nuget.org/packages/StateSet.Embedded)
-[![.NET](https://img.shields.io/badge/.NET-6.0%2B-purple.svg)](https://dotnet.microsoft.com/)
+> **Status.** Not yet published to NuGet — build it from this repository
+> (below). Before October 2026 this binding was an in-memory fake that never
+> called the engine and silently discarded data; it is now a real binding with
+> a smaller, honest surface (see [Coverage](#coverage)).
 
-## Installation
+## How it works
 
-```bash
-dotnet add package StateSet.Embedded
+```
+C# API (StateSetCommerce, CustomersApi, ...)
+   │  LibraryImport, JSON with decimals as exact strings
+   ▼
+libstateset_dotnet  ──  re-exports crates/stateset-ffi (json_api.rs, crypto_api.rs)
+   ▼
+stateset-embedded (Rust)  ──  SQLite file (or :memory:)
 ```
 
-## Quick Start
+Every method is one call to `stateset_json_call(handle, "orders.create",
+"{...}")`, which dispatches to the engine in safe Rust and returns a JSON
+envelope. The native side catches panics, reports typed error codes, and owns
+every string it returns until `stateset_string_free`. Nothing is cached in
+managed memory: close the instance, reopen the file, and the data is there.
+
+## Build and test
+
+Requires the .NET 8 SDK and a Rust toolchain.
+
+```bash
+cargo build -p stateset-dotnet --release          # -> target/release/libstateset_dotnet.{so,dylib} / stateset_dotnet.dll
+cd bindings/dotnet/tests
+dotnet test                                       # the csproj copies the native lib next to the tests
+```
+
+The library is found next to the application, under
+`runtimes/<rid>/native` in a package, on the OS loader path, or at the exact
+path in the `STATESET_NATIVE_LIB` environment variable. Point the build at a
+different native directory with `-p:StateSetNativeDir=/path/to/dir/`.
+
+## Quick start
 
 ```csharp
 using StateSet.Embedded;
 
-// Initialize with SQLite database
-using var commerce = new StateSetCommerce("commerce.db");
+using var commerce = new StateSetCommerce("commerce.db");   // or ":memory:"
 
-// Or use in-memory database for testing
-using var commerce = new StateSetCommerce(":memory:");
+var customer = commerce.Customers.Create("alice@example.com", "Alice", "Smith");
 
-// Create a customer
-var customer = commerce.Customers.Create(
-    email: "alice@example.com",
-    firstName: "Alice",
-    lastName: "Smith",
-    phone: "+1-555-0123"
-);
+var product = commerce.Products.Create("Premium Widget", sku: "WIDGET-001", price: 29.99m);
+commerce.Inventory.CreateItem("WIDGET-001", "Premium Widget", initialQuantity: 100m);
 
-// Create a product
-var product = commerce.Products.Create(
-    name: "Premium Widget",
-    sku: "WIDGET-001",
-    price: 29.99m,
-    description: "High-quality widget"
-);
-
-// Create inventory
-var item = commerce.Inventory.CreateItem(
-    sku: "WIDGET-001",
-    name: "Premium Widget",
-    initialQuantity: 100
-);
-
-// Create an order
-var order = commerce.Orders.Create(
-    customerId: customer.Id,
-    items: new[] {
-        new OrderItem { Sku = "WIDGET-001", Name = "Widget", Quantity = 2, UnitPrice = 29.99m }
-    },
-    currency: "USD"
-);
-
-// Ship the order
-var shipped = commerce.Orders.Ship(order.Id);
-```
-
-## API Reference
-
-| API | Description |
-|-----|-------------|
-| `Customers` | Customer management |
-| `Products` | Product catalog |
-| `Orders` | Order lifecycle |
-| `Inventory` | Stock management |
-| `Carts` | Shopping carts |
-| `Returns` | Return processing |
-| `Payments` | Payment operations |
-| `Shipments` | Shipping management |
-| `Warranties` | Warranty tracking |
-| `Suppliers` | Supplier management |
-| `PurchaseOrders` | Purchase orders |
-| `Invoices` | B2B invoicing |
-| `Bom` | Bills of Materials |
-| `WorkOrders` | Manufacturing |
-| `Currency` | Multi-currency |
-| `Subscriptions` | Recurring billing |
-| `Promotions` | Discounts & coupons |
-| `Tax` | Tax calculations |
-| `Quality` | Quality control |
-| `Lots` | Lot tracking |
-| `Serials` | Serial numbers |
-| `Warehouse` | Warehouse ops |
-| `Receiving` | Receiving |
-| `Fulfillment` | Picking & packing |
-| `AccountsPayable` | A/P management |
-| `AccountsReceivable` | A/R management |
-| `CostAccounting` | Cost tracking |
-| `Credit` | Credit management |
-| `Backorders` | Backorder tracking |
-| `GeneralLedger` | GL accounting |
-| `Analytics` | Reporting & forecasts |
-
-## Common Operations
-
-### Subscriptions
-
-```csharp
-// Create a subscription plan
-var plan = commerce.Subscriptions.CreatePlan(
-    code: "PREMIUM",
-    name: "Premium Plan",
-    interval: "month",
-    intervalCount: 1,
-    price: 19.99m,
-    currency: "USD"
-);
-
-// Subscribe a customer
-var subscription = commerce.Subscriptions.Subscribe(
-    customerId: customer.Id,
-    planId: plan.Id
-);
-
-// Pause/Resume/Cancel
-var paused = commerce.Subscriptions.Pause(subscription.Id);
-var resumed = commerce.Subscriptions.Resume(subscription.Id);
-var cancelled = commerce.Subscriptions.Cancel(subscription.Id);
-```
-
-### Promotions
-
-```csharp
-// Create a promotion
-var promo = commerce.Promotions.Create(
-    code: "SUMMER20",
-    name: "Summer Sale",
-    discountType: "percentage",
-    discountValue: 20.0m
-);
-
-// Create a coupon
-var coupon = commerce.Promotions.CreateCoupon(
-    promotionId: promo.Id,
-    code: "SAVE20NOW",
-    maxUses: 100
-);
-
-// Validate coupon
-var valid = commerce.Promotions.ValidateCoupon("SAVE20NOW");
-```
-
-### Tax
-
-```csharp
-// Get effective tax rate
-var rate = commerce.Tax.GetEffectiveRate(
-    country: "US",
-    state: "CA",
-    category: "general"
-);
-
-// Create tax exemption
-var exemption = commerce.Tax.CreateExemption(
-    customerId: customer.Id,
-    exemptionType: "resale",
-    effectiveFrom: "2024-01-01"
-);
-```
-
-### Warehouse & Fulfillment
-
-```csharp
-// Create warehouse
-var warehouse = commerce.Warehouse.CreateWarehouse(
-    code: "WH-001",
-    name: "Main Warehouse",
-    warehouseType: "distribution"
-);
-
-// Create fulfillment wave
-var wave = commerce.Fulfillment.CreateWave(
-    warehouseId: warehouse.Id,
-    orderIds: new[] { order.Id },
-    priority: 1
-);
-
-// Release wave for picking
-var released = commerce.Fulfillment.ReleaseWave(wave.Id);
-```
-
-## Error Handling
-
-```csharp
-try
+var order = commerce.Orders.Create(customer.Id, new[]
 {
-    var customer = commerce.Customers.Create(
-        email: "test@example.com",
-        firstName: "Test",
-        lastName: "User"
-    );
-}
-catch (StateSetException ex)
-{
-    Console.WriteLine($"Error: {ex.Message}");
-}
+    new CreateOrderItem { ProductId = product.Id, Sku = "WIDGET-001", Name = "Widget", Quantity = 2, UnitPrice = 29.99m },
+});
+// order.TotalAmount == 59.98m, exactly
+
+order = commerce.Orders.UpdateStatus(order.Id, OrderStatus.Confirmed);
+var payment = commerce.Payments.Create(order.Id, order.TotalAmount);
+commerce.Payments.Complete(payment.Id);
+commerce.Payments.Refund(payment.Id, 10.00m, "goodwill");
 ```
 
-## Platform Support
+Checkout from a cart:
 
-| Platform | Architectures | Status |
-|----------|---------------|--------|
-| Windows | x64, arm64 | Supported |
-| Linux | x64, arm64 | Supported |
-| macOS | x64, arm64 | Supported |
+```csharp
+var cart = commerce.Carts.Create(customerId: customer.Id, customerEmail: customer.Email);
+commerce.Carts.AddItem(cart.Id, "WIDGET-001", "Widget", quantity: 1, unitPrice: 29.99m);
+commerce.Carts.SetShipping(cart.Id, new CartAddress
+{
+    FirstName = "Alice", LastName = "Smith", Line1 = "1 Main St",
+    City = "Austin", State = "TX", PostalCode = "78701", Country = "US",
+}, method: "standard", amount: 5.00m);
+commerce.Carts.SetPayment(cart.Id, "credit_card", "tok_test");
+CheckoutResult result = commerce.Carts.Complete(cart.Id);
+```
 
-## Thread Safety
+## Coverage
 
-`StateSetCommerce` implements `IDisposable`. SQLite operations are serialized internally.
+| API | Methods |
+|---|---|
+| `Customers` | `Create`, `Get`, `GetByEmail`, `Update`, `List`, `Count`, `Delete` |
+| `Products` | `Create` (single price or variants), `Get`, `GetBySlug`, `Update`, `List`, `Count`, `Search`, `Activate`, `Archive`, `Delete`, `AddVariant`, `GetVariants`, `GetVariantBySku` |
+| `Inventory` | `CreateItem`, `GetItem`, `List`, `GetStock`, `Adjust`, `HasStock`, `Reserve`, `ReleaseReservation`, `ConfirmReservation`, `GetReservation` |
+| `Carts` | `Create`, `Get`, `List`, `AddItem`, `UpdateItemQuantity`, `RemoveItem`, `GetItems`, `ClearItems`, `SetShippingAddress`, `SetBillingAddress`, `SetShipping`, `SetPayment`, `ApplyDiscount`, `RemoveDiscount`, `Recalculate`, `MarkReadyForPayment`, `BeginCheckout`, `Complete`, `Cancel`, `Abandon` |
+| `Orders` | `Create`, `Get`, `GetByNumber`, `List`, `ListForCustomer`, `Count`, `UpdateStatus`, `Ship`, `Deliver`, `Cancel` |
+| `Payments` | `Create`, `Get`, `List`, `ForOrder`, `MarkProcessing`, `Complete`, `Fail`, `Cancel`, `Refund`, `GetRefund`, `GetRefunds`, `CompleteRefund`, `FailRefund` |
+| `Returns` | `Create`, `Get`, `List`, `ListForOrder`, `Approve`, `Reject`, `MarkReceived`, `SetItemDisposition`, `Complete`, `Cancel`, `AddTracking` |
+| `Shipments` | `Create`, `Get`, `GetByTracking`, `List`, `ForOrder`, `MarkProcessing`, `MarkReady`, `Ship`, `MarkInTransit`, `MarkOutForDelivery`, `Deliver`, `Cancel` |
+| `Crypto` | `JcsCanonicalize`, `PayloadPlainHash`, `MerkleRoot` (checked against `bindings/test-vectors/v1.json`) |
 
-## License
+Domains the old fake pretended to support (analytics, warranties, suppliers,
+purchase orders, invoices, BOM, work orders, currency, subscriptions,
+promotions, tax, quality, lots, serials, warehouse, receiving, fulfillment,
+AP/AR, cost accounting, credit, backorders, general ledger) were removed
+rather than kept as fakes. They exist in the engine and can be added by
+routing them in `crates/stateset-ffi/src/json_api.rs` plus a typed wrapper
+here.
 
-MIT OR Apache-2.0
+## Money and errors
+
+- Every money and quantity field is `decimal`, and crosses the boundary as an
+  exact decimal string (`"29.99"`). The native side refuses JSON floats.
+- Lookups (`Get*`) return `null` when nothing matches. Everything else throws:
+  `StateSetNotFoundException` (missing entity), `StateSetValidationException`
+  (bad argument, refused state transition, insufficient stock, ...), or
+  `StateSetException` with a `Code` (`StateSetErrorCode`) and `Kind`.
+- `StateSetCommerce` is thread-safe; `Dispose` waits for in-flight calls.
+
+Targets .NET 8 (`net8.0`); .NET 6 and 7 are out of support.

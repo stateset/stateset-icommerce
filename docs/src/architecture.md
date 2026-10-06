@@ -80,9 +80,10 @@ The binding story is more direct than a generic SDK wrapper model:
 - `bindings/node` links directly to `stateset-embedded`, `stateset-core`, `stateset-db`, and `stateset-crypto`.
 - The admin app and CLI both consume `@stateset/embedded` directly.
 - `bindings/python` links directly to `stateset-embedded`, `stateset-core`, `stateset-primitives`, `stateset-db`, and `stateset-sdk`.
-- Go, Swift, Java, Kotlin, and .NET also link directly to `stateset-embedded` and `stateset-core`.
+- Go, Java, and Kotlin also link directly to `stateset-embedded` and `stateset-core`.
+- Swift and .NET go through `stateset-ffi`'s JSON call surface (`stateset_json_call`), which dispatches to `stateset-embedded`.
 - `stateset-sdk` is the Rust-facing facade crate for feature-gated re-exports.
-- `stateset-ffi` is an optional C-ABI oriented interop surface. It is useful for explicit C-style integration, but it is not the mandatory substrate for every binding in this repository.
+- `stateset-ffi` is a C-ABI interop surface: typed `#[repr(C)]` functions for a few entities, plus the JSON call surface that backs the Swift and .NET bindings. It is not the substrate for every binding in this repository.
 - Ruby and PHP remain in the repo, but they are intentionally excluded from default workspace membership because they depend on host runtimes or headers.
 
 ## CLI and Admin Surfaces

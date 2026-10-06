@@ -64,7 +64,7 @@ bindings/go/example/example
 bindings/go/example/example.exe
 examples/dotnet/bin/
 examples/dotnet/obj/
-examples/swift/.build/
+examples/swift-basic/.build/
 examples/kotlin/.gradle/
 
 # Docs build outputs
@@ -137,3 +137,9 @@ lcov.info
 # local tooling
 .worktrees/
 .superpowers/
+
+# .NET / Swift binding build outputs
+bindings/dotnet/**/bin/
+bindings/dotnet/**/obj/
+bindings/swift/.build/
+bindings/swift/Package.resolved

@@ -82,3 +82,9 @@ diverge on money again.
 Node:   ~50 f64 money fields   (grep 'f64' bindings/node/src/lib.rs, money-named)
 Python: ~51 to_f64_result call sites on money fields
 ```
+
+The .NET and Swift bindings are not affected: since they became real
+(they were in-memory fakes before October 2026) every money and quantity
+field is `decimal` / `Decimal` carried across the boundary as an exact string,
+and the native JSON surface (`crates/stateset-ffi/src/json_api.rs`) refuses
+JSON floats outright.

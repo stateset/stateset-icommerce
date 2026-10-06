@@ -182,9 +182,7 @@
         "stateset-migrations"
       ],
       "stateset-dotnet": [
-        "stateset-core",
-        "stateset-crypto",
-        "stateset-embedded"
+        "stateset-ffi"
       ],
       "stateset-embedded": [
         "stateset-core",
@@ -213,6 +211,7 @@
       ],
       "stateset-ffi": [
         "stateset-core",
+        "stateset-crypto",
         "stateset-embedded",
         "stateset-primitives",
         "stateset-sdk"
@@ -270,9 +269,7 @@
         "stateset-sync"
       ],
       "stateset-swift": [
-        "stateset-core",
-        "stateset-crypto",
-        "stateset-embedded"
+        "stateset-ffi"
       ],
       "stateset-sync": [
         "stateset-crypto"
@@ -306,27 +303,28 @@
         "stateset-saga"
       ],
       [
-        "stateset-dotnet",
         "stateset-embedded-node",
         "stateset-go",
         "stateset-http",
         "stateset-java",
         "stateset-kotlin",
-        "stateset-sdk",
-        "stateset-swift"
+        "stateset-sdk"
       ],
       [
         "stateset-embedded-python",
         "stateset-ffi"
+      ],
+      [
+        "stateset-dotnet",
+        "stateset-swift"
       ]
     ],
     "topFanIn": [
       {
         "name": "stateset-core",
-        "dependentCount": 13,
+        "dependentCount": 11,
         "dependents": [
           "stateset-db",
-          "stateset-dotnet",
           "stateset-embedded",
           "stateset-embedded-node",
           "stateset-embedded-python",
@@ -336,33 +334,30 @@
           "stateset-http",
           "stateset-java",
           "stateset-kotlin",
-          "stateset-sdk",
-          "stateset-swift"
+          "stateset-sdk"
         ]
       },
       {
         "name": "stateset-crypto",
-        "dependentCount": 12,
+        "dependentCount": 11,
         "dependents": [
           "stateset-core",
-          "stateset-dotnet",
           "stateset-embedded-node",
           "stateset-embedded-python",
           "stateset-embedded-wasm",
+          "stateset-ffi",
           "stateset-go",
           "stateset-icp-iut",
           "stateset-java",
           "stateset-kotlin",
           "stateset-sdk",
-          "stateset-swift",
           "stateset-sync"
         ]
       },
       {
         "name": "stateset-embedded",
-        "dependentCount": 10,
+        "dependentCount": 8,
         "dependents": [
-          "stateset-dotnet",
           "stateset-embedded-node",
           "stateset-embedded-python",
           "stateset-ffi",
@@ -370,8 +365,7 @@
           "stateset-http",
           "stateset-java",
           "stateset-kotlin",
-          "stateset-sdk",
-          "stateset-swift"
+          "stateset-sdk"
         ]
       },
       {
@@ -405,6 +399,14 @@
           "stateset-embedded",
           "stateset-http",
           "stateset-sdk"
+        ]
+      },
+      {
+        "name": "stateset-ffi",
+        "dependentCount": 2,
+        "dependents": [
+          "stateset-dotnet",
+          "stateset-swift"
         ]
       },
       {
@@ -480,9 +482,7 @@
       "cargoPackage": "stateset-dotnet",
       "publishedPackage": "",
       "internalDeps": [
-        "stateset-core",
-        "stateset-crypto",
-        "stateset-embedded"
+        "stateset-ffi"
       ]
     },
     {
@@ -545,9 +545,7 @@
       "cargoPackage": "stateset-swift",
       "publishedPackage": "",
       "internalDeps": [
-        "stateset-core",
-        "stateset-crypto",
-        "stateset-embedded"
+        "stateset-ffi"
       ]
     },
     {
