@@ -442,7 +442,7 @@ Tier: **core**
 | `create_payment` | core | write | Create a payment for an order. |
 | `complete_payment` | core | write | Mark a payment as completed. |
 | `capture_payment` | core | write | Capture a payment for an exact amount, which may be less than the authorized amount (a partial capture). The captured amount is recorded exactly and bounds every later refund; capturing more than authorized, zero, or a different amount than an earlier capture is refused. |
-| `record_lost_chargeback` | core | write | Record a lost chargeback on a disputed payment. amount is the disputed amount the card network reversed; omit it for the whole remaining captured balance. A partial loss writes a chargeback_lost refund row and leaves the payment partially_refunded. |
+| `record_lost_chargeback` | core | write | Record a lost chargeback on a disputed payment. amount is the disputed amount the card network reversed; omit it for the whole remaining captured balance. A partial loss writes a chargeback_lost refund row and leaves the payment partially_refunded. A full loss also fails any refund still pending or processing (reason superseded_by_chargeback), since the network already returned the money. |
 | `mark_failed_payment` | core | write | Mark a payment as failed with a required reason and optional failure code. |
 | `cancel_payment` | core | delete | Cancel a payment before settlement is finalized. |
 | `create_refund` | core | write | Create a refund for a payment. |
