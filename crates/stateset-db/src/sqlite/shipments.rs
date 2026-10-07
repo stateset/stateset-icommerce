@@ -319,7 +319,7 @@ fn manifest_units_in_tx(
 /// the line still has unshipped, so a unit already shipped through the order
 /// itself is never counted twice. A shipment without items carries the
 /// order's remainder: every unshipped unit not promised to another open
-/// shipment. The order then goes through [`SqliteOrderRepository::apply_update_in_tx`]
+/// shipment. The order then goes through `SqliteOrderRepository::apply_update_in_tx`
 /// exactly like an explicit order ship (status `partially_shipped`/`shipped`,
 /// fulfilment status, reservations fulfilled), which may walk a
 /// pending/confirmed order through processing. Its own carry-along of open
