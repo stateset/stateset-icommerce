@@ -266,7 +266,7 @@ fn update_batch_atomic_cancel_releases_reservations_like_update() {
 }
 
 #[test]
-fn update_batch_atomic_ship_confirms_reservations_and_ships_lines() {
+fn update_batch_atomic_ship_fulfils_reservations_and_ships_lines() {
     let (db, customer_id) = setup();
     let order = order_with_order_level_money(&db, customer_id);
     advance(&db, order.id, &[OrderStatus::Confirmed, OrderStatus::Processing]);
@@ -284,14 +284,14 @@ fn update_batch_atomic_ship_confirms_reservations_and_ships_lines() {
     let reservations =
         db.inventory().list_reservations_by_reference("order", &order.id.to_string()).unwrap();
     assert!(
-        reservations.iter().all(|r| r.status == ReservationStatus::Confirmed),
-        "reservations confirmed: {reservations:?}"
+        reservations.iter().all(|r| r.status == ReservationStatus::Fulfilled),
+        "reservations fulfilled: {reservations:?}"
     );
-    // Confirming keeps the allocation against the SKU (on-hand is only
-    // decremented by the shipment's inventory transaction); nothing was
-    // released back to available.
+    // The shipped units left stock: on-hand and allocated both dropped by
+    // the shipped quantity, so available is unchanged.
     let stock_a = db.inventory().get_stock(SKU_A).unwrap().unwrap();
-    assert_eq!(stock_a.total_allocated, dec!(2), "shipped units stay allocated");
+    assert_eq!(stock_a.total_on_hand, dec!(8), "shipped units left on-hand");
+    assert_eq!(stock_a.total_allocated, dec!(0), "no shipped unit stays allocated");
     assert_eq!(stock_a.total_available, dec!(8), "nothing released back to available");
 }
 

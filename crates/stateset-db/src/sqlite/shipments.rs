@@ -100,6 +100,369 @@ pub(crate) fn ship_open_shipments_for_order_in_tx(
     Ok(event_ids)
 }
 
+/// Shipment statuses at or past the carrier hand-off
+/// ([`ShipmentStatus::has_left`]), as a SQL `IN (...)` body including the
+/// legacy spellings `ShipmentStatus` still parses. Mirrored in Postgres.
+const LEFT_STATUSES_SQL: &str = "('shipped', 'in_transit', 'intransit', 'out_for_delivery', \
+     'outfordelivery', 'delivered', 'failed', 'returned')";
+
+/// Shipments still waiting to leave, holds included, as a SQL `IN (...)` body.
+const OPEN_STATUSES_SQL: &str =
+    "('pending', 'processing', 'ready_to_ship', 'readytoship', 'on_hold', 'onhold')";
+
+/// The first shipment of an order that is on hold, by number.
+pub(crate) fn held_shipment_for_order_in_tx(
+    tx: &rusqlite::Connection,
+    order_id: &str,
+) -> rusqlite::Result<Option<String>> {
+    use rusqlite::OptionalExtension;
+    tx.query_row(
+        "SELECT shipment_number FROM shipments
+         WHERE order_id = ? AND status IN ('on_hold', 'onhold') ORDER BY created_at, id LIMIT 1",
+        [order_id],
+        |row| row.get(0),
+    )
+    .optional()
+}
+
+/// The first shipment of an order that has left the building
+/// ([`ShipmentStatus::has_left`]), as `"<number> (<status>)"`.
+pub(crate) fn left_shipment_for_order_in_tx(
+    tx: &rusqlite::Connection,
+    order_id: &str,
+) -> rusqlite::Result<Option<String>> {
+    use rusqlite::OptionalExtension;
+    tx.query_row(
+        &format!(
+            "SELECT shipment_number, status FROM shipments
+             WHERE order_id = ? AND status IN {LEFT_STATUSES_SQL} ORDER BY created_at, id LIMIT 1"
+        ),
+        [order_id],
+        |row| Ok(format!("{} ({})", row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+    )
+    .optional()
+}
+
+/// Refuse to finish shipping an order while one of its shipments is on hold.
+///
+/// A hold is an explicit decision (an address check, a fraud review) that an
+/// order ship must not override, and a fully shipped order may not keep a
+/// package waiting to leave. So the ship that would complete the order is
+/// refused until the hold is released or the shipment cancelled.
+pub(crate) fn ensure_no_held_shipments_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    order_id: &str,
+) -> rusqlite::Result<()> {
+    match held_shipment_for_order_in_tx(tx, order_id)? {
+        Some(number) => Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            CommerceError::Conflict(format!(
+                "order {order_id} cannot finish shipping while shipment {number} is on hold; \
+                 release or cancel the hold first"
+            )),
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// Refuse to cancel an order once any of its shipments has left the building
+/// (shipped, in transit, delivered, ...): those units need a return.
+pub(crate) fn ensure_no_shipment_left_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    order_id: &str,
+) -> rusqlite::Result<()> {
+    match left_shipment_for_order_in_tx(tx, order_id)? {
+        Some(shipment) => Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            CommerceError::Conflict(format!(
+                "order {order_id} cannot be cancelled: shipment {shipment} has already left; \
+                 create a return for the shipped units instead"
+            )),
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// Cancel every shipment of a cancelled order that never left (pending,
+/// processing, ready to ship or on hold), inside the caller's transaction.
+/// Each records a `shipment.status_changed` fact (`reason: order_cancelled`);
+/// returns the facts' event ids.
+pub(crate) fn cancel_open_shipments_for_order_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    order_id: &str,
+    now: chrono::DateTime<Utc>,
+) -> rusqlite::Result<Vec<Uuid>> {
+    let open: Vec<(String, String, i64)> = {
+        let mut stmt = tx.prepare(&format!(
+            "SELECT id, status, version FROM shipments
+             WHERE order_id = ? AND status IN {OPEN_STATUSES_SQL} ORDER BY created_at, id"
+        ))?;
+        stmt.query_map([order_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut event_ids = Vec::with_capacity(open.len());
+    for (shipment_id, previous_status, version) in open {
+        let next_version = version.checked_add(1).ok_or(rusqlite::Error::InvalidQuery)?;
+        let rows = tx.execute(
+            &format!(
+                "UPDATE shipments SET status = 'cancelled', version = version + 1, updated_at = ?
+                 WHERE id = ? AND status IN {OPEN_STATUSES_SQL}"
+            ),
+            rusqlite::params![now.to_rfc3339(), shipment_id],
+        )?;
+        if rows == 0 {
+            continue;
+        }
+        let event_id = super::kernel_outbox::record_outbox_fact(
+            tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "shipment.status_changed",
+                aggregate_type: "shipment",
+                aggregate_id: &shipment_id,
+                payload: serde_json::json!({
+                    "shipment_id": shipment_id,
+                    "order_id": order_id,
+                    "previous_status": previous_status,
+                    "status": ShipmentStatus::Cancelled.to_string(),
+                    "reason": "order_cancelled",
+                    "version": next_version,
+                }),
+            },
+        )?;
+        event_ids.push(event_id);
+    }
+    Ok(event_ids)
+}
+
+/// Refuse a new shipment (or a new shipment line) for an order that is
+/// closed to fulfilment: fully shipped, delivered, cancelled or refunded.
+/// A shipment for an order this store does not hold is left alone.
+fn ensure_order_accepts_shipments(conn: &rusqlite::Connection, order_id: OrderId) -> Result<()> {
+    use rusqlite::OptionalExtension;
+    let status: Option<String> = conn
+        .query_row("SELECT status FROM orders WHERE id = ?", [order_id.to_string()], |row| {
+            row.get(0)
+        })
+        .optional()
+        .map_err(map_db_error)?;
+    match status {
+        Some(status) => crate::shipment_allocations::validate_order_status(&status),
+        None => Ok(()),
+    }
+}
+
+/// The order lines (`id`, `sku`, `quantity`, `shipped_quantity`) of an order.
+fn order_lines_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    order_id: &str,
+) -> Result<Vec<(Uuid, String, i32, i32)>> {
+    let mut stmt = tx
+        .prepare(
+            "SELECT id, sku, quantity, shipped_quantity FROM order_items WHERE order_id = ? ORDER BY rowid",
+        )
+        .map_err(map_db_error)?;
+    stmt.query_map([order_id], |row| {
+        Ok((
+            parse_uuid_row(&row.get::<_, String>(0)?, "order_item", "id")?,
+            row.get(1)?,
+            row.get(2)?,
+            row.get(3)?,
+        ))
+    })
+    .map_err(map_db_error)?
+    .collect::<rusqlite::Result<Vec<_>>>()
+    .map_err(map_db_error)
+}
+
+/// Σ item quantity per order line over the order's open (waiting to leave)
+/// or `delivered` shipments, optionally excluding one shipment.
+fn manifest_units_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    order_id: &str,
+    delivered: bool,
+    excluding: Option<&str>,
+) -> Result<std::collections::BTreeMap<Uuid, i64>> {
+    let mut stmt = tx
+        .prepare(&if delivered {
+            "SELECT si.order_item_id, si.quantity FROM shipment_items si
+             JOIN shipments s ON s.id = si.shipment_id
+             WHERE s.order_id = ? AND s.id != ? AND s.status = 'delivered'
+               AND si.order_item_id IS NOT NULL"
+                .to_string()
+        } else {
+            format!(
+                "SELECT si.order_item_id, si.quantity FROM shipment_items si
+                 JOIN shipments s ON s.id = si.shipment_id
+                 WHERE s.order_id = ? AND s.id != ? AND s.status IN {OPEN_STATUSES_SQL}
+                   AND si.order_item_id IS NOT NULL"
+            )
+        })
+        .map_err(map_db_error)?;
+    let rows = stmt
+        .query_map([order_id, excluding.unwrap_or("")], |row| {
+            Ok((
+                parse_uuid_row(&row.get::<_, String>(0)?, "shipment_item", "order_item_id")?,
+                row.get::<_, i64>(1)?,
+            ))
+        })
+        .map_err(map_db_error)?;
+    let mut units = std::collections::BTreeMap::new();
+    for row in rows {
+        let (line, quantity) = row.map_err(map_db_error)?;
+        *units.entry(line).or_default() += quantity;
+    }
+    Ok(units)
+}
+
+/// A shipment just left the building: ship its units on the order, in the
+/// caller's transaction (shipment → order sync).
+///
+/// Each manifest line ships its quantity on its order line, capped at what
+/// the line still has unshipped, so a unit already shipped through the order
+/// itself is never counted twice. A shipment without items carries the
+/// order's remainder: every unshipped unit not promised to another open
+/// shipment. The order then goes through `SqliteOrderRepository::apply_update_in_tx`
+/// exactly like an explicit order ship (status `partially_shipped`/`shipped`,
+/// fulfilment status, reservations fulfilled), which may walk a
+/// pending/confirmed order through processing. Its own carry-along of open
+/// shipments is plain SQL, so the two directions cannot recurse.
+///
+/// A shipment whose order is cancelled or refunded cannot leave; one whose
+/// order is not in this store, or that moves no unit, changes nothing.
+fn ship_order_for_shipment_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    shipment: &Shipment,
+) -> Result<()> {
+    use rusqlite::OptionalExtension;
+    use stateset_core::{OrderStatus, ShipmentLineInput, UpdateOrder};
+    let order_id = shipment.order_id.to_string();
+    let Some(status) = tx
+        .query_row("SELECT status FROM orders WHERE id = ?", [&order_id], |row| {
+            row.get::<_, String>(0)
+        })
+        .optional()
+        .map_err(map_db_error)?
+    else {
+        return Ok(());
+    };
+    let status: OrderStatus = parse_enum(&status, "order", "status")?;
+    if matches!(status, OrderStatus::Cancelled | OrderStatus::Refunded) {
+        return Err(CommerceError::ValidationError(format!(
+            "shipment {} cannot ship: its order is {status}",
+            shipment.shipment_number
+        )));
+    }
+    let lines = order_lines_in_tx(tx, &order_id)?;
+    let mut wanted: std::collections::BTreeMap<Uuid, i64> = std::collections::BTreeMap::new();
+    if shipment.items.is_empty() {
+        let promised = manifest_units_in_tx(tx, &order_id, false, Some(&shipment.id.to_string()))?;
+        for (line, _, quantity, shipped) in &lines {
+            let open = i64::from(*quantity) - i64::from(*shipped);
+            wanted.insert(*line, open - promised.get(line).copied().unwrap_or(0));
+        }
+    } else {
+        for item in &shipment.items {
+            let line = item.order_item_id.or_else(|| {
+                let mut by_sku = lines.iter().filter(|(_, sku, ..)| *sku == item.sku);
+                match (by_sku.next(), by_sku.next()) {
+                    (Some((id, ..)), None) => Some(*id),
+                    _ => None,
+                }
+            });
+            if let Some(line) = line {
+                *wanted.entry(line).or_default() += i64::from(item.quantity);
+            }
+        }
+    }
+    let ship_lines: Vec<ShipmentLineInput> = lines
+        .iter()
+        .filter_map(|(line, _, quantity, shipped)| {
+            let open = i64::from(*quantity) - i64::from(*shipped);
+            let units = wanted.get(line).copied().unwrap_or(0).min(open);
+            (units > 0).then(|| ShipmentLineInput {
+                order_item_id: (*line).into(),
+                quantity: i32::try_from(units).unwrap_or(i32::MAX),
+            })
+        })
+        .collect();
+    if ship_lines.is_empty() {
+        return Ok(());
+    }
+    let outcome = super::orders::SqliteOrderRepository::apply_update_in_tx(
+        tx,
+        shipment.order_id,
+        &UpdateOrder { status: Some(OrderStatus::Shipped), ..Default::default() },
+        &super::orders::ShipMode::Lines(&ship_lines),
+        true,
+    )
+    .map_err(map_db_error)?;
+    match outcome.post_commit_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+/// A shipment was just delivered: deliver its order when the evidence is
+/// complete, in the caller's transaction (shipment → order sync).
+///
+/// There is no per-line delivered quantity, so this is derived
+/// conservatively: the order must be fully `shipped`, every one of its
+/// shipments that was not cancelled must be `delivered`, and those delivered
+/// manifests must cover every ordered unit. Anything less (units shipped
+/// without a shipment record, an itemless package, one still in transit)
+/// leaves the order `shipped` for an explicit `OrderRepository::deliver`.
+fn deliver_order_for_shipment_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    shipment: &Shipment,
+) -> Result<()> {
+    use rusqlite::OptionalExtension;
+    use stateset_core::{OrderStatus, UpdateOrder};
+    let order_id = shipment.order_id.to_string();
+    let Some(status) = tx
+        .query_row("SELECT status FROM orders WHERE id = ?", [&order_id], |row| {
+            row.get::<_, String>(0)
+        })
+        .optional()
+        .map_err(map_db_error)?
+    else {
+        return Ok(());
+    };
+    if parse_enum::<OrderStatus>(&status, "order", "status")? != OrderStatus::Shipped {
+        return Ok(());
+    }
+    let statuses: Vec<String> = {
+        let mut stmt =
+            tx.prepare("SELECT status FROM shipments WHERE order_id = ?").map_err(map_db_error)?;
+        stmt.query_map([&order_id], |row| row.get(0))
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?
+    };
+    for status in &statuses {
+        let status: ShipmentStatus = parse_enum(status, "shipment", "status")?;
+        if !matches!(status, ShipmentStatus::Delivered | ShipmentStatus::Cancelled) {
+            return Ok(());
+        }
+    }
+    let delivered = manifest_units_in_tx(tx, &order_id, true, None)?;
+    let covered = order_lines_in_tx(tx, &order_id)?.iter().all(|(line, _, quantity, _)| {
+        delivered.get(line).copied().unwrap_or(0) >= i64::from(*quantity)
+    });
+    if !covered {
+        return Ok(());
+    }
+    let outcome = super::orders::SqliteOrderRepository::apply_update_in_tx(
+        tx,
+        shipment.order_id,
+        &UpdateOrder { status: Some(OrderStatus::Delivered), ..Default::default() },
+        &super::orders::ShipMode::None,
+        false,
+    )
+    .map_err(map_db_error)?;
+    match outcome.post_commit_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
 /// Insert a shipment (and its lines) on the caller's transaction (shared by
 /// [`ShipmentRepository::create`] and the governed `shipments.create` kernel
 /// command).
@@ -108,6 +471,7 @@ pub(crate) fn create_shipment_tx(
     mut input: CreateShipment,
 ) -> Result<Shipment> {
     crate::shipment_updates::validate_create_items(&input)?;
+    ensure_order_accepts_shipments(tx, input.order_id)?;
     if let Some(items) = input.items.as_ref().filter(|items| !items.is_empty()) {
         input.items =
             Some(SqliteShipmentRepository::normalize_items_tx(tx, input.order_id, items)?);
@@ -548,6 +912,16 @@ impl SqliteShipmentRepository {
             },
         )
         .map_err(map_db_error)?;
+        // Shipment → order: the package's units ship (and deliver) on its
+        // order in this same transaction.
+        if shipment.status.has_left() && !previous_status.has_left() {
+            ship_order_for_shipment_in_tx(tx, &shipment)?;
+        }
+        if shipment.status == ShipmentStatus::Delivered
+            && previous_status != ShipmentStatus::Delivered
+        {
+            deliver_order_for_shipment_in_tx(tx, &shipment)?;
+        }
         Ok(shipment)
     }
 
@@ -609,6 +983,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
             let tx = super::begin_immediate(&mut conn)
                 .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
+            ensure_order_accepts_shipments(&tx, input.order_id)?;
             if let Some(inputs) = input.items.as_ref().filter(|items| !items.is_empty()) {
                 input.items = Some(Self::normalize_items_tx(&tx, input.order_id, inputs)?);
             }
@@ -1108,6 +1483,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
 
         for mut input in inputs {
             crate::shipment_updates::validate_create_items(&input)?;
+            ensure_order_accepts_shipments(&tx, input.order_id)?;
             if let Some(items) = input.items.as_ref().filter(|items| !items.is_empty()) {
                 input.items = Some(Self::normalize_items_tx(&tx, input.order_id, items)?);
             }

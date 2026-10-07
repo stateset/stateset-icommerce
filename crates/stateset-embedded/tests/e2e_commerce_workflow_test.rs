@@ -163,22 +163,6 @@ fn test_full_commerce_lifecycle() {
     assert_eq!(stock_reserved.total_available, dec!(98));
 
     // ========================================================================
-    // 8. Deduct inventory for fulfillment
-    // ========================================================================
-    // When order is fulfilled, adjust inventory to deduct shipped quantity
-    commerce
-        .inventory()
-        .adjust(&product_sku, dec!(-2), "Order fulfillment")
-        .expect("Failed to adjust inventory");
-
-    let stock_after_fulfillment =
-        commerce.inventory().get_stock(&product_sku).expect("get stock").expect("stock not found");
-    assert_eq!(stock_after_fulfillment.total_on_hand, dec!(98));
-    // Allocation remains until reservation is released
-    assert_eq!(stock_after_fulfillment.total_allocated, dec!(2));
-    assert_eq!(stock_after_fulfillment.total_available, dec!(96));
-
-    // ========================================================================
     // 9. Create shipment
     // ========================================================================
     let shipment = commerce
@@ -205,8 +189,17 @@ fn test_full_commerce_lifecycle() {
     let shipment = commerce.shipments().ship(shipment.id, None).expect("Failed to ship");
     assert_eq!(shipment.status, ShipmentStatus::Shipped);
 
-    // The shipment was advanced explicitly, so changing the order to shipped
-    // does not re-apply the order-level propagation to an open shipment.
+    // Shipping the (itemless) shipment shipped the order's remainder, and the
+    // shipped units left stock: on-hand and allocated both dropped by 2.
+    let shipped_order = commerce.orders().get(order.id).expect("get order").expect("order");
+    assert_eq!(shipped_order.status, OrderStatus::Shipped);
+    let stock_after_fulfillment =
+        commerce.inventory().get_stock(&product_sku).expect("get stock").expect("stock not found");
+    assert_eq!(stock_after_fulfillment.total_on_hand, dec!(98));
+    assert_eq!(stock_after_fulfillment.total_allocated, dec!(0));
+    assert_eq!(stock_after_fulfillment.total_available, dec!(98));
+
+    // Already shipped: an explicit status update is a no-op re-ship.
     commerce.orders().update_status(order.id, OrderStatus::Shipped).expect("set shipped");
 
     commerce.shipments().mark_in_transit(shipment.id).expect("in transit");

@@ -64,6 +64,7 @@ use stateset_core::{
     OrderStatus, PaymentFilter, PaymentId, PaymentStatus, PaymentTransactionStatus, RefundStatus,
     ReservationStatus, ReturnDisposition, ReturnId, ReturnReason, ReturnStatus, SetCartPayment,
     SetCartShipping, SetReturnDisposition, ShipmentId, ShipmentLineInput, ShipmentStatus,
+    TransactionType,
 };
 use stateset_embedded::Commerce;
 use stateset_test_utils::fixtures;
@@ -80,82 +81,16 @@ const OPS_MAX: usize = 40;
 /// gap is recorded instead of failing the case; every other property fails.
 /// Shrink-only: `known_gaps_are_still_real` replays each gap's reproducer and
 /// fails once it stops reproducing, so a fixed gap must leave this list.
-const KNOWN_GAPS: &[(&str, &str)] = &[
-    (
-        "shipment-ship-does-not-ship-order",
-        "Advancing a shipment record to shipped/delivered never moves the order: \
-         its lines' shipped_quantity stays 0 and the order stays confirmed/unfulfilled. \
-         Order → shipment propagation exists (a full order ship carries pre-ship \
-         shipments to shipped) but shipment → order does not, so the two fulfillment \
-         paths disagree. Needs a decision on which entity is the source of truth for \
-         shipped units (and whether shipping a shipment for an unpaid order is allowed).",
-    ),
-    (
-        "shipped-order-still-holds-stock",
-        "Shipping an order (full or by lines) moves its reservations to `confirmed`, \
-         which `ReservationStatus::holds_stock` still counts in `allocated`; nothing \
-         ever moves them to `fulfilled` or decrements on_hand. Shipped units therefore \
-         stay on hand and allocated forever, and a `restock` return disposition adds \
-         the same units to on_hand a second time. Needs a decision on the stock \
-         consumption point (ship vs. pick vs. deliver) for both backends.",
-    ),
-    (
-        "open-shipment-on-shipped-order",
-        "A fully shipped order can end up with a shipment still waiting to ship, two \
-         ways: (a) a shipment is created (pending) after the order shipped every unit — \
-         creation only refuses cancelled/refunded orders; (b) a shipment that was \
-         on_hold when the order shipped (the order ship deliberately leaves holds \
-         alone) is later released back to processing. A full order ship otherwise \
-         carries pre-ship shipments to shipped, so the engine intends 'a shipped order \
-         has no shipment waiting to ship'. Refusing (a) would break integrations that \
-         record a carrier fulfillment after the order shipped (e.g. Shopify fulfillment \
-         sync); for (b), releasing a hold on a shipped order could carry it to shipped. \
-         Needs a decision.",
-    ),
-    (
-        "cancelled-order-with-shipped-shipment",
-        "Cancelling an order leaves its open shipments untouched, and shipment status \
-         transitions never look at the order, so a shipment of a cancelled order can \
-         still be packed and handed to the carrier. Either cancel should carry open \
-         shipments to cancelled (the mirror of a full ship carrying them to shipped), or \
-         cancel should be refused while a shipment is in progress, and shipping a \
-         shipment of a cancelled order should be refused. Needs a decision.",
-    ),
-];
+///
+/// Empty: the four shipment/order/stock gaps found by this harness
+/// (`shipped-order-still-holds-stock`, `shipment-ship-does-not-ship-order`,
+/// `open-shipment-on-shipped-order`, `cancelled-order-with-shipped-shipment`)
+/// are fixed and their reproducers are regression tests below.
+const KNOWN_GAPS: &[(&str, &str)] = &[];
 
 /// The minimal sequence that reproduces each tracked gap.
 fn gap_reproducer(gap: &str) -> Vec<Op> {
-    match gap {
-        "shipment-ship-does-not-ship-order" => vec![
-            checkout(&[(0, 1, 1_000)]),
-            Op::CreateShipment { order: 0, line: 0, qty: 1 },
-            Op::AdvanceShipment { shipment: 0 },
-            Op::AdvanceShipment { shipment: 0 },
-            Op::AdvanceShipment { shipment: 0 },
-        ],
-        "cancelled-order-with-shipped-shipment" => vec![
-            checkout(&[(0, 1, 1_000)]),
-            Op::CreateShipment { order: 0, line: 0, qty: 1 },
-            Op::CancelOrder { order: 0 },
-            Op::AdvanceShipment { shipment: 0 },
-            Op::AdvanceShipment { shipment: 0 },
-            Op::AdvanceShipment { shipment: 0 },
-        ],
-        "open-shipment-on-shipped-order" => vec![
-            checkout(&[(0, 2, 1_000)]),
-            // (b) on hold while the order ships, then released.
-            Op::CreateShipment { order: 0, line: 0, qty: 1 },
-            Op::HoldShipment { shipment: 0 },
-            Op::ShipOrder { order: 0 },
-            Op::AdvanceShipment { shipment: 0 },
-            // (a) created after the order shipped.
-            Op::CreateShipment { order: 0, line: 0, qty: 1 },
-        ],
-        "shipped-order-still-holds-stock" => {
-            vec![checkout(&[(0, 1, 1_000)]), Op::ShipOrder { order: 0 }]
-        }
-        other => panic!("tracked gap {other} has no reproducer"),
-    }
+    panic!("tracked gap {gap} has no reproducer")
 }
 
 fn gap_tracked(id: &str) -> bool {
@@ -314,10 +249,6 @@ struct Model {
     payments: Vec<PaymentId>,
     refunds: Vec<Uuid>,
     shipments: Vec<ShipmentId>,
-    /// Shipments the order ship could not carry along: created after the
-    /// order had shipped every unit, or on hold when it did (tracked gap
-    /// `open-shipment-on-shipped-order`).
-    late_shipments: BTreeSet<ShipmentId>,
     returns: Vec<ReturnId>,
 }
 
@@ -694,9 +625,12 @@ impl<'c> Harness<'c> {
             Op::CreateShipment { order, line, qty } => {
                 let Some(order_id) = self.order(*order) else { return Ok(()) };
                 let Some(item) = self.line_item(order_id, *line, *qty)? else { return Ok(()) };
-                let order_shipped = matches!(
+                let order_closed = matches!(
                     self.commerce.orders().get(order_id)?.ok_or(CommerceError::NotFound)?.status,
-                    OrderStatus::Shipped | OrderStatus::Delivered
+                    OrderStatus::Shipped
+                        | OrderStatus::Delivered
+                        | OrderStatus::Cancelled
+                        | OrderStatus::Refunded
                 );
                 let shipment = self.guarded("create shipment", |c| {
                     c.shipments().create(CreateShipment {
@@ -708,8 +642,11 @@ impl<'c> Harness<'c> {
                     })
                 })?;
                 self.model.shipments.push(shipment.id);
-                if order_shipped {
-                    self.model.late_shipments.insert(shipment.id);
+                if order_closed {
+                    return Err(harness_err(format!(
+                        "shipment {} created for order {order_id}, which is closed to fulfilment",
+                        shipment.id
+                    )));
                 }
             }
             Op::AddShipmentItem { shipment, line, qty } => {
@@ -776,7 +713,6 @@ impl<'c> Harness<'c> {
             Op::ShipOrder { order } => {
                 let Some(order_id) = self.order(*order) else { return Ok(()) };
                 self.guarded("ship order", |c| c.orders().ship(order_id, Some("TRK-ORDER")))?;
-                self.note_held_shipments(order_id)?;
             }
             Op::ShipLine { order, line, qty } => {
                 let Some(order_id) = self.order(*order) else { return Ok(()) };
@@ -790,7 +726,6 @@ impl<'c> Harness<'c> {
                 self.guarded("ship order lines", |c| {
                     c.orders().ship_lines(order_id, None, Some(lines))
                 })?;
-                self.note_held_shipments(order_id)?;
             }
             Op::DeliverOrder { order } => {
                 let Some(order_id) = self.order(*order) else { return Ok(()) };
@@ -867,21 +802,6 @@ impl<'c> Harness<'c> {
                         self.guarded("cancel return", |c| c.returns().cancel(id))?;
                     }
                     _ => {}
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// After a ship that left the order fully shipped, remember the shipments
-    /// it deliberately did not carry along (on hold): releasing one later
-    /// reopens it on a shipped order (tracked gap).
-    fn note_held_shipments(&mut self, order_id: OrderId) -> Result<(), CommerceError> {
-        let order = self.commerce.orders().get(order_id)?.ok_or(CommerceError::NotFound)?;
-        if matches!(order.status, OrderStatus::Shipped | OrderStatus::Delivered) {
-            for s in self.commerce.shipments().for_order(order_id)? {
-                if s.status == ShipmentStatus::OnHold {
-                    self.model.late_shipments.insert(s.id);
                 }
             }
         }
@@ -1144,44 +1064,43 @@ impl<'c> Harness<'c> {
 
             let shipments = c.shipments().for_order(order_id).map_err(e)?;
             let mut allocated: BTreeMap<Uuid, i64> = BTreeMap::new();
+            let mut left_units: BTreeMap<Uuid, i64> = BTreeMap::new();
+            let mut delivered_units: BTreeMap<Uuid, i64> = BTreeMap::new();
+            let mut all_delivered = true;
             for s in &shipments {
                 if s.order_id != order_id {
                     return Err(format!("shipment {} listed under the wrong order", s.id));
                 }
-                if s.status != ShipmentStatus::Cancelled {
-                    for item in &s.items {
-                        if let Some(line) = item.order_item_id {
-                            *allocated.entry(line).or_default() += i64::from(item.quantity);
-                        }
+                let left = s.status.has_left();
+                for item in &s.items {
+                    let Some(line) = item.order_item_id else { continue };
+                    let qty = i64::from(item.quantity);
+                    if s.status != ShipmentStatus::Cancelled {
+                        *allocated.entry(line).or_default() += qty;
+                    }
+                    if left {
+                        *left_units.entry(line).or_default() += qty;
+                    }
+                    if s.status == ShipmentStatus::Delivered {
+                        *delivered_units.entry(line).or_default() += qty;
                     }
                 }
-                if fully_shipped
-                    && matches!(
-                        s.status,
-                        ShipmentStatus::Pending
-                            | ShipmentStatus::Processing
-                            | ShipmentStatus::ReadyToShip
-                    )
-                {
-                    let msg = format!(
-                        "FULFILLMENT: order {order_id} is {} but shipment {} is still {}",
-                        order.status, s.id, s.status
-                    );
-                    if self.model.late_shipments.contains(&s.id) {
-                        self.gap("open-shipment-on-shipped-order", msg)?;
-                    } else {
-                        // The order ship itself must have carried it along.
-                        return Err(msg);
-                    }
+                if !matches!(s.status, ShipmentStatus::Delivered | ShipmentStatus::Cancelled) {
+                    all_delivered = false;
                 }
-                let left_building = matches!(
-                    s.status,
-                    ShipmentStatus::Shipped
-                        | ShipmentStatus::InTransit
-                        | ShipmentStatus::OutForDelivery
-                        | ShipmentStatus::Delivered
-                );
-                if left_building && shipped == 0 {
+                // order → shipment: a closed order keeps no package waiting.
+                let waiting = !left && s.status != ShipmentStatus::Cancelled;
+                if waiting && (fully_shipped || order.status == OrderStatus::Cancelled) {
+                    self.gap(
+                        "open-shipment-on-shipped-order",
+                        format!(
+                            "FULFILLMENT: order {order_id} is {} but shipment {} is still {}",
+                            order.status, s.id, s.status
+                        ),
+                    )?;
+                }
+                // shipment → order: a package that left shipped its units.
+                if left && !s.items.is_empty() && shipped == 0 {
                     self.gap(
                         "shipment-ship-does-not-ship-order",
                         format!(
@@ -1190,7 +1109,7 @@ impl<'c> Harness<'c> {
                         ),
                     )?;
                 }
-                if left_building && order.status == OrderStatus::Cancelled {
+                if left && order.status == OrderStatus::Cancelled {
                     self.gap(
                         "cancelled-order-with-shipped-shipment",
                         format!(
@@ -1201,13 +1120,39 @@ impl<'c> Harness<'c> {
                 }
             }
             for item in &order.items {
-                let a = allocated.get(&item.id.into_uuid()).copied().unwrap_or(0);
+                let line = item.id.into_uuid();
+                let a = allocated.get(&line).copied().unwrap_or(0);
                 if a > i64::from(item.quantity) {
                     return Err(format!(
                         "OVER-ALLOCATION: order item {} ordered {} but {a} units sit on live shipments",
                         item.id, item.quantity
                     ));
                 }
+                // Every unit a shipment carried out is shipped on its line.
+                let l = left_units.get(&line).copied().unwrap_or(0);
+                if l > i64::from(item.shipped_quantity) {
+                    self.gap(
+                        "shipment-ship-does-not-ship-order",
+                        format!(
+                            "FULFILLMENT: order item {} has {l} units on shipments that left but \
+                             shipped_quantity {}",
+                            item.id, item.shipped_quantity
+                        ),
+                    )?;
+                }
+            }
+            // Delivered shipments that account for every unit deliver the order.
+            let delivery_complete = !shipments.is_empty()
+                && all_delivered
+                && order.items.iter().all(|i| {
+                    delivered_units.get(&i.id.into_uuid()).copied().unwrap_or(0)
+                        >= i64::from(i.quantity)
+                });
+            if order.status == OrderStatus::Shipped && delivery_complete {
+                return Err(format!(
+                    "FULFILLMENT: every unit of order {order_id} is on delivered shipments but the \
+                     order is still shipped"
+                ));
             }
 
             // ---- returns --------------------------------------------------
@@ -1252,6 +1197,38 @@ impl<'c> Harness<'c> {
                     format!(
                         "RESERVATION: order {order_id} is {} but still holds {live} live reservations",
                         order.status
+                    ),
+                )?;
+            }
+
+            // ---- stock leaves with the shipment -----------------------------
+            // Every shipped unit came out of on-hand exactly once: the ship
+            // consumed the order's reservation (a `shipment` movement against
+            // the order). Units of a backordered line leave through the
+            // backorder instead, so with backorders only "never more" holds.
+            let mut consumed = Decimal::ZERO;
+            for item_id in &self.item_ids {
+                for t in c.inventory().get_transactions(*item_id, u32::MAX).map_err(e)? {
+                    if t.transaction_type == TransactionType::Shipment
+                        && t.reference_type.as_deref() == Some("order")
+                        && t.reference_id.as_deref() == Some(order_id.to_string().as_str())
+                    {
+                        consumed -= t.quantity;
+                    }
+                }
+            }
+            let backordered = !c
+                .backorder()
+                .get_backorders_for_order(order_id.into_uuid())
+                .map_err(e)?
+                .is_empty();
+            let shipped_units = Decimal::from(shipped);
+            if consumed > shipped_units || (!backordered && consumed != shipped_units) {
+                self.gap(
+                    "shipped-order-still-holds-stock",
+                    format!(
+                        "STOCK: order {order_id} shipped {shipped} units but {consumed} left on-hand \
+                         against it (backordered: {backordered})"
                     ),
                 )?;
             }
@@ -1625,6 +1602,215 @@ fn shipment_manifest_freezes_from_ready_to_ship_on_every_backend() {
         }
         h.check_invariants().unwrap_or_else(|e| panic!("{name}: {e}"));
     }
+}
+
+// ===========================================================================
+// Regression tests for the four gaps this harness found (formerly KNOWN_GAPS).
+// ===========================================================================
+
+/// Run `ops` on every backend, then hand the harness to `check`.
+fn on_every_backend(ops: &[Op], check: impl Fn(&str, &Harness<'_>)) {
+    for (name, make) in backends() {
+        let Some(handle) = make() else { continue };
+        let h = run_sequence(handle.get(), ops).unwrap_or_else(|e| panic!("{name}: {e}"));
+        check(name, &h);
+    }
+}
+
+fn stock(h: &Harness<'_>, sku: usize) -> (Decimal, Decimal) {
+    let level = h.commerce.inventory().get_stock(&h.skus[sku]).unwrap().unwrap();
+    (level.total_on_hand, level.total_allocated)
+}
+
+/// `shipped-order-still-holds-stock`: shipping consumes the reservation, so
+/// on-hand drops by the shipped units, and a restocked return puts back
+/// exactly what left.
+#[test]
+fn regression_order_ship_consumes_stock_and_restock_returns_it_once() {
+    let ops = [
+        checkout(&[(0, 3, 1_000)]),
+        Op::ShipLine { order: 0, line: 0, qty: 1 },
+        Op::ShipOrder { order: 0 },
+        Op::DeliverOrder { order: 0 },
+        Op::RequestReturn { order: 0, line: 0, qty: 2 },
+        Op::AdvanceReturn { ret: 0 },
+        Op::AdvanceReturn { ret: 0 },
+        Op::AdvanceReturn { ret: 0 },
+        Op::AdvanceReturn { ret: 0 },
+    ];
+    on_every_backend(&ops, |name, h| {
+        let order = h.commerce.orders().get(h.model.orders[0].0).unwrap().unwrap();
+        assert_eq!(order.status, OrderStatus::Delivered, "{name}");
+        let ret = h.commerce.returns().get(h.model.returns[0]).unwrap().unwrap();
+        assert_eq!(ret.status, ReturnStatus::Completed, "{name}");
+        // 12 on hand, 3 shipped, 2 restocked.
+        assert_eq!(stock(h, 0), (Decimal::from(INITIAL_STOCK - 3 + 2), Decimal::ZERO), "{name}");
+        let reservations = h
+            .commerce
+            .inventory()
+            .list_reservations_by_reference("order", &order.id.to_string())
+            .unwrap();
+        assert!(
+            reservations.iter().all(|r| r.status == ReservationStatus::Fulfilled),
+            "{name}: {reservations:?}"
+        );
+    });
+}
+
+/// `shipment-ship-does-not-ship-order`: shipping a shipment ships its lines on
+/// the order (walking a confirmed order through processing), and delivering
+/// every shipment delivers the order.
+#[test]
+fn regression_shipment_ship_and_delivery_move_the_order() {
+    // One unit per line: Postgres does not promise a line order, so the
+    // assertions find each line by the SKU its shipment carried.
+    let mut ops = vec![
+        checkout(&[(0, 1, 1_000), (1, 1, 500)]),
+        Op::CreateShipment { order: 0, line: 0, qty: 1 },
+        Op::CreateShipment { order: 0, line: 1, qty: 1 },
+    ];
+    // Shipment 0 all the way to delivered: the order is partially shipped.
+    ops.extend(std::iter::repeat_n(Op::AdvanceShipment { shipment: 0 }, 6));
+    on_every_backend(&ops, |name, h| {
+        let order = h.commerce.orders().get(h.model.orders[0].0).unwrap().unwrap();
+        assert_eq!(order.status, OrderStatus::PartiallyShipped, "{name}");
+        let first = h.commerce.shipments().get(h.model.shipments[0]).unwrap().unwrap();
+        let shipped_sku = &first.items[0].sku;
+        for item in &order.items {
+            let sku = h.skus.iter().position(|s| *s == item.sku).unwrap();
+            if item.sku == *shipped_sku {
+                assert_eq!(item.shipped_quantity, 1, "{name}");
+                let left = Decimal::from(INITIAL_STOCK - 1);
+                assert_eq!(stock(h, sku), (left, Decimal::ZERO), "{name}");
+            } else {
+                assert_eq!(item.shipped_quantity, 0, "{name}");
+                assert_eq!(stock(h, sku).1, Decimal::ONE, "{name}: still reserved");
+            }
+        }
+    });
+    // Then shipment 1: shipped, and once delivered, the order is delivered.
+    ops.extend(std::iter::repeat_n(Op::AdvanceShipment { shipment: 1 }, 3));
+    on_every_backend(&ops, |name, h| {
+        let order = h.commerce.orders().get(h.model.orders[0].0).unwrap().unwrap();
+        assert_eq!(order.status, OrderStatus::Shipped, "{name}");
+        assert_eq!(order.fulfillment_status, FulfillmentStatus::Shipped, "{name}");
+    });
+    ops.extend(std::iter::repeat_n(Op::AdvanceShipment { shipment: 1 }, 3));
+    on_every_backend(&ops, |name, h| {
+        let order = h.commerce.orders().get(h.model.orders[0].0).unwrap().unwrap();
+        assert_eq!(order.status, OrderStatus::Delivered, "{name}");
+    });
+}
+
+/// A unit shipped through the order and then carried by a shipment is never
+/// counted twice: the shipment ships only what the line still has open.
+#[test]
+fn regression_order_and_shipment_ship_never_double_count() {
+    let mut ops = vec![
+        checkout(&[(0, 2, 1_000)]),
+        Op::CreateShipment { order: 0, line: 0, qty: 2 },
+        Op::ShipLine { order: 0, line: 0, qty: 1 },
+    ];
+    ops.extend(std::iter::repeat_n(Op::AdvanceShipment { shipment: 0 }, 3));
+    on_every_backend(&ops, |name, h| {
+        let order = h.commerce.orders().get(h.model.orders[0].0).unwrap().unwrap();
+        assert_eq!(order.status, OrderStatus::Shipped, "{name}");
+        assert_eq!(order.items[0].shipped_quantity, 2, "{name}");
+        assert_eq!(stock(h, 0), (Decimal::from(INITIAL_STOCK - 2), Decimal::ZERO), "{name}");
+    });
+}
+
+/// `open-shipment-on-shipped-order`: a hold blocks the ship that would
+/// complete the order, and a closed order takes no new shipment.
+#[test]
+fn regression_closed_orders_keep_no_shipment_waiting() {
+    let ops = [
+        checkout(&[(0, 2, 1_000)]),
+        Op::CreateShipment { order: 0, line: 0, qty: 1 },
+        Op::HoldShipment { shipment: 0 },
+        // Refused: shipment 0 is on hold.
+        Op::ShipOrder { order: 0 },
+    ];
+    on_every_backend(&ops, |name, h| {
+        let order_id = h.model.orders[0].0;
+        let order = h.commerce.orders().get(order_id).unwrap().unwrap();
+        assert!(!matches!(order.status, OrderStatus::Shipped), "{name}: {}", order.status);
+        let err = h.commerce.orders().ship(order_id, None).expect_err("held shipment");
+        assert!(matches!(err, CommerceError::Conflict(_)), "{name}: {err:?}");
+        // Cancel the hold: now the order ships, and takes no new shipment.
+        h.commerce.shipments().cancel(h.model.shipments[0]).unwrap();
+        h.commerce.orders().ship(order_id, None).unwrap();
+        let line = h.line_item(order_id, 0, 1).unwrap().unwrap();
+        let err = h
+            .commerce
+            .shipments()
+            .create(CreateShipment {
+                order_id,
+                recipient_name: "Ada Lovelace".into(),
+                shipping_address: "1 Analytical Way".into(),
+                items: Some(vec![line]),
+                ..Default::default()
+            })
+            .expect_err("shipped order");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "{name}: {err:?}");
+        let err = h
+            .commerce
+            .shipments()
+            .create(CreateShipment {
+                order_id,
+                recipient_name: "Ada Lovelace".into(),
+                shipping_address: "1 Analytical Way".into(),
+                ..Default::default()
+            })
+            .expect_err("shipped order, itemless");
+        assert!(matches!(err, CommerceError::ValidationError(_)), "{name}: {err:?}");
+    });
+}
+
+/// `cancelled-order-with-shipped-shipment`: cancelling an order cancels its
+/// shipments that never left, and is refused once one has left.
+#[test]
+fn regression_cancel_cancels_open_shipments_and_refuses_after_one_left() {
+    let ops = [
+        checkout(&[(0, 1, 1_000)]),
+        checkout(&[(1, 2, 1_000)]),
+        Op::CreateShipment { order: 0, line: 0, qty: 1 },
+        Op::HoldShipment { shipment: 0 },
+        Op::CancelOrder { order: 0 },
+        // Refused: the shipment was cancelled with its order.
+        Op::AdvanceShipment { shipment: 0 },
+    ];
+    on_every_backend(&ops, |name, h| {
+        let order = h.commerce.orders().get(h.model.orders[0].0).unwrap().unwrap();
+        assert_eq!(order.status, OrderStatus::Cancelled, "{name}");
+        let shipment = h.commerce.shipments().get(h.model.shipments[0]).unwrap().unwrap();
+        assert_eq!(shipment.status, ShipmentStatus::Cancelled, "{name}");
+        // Order 1: a shipment left, so the order cannot be cancelled.
+        let order_id = h.model.orders[1].0;
+        let line = h.line_item(order_id, 0, 1).unwrap().unwrap();
+        let s = h
+            .commerce
+            .shipments()
+            .create(CreateShipment {
+                order_id,
+                recipient_name: "Ada Lovelace".into(),
+                shipping_address: "1 Analytical Way".into(),
+                items: Some(vec![line]),
+                ..Default::default()
+            })
+            .unwrap();
+        let shipments = h.commerce.shipments();
+        shipments.mark_processing(s.id).unwrap();
+        shipments.mark_ready(s.id).unwrap();
+        shipments.ship(s.id, None).unwrap();
+        let err = h.commerce.orders().cancel(order_id).expect_err("a shipment left");
+        assert!(
+            matches!(err, CommerceError::Conflict(_) | CommerceError::OrderCannotBeCancelled(_)),
+            "{name}: {err:?}"
+        );
+        let order = h.commerce.orders().get(order_id).unwrap().unwrap();
+        assert_eq!(order.status, OrderStatus::PartiallyShipped, "{name}");
+    });
 }
 
 /// Every tracked gap must still reproduce; a gap that no longer does has been

@@ -17,16 +17,23 @@ pub(crate) struct Assignment {
     pub quantity: i32,
 }
 
+/// Refuse shipment manifests (a new shipment, or a new line on one) for an
+/// order that is closed to fulfilment: every unit already shipped
+/// (`shipped`, `delivered`) or the order is `cancelled`/`refunded`. A fully
+/// shipped order keeps no package waiting to leave.
 pub(crate) fn validate_order_status(status: &str) -> Result<()> {
     let status = status
         .parse::<stateset_core::OrderStatus>()
         .map_err(|error| CommerceError::DatabaseError(format!("Invalid order status: {error}")))?;
     if matches!(
         status,
-        stateset_core::OrderStatus::Cancelled | stateset_core::OrderStatus::Refunded
+        stateset_core::OrderStatus::Shipped
+            | stateset_core::OrderStatus::Delivered
+            | stateset_core::OrderStatus::Cancelled
+            | stateset_core::OrderStatus::Refunded
     ) {
         return Err(CommerceError::ValidationError(format!(
-            "Cannot allocate items for {status} order"
+            "Cannot create or add shipment items for a {status} order"
         )));
     }
     Ok(())

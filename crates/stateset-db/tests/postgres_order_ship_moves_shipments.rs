@@ -2,8 +2,8 @@
 //! PostgreSQL twin of the SQLite rule in `sqlite_partial_shipments.rs`: an
 //! order that ships in full carries its open shipment records (`pending`,
 //! `processing`, `ready_to_ship`) to `shipped`, a shipment without a tracking
-//! number adopts the order's, one with its own keeps it, holds and
-//! cancellations are left alone, and a partial shipment moves nothing.
+//! number adopts the order's, one with its own keeps it, a hold blocks
+//! the completing ship, cancellations are left alone, and a partial shipment moves nothing.
 
 use rust_decimal_macros::dec;
 use stateset_core::{
@@ -154,6 +154,16 @@ async fn postgres_full_order_ship_carries_open_shipments_but_partial_does_not() 
     }
     assert_eq!(load(&db, pending).await.tracking_number, None);
 
+    // A hold blocks the ship that would complete the order: nothing moves.
+    let err = db
+        .orders()
+        .ship_async(order.id.into_uuid(), ShipOrder { tracking_number: None, lines: None })
+        .await
+        .expect_err("held shipment blocks completing the order");
+    assert!(matches!(err, stateset_core::CommerceError::Conflict(_)), "{err:?}");
+    assert_eq!(load(&db, pending).await.status, ShipmentStatus::Pending);
+    db.shipments().cancel_async(held).await.expect("cancel the hold");
+
     let shipped = db
         .orders()
         .ship_async(
@@ -176,7 +186,7 @@ async fn postgres_full_order_ship_carries_open_shipments_but_partial_does_not() 
         assert!(moved.shipped_at.is_some());
         assert_eq!(facts(&db, id).await, vec!["shipped".to_string()]);
     }
-    assert_eq!(load(&db, held).await.status, ShipmentStatus::OnHold);
+    assert_eq!(load(&db, held).await.status, ShipmentStatus::Cancelled);
     assert!(facts(&db, held).await.is_empty());
     assert_eq!(load(&db, cancelled).await.status, ShipmentStatus::Cancelled);
     assert!(facts(&db, cancelled).await.is_empty());
