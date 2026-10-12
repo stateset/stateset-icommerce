@@ -171,7 +171,8 @@ export const shipmentTools = [
 
   {
     name: 'create_shipment',
-    description: 'Create a shipment for an order.',
+    description:
+      'Create a pending shipment for an order. Refused when the order is closed to fulfilment (shipped, delivered, cancelled or refunded). Nothing is fulfilled until the shipment ships: shipping it ships its lines on the order.',
     inputSchema: {
       orderId: z.string().min(1).describe('Order ID'),
       carrier: z.string().optional().describe('Carrier: USPS, UPS, FedEx, DHL'),
@@ -200,7 +201,9 @@ export const shipmentTools = [
           }),
         )
         .optional()
-        .describe('Shipment manifest contents; does not reserve stock or fulfill order lines'),
+        .describe(
+          'Shipment manifest contents; does not reserve stock. When the shipment ships, these lines ship on the order and their reserved stock leaves on-hand',
+        ),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -232,7 +235,7 @@ export const shipmentTools = [
   {
     name: 'update_shipment',
     description:
-      'Update shipment fields or move through the native lifecycle. Preserves omitted fields and rejects invalid transitions or stale expectedVersion. Cancellation requires cancel_shipment.',
+      "Update shipment fields or move through the native lifecycle. Preserves omitted fields and rejects invalid transitions or stale expectedVersion. Moving to shipped ships the shipment's lines on its order (see ship_shipment); moving to delivered delivers the order once every non-cancelled shipment is delivered and they cover every ordered unit. Cancellation requires cancel_shipment.",
     inputSchema: shipmentPatchSchema.shape,
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -246,7 +249,7 @@ export const shipmentTools = [
   {
     name: 'add_shipment_item',
     description:
-      'Add an order line to a shipment. Only a shipment that is still pending, processing or on_hold can change its items: one that is ready_to_ship, shipped, in transit, delivered, failed, returned or cancelled is refused, and nothing is written. Also rejects a quantity beyond what the order line has left to allocate across non-cancelled shipments, an order not in a shippable status, and a stale expectedVersion.',
+      'Add an order line to a shipment. Only a shipment that is still pending, processing or on_hold can change its items: one that is ready_to_ship, shipped, in transit, delivered, failed, returned or cancelled is refused, and nothing is written. Also rejects a quantity beyond what the order line has left to allocate across non-cancelled shipments, an order closed to fulfilment (shipped, delivered, cancelled or refunded), and a stale expectedVersion.',
     inputSchema: {
       shipmentId: z.string().min(1).describe('Shipment ID'),
       orderItemId: z
@@ -299,7 +302,8 @@ export const shipmentTools = [
 
   {
     name: 'ship_shipment',
-    description: 'Mark a ready_to_ship shipment as shipped with an optional tracking number.',
+    description:
+      "Mark a ready_to_ship shipment as shipped with an optional tracking number. In the same transaction its lines ship on the order (each capped at what the line still has unshipped, so nothing is counted twice; a shipment without items ships the order's remainder not promised to other open shipments): the order moves to partially_shipped or shipped, a pending/confirmed order walking through processing, and the units' reserved stock leaves on-hand. Refused for a cancelled or refunded order.",
     inputSchema: {
       shipmentId: z.string().min(1).describe('Shipment ID'),
       expectedVersion: z
@@ -331,7 +335,8 @@ export const shipmentTools = [
 
   {
     name: 'deliver_shipment',
-    description: 'Mark an out_for_delivery shipment as delivered.',
+    description:
+      'Mark an out_for_delivery shipment as delivered. When the order is fully shipped, every one of its non-cancelled shipments is delivered and their items cover every ordered unit, the order moves to delivered in the same transaction.',
     inputSchema: {
       shipmentId: z.string().min(1).describe('Shipment ID'),
       expectedVersion: z

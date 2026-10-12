@@ -990,6 +990,56 @@ impl SqliteInventoryRepository {
         rows.collect()
     }
 
+    /// Live (`pending`/`allocated`/`confirmed`) reservations keyed to one
+    /// order line, unconfirmed holds first, then oldest first, as
+    /// `(reservation_id, quantity)`. The order ship consumes these.
+    pub(crate) fn list_live_reservations_for_line_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        order_item_id: Uuid,
+    ) -> std::result::Result<Vec<(Uuid, Decimal)>, rusqlite::Error> {
+        let mut stmt = tx.prepare(
+            "SELECT id, quantity FROM inventory_reservations
+             WHERE order_item_id = ? AND status IN ('pending', 'allocated', 'confirmed')
+             ORDER BY CASE status WHEN 'confirmed' THEN 1 ELSE 0 END, created_at, id",
+        )?;
+        let rows = stmt.query_map([order_item_id.to_string()], |row| {
+            let id_str: String = row.get(0)?;
+            let qty_str: String = row.get(1)?;
+            let id = parse_uuid(&id_str, "inventory_reservation", "id")
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            let quantity = parse_decimal_row(&qty_str, "inventory_reservation", "quantity")?;
+            Ok((id, quantity))
+        })?;
+        rows.collect()
+    }
+
+    /// [`Self::list_live_reservations_for_line_in_tx`] for LEGACY rows (not
+    /// keyed to an order line): the order's live holds for one SKU.
+    pub(crate) fn list_live_legacy_reservations_for_sku_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        reference_type: &str,
+        reference_id: &str,
+        sku: &str,
+    ) -> std::result::Result<Vec<(Uuid, Decimal)>, rusqlite::Error> {
+        let mut stmt = tx.prepare(
+            "SELECT r.id, r.quantity FROM inventory_reservations r
+             JOIN inventory_items i ON i.id = r.item_id
+             WHERE r.reference_type = ? AND r.reference_id = ? AND i.sku = ?
+               AND r.order_item_id IS NULL
+               AND r.status IN ('pending', 'allocated', 'confirmed')
+             ORDER BY CASE r.status WHEN 'confirmed' THEN 1 ELSE 0 END, r.created_at, r.id",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![reference_type, reference_id, sku], |row| {
+            let id_str: String = row.get(0)?;
+            let qty_str: String = row.get(1)?;
+            let id = parse_uuid(&id_str, "inventory_reservation", "id")
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            let quantity = parse_decimal_row(&qty_str, "inventory_reservation", "quantity")?;
+            Ok((id, quantity))
+        })?;
+        rows.collect()
+    }
+
     /// The open-reservations-by-SKU lookup restricted to LEGACY rows
     /// (created before migration 080, so not keyed to an order line). The
     /// orders module uses this as the fallback after the line-keyed lookup so
@@ -1174,14 +1224,14 @@ impl SqliteInventoryRepository {
             )))
         })?;
 
-        if parsed_status == ReservationStatus::Released
-            || parsed_status == ReservationStatus::Cancelled
-        {
-            return Ok(false);
-        }
-
         if parsed_status == ReservationStatus::Expired {
             return Ok(true);
+        }
+        // Only a live hold can expire. A released, cancelled or FULFILLED
+        // reservation no longer counts in `allocated`; expiring it would take
+        // its units out of the balance a second time.
+        if !parsed_status.holds_stock() {
+            return Ok(false);
         }
 
         if let Some(expires_at) = expires_at {

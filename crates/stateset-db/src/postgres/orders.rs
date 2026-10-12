@@ -4,7 +4,7 @@ use super::kernel_outbox::append_kernel_event_tx;
 use super::resolve_currency_with_executor;
 use super::{
     backorder::PgBackorderRepository,
-    inventory::{PgInventoryRepository, ReservationConfirmOutcome},
+    inventory::PgInventoryRepository,
     map_db_error,
     payments::{
         derive_order_payment_status_pg, open_captures_for_order_pg, order_has_payments_pg,
@@ -934,8 +934,8 @@ impl PgOrderRepository {
         Ok(())
     }
 
-    /// Open reservations to confirm for one shipped line: the line's own keyed
-    /// holds first, then legacy un-keyed holds for the same SKU on the order.
+    /// Live reservations a shipped line consumes: the line's own keyed holds
+    /// first, then legacy un-keyed holds for the same SKU on the order.
     async fn open_reservations_for_shipped_line_in_tx(
         inventory_repo: &PgInventoryRepository,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -943,10 +943,10 @@ impl PgOrderRepository {
         delta: &LineDelta,
     ) -> Result<Vec<(Uuid, Decimal)>> {
         let mut open =
-            inventory_repo.list_open_reservations_for_line_in_tx(tx, delta.item_id).await?;
+            inventory_repo.list_live_reservations_for_line_in_tx(tx, delta.item_id).await?;
         open.extend(
             inventory_repo
-                .list_open_legacy_reservations_for_sku_in_tx(
+                .list_live_legacy_reservations_for_sku_in_tx(
                     tx,
                     "order",
                     &order_id.to_string(),
@@ -1311,6 +1311,64 @@ impl PgOrderRepository {
         Ok((resolved, deltas))
     }
 
+    /// Consume the order's inventory holds for exactly the units this ship
+    /// moves, on the caller's transaction (mirrors SQLite's
+    /// `fulfil_shipped_reservations_in_tx`).
+    ///
+    /// Shipped units covered by a live reservation leave both on-hand and
+    /// allocated (`fulfil_reservation_in_tx`: a `shipment` ledger row and an
+    /// `inventory.reservation_fulfilled.v1` fact); units with no hold
+    /// (backordered, untracked SKU) leave through their backorder, never
+    /// twice. A ship that leaves the order fully shipped releases any hold
+    /// still live, so a shipped order holds no stock. Returns the first
+    /// expired reservation, if any.
+    pub(crate) async fn fulfil_shipped_reservations_in_tx(
+        inventory_repo: &PgInventoryRepository,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+        deltas: &[LineDelta],
+        fully_shipped: bool,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<Option<Uuid>> {
+        let reservation_ids = inventory_repo
+            .list_reservation_ids_by_reference_in_tx(tx, "order", &id.to_string())
+            .await?;
+        for reservation_id in &reservation_ids {
+            if inventory_repo.expire_reservation_if_needed_in_tx(tx, *reservation_id, now).await? {
+                return Ok(Some(*reservation_id));
+            }
+        }
+        let reason = format!("Order {id} shipment");
+        for delta in deltas.iter().filter(|d| d.delta > 0) {
+            let mut remaining = Decimal::from(delta.delta);
+            let open =
+                Self::open_reservations_for_shipped_line_in_tx(inventory_repo, tx, id, delta)
+                    .await?;
+            for (reservation_id, reserved_qty) in open {
+                if remaining <= Decimal::ZERO {
+                    break;
+                }
+                let take = remaining.min(reserved_qty);
+                PgInventoryRepository::fulfil_reservation_in_tx(
+                    tx,
+                    reservation_id,
+                    take,
+                    &reason,
+                    now,
+                )
+                .await?;
+                remaining -= take;
+            }
+        }
+        if fully_shipped {
+            // `release_reservation_in_tx` is a no-op on fulfilled rows.
+            for reservation_id in reservation_ids {
+                inventory_repo.release_reservation_in_tx(tx, reservation_id).await?;
+            }
+        }
+        Ok(None)
+    }
+
     /// Shared implementation of `update_async` and `ship_async`: one
     /// [`Self::apply_update_in_tx`] in its own transaction.
     async fn apply_update_async(
@@ -1474,82 +1532,28 @@ impl PgOrderRepository {
             return Err(CommerceError::OrderCannotBeRefunded(current_payment_status.to_string()));
         }
 
+        if new_status == OrderStatus::Cancelled && current_status != OrderStatus::Cancelled {
+            // Nothing that already left the building can be cancelled.
+            super::shipments::ensure_no_shipment_left_in_tx(tx.as_mut(), id).await?;
+        }
+
         if is_ship {
-            let reservation_ids = inventory_repo
-                .list_reservation_ids_by_reference_in_tx(tx, "order", &id.to_string())
-                .await?;
-
-            let mut expired_reservation: Option<Uuid> = None;
-            for reservation_id in &reservation_ids {
-                if inventory_repo
-                    .expire_reservation_if_needed_in_tx(tx, *reservation_id, now)
-                    .await?
-                    && expired_reservation.is_none()
-                {
-                    expired_reservation = Some(*reservation_id);
-                }
+            let fully_shipped = new_status == OrderStatus::Shipped;
+            if fully_shipped && current_status != OrderStatus::Shipped {
+                // A hold is an explicit decision: the order cannot complete
+                // shipping around it.
+                super::shipments::ensure_no_held_shipments_in_tx(tx.as_mut(), id).await?;
             }
-
-            if let Some(expired_id) = expired_reservation {
-                // Commit the expiry bookkeeping, then surface the error.
-                return Ok(UpdateOutcome {
-                    order: Self::load_order_in_tx(tx, id).await?,
-                    post_commit_error: Some(CommerceError::ReservationExpired(expired_id)),
-                });
-            }
-
-            match ship {
-                ShipMode::None => {}
-                ShipMode::All => {
-                    for reservation_id in reservation_ids {
-                        match inventory_repo
-                            .confirm_reservation_in_tx_with_now(tx, reservation_id, now)
-                            .await?
-                        {
-                            ReservationConfirmOutcome::Confirmed => {}
-                            ReservationConfirmOutcome::Expired => {
-                                expired_reservation = Some(reservation_id);
-                                break;
-                            }
-                        }
-                    }
-                }
-                ShipMode::Lines(_) => {
-                    'lines: for delta in line_deltas.iter().filter(|d| d.delta > 0) {
-                        let mut remaining = Decimal::from(delta.delta);
-                        let open = Self::open_reservations_for_shipped_line_in_tx(
-                            &inventory_repo,
-                            tx,
-                            id,
-                            delta,
-                        )
-                        .await?;
-                        for (reservation_id, reserved_qty) in open {
-                            if remaining <= Decimal::ZERO {
-                                break;
-                            }
-                            let take = remaining.min(reserved_qty);
-                            match inventory_repo
-                                .confirm_reservation_quantity_in_tx_with_now(
-                                    tx,
-                                    reservation_id,
-                                    take,
-                                    now,
-                                )
-                                .await?
-                            {
-                                ReservationConfirmOutcome::Confirmed => remaining -= take,
-                                ReservationConfirmOutcome::Expired => {
-                                    expired_reservation = Some(reservation_id);
-                                    break 'lines;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if let Some(expired_id) = expired_reservation {
+            if let Some(expired_id) = Self::fulfil_shipped_reservations_in_tx(
+                &inventory_repo,
+                tx,
+                id,
+                &line_deltas,
+                fully_shipped,
+                now,
+            )
+            .await?
+            {
                 // Commit the expiry bookkeeping, then surface the error.
                 return Ok(UpdateOutcome {
                     order: Self::load_order_in_tx(tx, id).await?,
@@ -1658,6 +1662,8 @@ impl PgOrderRepository {
         }
 
         if matches!(input.status, Some(OrderStatus::Cancelled)) {
+            // Its packages that never left are cancelled with it.
+            super::shipments::cancel_open_shipments_for_order_in_tx(tx.as_mut(), id, now).await?;
             let reservation_ids = inventory_repo
                 .list_reservation_ids_by_reference_in_tx(tx, "order", &id.to_string())
                 .await?;

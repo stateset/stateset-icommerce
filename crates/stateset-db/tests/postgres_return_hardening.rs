@@ -664,9 +664,11 @@ async fn disposition_transitions_serials_and_restores_lot() {
     let reloaded = db.returns().get_async(ret.id.into_uuid()).await.unwrap().unwrap();
     assert_eq!(reloaded.items[0].serial_ids, serials);
 
-    // Serial count mismatch rolls everything back.
+    // Serial count mismatch rolls everything back. (This second order
+    // reserves the two restocked units, and shipping it consumes them.)
     let order = shipped_order(&db, &sku, 2, dec!(10), None).await;
     let ret = received_return(&db, &order, 2).await;
+    let before = on_hand(&db, &sku, wh).await;
     let err = db
         .returns()
         .set_item_disposition_async(
@@ -680,7 +682,7 @@ async fn disposition_transitions_serials_and_restores_lot() {
         .await
         .expect_err("count mismatch");
     assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
-    assert_eq!(on_hand(&db, &sku, wh).await, (dec!(2), dec!(0)));
+    assert_eq!(on_hand(&db, &sku, wh).await, before);
 }
 
 #[tokio::test]

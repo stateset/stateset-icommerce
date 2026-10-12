@@ -1552,12 +1552,22 @@ impl SqliteKernelExecutor {
                 .map(|mut order| {
                     order.items = SqliteOrderRepository::load_order_items_with_conn(tx, order.id)
                         .map_err(to_sql_err)?;
-                    let open_captures = if command.payload.status == OrderStatus::Cancelled {
+                    let cancelling = command.payload.status == OrderStatus::Cancelled;
+                    let open_captures = if cancelling {
                         open_captures_for_order_conn(tx, &order_id)?
                     } else {
                         Vec::new()
                     };
-                    Ok::<_, rusqlite::Error>(OrderTransitionSnapshot { order, open_captures })
+                    let left_shipment = if cancelling {
+                        super::shipments::left_shipment_for_order_in_tx(tx, &order_id)?
+                    } else {
+                        None
+                    };
+                    Ok::<_, rusqlite::Error>(OrderTransitionSnapshot {
+                        order,
+                        open_captures,
+                        left_shipment,
+                    })
                 })
                 .transpose()?;
             let effects = match plan_order_transition(command, snapshot.as_ref()) {
@@ -1658,6 +1668,16 @@ impl SqliteKernelExecutor {
                     }
                 }
                 cancel_backorders_for_order_in_tx(tx, command.payload.order_id.into_uuid())?;
+                // Packages that never left are cancelled with the order; their
+                // facts carry this command's context.
+                for event_id in super::shipments::cancel_open_shipments_for_order_in_tx(
+                    tx, &order_id, started_at,
+                )? {
+                    tx.execute("UPDATE kernel_outbox SET command_id = ?, idempotency_key = ?, principal_type = ?, principal_id = ?, correlation_id = ?, causation_id = ? WHERE id = ?",
+                        params![command.command_id.to_string(), command.idempotency_key, principal_kind_name(command), command.principal.id,
+                            command.correlation_id.map(|id| id.to_string()), command.causation_id.map(|id| id.to_string()), event_id.to_string()])?;
+                    related_event_ids.push(event_id);
+                }
             }
             let outstanding_payment_ids: Vec<String> = effects
                 .outstanding_capture_ids
@@ -1769,10 +1789,13 @@ impl SqliteKernelExecutor {
                         )
                         .optional()?
                         .is_some();
+                    let held_shipment =
+                        super::shipments::held_shipment_for_order_in_tx(tx, &order_id)?;
                     Ok::<_, rusqlite::Error>(ShipOrderSnapshot {
                         order,
                         shipment,
                         expired_reservation,
+                        held_shipment,
                     })
                 })
                 .transpose()?;
@@ -1819,11 +1842,11 @@ impl SqliteKernelExecutor {
                     tx, "order", &order_id,
                 )?;
             tx.execute_batch("SAVEPOINT kernel_ship")?;
-            if SqliteOrderRepository::confirm_shipped_reservations_in_tx(
+            if SqliteOrderRepository::fulfil_shipped_reservations_in_tx(
                 tx,
                 command.payload.order_id,
-                &mode,
                 &effects.deltas,
+                effects.resolved_status == OrderStatus::Shipped,
                 started_at,
             )?
             .is_some()
@@ -1867,18 +1890,17 @@ impl SqliteKernelExecutor {
             }
             let mut event_ids = Vec::new();
             for reservation_id in reservation_ids {
+                // The ship consumed (or, once fully shipped, released) the
+                // order's holds: those facts carry this command's context.
                 let mut stmt = tx.prepare(
                     "SELECT id FROM kernel_outbox WHERE created_at >= ?
-                       AND event_type = 'inventory.reservation_confirmed.v1'
-                       AND (aggregate_id = ? OR json_extract(payload, '$.source_reservation_id') = ?)
+                       AND event_type IN ('inventory.reservation_fulfilled.v1',
+                                          'inventory.reservation_released.v1')
+                       AND aggregate_id = ?
                      ORDER BY rowid",
                 )?;
                 let ids = stmt.query_map(
-                    params![
-                        started_at.to_rfc3339(),
-                        reservation_id.to_string(),
-                        reservation_id.to_string()
-                    ],
+                    params![started_at.to_rfc3339(), reservation_id.to_string()],
                     |row| parse_uuid_row(&row.get::<_, String>(0)?, "kernel_outbox", "id"),
                 )?;
                 for event_id in ids {

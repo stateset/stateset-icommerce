@@ -318,7 +318,7 @@ async fn postgres_update_batch_atomic_cancel_releases_reservations_like_update()
 }
 
 #[tokio::test]
-async fn postgres_update_batch_atomic_ship_confirms_reservations_and_ships_lines() {
+async fn postgres_update_batch_atomic_ship_fulfils_reservations_and_ships_lines() {
     let Some(ctx) = setup().await else { return };
     let order = ctx.order_with_order_level_money().await;
     let id = order.id.into_uuid();
@@ -343,12 +343,13 @@ async fn postgres_update_batch_atomic_ship_confirms_reservations_and_ships_lines
         .await
         .unwrap();
     assert!(
-        reservations.iter().all(|r| r.status == ReservationStatus::Confirmed),
+        reservations.iter().all(|r| r.status == ReservationStatus::Fulfilled),
         "{reservations:?}"
     );
-    // Confirming keeps the allocation against the SKU; nothing is released.
+    // The shipped units left stock: on-hand and allocated both dropped.
     let stock = ctx.db.inventory().get_stock_async(&ctx.sku_a).await.unwrap().unwrap();
-    assert_eq!(stock.total_allocated, dec!(2), "shipped units stay allocated");
+    assert_eq!(stock.total_on_hand, dec!(8), "shipped units left on-hand");
+    assert_eq!(stock.total_allocated, dec!(0), "no shipped unit stays allocated");
     assert_eq!(stock.total_available, dec!(8), "nothing released back to available");
 }
 
@@ -608,34 +609,42 @@ async fn postgres_line_edits_write_kernel_outbox_events_in_the_same_transaction(
         .expect("add item");
     ctx.db.orders().remove_item_async(id, added.id.into_uuid()).await.expect("remove item");
 
-    let events = ctx.db.kernel_outbox().pending_async(1000).await.expect("pending");
-    let added_event = events
+    // Looked up by aggregate: a shared database can hold more pending facts
+    // than any `pending_async` page.
+    let events: Vec<(String, String, serde_json::Value)> = sqlx::query_as(
+        "SELECT event_type, aggregate_type, payload FROM kernel_outbox
+         WHERE aggregate_id = $1 ORDER BY created_at, id",
+    )
+    .bind(id.to_string())
+    .fetch_all(ctx.db.pool())
+    .await
+    .expect("outbox");
+    let (_, aggregate_type, added_event) = events
         .iter()
-        .find(|e| e.event_type == "orders.item_added.v1" && e.aggregate_id == id.to_string())
+        .find(|(t, ..)| t == "orders.item_added.v1")
         .expect("orders.item_added.v1 event");
-    assert_eq!(added_event.aggregate_type, "order");
-    assert_eq!(added_event.payload["order_item_id"], added.id.to_string());
-    assert_eq!(added_event.payload["sku"], ctx.sku_b);
-    assert_eq!(added_event.payload["quantity"], 3);
-    assert_eq!(added_event.payload["total_amount"], "30.5000", "24.50 + 3 × 2.00");
-    let removed_event = events
+    assert_eq!(aggregate_type, "order");
+    assert_eq!(added_event["order_item_id"], added.id.to_string());
+    assert_eq!(added_event["sku"], ctx.sku_b);
+    assert_eq!(added_event["quantity"], 3);
+    assert_eq!(added_event["total_amount"], "30.5000", "24.50 + 3 × 2.00");
+    let (_, _, removed_event) = events
         .iter()
-        .find(|e| e.event_type == "orders.item_removed.v1" && e.aggregate_id == id.to_string())
+        .find(|(t, ..)| t == "orders.item_removed.v1")
         .expect("orders.item_removed.v1 event");
-    assert_eq!(removed_event.payload["order_item_id"], added.id.to_string());
-    assert_eq!(removed_event.payload["total_amount"], "24.5000");
+    assert_eq!(removed_event["order_item_id"], added.id.to_string());
+    assert_eq!(removed_event["total_amount"], "24.5000");
 
     // A refused edit writes nothing.
     assert!(ctx.db.orders().remove_item_async(id, Uuid::new_v4()).await.is_err());
-    let removed_count = ctx
-        .db
-        .kernel_outbox()
-        .pending_async(1000)
-        .await
-        .expect("pending")
-        .iter()
-        .filter(|e| e.event_type == "orders.item_removed.v1" && e.aggregate_id == id.to_string())
-        .count();
+    let removed_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM kernel_outbox
+         WHERE aggregate_id = $1 AND event_type = 'orders.item_removed.v1'",
+    )
+    .bind(id.to_string())
+    .fetch_one(ctx.db.pool())
+    .await
+    .expect("count");
     assert_eq!(removed_count, 1);
 }
 

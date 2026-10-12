@@ -108,8 +108,8 @@ async fn postgres_async_commerce_smoke() {
         .await
         .expect("list reservations for order after ship");
     assert!(
-        reservations.iter().all(|r| r.status == ReservationStatus::Confirmed),
-        "expected reservations to be confirmed after shipping"
+        reservations.iter().all(|r| r.status == ReservationStatus::Fulfilled),
+        "expected reservations to be fulfilled (consumed) after shipping"
     );
 }
 

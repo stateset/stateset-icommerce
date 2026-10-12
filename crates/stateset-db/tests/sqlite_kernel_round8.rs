@@ -511,6 +511,22 @@ fn full_kernel_shipment_carries_open_shipment_records() {
         },
     );
     ship.commitment = declaring("20");
+    // A held shipment blocks the ship that would complete the order.
+    let refused = executor.execute_ship_order(&ship).expect("ship order");
+    assert_eq!(refused.status, ExecutionStatus::Rejected, "{refused:?}");
+    assert_eq!(refused.error_code.as_deref(), Some("commerce.shipment_on_hold"));
+    assert_eq!(db.shipments().get(open.id).unwrap().unwrap().status, ShipmentStatus::Pending);
+    db.shipments().cancel(held.id).expect("cancel the hold");
+    let mut ship = command(
+        "orders.ship",
+        "r8-ship-follow-after-hold",
+        ShipOrderCommand {
+            order_id: order.id,
+            tracking_number: Some("TRK-KERNEL".into()),
+            lines: None,
+        },
+    );
+    ship.commitment = declaring("20");
     let receipt = executor.execute_ship_order(&ship).expect("ship order");
     assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{receipt:?}");
 
@@ -521,7 +537,7 @@ fn full_kernel_shipment_carries_open_shipment_records() {
     let labelled = db.shipments().get(labelled.id).expect("load").expect("shipment");
     assert_eq!(labelled.status, ShipmentStatus::Shipped);
     assert_eq!(labelled.tracking_number.as_deref(), Some("OWN-LABEL"));
-    assert_eq!(db.shipments().get(held.id).unwrap().unwrap().status, ShipmentStatus::OnHold);
+    assert_eq!(db.shipments().get(held.id).unwrap().unwrap().status, ShipmentStatus::Cancelled);
     assert_eq!(
         db.shipments().get(cancelled.id).unwrap().unwrap().status,
         ShipmentStatus::Cancelled

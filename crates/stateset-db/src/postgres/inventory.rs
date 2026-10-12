@@ -1048,30 +1048,6 @@ impl PgInventoryRepository {
         Ok(ReservationConfirmOutcome::Confirmed)
     }
 
-    /// Open (`pending`/`allocated`) reservations held by `reference` for `sku`,
-    /// oldest first, as `(reservation_id, quantity)`.
-    pub(crate) async fn list_open_reservations_for_sku_in_tx(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        reference_type: &str,
-        reference_id: &str,
-        sku: &str,
-    ) -> Result<Vec<(Uuid, Decimal)>> {
-        sqlx::query_as(
-            "SELECT r.id, r.quantity FROM inventory_reservations r
-             JOIN inventory_items i ON i.id = r.item_id
-             WHERE r.reference_type = $1 AND r.reference_id = $2 AND i.sku = $3
-               AND r.status IN ('pending', 'allocated')
-             ORDER BY r.created_at, r.id",
-        )
-        .bind(reference_type)
-        .bind(reference_id)
-        .bind(sku)
-        .fetch_all(tx.as_mut())
-        .await
-        .map_err(map_db_error)
-    }
-
     /// Open (`pending`/`allocated`) reservations keyed to one order line
     /// (migration 087), oldest first, as `(reservation_id, quantity)`.
     pub(crate) async fn list_open_reservations_for_line_in_tx(
@@ -1090,7 +1066,51 @@ impl PgInventoryRepository {
         .map_err(map_db_error)
     }
 
-    /// [`Self::list_open_reservations_for_sku_in_tx`] restricted to LEGACY rows
+    /// Live (`pending`/`allocated`/`confirmed`) reservations keyed to one
+    /// order line, unconfirmed holds first, then oldest first. The order ship
+    /// consumes these (mirrors SQLite).
+    pub(crate) async fn list_live_reservations_for_line_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        order_item_id: Uuid,
+    ) -> Result<Vec<(Uuid, Decimal)>> {
+        sqlx::query_as(
+            "SELECT id, quantity FROM inventory_reservations
+             WHERE order_item_id = $1 AND status IN ('pending', 'allocated', 'confirmed')
+             ORDER BY CASE status WHEN 'confirmed' THEN 1 ELSE 0 END, created_at, id",
+        )
+        .bind(order_item_id)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)
+    }
+
+    /// [`Self::list_live_reservations_for_line_in_tx`] for LEGACY rows (not
+    /// keyed to an order line): the order's live holds for one SKU.
+    pub(crate) async fn list_live_legacy_reservations_for_sku_in_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        reference_type: &str,
+        reference_id: &str,
+        sku: &str,
+    ) -> Result<Vec<(Uuid, Decimal)>> {
+        sqlx::query_as(
+            "SELECT r.id, r.quantity FROM inventory_reservations r
+             JOIN inventory_items i ON i.id = r.item_id
+             WHERE r.reference_type = $1 AND r.reference_id = $2 AND i.sku = $3
+               AND r.order_item_id IS NULL
+               AND r.status IN ('pending', 'allocated', 'confirmed')
+             ORDER BY CASE r.status WHEN 'confirmed' THEN 1 ELSE 0 END, r.created_at, r.id",
+        )
+        .bind(reference_type)
+        .bind(reference_id)
+        .bind(sku)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)
+    }
+
+    /// The order's open (`pending`/`allocated`) holds for one SKU, restricted to LEGACY rows
     /// (not keyed to an order line); the orders module's fallback after the
     /// line-keyed lookup, so a SKU-based release never takes another line's
     /// keyed hold.
@@ -1247,12 +1267,14 @@ impl PgInventoryRepository {
             ))
         })?;
 
-        if status == ReservationStatus::Released || status == ReservationStatus::Cancelled {
-            return Ok(false);
-        }
-
         if status == ReservationStatus::Expired {
             return Ok(true);
+        }
+        // Only a live hold can expire. A released, cancelled or FULFILLED
+        // reservation no longer counts in `allocated`; expiring it would take
+        // its units out of the balance a second time.
+        if !status.holds_stock() {
+            return Ok(false);
         }
 
         if let Some(expires_at) = res.expires_at {

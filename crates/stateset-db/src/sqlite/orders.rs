@@ -7,7 +7,7 @@ use super::{
         create_backorder_in_tx,
     },
     build_in_clause,
-    inventory::{ReservationConfirmOutcome, SqliteInventoryRepository},
+    inventory::SqliteInventoryRepository,
     map_db_error, params_refs, parse_datetime_row, parse_decimal_row, parse_enum, parse_enum_row,
     parse_json_opt_row, parse_uuid_row,
     payments::{
@@ -957,9 +957,9 @@ impl SqliteOrderRepository {
         Ok(())
     }
 
-    /// Open reservations to confirm for one shipped line: the line's own keyed
-    /// holds first, then (legacy, pre-080 rows only) un-keyed holds for the
-    /// same SKU on the order.
+    /// Live reservations a shipped line consumes: the line's own keyed holds
+    /// first, then (legacy, pre-080 rows only) un-keyed holds for the same SKU
+    /// on the order.
     fn open_reservations_for_shipped_line_in_tx(
         tx: &rusqlite::Transaction<'_>,
         reference_id: &str,
@@ -967,8 +967,8 @@ impl SqliteOrderRepository {
     ) -> std::result::Result<Vec<(Uuid, Decimal)>, rusqlite::Error> {
         let item_id = parse_uuid_row(&delta.item_id, "order_item", "id")?;
         let mut open =
-            SqliteInventoryRepository::list_open_reservations_for_line_in_tx(tx, item_id)?;
-        open.extend(SqliteInventoryRepository::list_open_legacy_reservations_for_sku_in_tx(
+            SqliteInventoryRepository::list_live_reservations_for_line_in_tx(tx, item_id)?;
+        open.extend(SqliteInventoryRepository::list_live_legacy_reservations_for_sku_in_tx(
             tx,
             "order",
             reference_id,
@@ -1162,16 +1162,27 @@ impl SqliteOrderRepository {
         Ok((resolved, deltas))
     }
 
-    /// Confirm the shipped portion of the order's inventory reservations.
+    /// Consume the order's inventory holds for exactly the units this ship
+    /// moves, on the caller's transaction.
+    ///
+    /// Every shipped unit that is covered by a live reservation leaves stock
+    /// here: `fulfil_reservation_in_tx` takes it out of BOTH on-hand and
+    /// allocated, writes a `shipment` ledger row and an
+    /// `inventory.reservation_fulfilled.v1` fact, and marks the hold
+    /// `fulfilled` (or shrinks it to the unshipped remainder). Units with no
+    /// hold (backordered, or an untracked SKU) leave stock through their
+    /// backorder, never twice. When the ship leaves the order fully shipped,
+    /// any hold still live (a surplus or legacy row) is released, so a shipped
+    /// order holds no stock.
     ///
     /// Returns the first expired reservation, if any; the caller then surfaces
     /// [`CommerceError::ReservationExpired`] after committing the expiry
     /// bookkeeping (matching the legacy full-ship behaviour).
-    pub(crate) fn confirm_shipped_reservations_in_tx(
+    pub(crate) fn fulfil_shipped_reservations_in_tx(
         tx: &rusqlite::Transaction<'_>,
         id: OrderId,
-        ship: &ShipMode<'_>,
         deltas: &[LineDelta],
+        fully_shipped: bool,
         now: chrono::DateTime<Utc>,
     ) -> std::result::Result<Option<Uuid>, rusqlite::Error> {
         let reference_id = id.to_string();
@@ -1190,41 +1201,31 @@ impl SqliteOrderRepository {
             }
         }
 
-        match ship {
-            ShipMode::None => {}
-            ShipMode::All => {
-                for reservation_id in reservation_ids {
-                    match SqliteInventoryRepository::confirm_reservation_in_tx_with_now(
-                        tx,
-                        reservation_id,
-                        now,
-                    )? {
-                        ReservationConfirmOutcome::Confirmed => {}
-                        ReservationConfirmOutcome::Expired => return Ok(Some(reservation_id)),
-                    }
+        let reason = format!("Order {id} shipment");
+        for delta in deltas.iter().filter(|d| d.delta > 0) {
+            let mut remaining = Decimal::from(delta.delta);
+            let open = Self::open_reservations_for_shipped_line_in_tx(tx, &reference_id, delta)?;
+            for (reservation_id, reserved_qty) in open {
+                if remaining <= Decimal::ZERO {
+                    break;
                 }
+                let take = remaining.min(reserved_qty);
+                SqliteInventoryRepository::fulfil_reservation_in_tx(
+                    tx,
+                    reservation_id,
+                    take,
+                    &reason,
+                    now,
+                )
+                .map_err(to_sql_err)?;
+                remaining -= take;
             }
-            ShipMode::Lines(_) => {
-                for delta in deltas.iter().filter(|d| d.delta > 0) {
-                    let mut remaining = Decimal::from(delta.delta);
-                    let open =
-                        Self::open_reservations_for_shipped_line_in_tx(tx, &reference_id, delta)?;
-                    for (reservation_id, reserved_qty) in open {
-                        if remaining <= Decimal::ZERO {
-                            break;
-                        }
-                        let take = remaining.min(reserved_qty);
-                        match SqliteInventoryRepository::confirm_reservation_quantity_in_tx_with_now(
-                            tx,
-                            reservation_id,
-                            take,
-                            now,
-                        )? {
-                            ReservationConfirmOutcome::Confirmed => remaining -= take,
-                            ReservationConfirmOutcome::Expired => return Ok(Some(reservation_id)),
-                        }
-                    }
-                }
+        }
+
+        if fully_shipped {
+            // `release_reservation_in_tx` is a no-op on fulfilled rows.
+            for reservation_id in reservation_ids {
+                SqliteInventoryRepository::release_reservation_in_tx(tx, reservation_id)?;
             }
         }
         Ok(None)
@@ -1366,8 +1367,23 @@ impl SqliteOrderRepository {
                 }
 
                 if is_ship {
-                    reservation_expired =
-                        Self::confirm_shipped_reservations_in_tx(tx, id, ship, &line_deltas, now)?;
+                    let fully_shipped = target == OrderStatus::Shipped;
+                    if fully_shipped && current_status != OrderStatus::Shipped {
+                        // A hold is an explicit decision: the order cannot
+                        // complete shipping around it.
+                        super::shipments::ensure_no_held_shipments_in_tx(tx, &id.to_string())?;
+                    }
+                    reservation_expired = Self::fulfil_shipped_reservations_in_tx(
+                        tx,
+                        id,
+                        &line_deltas,
+                        fully_shipped,
+                        now,
+                    )?;
+                }
+                if target == OrderStatus::Cancelled && current_status != OrderStatus::Cancelled {
+                    // Nothing that already left the building can be cancelled.
+                    super::shipments::ensure_no_shipment_left_in_tx(tx, &id.to_string())?;
                 }
             }
 
@@ -1519,6 +1535,8 @@ impl SqliteOrderRepository {
             }
 
             if matches!(input.status, Some(OrderStatus::Cancelled)) {
+                // Its packages that never left are cancelled with it.
+                super::shipments::cancel_open_shipments_for_order_in_tx(tx, &id.to_string(), now)?;
                 let reservation_ids =
                     SqliteInventoryRepository::list_reservation_ids_by_reference_in_tx(
                         tx,

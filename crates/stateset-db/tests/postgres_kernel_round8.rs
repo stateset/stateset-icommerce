@@ -594,6 +594,22 @@ async fn postgres_full_kernel_shipment_carries_open_shipment_records() {
         },
     );
     ship.commitment = declaring("20");
+    // A held shipment blocks the ship that would complete the order.
+    let refused = executor.execute_ship_order_async(&ship).await.expect("ship order");
+    assert_eq!(refused.status, ExecutionStatus::Rejected, "{refused:?}");
+    assert_eq!(refused.error_code.as_deref(), Some("commerce.shipment_on_hold"));
+    assert_eq!(status(open).await.status, ShipmentStatus::Pending);
+    shipments.cancel_async(held).await.expect("cancel the hold");
+    let mut ship = command(
+        "orders.ship",
+        format!("r8-pg-ship-follow-after-hold-{suffix}"),
+        ShipOrderCommand {
+            order_id: order.id,
+            tracking_number: Some("TRK-PG-KERNEL".into()),
+            lines: None,
+        },
+    );
+    ship.commitment = declaring("20");
     let receipt = executor.execute_ship_order_async(&ship).await.expect("ship order");
     assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{receipt:?}");
 
@@ -604,7 +620,7 @@ async fn postgres_full_kernel_shipment_carries_open_shipment_records() {
     let own = status(labelled).await;
     assert_eq!(own.status, ShipmentStatus::Shipped);
     assert_eq!(own.tracking_number.as_deref(), Some("OWN-LABEL"));
-    assert_eq!(status(held).await.status, ShipmentStatus::OnHold);
+    assert_eq!(status(held).await.status, ShipmentStatus::Cancelled);
     assert_eq!(status(cancelled).await.status, ShipmentStatus::Cancelled);
 
     let facts: Vec<(Uuid, Option<Uuid>)> = sqlx::query_as(

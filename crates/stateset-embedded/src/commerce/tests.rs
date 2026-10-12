@@ -108,8 +108,30 @@ fn test_metrics_record_key_engine_operations() {
         .unwrap();
     commerce.payments().mark_completed(payment.id).unwrap();
 
-    // Returns can only be requested against shipped goods.
-    commerce.orders().ship(order.id, None).unwrap();
+    // Returns can only be requested against shipped goods: delivering the
+    // shipment ships its unit on the order.
+    let shipment = commerce
+        .shipments()
+        .create(CreateShipment {
+            order_id: order.id,
+            carrier: Some(ShippingCarrier::Ups),
+            recipient_name: "Metric Tester".into(),
+            shipping_address: "123 Metric Way, Testville, ST 12345".into(),
+            items: Some(vec![CreateShipmentItem {
+                sku: "SKU-METRIC".into(),
+                name: "Metric Widget".into(),
+                quantity: 1,
+                ..Default::default()
+            }]),
+            ..Default::default()
+        })
+        .unwrap();
+    commerce.shipments().mark_processing(shipment.id).unwrap();
+    commerce.shipments().mark_ready(shipment.id).unwrap();
+    commerce.shipments().ship(shipment.id, None).unwrap();
+    commerce.shipments().mark_in_transit(shipment.id).unwrap();
+    commerce.shipments().mark_out_for_delivery(shipment.id).unwrap();
+    commerce.shipments().mark_delivered(shipment.id).unwrap();
     commerce
         .returns()
         .create(CreateReturn {
@@ -141,29 +163,6 @@ fn test_metrics_record_key_engine_operations() {
         })
         .unwrap();
     commerce.carts().complete(cart.id).unwrap();
-
-    let shipment = commerce
-        .shipments()
-        .create(CreateShipment {
-            order_id: order.id,
-            carrier: Some(ShippingCarrier::Ups),
-            recipient_name: "Metric Tester".into(),
-            shipping_address: "123 Metric Way, Testville, ST 12345".into(),
-            items: Some(vec![CreateShipmentItem {
-                sku: "SKU-METRIC".into(),
-                name: "Metric Widget".into(),
-                quantity: 1,
-                ..Default::default()
-            }]),
-            ..Default::default()
-        })
-        .unwrap();
-    commerce.shipments().mark_processing(shipment.id).unwrap();
-    commerce.shipments().mark_ready(shipment.id).unwrap();
-    commerce.shipments().ship(shipment.id, None).unwrap();
-    commerce.shipments().mark_in_transit(shipment.id).unwrap();
-    commerce.shipments().mark_out_for_delivery(shipment.id).unwrap();
-    commerce.shipments().mark_delivered(shipment.id).unwrap();
 
     let plan = commerce
         .subscriptions()

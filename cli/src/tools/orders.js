@@ -205,7 +205,8 @@ export const orderTools = [
 
   {
     name: 'ship_order',
-    description: 'Mark an order as shipped with optional tracking number.',
+    description:
+      "Ship every remaining unit of an order, with an optional tracking number. In the same transaction the shipped units leave stock (their reservations are fulfilled, so on-hand and allocated both drop) and the order's open shipments (pending, processing, ready_to_ship) move to shipped. Refused while one of the order's shipments is on_hold: release or cancel the hold first.",
     inputSchema: {
       orderId: z.string().min(1).describe('Order ID (UUID)'),
       trackingNumber: z.string().optional().describe('Shipping tracking number'),
@@ -240,7 +241,8 @@ export const orderTools = [
 
   {
     name: 'cancel_order',
-    description: 'Cancel an order. Only pending or confirmed orders can be cancelled.',
+    description:
+      'Cancel an order that has not shipped (pending, confirmed or processing). Releases its stock holds and cancels its shipments that never left (pending, processing, ready_to_ship, on_hold). Refused once any shipment of the order has shipped (shipped, in transit, delivered, ...): create a return for those units instead.',
     inputSchema: {
       orderId: z.string().min(1).describe('Order ID (UUID)'),
     },

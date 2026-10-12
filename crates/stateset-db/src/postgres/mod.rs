@@ -547,6 +547,12 @@ impl PostgresDatabase {
         // state after 099), so a fresh Postgres store stops charging zero
         // tax. Skipped on a store that already has any tax rate.
         migrations.push(("105_seed_tax_rates", include_str!("migrations/105_seed_tax_rates.sql")));
+        // Backfill: fulfil legacy confirmed order reservations so shipped units
+        // are consumed exactly once (idempotent by status).
+        migrations.push((
+            "106_shipped_reservations_backfill",
+            include_str!("migrations/106_shipped_reservations_backfill.sql"),
+        ));
 
         migrations
     }

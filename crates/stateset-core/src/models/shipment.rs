@@ -140,6 +140,30 @@ impl ShipmentStatus {
         matches!(self, Self::Delivered | Self::Cancelled | Self::Returned)
     }
 
+    /// Whether the package has been handed to the carrier: `shipped` and
+    /// everything that can only follow it (`in_transit`, `out_for_delivery`,
+    /// `delivered`, `failed`, `returned`).
+    ///
+    /// A shipment that has left carries real units: they were shipped on its
+    /// order in the same transaction, and the order can no longer be
+    /// cancelled (it needs a return). Exhaustive on purpose.
+    #[must_use]
+    pub const fn has_left(self) -> bool {
+        match self {
+            Self::Shipped
+            | Self::InTransit
+            | Self::OutForDelivery
+            | Self::Delivered
+            | Self::Failed
+            | Self::Returned => true,
+            Self::Pending
+            | Self::Processing
+            | Self::ReadyToShip
+            | Self::OnHold
+            | Self::Cancelled => false,
+        }
+    }
+
     /// Whether items may be added to or removed from a shipment in this status.
     ///
     /// The manifest is editable only before the package is packed: `pending`,

@@ -447,8 +447,25 @@ impl Harness {
             }
             Op::Ship { order } => {
                 let Some(o) = Self::pick(&self.model.orders, *order) else { return Ok(()) };
+                // A full ship consumes every live hold of the order: those
+                // units leave on-hand (backordered units have no hold).
+                let mut held = [Decimal::ZERO; 3];
+                for r in self
+                    .commerce
+                    .inventory()
+                    .list_reservations_by_reference("order", &self.model.orders[o].id.to_string())?
+                {
+                    if r.status.holds_stock()
+                        && let Some(s) = self.item_ids.iter().position(|id| *id == r.item_id)
+                    {
+                        held[s] += r.quantity;
+                    }
+                }
                 self.commerce.orders().ship(self.model.orders[o].id, None)?;
                 self.model.orders[o].shipped = true;
+                for (s, units) in held.iter().enumerate() {
+                    self.model.on_hand[s] -= *units;
+                }
             }
             Op::Deliver { order } => {
                 let Some(o) = Self::pick(&self.model.orders, *order) else { return Ok(()) };

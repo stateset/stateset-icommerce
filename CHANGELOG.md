@@ -20,18 +20,18 @@ This project follows Keep a Changelog and Semantic Versioning.
   non-negative and `allocated` equals Σ live reservations; returns never exceed shipped units; and
   every refused call leaves every entity the case owns byte-for-byte unchanged. Cases:
   `CROSS_ENTITY_CASES` (default 32) / `CROSS_ENTITY_PG_CASES` (default 12); shrink budget
-  `CROSS_ENTITY_SHRINK_ITERS`. Four cross-entity gaps that need a product decision are tracked
-  in its shrink-only `KNOWN_GAPS` list, each with a reproducer that must keep failing: shipping a
-  shipment record never ships the order; shipped orders keep their stock `confirmed` (allocated
-  and on hand) forever; a shipped order can still own a shipment waiting to ship (created later,
-  or on hold during the order ship and released after); and cancelling an order leaves its open
-  shipments shippable.
+  `CROSS_ENTITY_SHRINK_ITERS`. Gaps that need a product decision go in its shrink-only
+  `KNOWN_GAPS` list, each with a reproducer that must keep failing; the four it found are fixed
+  (see *Changed* below) and the list is empty. It also checks that shipments and their order agree
+  in both directions (units on shipments that left ≤ the line's `shipped_quantity`; a closed order
+  keeps no shipment waiting; fully delivered shipments deliver the order) and that every shipped
+  unit left on-hand exactly once.
 - **Guard-predicate wiring lint** (`crates/stateset-core/tests/guard_predicate_wiring.rs`): every
   `can_*` / `allows_*` / `*_allowed` / `*eligible*` predicate on a core model must have a
   production call site outside its own model file. Known-unwired predicates sit in a shrink-only
   backlog (27 today); an unlisted dead predicate, a listed predicate that became wired, or a stale
   witness fails the lint.
-- `ShipmentStatus::allows_item_changes` and `OrderStatus::can_ship_to`.
+- `ShipmentStatus::allows_item_changes`, `ShipmentStatus::has_left` and `OrderStatus::can_ship_to`.
 
 ### Changed (behaviour, needs a release note)
 
@@ -49,6 +49,45 @@ This project follows Keep a Changelog and Semantic Versioning.
   `ShipmentStatus::allows_item_changes` — an exhaustive match, so a new status must decide — and is
   checked under the shipment lock before any item row is written, on both backends. The
   `add_shipment_item` / `remove_shipment_item` MCP tool descriptions now state it.
+- **Shipping an order now takes the units out of on-hand stock.** An order ship (full or by
+  lines, `OrderRepository::ship` / `update(status = shipped)` / the governed `orders.ship`) used to
+  mark the shipped units' reservations `confirmed`, which still counted as allocated: on-hand never
+  dropped, and a `restock` return then added the same units a second time. The ship now fulfils
+  the reservations for exactly the shipped quantities in its own transaction (on-hand and
+  allocated both drop, a `shipment` inventory movement and an
+  `inventory.reservation_fulfilled.v1` fact are written, the reservation becomes `fulfilled` or
+  keeps the unshipped remainder), and a ship that completes the order releases any hold still
+  live. Units without a reservation (backordered, untracked SKUs) leave through their backorder,
+  never twice. Order ship no longer emits `inventory.reservation_confirmed.v1`. A reservation that
+  is already fulfilled can no longer be expired (which used to drop its units from `allocated` a
+  second time). Both backends.
+- **Shipping or delivering a shipment now updates its order.** Moving a shipment to `shipped`
+  ships its manifest lines on the order in the same transaction — each capped at what the line
+  still has unshipped, so a unit already shipped through the order is never counted twice; a
+  shipment without items ships the order's remainder not promised to another open shipment — with
+  the same effects as an order ship (`partially_shipped`/`shipped`, fulfillment status, stock
+  fulfilled, a `pending`/`confirmed` order walked through `processing`). Shipping a shipment of a
+  cancelled or refunded order is refused. Delivering a shipment delivers the order when the order
+  is fully shipped, every non-cancelled shipment is `delivered` and their items cover every ordered
+  unit (there is no per-line delivered quantity, so anything less leaves the order `shipped`). The
+  order → shipment direction is unchanged (a full order ship carries pending/processing/ready
+  shipments to `shipped`); neither direction re-triggers the other.
+- **Order cancel cancels open shipments and is refused once a shipment has left.** Cancelling an
+  order (repository update, `cancel`, or the governed `orders.transition`) now cancels its
+  shipments that never left (`pending`, `processing`, `ready_to_ship`, `on_hold`) in the same
+  transaction, each with a `shipment.status_changed` fact (`reason: order_cancelled`). It is
+  refused (`Conflict`, or the governed rejection `commerce.order.shipment_left`) if any shipment is
+  `shipped`, `in_transit`, `out_for_delivery`, `delivered`, `failed` or `returned`: those units
+  need a return.
+- **Shipments are refused on closed orders, and a hold blocks completing the order.** Creating a
+  shipment (with or without items, including batches and the governed `shipments.create`) or
+  adding a shipment item is refused for an order that is `shipped`, `delivered`, `cancelled` or
+  `refunded`. A ship that would leave the order fully shipped is refused (`Conflict`, or the
+  governed rejection `commerce.shipment_on_hold`) while one of its shipments is `on_hold`: release
+  or cancel the hold first. Previously the held shipment was left behind and could be released
+  onto a shipped order. MCP tool descriptions for `ship_order`, `cancel_order`, `create_shipment`,
+  `update_shipment`, `add_shipment_item`, `ship_shipment` and `deliver_shipment` state the new
+  rules.
 
 ## [1.37.0] - 2026-10-01
 

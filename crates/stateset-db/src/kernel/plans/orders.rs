@@ -51,6 +51,10 @@ pub struct OrderTransitionSnapshot {
     /// Payments that still hold captured money against the order. Only
     /// consulted for cancellations; other transitions may pass an empty list.
     pub open_captures: Vec<Payment>,
+    /// A shipment of the order that has already left the building
+    /// (`ShipmentStatus::has_left`), as `"<number> (<status>)"`. Only
+    /// consulted for cancellations: such an order needs a return instead.
+    pub left_shipment: Option<String>,
 }
 
 /// Effects of an accepted order transition.
@@ -122,6 +126,19 @@ pub fn plan_order_transition(
         ));
     }
     let cancelling = next_status == OrderStatus::Cancelled;
+    if cancelling
+        && order.status != OrderStatus::Cancelled
+        && let Some(shipment) = &snapshot.left_shipment
+    {
+        return reject(GuardRejection::never(
+            "commerce.order.shipment_left",
+            format!(
+                "order {} cannot be cancelled: shipment {shipment} has already left; \
+                 create a return for the shipped units instead",
+                order.id
+            ),
+        ));
+    }
     let void_payments = command.payload.void_payments;
     let mut outstanding_capture_ids = Vec::new();
     if cancelling && !snapshot.open_captures.is_empty() {
@@ -164,6 +181,9 @@ pub struct ShipOrderSnapshot<D> {
     pub shipment: Result<(OrderStatus, Vec<D>), String>,
     /// Whether any open reservation for the order has already expired.
     pub expired_reservation: bool,
+    /// A shipment of the order that is on hold (its number). A ship that
+    /// would leave the order fully shipped is refused while one exists.
+    pub held_shipment: Option<String>,
 }
 
 /// Effects of an accepted shipment.
@@ -216,6 +236,19 @@ pub fn plan_ship_order<D: Clone>(
         return reject(GuardRejection::never(
             "commerce.reservation_expired",
             "an inventory reservation expired before shipment",
+        ));
+    }
+    if resolved_status == OrderStatus::Shipped
+        && order.status != OrderStatus::Shipped
+        && let Some(shipment) = &snapshot.held_shipment
+    {
+        return reject(GuardRejection::never(
+            "commerce.shipment_on_hold",
+            format!(
+                "order {} cannot finish shipping while shipment {shipment} is on hold; \
+                 release or cancel the hold first",
+                order.id
+            ),
         ));
     }
     PlanOutcome::Proceed(ShipOrderEffects {
