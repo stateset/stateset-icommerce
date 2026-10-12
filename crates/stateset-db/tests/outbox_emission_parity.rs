@@ -413,7 +413,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("integration_mappings.rs", "delete"),
     ("integration_mappings.rs", "bulk_upsert"),
     ("inventory.rs", "apply_allocation_delta_in_tx"),
-    ("inventory.rs", "expire_reservation_in_tx"),
     ("inventory.rs", "consume_available_in_tx"),
     ("inventory.rs", "create_item"),
     ("inventory.rs", "adjust"),
@@ -720,7 +719,8 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("zone_shipping_methods.rs", "delete"),
 ];
 
-/// Drop everything from the trailing `#[cfg(test)]` module onward.
+/// Drop a whole-file test fixture or the trailing `#[cfg(test)]` module.
+/// A leading inner attribute gates the entire file out of production builds.
 ///
 /// Every `src/sqlite/*.rs` file in this crate puts its `#[cfg(test)] mod
 /// tests { ... }` block as a single trailing module at column 0. Without
@@ -744,7 +744,24 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
 /// scan — there is no structural guard against that here, only the
 /// convention that trailing test modules are the only column-0 occurrence.
 fn strip_test_module(source: &str) -> &str {
+    if source.lines().next() == Some("#![cfg(test)]") {
+        return "";
+    }
     source.split_once("\n#[cfg(test)]").map_or(source, |(head, _)| head)
+}
+
+#[test]
+fn test_only_file_attribute_does_not_hide_production_code() {
+    assert_eq!(strip_test_module("#![cfg(test)]\nfn seed() { UPDATE fixtures }"), "");
+    let production = "fn write() { UPDATE orders }";
+    assert_eq!(strip_test_module(production), production);
+    assert_eq!(
+        strip_test_module("fn write() { UPDATE orders }\n#[cfg(test)]\nmod tests {}"),
+        production
+    );
+    // An attribute-looking string in a production function is not a file guard.
+    let literal = "fn write() { let text = \"#![cfg(test)]\"; UPDATE orders }";
+    assert_eq!(strip_test_module(literal), literal);
 }
 
 fn sqlite_sources() -> Vec<(String, String)> {

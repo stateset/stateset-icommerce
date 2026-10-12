@@ -16,8 +16,9 @@
 //   PORT=9000 node src/server.mjs
 
 import { createServer } from 'node:http';
+import { mergeNativeFulfillment } from './native-fulfillment.mjs';
 import { once } from 'node:events';
-import { generateKeyPairSync, createPrivateKey, createPublicKey } from 'node:crypto';
+import { generateKeyPairSync, createPrivateKey, createPublicKey, createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import {
@@ -43,6 +44,10 @@ import {
   stubChannelRegister,
 } from './backend-stub.mjs';
 import { publishToSubscribers, fetchChannelEvents } from './channel-emitter.mjs';
+import { takeNativeMerchant } from './native-http.mjs';
+
+const nativeMerchant = takeNativeMerchant();
+state.bindBackend(nativeMerchant ? 'native-checkout' : 'reference');
 
 // ---------------------------------------------------------------------------
 // ICPIP-0005 channel store (in-memory). Keyed by channel_id. Production
@@ -294,7 +299,11 @@ function checkDelegation(intent, body, now) {
   }
   const { signature: _bindingSignature, ...unsignedBinding } = binding;
   if (
-    !verifyEd25519(canonicalJson(unsignedBinding), binding.signature.sig, Buffer.from(trustedKeyHex, 'hex'))
+    !verifyEd25519(
+      canonicalJson(unsignedBinding),
+      binding.signature.sig,
+      Buffer.from(trustedKeyHex, 'hex'),
+    )
   ) {
     return {
       status: 401,
@@ -378,7 +387,10 @@ function handleHealthz(req, res) {
   reply(res, 200, {
     ok: true,
     storage: state.isDurable() ? 'sqlite' : 'memory',
-    settlement: 'simulated',
+    checkout: nativeMerchant ? 'native' : 'reference',
+    settlement: nativeMerchant ? 'unconfigured' : 'simulated',
+    ...(nativeMerchant?.payments ? { payment_reconciliation: 'configured' } : {}),
+    ...(nativeMerchant?.fulfillment ? { fulfillment_reconciliation: 'configured' } : {}),
     ...state.counts(),
   });
 }
@@ -386,7 +398,7 @@ function handleHealthz(req, res) {
 function handleWellKnown(req, res) {
   reply(res, 200, {
     spec: 'icp-1.0',
-    handler: 'stateset-icp-handler-stub',
+    handler: nativeMerchant ? 'stateset-icp-handler-native' : 'stateset-icp-handler-stub',
     handler_version: '0.1.0',
     trust_mode: ENFORCE_TRUST ? 'enforce' : 'demo',
     merchant_aid: merchantAid,
@@ -404,7 +416,11 @@ function handleWellKnown(req, res) {
         'quote.request',
         'payout.request',
         'channel.register',
-      ].filter((verb) => !state.isDurable() || verb !== 'channel.register'),
+      ].filter((verb) =>
+        nativeMerchant
+          ? verb === 'purchase.create'
+          : !state.isDurable() || verb !== 'channel.register',
+      ),
       transports: ['http'],
       pqc_hybrid: false,
       push_channels: state.isDurable() ? [] : ['webhook', 'sse'],
@@ -426,6 +442,13 @@ async function handleSubmitIntent(req, res) {
   const { intent, signature } = body;
   if (!intent || !signature) {
     return reply(res, 400, err('format.missing_field', 'expected { intent, signature }'));
+  }
+  if (nativeMerchant && intent.verb !== 'purchase.create') {
+    return reply(
+      res,
+      503,
+      err('native.workflow_unavailable', 'this native workflow is not configured'),
+    );
   }
   if (state.isDurable() && intent.verb === 'channel.register') {
     return reply(
@@ -543,6 +566,19 @@ async function handleSubmitIntent(req, res) {
   if (delegationFailure) {
     return reply(res, delegationFailure.status, delegationFailure.body);
   }
+
+  // Native snapshots are asynchronous. Read them outside the protocol write
+  // transaction; acceptance checks the persisted fingerprint under the native
+  // checkout transaction. The resolver is an operator-owned, read-only lookup.
+  if (nativeMerchant && state.getIntent(intent.intent_id))
+    return reply(
+      res,
+      409,
+      err('replay.intent_seen', 'intent identity is immutable; use a new intent ID'),
+    );
+  const nativeQuote = nativeMerchant
+    ? await nativeMerchant.quote(intent, merchantKp.privateKey, merchantAid)
+    : null;
 
   // 4b. Nonce replay (§5.3) — only consume a nonce AFTER the signature is
   // proven valid, so an attacker can't burn a victim's nonce with a forged
@@ -678,11 +714,11 @@ async function handleSubmitIntent(req, res) {
       });
     }
 
-    const result = stubQuote(intent, merchantKp.privateKey);
+    const result = nativeQuote ?? stubQuote(intent, merchantKp.privateKey);
     if (!result.ok) return reply(res, 422, result.error);
 
     state.recordIntent(intent, signature.sig, edPubRaw);
-    state.recordQuote(result.quote, intent.intent_id, result.signatureHex);
+    state.recordQuote(result.quote, intent.intent_id, result.signatureHex, result.nativeCheckout);
 
     return reply(res, 200, {
       quote: result.quote,
@@ -694,28 +730,34 @@ async function handleSubmitIntent(req, res) {
 async function handleAcceptQuote(req, res, _url, [quoteId]) {
   const body = await readJson(req);
   if (!body) return reply(res, 400, errBadJson());
-  return transactionReply(res, (reply) => {
-    const record = state.getQuote(quoteId);
-    if (!record) return reply(res, 404, err('format.unknown_quote', `quote ${quoteId} not found`));
-    const { quote, intentId } = record;
-    const original = state.getIntent(intentId);
-    const acceptance = body.acceptance;
-    if (
-      !original?.signerPublicKey ||
-      acceptance?.type !== 'quote.accept' ||
-      acceptance.quote_id !== quoteId ||
-      acceptance.buyer !== original.intent.buyer ||
-      body.signature?.alg !== 'ed25519' ||
-      body.signature.kid !== original.intent.buyer ||
-      !verifyEd25519(canonicalJson(acceptance), body.signature.sig, original.signerPublicKey)
-    ) {
-      return reply(
-        res,
-        401,
-        err('auth.acceptance_invalid', 'quote acceptance must be signed by the original buyer'),
-      );
-    }
+  const record = state.getQuote(quoteId);
+  if (!record) return reply(res, 404, err('format.unknown_quote', `quote ${quoteId} not found`));
+  const { quote, intentId } = record;
+  const original = state.getIntent(intentId);
+  const acceptance = body.acceptance;
+  if (
+    !original?.signerPublicKey ||
+    acceptance?.type !== 'quote.accept' ||
+    acceptance.quote_id !== quoteId ||
+    acceptance.buyer !== original.intent.buyer ||
+    body.signature?.alg !== 'ed25519' ||
+    body.signature.kid !== original.intent.buyer ||
+    !verifyEd25519(canonicalJson(acceptance), body.signature.sig, original.signerPublicKey)
+  ) {
+    return reply(
+      res,
+      401,
+      err('auth.acceptance_invalid', 'quote acceptance must be signed by the original buyer'),
+    );
+  }
 
+  if (nativeMerchant || record.nativeCheckout) {
+    if (!nativeMerchant || !record.nativeCheckout)
+      return reply(res, 503, err('native.backend_unavailable', 'quote backend is not configured'));
+    return handleNativeAcceptance(res, record);
+  }
+
+  return transactionReply(res, (reply) => {
     const funding = stubFundingInstructions(quote);
     const existingEscrow = state.getEscrow(funding.escrow_id);
     if (existingEscrow) {
@@ -772,7 +814,130 @@ async function handleAcceptQuote(req, res, _url, [quoteId]) {
   });
 }
 
+async function handleNativeAcceptance(res, record) {
+  const { quote, intentId } = record;
+  let result;
+  try {
+    result = await nativeMerchant.accept(quote.quote_id);
+  } catch (error) {
+    if (error.code !== 'native.quote_invalid') throw error;
+    const expired = Date.parse(quote.exp) <= Date.now();
+    return reply(
+      res,
+      expired ? 410 : 422,
+      err(expired ? 'replay.expired' : error.code, 'native quote is invalid or expired'),
+    );
+  }
+  if (result.status === 'preview') {
+    return reply(res, 200, {
+      checkout: { status: 'preview', verdict: result.receipt?.status },
+      funding: null,
+      order: null,
+    });
+  }
+  if (result.status === 'reconciling') {
+    return reply(res, 202, {
+      checkout: { id: result.id, status: 'reconciling' },
+      funding: null,
+      order: null,
+    });
+  }
+  if (result.status !== 'accepted')
+    return reply(
+      res,
+      409,
+      err(
+        result.error ?? 'native.checkout_rejected',
+        'native checkout rejected the accepted quote',
+      ),
+    );
+
+  // Native order/stock/budget/outbox/receipt already committed atomically.
+  // This separate projection may fail; a signed retry recovers the same native
+  // receipt and checkpoints it without reserving reference inventory again.
+  const payment = await nativeMerchant.reconcilePayment(record, result.orderId);
+  const fulfillment = await nativeMerchant.reconcileFulfillment(record, result.orderId);
+  return transactionReply(res, (reply) => {
+    const escrowId =
+      '0x' +
+      createHash('sha256')
+        .update(canonicalJson(['icp.native.escrow.v1', intentId, quote.quote_id]))
+        .digest('hex');
+    const existing = state.getEscrow(escrowId);
+    if (existing) {
+      const response = existing.native_acceptance;
+      // Concurrent stale lookups cannot overwrite a recorded capture. This
+      // response describes acceptance, not future refund/dispute accounting.
+      if (payment && response.payment?.status !== 'recorded') {
+        response.payment = payment;
+        if (payment.status === 'recorded') response.order.payment_status = 'paid';
+        state.updateEscrow(escrowId, { native_acceptance: response });
+      }
+      const mergedFulfillment = mergeNativeFulfillment(response.fulfillment, fulfillment);
+      if (mergedFulfillment !== response.fulfillment) {
+        response.fulfillment = mergedFulfillment;
+        if (response.fulfillment.status === 'recorded') {
+          response.order.status = response.fulfillment.order_status ?? 'shipped';
+          response.order.payment_status = 'paid';
+        }
+        state.updateEscrow(escrowId, { native_acceptance: response });
+      }
+      return reply(res, 200, response);
+    }
+    const response = {
+      checkout: { id: result.id, status: 'accepted' },
+      order: {
+        order_id: result.orderId,
+        status:
+          fulfillment?.status === 'recorded'
+            ? (fulfillment.order_status ?? 'shipped')
+            : 'confirmed',
+        payment_status:
+          payment?.status === 'recorded' || fulfillment?.status === 'recorded' ? 'paid' : 'pending',
+        quote_id: quote.quote_id,
+      },
+      escrow: { escrow_id: escrowId, state: 'pending', settlement: 'unconfigured' },
+      funding: null,
+      inventory_reservation: null,
+      ...(payment ? { payment } : {}),
+      ...(fulfillment ? { fulfillment } : {}),
+    };
+    state.createEscrow(escrowId, {
+      state: 'pending',
+      intent_id: intentId,
+      quote_id: quote.quote_id,
+      amount: quote.total,
+      settler: quote.settler,
+      seq: 0,
+      order_id: result.orderId,
+      native_acceptance: response,
+    });
+    appendSignedEscrowEvent(escrowId, {
+      type: 'icp.escrow.event',
+      v: 'icp-1.0',
+      escrow_id: escrowId,
+      intent_id: intentId,
+      seq: 0,
+      from_state: 'none',
+      to_state: 'pending',
+      trigger: {
+        kind: 'native-checkout-accepted',
+        quote_id: quote.quote_id,
+        order_id: result.orderId,
+      },
+      iat: new Date().toISOString(),
+    });
+    return reply(res, 200, response);
+  });
+}
+
 async function handleFulfill(req, res, _url, [escrowId]) {
+  if (nativeMerchant)
+    return reply(
+      res,
+      503,
+      err('native.workflow_unavailable', 'native fulfillment and settlement are not configured'),
+    );
   const body = await readJson(req);
   if (!body) return reply(res, 400, errBadJson());
   return transactionReply(res, (reply) => {
@@ -858,6 +1023,12 @@ async function handleFulfill(req, res, _url, [escrowId]) {
 }
 
 async function handleCosignSettlement(req, res) {
+  if (nativeMerchant)
+    return reply(
+      res,
+      503,
+      err('native.workflow_unavailable', 'native settlement verification is not configured'),
+    );
   const body = await readJson(req);
   return transactionReply(res, (reply) => {
     const receipt = body?.receipt;
@@ -875,7 +1046,10 @@ async function handleCosignSettlement(req, res) {
       return reply(
         res,
         400,
-        err('format.missing_field', 'receipt.settlement_id must be a non-empty string (<=128 chars)'),
+        err(
+          'format.missing_field',
+          'receipt.settlement_id must be a non-empty string (<=128 chars)',
+        ),
       );
     }
     if (!ALLOWED_SETTLERS.has(receipt.settler)) {
@@ -976,6 +1150,12 @@ async function handleCosignSettlement(req, res) {
 }
 
 async function handleDispute(req, res, _url, [escrowId]) {
+  if (nativeMerchant)
+    return reply(
+      res,
+      503,
+      err('native.workflow_unavailable', 'native dispute recovery is not configured'),
+    );
   const body = await readJson(req);
   if (!body) return reply(res, 400, errBadJson());
   return transactionReply(res, (reply) => {
@@ -1082,7 +1262,7 @@ function handleGetChannelEvents(req, res, url, [channelId]) {
     );
   }
   const sinceParam = url.searchParams.get('since');
-  const since = sinceParam == null ? 0 : Number(sinceParam);
+  const since = sinceParam === null ? 0 : Number(sinceParam);
   if (!Number.isFinite(since) || since < 0) {
     return reply(
       res,
@@ -1113,7 +1293,7 @@ async function readJson(req) {
   for await (const c of req) chunks.push(c);
   try {
     return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  } catch (_) {
+  } catch {
     return null;
   }
 }

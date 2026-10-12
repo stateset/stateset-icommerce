@@ -30,16 +30,31 @@ echo "${TLA_SHA256}  ${JAR}" | sha256sum -c --quiet - \
 
 tlc() {
   # -cleanup removes TLC's state directory. v1.7.4 predates -noGenerateSpecTE.
-  java -XX:+UseParallelGC -cp "$JAR" tlc2.TLC -workers auto -cleanup "$@"
+  # TLC extracts standard modules into java.io.tmpdir and deletes them at exit.
+  # Sharing /tmp with another JVM can delete FiniteSets.tla during parsing.
+  java "-Djava.io.tmpdir=$JAVA_TMP" -XX:+UseParallelGC -cp "$JAR" tlc2.TLC -workers "${TLA_WORKERS:-auto}" -cleanup "$@"
 }
 
+completed() {
+  # Exit zero alone does not establish that a nonempty state space was checked.
+  grep -Fq 'Model checking completed. No error has been found.' "$1" \
+    && grep -Eq '[1-9][0-9]* distinct states found' "$1"
+}
+
+# Run in an isolated snapshot: concurrent runs cannot overwrite one another's
+# logs or delete one another's TLC state. Failed runs retain all evidence.
+JAR="$(realpath "$JAR")"
+work="$(mktemp -d)"
+trap 'code=$?; if [[ $code -eq 0 ]]; then rm -rf "$work"; else echo "TLC evidence retained at $work" >&2; fi' EXIT
+JAVA_TMP="$work/.java-tmp"
+mkdir -p "$JAVA_TMP"
+cp -R "$HERE/." "$work/"
+HERE="$work"
 fail=0
 cd "$HERE/payments"
-# A run that ends on a counterexample leaves its state directory behind.
-trap 'rm -rf "$HERE/payments/states" "$HERE/inventory/states" "$HERE/x402/states" "$HERE/returns/states" "$HERE/finance/states" "$HERE/subscriptions/states" "$HERE/warehouse/states" "$HERE/kernel/states" "$HERE/checkout/states" "$HERE/promotions/states" "$HERE/sync/states" "$HERE/manufacturing/states" "$HERE/stored_value/states" "$HERE/warranties/states" "$HERE/http/states" "$HERE/loyalty/states" "$HERE/quality/states" "$HERE/edi/states"' EXIT
 
 echo "== PaymentRefunds: the implementation (Locked = TRUE) must satisfy every property"
-if tlc -config PaymentRefunds_locked.cfg PaymentRefunds.tla > locked.log 2>&1; then
+if tlc -config PaymentRefunds_locked.cfg PaymentRefunds.tla > locked.log 2>&1 && completed locked.log; then
   grep -E 'distinct states found|No error has been found' locked.log || true
 else
   echo "FAIL: the locked model violated a property:" >&2
@@ -77,32 +92,66 @@ rm -f spec_transitions.txt locked.log unlocked.log
 check_pair() {
   local dir="$1" module="$2" good="$3" bad="$4" invariant="$5"
   local code
+  local good_log="${module}_${good%.cfg}.log" bad_log="${module}_${bad%.cfg}.log"
   cd "$HERE/$dir"
   echo "== $module: guarded configuration"
-  if tlc -config "$good" "$module.tla" > guarded.log 2>&1; then
-    grep -E 'distinct states found|No error has been found' guarded.log || true
+  if tlc -config "$good" "$module.tla" > "$good_log" 2>&1 && completed "$good_log"; then
+    grep -E 'distinct states found|No error has been found' "$good_log" || true
   else
     echo "FAIL: $module violated a property:" >&2
-    grep -E 'Error:|is violated' guarded.log >&2 || tail -20 guarded.log >&2
+    grep -E 'Error:|is violated' "$good_log" >&2 || tail -20 "$good_log" >&2
     fail=1
   fi
   echo "== $module: $bad must violate $invariant"
   set +e
-  tlc -config "$bad" "$module.tla" > broken.log 2>&1
+  tlc -config "$bad" "$module.tla" > "$bad_log" 2>&1
   code=$?
   set -e
-  if [[ $code -eq 12 ]] && grep -q "Invariant $invariant is violated" broken.log; then
+  if [[ $code -eq 12 ]] && grep -q "Invariant $invariant is violated" "$bad_log"; then
     echo "ok: $invariant counterexample found"
   else
     echo "FAIL: expected $invariant counterexample (exit 12), got exit $code" >&2
     fail=1
   fi
-  rm -f guarded.log broken.log
   rm -rf states
 }
 
 check_pair payments OrderCapture OrderCapture_atomic.cfg OrderCapture_split.cfg NoOverCapture
 check_pair inventory InventoryReservations InventoryReservations_guarded.cfg InventoryReservations_unguarded.cfg AllocatedMatchesOpen
+check_pair inventory InventoryReservations InventoryReservations_guarded.cfg InventoryReservations_release_unguarded.cfg AllocatedMatchesOpen
+check_pair inventory InventoryReservations InventoryReservations_guarded.cfg InventoryReservations_fulfil_unguarded.cfg AllocatedMatchesOpen
+check_pair inventory ReservationSplits ReservationSplits_guarded.cfg ReservationSplits_terminal.cfg AllocatedMatchesOpen
+check_pair inventory ReservationSplits ReservationSplits_guarded.cfg ReservationSplits_expiry.cfg AllocatedMatchesOpen
+check_pair inventory ReservationSplits ReservationSplits_guarded.cfg ReservationSplits_nonatomic.cfg AllocatedMatchesOpen
+check_pair inventory ReservationPreview ReservationPreview_guarded.cfg ReservationPreview_unguarded.cfg PredictionMatchesApply
+check_pair inventory LazyExpiry LazyExpiry_locked.cfg LazyExpiry_unlocked.cfg AllocatedMatchesOpen
+check_pair inventory ShipmentAtomicity ShipmentAtomicity_guarded.cfg ShipmentAtomicity_early.cfg Coherent
+check_pair inventory ShipmentAtomicity ShipmentAtomicity_guarded.cfg ShipmentAtomicity_partial_rollback.cfg Coherent
+check_pair inventory ReservationOwnership ReservationOwnership_guarded.cfg ReservationOwnership_borrow.cfg OwnerConservation
+check_pair inventory ShipmentRelease ShipmentRelease_locked.cfg ShipmentRelease_stale.cfg OwnerConservation
+check_pair inventory ShipmentExpiry ShipmentExpiry_guarded.cfg ShipmentExpiry_deadline.cfg LiveAtAdmission
+check_pair inventory ShipmentExpiry ShipmentExpiry_guarded.cfg ShipmentExpiry_unlocked.cfg OwnerConservation
+check_pair inventory ReservationLockOrder ReservationLockOrder_phased.cfg ReservationLockOrder_interleaved.cfg NoCircularWait
+check_pair inventory ReservationLockOrder ReservationLockOrder_identity.cfg ReservationLockOrder_deadline.cfg NoCircularWait
+
+cd "$HERE/inventory"
+echo "== InventoryReservations: stock-holding statuses must match Lean and Rust"
+if tlc -config InventoryReservations_guarded.cfg PrintReservationHolds.tla > holds.log 2>&1 && completed holds.log; then
+  grep -E '^"[a-z_]+ -> (true|false)"$' holds.log \
+    | tr -d '"' | LC_ALL=C sort > spec_holds.txt
+  if diff -u holds_stock.golden spec_holds.txt; then
+    echo "ok: 7 reservation statuses, identical"
+  else
+    echo "FAIL: TLA+ reservation holds drifted from the Lean/Rust table" >&2
+    fail=1
+  fi
+else
+  echo "FAIL: could not evaluate TLA+ reservation holds" >&2
+  tail -20 holds.log >&2
+  fail=1
+fi
+rm -f spec_holds.txt holds.log
+
 check_pair x402 X402Claims X402Claims_atomic.cfg X402Claims_split.cfg NoDuplicateClaim
 check_pair x402 EscrowSettlement EscrowSettlement_guarded.cfg EscrowSettlement_split.cfg NoDoubleSettlement
 
@@ -151,6 +200,9 @@ check_pair sync PullConflict PullConflict_local.cfg PullConflict_local_split.cfg
 
 check_pair kernel ReceiptGate ReceiptGate_atomic.cfg ReceiptGate_split.cfg AtMostOneEffect
 check_pair kernel ReceiptGate ReceiptGate_atomic.cfg ReceiptGate_unprotected.cfg NoUnauthorizedEffect
+check_pair kernel ReceiptPromotion ReceiptPromotion_guarded.cfg ReceiptPromotion_split.cfg AtMostOnce
+check_pair kernel ReceiptPromotion ReceiptPromotion_guarded.cfg ReceiptPromotion_stale.cfg NoStaleOrDeniedEffect
+check_pair kernel ReceiptPromotion ReceiptPromotion_guarded.cfg ReceiptPromotion_unsealed.cfg NoUnverifiedEffect
 check_pair kernel OutboxLease OutboxLease_guarded.cfg OutboxLease_unguarded.cfg AckOwned
 check_pair kernel SagaRollback SagaRollback_guarded.cfg SagaRollback_repeat.cfg AtMostOnceRecorded
 check_pair kernel SagaRollback SagaRollback_guarded.cfg SagaRollback_forward.cfg ReverseCompensation

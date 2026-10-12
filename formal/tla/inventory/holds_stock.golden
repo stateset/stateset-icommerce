@@ -1,0 +1,7 @@
+allocated -> true
+cancelled -> false
+confirmed -> true
+expired -> false
+fulfilled -> false
+pending -> true
+released -> false

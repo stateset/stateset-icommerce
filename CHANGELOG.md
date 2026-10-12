@@ -6,8 +6,36 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.38.0] - 2026-10-12
+
+### Added
+
+- Lean proofs and TLA+ models for reservation lifecycle safety, line-owned
+  stock selection, receipt promotion, shipment atomicity, expiry races, and
+  reservation/balance lock ordering. Generated fixtures connect selected
+  models to Rust and both SQL backends; the Lean runner audits compiled
+  declarations for unexpected axioms and proof holes.
+- Governed partial reserved shipments with order-line ownership checks,
+  exact split quantities, durable receipt replay, and backend parity tests.
+- Native merchant HTTP example, payment and fulfillment reconciliation
+  adapters, Stripe payment integration tests, and expanded merchant docs.
+
 ### Fixed
 
+- YAML policy loading uses the maintained Serde Norway fork, removing the
+  unmaintained `unsafe-libyaml` dependency flagged by the release policy gate.
+- Updated the CLI's MCP SDK and Sharp dependencies and the storefront's CSS
+  selector parser to patched versions identified by release dependency checks.
+- Reservation confirmation and release no longer reuse fulfilled stock;
+  expiry emits its domain event within the inventory transaction. Preview
+  version predictions now match terminal and already-confirmed no-op cases.
+- PostgreSQL lazy expiry locks and rereads candidates before releasing stock.
+  Shipment locks all reservations before balances, and lazy expiry uses the
+  same reservation identity order, preventing the reproduced lock inversions.
+- PostgreSQL startup migrations run on their advisory-lock connection so a
+  one-connection pool can initialize and reopen without pool starvation.
+- Shipment and receipt failure-injection regressions verify rollback of
+  inventory, ledger, outbox, order, and receipt effects before same-key retry.
 - CLI on Node 20: `@google-cloud/pubsub` is pinned to `^5` (v6 requires
   Node >= 22). On Node 20 npm dropped the optional v6 package together with
   its optional subtree, including `@grpc/grpc-js` and `@grpc/proto-loader`,

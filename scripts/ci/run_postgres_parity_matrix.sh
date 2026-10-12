@@ -49,6 +49,7 @@ discover_tests() {
 }
 
 run_db_postgres() {
+  run_cmd cargo test --locked -p stateset-db --no-default-features --features postgres --lib postgres_inventory_transitions_match_lean
   local tests
   mapfile -t tests < <(discover_tests "${REPO_ROOT}/crates/stateset-db/tests" 'postgres_*' 'postgres_saga.*')
 

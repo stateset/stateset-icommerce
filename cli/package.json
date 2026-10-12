@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "1.37.0",
+  "version": "1.38.0",
   "description": "AI-powered local-first commerce engine — orders, inventory, payments, policies, and integrations",
   "type": "module",
   "bin": {
@@ -202,7 +202,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.1.70",
     "@clack/prompts": "^0.11.0",
     "@modelcontextprotocol/node": "^2.0.0",
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@modelcontextprotocol/server": "^2.0.0",
     "@stateset/embedded": "file:../bindings/node",
     "bignumber.js": "^9.3.1",
@@ -248,7 +248,7 @@
       "uuid": "11.1.1"
     },
     "protobufjs": "7.6.6",
-    "sharp": "0.35.4",
+    "sharp": "0.35.5",
     "undici": "6.28.1"
   },
   "publishConfig": {

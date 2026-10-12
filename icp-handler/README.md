@@ -18,6 +18,21 @@ The reference impl uses a **stub Backend** (in-memory state, auto-fulfillment).
 A production deployment swaps in the real engine adapter described in
 `icp-spec/handler-design.md` §"Default StateSet backend adapter".
 
+For native orders over these HTTP endpoints, the source tree also provides
+`cli/examples/native-merchant.mjs --config PATH [--apply]`. It uses operator-owned
+cart resolution and kernel authority, signed cart fingerprints, strict stock
+checks, and recovery from native receipts. Optional read-only Stripe verification
+can record existing USD card captures through governed payment commands.
+An optional operator dispatch resolver records full or partial shipments through governed
+`orders.ship_reserved`, with version checks, atomic reserved-stock consumption
+and receipt recovery. Successive dispatches use distinct approved references;
+responses preserve cumulative shipment progress across retries and outages.
+Partial shipping requires `orders.ship_reserved.partial.v1` on the native binary.
+Legacy pinned `orders.ship` commands retain their
+reservation-confirmation behavior and report depletion as unverified.
+Payments otherwise remain pending; simulated settlement is disabled. See
+[native HTTP configuration and recovery](../docs/src/durable-merchant.md#native-checkout-over-http).
+
 ## Run it
 
 ```sh
@@ -43,6 +58,7 @@ PORT=0 node --test test/roundtrip.test.mjs  # just the end-to-end flow
 ```
 
 The roundtrip test:
+
 1. Generates a fresh buyer Agent (Ed25519 + X25519, AID per spec §4.2)
 2. Builds and signs a real ICP-1.0 `purchase.create` Intent
 3. POSTs it (with both pubkeys so the handler can verify the §4.2 binding)
@@ -59,17 +75,17 @@ AID, and a replayed nonce is rejected with `replay.nonce_seen`.
 
 ## Surface
 
-| Verb | Path | Purpose |
-|---|---|---|
-| GET  | `/icp/v1/.well-known/icp`         | Capability advertisement |
-| GET  | `/icp/v1/settlers`                 | Accepted Settler allowlist |
-| POST | `/icp/v1/intents`                  | Submit signed Intent, get Quote |
-| POST | `/icp/v1/quotes/:id/accept`        | Accept a Quote, get funding instructions |
-| POST | `/icp/v1/escrows/:id/fulfill`      | Submit fulfillment evidence (stub auto-releases) |
-| POST | `/icp/v1/escrows/:id/dispute`      | Open a dispute |
-| GET  | `/icp/v1/escrows/:id/events`       | Server-Sent Events stream of EscrowEvents |
-| GET  | `/icp/v1/settlements/:id`          | Fetch a SettlementReceipt |
-| GET  | `/healthz`                         | Liveness probe |
+| Verb | Path                          | Purpose                                          |
+| ---- | ----------------------------- | ------------------------------------------------ |
+| GET  | `/icp/v1/.well-known/icp`     | Capability advertisement                         |
+| GET  | `/icp/v1/settlers`            | Accepted Settler allowlist                       |
+| POST | `/icp/v1/intents`             | Submit signed Intent, get Quote                  |
+| POST | `/icp/v1/quotes/:id/accept`   | Accept a Quote, get funding instructions         |
+| POST | `/icp/v1/escrows/:id/fulfill` | Submit fulfillment evidence (stub auto-releases) |
+| POST | `/icp/v1/escrows/:id/dispute` | Open a dispute                                   |
+| GET  | `/icp/v1/escrows/:id/events`  | Server-Sent Events stream of EscrowEvents        |
+| GET  | `/icp/v1/settlements/:id`     | Fetch a SettlementReceipt                        |
+| GET  | `/healthz`                    | Liveness probe                                   |
 
 All bodies are JSON (`application/icp+json`) — the normative icp-1.0
 encoding per spec §5.1. A binary Canonical CBOR encoding

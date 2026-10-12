@@ -179,6 +179,14 @@
       "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "expected_version", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_quantity"]
     },
     {
+      "name": "orders.ship_reserved",
+      "risk": "critical",
+      "capability": "orders.ship_reserved",
+      "sqliteExecutor": "execute_ship_reserved_order",
+      "postgresExecutor": "execute_ship_reserved_order_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "expected_version", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_quantity"]
+    },
+    {
       "name": "orders.transition",
       "risk": "high",
       "capability": "orders.transition",

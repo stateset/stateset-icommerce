@@ -2,7 +2,7 @@
 # Publish-workflow guard: refuse to publish anything from a commit that is not
 # a released state of the protected branch.
 #
-#   scripts/ci/check_release_guard.sh [--version 1.37.0] [--sha <sha>]
+#   scripts/ci/check_release_guard.sh [--version 1.38.0] [--sha <sha>]
 #
 # Every publish workflow (crates.io, npm, PyPI, sigstore signing) runs this
 # first. It fails unless all four hold:
@@ -35,7 +35,7 @@ its required checks are green, and the three sibling release tags all exist on
 it.
 
 Options:
-  --version VERSION   Release version (1.37.0, v1.37.0, cli-v1.37.0, py-v1.37.0).
+  --version VERSION   Release version (1.38.0, v1.38.0, cli-v1.38.0, py-v1.38.0).
                       Defaults to RELEASE_VERSION, then the pushed tag ref.
   --sha SHA           Commit under test. Defaults to GITHUB_SHA, then HEAD.
   -h, --help          Show this help message.

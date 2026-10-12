@@ -2,10 +2,19 @@
 
 use crate::kernel::envelope::GuardRejection;
 use rust_decimal::Decimal;
-use stateset_core::{EconomicCommitment, ReserveInventory};
+use stateset_core::{EconomicCommitment, ReservationStatus, ReserveInventory};
 use uuid::Uuid;
 
 const VALIDATION: &str = "commerce.inventory_validation_failed";
+
+/// Predict the balance-version increment for a lifecycle command on this
+/// snapshot. Confirmation (including a split) keeps the allocation unchanged
+/// unless it expires a pending/allocated hold; confirmed rows return early.
+/// Terminal rows never hold stock. See `formal/lean/InventoryPreview.lean`.
+#[must_use]
+pub fn reservation_changes_balance(status: ReservationStatus, release: bool, due: bool) -> bool {
+    status.holds_stock() && (release || (status != ReservationStatus::Confirmed && due))
+}
 
 /// Static payload checks for `inventory.reserve`.
 #[must_use]

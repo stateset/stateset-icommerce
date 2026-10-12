@@ -2131,3 +2131,210 @@ async fn postgres_kernel_storefront_commands_run_a_complete_checkout_on_the_gove
 
     assert!(db.kernel_outbox().verify_audit_chain_async().await.expect("verify chain").valid);
 }
+
+async fn postgres_reserved_shipping_fixture(
+    quantities: &[i32],
+) -> Option<(Arc<PostgresDatabase>, stateset_core::Order, String, Uuid)> {
+    let url = postgres_url()?;
+    let db = Arc::new(PostgresDatabase::connect(&url).await.unwrap());
+    let suffix = Uuid::new_v4();
+    let sku = format!("RESERVED-SHIP-{suffix}");
+    db.inventory()
+        .create_item_async(CreateInventoryItem {
+            sku: sku.clone(),
+            name: "Reserved shipping".into(),
+            initial_quantity: Some(dec!(10)),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let customer = db
+        .customers()
+        .create_async(CreateCustomer {
+            email: format!("reserved-{suffix}@example.com"),
+            first_name: "Stock".into(),
+            last_name: "Test".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let order = db
+        .orders()
+        .create_async(CreateOrder {
+            customer_id: customer.id,
+            items: quantities
+                .iter()
+                .map(|quantity| CreateOrderItem {
+                    product_id: ProductId::new(),
+                    sku: sku.clone(),
+                    name: "Stock".into(),
+                    quantity: *quantity,
+                    unit_price: dec!(10),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    for status in [OrderStatus::Confirmed, OrderStatus::Processing] {
+        db.orders()
+            .update_async(
+                order.id.into_uuid(),
+                UpdateOrder { status: Some(status), ..Default::default() },
+            )
+            .await
+            .unwrap();
+    }
+    let payment = db
+        .payments()
+        .create_async(CreatePayment {
+            order_id: Some(order.id),
+            amount: order.total_amount,
+            currency: Some(order.currency),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    db.payments().mark_completed_async(payment.id.into_uuid()).await.unwrap();
+    let order = db.orders().get_async(order.id.into_uuid()).await.unwrap().unwrap();
+    Some((db, order, sku, suffix))
+}
+
+#[tokio::test]
+async fn postgres_reserved_shipping_consumes_once_under_concurrent_retries() {
+    let Some((db, order, sku, suffix)) = postgres_reserved_shipping_fixture(&[2]).await else {
+        return;
+    };
+    let mut command = kernel_command(
+        "orders.ship_reserved",
+        format!("reserved-{suffix}"),
+        "orders.ship_reserved",
+        ShipOrderCommand {
+            order_id: order.id,
+            tracking_number: Some("TRACK-RESERVED".into()),
+            lines: None,
+        },
+    );
+    command.expected_version = Some(order.version);
+    let policy = policy()
+        .allow("orders.ship_reserved", KernelCommandPolicy::requiring(["orders.ship_reserved"]));
+    let kernel = db.kernel_executor(policy);
+    assert_eq!(
+        kernel.execute_ship_reserved_order_async(&command).await.unwrap().status,
+        ExecutionStatus::Previewed
+    );
+    command.command_id = Uuid::new_v4();
+    command.mode = ExecutionMode::Apply;
+    let (a, b) = tokio::join!(
+        kernel.execute_ship_reserved_order_async(&command),
+        kernel.execute_ship_reserved_order_async(&command)
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!(a.status, ExecutionStatus::Succeeded, "{:?}", a.error_message);
+    assert_eq!(a.receipt_id, b.receipt_id);
+    let stock = db.inventory().get_stock_async(&sku).await.unwrap().unwrap();
+    assert_eq!(stock.total_on_hand, dec!(8));
+    assert_eq!(stock.total_allocated, dec!(0));
+    assert_eq!(stock.total_available, dec!(8));
+    let linked: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM kernel_outbox WHERE event_type='inventory.reservation_fulfilled.v1' AND command_id=$1")
+        .bind(command.command_id).fetch_one(db.pool()).await.unwrap();
+    assert_eq!(linked, 1);
+    let status: String = sqlx::query_scalar("SELECT status FROM inventory_reservations WHERE reference_type='order' AND reference_id=$1")
+        .bind(order.id.to_string()).fetch_one(db.pool()).await.unwrap();
+    assert_eq!(status, "fulfilled");
+}
+
+#[tokio::test]
+async fn postgres_reserved_partial_shipping_serializes_competing_dispatches() {
+    let Some((db, order, sku, suffix)) = postgres_reserved_shipping_fixture(&[2, 2]).await else {
+        return;
+    };
+    let mut first = kernel_command(
+        "orders.ship_reserved",
+        format!("partial-first-{suffix}"),
+        "orders.ship_reserved",
+        ShipOrderCommand {
+            order_id: order.id,
+            tracking_number: Some("PARTIAL-1".into()),
+            lines: Some(vec![ShipmentLineInput { order_item_id: order.items[0].id, quantity: 1 }]),
+        },
+    );
+    first.expected_version = Some(order.version);
+    let kernel =
+        db.kernel_executor(policy().allow(
+            "orders.ship_reserved",
+            KernelCommandPolicy::requiring(["orders.ship_reserved"]),
+        ));
+    assert_eq!(
+        kernel.execute_ship_reserved_order_async(&first).await.unwrap().status,
+        ExecutionStatus::Previewed
+    );
+    first.command_id = Uuid::new_v4();
+    first.mode = ExecutionMode::Apply;
+    let (a, b) = tokio::join!(
+        kernel.execute_ship_reserved_order_async(&first),
+        kernel.execute_ship_reserved_order_async(&first)
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!(a.status, ExecutionStatus::Succeeded, "{:?}", a.error_message);
+    assert_eq!(a.receipt_id, b.receipt_id);
+    let partial = a.result.as_ref().unwrap();
+    assert_eq!(partial.status, OrderStatus::PartiallyShipped);
+    let stock = db.inventory().get_stock_async(&sku).await.unwrap().unwrap();
+    assert_eq!(stock.total_on_hand, dec!(9));
+    assert_eq!(stock.total_allocated, dec!(3));
+    assert_eq!(stock.total_available, dec!(6));
+    let sibling: rust_decimal::Decimal =
+        sqlx::query_scalar("SELECT quantity FROM inventory_reservations WHERE order_item_id=$1")
+            .bind(order.items[1].id.into_uuid())
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(sibling, dec!(2));
+    // Force the prior fact into the next command's timestamp window. Exact
+    // event IDs must preserve its original command link regardless of clocks.
+    sqlx::query("UPDATE kernel_outbox SET created_at=NOW()+INTERVAL '1 day' WHERE command_id=$1 AND event_type='inventory.reservation_fulfilled.v1'")
+        .bind(first.command_id).execute(db.pool()).await.unwrap();
+    let mut next = first.clone();
+    next.command_id = Uuid::new_v4();
+    next.idempotency_key = format!("partial-next-{suffix}");
+    next.expected_version = Some(partial.version);
+    let mut competing = next.clone();
+    competing.command_id = Uuid::new_v4();
+    competing.idempotency_key = format!("partial-competing-{suffix}");
+    let (n, c) = tokio::join!(
+        kernel.execute_ship_reserved_order_async(&next),
+        kernel.execute_ship_reserved_order_async(&competing)
+    );
+    let outcomes = [n.unwrap(), c.unwrap()];
+    assert_eq!(outcomes.iter().filter(|r| r.status == ExecutionStatus::Succeeded).count(), 1);
+    assert_eq!(outcomes.iter().filter(|r| r.status == ExecutionStatus::Rejected).count(), 1);
+    let current = outcomes
+        .iter()
+        .find_map(|r| if r.status == ExecutionStatus::Succeeded { r.result.as_ref() } else { None })
+        .unwrap();
+    assert_eq!(current.status, OrderStatus::PartiallyShipped);
+    let linked: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM kernel_outbox WHERE command_id=$1 AND event_type='inventory.reservation_fulfilled.v1'")
+        .bind(first.command_id).fetch_one(db.pool()).await.unwrap();
+    assert_eq!(linked, 1);
+    let mut finish = next;
+    finish.command_id = Uuid::new_v4();
+    finish.idempotency_key = format!("partial-finish-{suffix}");
+    finish.expected_version = Some(current.version);
+    finish.payload.lines = None;
+    let done = kernel.execute_ship_reserved_order_async(&finish).await.unwrap();
+    assert_eq!(done.status, ExecutionStatus::Succeeded, "{:?}", done.error_message);
+    assert_eq!(done.result.unwrap().status, OrderStatus::Shipped);
+    assert_eq!(
+        kernel.execute_ship_reserved_order_async(&first).await.unwrap().receipt_id,
+        a.receipt_id
+    );
+    let stock = db.inventory().get_stock_async(&sku).await.unwrap().unwrap();
+    assert_eq!(stock.total_on_hand, dec!(6));
+    assert_eq!(stock.total_allocated, dec!(0));
+    assert_eq!(stock.total_available, dec!(6));
+    let movements: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM inventory_transactions WHERE reference_type='order' AND reference_id=$1 AND transaction_type='shipment'")
+        .bind(order.id.to_string()).fetch_one(db.pool()).await.unwrap();
+    assert_eq!(movements, 3);
+}
