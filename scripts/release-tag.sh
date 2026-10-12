@@ -3,7 +3,7 @@
 # sibling tags in one atomic push.
 #
 #   scripts/release-tag.sh <version> [--dry-run] [--allow-red <context>]
-#   npm run release:tag -- 1.38.0
+#   npm run release:tag -- 1.38.1
 #
 # Why this exists (each rule is a shipped incident):
 #   * v1.31.0 and v1.32.0 were pushed with only the `v*` tag, so npm and PyPI
@@ -37,7 +37,7 @@ py-v<version> in a single push, after verifying that:
   5. none of the three tags already points at a different commit.
 
 Arguments:
-  version               1.38.0 or v1.38.0
+  version               1.38.1 or v1.38.1
 
 Options:
   --dry-run             Run every check, then report what would be tagged and
