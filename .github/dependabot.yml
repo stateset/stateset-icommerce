@@ -53,6 +53,12 @@ updates:
       # break every published CLI install on Node 20.
       - dependency-name: "commander"
         update-types: ["version-update:semver-major"]
+      # @google-cloud/pubsub v6 requires Node >= 22. It is optional, and on
+      # Node 20 npm drops it together with its optional subtree — including
+      # @grpc/grpc-js and @grpc/proto-loader — so Node 20 users silently lose
+      # gRPC sync. Stay on v5 until the engines floor moves to 22.
+      - dependency-name: "@google-cloud/pubsub"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/bindings/node"

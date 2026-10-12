@@ -6,6 +6,14 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- CLI on Node 20: `@google-cloud/pubsub` is pinned to `^5` (v6 requires
+  Node >= 22). On Node 20 npm dropped the optional v6 package together with
+  its optional subtree, including `@grpc/grpc-js` and `@grpc/proto-loader`,
+  so installs on the supported Node 20 floor silently fell back to REST-only
+  sync. Dependabot now ignores pubsub majors until the engines floor moves.
+
 ## [1.37.0] - 2026-10-01
 
 ### Added
