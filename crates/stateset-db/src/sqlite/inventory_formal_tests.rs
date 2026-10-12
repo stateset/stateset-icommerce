@@ -250,7 +250,8 @@ fn run_cases(operation: &str) {
             {
                 failures.push(format!(
                     "{operation} status={status} quantity={} other={} amount={} time={} scale={scale}: \
-                     balance {actual_balance:?} != {expected_balance:?}; rows {actual_rows:?} != {expected_rows:?}",
+                     balance actual: {actual_balance:?}, expected: {expected_balance:?}; \
+                     rows actual: {actual_rows:?}, expected: {expected_rows:?}",
                     case.before.rows[0].quantity, case.before.rows[1].quantity,
                     case.amount, case.time,
                 ));
