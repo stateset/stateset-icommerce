@@ -1745,14 +1745,31 @@ impl PgShipmentRepository {
     ) -> Result<Vec<Shipment>> {
         validate_batch_size(&updates)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        // Stable lock order prevents opposing batches from deadlocking. Keep the
-        // caller's order for applying patches, including repeated IDs.
+        // Deadlock-safe locking: always lock ORDER rows first, then SHIPMENT rows.
+        // This matches the single-row update path (order-before-shipment) and the
+        // order transition path (which locks the order, then its shipments).
+        // Lock orders for all shipments in a deterministic order.
         let ids: Vec<Uuid> = updates.iter().map(|(id, _)| id.into_uuid()).collect();
-        sqlx::query("SELECT id FROM shipments WHERE id = ANY($1) ORDER BY id FOR UPDATE")
+        if !ids.is_empty() {
+            sqlx::query(
+                "SELECT o.id \
+                 FROM orders o \
+                 JOIN shipments s ON s.order_id = o.id \
+                 WHERE s.id = ANY($1) \
+                 ORDER BY o.id \
+                 FOR UPDATE",
+            )
             .bind(&ids)
             .fetch_all(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+            // Then lock the targeted shipment rows in a stable order.
+            sqlx::query("SELECT id FROM shipments WHERE id = ANY($1) ORDER BY id FOR UPDATE")
+                .bind(&ids)
+                .fetch_all(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        }
         let mut results = Vec::with_capacity(updates.len());
         for (id, input) in updates {
             results.push(self.update_tx(&mut tx, id.into_uuid(), input).await?);
