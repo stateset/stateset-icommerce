@@ -10,6 +10,8 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 - Release hygiene accepts completed npm lockfile synchronization while still
   rejecting stale resolved platform packages and inconsistent release pins.
+- Update locked `quinn-proto` to 0.11.18, addressing five memory-exhaustion and
+  panic advisories in the optional HTTP/3 dependency branch.
 
 ## [1.38.0] - 2026-10-12
 
