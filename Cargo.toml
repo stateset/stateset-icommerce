@@ -208,7 +208,7 @@ proc-macro2 = "1"
 
 # Policy engine
 regex = "1"
-serde_yaml = "0.9"
+serde_norway = "0.9.42"
 tempfile = "3.10"
 
 # Internal crates

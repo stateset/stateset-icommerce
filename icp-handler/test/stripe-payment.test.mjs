@@ -80,7 +80,7 @@ test('Stripe lookup verifies direct USD card capture and returns only allowed ev
   assert.doesNotMatch(JSON.stringify(result), /secret|payment_method_details|2500/);
   assert.equal(requests.length, 2);
   for (const { url, options } of requests) {
-    assert.match(url, /^https:\/\/api.stripe.com\/v1\//);
+    assert.match(url, /^https:\/\/api\.stripe\.com\/v1\//);
     assert.equal(options.method, 'GET');
     assert.equal(options.redirect, 'error');
     assert.equal(options.headers['Stripe-Account'], 'acct_test');
