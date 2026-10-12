@@ -123,12 +123,34 @@ impl PaymentTransactionStatus {
     pub const fn is_lost_chargeback(self, next: Self) -> bool {
         matches!((self, next), (Self::Disputed, Self::Refunded))
     }
+
+    /// Whether moving a payment from `self` to `next` resolves a dispute **in
+    /// the merchant's favour** (`Disputed -> Completed`, as requested by the
+    /// caller).
+    ///
+    /// The requested `Completed` is not what gets stored: a dispute won
+    /// restores the status the refund ledger implies
+    /// ([`Payment::won_dispute_status`]), so a payment that was partially
+    /// refunded before the dispute goes back to `PartiallyRefunded`, not
+    /// `Completed`.
+    #[must_use]
+    pub const fn is_dispute_won(self, next: Self) -> bool {
+        matches!((self, next), (Self::Disputed, Self::Completed))
+    }
 }
 
 /// Refund `reason` stamped on the refund-ledger row a lost chargeback writes
 /// (see [`PaymentTransactionStatus::is_lost_chargeback`]), so reports can tell
 /// money the card network reversed from refunds the merchant issued.
 pub const LOST_CHARGEBACK_REFUND_REASON: &str = "chargeback_lost";
+
+/// `failure_reason` stamped on every refund still in flight (`pending` /
+/// `processing`) when a payment loses its chargeback IN FULL: the card network
+/// has already reversed the whole remaining balance, so those refunds can
+/// never be paid out and are failed in the same transaction, releasing their
+/// reservation (each emits `payments.refund_failed.v1`). A partial loss leaves
+/// in-flight refunds alone — their reservation is still covered.
+pub const CHARGEBACK_SUPERSEDED_REFUND_REASON: &str = "superseded_by_chargeback";
 
 /// Payment method type
 #[derive(
@@ -403,6 +425,45 @@ impl Payment {
     #[must_use]
     pub fn captured(&self) -> Decimal {
         self.captured_amount.unwrap_or(self.amount)
+    }
+
+    /// The status a won dispute (`Disputed -> Completed` requested) resolves
+    /// to, derived from the refund ledger rather than hard-coded: refunds
+    /// completed before the dispute stay on the books, so the payment returns
+    /// to `PartiallyRefunded` when `0 < amount_refunded < captured`, and to
+    /// `Completed` only when nothing was refunded.
+    ///
+    /// `Refunded` (`amount_refunded >= captured`) is returned for
+    /// completeness; the backends never hold a `Disputed` payment in that
+    /// state, because a refund that settles the whole capture moves the
+    /// payment to `Refunded` and ends the dispute.
+    #[must_use]
+    pub fn won_dispute_status(&self) -> PaymentTransactionStatus {
+        if self.amount_refunded <= Decimal::ZERO {
+            PaymentTransactionStatus::Completed
+        } else if self.amount_refunded >= self.captured() {
+            PaymentTransactionStatus::Refunded
+        } else {
+            PaymentTransactionStatus::PartiallyRefunded
+        }
+    }
+
+    /// The status an accepted status write of `requested` actually stores on
+    /// this payment. Every write stores what was asked for, except a won
+    /// dispute (`Disputed -> Completed`,
+    /// [`PaymentTransactionStatus::is_dispute_won`]), which restores the
+    /// status the refund ledger implies ([`Self::won_dispute_status`]) — so
+    /// refunds completed before the dispute keep the payment
+    /// `PartiallyRefunded` instead of being forgotten. Every edge it can
+    /// produce (`Disputed -> Completed | PartiallyRefunded | Refunded`) is one
+    /// [`PaymentTransactionStatus::can_transition_to`] allows. Both storage
+    /// backends route `update` through it.
+    #[must_use]
+    pub fn resolved_status_write(
+        &self,
+        requested: PaymentTransactionStatus,
+    ) -> PaymentTransactionStatus {
+        if self.status.is_dispute_won(requested) { self.won_dispute_status() } else { requested }
     }
 
     /// The amount of this payment that has not yet been refunded: what was
@@ -1509,5 +1570,39 @@ mod tests {
                 .validate()
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn won_dispute_restores_the_status_the_ledger_implies() {
+        use PaymentTransactionStatus as S;
+        use rust_decimal_macros::dec;
+        let won = |refunded, captured: Option<Decimal>| {
+            let mut p = payment_for_refund(S::Disputed, dec!(100), refunded);
+            p.captured_amount = captured;
+            p.resolved_status_write(S::Completed)
+        };
+        assert_eq!(won(dec!(0), None), S::Completed);
+        assert_eq!(won(dec!(30), None), S::PartiallyRefunded);
+        assert_eq!(won(dec!(30), Some(dec!(60))), S::PartiallyRefunded);
+        assert_eq!(won(dec!(60), Some(dec!(60))), S::Refunded);
+        // Every status the resolution can store is a legal edge out of Disputed.
+        for status in [S::Completed, S::PartiallyRefunded, S::Refunded] {
+            assert!(S::Disputed.can_transition_to(status));
+        }
+    }
+
+    #[test]
+    fn only_a_won_dispute_is_resolved_from_the_ledger() {
+        use PaymentTransactionStatus as S;
+        use rust_decimal_macros::dec;
+        assert!(S::Disputed.is_dispute_won(S::Completed));
+        assert!(!S::Disputed.is_dispute_won(S::Refunded));
+        assert!(!S::Processing.is_dispute_won(S::Completed));
+        // Any other write stores exactly what was requested.
+        let partly = payment_for_refund(S::PartiallyRefunded, dec!(100), dec!(30));
+        assert_eq!(partly.resolved_status_write(S::Disputed), S::Disputed);
+        let disputed = payment_for_refund(S::Disputed, dec!(100), dec!(30));
+        assert_eq!(disputed.resolved_status_write(S::Refunded), S::Refunded);
+        assert_eq!(disputed.resolved_status_write(S::Disputed), S::Disputed);
     }
 }

@@ -70,6 +70,8 @@ SumAmts(ids) ==
 InFlight  == SumAmts({i \in RefundIds : refunds[i].st \in InFlightStatuses})
 Remaining == Amount - refunded - InFlight   \* refundable_remaining_in_tx
 
+NewStatus(r) == IF r >= Amount THEN "refunded" ELSE "partially_refunded"
+
 -----------------------------------------------------------------------------
 
 Init ==
@@ -80,18 +82,56 @@ Init ==
     /\ pc       = [w \in Workers |-> "idle"]
 
 (* The payment's own lifecycle: authorization, capture, dispute. Moves     *)
-(* into refunded / partially_refunded happen ONLY through CompleteRefund,  *)
-(* as in the code. (A chargeback that lands a dispute on `refunded`        *)
-(* without a refund record is out of scope for this model.)                *)
+(* into refunded / partially_refunded happen ONLY through CompleteRefund   *)
+(* and the dispute resolutions below, as in the code. A dispute is never   *)
+(* resolved by a bare status flip: WinDispute / LoseChargeback* own every  *)
+(* edge out of "disputed".                                                 *)
 LifecycleTargets ==
     {"processing", "requires_action", "completed", "failed", "cancelled", "disputed"}
 
 PaymentStep ==
+    /\ pstatus # "disputed"
     /\ \E to \in LifecycleTargets :
           /\ to # pstatus
           /\ CanTransition(pstatus, to)
           /\ pstatus' = to
     /\ UNCHANGED <<refunded, refunds, seen, pc>>
+
+(* A dispute won (`update` to "completed", Payment::resolved_status_write): *)
+(* the payment returns to the status its refund ledger implies, so refunds *)
+(* completed before the dispute are not forgotten.                         *)
+WinDispute ==
+    /\ pstatus = "disputed"
+    /\ pstatus' = IF refunded = 0 THEN "completed" ELSE NewStatus(refunded)
+    /\ UNCHANGED <<refunded, refunds, seen, pc>>
+
+(* A chargeback lost in FULL (`update` to "refunded", or                     *)
+(* record_lost_chargeback(id, None)): a completed chargeback_lost row for  *)
+(* the whole remaining capture, and every refund still in flight is failed *)
+(* (superseded_by_chargeback) in the same transaction -- the network took  *)
+(* the money it would have returned.                                       *)
+LoseChargebackFull ==
+    /\ pstatus = "disputed"
+    /\ LET superseded == [i \in RefundIds |->
+                             IF refunds[i].st \in InFlightStatuses
+                             THEN [refunds[i] EXCEPT !.st = "failed"]
+                             ELSE refunds[i]]
+       IN  refunds' = Append(superseded, [amt |-> Amount - refunded, st |-> "completed"])
+    /\ refunded' = Amount
+    /\ pstatus'  = "refunded"
+    /\ UNCHANGED <<seen, pc>>
+
+(* A chargeback lost for PART of the payment (record_lost_chargeback(id,    *)
+(* Some(a))): bounded by the unreserved balance, so refunds in flight stay *)
+(* covered and are left alone.                                             *)
+LoseChargebackPartial(a) ==
+    /\ pstatus = "disputed"
+    /\ refunded + a < Amount
+    /\ a <= Remaining
+    /\ refunds'  = Append(refunds, [amt |-> a, st |-> "completed"])
+    /\ refunded' = refunded + a
+    /\ pstatus'  = "partially_refunded"
+    /\ UNCHANGED <<seen, pc>>
 
 (* create_refund with the lock held: check and insert are atomic.          *)
 CreateLocked(w, a) ==
@@ -131,8 +171,6 @@ StartRefund(i) ==
 (*     UPDATE payments ... WHERE status IN (statuses allowed to reach new) *)
 (* and a zero-row update rolls the whole transaction back -- modelled here *)
 (* as the action simply not being enabled.                                 *)
-NewStatus(r) == IF r >= Amount THEN "refunded" ELSE "partially_refunded"
-
 CompleteRefund(i) ==
     /\ refunds[i].st \in InFlightStatuses
     /\ LET nr == refunded + refunds[i].amt
@@ -159,6 +197,9 @@ CancelRefund(i) ==
 
 Next ==
     \/ PaymentStep
+    \/ WinDispute
+    \/ LoseChargebackFull
+    \/ \E a \in 1..Amount : LoseChargebackPartial(a)
     \/ \E w \in Workers, a \in 1..Amount : CreateLocked(w, a) \/ InsertRefund(w, a)
     \/ \E w \in Workers : ReadRemaining(w)
     \/ \E i \in RefundIds :
@@ -186,6 +227,14 @@ RefundedIsSumOfCompleted ==
 StatusMatchesBalance ==
     /\ pstatus = "refunded"           => refunded = Amount
     /\ pstatus = "partially_refunded" => 0 < refunded /\ refunded < Amount
+
+(* A payment reads "completed" only while nothing has been refunded: a won *)
+(* dispute must not forget refunds completed before it.                    *)
+CompletedMeansNothingRefunded == pstatus = "completed" => refunded = 0
+
+(* A fully refunded payment has nothing left in flight: a full lost        *)
+(* chargeback cannot strand a refund that can never complete.              *)
+NoStrandedRefund == pstatus = "refunded" => InFlight = 0
 
 (* Every status change the model makes is one the state machine allows.   *)
 TransitionsLegal == [][pstatus' # pstatus => CanTransition(pstatus, pstatus')]_vars

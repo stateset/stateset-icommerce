@@ -146,7 +146,7 @@ export const paymentTools = [
   {
     name: 'record_lost_chargeback',
     description:
-      'Record a lost chargeback on a disputed payment. amount is the disputed amount the card network reversed; omit it for the whole remaining captured balance. A partial loss writes a chargeback_lost refund row and leaves the payment partially_refunded.',
+      'Record a lost chargeback on a disputed payment. amount is the disputed amount the card network reversed; omit it for the whole remaining captured balance. A partial loss writes a chargeback_lost refund row and leaves the payment partially_refunded. A full loss also fails any refund still pending or processing (reason superseded_by_chargeback), since the network already returned the money.',
     inputSchema: {
       paymentId: z.string().min(1).describe('Disputed payment ID'),
       amount: exactPositiveAmount

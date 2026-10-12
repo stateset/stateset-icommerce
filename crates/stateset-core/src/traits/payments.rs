@@ -36,8 +36,16 @@ pub trait PaymentRepository: Send + Sync {
     /// ledger in the same transaction (a completed refund row for the whole
     /// remaining balance, reason
     /// [`crate::LOST_CHARGEBACK_REFUND_REASON`]) and the order's payment status
-    /// is re-derived — it no longer reads `paid`. A won dispute is
-    /// `Disputed -> Completed` and changes nothing else.
+    /// is re-derived — it no longer reads `paid`. Refunds still in flight are
+    /// failed in the same transaction (reason
+    /// [`crate::CHARGEBACK_SUPERSEDED_REFUND_REASON`]): the network already
+    /// took the money they would return.
+    ///
+    /// A won dispute is requested as `Disputed -> Completed` and stores the
+    /// status the refund ledger implies
+    /// ([`crate::Payment::resolved_status_write`]): `PartiallyRefunded` when
+    /// refunds completed before the dispute, `Completed` otherwise. Nothing
+    /// else changes.
     fn update(&self, id: PaymentId, input: UpdatePayment) -> Result<Payment>;
 
     /// List payments with filter
@@ -83,15 +91,17 @@ pub trait PaymentRepository: Send + Sync {
     /// Record a **lost chargeback** on a `Disputed` payment for `amount`
     /// (`None` = the whole remaining captured balance).
     ///
-    /// The whole remaining balance behaves exactly like the
-    /// `Disputed -> Refunded` status write ([`Self::update`]). A smaller
+    /// `None` behaves exactly like the `Disputed -> Refunded` status write
+    /// ([`Self::update`]), including failing every refund still in flight
+    /// (reason [`crate::CHARGEBACK_SUPERSEDED_REFUND_REASON`]). An explicit
     /// amount — a dispute lost for part of the payment — writes a completed
     /// refund-ledger row for that amount (reason
     /// [`crate::LOST_CHARGEBACK_REFUND_REASON`]), advances `amount_refunded`,
-    /// moves the payment to `PartiallyRefunded`, and re-derives the order's
-    /// payment status from the ledger. The amount must be positive and fit
-    /// within the captured amount net of refunds already completed or in
-    /// flight.
+    /// moves the payment to `PartiallyRefunded` (or `Refunded` when it is the
+    /// whole remaining balance), and re-derives the order's payment status
+    /// from the ledger. The amount must be positive and fit within the
+    /// captured amount net of refunds already completed or in flight, so
+    /// in-flight refunds stay covered and are left alone.
     fn record_lost_chargeback(
         &self,
         id: PaymentId,
