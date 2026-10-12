@@ -6,6 +6,11 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- Release hygiene accepts completed npm lockfile synchronization while still
+  rejecting stale resolved platform packages and inconsistent release pins.
+
 ## [1.38.0] - 2026-10-12
 
 ### Added

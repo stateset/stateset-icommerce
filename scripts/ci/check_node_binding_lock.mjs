@@ -3,12 +3,20 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const manifest = JSON.parse(readFileSync(new URL('../../bindings/node/package.json', import.meta.url), 'utf8'));
-const lock = JSON.parse(readFileSync(new URL('../../bindings/node/package-lock.json', import.meta.url), 'utf8'));
+const manifest = JSON.parse(
+  readFileSync(new URL('../../bindings/node/package.json', import.meta.url), 'utf8'),
+);
+const lock = JSON.parse(
+  readFileSync(new URL('../../bindings/node/package-lock.json', import.meta.url), 'utf8'),
+);
 const root = lock.packages?.[''];
 const changelog = readFileSync(new URL('../../CHANGELOG.md', import.meta.url), 'utf8');
 
-const pendingReleaseLock = process.env.RELEASE_LOCK_SYNC_DEFERRED === 'true';
+// Release hygiene permits a deferred sync, but a completed sync must still
+// take the strict path even when that permission is enabled.
+const pendingReleaseLock =
+  process.env.RELEASE_LOCK_SYNC_DEFERRED === 'true' &&
+  Object.values(root?.optionalDependencies ?? {}).some((version) => version !== manifest.version);
 
 function parseVersion(version, label) {
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version ?? '');
@@ -26,8 +34,16 @@ function isOlderVersion(candidate, current) {
     : false;
 }
 
-assert.equal(lock.version, manifest.version, 'Node binding lockfile version must match its manifest');
-assert.equal(root?.version, manifest.version, 'Node binding lockfile root version must match its manifest');
+assert.equal(
+  lock.version,
+  manifest.version,
+  'Node binding lockfile version must match its manifest',
+);
+assert.equal(
+  root?.version,
+  manifest.version,
+  'Node binding lockfile root version must match its manifest',
+);
 
 if (pendingReleaseLock) {
   // release-bump intentionally keeps registry package pins at the last
