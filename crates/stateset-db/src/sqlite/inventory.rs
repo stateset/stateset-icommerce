@@ -2524,7 +2524,6 @@ impl InventoryRepository for SqliteInventoryRepository {
     }
 }
 
-#[cfg(test)]
 #[path = "inventory_formal_tests.rs"]
 mod formal_tests;
 

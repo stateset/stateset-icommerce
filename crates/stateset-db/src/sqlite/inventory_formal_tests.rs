@@ -1,3 +1,4 @@
+#![cfg(test)]
 //! Bounded conformance to Lean's executable, safety-proved transitions.
 //! Each fixture runs through real SQL at three exact decimal scales.
 use super::*;
