@@ -64,9 +64,7 @@ export class NativeMerchantCheckout {
       return this.allowApply ? this.resume(id) : { id, status: 'preview', existing: true };
     }
     await this.requireStockPolicySupport(this.stockPolicy);
-    const quote = clone(
-      await this.resolveQuote(request.quoteId, clone(this.principal)),
-    );
+    const quote = clone(await this.resolveQuote(request.quoteId, clone(this.principal)));
     if (
       quote.quoteId !== request.quoteId ||
       amount(quote.amount) <= 0n ||
@@ -74,7 +72,9 @@ export class NativeMerchantCheckout {
       !Number.isFinite(Date.parse(quote.expiresAt)) ||
       Date.parse(quote.expiresAt) <= Date.now()
     ) {
-      throw new Error('invalid or expired native checkout quote');
+      throw Object.assign(new Error('invalid or expired native checkout quote'), {
+        code: 'native.quote_invalid',
+      });
     }
     required(quote.cartId, 'quote cartId');
     if (this.requireCartFingerprint && !quote.cartFingerprint)
@@ -161,10 +161,7 @@ export class NativeMerchantCheckout {
         await this.requireStockPolicySupport(command.payload.stock_policy);
         if (command.payload.expected_cart_fingerprint !== undefined)
           await this.requireFeature('checkout.cart_fingerprint.v1');
-        receipt = await this.commerce.executeKernelCommand(
-          clone(command),
-          clone(this.policy),
-        );
+        receipt = await this.commerce.executeKernelCommand(clone(command), clone(this.policy));
       }
       if (!receipt || typeof receipt !== 'object')
         throw new Error('invalid native receipt lookup result');

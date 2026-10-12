@@ -392,6 +392,8 @@ impl Commerce {
         guard(|| {
             Ok(vec![
                 "checkout.stock_policy.v1".to_owned(),
+                "orders.ship_reserved.v1".to_owned(),
+                "orders.ship_reserved.partial.v1".to_owned(),
                 "checkout.cart_fingerprint.v1".to_owned(),
             ])
         })

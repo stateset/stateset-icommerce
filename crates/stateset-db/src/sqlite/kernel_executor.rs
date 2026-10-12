@@ -40,13 +40,13 @@ use crate::kernel::plans::finance::{
     post_journal_entry_guard, settle_x402_guard,
 };
 use crate::kernel::plans::inventory::{
-    declares_quantity, economic_quantity_guard, reservation_lifecycle_guard,
-    reserve_inventory_guard,
+    declares_quantity, economic_quantity_guard, reservation_changes_balance,
+    reservation_lifecycle_guard, reserve_inventory_guard,
 };
 use crate::kernel::plans::orders::{
-    CART_UNITS_SQL_SQLITE, OrderTransitionSnapshot, ShipOrderSnapshot, plan_order_transition,
-    plan_ship_order, reservation_expired_during_shipment, ship_order_guard, shipped_units,
-    transition_order_guard,
+    CART_UNITS_SQL_SQLITE, OrderTransitionSnapshot, ReservedShipmentStock, ShipOrderSnapshot,
+    plan_order_transition, plan_reserved_stock, plan_ship_order,
+    reservation_expired_during_shipment, ship_order_guard, shipped_units, transition_order_guard,
 };
 use crate::kernel::plans::payments::{
     RefundSnapshot, create_payment_guard, economic_counterparty_guard, economic_money_guard,
@@ -1394,27 +1394,16 @@ impl SqliteKernelExecutor {
                 return Ok(receipt);
             }
 
-            let expires_during_apply =
-                reservation.expires_at.is_some_and(|expiry| expiry < started_at)
-                    && !matches!(
-                        reservation.status,
-                        ReservationStatus::Released
-                            | ReservationStatus::Cancelled
-                            | ReservationStatus::Expired
-                    );
-            let releases_balance = matches!(action, InventoryLifecycleAction::Release)
-                && !matches!(
-                    reservation.status,
-                    ReservationStatus::Released
-                        | ReservationStatus::Cancelled
-                        | ReservationStatus::Expired
-                );
+            let changes_balance = reservation_changes_balance(
+                reservation.status,
+                matches!(action, InventoryLifecycleAction::Release),
+                reservation.expires_at.is_some_and(|expiry| expiry < started_at),
+            );
             if command.mode == ExecutionMode::Preview {
                 let mut receipt = preview_receipt(command, policy.clone(), "inventory_reservation");
                 receipt.result = Some(reservation);
                 receipt.version_before = Some(version_before);
-                receipt.version_after =
-                    Some(version_before + i32::from(expires_during_apply || releases_balance));
+                receipt.version_after = Some(version_before + i32::from(changes_balance));
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
@@ -1717,11 +1706,31 @@ impl SqliteKernelExecutor {
         &self,
         command: &CommandEnvelope<ShipOrderCommand>,
     ) -> Result<ExecutionReceipt<Order>> {
+        self.execute_ship_order_inventory(command, false)
+    }
+
+    /// Atomically ship all or selected units of a paid order and consume its reserved stock.
+    pub fn execute_ship_reserved_order(
+        &self,
+        command: &CommandEnvelope<ShipOrderCommand>,
+    ) -> Result<ExecutionReceipt<Order>> {
+        self.execute_ship_order_inventory(command, true)
+    }
+
+    fn execute_ship_order_inventory(
+        &self,
+        command: &CommandEnvelope<ShipOrderCommand>,
+        consume_stock: bool,
+    ) -> Result<ExecutionReceipt<Order>> {
         let run = CommandRun::prepare(
             command,
             &command.payload,
             &self.policy,
-            EnvelopeGuard::aggregate(SHIP_ORDER_COMMAND),
+            EnvelopeGuard::aggregate(if consume_stock {
+                "orders.ship_reserved"
+            } else {
+                SHIP_ORDER_COMMAND
+            }),
             "order",
         )?
         .then_guard(|_| ship_order_guard(&command.payload));
@@ -1804,6 +1813,103 @@ impl SqliteKernelExecutor {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
+            let stock = if consume_stock {
+                let mut tracked = Vec::new();
+                for item in &order.items {
+                    if tx.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM inventory_items WHERE sku=?)",
+                        [&item.sku],
+                        |row| row.get::<_, bool>(0),
+                    )? {
+                        tracked.push(item.sku.clone());
+                    }
+                }
+                let mut stmt = tx.prepare(
+                    "SELECT r.id, i.sku, r.quantity, r.item_id, r.location_id,
+                            b.quantity_on_hand, b.quantity_allocated, r.expires_at, b.quantity_available, r.order_item_id
+                     FROM inventory_reservations r JOIN inventory_items i ON i.id=r.item_id
+                     JOIN inventory_balances b ON b.item_id=r.item_id AND b.location_id=r.location_id
+                     WHERE r.reference_type='order' AND r.reference_id=?
+                       AND r.status IN ('pending','confirmed','allocated')
+                     ORDER BY r.item_id, r.location_id, r.id")?;
+                let rows = stmt
+                    .query_map([&order_id], |row| {
+                        Ok(ReservedShipmentStock {
+                            id: parse_uuid_row(
+                                &row.get::<_, String>(0)?,
+                                "inventory_reservations",
+                                "id",
+                            )?,
+                            order_item_id: row.get(9)?,
+                            sku: row.get(1)?,
+                            quantity: parse_decimal_row(
+                                &row.get::<_, String>(2)?,
+                                "inventory_reservations",
+                                "quantity",
+                            )?,
+                            item_id: row.get(3)?,
+                            location_id: row.get(4)?,
+                            on_hand: parse_decimal_row(
+                                &row.get::<_, String>(5)?,
+                                "inventory_balances",
+                                "quantity_on_hand",
+                            )?,
+                            allocated: parse_decimal_row(
+                                &row.get::<_, String>(6)?,
+                                "inventory_balances",
+                                "quantity_allocated",
+                            )?,
+                            expires_at: parse_datetime_opt_row(
+                                row.get(7)?,
+                                "inventory_reservations",
+                                "expires_at",
+                            )?,
+                            available: parse_decimal_row(
+                                &row.get::<_, String>(8)?,
+                                "inventory_balances",
+                                "quantity_available",
+                            )?,
+                        })
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                let previous = if order.items.iter().any(|item| item.shipped_quantity > 0) {
+                    let raw: Option<String> = tx.query_row(
+                        "SELECT json_extract(receipt, '$.result') FROM kernel_receipts
+                         WHERE command_type='orders.ship_reserved' AND status='succeeded'
+                           AND json_extract(receipt, '$.result.id')=?
+                         ORDER BY CAST(json_extract(receipt, '$.version_after') AS INTEGER) DESC LIMIT 1",
+                        [&order_id], |row| row.get(0),
+                    ).optional()?;
+                    raw.map(|raw| serde_json::from_str::<Order>(&raw)).transpose().map_err(
+                        |error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                0,
+                                rusqlite::types::Type::Text,
+                                Box::new(error),
+                            )
+                        },
+                    )?
+                } else {
+                    None
+                };
+                let deltas: Vec<_> = effects
+                    .deltas
+                    .iter()
+                    .map(|delta| (delta.item_id.clone(), delta.delta))
+                    .collect();
+                match plan_reserved_stock(&order, &tracked, &rows, &deltas, previous.as_ref()) {
+                    Ok(stock) => stock,
+                    Err(rejection) => {
+                        let mut receipt = run.rejected_by(&rejection);
+                        receipt.aggregate_id = Some(order_id.clone());
+                        receipt.version_before = Some(version_before);
+                        append_receipt(tx, &request_hash, &mut receipt)?;
+                        return Ok(receipt);
+                    }
+                }
+            } else {
+                Vec::new()
+            };
             if run.is_preview() {
                 let mut receipt = run.previewed();
                 receipt.aggregate_id = Some(order_id.clone());
@@ -1819,7 +1925,20 @@ impl SqliteKernelExecutor {
                     tx, "order", &order_id,
                 )?;
             tx.execute_batch("SAVEPOINT kernel_ship")?;
-            if SqliteOrderRepository::confirm_shipped_reservations_in_tx(
+            let mut stock_event_ids = Vec::new();
+            if consume_stock {
+                for row in &stock {
+                    let event_id = SqliteInventoryRepository::fulfil_reservation_in_tx(
+                        tx,
+                        row.id,
+                        row.quantity,
+                        "governed reserved order shipment",
+                        started_at,
+                    )
+                    .map_err(to_sql_err)?;
+                    stock_event_ids.push(event_id);
+                }
+            } else if SqliteOrderRepository::confirm_shipped_reservations_in_tx(
                 tx,
                 command.payload.order_id,
                 &mode,
@@ -1865,31 +1984,38 @@ impl SqliteKernelExecutor {
                     expected_version: version_before,
                 }));
             }
-            let mut event_ids = Vec::new();
-            for reservation_id in reservation_ids {
-                let mut stmt = tx.prepare(
-                    "SELECT id FROM kernel_outbox WHERE created_at >= ?
-                       AND event_type = 'inventory.reservation_confirmed.v1'
-                       AND (aggregate_id = ? OR json_extract(payload, '$.source_reservation_id') = ?)
-                     ORDER BY rowid",
-                )?;
-                let ids = stmt.query_map(
-                    params![
-                        started_at.to_rfc3339(),
-                        reservation_id.to_string(),
-                        reservation_id.to_string()
-                    ],
-                    |row| parse_uuid_row(&row.get::<_, String>(0)?, "kernel_outbox", "id"),
-                )?;
-                for event_id in ids {
-                    let event_id = event_id?;
-                    tx.execute("UPDATE kernel_outbox SET command_id = ?, idempotency_key = ?, principal_type = ?, principal_id = ?, correlation_id = ?, causation_id = ? WHERE id = ?",
-                        params![command.command_id.to_string(), command.idempotency_key, principal_kind_name(command), command.principal.id,
-                            command.correlation_id.map(|id| id.to_string()), command.causation_id.map(|id| id.to_string()), event_id.to_string()])?;
-                    if !event_ids.contains(&event_id) {
-                        event_ids.push(event_id);
+            let mut event_ids = stock_event_ids;
+            // Stock consumption returns its exact event IDs. A timestamp range
+            // can include a previous dispatch that committed while this caller
+            // waited for the order lock, and must never relink that history.
+            if !consume_stock {
+                for reservation_id in reservation_ids {
+                    let mut stmt = tx.prepare(
+                        "SELECT id FROM kernel_outbox WHERE created_at >= ?
+                           AND event_type = 'inventory.reservation_confirmed.v1'
+                           AND (aggregate_id = ? OR json_extract(payload, '$.source_reservation_id') = ?)
+                         ORDER BY rowid",
+                    )?;
+                    let ids = stmt.query_map(
+                        params![
+                            started_at.to_rfc3339(),
+                            reservation_id.to_string(),
+                            reservation_id.to_string()
+                        ],
+                        |row| parse_uuid_row(&row.get::<_, String>(0)?, "kernel_outbox", "id"),
+                    )?;
+                    for event_id in ids {
+                        let event_id = event_id?;
+                        if !event_ids.contains(&event_id) {
+                            event_ids.push(event_id);
+                        }
                     }
                 }
+            }
+            for event_id in &event_ids {
+                tx.execute("UPDATE kernel_outbox SET command_id = ?, idempotency_key = ?, principal_type = ?, principal_id = ?, correlation_id = ?, causation_id = ? WHERE id = ?",
+                    params![command.command_id.to_string(), command.idempotency_key, principal_kind_name(command), command.principal.id,
+                        command.correlation_id.map(|id| id.to_string()), command.causation_id.map(|id| id.to_string()), event_id.to_string()])?;
             }
             // Same rule as `OrderRepository::ship`: a full shipment carries
             // the order's open shipment records to `shipped`, and their facts

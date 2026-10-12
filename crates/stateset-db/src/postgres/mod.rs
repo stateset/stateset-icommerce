@@ -261,7 +261,9 @@ impl PostgresDatabase {
             .await
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        let result = Self::apply_migrations(pool).await;
+        // Use the connection that owns the lock. Acquiring another from the
+        // pool here deadlocks startup when max_connections is one.
+        let result = Self::apply_migrations(&mut lock_conn).await;
 
         // Release before the connection returns to the pool — a session-level
         // advisory lock outlives the borrow on a pooled (not closed) connection.
@@ -553,7 +555,8 @@ impl PostgresDatabase {
 
     /// Apply pending migrations. Callers must hold the migration advisory lock
     /// (see [`Self::run_migrations`]).
-    async fn apply_migrations(pool: &PgPool) -> Result<(), CommerceError> {
+    async fn apply_migrations(conn: &mut sqlx::PgConnection) -> Result<(), CommerceError> {
+        use sqlx::Connection;
         // Create migrations table if not exists
         sqlx::query(
             r#"
@@ -565,13 +568,13 @@ impl PostgresDatabase {
             )
             "#,
         )
-        .execute(pool)
+        .execute(&mut *conn)
         .await
         .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         for (name, sql) in Self::embedded_migrations() {
             let mut tx =
-                pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                conn.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             let checksum = Self::compute_migration_checksum(sql);
 
             // Check if migration already applied (inside tx so apply+record is atomic per migration).

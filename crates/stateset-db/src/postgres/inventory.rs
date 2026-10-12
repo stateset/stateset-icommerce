@@ -1,5 +1,9 @@
 //! PostgreSQL inventory repository implementation
 
+#[cfg(test)]
+#[path = "inventory_formal_tests.rs"]
+mod formal_tests;
+
 use super::kernel_outbox::append_kernel_event_tx;
 use super::map_db_error;
 use crate::KernelOutboxEvent;
@@ -403,14 +407,15 @@ impl PgInventoryRepository {
     /// Consume `quantity` units of an open reservation (mirrors the SQLite
     /// `fulfil_reservation_in_tx`): on-hand and allocated both go down,
     /// available is unchanged, a `shipment` ledger row is written and the
-    /// reservation becomes `fulfilled` (or keeps the remainder open).
+    /// reservation becomes `fulfilled` (or keeps the remainder open). Returns
+    /// the new inventory event ID for exact command linkage.
     pub(crate) async fn fulfil_reservation_in_tx(
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         reservation_id: Uuid,
         quantity: Decimal,
         reason: &str,
         now: DateTime<Utc>,
-    ) -> Result<()> {
+    ) -> Result<Uuid> {
         validate_quantity(quantity)?;
         let res = sqlx::query_as::<_, ReservationRow>(
             "SELECT * FROM inventory_reservations WHERE id = $1 FOR UPDATE",
@@ -512,25 +517,22 @@ impl PgInventoryRepository {
         .await
         .map_err(map_db_error)?;
 
-        append_kernel_event_tx(
-            tx.as_mut(),
-            &KernelOutboxEvent::domain(
-                "inventory.reservation_fulfilled.v1",
-                "inventory_reservation",
-                reservation_id.to_string(),
-                serde_json::json!({
-                    "reservation_id": reservation_id.to_string(),
-                    "item_id": res.item_id,
-                    "location_id": res.location_id,
-                    "quantity": quantity.to_string(),
-                    "remaining_quantity": (res.quantity - quantity).to_string(),
-                    "balance_version": current_version + 1,
-                }),
-                None,
-            ),
-        )
-        .await?;
-        Ok(())
+        let event = KernelOutboxEvent::domain(
+            "inventory.reservation_fulfilled.v1",
+            "inventory_reservation",
+            reservation_id.to_string(),
+            serde_json::json!({
+                "reservation_id": reservation_id.to_string(),
+                "item_id": res.item_id,
+                "location_id": res.location_id,
+                "quantity": quantity.to_string(),
+                "remaining_quantity": (res.quantity - quantity).to_string(),
+                "balance_version": current_version + 1,
+            }),
+            None,
+        );
+        append_kernel_event_tx(tx.as_mut(), &event).await?;
+        Ok(event.id)
     }
 
     /// One inventory adjustment on the caller's transaction: item lookup,
@@ -673,7 +675,7 @@ impl PgInventoryRepository {
         quantity: Decimal,
         now: DateTime<Utc>,
     ) -> Result<()> {
-        Self::release_allocated_units_in_tx(
+        let new_version = Self::release_allocated_units_in_tx(
             tx,
             item_id,
             location_id,
@@ -689,6 +691,25 @@ impl PgInventoryRepository {
             .await
             .map_err(map_db_error)?;
 
+        append_kernel_event_tx(
+            tx.as_mut(),
+            &KernelOutboxEvent::domain(
+                "inventory.reservation_expired.v1",
+                "inventory_reservation",
+                reservation_id.to_string(),
+                serde_json::json!({
+                    "reservation_id": reservation_id.to_string(),
+                    "item_id": item_id,
+                    "location_id": location_id,
+                    "quantity": quantity.to_string(),
+                    "status": ReservationStatus::Expired.to_string(),
+                    "balance_version": new_version,
+                }),
+                None,
+            ),
+        )
+        .await?;
+
         Ok(())
     }
 
@@ -698,11 +719,21 @@ impl PgInventoryRepository {
         location_id: i32,
         now: DateTime<Utc>,
     ) -> Result<()> {
+        // Lock candidates before waiting on their balance. Otherwise two
+        // reservers can read the same open row, then each subtract its units
+        // after serializing on the balance. A locking read rechecks status
+        // and quantity if another transaction changes the row while we wait.
+        // This is a blocking scan: match shipment's identity order within
+        // this fixed item/location. Deadline order can invert two row locks.
+        // The background sweeper may retain deadline priority because its
+        // SKIP LOCKED scan never waits for a reservation owned by a shipment.
         let reservations: Vec<(Uuid, Decimal)> = sqlx::query_as(
             "SELECT id, quantity FROM inventory_reservations
              WHERE item_id = $1 AND location_id = $2
                AND status IN ('pending', 'confirmed', 'allocated')
-               AND expires_at IS NOT NULL AND expires_at < $3",
+               AND expires_at IS NOT NULL AND expires_at < $3
+             ORDER BY id
+             FOR UPDATE",
         )
         .bind(item_id)
         .bind(location_id)
@@ -1147,14 +1178,12 @@ impl PgInventoryRepository {
                 res.status, e
             ))
         })?;
-        if matches!(status, ReservationStatus::Released | ReservationStatus::Cancelled) {
-            return Ok(ReservationConfirmOutcome::Confirmed);
-        }
-        if status == ReservationStatus::Confirmed {
-            return Ok(ReservationConfirmOutcome::Confirmed);
-        }
         if status == ReservationStatus::Expired {
             return Ok(ReservationConfirmOutcome::Expired);
+        }
+        // Keep partial confirmation aligned with the full-confirm terminal guard.
+        if !status.holds_stock() || status == ReservationStatus::Confirmed {
+            return Ok(ReservationConfirmOutcome::Confirmed);
         }
         if let Some(expires_at) = res.expires_at {
             if expires_at < now {
@@ -1247,12 +1276,11 @@ impl PgInventoryRepository {
             ))
         })?;
 
-        if status == ReservationStatus::Released || status == ReservationStatus::Cancelled {
-            return Ok(false);
-        }
-
         if status == ReservationStatus::Expired {
             return Ok(true);
+        }
+        if !status.holds_stock() {
+            return Ok(false);
         }
 
         if let Some(expires_at) = res.expires_at {

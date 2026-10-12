@@ -94,6 +94,10 @@ pub fn resolve_replay<C, T: DeserializeOwned>(
 }
 
 #[cfg(test)]
+#[path = "replay_formal_tests.rs"]
+mod formal_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use chrono::Utc;

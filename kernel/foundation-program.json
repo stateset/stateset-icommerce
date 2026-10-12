@@ -54,6 +54,199 @@
       ],
       "evidence": [
         {
+          "scope": "Recoverable successive partial dispatches over native merchant HTTP",
+          "implementation": [
+            "icp-handler/src/native-fulfillment.mjs",
+            "icp-handler/src/server.mjs",
+            "icp-handler/openapi.yaml",
+            "cli/test/fixtures/native-http-config.mjs"
+          ],
+          "validation": [
+            {
+              "command": "PORT=0 node --test icp-handler/test/*.test.mjs",
+              "result": "172 passed with zero skips. Bridge tests cover partial quantities and untouched lines, authoritative receipt recovery, rejected subsequent commands, competing distinct approvals, historical reference reuse, partial-feature refusal, malformed progress receipts and monotonic projection merging."
+            },
+            {
+              "command": "node --test cli/test/unit/native-merchant-http.test.js cli/test/unit/icp-durable-store.test.js",
+              "result": "41 passed with zero skips against the native binding. Includes concurrent partial dispatches across workers, restart and resolver outages, recovery after native commit or HTTP projection loss for both initial partial and final dispatches, and a later pinned command whose receipt lookup was unavailable."
+            },
+            {
+              "command": "node scripts/ci/check_kernel_coverage.mjs",
+              "result": "34 governed commands verified. Scoped ESLint, Prettier, OpenAPI YAML parsing and git diff whitespace checks passed."
+            }
+          ],
+          "limitations": [
+            "Only operator-owned dispatch approvals can supply references, quantities, tracking and reviewed order versions. Partial or subsequent dispatches require orders.ship_reserved.partial.v1; initial full dispatches retain orders.ship_reserved.v1 compatibility.",
+            "The protocol journal serializes dispatch commands per order within the configured principal scope. Native receipts remain authoritative. Rejected pinned commands require operator reconciliation and are not replaced by changing the resolver.",
+            "Responses show historical cumulative shipment evidence. At a fixed order version, attention is retained until a later verified dispatch advances the projection. Legacy full shipment journals remain recoverable with their original inventory semantics.",
+            "Carrier label purchase, physical dispatch, delivery verification, refunds, disputes and escrow settlement are not performed. Tests use local operator dispatch fixtures and no carrier services."
+          ]
+        },
+        {
+          "scope": "Governed partial shipments with line-bound stock consumption",
+          "implementation": [
+            "crates/stateset-db/src/kernel/plans/orders.rs",
+            "crates/stateset-db/src/sqlite/kernel_executor.rs",
+            "crates/stateset-db/src/postgres/kernel_executor.rs",
+            "crates/stateset-db/src/sqlite/inventory.rs",
+            "crates/stateset-db/src/postgres/inventory.rs",
+            "bindings/node/src/lib.rs"
+          ],
+          "validation": [
+            {
+              "command": "cargo test --offline -p stateset-db --features sqlite,postgres,vector --test sqlite_kernel_outbox --test inventory_round5_sqlite -- --test-threads=2",
+              "result": "82 passed locally: 68 kernel tests and 14 inventory/backorder tests. Covers repeated partial dispatches, same-SKU line isolation, split holds, remaining-quantity refusal, stale competing approvals, preview, historical receipt replay, legacy provenance refusal, exact inventory event linkage and rollback on receipt failure."
+            },
+            {
+              "command": "POSTGRES_URL=<isolated-local-test-database> cargo test --offline -p stateset-db --features sqlite,postgres,vector --test postgres_kernel_executor postgres_reserved_ -- --nocapture",
+              "result": "Two live PostgreSQL 12 tests passed, including concurrent retries of one partial dispatch and distinct competing dispatches at the same order version. Verified remaining holds, final stock conservation and preservation of prior inventory event command links. The isolated cluster was stopped afterward."
+            },
+            {
+              "command": "cargo build --offline -p stateset-embedded-node --features stateset-db/postgres",
+              "result": "Native binding rebuilt successfully and installed atomically for local tests. The new orders.ship_reserved.partial.v1 feature was verified through the Node binding."
+            },
+            {
+              "command": "node --test cli/test/unit/native-merchant-http.test.js cli/test/unit/icp-durable-store.test.js",
+              "result": "35 passed with zero skips against the rebuilt binding. Includes a paid checkout followed by two governed partial dispatches and historical receipt replay, explicit refusal of partial approvals by the current HTTP adapter, existing worker concurrency, process-death recovery and protocol checkpoint failures."
+            },
+            {
+              "command": "node scripts/ci/check_kernel_coverage.mjs",
+              "result": "34 governed commands verified. Scoped Rust formatting, JavaScript lint, Prettier and git diff whitespace checks passed."
+            }
+          ],
+          "limitations": [
+            "Partial dispatches require orders.ship_reserved.partial.v1 on Node hosts. Each new dispatch needs its own idempotency key and expected_version; retries retain the original key.",
+            "Tracked lines require exact line-bound remaining reservations. Entirely unkeyed legacy holds are supported only for an initial full shipment; mixed keyed/unkeyed holds require operator reconciliation.",
+            "Already-shipped quantities must match the latest succeeded reserved-shipping receipt. Retain those receipts until fulfillment is complete; legacy confirmation-only shipping cannot silently establish stock-consumption provenance.",
+            "The native merchant HTTP adapter still accepts one full dispatch per order. Multiple-dispatch HTTP journal/projection recovery, carrier dispatch, delivery verification, refunds and disputes remain open."
+          ]
+        },
+        {
+          "scope": "Atomic reserved-stock consumption for governed full native shipments",
+          "implementation": [
+            "crates/stateset-db/src/kernel/plans/orders.rs",
+            "crates/stateset-db/src/sqlite/kernel_executor.rs",
+            "crates/stateset-db/src/postgres/kernel_executor.rs",
+            "crates/stateset-embedded/src/commerce/kernel.rs",
+            "bindings/node/src/lib.rs",
+            "icp-handler/src/native-fulfillment.mjs"
+          ],
+          "validation": [
+            {
+              "command": "PORT=0 node --test icp-handler/test/*.test.mjs",
+              "result": "164 passed locally, including preview, reference reuse, receipt validation, unsupported binary refusal and legacy receipt recovery."
+            },
+            {
+              "command": "node scripts/ci/check_kernel_coverage.mjs",
+              "result": "34 governed commands verified, including the new orders.ship_reserved capability."
+            },
+            {
+              "command": "node --test cli/test/unit/native-merchant-http.test.js cli/test/unit/icp-durable-store.test.js",
+              "result": "33 passed locally against the rebuilt native binding: 28 native HTTP scenarios and five durable reference regressions. Dispatch checks assert one on-hand deduction, cleared allocation, preserved availability and unchanged checkout budget across retries, process death and projection failure."
+            },
+            {
+              "command": "cargo test --offline -p stateset-db --features sqlite,postgres,vector --test sqlite_kernel_outbox -- --test-threads=2",
+              "result": "61 passed locally under Rust 1.90.0. New reserved-shipping checks cover preview, exact-once consumption, preservation of other holds, legacy authority refusal, invalid coverage/payment/version/expiry and atomic rollback when receipt insertion fails."
+            },
+            {
+              "command": "POSTGRES_URL=<isolated-local-test-database> cargo test --offline -p stateset-db --features sqlite,postgres,vector --test postgres_kernel_executor postgres_reserved_shipping",
+              "result": "One live PostgreSQL 12 test passed on an isolated temporary cluster: preview and two concurrent apply retries produce one receipt, one inventory consumption event and the expected stock balances. The temporary cluster was stopped afterward."
+            },
+            {
+              "command": "cargo build --offline -p stateset-embedded-node --features stateset-db/postgres",
+              "result": "Native binding rebuilt successfully. Verified orders.ship_reserved.v1 advertisement. A fresh-process concurrent HTTP dispatch scenario also passed after the local binding replacement."
+            }
+          ],
+          "limitations": [
+            "New orders.ship_reserved commands require their own policy grant and a native binary advertising orders.ship_reserved.v1. Legacy orders.ship and previously pinned operations retain confirmation-only behavior; historical holds are not automatically consumed.",
+            "Only full shipments of paid, processing, wholly unshipped orders with expected_version are supported. Untracked SKUs have no inventory to consume.",
+            "Native stock, order, inventory ledger, outbox and receipt commit together. The HTTP protocol checkpoint remains separate and recoverable.",
+            "Carrier dispatch, delivery verification, partial shipments, refunds/disputes and continuous accounting reconciliation remain separate integrations."
+          ]
+        },
+        {
+          "scope": "Opt-in native merchant HTTP quote acceptance and recovery on SQLite",
+          "implementation": [
+            "icp-handler/src/native-http.mjs",
+            "icp-handler/src/server.mjs",
+            "icp-handler/src/state.mjs",
+            "cli/examples/native-merchant.mjs"
+          ],
+          "validation": [
+            {
+              "command": "node --test cli/test/unit/native-merchant-http.test.js cli/test/unit/icp-durable-store.test.js",
+              "result": "13 passed locally under Node 20.20.0: eight native HTTP scenarios plus five durable reference regressions. A ninth native HTTP scenario for newly expired quotes passed separately with --test-name-pattern='expired HTTP quote'. Native-store SQL inspection and receipt lookup use isolated processes."
+            },
+            {
+              "command": "node --test cli/test/unit/native-merchant-checkout.test.js",
+              "result": "23 native bridge tests passed locally."
+            },
+            {
+              "command": "PORT=0 node --test icp-handler/test/*.test.mjs",
+              "result": "137 handler tests passed locally, including protocol/OpenAPI surface checks."
+            }
+          ],
+          "limitations": [
+            "Native order, allocation, budget, outbox and receipt commit together; protocol escrow/event projection is a separate recoverable checkpoint, not a distributed transaction.",
+            "Native mode leaves payment pending and disables reference settlement, fulfillment, disputes and non-purchase verbs. No real provider or PostgreSQL was exercised.",
+            "Cart ownership lookup, authoritative kernel receipt access and scoped budget provisioning remain operator integrations. Cross-store restore reconciliation and hosted key lifecycle remain open.",
+            "Local tests do not replace immutable CI release evidence."
+          ]
+        },
+        {
+          "scope": "Read-only Stripe direct USD card capture verification and governed native HTTP payment recording",
+          "implementation": [
+            "icp-handler/src/stripe-payment.mjs",
+            "icp-handler/src/native-payment.mjs",
+            "icp-handler/src/native-http.mjs",
+            "icp-handler/src/server.mjs"
+          ],
+          "validation": [
+            {
+              "command": "PORT=0 node --test icp-handler/test/*.test.mjs",
+              "result": "156 passed locally under Node 20.20.0, including 19 concrete Stripe adapter checks. Final strict account, recipient-field and cart-binding validation passed."
+            },
+            {
+              "command": "node --test cli/test/unit/native-merchant-http.test.js cli/test/unit/icp-durable-store.test.js",
+              "result": "21 passed locally: 16 native HTTP tests and five durable reference regressions. Seven Stripe/native scenarios cover concurrent retries, SIGKILL after payment creation and completion, mismatched evidence, outage, kernel denial, reference reuse, preview and protocol checkpoint repair. Those seven passed again after the final adapter validation changes."
+            }
+          ],
+          "limitations": [
+            "Provider responses were controlled fixtures; no Stripe account, live credentials or funds were used. External charging, provider idempotency and real-provider failure drills remain open.",
+            "Only existing direct USD card PaymentIntents with full capture are supported. No confirm, capture, refund, transfer or payout API calls are made.",
+            "Recorded payment is historical capture evidence, not final settlement or protection from future refunds/disputes. Native escrow fulfillment and settlement remain disabled.",
+            "Provider-reference claims cover one shared protocol journal. Other stores, direct write entrypoints, restore reconciliation and continuous reversal/accounting reconciliation require further integration."
+          ]
+        },
+        {
+          "scope": "Operator-approved full native dispatch recording over signed HTTP acceptance retries",
+          "implementation": [
+            "icp-handler/src/native-fulfillment.mjs",
+            "icp-handler/src/native-http.mjs",
+            "icp-handler/src/server.mjs"
+          ],
+          "validation": [
+            {
+              "command": "PORT=0 node --test icp-handler/test/*.test.mjs",
+              "result": "162 passed locally under Node 20.20.0, including dispatch preview, reference reuse and mismatched receipt guards."
+            },
+            {
+              "command": "node --test cli/test/unit/native-merchant-http.test.js cli/test/unit/icp-durable-store.test.js",
+              "result": "31 passed locally: 26 native HTTP scenarios and five durable reference regressions, including ten native dispatch concurrency, crash, checkpoint, outage and refusal scenarios."
+            },
+            {
+              "command": "node --test --test-name-pattern='native dispatch' cli/test/unit/native-merchant-http.test.js",
+              "result": "All 11 dispatch scenarios passed after the final response correction, including a new regression for operator-recorded native payment without a configured provider adapter. The 162 handler tests also passed again."
+            }
+          ],
+          "limitations": [
+            "Current orders.ship confirms reservations and updates shipped quantities but does not deduct on-hand or allocated inventory. Recorded responses explicitly report inventory depletion_unverified; atomic stock depletion remains open.",
+            "Only operator-approved full dispatch records for paid, processing, wholly unshipped orders are supported. Approval binds native order version and all line quantities. No carrier API, physical dispatch, delivery verification or escrow release was exercised.",
+            "Commands and reference claims persist across retries. Rejected commands require operator reconciliation; partial shipment, refund and dispute recovery remain open.",
+            "Native receipt and protocol response checkpoint are separate recoverable commits. The protocol escrow event stream does not certify native delivery. Local evidence does not replace release CI or live-provider validation."
+          ]
+        },
+        {
           "scope": "Native shipment creation and field/lifecycle updates, cancellation and atomic batches on SQLite and PostgreSQL",
           "implementation": [
             "crates/stateset-db/src/shipment_updates.rs",

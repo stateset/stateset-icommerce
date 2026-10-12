@@ -39,6 +39,16 @@ export function isDurable() {
 export function bindIdentity(identity) {
   storage?.bindIdentity(identity);
 }
+export function bindBackend(mode) {
+  if (!storage) return;
+  atomic(() => {
+    const metadata = storage.collection('metadata');
+    const prior = metadata.get('backend');
+    if ((prior && prior !== mode) || (!prior && mode !== 'reference' && quotes.size))
+      throw new Error('merchant backend does not match this protocol database');
+    metadata.set('backend', mode);
+  });
+}
 export function durableReplayGuard(options) {
   return storage.replayGuard(options);
 }
@@ -165,8 +175,13 @@ export function getIntent(intentId) {
     : undefined;
 }
 
-export function recordQuote(quote, intentId, signatureHex) {
-  immutableRecord(quotes, quote.quote_id, { quote, intentId, signatureHex });
+export function recordQuote(quote, intentId, signatureHex, nativeCheckout) {
+  immutableRecord(quotes, quote.quote_id, {
+    quote,
+    intentId,
+    signatureHex,
+    ...(nativeCheckout ? { nativeCheckout } : {}),
+  });
 }
 export function getQuote(quoteId) {
   return quotes.get(quoteId);

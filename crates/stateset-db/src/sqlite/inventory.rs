@@ -216,14 +216,14 @@ impl SqliteInventoryRepository {
     }
 
     fn expire_reservation_in_tx(
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         reservation_id: Uuid,
         item_id: i64,
         location_id: i32,
         quantity: Decimal,
         now: DateTime<Utc>,
     ) -> Result<()> {
-        Self::apply_allocation_delta_in_tx(
+        let new_version = Self::apply_allocation_delta_in_tx(
             conn,
             item_id,
             location_id,
@@ -238,6 +238,25 @@ impl SqliteInventoryRepository {
         )
         .map_err(map_db_error)?;
 
+        append_kernel_event_tx(
+            conn,
+            &KernelOutboxEvent::domain(
+                "inventory.reservation_expired.v1",
+                "inventory_reservation",
+                reservation_id.to_string(),
+                serde_json::json!({
+                    "reservation_id": reservation_id.to_string(),
+                    "item_id": item_id,
+                    "location_id": location_id,
+                    "quantity": quantity.to_string(),
+                    "status": ReservationStatus::Expired.to_string(),
+                    "balance_version": new_version,
+                }),
+                None,
+            ),
+        )
+        .map_err(map_db_error)?;
+
         Ok(())
     }
 
@@ -245,7 +264,7 @@ impl SqliteInventoryRepository {
     /// location (the per-item lazy expiry only runs on traffic). Rows are
     /// taken oldest-expiry first so repeated calls drain a backlog in order.
     pub(crate) fn expire_reservations_in_tx(
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         now: DateTime<Utc>,
         limit: u32,
     ) -> Result<u64> {
@@ -373,14 +392,15 @@ impl SqliteInventoryRepository {
     /// is unchanged), a `shipment` ledger row is written, and the reservation
     /// is marked `fulfilled` when fully consumed (otherwise its quantity is
     /// reduced and it stays open for the remainder). Used by backorder
-    /// fulfilment. Errors if the reservation is not open or too small.
+    /// fulfilment. Returns the new inventory event ID for exact command linkage.
+    /// Errors if the reservation is not open or too small.
     pub(crate) fn fulfil_reservation_in_tx(
         tx: &rusqlite::Transaction<'_>,
         reservation_id: Uuid,
         quantity: Decimal,
         reason: &str,
         now: DateTime<Utc>,
-    ) -> Result<()> {
+    ) -> Result<Uuid> {
         validate_quantity(quantity)?;
         let res = tx
             .query_row(
@@ -495,29 +515,26 @@ impl SqliteInventoryRepository {
         )
         .map_err(map_db_error)?;
 
-        append_kernel_event_tx(
-            tx,
-            &KernelOutboxEvent::domain(
-                "inventory.reservation_fulfilled.v1",
-                "inventory_reservation",
-                reservation_id.to_string(),
-                serde_json::json!({
-                    "reservation_id": reservation_id.to_string(),
-                    "item_id": item_id,
-                    "location_id": location_id,
-                    "quantity": quantity.to_string(),
-                    "remaining_quantity": (reserved - quantity).to_string(),
-                    "balance_version": current_version + 1,
-                }),
-                None,
-            ),
-        )
-        .map_err(map_db_error)?;
-        Ok(())
+        let event = KernelOutboxEvent::domain(
+            "inventory.reservation_fulfilled.v1",
+            "inventory_reservation",
+            reservation_id.to_string(),
+            serde_json::json!({
+                "reservation_id": reservation_id.to_string(),
+                "item_id": item_id,
+                "location_id": location_id,
+                "quantity": quantity.to_string(),
+                "remaining_quantity": (reserved - quantity).to_string(),
+                "balance_version": current_version + 1,
+            }),
+            None,
+        );
+        append_kernel_event_tx(tx, &event).map_err(map_db_error)?;
+        Ok(event.id)
     }
 
     fn expire_reservations_for_item_in_tx(
-        conn: &rusqlite::Connection,
+        conn: &rusqlite::Transaction<'_>,
         item_id: i64,
         location_id: i32,
         now: DateTime<Utc>,
@@ -1069,14 +1086,13 @@ impl SqliteInventoryRepository {
                 format!("Invalid inventory_reservation.status '{status}': {e}"),
             )))
         })?;
-        if matches!(parsed_status, ReservationStatus::Released | ReservationStatus::Cancelled) {
-            return Ok(ReservationConfirmOutcome::Confirmed);
-        }
-        if parsed_status == ReservationStatus::Confirmed {
-            return Ok(ReservationConfirmOutcome::Confirmed);
-        }
         if parsed_status == ReservationStatus::Expired {
             return Ok(ReservationConfirmOutcome::Expired);
+        }
+        // A partial confirmation must obey the same terminal guard as a full
+        // confirmation. Splitting a fulfilled row would create an unbacked hold.
+        if !parsed_status.holds_stock() || parsed_status == ReservationStatus::Confirmed {
+            return Ok(ReservationConfirmOutcome::Confirmed);
         }
         if let Some(expires_at) = expires_at {
             if expires_at < now {
@@ -1174,14 +1190,12 @@ impl SqliteInventoryRepository {
             )))
         })?;
 
-        if parsed_status == ReservationStatus::Released
-            || parsed_status == ReservationStatus::Cancelled
-        {
-            return Ok(false);
-        }
-
         if parsed_status == ReservationStatus::Expired {
             return Ok(true);
+        }
+        // Consumed units must not be subtracted from another live hold.
+        if !parsed_status.holds_stock() {
+            return Ok(false);
         }
 
         if let Some(expires_at) = expires_at {
@@ -2509,6 +2523,10 @@ impl InventoryRepository for SqliteInventoryRepository {
         Ok(results)
     }
 }
+
+#[cfg(test)]
+#[path = "inventory_formal_tests.rs"]
+mod formal_tests;
 
 #[cfg(test)]
 mod tests {

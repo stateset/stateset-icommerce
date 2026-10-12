@@ -5,6 +5,55 @@
 - **Lean 4** proofs about its money arithmetic, checked in CI (`Lean Proofs`,
   run by `formal/lean/check.sh`).
 
+The Lean suite also proves inventory ledger safety by induction over arbitrary
+finite executions. Run both suites and their focused implementation links with:
+
+```bash
+bash formal/lean/check.sh
+bash formal/tla/check.sh
+cargo test -p stateset-core --lib matches_the_
+cargo test -p stateset-core --test reservation_formal_conformance
+cargo test -p stateset-db --lib releasing_fulfilled_reservation_does_not_free_another_hold
+cargo test -p stateset-db --lib sqlite::inventory::formal_tests
+cargo test -p stateset-db --test sqlite_reservation_split_atomicity
+cargo test -p stateset-db --test sqlite_reservation_preview
+cargo test -p stateset-db --lib kernel::replay::
+cargo test -p stateset-db --lib reserved_stock_selection_matches_lean_ownership
+cargo test -p stateset-db --test sqlite_receipt_promotion
+cargo test -p stateset-db --test sqlite_lazy_expiry
+cargo test -p stateset-db --test sqlite_shipment_atomicity
+# Requires an isolated PostgreSQL test database in POSTGRES_URL:
+cargo test -p stateset-db --features postgres --lib postgres_inventory_transitions_match_lean
+cargo test -p stateset-db --features postgres --test postgres_reservation_preview
+cargo test -p stateset-db --features postgres --test postgres_receipt_promotion
+cargo test -p stateset-db --features postgres --test postgres_lazy_expiry
+cargo test -p stateset-db --features postgres --test postgres_shipment_atomicity
+cargo test -p stateset-db --features postgres --test postgres_migrations
+```
+
+These are proofs and model checks of specified abstractions, with selected
+conformance tests. They are **not a machine-checked verification of the entire
+Rust engine**, its SQL backends, external payment providers, or every API path.
+
+The Lean runner discovers every `.lean` module and builds it in a fresh directory
+in dependency order. `Audit.lean` inspects every kernel-safe compiled declaration,
+including private theorems, unused helpers, definitions and unused axioms. It
+rejects dependencies outside `propext`, `Classical.choice` and `Quot.sound` directly
+through Lean's environment API. Unsafe compiler IR helpers are excluded because
+they are not kernel proofs. The runner also treats compiler warnings as errors
+and tests that private proof holes, definition holes and unused axioms are rejected.
+There is no manually curated theorem list or parsing of `#print` messages.
+
+The TLA+ runner checks an isolated source snapshot and gives Java a private
+temporary directory, so overlapping runs cannot delete each other's state,
+extracted standard modules, or logs. TLC extracts files such as `FiniteSets.tla`
+and deletes them at JVM exit; sharing `/tmp` caused a reproduced intermittent
+parser failure even with separate source snapshots. Guarded runs must finish exhaustive
+checking of a nonempty state space. Broken runs must exit with TLC's invariant
+violation code **and** name the intended invariant. Failed runs retain their
+temporary workspace and per-configuration logs; `TLA_WORKERS` overrides the
+default worker count.
+
 ## Why a model has to be able to fail
 
 A proof about a model says nothing about code the model does not match, and a
@@ -78,10 +127,21 @@ One item/location starts with five units and two reservation records of two
 and three units. The model interleaves reserve, confirm, partial/full fulfill,
 release and expiry. `AllocatedMatchesOpen` requires the balance's allocated
 quantity to equal the sum of open holds; `StockBounds` prevents overselling.
-With terminal guards, TLC checks all 176 reachable states. Without them it
-finds `fulfilled → confirmed`: the row again looks like a live hold although
-its units have already left allocated stock. Releasing a fulfilled row can
-likewise free another hold's stock.
+With terminal guards, TLC checks all 176 reachable states. `StockConserved`
+also requires on-hand plus cumulative fulfilled units to equal initial stock.
+Independent negative controls disable each guard: unsafe confirmation allows
+`fulfilled → confirmed`, making a consumed row look like a live hold; unsafe
+release subtracts its retained quantity from allocated stock again; unsafe
+fulfilment ships a fulfilled row again. Release and fulfilment require enough
+allocated stock for the subtraction, so these negative controls must consume
+another hold without entering the engine's negative-delta repair or clamp.
+All three must produce an `AllocatedMatchesOpen` counterexample for the runner
+to pass.
+
+The release counterexample reserves three units for `r2` and two for `r1`,
+fulfills `r1`, then incorrectly releases `r1`: allocated becomes one while
+`r2` still holds three. The resulting balance is nonnegative, so negative-delta
+repair would not catch this error.
 
 SQLite and Postgres use `ReservationStatus::holds_stock()` in their release
 and confirm guards. The mutation-tested SQLite regression
@@ -90,6 +150,386 @@ terminal paths while another reservation remains live. The TLA+ result is
 bounded to these two records, integral units and one location. It does not
 model database repair from previously drifted balances or prove the SQL
 transaction implementation.
+
+### Unbounded Lean companion: `lean/InventoryReservations.lean`
+
+`reachable_safe` proves, for **every** natural-number capacity, finite
+reservation ledger, and finite execution admitted by `Step`:
+
+- allocated units equal the sum of quantities in stock-holding rows;
+- allocated units never exceed on-hand units;
+- on-hand plus cumulative fulfilled units equals initial capacity.
+
+`reachable_stock_bounds` derives on-hand ≤ capacity. The proof handles atomic
+reserve, confirm, partial confirmation with row splitting, partial/full
+fulfillment, release, expiry, and stuttering
+(refused/idempotent calls). Full fulfillment retains the row's quantity but
+removes its contribution to the live ledger. Separate theorems prove that
+reopening a positive fulfilled row breaks the ledger, and releasing it breaks
+the ledger when another allocation covers its quantity. Every kernel-safe
+declaration is included in the CI axiom audit; no unfinished proof or extra
+axiom is accepted.
+
+The shared `tla/inventory/holds_stock.golden` table links Lean's `Status.isOpen`,
+TLA+'s `Open`, and Rust's `ReservationStatus::holds_stock()` for all seven
+current statuses. Both formal runners emit and compare the table; the Rust
+`reservation_holds_stock_matches_lean_and_tla` test consumes it. This is exact
+predicate conformance, not a proof of complete transition equivalence.
+
+The executable `confirmQuantity`, `expireIfDue` and `fulfilQuantity` functions
+are proved to refine `Step` and preserve `Safe`.
+`InventoryTransitionsGolden.lean` computes 1,575 deterministic before/after
+cases from those functions, with a proof that their starting fixtures are safe.
+The matrix covers all seven statuses,
+quantities 1–3, another live hold of 1–3 units, zero/partial/full/excess
+confirmation amounts, and expiry before/equal to/after the supplied clock or
+absent. It also includes 315 fulfilment cases with negative, zero, partial,
+full and excessive quantities. SQLite and PostgreSQL run the same cases through
+their actual transaction helpers at scales 0, 2 and 6:
+**4,725 checks per backend**. PostgreSQL migration
+080 makes inventory quantities unconstrained `NUMERIC`, preserving these finer
+units. The checks compare balances,
+row quantities/statuses, source identity and return outcomes. This is bounded
+transition conformance, not universal Rust/SQL refinement or a concurrency test.
+
+`lean/InventoryFulfilment.lean` models signed requests and proves the exact
+acceptance condition: positive quantity, an open row, and no more than the held
+quantity. It proves that refusals leave state unchanged and that fulfilment
+preserves available stock for arbitrary safe starting ledgers. The database
+checks compare rejection categories as well as state. For accepted calls they
+also require one version increment, one exact negative shipment ledger entry,
+and one fulfilment outbox event whose ID is returned by the helper. Event payloads
+must carry the exact shipped and remaining quantities, reservation and location,
+and new balance version. Refused calls must write no shipment or event and leave
+the version unchanged. These cases start with no spare stock on open holds and
+no expiry timestamp; expiry policy, already-corrupt balances, caller rollback
+after SQL failures, and concurrent fulfilment are not established by this matrix.
+
+These checks reproduced two implementation defects before the guards were fixed
+in both backends: partial confirmation could split a fulfilled row into an
+unbacked confirmed hold, and expiry-by-ID could subtract an already consumed
+row's quantity from another hold. SQLite failed 135 confirmation cases and
+27 expiry cases before the fixes. The PostgreSQL CI parity lane explicitly runs
+the shared matrix; a local run without a database URL skips that live test and
+must not be counted as PostgreSQL evidence.
+
+**Abstraction boundary.** Lean appends fresh rows rather than modeling UUIDs or
+TLA+'s two initially absent slots. Quantities use a common exact integral scale;
+decimal parsing, overflow and rounding are outside the proof. Each step assumes
+an atomic, serialized commit and initially consistent balances. Expiry selection
+abstracts wall-clock time. Restocking, arbitrary stock adjustments, multiple
+locations, crash recovery, and liveness are not modeled. `allocated` and
+`cancelled` are represented for predicate/fixture conformance, but no transition
+creates either status from the empty initial ledger.
+
+### Reservation ownership: `lean/ReservationOwnership.lean`
+
+The shared `plan_reserved_stock` planner selects stock by order-line ID, even
+when several lines have the same SKU. The Lean executable `select` follows its
+ordered greedy selection, reducing only the selected row owner's outstanding
+request. `selected_per_owner` proves, for any finite row list, line ID, request
+map, and natural quantities, that each line receives exactly the lesser of its
+request and its own total holds. Consequences include no overship, complete
+selection when a request is covered, and no consumption for an unrequested line.
+`rows_bounded` preserves each row's owner and bounds its selected quantity.
+`sibling_surplus_cannot_cover` establishes that another line's surplus cannot
+compensate for a shortage, regardless of the shared SKU total.
+
+`ReservationOwnershipGolden.lean` generates 2,160 fixtures: quantities 1–3,
+zero through excessive requests, scales 0/2/6, whole/split/reversed holds,
+same-SKU redistribution to a sibling, and foreign owners. Rust runs the actual
+shared planner against all cases both before and after a prior partial shipment,
+and with single or repeated line requests: **8,640 comparisons**. Selected
+reservation IDs, quantities, and order must match exactly. Lean retains zero
+selections to preserve row positions; the fixture consumer omits those entries
+as Rust does. CI regenerates and compares the fixture file.
+
+The `line_owned_fractional_splits_preserve_same_sku_sibling` integration tests
+in both shipment-atomicity test files exercise the governed SQL path. A line's
+hold is split into one micro-unit and a remainder; shipping one unit consumes
+both rows exactly and leaves the same-SKU sibling untouched. Replay returns the
+same receipt. Moving a micro-unit from the remaining target hold to the sibling
+preserves aggregate SKU coverage but makes the next shipment refuse cleanly,
+without changing the order or stock balance.
+
+`tla/inventory/ReservationOwnership.tla` checks atomic portions against two
+same-SKU lines and three holds, including a split hold, for every request pair
+from 0–3. All 150 reachable guarded states satisfy the invariants.
+`OwnerConservation` ties each line's shipped units to its own consumed
+holds. A negative configuration allows borrowing another line's hold and must
+violate that invariant even while `NoOvership` remains enforced.
+
+These prove the selection algorithm under supplied ownership and quantity
+evidence. The unbounded Lean proof does not establish every planner admission
+guard, SQL locking, UUID uniqueness, receipt provenance/authenticity, expiry,
+legacy unkeyed holds, decimal overflow, or liveness. The shared fixture admission
+checks cover a bounded subset of those guards; the database tests establish
+selected integration scenarios, not universal backend refinement.
+
+### Shipment versus release: `lean/ShipmentRelease.lean`
+
+Two operations on the same reservation must serialize and reread both its
+status and its remaining quantity. The Lean companion to `InventoryFulfilment`
+proves safety for both orders: a release after a shipment frees only the
+remainder (or does nothing after full fulfilment), while fulfilment after a
+release has no effect. For arbitrary natural quantities and surrounding row
+lists, `ship_then_release_preserves_other_holds` leaves precisely the other
+rows' live allocation. `stale_partial_release_steals_sibling` demonstrates why
+reusing the original quantity can consume sibling stock even without making
+the allocation negative.
+
+`tla/inventory/ShipmentRelease.tla` explicitly interleaves reads and commits
+for shipment and release, with partial/full requests and a same-SKU sibling.
+All **18 reachable locked states** preserve owner allocation, total stock,
+at-most-once effects, and types. Disabling the row lock must produce an
+`OwnerConservation` counterexample.
+
+`shipment_racing_release_uses_current_hold_and_preserves_sibling` in
+`postgres_shipment_atomicity` queues real governed shipment and public release
+calls behind a held reservation lock. Named worker connections and observed
+database lock waits force each execution order, for both partial and full
+target-line shipments: **four scenarios**. Assertions cover order quantities,
+reservation status/quantity, unchanged sibling holds, balance/ledger agreement,
+fulfilment/release events, and durable receipt replay after the competing
+operation. The existing PostgreSQL parity lane includes this test file.
+
+This test also exposed a startup pool starvation bug: migrations held the
+advisory-lock connection while requesting another connection from a size-one
+pool. Migrations now execute on the lock-owning connection. The PostgreSQL
+migration test checks size-one startup and reopen; this is a regression test,
+not a formal proof of migration correctness.
+
+The shipment proofs assume initially consistent ledgers, exact common-scale
+units, atomic commits, and fresh locked reads. They do not prove PostgreSQL's
+lock implementation, scheduling fairness, deadlock freedom, or expiry races.
+The database tests cover selected execution orders, not universal refinement.
+
+### Shipment versus expiry: `lean/ShipmentExpiry.lean`
+
+Shipment admission checks the deadline after acquiring the reservation locks.
+`shipBeforeDeadline_safe` links that check to the proved inventory transition;
+`expired_deadline_refuses` and `shipment_effect_requires_live_deadline` exclude
+effects admitted at or after the deadline. The expiry companion proves that
+closing a partially shipped hold frees precisely its remaining units, preserves
+every other row's live allocation, and does nothing to a fully fulfilled hold.
+An already expired hold cannot be fulfilled. These statements quantify over
+arbitrary natural quantities, finite surrounding row lists, and timestamps.
+
+`tla/inventory/ShipmentExpiry.tla` separates admission from commit and allows
+the deadline to pass while a shipment holds its locks. The sweeper can skip that
+row and revisit it after commit. All **30 guarded reachable states** preserve
+live admission, owner allocation, total stock, and types. Independent negative
+configurations must violate `LiveAtAdmission` when the deadline check is omitted
+and `OwnerConservation` when the sweeper ignores shipment locks.
+
+`shipment_expiry_interleavings_preserve_stock_and_recheck_deadlines` adds
+**six PostgreSQL scenarios**: partial/full target-line shipment crossed with
+shipment-first, expiry-first, and a deadline changed during the lock wait.
+A scoped trigger pauses an admitted shipment at its ledger insert; a balance
+lock pauses a sweeper after reservation selection. Observable worker lock waits
+establish the interleavings. A competing sweep must finish while skipping the
+locked target, and a subsequent sweep expires only the unshipped remainder.
+In the deadline case, `clock_timestamp()` installs the new deadline after the
+shipment is already waiting, so a check against command start would be stale.
+Assertions cover reservation rows, sibling allocation, stock, order quantities,
+shipment ledger, exact expiry quantities/events, repeated sweeps, and receipt
+replay without further effects.
+
+The public sweeper takes an explicit cutoff. The first two scenarios pass a
+cutoff beyond a future deadline to represent expiry after admission without
+timing sleeps; they do not test wall-clock scheduling. The logical admission
+instant is the locked deadline check, not transaction commit. Lean assumes
+atomic commits and fresh locked reads; TLC abstracts lock ownership and uses
+bounded quantities. Neither proves SQL refinement, clock monotonicity, decimal
+overflow, deadlock freedom, or eventual processing of skipped rows. These tests
+require an isolated PostgreSQL test database because the sweep is global.
+
+### Reservation and balance lock order: `lean/ReservationLockOrder.lean`
+
+The reserved-shipment join originally locked both reservation and balance rows
+as it traversed its results. With two holds on one balance, that could acquire
+`reservation 1 → balance → reservation 2`. A release or expiry owning reservation
+2 and requesting the balance would complete a circular wait.
+
+The PostgreSQL executor now acquires **all reservation locks before any balance
+lock**. It then locks distinct balances in item/location order and reloads their
+quantities before planning; the earlier unlocked join values are not used as
+authoritative balance evidence. Each distinct balance requires one additional
+locking query, shared by all its reservation rows.
+
+`shipment_locks_all_reservations_before_balances` holds the later reservation,
+waits until the real shipment query blocks, and attempts its balance lock with
+`NOWAIT`. Before the fix PostgreSQL returned `55P03`, demonstrating the closing
+edge of a possible wait cycle without relying on deadlock victim selection.
+After the fix the balance can be locked, and opening the gate allows shipment
+to complete with the expected stock. The release/expiry interleavings, ownership,
+and shipment rollback tests also pass with the revised query sequence.
+
+Lean models waiting threads by held resource ranks and a requested rank.
+`wait_path_increases` proves that every edge of a finite wait chain increases
+the requested rank when all participants acquire resources in strict order;
+`no_circular_wait` excludes a nonempty finite cycle. Supporting lemmas place
+every reservation before every balance and preserve balance index order. The
+old interleaved shipment violates that ranking.
+
+`tla/inventory/ReservationLockOrder.tla` checks a two-reservation shipment against
+a close operation holding the later reservation and needing the shared balance.
+All **16 reachable phased states** satisfy `NoCircularWait` and `TypeOK`.
+The old interleaved order must produce a `NoCircularWait` counterexample.
+
+The blocking lazy-expiry scan must also agree with shipment on reservation
+order. It previously sorted by expiry timestamp, which can place a larger
+reservation ID before a smaller one. It now sorts by ID within its fixed
+item/location. Lazy expiry closes every eligible row in that scope, so this
+does not change which rows qualify. The background batch sweeper retains
+deadline priority and `SKIP LOCKED`; it does not wait on reservation owners.
+
+`lazy_expiry_locks_reservations_in_shipment_identity_order` deliberately gives
+two holds opposing deadline/ID orders. While a real `reserve_async` call waits
+on the smaller ID, that row's owner probes the larger ID with `NOWAIT`. The old
+query returned `55P03`; the identity-ordered scan leaves the larger row free.
+At scales 0 and 6, the test also checks both expiry events and their exact
+quantities, the new allocation, total live holds, and an unchanged third hold.
+The probe represents the next lock a shipment would request; it does not rely
+on an actual deadlock or the database's choice of victim.
+
+The model's `CloseOrder = "identity"` configuration lets lazy expiry acquire
+both reservations before their balance. Its **16 reachable states** satisfy
+the same invariants; the deadline-ordered configuration must find a circular
+wait. Lean's `ordered_waiter_advance` proves that acquiring a requested rank
+and then requesting a strictly larger rank preserves the ordering premise.
+An empty acquisition sequence starts ordered, and reversed reservation IDs
+violate the premise independently of the reservation/balance phase ordering.
+
+This establishes the identified reservation/balance locking rule under stable
+resource identities and a common acquisition order. It does **not** establish
+deadlock freedom across all engine paths: other reservation ordering schemes,
+order/idempotency locks, changing lock sets, database-internal locks, starvation,
+and crash recovery are outside this model. The SQL regression demonstrates this
+specific locking window rather than universally refining PostgreSQL into Lean.
+
+### Shipment transaction boundaries: `lean/ShipmentAtomicity.lean`
+
+The quantity proofs assume atomic commits. This companion makes that assumption
+explicit for five effect groups: inventory balances/reservations, shipment ledger,
+outbox, order, and receipt. Counts represent one logical dispatch batch, not units
+or rows. `attempt_safe` and `reachable_safe` prove that complete publication keeps
+all groups together across arbitrarily many attempts. Separate theorems establish
+that rollback restores every group, incomplete work cannot publish, and a retry
+after success has no further effect. `partial_publication_breaks_coherence` proves
+that publishing any nonempty proper prefix separates inventory from its receipt.
+
+`tla/inventory/ShipmentAtomicity.tla` explores two callers, a durable preview,
+private writes, aborts at every stage, commit, and retries serialized by the
+command lock. All 14 reachable guarded states satisfy `Coherent`, `ReceiptBacked`,
+`AtMostOnce`, and `TypeOK`. Independent broken configurations must expose a `Coherent`
+counterexample when writes become visible early or rollback retains staged writes.
+The five stages abstract effect groups; they do not reproduce the interleaved SQL
+statement order within a multi-line dispatch.
+
+`sqlite_shipment_atomicity` and `postgres_shipment_atomicity` each run 16 scenarios:
+four failure sites × direct apply/preview promotion × full/partial dispatch.
+Every order has two tracked items with separate balances. Scoped triggers fail
+the second item's shipment-ledger insert or inventory-event insert, the order
+update, or the final receipt insert. Each trigger first requires the first item's
+shipment entry to exist inside the transaction, proving a prefix has run.
+After the error, snapshots of balances, reservations, shipment ledger, order and
+lines, outbox, and receipts must equal the pre-attempt snapshots, including the
+durable preview when present. Retrying the same key must succeed with exactly two
+inventory facts, one order fact, and two shipment ledger entries. A further retry
+with a new command ID must return the identical stored receipt and change none of
+those rows. PostgreSQL fixtures and trigger predicates are isolated by generated
+IDs, and CI discovers that live test automatically.
+
+This is evidence for the kernel's transaction boundary under injected SQL errors,
+not a proof of the database's recovery implementation. OS crashes, lost commit
+acknowledgements, outbox delivery, arbitrary triggers, multiple commands/keys, and
+external carrier side effects remain outside this model. Serialization and
+receipt authenticity are assumptions, with separate receipt-promotion checks.
+
+### Preview/apply agreement: `lean/InventoryPreview.lean`
+
+`confirm_prediction` and `release_prediction` prove the exact allocation result
+for every modeled state, row quantity, confirmation amount and expiry decision.
+`releaseRow_step` connects the executable release function to the ledger-safe
+transition relation. A separate arithmetic theorem proves that removing a
+positive hold covered by the allocation actually changes that allocation.
+The corresponding Rust helper, `reservation_changes_balance`, is shared by both
+kernel executors: only an open hold can change the balance, and confirming an
+already-confirmed row is a no-op even when its expiry timestamp is past.
+
+The Lean generator emits all **42 status/operation/expiry combinations**.
+`sqlite_reservation_preview` and `postgres_reservation_preview` consume this
+table through the public governed executors. Each test checks preview stock/row
+immutability, expected rejection behavior, predicted and applied versions,
+the final allocation, and event-free terminal no-ops. Both backends reproduced
+the old prediction of version 11 when applying an overdue confirmed reservation
+actually retained version 10. Fulfilled confirmations and releases had the same
+class of prediction error. The PostgreSQL parity runner discovers its test
+automatically; an unset database URL skips it and is not live verification.
+
+`tla/inventory/ReservationPreview.tla` checks the preview/apply protocol over all
+32 accepted combinations (**96 reachable states**). Its negative control uses
+the former prediction rule and must violate `PredictionMatchesApply`.
+
+These claims assume an unchanged reservation/balance snapshot and expiry
+decision between preview and apply. A preview does not reserve a future result:
+concurrent changes or crossing an expiry boundary can legitimately change it.
+Balance-version overflow, arbitrary initial balance corruption and full SQL
+refinement are outside this proof. The tests use distinct command keys so apply
+executes independently of the preview receipt.
+
+### Split confirmation and expiry: `tla/inventory/ReservationSplits.tla`
+
+One source hold of two units and a second hold of two units share four on-hand
+units. The source may be confirmed, fulfilled in parts, split into a one-unit
+confirmed child, or expired as the abstract clock advances. The guarded model
+checks 21 reachable states. Three independent negative configurations require
+ledger-drift counterexamples from splitting a fulfilled row, expiring a fulfilled
+row, and exposing the source decrement before inserting the split child. The
+expiry counterexample stays on the nonnegative arithmetic path, outside database
+repair. This model has one child slot, keeps the other hold fixed, and does not
+model a database crash or concurrent transaction internals.
+The SQLite `split_confirmation_rolls_back_on_child_or_receipt_failure` regression
+injects failures at both the child insert and the final kernel receipt insert.
+It checks that source quantity, allocation, child rows, events and receipts roll
+back together, and that retrying the same command succeeds after removing the
+fault. This exercises the governed transaction boundary used by the engine.
+
+### Concurrent lazy expiry: `tla/inventory/LazyExpiry.tla`
+
+Two reservers discover the same expired two-unit hold while another reservation
+holds three units. Each caller then reserves one new unit. The model separates
+candidate selection from the transaction that expires and reserves stock. With
+candidate row locks, all six reachable states satisfy `AllocatedMatchesOpen`
+and `ExpiryAtMostOnce`. Without
+the locks, both workers can cache the open row and expire it independently:
+allocated becomes three while the live ledger holds five, and two expiry events
+are emitted. The balance remains nonnegative, so negative-allocation repair
+cannot detect this corruption.
+
+`postgres_lazy_expiry` reproduced that exact `(allocated=3, held=5, events=2)`
+failure before the fix. It holds the balance row, starts two dedicated worker
+connections, and waits until `pg_stat_activity` shows both waiting for a real
+database lock before releasing the gate. The fixed lazy-expiry query selects
+candidates `FOR UPDATE`, ordered by reservation ID within the item/location
+to match shipment's blocking lock order (see the lock-order section above). A waiting
+locking read rechecks the candidate after the prior transaction commits,
+preventing the second release. The regression runs at scales 0 and 6 and checks
+the other hold remains intact. `sqlite_lazy_expiry` checks the same final ledger
+and event counts with concurrent callers; SQLite already serializes the whole
+write transaction with `BEGIN IMMEDIATE`. PostgreSQL CI discovers the new live
+test automatically.
+
+`lean/InventoryExpiry.lean` proves expiry is idempotent when the second call
+uses the refreshed row, for arbitrary quantities and surrounding ledgers. It
+also proves that subtracting a stale expired row's positive quantity breaks the
+ledger even when another allocation covers the subtraction. The existing
+`expireIfDue_step` theorem connects fresh-row expiry to the ledger-safe transition
+relation. These are algebraic guarantees under a fresh-read/serialization
+assumption, not a proof of PostgreSQL's lock implementation. TLC covers two
+workers, one expiry candidate and one fixed live hold; liveness, deadlock freedom,
+other isolation levels and arbitrary multi-row workloads are outside the model.
 
 ## `tla/x402/X402Claims.tla` — one claim per cart
 
@@ -208,6 +648,69 @@ check admits an unauthorized effect. SQLite's
 `kernel_policy_denial_is_a_durable_non_mutating_receipt` exercise these
 guards. The model abstracts policy evaluation to an operator decision and
 does not prove every command handler or distributed side effects.
+
+### Durable preview promotion: `lean/ReceiptPromotion.lean`
+
+The executable `decide` function models the actual replay decision order:
+verify the receipt seal, reject a different semantic fingerprint, promote an
+intact matching preview on apply, otherwise return the stored receipt.
+`promotion_requires` proves all promotion preconditions; `tamper_precedes_conflict`
+ensures a conflicting request cannot hide a corrupted receipt. All four stored
+statuses are represented, including failed receipts.
+
+`invoke` models atomic receipt/mutation commits, fresh invocations and preview
+promotion, with current policy/version/deadline checks abstracted as a guard.
+Induction proves `at_most_once` for arbitrary fingerprint values and arbitrary
+finite invocation sequences on one key. `denial_has_no_effect` and
+`terminal_is_stable` prove that denied invocations do not add effects and a
+terminal receipt cannot be reopened by retries or a restored policy.
+
+The generated `receipt_promotion.golden` covers all **32 replay decisions**.
+`kernel::replay::formal_tests::receipt_replay_matches_lean` runs the actual Rust
+resolver and audit-hash verifier for those decisions, expanding invalid seals
+into altered-body, missing-audit and forged-hash cases: **64 checks**. Replayed
+receipts must retain every serialized field, including identity and seal.
+
+`sqlite_receipt_promotion` and `postgres_receipt_promotion` exercise the public
+kernel executors with a real reservation split:
+
+- Two concurrent same-key promotions must return the same sealed receipt and
+  create exactly one child reservation and one confirmation event.
+- Policy revocation and a changed balance version must be checked again at
+  promotion. Rejections remain durable; recovery requires a new key. Editing
+  the expected version under the old key must produce an idempotency conflict.
+- A reservation that expires after preview must expire on apply even when its
+  balance version has not changed. Retrying the applied command must replay
+  the receipt without confirming any units.
+
+The expiry scenario exposed a defect in both backends: expiry changed the
+balance and reservation status without emitting the event that the kernel
+executor already expected to attach to the receipt. Both expiry helpers now
+append `inventory.reservation_expired.v1` inside the same transaction, including
+the exact quantity and resulting balance version. The test verifies the event's
+command/key attribution and receipt reference, injects an outbox-insert failure
+to require rollback of the stock/row/receipt changes, and then retries the same
+key successfully. SQLite's helper signatures require a transaction rather than
+a bare connection. This event-atomicity check is executable fault injection;
+the Lean receipt model does not prove the outbox implementation.
+
+The tests move expiry into the past directly to make the boundary deterministic;
+they do not sleep or depend on scheduler timing. The PostgreSQL parity script
+automatically discovers its integration test and requires a database URL.
+
+`tla/kernel/ReceiptPromotion.tla` checks all 22 reachable guarded states with
+two competing promoters while policy,
+version and seal validity can change after the durable preview. Independent
+negative controls split the atomic commit, skip guard rechecks, or skip seal
+verification. They must violate `AtMostOnce`, `NoStaleOrDeniedEffect`, and
+`NoUnverifiedEffect`, respectively.
+
+These models assume transaction atomicity, collision-free semantic fingerprints
+and a correct seal-verification predicate; they do not prove SHA-256, database
+crash recovery, external effects, policy evaluation internals or liveness.
+The concurrency regressions exercise real transactions but are not an exhaustive
+proof of SQL interleavings. A balance version is not a reservation-row version:
+row-only changes and expiry must still be checked during promotion.
 
 ## `tla/kernel/OutboxLease.tla` — owned acknowledgement
 

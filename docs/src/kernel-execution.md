@@ -556,6 +556,49 @@ transaction, adopting the command's tracking number when they have none, each
 with a `shipment.status_changed` fact. Every caused fact is listed in the receipt
 and inherits the command's principal, correlation, and causation context.
 
+`orders.ship_reserved` is the opt-in stock-consuming counterpart, with its own
+policy capability. It uses `ShipOrderCommand` and requires `expected_version`
+and a paid order in `processing` or `partially_shipped`. `lines` names the
+**additional units** to ship now; omitting lines (or passing an empty list) ships
+the remaining quantities. The command refuses quantities above the unshipped
+remainder. The order remains `partially_shipped` until all its units have shipped.
+
+For example, after shipping one unit of a three-unit line, a second command with
+`lines: [{ order_item_id: "<line-id>", quantity: 1 }]` ships one more unit. Give
+that dispatch its own idempotency key and the current order version. Retrying
+an earlier dispatch with its original key recovers its historical receipt and
+does not ship another unit.
+
+Open, line-bound reservations must exactly cover **remaining** tracked order-line
+quantities and be backed by nonnegative inventory balances. Lines sharing a SKU
+cannot borrow each other's holds. Partial consumption reduces a hold's quantity;
+consuming its remainder marks it fulfilled. Entirely unkeyed legacy holds remain
+supported only for a wholly unshipped order shipped in full. Mixed keyed and
+unkeyed holds require operator reconciliation.
+
+When units have already shipped, their line IDs, SKUs, ordered quantities and
+shipped quantities must match the latest succeeded `orders.ship_reserved`
+receipt for that order. A missing or mismatched receipt refuses the command with
+`commerce.shipment_stock_provenance_missing`; legacy confirmation-only shipments
+cannot be silently treated as consumed stock. Retain those receipts while an
+order still needs dispatches.
+
+Preview validates coverage and provenance without changing stock. Apply deducts
+only the approved units from on-hand and allocated stock together, writes
+shipment inventory transactions and `inventory.reservation_fulfilled.v1` facts,
+and updates the order and receipt in the same transaction. Inventory facts link
+to their dispatch by exact event ID, so later dispatches cannot relink older
+facts. Available stock is preserved; remaining holds and other orders' holds
+stay allocated. Untracked SKUs have no inventory to consume.
+
+Existing `orders.ship` retains its confirmation-only behavior. Node hosts can
+require `orders.ship_reserved.v1` in `kernelFeatures()` for initial full shipping
+and **`orders.ship_reserved.partial.v1`** for partial or subsequent dispatches.
+Older binaries must not silently substitute legacy shipping. The native merchant
+HTTP adapter can reconcile successive operator-approved partial dispatches;
+see [native dispatch recording](durable-merchant.md#optional-native-dispatch-recording)
+for journal recovery and cumulative progress responses.
+
 `returns.transition` applies the return state machine under the same governed
 boundary. Preview reports the current return and predicted version; apply locks
 the return, checks `expected_version`, commits `returns.updated.v1` with exact
