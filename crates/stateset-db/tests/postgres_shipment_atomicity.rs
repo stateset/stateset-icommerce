@@ -822,7 +822,13 @@ async fn line_owned_fractional_splits_preserve_same_sku_sibling() {
     assert_eq!(refused.status, ExecutionStatus::Rejected);
     assert_eq!(refused.error_code.as_deref(), Some("commerce.shipment_inventory_invalid"));
     assert!(refused.event_ids.is_empty());
-    assert_eq!(db.orders().get_async(order.id.into_uuid()).await.unwrap().unwrap(), *shipped);
+    // Repository reads and the command receipt need not return lines in the
+    // same SQL row order. Compare every field after ordering by line identity.
+    let mut unchanged = db.orders().get_async(order.id.into_uuid()).await.unwrap().unwrap();
+    let mut expected = shipped.clone();
+    unchanged.items.sort_by_key(|item| item.id);
+    expected.items.sort_by_key(|item| item.id);
+    assert_eq!(unchanged, expected);
     assert_eq!(
         serde_json::to_value(db.inventory().get_stock_async(&sku).await.unwrap().unwrap()).unwrap(),
         serde_json::to_value(stock).unwrap()
