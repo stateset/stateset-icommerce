@@ -28,6 +28,9 @@
     "wagmi": "3.1.0",
     "zod": "^3.25.76"
   },
+  "overrides": {
+    "postcss-selector-parser": "^7.1.6"
+  },
   "devDependencies": {
     "@types/node": "^20",
     "@types/react": "^19",

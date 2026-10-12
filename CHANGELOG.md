@@ -24,6 +24,8 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 - YAML policy loading uses the maintained Serde Norway fork, removing the
   unmaintained `unsafe-libyaml` dependency flagged by the release policy gate.
+- Updated the CLI's MCP SDK and Sharp dependencies and the storefront's CSS
+  selector parser to patched versions identified by release dependency checks.
 - Reservation confirmation and release no longer reuse fulfilled stock;
   expiry emits its domain event within the inventory transaction. Preview
   version predictions now match terminal and already-confirmed no-op cases.
