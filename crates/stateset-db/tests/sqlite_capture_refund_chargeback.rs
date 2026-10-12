@@ -105,6 +105,19 @@ fn full_capture_records_the_whole_amount_as_captured() {
 }
 
 #[test]
+fn plain_status_update_to_completed_records_captured_amount_and_paid_at() {
+    let db = db();
+    let order_id = order_totalling(&db, dec!(42.00));
+    let payment = authorized(&db, order_id, dec!(42.00));
+    // Use the generic update path, not the dedicated mark_completed.
+    let updated =
+        db.payments().update(payment.id, UpdatePayment { status: Some(PaymentTransactionStatus::Completed), ..Default::default() }).expect("complete via update");
+    assert_eq!(updated.status, PaymentTransactionStatus::Completed);
+    assert_eq!(updated.captured_amount, Some(dec!(42.00)));
+    assert!(updated.paid_at.is_some());
+}
+
+#[test]
 fn partial_capture_is_recorded_exactly_and_bounds_refunds() {
     let db = db();
     let order_id = order_totalling(&db, dec!(100.00));
@@ -433,6 +446,30 @@ fn lost_chargeback_for_the_whole_remainder_is_the_full_path() {
         db.payments().record_lost_chargeback(payment.id, None).expect("full chargeback lost");
     assert_eq!(lost.status, PaymentTransactionStatus::Refunded);
     assert_eq!(lost.amount_refunded, dec!(100.00));
+    assert_eq!(order_payment_status(&db, order_id), PaymentStatus::Refunded);
+}
+
+#[test]
+fn full_lost_chargeback_fails_in_flight_refunds() {
+    let db = db();
+    let (order_id, payment) = captured_payment(&db, dec!(100.00));
+    // Put a refund in flight (pending).
+    let pending = db
+        .payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(30.00)),
+            ..Default::default()
+        })
+        .expect("refund");
+    // Dispute, then lose in full via status write.
+    set_status(&db, payment.id, PaymentTransactionStatus::Disputed).expect("dispute");
+    let lost = set_status(&db, payment.id, PaymentTransactionStatus::Refunded).expect("lost");
+    assert_eq!(lost.status, PaymentTransactionStatus::Refunded);
+    assert_eq!(lost.amount_refunded, dec!(100.00));
+    // The in-flight refund was failed and released.
+    let after = db.payments().get_refund(pending.id).expect("get").expect("refund");
+    assert_eq!(after.status, RefundStatus::Failed);
     assert_eq!(order_payment_status(&db, order_id), PaymentStatus::Refunded);
 }
 

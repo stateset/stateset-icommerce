@@ -586,6 +586,53 @@ async fn write_chargeback_reversal_pg(
         ),
     )
     .await?;
+    // Supersede any in-flight refunds on a full loss: they can no longer
+    // settle without over-refunding. Mark them failed and emit the same event
+    // as the explicit `fail_refund` path.
+    if new_status == PaymentTransactionStatus::Refunded {
+        let ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM refunds WHERE payment_id = $1 AND status IN ($2, $3)",
+        )
+        .bind(payment.id.into_uuid())
+        .bind(RefundStatus::Pending.to_string())
+        .bind(RefundStatus::Processing.to_string())
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(map_db_error)?;
+        for refund_id in ids {
+            let changed = sqlx::query(
+                "UPDATE refunds SET status = $1, failure_reason = $2, updated_at = $3
+                 WHERE id = $4 AND status IN ($5, $6)",
+            )
+            .bind(RefundStatus::Failed.to_string())
+            .bind("superseded_by_chargeback")
+            .bind(now)
+            .bind(refund_id)
+            .bind(RefundStatus::Pending.to_string())
+            .bind(RefundStatus::Processing.to_string())
+            .execute(&mut *conn)
+            .await
+            .map_err(map_db_error)?
+            .rows_affected();
+            if changed == 1 {
+                append_kernel_event_tx(
+                    conn,
+                    &KernelOutboxEvent::domain(
+                        "payments.refund_failed.v1",
+                        "refund",
+                        refund_id.to_string(),
+                        serde_json::json!({
+                            "refund_id": refund_id.to_string(),
+                            "payment_id": payment.id.to_string(),
+                            "reason": "superseded_by_chargeback",
+                        }),
+                        None,
+                    ),
+                )
+                .await?;
+            }
+        }
+    }
     Ok(id)
 }
 
@@ -1265,6 +1312,35 @@ impl PgPaymentRepository {
         }
         ensure_not_refund_by_status_flip(current, target)?;
 
+        // A plain `Completed` status write must also record the captured amount and `paid_at`.
+        if current != target && target == PaymentTransactionStatus::Completed {
+            capture_pg(tx.as_mut(), id, None, now).await?;
+            // Apply non-status field patches, if any.
+            if input.external_id.is_some()
+                || input.failure_reason.is_some()
+                || input.failure_code.is_some()
+                || input.metadata.is_some()
+            {
+                sqlx::query(
+                    "UPDATE payments SET external_id = $1, failure_reason = $2, failure_code = $3, metadata = $4, updated_at = $5 WHERE id = $6",
+                )
+                .bind(input.external_id.or(payment.external_id))
+                .bind(input.failure_reason.or(payment.failure_reason))
+                .bind(input.failure_code.or(payment.failure_code))
+                .bind(input.metadata.or(payment.metadata))
+                .bind(now)
+                .bind(id)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            }
+            if let Some(order_id) = payment.order_id {
+                sync_order_payment_status_pg(tx.as_mut(), order_id.into_uuid(), now).await?;
+            }
+            tx.commit().await.map_err(map_db_error)?;
+            return self.get_async(id).await?.ok_or(CommerceError::NotFound);
+        }
+
         // A write that moves the payment from a non-capturing status into a
         // capturing one re-acquires a slice of the order total, so it gets the
         // same in-transaction order guards as `mark_completed_async` (capacity,
@@ -1519,7 +1595,7 @@ impl PgPaymentRepository {
              idempotency_key, failure_reason, notes, refunded_at, created_at, updated_at
              FROM refunds
              WHERE status IN ('pending', 'processing') AND external_id IS NOT NULL
-             ORDER BY created_at, id LIMIT $1",
+             ORDER BY updated_at, id LIMIT $1",
         )
         .bind(i64::from(limit))
         .fetch_all(&self.pool)
@@ -2532,6 +2608,19 @@ impl PaymentRepository for PgPaymentRepository {
 
     fn list_in_flight_refunds(&self, limit: u32) -> Result<Vec<Refund>> {
         super::block_on(self.list_in_flight_refunds_async(limit))
+    }
+
+    fn touch_refund(&self, id: Uuid) -> Result<()> {
+        super::block_on(async {
+            let now = Utc::now();
+            sqlx::query("UPDATE refunds SET updated_at = $1 WHERE id = $2")
+                .bind(now)
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(map_db_error)?;
+            Ok(())
+        })
     }
 
     fn mark_completed(&self, id: PaymentId) -> Result<Payment> {

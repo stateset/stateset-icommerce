@@ -166,6 +166,38 @@ fn pending_refund_is_left_pending_not_completed() {
 }
 
 #[test]
+fn refund_without_amount_uses_reserved_amount_when_pending_exists() {
+    let commerce = Commerce::in_memory().expect("in-memory");
+    let payment = draft_payment(&commerce, dec!(50.00));
+    // Capture upstream.
+    let mock = MockPaymentProvider::new(vec![
+        ProviderDecision::Captured { reference: "pi_rsrv".into(), amount: None },
+        // First refund: leave pending with upstream id re_1 (10.00 reserved).
+        ProviderDecision::Pending { reference: "re_1".into() },
+        // Second refund: accepted immediately for the remainder (should be 40.00).
+        ProviderDecision::Captured { reference: "re_2".into(), amount: Some(dec!(40.00)) },
+    ]);
+    commerce
+        .payments()
+        .capture_with_provider(payment.id, &mock, None, Some("pm".into()))
+        .expect("capture");
+    commerce.payments().refund_with_provider(payment.id, &mock, Some(dec!(10.00)), None).expect("10");
+    // Ask for "full" refund with no amount; engine must pass exactly the reserved amount (40.00).
+    commerce.payments().refund_with_provider(payment.id, &mock, None, None).expect("rest");
+
+    let calls = mock.calls();
+    // Find the refund call for the second refund; it must carry 40.00.
+    let refund_calls: Vec<_> =
+        calls.into_iter().filter(|c| c.starts_with("refund:")).collect();
+    assert_eq!(refund_calls.len(), 2, "expected two refund calls");
+    assert!(
+        refund_calls.iter().any(|c| c.contains(":40.00:USD:")),
+        "second refund should request exactly the reserved amount (40.00), got: {:?}",
+        refund_calls
+    );
+}
+
+#[test]
 fn capture_does_not_follow_a_3ds_challenge() {
     let commerce = Commerce::in_memory().expect("in-memory");
     let payment = draft_payment(&commerce, dec!(30.00));
@@ -368,6 +400,49 @@ fn reconciliation_reports_a_provider_outage_per_refund_and_keeps_going() {
         let refund = commerce.payments().get_refund(id).expect("get").expect("refund");
         assert_eq!(refund.status, stateset_embedded::RefundStatus::Pending, "left for next pass");
     }
+}
+
+#[test]
+fn reconciliation_does_not_starve_newer_refunds() {
+    let commerce = Commerce::in_memory().expect("in-memory");
+    let payment = draft_payment(&commerce, dec!(30.00));
+    // Capture upstream.
+    let capt = MockPaymentProvider::new(vec![ProviderDecision::Captured {
+        reference: "pi_starve".into(),
+        amount: None,
+    }]);
+    commerce
+        .payments()
+        .capture_with_provider(payment.id, &capt, None, Some("pm".into()))
+        .expect("capture");
+
+    // Create two pending refunds with distinct upstream ids.
+    let create = MockPaymentProvider::new(vec![
+        ProviderDecision::Pending { reference: "re_a".into() },
+        ProviderDecision::Pending { reference: "re_b".into() },
+    ]);
+    commerce
+        .payments()
+        .refund_with_provider(payment.id, &create, Some(dec!(5.00)), None)
+        .expect("re_a");
+    commerce
+        .payments()
+        .refund_with_provider(payment.id, &create, Some(dec!(5.00)), None)
+        .expect("re_b");
+
+    // Two passes with limit 1 should look up re_a then re_b (fairness via updated_at).
+    let poller = MockPaymentProvider::new(vec![
+        ProviderDecision::Pending { reference: "re_a".into() },
+        ProviderDecision::Pending { reference: "re_b".into() },
+    ]);
+    let r1 = commerce.payments().reconcile_pending_refunds(&poller, 1).expect("pass 1");
+    assert_eq!(r1.examined, 1);
+    let r2 = commerce.payments().reconcile_pending_refunds(&poller, 1).expect("pass 2");
+    assert_eq!(r2.examined, 1);
+    let calls = poller.calls();
+    // Order-insensitive check that both refund ids were queried across the two passes.
+    assert!(calls.contains(&"refund_status:re_a".to_string()));
+    assert!(calls.contains(&"refund_status:re_b".to_string()));
 }
 
 #[test]

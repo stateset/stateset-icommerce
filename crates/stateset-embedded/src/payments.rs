@@ -371,7 +371,16 @@ impl Payments {
         // payment are distinct upstream operations, and a retry of this row
         // replays rather than double-refunding.
         let idempotency_key = format!("refund-{}", refund.id);
-        match provider.refund(&reference, amount, &payment.currency.to_string(), &idempotency_key) {
+        // Always ask the processor for the exact amount the engine reserved on the
+        // refund row. When `amount` was omitted, the repository resolved it to the
+        // current refundable balance net of any in-flight reservations; passing
+        // `None` upstream would instruct a full remaining refund instead.
+        match provider.refund(
+            &reference,
+            Some(refund.amount),
+            &payment.currency.to_string(),
+            &idempotency_key,
+        ) {
             Ok(ProviderDecision::Declined { code, message }) => {
                 self.db.payments().fail_refund(refund.id, &format!("{code}: {message}"))?;
                 Ok(ProviderDecision::Declined { code, message })
@@ -428,6 +437,9 @@ impl Payments {
                 self.db.payments().fail_refund(refund_id, &format!("{code}: {message}"))
             }
             ProviderDecision::Pending { .. } | ProviderDecision::RequiresAction { .. } => {
+                // Touch to advance fairness: reconciliation orders by `updated_at`,
+                // so a checked-still-pending refund moves to the back of the queue.
+                let _ = self.db.payments().touch_refund(refund_id);
                 Ok(refund)
             }
             ProviderDecision::Authorized { reference } => Err(CommerceError::ExternalServiceError(

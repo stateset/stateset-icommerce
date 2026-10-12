@@ -129,6 +129,24 @@ async fn pg_full_capture_records_the_whole_amount() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pg_plain_status_update_to_completed_records_captured_amount() {
+    let db = require_db!();
+    let order_id = order_totalling(&db, dec!(42.00)).await;
+    let payment = authorized(&db, order_id, dec!(42.00)).await;
+    let done = db
+        .payments()
+        .update_async(
+            payment.id.into_uuid(),
+            UpdatePayment { status: Some(PaymentTransactionStatus::Completed), ..Default::default() },
+        )
+        .await
+        .expect("complete via update");
+    assert_eq!(done.status, PaymentTransactionStatus::Completed);
+    assert_eq!(done.captured_amount, Some(dec!(42.00)));
+    assert!(done.paid_at.is_some());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn pg_partial_capture_is_recorded_exactly_and_bounds_refunds() {
     let db = require_db!();
     let order_id = order_totalling(&db, dec!(100.00)).await;
@@ -319,6 +337,19 @@ async fn pg_lost_chargeback_is_bounded_and_requires_a_dispute() {
     let partial =
         db.payments().record_lost_chargeback_async(id, Some(dec!(70.00))).await.expect("70");
     assert_eq!(partial.status, PaymentTransactionStatus::PartiallyRefunded);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pg_full_lost_chargeback_fails_in_flight_refunds() {
+    let db = require_db!();
+    let (order_id, payment) = captured_payment(&db, dec!(100.00)).await;
+    let pending = refund(&db, payment.id, Some(dec!(30.00))).await.expect("refund");
+    set_status(&db, payment.id, PaymentTransactionStatus::Disputed).await.expect("dispute");
+    let lost = set_status(&db, payment.id, PaymentTransactionStatus::Refunded).await.expect("lost");
+    assert_eq!(lost.status, PaymentTransactionStatus::Refunded);
+    let after = db.payments().get_refund_async(pending.id).await.expect("get").expect("refund");
+    assert_eq!(after.status, RefundStatus::Failed);
+    assert_eq!(order_payment_status(&db, order_id).await, PaymentStatus::Refunded);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

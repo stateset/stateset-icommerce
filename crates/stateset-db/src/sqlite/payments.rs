@@ -444,6 +444,41 @@ fn write_chargeback_reversal_tx(
             None,
         ),
     )?;
+    // A full loss supersedes any in-flight refunds: they can no longer settle
+    // without over-refunding. Fail them in the same transaction, releasing
+    // their reservations and emitting the same outbox event as `fail_refund`.
+    if new_status == PaymentTransactionStatus::Refunded {
+        let mut stmt = tx.prepare(
+            "SELECT id FROM refunds WHERE payment_id = ? AND status IN ('pending', 'processing')",
+        )?;
+        let rows = stmt.query_map([payment.id.to_string()], |row| row.get::<_, String>(0))?;
+        let mut to_fail: Vec<Uuid> = Vec::new();
+        for row in rows {
+            to_fail.push(parse_uuid_row(&row?, "refund", "id")?);
+        }
+        for refund_id in to_fail {
+            let changed = tx.execute(
+                "UPDATE refunds SET status = ?, failure_reason = ?, updated_at = ? WHERE id = ? AND status IN ('pending','processing')",
+                params![RefundStatus::Failed.to_string(), "superseded_by_chargeback", now.to_rfc3339(), refund_id.to_string()],
+            )?;
+            if changed == 1 {
+                append_kernel_event_tx(
+                    tx,
+                    &KernelOutboxEvent::domain(
+                        "payments.refund_failed.v1",
+                        "refund",
+                        refund_id.to_string(),
+                        serde_json::json!({
+                            "refund_id": refund_id.to_string(),
+                            "payment_id": payment.id.to_string(),
+                            "reason": "superseded_by_chargeback",
+                        }),
+                        None,
+                    ),
+                )?;
+            }
+        }
+    }
     Ok(id)
 }
 
@@ -1225,6 +1260,34 @@ impl PaymentRepository for SqlitePaymentRepository {
             }
             ensure_not_refund_by_status_flip(current, target).map_err(domain_err)?;
 
+            // Yellow: a plain status update to `completed` must also record the
+            // captured amount and `paid_at`. Route it through the capture path.
+            if current != target && target == PaymentTransactionStatus::Completed {
+                capture_tx(tx, id, None, now)?;
+                // Apply non-status field patches, if any.
+                if input.external_id.is_some()
+                    || input.failure_reason.is_some()
+                    || input.failure_code.is_some()
+                    || input.metadata.is_some()
+                {
+                    tx.execute(
+                        "UPDATE payments SET external_id = ?, failure_reason = ?, failure_code = ?, metadata = ?, updated_at = ? WHERE id = ?",
+                        params![
+                            input.external_id.clone().or(payment.external_id),
+                            input.failure_reason.clone().or(payment.failure_reason),
+                            input.failure_code.clone().or(payment.failure_code),
+                            input.metadata.clone().or(payment.metadata),
+                            now.to_rfc3339(),
+                            id.to_string(),
+                        ],
+                    )?;
+                }
+                if let Some(order_id) = payment.order_id {
+                    sync_order_payment_status_tx(tx, &order_id.to_string(), now)?;
+                }
+                return Ok(());
+            }
+
             // A write that moves the payment from a non-capturing status into a
             // capturing one re-acquires a slice of the order total, so it gets
             // the same in-transaction order guards as `mark_completed`
@@ -1435,11 +1498,22 @@ impl PaymentRepository for SqlitePaymentRepository {
             .prepare(
                 "SELECT * FROM refunds
                  WHERE status IN ('pending', 'processing') AND external_id IS NOT NULL
-                 ORDER BY created_at, id LIMIT ?",
+                 ORDER BY updated_at, id LIMIT ?",
             )
             .map_err(map_db_error)?;
         let rows = stmt.query_map([limit], Self::row_to_refund).map_err(map_db_error)?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_db_error)
+    }
+
+    fn touch_refund(&self, id: Uuid) -> Result<()> {
+        let conn = self.conn()?;
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE refunds SET updated_at = ? WHERE id = ?",
+            params![now, id.to_string()],
+        )
+        .map_err(map_db_error)?;
+        Ok(())
     }
 
     /// Mark a payment failed.

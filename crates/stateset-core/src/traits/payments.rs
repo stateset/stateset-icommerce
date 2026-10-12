@@ -108,6 +108,13 @@ pub trait PaymentRepository: Send + Sync {
     /// the work list of pending-refund reconciliation.
     fn list_in_flight_refunds(&self, limit: u32) -> Result<Vec<Refund>>;
 
+    /// Bump a refund's `updated_at` without changing its state.
+    ///
+    /// Used by the reconciliation sweep to advance fairness: the sweep orders
+    /// by `updated_at`, so checking a still-pending refund moves it to the back
+    /// of the queue and lets newer refunds make progress.
+    fn touch_refund(&self, id: Uuid) -> Result<()>;
+
     /// Mark payment as failed
     fn mark_failed(&self, id: PaymentId, reason: &str, code: Option<&str>) -> Result<Payment>;
 
