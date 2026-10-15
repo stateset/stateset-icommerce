@@ -1229,7 +1229,7 @@ jobs:
             -p stateset-ffi --lib \
             --fail-under-lines 90 \
             --fail-under-functions 85 \
-            --ignore-filename-regex '(/tests/|/benches/|stateset-(core|crypto|db|embedded|migrations|observability|primitives|pricing|sdk|sync)/)' \
+            --ignore-filename-regex '(/tests/|/tests\.rs$|/benches/|stateset-(core|crypto|db|embedded|migrations|observability|primitives|pricing|sdk|sync)/)' \
             --summary-only
 
       - name: Check stateset-db coverage floor
