@@ -20,7 +20,7 @@ they drift apart. These macros generate them from the model.
 
 ## Usage
 
-```rust,ignore
+```rust
 use stateset_macros::StateSetId;
 
 #[derive(StateSetId)]
@@ -34,8 +34,9 @@ println!("{id}");
 
 DTO generation is driven by attributes on the struct and its fields:
 
-```rust,ignore
+```rust
 use stateset_macros::GenerateDto;
+use uuid::Uuid as ProductId;
 
 #[derive(GenerateDto)]
 #[dto(create, update, filter)]
@@ -45,7 +46,7 @@ pub struct Product {
     pub name: String,
     pub sku: String,
     #[dto(skip_update)]
-    pub created_at: DateTime<Utc>,
+    pub created_at: String,
 }
 // Generates: CreateProduct { name, sku, created_at }
 //            UpdateProduct { name: Option<String>, sku: Option<String> }
@@ -54,17 +55,21 @@ pub struct Product {
 
 Struct-level attributes are `create`, `update`, and `filter`; field-level are
 `skip_create`, `skip_update`, and `skip_filter`. `JsonSchema` produces a
-`{snake_case_name}_json_schema() -> serde_json::Value` function. See the
+`{snake_case_name}_json_schema() -> serde_json::Value` function. It preserves
+Serde field names, skips, defaults, nullable options, and unknown-field refusal.
+Decimal fields advertise strings. Unsupported types and serialization attributes
+fail compilation instead of silently advertising a string schema. Supply
+`#[schema(with = "path::schema_function")]` on a field for a nested model or
+custom serializer; the function returns the complete field schema as
+`serde_json::Value`. See the
 [API docs](https://docs.rs/stateset-macros) for details.
 
-Examples are marked `ignore` because a derive macro needs a real type context and the
-surrounding domain crate to expand meaningfully; the macros are exercised by the
-expansion tests in this crate and across `stateset-core`.
+The examples compile and run as doctests. Downstream integration tests also
+compare generated schemas with actual Serde wire values.
 
 ## Part of StateSet iCommerce
 
-Used throughout [`stateset-core`](https://crates.io/crates/stateset-core) and
-available through [`stateset-sdk`](https://crates.io/crates/stateset-sdk)'s `macros`
+Available through [`stateset-sdk`](https://crates.io/crates/stateset-sdk)'s `macros`
 feature.
 
 ## License

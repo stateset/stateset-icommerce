@@ -90,8 +90,8 @@ release: every release is an annotated git tag, so the documentation for any
 published version is the `docs/src/` tree at that tag.
 
 ```bash
-git show v1.38.1:docs/src/getting-started.md   # read one page at a release
-git worktree add ../docs-v1.38.1 v1.38.1       # or check the whole book out
+git show v1.38.2:docs/src/getting-started.md   # read one page at a release
+git worktree add ../docs-v1.38.2 v1.38.2       # or check the whole book out
 ```
 
 See `RELEASING.md` for the release procedure.

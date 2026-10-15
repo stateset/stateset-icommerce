@@ -450,9 +450,9 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chacha20"
-version = "0.10.0"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f8d983286843e49675a4b7a2d174efe136dc93a18d69130dd18198a6c167601"
+checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
@@ -575,15 +575,6 @@ name = "compression-core"
 version = "0.4.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75984efb6ed102a0d42db99afb6c1948f0380d1d91808d5529916e6c08b49d8d"
-
-[[package]]
-name = "concurrent-queue"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
-dependencies = [
- "crossbeam-utils",
-]
 
 [[package]]
 name = "console"
@@ -851,9 +842,9 @@ dependencies = [
 
 [[package]]
 name = "der"
-version = "0.8.0"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71fd89660b2dc699704064e59e9dba0147b903e85319429e131620d022be411b"
+checksum = "a878c850e9e421b20262e9b41f9c860e4785fa07541c266b62ff9d1ef998a80a"
 dependencies = [
  "const-oid 0.10.2",
  "zeroize",
@@ -967,11 +958,10 @@ dependencies = [
 
 [[package]]
 name = "event-listener"
-version = "5.4.1"
+version = "5.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13b66accf52311f30a0db42147dadea9850cb48cd070028831ae5f5d4b856ab"
+checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"
 dependencies = [
- "concurrent-queue",
  "parking",
  "pin-project-lite",
 ]
@@ -2267,7 +2257,7 @@ version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "451913da69c775a56034ea8d9003d27ee8948e12443eae7c038ba100a4f21cb7"
 dependencies = [
- "der 0.8.0",
+ "der 0.8.2",
  "spki 0.8.0",
 ]
 
@@ -3012,9 +3002,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.45"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "log",
  "once_cell",
@@ -3389,9 +3379,9 @@ dependencies = [
 
 [[package]]
 name = "spin"
-version = "0.9.8"
+version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
 dependencies = [
  "lock_api",
 ]
@@ -3413,7 +3403,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d9efca8738c78ee9484207732f728b1ef517bbb1833d6fc0879ca898a522f6f"
 dependencies = [
  "base64ct",
- "der 0.8.0",
+ "der 0.8.2",
 ]
 
 [[package]]
@@ -3631,7 +3621,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stateset-a2a"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "chrono",
  "hex",
@@ -3648,7 +3638,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-authz"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "chrono",
  "serde",
@@ -3659,7 +3649,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-benches"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "axum",
  "chrono",
@@ -3683,7 +3673,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-core"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "auto_impl",
  "base64",
@@ -3714,7 +3704,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-crypto"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -3740,11 +3730,10 @@ dependencies = [
 
 [[package]]
 name = "stateset-db"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "chrono",
  "criterion",
- "hex",
  "insta",
  "r2d2",
  "r2d2_sqlite",
@@ -3768,7 +3757,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-dotnet"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "chrono",
  "libc",
@@ -3784,7 +3773,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "chrono",
  "criterion",
@@ -3816,7 +3805,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-node"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "aes-gcm",
  "chrono",
@@ -3838,7 +3827,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-python"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "chrono",
  "hex",
@@ -3858,7 +3847,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-wasm"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
@@ -3881,7 +3870,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-ffi"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3899,7 +3888,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-go"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "chrono",
  "libc",
@@ -3915,7 +3904,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-http"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "axum",
  "base64",
@@ -3951,7 +3940,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-icp-client"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -3967,7 +3956,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-icp-iut"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "anyhow",
  "ed25519-dalek",
@@ -3981,7 +3970,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-integration-tests"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "chrono",
  "proptest",
@@ -4004,7 +3993,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-java"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "chrono",
  "jni",
@@ -4021,7 +4010,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-jobs"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "chrono",
  "futures",
@@ -4036,7 +4025,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-kotlin"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "chrono",
  "jni",
@@ -4052,7 +4041,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-macros"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4065,7 +4054,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-migrations"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "chrono",
  "insta",
@@ -4079,7 +4068,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-observability"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
@@ -4093,7 +4082,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-policy"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "chrono",
  "insta",
@@ -4112,7 +4101,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-pricing"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "chrono",
  "proptest",
@@ -4126,7 +4115,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-primitives"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "proptest",
  "proptest-derive",
@@ -4141,7 +4130,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-saga"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "chrono",
  "serde",
@@ -4155,7 +4144,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-sdk"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4177,7 +4166,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-swift"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "cbindgen",
  "chrono",
@@ -4194,7 +4183,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-sync"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4213,7 +4202,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-test-utils"
-version = "1.38.1"
+version = "1.38.2"
 dependencies = [
  "chrono",
  "rust_decimal",

@@ -22,8 +22,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 serde_jcs = { workspace = true }
 sha2 = { workspace = true }
-hex = { workspace = true, optional = true }
 tracing = { version = "0.1", optional = true }
+tempfile = { version = "3.23", optional = true }
 
 # SQLite dependencies (optional)
 rusqlite = { workspace = true, optional = true }
@@ -58,7 +58,7 @@ workspace = true
 
 [features]
 default = ["sqlite"]
-sqlite = ["dep:stateset-migrations", "dep:rusqlite", "dep:r2d2", "dep:r2d2_sqlite", "dep:hex", "dep:tracing", "stateset-core/rusqlite"]
+sqlite = ["dep:stateset-migrations", "dep:rusqlite", "dep:r2d2", "dep:r2d2_sqlite", "dep:tracing", "dep:tempfile", "stateset-core/rusqlite"]
 postgres = ["dep:sqlx", "dep:tokio", "dep:tracing", "stateset-core/sqlx-postgres"]
 vector = ["sqlite", "stateset-migrations/vector", "stateset-core/embeddings"]
 # Experimental: persisted saga coordinator for multi-step orchestration.

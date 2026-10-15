@@ -49,9 +49,14 @@ markers = {
     "stateset-migrations": ["migration-proof path=db rollback=3,2 target=1 remigrated=2,3 data_preserved=true integrity=ok"],
     "stateset-http": ["tenant-recovery-proof restart=replayed backup=replayed authorization=enforced orders=1 payments=1 refunds=1 integrity=ok",
                       "tenant-receipt-failure-proof payments=1 reservation=pending"],
+    "stateset-db": ["process-recovery-proof boundary=before_commit stock=unchanged uncommitted=discarded integrity=ok",
+                    "process-recovery-proof boundary=after_commit receipt=replayed reservations=1 events=1 integrity=ok",
+                    "process-workload-proof workers=4 keys=64 attempts=256 effects=64 replays=192 elapsed_ms=123 integrity=ok audit=valid"],
 }
 if not os.environ.get("NO_MARKERS"):
     for marker in markers[package]:
+        if os.environ.get("HARNESS_PREFIX") and package == "stateset-db":
+            marker = "test serial_worker ... " + marker
         if os.environ.get("SPLIT_MARKER"):
             marker = marker.replace(" integrity=ok", "\n integrity=ok")
         print(marker)
@@ -125,7 +130,7 @@ class RecoveryEvidenceTests(unittest.TestCase):
         self.assertIn('"test"\\path\nsecond line', report["toolchain"]["cargo"])
         self.assertEqual(report["github_run_id"], 'run "quoted"\nnext')
         self.assertEqual(self.calls.read_text().splitlines(),
-                         ["stateset-embedded", "stateset-migrations", "stateset-http"])
+                         ["stateset-embedded", "stateset-migrations", "stateset-http", "stateset-db"])
 
     def test_failed_rerun_replaces_success_without_reusing_logs(self):
         old = self.assert_success(self.invoke())
@@ -139,7 +144,7 @@ class RecoveryEvidenceTests(unittest.TestCase):
         self.assertEqual(check["result"], "failed")
         self.assertEqual(check["log_sha256"],
                          hashlib.sha256((self.output / check["log"]).read_bytes()).hexdigest())
-        for name in ("migration_rollback", "tenant_http_recovery"):
+        for name in ("migration_rollback", "tenant_http_recovery", "sqlite_process_recovery"):
             self.assertEqual(report["checks"][name]["result"], "not_run")
             self.assertIsNone(report["checks"][name]["log_sha256"])
             self.assertFalse((self.output / report["checks"][name]["log"]).exists())
@@ -152,9 +157,22 @@ class RecoveryEvidenceTests(unittest.TestCase):
         self.assertEqual(report["checks"]["migration_rollback"]["result"], "passed")
         self.assertEqual(report["checks"]["tenant_http_recovery"]["result"], "failed")
 
+    def test_process_recovery_failure_cannot_reuse_earlier_success(self):
+        self.assert_success(self.invoke())
+        self.assertNotEqual(self.invoke(FAIL="stateset-db").returncode, 0)
+        report = self.report()
+        self.assertEqual(report["result"], "failed")
+        self.assertEqual(report["checks"]["sqlite_process_recovery"]["result"], "failed")
+        self.assertEqual(report["checks"]["sqlite_process_recovery"]["exit_code"], 17)
+        self.assertTrue(all(check["result"] == "passed" for name, check in report["checks"].items()
+                            if name != "sqlite_process_recovery"))
+
     def test_missing_marker_fails_even_with_zero_exit(self):
         self.assertNotEqual(self.invoke(NO_MARKERS="1").returncode, 0)
         self.assertIn("proof marker missing", self.report()["error"])
+
+    def test_serial_harness_prefix_is_allowed_on_process_proof_lines(self):
+        self.assert_success(self.invoke(HARNESS_PREFIX="1"))
 
     def test_marker_fragments_on_unrelated_lines_do_not_pass(self):
         self.assertNotEqual(self.invoke(SPLIT_MARKER="1").returncode, 0)

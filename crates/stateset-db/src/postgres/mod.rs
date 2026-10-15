@@ -549,6 +549,11 @@ impl PostgresDatabase {
         // state after 099), so a fresh Postgres store stops charging zero
         // tax. Skipped on a store that already has any tax rate.
         migrations.push(("105_seed_tax_rates", include_str!("migrations/105_seed_tax_rates.sql")));
+        #[cfg(feature = "saga")]
+        migrations.push((
+            "106_saga_rollback_intent",
+            include_str!("migrations/106_saga_rollback_intent.sql"),
+        ));
 
         migrations
     }

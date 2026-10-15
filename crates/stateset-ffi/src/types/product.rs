@@ -3,7 +3,8 @@
 use std::ffi::CString;
 use std::os::raw::c_char;
 
-use stateset_core::models::product::Product;
+use stateset_core::models::product::{Product, ProductVariant};
+use stateset_primitives::{CurrencyCode, Money};
 
 use crate::error::{FfiErrorCode, catch_ffi_void, set_last_error};
 
@@ -21,9 +22,11 @@ pub struct FfiProduct {
     pub id: FfiUuid,
     /// Product name — owned, null-terminated UTF-8.
     pub name: *mut c_char,
-    /// SKU — null-terminated, max 63 chars + null. Padded with zeros.
+    /// Default variant SKU — null-terminated, max 63 bytes + null.
+    /// Empty when the product has no variants.
     pub sku: [u8; 64],
-    /// Price of the first (default) variant. Zero if no variants.
+    /// Default variant price in the store's base currency. All-zero currency
+    /// bytes indicate that no variant price is available.
     pub price: FfiMoney,
 }
 
@@ -41,27 +44,58 @@ impl Default for FfiProduct {
 impl FfiProduct {
     /// Build an [`FfiProduct`] from a domain [`Product`].
     ///
-    /// The `sku` is taken from the product slug (as a placeholder SKU) and
-    /// price defaults to zero since the Product model does not carry price
-    /// directly — prices live on variants.
+    /// SKU and price are unavailable without variant data. They are left
+    /// empty rather than substituting the product slug for a sellable SKU.
+    /// Use [`Self::try_from_variant`] when variant data is available.
     ///
     /// # Errors
     ///
     /// Returns [`FfiErrorCode::InvalidArgument`] if `name` contains an
     /// interior null byte that cannot cross the C ABI safely.
     pub fn try_from_domain(p: &Product) -> Result<Self, FfiErrorCode> {
-        let name_ptr = into_owned_c_string_ptr(&p.name, "product.name")?;
-
-        let mut sku = [0u8; 64];
-        let slug_bytes = p.slug.as_bytes();
-        let len = slug_bytes.len().min(63);
-        sku[..len].copy_from_slice(&slug_bytes[..len]);
-
         Ok(Self {
             id: FfiUuid::from(p.id),
-            name: name_ptr,
+            name: into_owned_c_string_ptr(&p.name, "product.name")?,
+            ..Self::default()
+        })
+    }
+
+    /// Build a summary from an actual variant and its price currency.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a variant belonging to another product, a SKU containing a
+    /// null byte or exceeding the ABI's 63-byte capacity, an unrepresentable
+    /// monetary amount, or a product name containing an interior null byte.
+    /// SKU bytes and money are never silently truncated or rounded.
+    pub fn try_from_variant(
+        p: &Product,
+        variant: &ProductVariant,
+        currency: CurrencyCode,
+    ) -> Result<Self, FfiErrorCode> {
+        if variant.product_id != p.id {
+            set_last_error("product variant belongs to a different product");
+            return Err(FfiErrorCode::InvalidArgument);
+        }
+        if variant.price.is_sign_negative() && !variant.price.is_zero() {
+            set_last_error("product.price must be nonnegative");
+            return Err(FfiErrorCode::InvalidArgument);
+        }
+        let bytes = variant.sku.as_bytes();
+        if bytes.is_empty() || bytes.len() > 63 || bytes.contains(&0) {
+            set_last_error("product.sku must contain 1 to 63 bytes without null bytes");
+            return Err(FfiErrorCode::InvalidArgument);
+        }
+        let price = FfiMoney::try_from(Money::new(variant.price, currency))?;
+        let mut sku = [0; 64];
+        sku[..bytes.len()].copy_from_slice(bytes);
+        // Allocate the owned string last: every fallible value conversion
+        // must finish before ownership crosses the C ABI.
+        Ok(Self {
+            id: FfiUuid::from(p.id),
+            name: into_owned_c_string_ptr(&p.name, "product.name")?,
             sku,
-            price: FfiMoney::default(), // variants carry price, not Product
+            price,
         })
     }
 }
@@ -132,9 +166,10 @@ mod tests {
         let name = unsafe { CStr::from_ptr(ffi.name) };
         assert_eq!(name.to_str().unwrap(), "Test Widget");
 
-        // SKU should contain slug bytes.
+        // A product alone cannot provide a variant SKU or price.
         let sku_str = std::str::from_utf8(&ffi.sku).unwrap().trim_end_matches('\0');
-        assert_eq!(sku_str, "test-widget");
+        assert_eq!(sku_str, "");
+        assert_eq!(ffi.price, FfiMoney::default());
 
         unsafe { stateset_product_free(ffi) };
     }
@@ -154,16 +189,13 @@ mod tests {
     }
 
     #[test]
-    fn product_sku_truncation() {
+    fn product_slug_is_not_used_as_a_sku() {
         let mut p = make_test_product();
         // Create a slug longer than 63 characters.
         p.slug = "a".repeat(100);
 
         let ffi = FfiProduct::try_from_domain(&p).unwrap();
-        // Should be truncated to 63 + null terminator.
-        assert_eq!(ffi.sku[63], 0); // null terminator position
-        let sku_str = std::str::from_utf8(&ffi.sku[..63]).unwrap();
-        assert_eq!(sku_str.len(), 63);
+        assert_eq!(ffi.sku, [0; 64]);
 
         unsafe { stateset_product_free(ffi) };
     }

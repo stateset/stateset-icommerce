@@ -94,7 +94,8 @@ fn array_field_schema() {
 fn optional_field_in_properties_but_not_required() {
     let schema = create_order_json_schema();
     // note should be in properties
-    assert!(schema["properties"]["note"]["type"].is_string());
+    assert_eq!(schema["properties"]["note"]["anyOf"][0]["type"], "string");
+    assert_eq!(schema["properties"]["note"]["anyOf"][1]["type"], "null");
     // note should NOT be in required
     let required = schema["required"].as_array().expect("required should be an array");
     let required_names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
@@ -140,7 +141,7 @@ fn all_types_correct_mapping() {
     assert_eq!(schema["properties"]["id"]["format"], "uuid");
     assert_eq!(schema["properties"]["tags"]["type"], "array");
     // note is Option<String>, should still have string type
-    assert_eq!(schema["properties"]["note"]["type"], "string");
+    assert_eq!(schema["properties"]["note"]["anyOf"][0]["type"], "string");
 }
 
 #[test]
@@ -180,4 +181,71 @@ fn schema_is_valid_json() {
     let json_str = serde_json::to_string_pretty(&schema).expect("should serialize to valid JSON");
     let _reparsed: serde_json::Value =
         serde_json::from_str(&json_str).expect("should re-parse as valid JSON");
+}
+
+#[derive(Debug, JsonSchema, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WireContract {
+    pub first_name: String,
+    #[serde(rename = "display-name")]
+    pub display_name: String,
+    pub note: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra_note: Option<String>,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(skip)]
+    pub internal_only: String,
+    pub r#type: String,
+}
+
+#[test]
+fn schema_preserves_serialized_names_nullability_and_optional_fields() {
+    let value = WireContract {
+        first_name: "Ada".into(),
+        display_name: "A".into(),
+        note: None,
+        extra_note: None,
+        enabled: false,
+        internal_only: "secret".into(),
+        r#type: "buyer".into(),
+    };
+    let wire = serde_json::to_value(value).unwrap();
+    let schema = wire_contract_json_schema();
+    let properties = schema["properties"].as_object().unwrap();
+    for name in wire.as_object().unwrap().keys() {
+        assert!(properties.contains_key(name), "wire field {name} is missing from schema");
+    }
+    assert!(!properties.contains_key("first_name"));
+    assert!(!properties.contains_key("internalOnly"));
+    assert!(!properties.contains_key("r#type"));
+    assert_eq!(wire["note"], serde_json::Value::Null);
+    assert_eq!(properties["note"]["anyOf"][1]["type"], "null");
+    assert_eq!(schema["additionalProperties"], false);
+    let required = schema["required"].as_array().unwrap();
+    assert!(required.contains(&serde_json::json!("firstName")));
+    assert!(required.contains(&serde_json::json!("display-name")));
+    assert!(!required.contains(&serde_json::json!("enabled")));
+    assert!(!required.contains(&serde_json::json!("extraNote")));
+}
+
+#[derive(Debug, JsonSchema, serde::Serialize)]
+pub struct NestedWire {
+    pub name: String,
+}
+
+#[derive(Debug, JsonSchema, serde::Serialize)]
+pub struct WithNestedWire {
+    #[schema(with = "nested_wire_json_schema")]
+    pub nested: NestedWire,
+}
+
+#[test]
+fn explicit_nested_schema_preserves_object_shape() {
+    let value = WithNestedWire { nested: NestedWire { name: "nested".into() } };
+    let wire = serde_json::to_value(value).unwrap();
+    let schema = with_nested_wire_json_schema();
+    assert!(wire["nested"].is_object());
+    assert_eq!(schema["properties"]["nested"]["type"], "object");
+    assert_eq!(schema["properties"]["nested"]["properties"]["name"]["type"], "string");
 }

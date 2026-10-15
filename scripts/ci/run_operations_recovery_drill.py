@@ -51,6 +51,20 @@ CHECKS = {
                        "PRAGMA integrity_check=ok"],
         "log": "tenant-http-recovery.log",
     },
+    "sqlite_process_recovery": {
+        "command": ["cargo", "test", "--locked", "-p", "stateset-db", "--test",
+                    "sqlite_process_recovery", "--", "--nocapture"],
+        "markers": [r"^(?:test [a-zA-Z0-9_:]+ \.\.\. )?process-recovery-proof boundary=before_commit stock=unchanged uncommitted=discarded integrity=ok$",
+                    r"^(?:test [a-zA-Z0-9_:]+ \.\.\. )?process-recovery-proof boundary=after_commit receipt=replayed reservations=1 events=1 integrity=ok$",
+                    r"^(?:test [a-zA-Z0-9_:]+ \.\.\. )?process-workload-proof workers=4 keys=64 attempts=256 effects=64 replays=192 elapsed_ms=[0-9]+ integrity=ok audit=valid$"],
+        "minimum_tests": 3,
+        "assertions": ["killed writer discards uncommitted WAL pages",
+                       "kill after commit before acknowledgment preserves retry receipt",
+                       "four independent processes produce 64 effects from 256 attempts",
+                       "exact fractional stock conservation", "receipt audit chain valid",
+                       "PRAGMA integrity_check=ok and foreign_key_check empty"],
+        "log": "sqlite-process-recovery.log",
+    },
 }
 
 
