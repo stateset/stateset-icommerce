@@ -127,6 +127,15 @@ describe('mcp stdio — protocol 2026-07-28', () => {
     assert.ok(!res.error, `tools/call failed: ${res.error?.message}`);
     assert.equal(JSON.parse(res.result.content[0].text).success, true);
   });
+
+  it('enforces payment amount refinements before write permission checks', async () => {
+    const res = await modern(client, 3, 'tools/call', {
+      name: 'create_payment',
+      arguments: { orderId: 'unused-order', amount: '0.00' },
+    });
+    assert.equal(res.result.isError, true);
+    assert.match(res.result.content[0].text, /Amount must be positive/);
+  });
 });
 
 describe('mcp stdio — 2025-era clients', () => {
@@ -157,6 +166,20 @@ describe('mcp stdio — 2025-era clients', () => {
     client.notify({ jsonrpc: '2.0', method: 'notifications/initialized' });
     const res = await client.request({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     assert.deepEqual(res.result.tools.map((tool) => tool.name).sort(), CORE_TIER);
+  });
+
+  it('enforces the same payment refinements for legacy clients', async () => {
+    const res = await client.request({
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: {
+        name: 'create_payment',
+        arguments: { orderId: 'unused-order', amount: '0.00' },
+      },
+    });
+    assert.equal(res.result.isError, true);
+    assert.match(res.result.content[0].text, /Amount must be positive/);
   });
 });
 

@@ -171,6 +171,15 @@ describe('mcp http — protocol 2026-07-28, stateless', () => {
     assert.ok(seeded.count >= 5, `expected seeded customers, got ${seeded.count}`);
   });
 
+  it('rejects zero decimal payments at the schema boundary', async () => {
+    const response = await callTool(BASE, 'create_payment', {
+      orderId: 'unused-order',
+      amount: '0.00',
+    });
+    assert.equal(response.json.result.isError, true);
+    assert.match(response.json.result.content[0].text, /Amount must be positive/);
+  });
+
   it('shares one store across requests', async () => {
     const marker = `shared-${Date.now()}@stateless.test`;
     const created = toolText(

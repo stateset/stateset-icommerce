@@ -28,12 +28,15 @@
 //!    binary knows about is refused — restoring forward-migrated data into an
 //!    older engine would let it read columns it does not understand and write
 //!    rows the newer schema forbids.
-//! 3. An existing, non-empty target is never overwritten unless
+//! 3. An existing target (including an empty file) is never overwritten unless
 //!    [`RestoreOptions::overwrite`] is set.
 //! 4. The restore is atomic: the backup is copied to a temporary file in the
-//!    *same directory* as the target, fsynced, and then `rename`d into place,
-//!    so a crash mid-restore leaves either the old database or the new one,
-//!    never a half-written file.
+//!    *same directory* as the target, checked, fsynced, and published without
+//!    replacing a concurrently created file unless overwrite was requested.
+//! 5. Symlinks, special files and targets with WAL/SHM/journal sidecars are
+//!    refused, even with overwrite. Stop all connections before replacing a
+//!    database; this API cannot coordinate other processes. A fresh path is
+//!    preferred. Directory entries are synced on Unix before success.
 //!
 //! # Example
 //!
@@ -51,7 +54,7 @@
 //! ```
 
 use chrono::{DateTime, Utc};
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
@@ -160,10 +163,11 @@ pub struct BackupReport {
 /// Options controlling [`restore_from`].
 #[derive(Debug, Clone, Default)]
 pub struct RestoreOptions {
-    /// Replace an existing non-empty target database.
+    /// Replace an existing regular target file. All connections must be closed
+    /// and SQLite sidecars must be absent; use a fresh path when possible.
     pub overwrite: bool,
-    /// Skip the manifest checksum verification (strongly discouraged;
-    /// intended only for recovering a backup whose manifest was lost).
+    /// Skip manifest verification (for recovering a backup whose manifest was
+    /// lost). The actual database integrity and schema are still checked.
     pub skip_checksum: bool,
     /// Allow restoring a backup whose schema is newer than this binary knows.
     /// Unsafe — provided only as a break-glass escape hatch.
@@ -232,8 +236,11 @@ fn applied_schema(conn: &Connection) -> Result<(String, usize)> {
 /// Take a consistent backup of `conn` into `backup_path` and write its manifest.
 ///
 /// The parent directory of `backup_path` is created if needed. Any existing
-/// file at `backup_path` is rejected by SQLite's `VACUUM INTO`, which refuses
-/// to overwrite — pick a fresh path per backup.
+/// file at `backup_path` or its manifest is rejected. A private snapshot is
+/// synced before publication; its schema metadata comes from that snapshot,
+/// so concurrent source migrations cannot change the manifest's meaning.
+/// Keep both files together. An interrupted publication can leave an orphaned
+/// snapshot without a manifest; choose a fresh path for the next attempt.
 ///
 /// # Errors
 ///
@@ -248,19 +255,31 @@ pub fn backup_to(
     if let Some(parent) = backup_path.parent().filter(|p| !p.as_os_str().is_empty()) {
         fs::create_dir_all(parent).map_err(io(parent))?;
     }
-
-    // VACUUM INTO takes a string literal, not a bound parameter, so the path is
-    // escaped by doubling single quotes. Embedded NULs would truncate the
-    // literal, so reject them outright.
-    let literal = backup_path.to_string_lossy().into_owned();
-    if literal.contains('\0') {
-        return Err(MaintenanceError::Manifest("backup path contains a NUL byte".to_owned()));
-    }
-    conn.execute_batch(&format!("VACUUM INTO '{}';", literal.replace('\'', "''")))?;
-
-    let (schema_version, migration_count) = applied_schema(conn)?;
-    let size_bytes = fs::metadata(backup_path).map_err(io(backup_path))?.len();
-    let checksum = file_checksum(backup_path)?;
+    let manifest_path = manifest_path_for(backup_path);
+    reject_existing(backup_path)?;
+    reject_existing(&manifest_path)?;
+    reject_sidecars(backup_path)?;
+    let dir = parent_directory(backup_path);
+    let snapshot = tempfile::Builder::new()
+        .prefix(".backup-")
+        .tempfile_in(&dir)
+        .map_err(io(&dir))?
+        .into_temp_path();
+    let literal = snapshot
+        .to_str()
+        .ok_or_else(|| MaintenanceError::Manifest("backup path is not UTF-8".into()))?;
+    // VACUUM accepts a bound destination expression. SQLite allows the empty
+    // private placeholder created above, but never writes the final path.
+    conn.execute("VACUUM INTO ?1", [literal])?;
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&snapshot)
+        .map_err(io(&snapshot))?
+        .sync_all()
+        .map_err(io(&snapshot))?;
+    let (schema_version, migration_count) = inspect_image(&snapshot)?;
+    let size_bytes = fs::metadata(&snapshot).map_err(io(&snapshot))?.len();
+    let checksum = file_checksum(&snapshot)?;
 
     let manifest = BackupManifest {
         manifest_version: MANIFEST_VERSION,
@@ -270,23 +289,20 @@ pub fn backup_to(
         created_at: Utc::now(),
         source_path: source_path.as_ref().to_string_lossy().into_owned(),
         size_bytes,
-        checksum: checksum.clone(),
+        checksum,
     };
-
-    let manifest_path = manifest_path_for(backup_path);
     let encoded = serde_json::to_vec_pretty(&manifest)
         .map_err(|e| MaintenanceError::Manifest(e.to_string()))?;
-    write_file_durably(&manifest_path, &encoded)?;
-
-    // Verify what actually landed on disk, not what we think we wrote.
-    let verified = file_checksum(backup_path)?;
-    if verified != checksum {
-        return Err(MaintenanceError::ChecksumMismatch {
-            path: backup_path.to_path_buf(),
-            expected: checksum,
-            actual: verified,
-        });
-    }
+    let mut staged_manifest =
+        tempfile::Builder::new().prefix(".backup-manifest-").tempfile_in(&dir).map_err(io(&dir))?;
+    staged_manifest.write_all(&encoded).map_err(io(&manifest_path))?;
+    staged_manifest.as_file().sync_all().map_err(io(&manifest_path))?;
+    reject_sidecars(backup_path)?;
+    snapshot.persist_noclobber(backup_path).map_err(|err| io(backup_path)(err.error))?;
+    staged_manifest
+        .persist_noclobber(&manifest_path)
+        .map_err(|err| io(&manifest_path)(err.error))?;
+    sync_directory(&dir)?;
 
     Ok(BackupReport { backup_path: backup_path.to_path_buf(), manifest_path, manifest })
 }
@@ -302,9 +318,9 @@ pub fn read_manifest(backup_path: &Path) -> Result<BackupManifest> {
     let bytes = fs::read(&path).map_err(io(&path))?;
     let manifest: BackupManifest =
         serde_json::from_slice(&bytes).map_err(|e| MaintenanceError::Manifest(e.to_string()))?;
-    if manifest.manifest_version > MANIFEST_VERSION {
+    if manifest.manifest_version != MANIFEST_VERSION {
         return Err(MaintenanceError::Manifest(format!(
-            "manifest version {} is newer than supported version {MANIFEST_VERSION}",
+            "manifest version {} is unsupported; expected version {MANIFEST_VERSION}",
             manifest.manifest_version
         )));
     }
@@ -335,7 +351,8 @@ fn is_schema_newer_than_known(candidate: &str) -> bool {
 /// Returns [`MaintenanceError::ChecksumMismatch`] if the backup does not match
 /// its manifest, [`MaintenanceError::SchemaTooNew`] if the backup requires
 /// migrations this binary lacks, [`MaintenanceError::TargetExists`] if a
-/// non-empty target exists without `overwrite`, or an I/O error.
+/// target exists without `overwrite`, or an I/O error. Symlinks and SQLite
+/// sidecars are refused even with `overwrite`.
 pub fn restore_from(
     backup_path: impl AsRef<Path>,
     target_path: impl AsRef<Path>,
@@ -343,101 +360,177 @@ pub fn restore_from(
 ) -> Result<RestoreReport> {
     let backup_path = backup_path.as_ref();
     let target_path = target_path.as_ref();
+    // Read the manifest once, then validate the bytes actually staged for
+    // publication. Never validate one open of the source and install another.
+    let manifest = if options.skip_checksum { None } else { Some(read_manifest(backup_path)?) };
+    restore_image(backup_path, target_path, options, manifest.as_ref(), None)
+}
 
-    let backup_size = fs::metadata(backup_path).map_err(io(backup_path))?.len();
+// Legacy BackupManager metadata has a checksum but no migration count. Keep
+// its recovery path on the same staged, integrity-checked publication code.
+pub(crate) fn restore_legacy_image(
+    backup_path: &Path,
+    target_path: &Path,
+    checksum: Option<&str>,
+) -> Result<RestoreReport> {
+    restore_image(backup_path, target_path, &RestoreOptions::default(), None, checksum)
+}
 
-    // 1. Manifest + checksum.
-    let mut schema_version = String::new();
-    let mut checksum_verified = false;
-    if options.skip_checksum {
-        // Still read the manifest opportunistically for the schema gate.
-        if let Ok(manifest) = read_manifest(backup_path) {
-            schema_version = manifest.schema_version;
-        }
-    } else {
-        let manifest = read_manifest(backup_path)?;
-        let actual = file_checksum(backup_path)?;
-        if actual != manifest.checksum {
+fn restore_image(
+    backup_path: &Path,
+    target_path: &Path,
+    options: &RestoreOptions,
+    manifest: Option<&BackupManifest>,
+    legacy_checksum: Option<&str>,
+) -> Result<RestoreReport> {
+    validate_target(target_path, options.overwrite)?;
+    let dir = parent_directory(target_path);
+    fs::create_dir_all(&dir).map_err(io(&dir))?;
+    let mut staged =
+        tempfile::Builder::new().prefix(".restore-").tempfile_in(&dir).map_err(io(&dir))?;
+    let mut source = File::open(backup_path).map_err(io(backup_path))?;
+    if !source.metadata().map_err(io(backup_path))?.is_file() {
+        return Err(MaintenanceError::Manifest("backup must be a regular file".into()));
+    }
+    let (size_bytes, checksum) =
+        copy_and_hash(&mut source, staged.as_file_mut()).map_err(io(staged.path()))?;
+    staged.as_file().sync_all().map_err(io(staged.path()))?;
+    if let Some(expected) = manifest.map(|manifest| manifest.checksum.as_str()).or(legacy_checksum)
+    {
+        if checksum != expected {
             return Err(MaintenanceError::ChecksumMismatch {
                 path: backup_path.to_path_buf(),
-                expected: manifest.checksum,
-                actual,
+                expected: expected.to_owned(),
+                actual: checksum,
             });
         }
-        checksum_verified = true;
-        schema_version = manifest.schema_version;
+    }
+    if let Some(manifest) = manifest {
+        if size_bytes != manifest.size_bytes {
+            return Err(MaintenanceError::Manifest("backup size differs from manifest".into()));
+        }
     }
 
-    // 2. Forward-restore gate.
+    let (schema_version, migration_count) = inspect_image(staged.path())?;
+    // The schema gate applies even when the sidecar was lost or untrusted.
     if !options.allow_newer_schema && is_schema_newer_than_known(&schema_version) {
         return Err(MaintenanceError::SchemaTooNew {
             backup: schema_version,
             known: crate::migrations::latest_known_migration().to_owned(),
         });
     }
-
-    // 3. Overwrite gate. A zero-byte target is treated as absent: SQLite
-    //    creates one on first connect, so refusing it would make restore into
-    //    a freshly-opened path impossible.
-    let existing_len = fs::metadata(target_path).map(|m| m.len()).ok();
-    let replaced_existing = matches!(existing_len, Some(len) if len > 0);
-    if replaced_existing && !options.overwrite {
-        return Err(MaintenanceError::TargetExists { path: target_path.to_path_buf() });
+    if let Some(manifest) = manifest {
+        if manifest.schema_version != schema_version || manifest.migration_count != migration_count
+        {
+            return Err(MaintenanceError::Manifest(
+                "backup schema or migration count differs from manifest".into(),
+            ));
+        }
     }
 
-    // 4. Atomic install: temp file in the same directory, fsync, rename.
-    let dir = target_path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-    fs::create_dir_all(&dir).map_err(io(&dir))?;
-    let temp_name = format!(
-        ".{}.restore-{}.tmp",
-        target_path.file_name().map_or_else(|| "database".into(), |n| n.to_string_lossy()),
-        Utc::now().timestamp_nanos_opt().unwrap_or_default()
-    );
-    let temp_path = dir.join(temp_name);
-
-    let copy_result = (|| -> Result<()> {
-        let bytes = fs::read(backup_path).map_err(io(backup_path))?;
-        write_file_durably(&temp_path, &bytes)
-    })();
-    if let Err(err) = copy_result {
-        let _ = fs::remove_file(&temp_path);
-        return Err(err);
+    // Repeat the sidecar/type check immediately before installation. Default
+    // publication is atomically no-clobber, including zero-byte placeholders
+    // and dangling symlinks created while the copy was running.
+    let replaced_existing = validate_target(target_path, options.overwrite)?;
+    if options.overwrite {
+        staged.persist(target_path).map_err(|err| io(target_path)(err.error))?;
+    } else {
+        staged.persist_noclobber(target_path).map_err(|err| {
+            if err.error.kind() == std::io::ErrorKind::AlreadyExists {
+                MaintenanceError::TargetExists { path: target_path.to_path_buf() }
+            } else {
+                io(target_path)(err.error)
+            }
+        })?;
     }
-
-    if let Err(err) = fs::rename(&temp_path, target_path).map_err(io(target_path)) {
-        let _ = fs::remove_file(&temp_path);
-        return Err(err);
-    }
-    // Durably record the directory entry so the rename survives a crash.
-    if let Ok(handle) = File::open(&dir) {
-        let _ = handle.sync_all();
-    }
-
-    // Stale WAL/SHM sidecars from the replaced database would be replayed on
-    // top of the restored file and silently corrupt it.
-    for suffix in ["-wal", "-shm"] {
-        let mut sidecar = target_path.as_os_str().to_os_string();
-        sidecar.push(suffix);
-        let _ = fs::remove_file(PathBuf::from(sidecar));
-    }
-
+    sync_directory(&dir)?;
     Ok(RestoreReport {
         target_path: target_path.to_path_buf(),
         schema_version,
-        size_bytes: backup_size,
-        checksum_verified,
+        size_bytes,
+        checksum_verified: manifest.is_some() || legacy_checksum.is_some(),
         replaced_existing,
     })
 }
 
-/// Write `bytes` to `path`, fsyncing the file before returning.
-fn write_file_durably(path: &Path, bytes: &[u8]) -> Result<()> {
-    let mut file = File::create(path).map_err(io(path))?;
-    file.write_all(bytes).map_err(io(path))?;
-    file.sync_all().map_err(io(path))?;
+fn parent_directory(path: &Path) -> PathBuf {
+    path.parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+}
+
+fn reject_existing(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Err(MaintenanceError::TargetExists { path: path.to_path_buf() }),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(io(path)(err)),
+    }
+}
+
+fn reject_sidecars(path: &Path) -> Result<()> {
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let mut name = path.as_os_str().to_os_string();
+        name.push(suffix);
+        reject_existing(&PathBuf::from(name))?;
+    }
+    Ok(())
+}
+
+fn validate_target(path: &Path, overwrite: bool) -> Result<bool> {
+    reject_sidecars(path)?;
+    match fs::symlink_metadata(path) {
+        Ok(meta) if overwrite && meta.file_type().is_file() => Ok(true),
+        Ok(_) => Err(MaintenanceError::TargetExists { path: path.to_path_buf() }),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(io(path)(err)),
+    }
+}
+
+/// Check the actual staged image, without creating or migrating a database.
+fn inspect_image(path: &Path) -> Result<(String, usize)> {
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    let mut check = conn.prepare("PRAGMA integrity_check")?;
+    let results = check
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    if results != ["ok"] {
+        return Err(MaintenanceError::Manifest(format!(
+            "SQLite integrity check failed: {}",
+            results.join("; ")
+        )));
+    }
+    applied_schema(&conn)
+}
+
+/// Hash while streaming with bounded memory; the digest binds exactly the
+/// image we publish, even if the source path is replaced during the copy.
+fn copy_and_hash(
+    source: &mut impl Read,
+    target: &mut impl Write,
+) -> std::io::Result<(u64, String)> {
+    let mut hasher = Sha256::new();
+    let mut size = 0_u64;
+    let mut buffer = vec![0_u8; 64 * 1024];
+    loop {
+        let count = source.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        target.write_all(&buffer[..count])?;
+        hasher.update(&buffer[..count]);
+        size += count as u64;
+    }
+    Ok((size, format!("{:x}", hasher.finalize())))
+}
+
+fn sync_directory(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    File::open(path).map_err(io(path))?.sync_all().map_err(io(path))?;
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
@@ -499,10 +592,15 @@ mod tests {
         let backup = dir.path().join("backup.db");
         backup_to(&conn, "memory", &backup).expect("backup");
 
-        // Rewrite the manifest claiming a migration far beyond what we know.
+        // The actual image, rather than just its sidecar, has a newer schema.
+        let future = Connection::open(&backup).expect("open snapshot");
+        future.execute("UPDATE _migrations SET name = '999_from_the_future' WHERE name = (SELECT MAX(name) FROM _migrations)", []).expect("future migration");
+        drop(future);
         let manifest_path = manifest_path_for(&backup);
         let mut manifest = read_manifest(&backup).expect("manifest");
         manifest.schema_version = "999_from_the_future".to_owned();
+        manifest.checksum = file_checksum(&backup).expect("checksum");
+        manifest.size_bytes = fs::metadata(&backup).expect("metadata").len();
         fs::write(&manifest_path, serde_json::to_vec(&manifest).expect("encode")).expect("write");
 
         let target = dir.path().join("restored.db");
@@ -540,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn restore_into_empty_placeholder_is_allowed() {
+    fn restore_into_empty_placeholder_requires_explicit_overwrite() {
         let dir = tempfile::tempdir().expect("tempdir");
         let conn = seeded_db();
         let backup = dir.path().join("backup.db");
@@ -548,9 +646,17 @@ mod tests {
 
         let target = dir.path().join("fresh.db");
         fs::write(&target, b"").expect("touch");
-        let report =
-            restore_from(&backup, &target, &RestoreOptions::default()).expect("restore into empty");
-        assert!(!report.replaced_existing);
+        let error = restore_from(&backup, &target, &RestoreOptions::default())
+            .expect_err("refuse empty target");
+        assert!(matches!(error, MaintenanceError::TargetExists { .. }));
+        assert_eq!(fs::metadata(&target).expect("metadata").len(), 0);
+        let report = restore_from(
+            &backup,
+            &target,
+            &RestoreOptions { overwrite: true, ..Default::default() },
+        )
+        .expect("explicit overwrite");
+        assert!(report.replaced_existing);
     }
 
     #[test]
@@ -595,6 +701,198 @@ mod tests {
         let err = restore_from(&backup, dir.path().join("t.db"), &RestoreOptions::default())
             .expect_err("no manifest");
         assert!(matches!(err, MaintenanceError::Io { .. }), "got {err:?}");
+    }
+
+    #[test]
+    fn restore_without_manifest_checks_actual_schema_and_integrity() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backup = dir.path().join("backup.db");
+        backup_to(&seeded_db(), "memory", &backup).expect("backup");
+        fs::remove_file(manifest_path_for(&backup)).expect("remove manifest");
+        let options = RestoreOptions { skip_checksum: true, ..Default::default() };
+        let target = dir.path().join("restored.db");
+        let report = restore_from(&backup, &target, &options).expect("lost manifest recovery");
+        assert!(!report.checksum_verified);
+        assert_eq!(report.schema_version, migrations::latest_known_migration());
+        fs::remove_file(&target).expect("remove target");
+
+        let conn = Connection::open(&backup).expect("open image");
+        conn.execute("UPDATE _migrations SET name = '999_future' WHERE name = (SELECT MAX(name) FROM _migrations)", []).expect("new schema");
+        drop(conn);
+        assert!(matches!(
+            restore_from(&backup, &target, &options),
+            Err(MaintenanceError::SchemaTooNew { .. })
+        ));
+        assert!(!target.exists());
+
+        fs::write(&backup, b"not a SQLite image").expect("corrupt image");
+        assert!(restore_from(&backup, &target, &options).is_err());
+        assert!(!target.exists());
+        assert_no_staging_files(dir.path());
+    }
+
+    #[test]
+    fn restore_rejects_inconsistent_manifest_metadata() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backup = dir.path().join("backup.db");
+        backup_to(&seeded_db(), "memory", &backup).expect("backup");
+        let manifest = read_manifest(&backup).expect("manifest");
+        for field in ["version", "size", "schema", "count"] {
+            let mut modified = manifest.clone();
+            match field {
+                "version" => modified.manifest_version = 0,
+                "size" => modified.size_bytes += 1,
+                "schema" => modified.schema_version = "001_incorrect".into(),
+                "count" => modified.migration_count += 1,
+                _ => unreachable!(),
+            }
+            fs::write(manifest_path_for(&backup), serde_json::to_vec(&modified).expect("encode"))
+                .expect("write");
+            let target = dir.path().join("restored.db");
+            assert!(
+                matches!(
+                    restore_from(&backup, &target, &RestoreOptions::default()),
+                    Err(MaintenanceError::Manifest(_))
+                ),
+                "field {field}"
+            );
+            assert!(!target.exists());
+            assert_no_staging_files(dir.path());
+        }
+    }
+
+    #[test]
+    fn restore_refuses_sidecars_without_deleting_them() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backup = dir.path().join("backup.db");
+        backup_to(&seeded_db(), "memory", &backup).expect("backup");
+        let target = dir.path().join("live.db");
+        fs::write(&target, b"existing database").expect("target");
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let sidecar = dir.path().join(format!("live.db{suffix}"));
+            fs::write(&sidecar, b"unreconciled journal").expect("sidecar");
+            for overwrite in [false, true] {
+                let options = RestoreOptions { overwrite, ..Default::default() };
+                assert!(matches!(
+                    restore_from(&backup, &target, &options),
+                    Err(MaintenanceError::TargetExists { .. })
+                ));
+                assert_eq!(fs::read(&target).expect("target"), b"existing database");
+                assert_eq!(fs::read(&sidecar).expect("sidecar"), b"unreconciled journal");
+            }
+            fs::remove_file(sidecar).expect("remove fixture");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_and_restore_never_follow_destination_symlinks() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let victim = dir.path().join("victim.db");
+        fs::write(&victim, b"precious bytes").expect("victim");
+        let backup = dir.path().join("backup.db");
+        backup_to(&seeded_db(), "memory", &backup).expect("backup");
+        assert_eq!(fs::metadata(&backup).expect("metadata").permissions().mode() & 0o077, 0);
+        assert_eq!(
+            fs::metadata(manifest_path_for(&backup)).expect("metadata").permissions().mode()
+                & 0o077,
+            0
+        );
+        for destination in [&victim, &dir.path().join("missing.db")] {
+            let target = dir.path().join("symlink.db");
+            symlink(destination, &target).expect("symlink");
+            for overwrite in [false, true] {
+                assert!(matches!(
+                    restore_from(
+                        &backup,
+                        &target,
+                        &RestoreOptions { overwrite, ..Default::default() }
+                    ),
+                    Err(MaintenanceError::TargetExists { .. })
+                ));
+            }
+            assert!(backup_to(&seeded_db(), "memory", &target).is_err());
+            fs::remove_file(&target).expect("unlink");
+        }
+        assert_eq!(fs::read(&victim).expect("victim"), b"precious bytes");
+    }
+
+    #[test]
+    fn concurrent_restores_publish_exactly_one_complete_image() {
+        use std::sync::{Arc, Barrier};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backup = dir.path().join("backup.db");
+        backup_to(&seeded_db(), "memory", &backup).expect("backup");
+        let target = dir.path().join("restored.db");
+        let barrier = Arc::new(Barrier::new(4));
+        let workers: Vec<_> = (0..4)
+            .map(|_| {
+                let (backup, target, barrier) = (backup.clone(), target.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    restore_from(&backup, &target, &RestoreOptions::default())
+                })
+            })
+            .collect();
+        let results: Vec<_> =
+            workers.into_iter().map(|worker| worker.join().expect("worker")).collect();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        for error in results.into_iter().filter_map(std::result::Result::err) {
+            assert!(matches!(error, MaintenanceError::TargetExists { .. }), "{error:?}");
+        }
+        assert_eq!(
+            file_checksum(&target).expect("restored checksum"),
+            file_checksum(&backup).expect("source checksum")
+        );
+        assert_no_staging_files(dir.path());
+    }
+
+    #[test]
+    fn backup_refuses_existing_manifest_or_image_without_modification() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let backup = dir.path().join("backup.db");
+        let manifest = manifest_path_for(&backup);
+        fs::write(&manifest, b"previous manifest").expect("manifest");
+        assert!(backup_to(&seeded_db(), "memory", &backup).is_err());
+        assert!(!backup.exists());
+        assert_eq!(fs::read(&manifest).expect("manifest"), b"previous manifest");
+        fs::remove_file(&manifest).expect("remove fixture");
+        fs::write(&backup, b"").expect("empty destination");
+        assert!(backup_to(&seeded_db(), "memory", &backup).is_err());
+        assert_eq!(fs::metadata(&backup).expect("metadata").len(), 0);
+    }
+
+    #[test]
+    fn streaming_checksum_binds_the_copied_bytes_and_propagates_failures() {
+        let data = vec![42_u8; 128 * 1024 + 17];
+        let mut copied = Vec::new();
+        let (size, hash) = copy_and_hash(&mut data.as_slice(), &mut copied).expect("copy");
+        assert_eq!(copied, data);
+        assert_eq!(size, data.len() as u64);
+        assert_eq!(hash, format!("{:x}", Sha256::digest(&data)));
+        struct FailingReader;
+        impl Read for FailingReader {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("interrupted source"))
+            }
+        }
+        assert!(copy_and_hash(&mut FailingReader, &mut Vec::new()).is_err());
+        assert!(copy_and_hash(&mut data.as_slice(), &mut std::io::Cursor::new([0_u8; 4])).is_err());
+    }
+
+    fn assert_no_staging_files(directory: &Path) {
+        for entry in fs::read_dir(directory).expect("directory") {
+            let name = entry.expect("entry").file_name();
+            assert!(
+                !name.to_string_lossy().starts_with(".restore-"),
+                "staging file left behind: {name:?}"
+            );
+            assert!(
+                !name.to_string_lossy().starts_with(".backup-"),
+                "staging file left behind: {name:?}"
+            );
+        }
     }
 
     #[test]

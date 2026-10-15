@@ -5,8 +5,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { createRequire } from 'node:module';
+import { createHash } from 'node:crypto';
 import { DatabaseManager } from '../../src/database.js';
-import { sqliteGet } from '../helpers/sqlite-process.js';
+import { sqliteExec, sqliteGet } from '../helpers/sqlite-process.js';
 
 const { Commerce } = createRequire(import.meta.url)('@stateset/embedded');
 
@@ -122,7 +123,7 @@ test('restore refuses managed and existing paths without changing their data', a
   assertNoStaging(dir);
 });
 
-test('restore fails closed on corrupt, missing and newer manifests', async (t) => {
+test('restore fails closed on corrupt, missing, inconsistent and future-schema backups', async (t) => {
   const { manager, source, backups, dir } = fixture(t);
   await customer(manager.getConnection(), 'checksum@example.com');
   const backup = await manager.backup(source, backups);
@@ -138,6 +139,18 @@ test('restore fails closed on corrupt, missing and newer manifests', async (t) =
   assert.equal(fs.existsSync(target), false);
   const newer = JSON.parse(manifest);
   newer.schema_version = '999_future_schema';
+  fs.writeFileSync(backup.manifestPath, JSON.stringify(newer));
+  await assert.rejects(manager.restore(backup.backup, target), /differs from manifest/i);
+  assert.equal(fs.existsSync(target), false);
+
+  // A future manifest alone is inconsistent. Exercise the forward-schema
+  // refusal with a matching database image and checksum as well.
+  sqliteExec(
+    backup.backup,
+    "UPDATE _migrations SET name = '999_future_schema' WHERE name = (SELECT MAX(name) FROM _migrations)",
+  );
+  newer.checksum = createHash('sha256').update(fs.readFileSync(backup.backup)).digest('hex');
+  newer.size_bytes = fs.statSync(backup.backup).size;
   fs.writeFileSync(backup.manifestPath, JSON.stringify(newer));
   await assert.rejects(manager.restore(backup.backup, target), /newer/i);
   assert.equal(fs.existsSync(target), false);

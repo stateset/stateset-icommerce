@@ -21,6 +21,12 @@ commerce, A2A, finance, manufacturing, and the V4 entities (reviews, wishlists, 
 cards, loyalty, fraud, segments, store credits, shipping zones, rewards, search
 configs).
 
+Pooled `:memory:` stores use an ephemeral file so their locking behavior matches
+file-backed WAL deployments. Each store owns a distinct securely created private
+temporary directory (0700 on Unix), which also protects WAL and journal files.
+Repositories and checked-out connections keep that directory alive after the
+engine handle drops; cleanup occurs after the last pool handle closes.
+
 ### PostgreSQL
 
 Async backend via `sqlx`, for concurrent deployments. As of v1.17.0 it implements the
@@ -52,6 +58,38 @@ let db = PostgresDatabase::connect(
     &DatabaseConfig::postgres("postgres://localhost/stateset")
 ).await?;
 ```
+
+## Backup and recovery
+
+`maintenance::backup_to` publishes a consistent SQLite snapshot and a versioned
+SHA-256 manifest. Both files must be retained together. Snapshot schema metadata
+is read from the snapshot itself, and the snapshot and manifest are synced before
+success. Their publication is not one filesystem transaction: an interrupted
+backup may leave an image without its manifest and must not count as a verified
+backup. Each attempt requires fresh database and manifest paths.
+
+Restore streams into a private staging file, checks those exact bytes against
+the manifest, and validates SQLite integrity and the actual migration metadata
+before publication. Missing-manifest recovery with `skip_checksum` still checks
+integrity and schema compatibility. Default publication never replaces another
+file, including an empty placeholder created concurrently. Explicit native
+`overwrite` supports an offline regular file; symlinks and targets with WAL, SHM,
+or rollback-journal entries are always refused. Stop every connection first;
+restoring to a new path is preferred. Temporary files clean up on normal failure;
+process death may leave staging files that are not completed backups. New files
+are private to their owner on Unix, and directory entries are synced there.
+
+The older `backup::BackupManager` uses this same recovery implementation. It
+retains checksum verification for older `.meta` backups, rejects malformed
+metadata, and never overwrites a restore target. Metadata-free legacy images
+receive integrity and schema checks without checksum verification. Retention
+requires a positive count and is scoped to the source database's timestamped
+filenames. Backups are uncompressed SQLite images; the legacy `compress` option
+does not enable compression, and metadata reports `compressed: false`.
+
+The [operations runbook](../../docs/src/guides/operations-recovery.md) documents
+restore rehearsal and the process-crash/concurrency evidence drill. These checks
+do not prove external provider settlement or host power-loss durability.
 
 ## Shipment contents and audit
 

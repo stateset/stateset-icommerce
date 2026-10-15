@@ -189,22 +189,26 @@ jobs:
         # RUSTSEC-2023-0071 affects `rsa` (pulled in via optional `sqlx-mysql`).
         # This workspace does not enable or ship MySQL support, and there is no
         # fixed upgrade available upstream.
-        # RUSTSEC-2026-0097 affects `rand` when custom logging calls `rand::rng()`;
-        # this workspace does not install such a logger. Keep this ignored until
-        # upstream `rand` consumers converge on patched releases.
-        # RUSTSEC-2026-0258 affects `h2` 0.3 (via tonic 0.11 / hyper 0.14), which only
-        # enters the graph through stateset-observability's optional `otel` feature
-        # (opentelemetry-otlp 0.16). Not compiled by default; clears when the OTLP
-        # stack moves to opentelemetry-otlp >= 0.27 / tonic 0.12 (tracked upgrade).
         # RUSTSEC-2026-0235 affects `rkyv` 0.7, an OPTIONAL dependency of rust_decimal
         # that is present in Cargo.lock but never enabled by this workspace (we use
         # only the `serde` feature), so the vulnerable code is never compiled.
         run: >-
           cargo audit
+          --deny warnings
           --ignore RUSTSEC-2023-0071
-          --ignore RUSTSEC-2026-0097
-          --ignore RUSTSEC-2026-0258
           --ignore RUSTSEC-2026-0235
+
+      - name: Ensure advisory exceptions stay outside the build graph
+        # An optional dependency in Cargo.lock is not necessarily compiled.
+        # Fail closed if either exception becomes reachable through any
+        # workspace feature or target, instead of silently suppressing it.
+        run: |
+          cargo tree --locked --workspace --all-features --target all \
+            --edges normal,build --prefix none --format '{p}' > audit-build-graph.txt
+          if grep -E '^(rsa|rkyv) ' audit-build-graph.txt; then
+            echo '::error::An advisory-ignored package is compiled; remove its exception and remediate it.'
+            exit 1
+          fi
 
   deny:
     name: Dependency Policy
@@ -1166,8 +1170,25 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The prior aggregate run already used 58 minutes; independent boundary
+    # and live-PostgreSQL saga gates need room to finish as well.
+    timeout-minutes: 90
     needs: [fmt, clippy]
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: stateset_saga_coverage
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d stateset_saga_coverage"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
 
     steps:
       - uses: actions/checkout@v7
@@ -1188,18 +1209,63 @@ jobs:
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
+      - name: Check schema and macro coverage floor
+        # This crate defines downstream wire contracts. Keep its coverage
+        # independent of the aggregate workspace floor (measured above 93%).
+        run: |
+          cargo llvm-cov \
+            -p stateset-macros \
+            --fail-under-lines 90 \
+            --fail-under-functions 95 \
+            --ignore-filename-regex '(/tests/|/benches/)' \
+            --summary-only
+
+      - name: Check C boundary unit coverage floor
+        # ABI fixtures run in the Rust test job. Measure the Rust unit binary
+        # separately: mixing its cfg(test) profiles with the shared library
+        # loaded by C/Python fixtures produces mismatched LLVM function data.
+        run: |
+          cargo llvm-cov \
+            -p stateset-ffi --lib \
+            --fail-under-lines 90 \
+            --fail-under-functions 85 \
+            --ignore-filename-regex '(/tests/|/tests\.rs$|/benches/|stateset-(core|crypto|db|embedded|migrations|observability|primitives|pricing|sdk|sync)/)' \
+            --summary-only
+
       - name: Check stateset-db coverage floor
         # stateset-db is excluded from the workspace 80% gate below, but it must
-        # not be floorless: this gate measures the db crate against its own test
-        # suite. Baseline measured 2026-07-14: 52.05% lines. Ratchet this floor
-        # up as db-crate coverage improves; do not lower it.
+        # have its own gate. The checker uses database files only and enforces
+        # independent recovery-file floors so aggregate gains cannot hide a
+        # regression at the backup/restore boundary.
         env:
           STATESET_ALLOW_POSTGRES_SKIP: "1"
         run: |
+          python3 scripts/ci/check_db_coverage.test.py
+          mkdir -p coverage
           cargo llvm-cov \
             -p stateset-db \
-            --fail-under-lines 50 \
-            --ignore-filename-regex '(/tests/|/benches/)' \
+            --ignore-filename-regex '(/tests/|/benches/|stateset-(core|crypto|migrations|primitives)/)' \
+            --json --output-path coverage/stateset-db.json
+          python3 scripts/ci/check_db_coverage.py coverage/stateset-db.json
+
+      - name: Retain database coverage evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: database-coverage-${{ github.sha }}-${{ github.run_attempt }}
+          path: coverage/stateset-db.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Check saga recovery coverage against PostgreSQL
+        env:
+          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_saga_coverage
+        run: |
+          cargo llvm-cov \
+            -p stateset-saga \
+            --fail-under-lines 90 \
+            --fail-under-functions 80 \
+            --ignore-filename-regex '(/tests/|/benches/|stateset-(core|crypto|db|migrations|primitives)/)' \
             --summary-only
 
       - name: Generate code coverage

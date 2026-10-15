@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
+node --test ./scripts/ci/check_node_binding_lock.test.mjs
+
 extract_with_regex() {
   local pattern="$1"
   local file="$2"

@@ -6,6 +6,48 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.38.2] - 2026-10-15
+
+Includes the fixes prepared for the unpublished 1.38.1 release.
+
+### Fixed
+
+- Preserve original Zod refinements, defaults, and transforms in MCP v2 tool
+  execution; wait for service initialization and close per-request resources.
+- Restore SQLite backups from the exact staged, checksum-verified image after
+  integrity and schema checks. Refuse existing targets by default, including
+  empty files; explicit overwrite requires an offline regular file without
+  SQLite journals. Symlinks and journal entries are never replaced.
+- Route legacy backups through the verified recovery path, retain legacy
+  checksums, isolate retention by database name, and avoid concurrent snapshot
+  filename collisions. Report snapshots as uncompressed.
+- Keep pooled ephemeral SQLite databases and their journals inside unique
+  private directories, retained until their final connection closes.
+- Return actual product variant SKU, price, and store currency through the C
+  boundary, rejecting unrepresentable values rather than truncating them.
+- Align generated JSON schemas with Serde field naming, defaults, optional
+  fields, and unknown-field rules; reject unsupported layouts explicitly.
+- Persist saga execution attempts and rollback intent, bind idempotency keys
+  to requests, serialize transitions, and resume compensation after restart.
+- Update cached dependency resolutions for `event-listener`, `chacha20`,
+  `der`, and `spin`; remove obsolete advisory exceptions and reject compiled
+  dependencies covered by the remaining exceptions.
+- Update `rustls` to 0.23.46 for RUSTSEC-2026-0346 through RUSTSEC-2026-0349,
+  retaining the configured Bytecode Alliance source-audit chain for the patch.
+- Release hygiene accepts completed npm lockfile synchronization while still
+  rejecting stale resolved platform packages and inconsistent release pins.
+- Update locked `quinn-proto` to 0.11.18, addressing five memory-exhaustion and
+  panic advisories in the optional HTTP/3 dependency branch.
+- Give npm registry propagation up to twenty minutes before publishing the
+  storefront scaffolder, matching the platform package availability window.
+
+### Added
+
+- Process-termination recovery and multiprocess retry-contention checks with
+  exact inventory, durable receipts, and audit-chain invariants.
+- Independent CI coverage gates for macros, the C boundary, PostgreSQL sagas,
+  and SQLite database recovery, with retained database coverage artifacts.
+
 ## [1.38.0] - 2026-10-12
 
 ### Added

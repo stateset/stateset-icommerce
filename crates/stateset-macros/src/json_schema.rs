@@ -5,7 +5,7 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{DeriveInput, Fields, GenericArgument, PathArguments, Type, parse2};
+use syn::{Attribute, DeriveInput, Fields, GenericArgument, LitStr, PathArguments, Type, parse2};
 
 /// Entry point: parse the derive input and emit the expanded token stream.
 pub(crate) fn derive(input: TokenStream) -> TokenStream {
@@ -75,26 +75,27 @@ fn type_ident_str(ty: &Type) -> Option<String> {
 
 /// Generate a `serde_json::json!(...)` token stream for the JSON Schema of a
 /// given type.
-fn type_to_schema(ty: &Type) -> TokenStream {
+fn type_to_schema(ty: &Type) -> syn::Result<TokenStream> {
     // Option<T> — unwrap and recurse (the caller handles required vs optional)
     if let Some(inner) = extract_option_inner(ty) {
-        return type_to_schema(inner);
+        let schema = type_to_schema(inner)?;
+        return Ok(quote! { ::serde_json::json!({ "anyOf": [#schema, { "type": "null" }] }) });
     }
 
     // Vec<T> → array
     if let Some(inner) = extract_vec_inner(ty) {
-        let items_schema = type_to_schema(inner);
-        return quote! {
+        let items_schema = type_to_schema(inner)?;
+        return Ok(quote! {
             ::serde_json::json!({
                 "type": "array",
                 "items": #items_schema
             })
-        };
+        });
     }
 
     // Named types
     if let Some(ident) = type_ident_str(ty) {
-        return match ident.as_str() {
+        return Ok(match ident.as_str() {
             "String" | "str" => quote! {
                 ::serde_json::json!({ "type": "string" })
             },
@@ -115,23 +116,122 @@ fn type_to_schema(ty: &Type) -> TokenStream {
                 ::serde_json::json!({ "type": "string", "format": "uuid" })
             },
             _ => {
-                // Fallback: treat unknown types as string
-                quote! {
-                    ::serde_json::json!({ "type": "string" })
+                return Err(syn::Error::new_spanned(
+                    ty,
+                    "unsupported schema type; supply #[schema(with = \"path::schema_function\")] for this field",
+                ));
+            }
+        });
+    }
+    Err(syn::Error::new_spanned(
+        ty,
+        "unsupported schema type; supply #[schema(with = \"path::schema_function\")] for this field",
+    ))
+}
+
+#[derive(Default)]
+struct SerdeOptions {
+    rename: Option<String>,
+    rename_all: Option<String>,
+    skip: bool,
+    optional: bool,
+    deny_unknown_fields: bool,
+    schema_with: Option<syn::Path>,
+}
+
+fn serde_options(attributes: &[Attribute]) -> syn::Result<SerdeOptions> {
+    let mut options = SerdeOptions::default();
+    for attribute in attributes.iter().filter(|attr| attr.path().is_ident("schema")) {
+        attribute.parse_nested_meta(|meta| {
+            if !meta.path.is_ident("with") {
+                return Err(meta.error("expected schema(with = \"path::schema_function\")"));
+            }
+            let path: LitStr = meta.value()?.parse()?;
+            options.schema_with = Some(path.parse()?);
+            Ok(())
+        })?;
+    }
+    for attribute in attributes.iter().filter(|attr| attr.path().is_ident("serde")) {
+        attribute.parse_nested_meta(|meta| {
+            if meta.path.is_ident("rename") {
+                options.rename = Some(meta.value()?.parse::<LitStr>()?.value());
+            } else if meta.path.is_ident("rename_all") {
+                let rule: LitStr = meta.value()?.parse()?;
+                if !["lowercase", "UPPERCASE", "PascalCase", "camelCase", "snake_case",
+                    "SCREAMING_SNAKE_CASE", "kebab-case", "SCREAMING-KEBAB-CASE"].contains(&rule.value().as_str()) {
+                    return Err(syn::Error::new_spanned(rule, "unsupported serde rename rule"));
+                }
+                options.rename_all = Some(rule.value());
+            } else if meta.path.is_ident("skip") || meta.path.is_ident("skip_serializing") {
+                options.skip = true;
+            } else if meta.path.is_ident("skip_serializing_if") {
+                let _: LitStr = meta.value()?.parse()?;
+                options.optional = true;
+            } else if meta.path.is_ident("default") {
+                options.optional = true;
+                if meta.input.peek(syn::Token![=]) { let _: LitStr = meta.value()?.parse()?; }
+            } else if meta.path.is_ident("deny_unknown_fields") {
+                options.deny_unknown_fields = true;
+            } else if meta.path.is_ident("alias") || meta.path.is_ident("deserialize_with") {
+                let _: LitStr = meta.value()?.parse()?;
+            } else if meta.path.is_ident("skip_deserializing") {
+                // Deserialization-only attributes do not alter serialized field names or types.
+            } else if (meta.path.is_ident("with") || meta.path.is_ident("serialize_with")) && options.schema_with.is_some() {
+                let _: LitStr = meta.value()?.parse()?;
+            } else {
+                return Err(meta.error("serde attribute is not supported by JsonSchema; use an explicit schema for this type"));
+            }
+            Ok(())
+        })?;
+    }
+    Ok(options)
+}
+
+fn rename_field(name: &str, rule: Option<&str>) -> String {
+    match rule {
+        Some("UPPERCASE" | "SCREAMING_SNAKE_CASE") => name.to_ascii_uppercase(),
+        Some("PascalCase" | "camelCase") => {
+            let mut result = String::new();
+            let mut capitalize = true;
+            for ch in name.chars() {
+                if ch == '_' {
+                    capitalize = true;
+                } else if capitalize {
+                    result.push(ch.to_ascii_uppercase());
+                    capitalize = false;
+                } else {
+                    result.push(ch);
                 }
             }
-        };
-    }
-
-    // Ultimate fallback
-    quote! {
-        ::serde_json::json!({ "type": "string" })
+            if rule == Some("camelCase") {
+                if let Some(first) = result.get_mut(..1) {
+                    first.make_ascii_lowercase();
+                }
+            }
+            result
+        }
+        Some("kebab-case") => name.replace('_', "-"),
+        Some("SCREAMING-KEBAB-CASE") => name.to_ascii_uppercase().replace('_', "-"),
+        _ => name.to_owned(),
     }
 }
 
 fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let name = &input.ident;
     let vis = &input.vis;
+    if !input.generics.params.is_empty() {
+        return Err(syn::Error::new_spanned(
+            &input.generics,
+            "JsonSchema requires a concrete struct without generic parameters",
+        ));
+    }
+    let container = serde_options(&input.attrs)?;
+    if container.schema_with.is_some() {
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "schema(with) belongs on a field; write a manual schema function for a custom root",
+        ));
+    }
 
     let fields = match &input.data {
         syn::Data::Struct(data) => match &data.fields {
@@ -153,6 +253,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     // Build the properties and required arrays
     let mut property_inserts = Vec::new();
     let mut required_names = Vec::new();
+    let mut property_names = std::collections::HashSet::new();
 
     for field in fields {
         let Some(field_name) = field.ident.as_ref() else {
@@ -161,10 +262,29 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                 "JsonSchema only supports structs with named fields",
             ));
         };
-        let field_name_str = field_name.to_string();
-
-        let is_optional = extract_option_inner(&field.ty).is_some();
-        let schema = type_to_schema(&field.ty);
+        let options = serde_options(&field.attrs)?;
+        if options.skip {
+            continue;
+        }
+        let rust_name = field_name.to_string();
+        let rust_name = rust_name.strip_prefix("r#").unwrap_or(&rust_name);
+        let field_name_str = options
+            .rename
+            .clone()
+            .unwrap_or_else(|| rename_field(rust_name, container.rename_all.as_deref()));
+        if !property_names.insert(field_name_str.clone()) {
+            return Err(syn::Error::new_spanned(
+                field,
+                "duplicate serialized field name in JsonSchema",
+            ));
+        }
+        let is_optional =
+            extract_option_inner(&field.ty).is_some() || options.optional || container.optional;
+        let schema = if let Some(function) = options.schema_with {
+            quote! { #function() }
+        } else {
+            type_to_schema(&field.ty)?
+        };
 
         property_inserts.push(quote! {
             properties.insert(
@@ -178,17 +298,24 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         }
     }
 
+    let extra_properties = container.deny_unknown_fields.then(|| {
+        quote! {
+            schema["additionalProperties"] = ::serde_json::json!(false);
+        }
+    });
     Ok(quote! {
         /// Returns a JSON Schema for this struct.
         #vis fn #fn_name() -> ::serde_json::Value {
             let mut properties = ::serde_json::Map::new();
             #(#property_inserts)*
 
-            ::serde_json::json!({
+            let mut schema = ::serde_json::json!({
                 "type": "object",
                 "properties": ::serde_json::Value::Object(properties),
                 "required": [#(#required_names),*]
-            })
+            });
+            #extra_properties
+            schema
         }
     })
 }
@@ -197,6 +324,54 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
 mod tests {
     use super::*;
     use quote::quote;
+
+    #[test]
+    fn unsupported_serialization_shapes_fail_explicitly() {
+        for input in [
+            quote! { #[serde(transparent)] struct Wrapped { value: String } },
+            quote! { struct Flat { #[serde(flatten)] value: Other } },
+            quote! { struct Custom { #[serde(serialize_with = "custom")] value: String } },
+            quote! { struct Generic<T> { value: T } },
+            quote! { #[serde(rename_all = "unknown")] struct Invalid { value: String } },
+            quote! { struct Collision { #[serde(rename = "same")] a: String, #[serde(rename = "same")] b: String } },
+        ] {
+            let output = derive(input).to_string();
+            assert!(output.contains("compile_error"), "must refuse an inaccurate schema: {output}");
+        }
+    }
+
+    #[test]
+    fn explicit_schema_supports_custom_serializers_and_skipped_types() {
+        let output = derive(quote! {
+            struct Custom {
+                #[schema(with = "custom_schema")]
+                #[serde(serialize_with = "serialize_custom")]
+                value: CustomValue,
+                #[serde(skip)] hidden: Unknown,
+            }
+        })
+        .to_string();
+        assert!(!output.contains("compile_error"), "{output}");
+        assert!(output.contains("custom_schema"));
+        assert!(!output.contains("hidden"));
+    }
+
+    #[test]
+    fn field_renaming_matches_serde_field_rules() {
+        for (rule, expected) in [
+            ("lowercase", "first_name"),
+            ("UPPERCASE", "FIRST_NAME"),
+            ("PascalCase", "FirstName"),
+            ("camelCase", "firstName"),
+            ("snake_case", "first_name"),
+            ("SCREAMING_SNAKE_CASE", "FIRST_NAME"),
+            ("kebab-case", "first-name"),
+            ("SCREAMING-KEBAB-CASE", "FIRST-NAME"),
+        ] {
+            assert_eq!(rename_field("first_name", Some(rule)), expected);
+        }
+        assert_eq!(rename_field("__private", Some("camelCase")), "private");
+    }
 
     #[test]
     fn generates_schema_function() {
@@ -446,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_type_falls_back_to_string() {
+    fn unsupported_types_require_an_explicit_schema() {
         let input = quote! {
             pub struct WithUnknown {
                 pub custom: MyCustomType,
@@ -455,7 +630,8 @@ mod tests {
 
         let output = derive(input);
         let output_str = output.to_string();
-        assert!(output_str.contains("\"string\""), "unknown types should fall back to \"string\"");
+        assert!(output_str.contains("compile_error"));
+        assert!(output_str.contains("unsupported schema type"));
     }
 
     #[test]

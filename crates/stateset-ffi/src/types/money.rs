@@ -183,15 +183,7 @@ const fn minor_unit_factor(minor_units: u32) -> u64 {
 }
 
 pub(crate) fn currency_minor_unit_scale(code: &str) -> u32 {
-    match code {
-        // ISO 4217 zero-decimal currencies (subset commonly used in commerce).
-        "BIF" | "CLP" | "DJF" | "GNF" | "ISK" | "JPY" | "KMF" | "KRW" | "PYG" | "RWF" | "UGX"
-        | "VND" | "VUV" | "XAF" | "XOF" | "XPF" => 0,
-        // ISO 4217 three-decimal currencies.
-        "BHD" | "IQD" | "JOD" | "KWD" | "LYD" | "OMR" | "TND" => 3,
-        // Most fiat currencies use two decimals.
-        _ => 2,
-    }
+    u32::from(stateset_primitives::currency_decimal_places(code))
 }
 
 // ---------------------------------------------------------------------------

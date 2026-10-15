@@ -40,6 +40,13 @@ option, not as the mandatory path through the binding layer.
 Native builds must retain `panic = "unwind"` (the Cargo default) so the guards
 can catch panics. This crate rejects `panic = "abort"` builds at compile time.
 
+Product summaries use the default variant (or the first variant when no default
+is designated) and the store's base currency. Products without variants return
+an empty SKU and all-zero currency bytes to signal that no price is available.
+The ABI rejects SKUs longer than 63 bytes and prices that cannot be represented
+exactly in its integer minor-unit field; it never truncates an identifier or
+rounds a price to fit.
+
 ## Usage (C)
 
 ```c

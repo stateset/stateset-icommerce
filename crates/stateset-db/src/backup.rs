@@ -5,8 +5,7 @@
 //! # Features
 //!
 //! - Full database backups (VACUUM INTO)
-//! - Point-in-time recovery
-//! - Incremental backups
+//! - Timestamped full snapshots and retention
 //! - Backup verification
 //! - Restore with integrity checks
 
@@ -14,7 +13,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use stateset_core::CommerceError;
 use std::fs;
-use std::io::{self, Read};
+use std::io;
 use std::path::{Path, PathBuf};
 
 /// Backup configuration
@@ -22,9 +21,10 @@ use std::path::{Path, PathBuf};
 pub struct BackupConfig {
     /// Number of backups to retain
     pub retain_count: usize,
-    /// Whether to compress backups
+    /// Reserved for compatibility. Snapshots are uncompressed SQLite images.
     pub compress: bool,
-    /// Whether to verify backups after creation
+    /// Include a checksum in legacy `.meta` metadata. Native manifests always
+    /// include a checksum and snapshots always receive an integrity check.
     pub verify: bool,
 }
 
@@ -87,6 +87,12 @@ pub struct BackupManager {
 impl BackupManager {
     /// Create a new backup manager
     pub fn new<P: AsRef<Path>>(backup_dir: P, config: BackupConfig) -> Result<Self, io::Error> {
+        if config.retain_count == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "retain_count must be positive",
+            ));
+        }
         let backup_dir = backup_dir.as_ref().to_path_buf();
         fs::create_dir_all(&backup_dir)?;
         Ok(Self { config, backup_dir })
@@ -127,38 +133,27 @@ impl BackupManager {
             )));
         }
 
-        let (filename, backup_path) = {
-            let mut attempt = 0usize;
-            loop {
-                let suffix = if attempt == 0 { String::new() } else { format!("_{attempt}") };
-                let candidate = format!("{db_name}_{timestamp_str}{suffix}.db");
-                let path = self.backup_dir.join(&candidate);
-                if !path.exists() {
-                    break (candidate, path);
-                }
-                attempt += 1;
-            }
-        };
+        // A timestamp and exists-check are not a reservation: independent
+        // workers can choose the same path before either publishes. Unique
+        // names avoid that race; publication still refuses any collision.
+        let filename = format!("{db_name}_{timestamp_str}_{}.db", uuid::Uuid::new_v4().simple());
+        let backup_path = self.backup_dir.join(&filename);
 
-        // Create backup using VACUUM INTO (path is validated above)
-        let backup_file = backup_path.display().to_string();
-        conn.execute_batch(&format!("VACUUM INTO '{}';", backup_file.replace('\'', "''")))
-            .map_err(|e| CommerceError::DatabaseError(format!("Backup failed: {e}")))?;
-
-        // Get backup metadata
-        let size_bytes = fs::metadata(&backup_path).map(|m| m.len()).unwrap_or(0);
-
-        let table_count: usize = conn
-            .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table'", [], |r| r.get(0))
-            .unwrap_or(0);
-
-        // Get schema version
-        let schema_version: i32 =
-            conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap_or(0);
-
-        // Calculate checksum if configured
-        let checksum =
-            if self.config.verify { self.calculate_checksum(&backup_path)? } else { String::new() };
+        let report = crate::maintenance::backup_to(conn, database_path.as_ref(), &backup_path)?;
+        let snapshot =
+            Connection::open_with_flags(&backup_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(crate::maintenance::MaintenanceError::from)?;
+        let table_count: usize = snapshot
+            .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table'", [], |row| {
+                row.get(0)
+            })
+            .map_err(crate::maintenance::MaintenanceError::from)?;
+        let schema_version: i32 = snapshot
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(crate::maintenance::MaintenanceError::from)?;
+        let size_bytes = report.manifest.size_bytes;
+        let checksum = if self.config.verify { report.manifest.checksum } else { String::new() };
+        drop(snapshot);
 
         let metadata = BackupMetadata {
             filename,
@@ -166,7 +161,7 @@ impl BackupManager {
             size_bytes,
             schema_version,
             table_count,
-            compressed: self.config.compress,
+            compressed: false,
             checksum,
         };
 
@@ -184,7 +179,11 @@ impl BackupManager {
         Ok(BackupResult { metadata, path: backup_path })
     }
 
-    /// Restore database from a backup
+    /// Restore to a new path using staged checksum and integrity validation.
+    ///
+    /// Existing files, symlinks and SQLite sidecars are never replaced. Current
+    /// snapshots use their manifest; older `.meta` snapshots retain checksum
+    /// validation when their metadata includes a checksum.
     pub fn restore<V: AsRef<Path>>(
         &self,
         _conn: &Connection,
@@ -194,37 +193,48 @@ impl BackupManager {
         let backup_path = backup_path.as_ref();
         let restore_path = restore_path.as_ref();
 
-        // Verify backup exists
-        if !backup_path.exists() {
-            return Err(CommerceError::DatabaseError(format!(
-                "Backup file not found: {}",
-                backup_path.display()
-            )));
+        let manifest = crate::maintenance::manifest_path_for(backup_path);
+        match fs::symlink_metadata(&manifest) {
+            Ok(_) => {
+                crate::maintenance::restore_from(backup_path, restore_path, &Default::default())?;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let metadata_path = backup_path.with_extension("meta");
+                let metadata = match fs::read(&metadata_path) {
+                    Ok(bytes) => {
+                        Some(serde_json::from_slice::<BackupMetadata>(&bytes).map_err(|error| {
+                            CommerceError::DatabaseError(format!(
+                                "Invalid backup metadata: {error}"
+                            ))
+                        })?)
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                    Err(error) => {
+                        return Err(CommerceError::DatabaseError(format!(
+                            "Backup metadata unreadable: {error}"
+                        )));
+                    }
+                };
+                let checksum = metadata
+                    .as_ref()
+                    .map(|meta| meta.checksum.as_str())
+                    .filter(|value| !value.is_empty());
+                crate::maintenance::restore_legacy_image(backup_path, restore_path, checksum)?;
+            }
+            Err(error) => {
+                return Err(CommerceError::DatabaseError(format!(
+                    "Backup manifest unreadable: {error}"
+                )));
+            }
         }
-
-        // Copy backup to restore location
-        fs::copy(backup_path, restore_path)
-            .map_err(|e| CommerceError::DatabaseError(format!("Restore copy failed: {e}")))?;
-
-        // Open restore connection and verify integrity
-        let restore_conn = Connection::open(restore_path)
-            .map_err(|e| CommerceError::DatabaseError(format!("Restore open failed: {e}")))?;
-
-        // Run integrity check
-        let integrity_result: String = restore_conn
-            .query_row("PRAGMA integrity_check", [], |r| r.get(0))
-            .unwrap_or_else(|_| "failed".to_string());
-
-        if integrity_result != "ok" {
-            return Err(CommerceError::DatabaseError(format!(
-                "Backup integrity check failed: {integrity_result}"
-            )));
-        }
-
-        // Get table count
+        let restore_conn =
+            Connection::open_with_flags(restore_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(crate::maintenance::MaintenanceError::from)?;
         let table_count: usize = restore_conn
-            .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table'", [], |r| r.get(0))
-            .unwrap_or(0);
+            .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table'", [], |row| {
+                row.get(0)
+            })
+            .map_err(crate::maintenance::MaintenanceError::from)?;
 
         Ok(RestoreResult { restored_at: Utc::now(), table_count, success: true })
     }
@@ -242,7 +252,13 @@ impl BackupManager {
 
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("db") {
                 if let Some(metadata) = self.load_metadata(&path) {
-                    backups.push(metadata);
+                    // Never let an edited metadata filename redirect retention
+                    // deletion outside the actual file discovered in this directory.
+                    if path.file_name().and_then(|name| name.to_str())
+                        == Some(metadata.filename.as_str())
+                    {
+                        backups.push(metadata);
+                    }
                 }
             }
         }
@@ -259,6 +275,17 @@ impl BackupManager {
         fs::remove_file(backup_path)
             .map_err(|e| CommerceError::DatabaseError(format!("Failed to delete backup: {e}")))?;
 
+        let manifest_path = crate::maintenance::manifest_path_for(backup_path);
+        match fs::remove_file(&manifest_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(CommerceError::DatabaseError(format!(
+                    "Failed to delete backup manifest: {error}"
+                )));
+            }
+        }
+
         // Delete metadata file
         let metadata_path = backup_path.with_extension("meta");
         if metadata_path.exists() {
@@ -269,25 +296,9 @@ impl BackupManager {
     }
 
     /// Calculate SHA256 checksum of a file
+    #[cfg(test)]
     fn calculate_checksum<P: AsRef<Path>>(&self, path: P) -> Result<String, CommerceError> {
-        use sha2::{Digest, Sha256};
-
-        let mut hash = Sha256::new();
-        let mut file = fs::File::open(path)
-            .map_err(|e| CommerceError::DatabaseError(format!("Failed to open backup: {e}")))?;
-
-        let mut buffer = vec![0; 8192];
-        loop {
-            let n = file
-                .read(&mut buffer)
-                .map_err(|e| CommerceError::DatabaseError(format!("Failed to read backup: {e}")))?;
-            if n == 0 {
-                break;
-            }
-            hash.update(&buffer[..n]);
-        }
-
-        Ok(hex::encode(hash.finalize()))
+        crate::maintenance::file_checksum(path.as_ref()).map_err(Into::into)
     }
 
     /// Verify backup integrity
@@ -342,7 +353,7 @@ impl BackupManager {
     fn cleanup_old_backups(&self, db_name: &str) -> Result<(), CommerceError> {
         let backups = self.list_backups()?;
         let db_backups: Vec<_> =
-            backups.into_iter().filter(|b| b.filename.starts_with(db_name)).collect();
+            backups.into_iter().filter(|backup| is_backup_for(&backup.filename, db_name)).collect();
 
         // Remove excess backups
         for backup in db_backups.iter().skip(self.config.retain_count) {
@@ -352,6 +363,28 @@ impl BackupManager {
 
         Ok(())
     }
+}
+
+fn is_backup_for(filename: &str, db_name: &str) -> bool {
+    let Some(body) =
+        filename.strip_prefix(&format!("{db_name}_")).and_then(|name| name.strip_suffix(".db"))
+    else {
+        return false;
+    };
+    let Some(timestamp) = body.get(..15) else { return false };
+    if chrono::NaiveDateTime::parse_from_str(timestamp, "%Y%m%d_%H%M%S").is_err() {
+        return false;
+    }
+    let suffix = &body[15..];
+    // Accept the old timestamp-only / numeric collision suffixes and the new
+    // UUID suffix. Require the whole shape: a store name can itself contain a
+    // timestamp, and must not be mistaken for an older backup of another store.
+    suffix.is_empty()
+        || suffix.strip_prefix('_').is_some_and(|value| {
+            !value.is_empty()
+                && (value.bytes().all(|byte| byte.is_ascii_digit())
+                    || (value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())))
+        })
 }
 
 #[cfg(test)]
@@ -401,6 +434,16 @@ mod tests {
         let backups = manager.list_backups().unwrap();
 
         assert_eq!(backups.len(), 0);
+    }
+
+    #[test]
+    fn zero_retention_cannot_report_a_deleted_backup_as_success() {
+        let dir = TempDir::new().unwrap();
+        let result = BackupManager::new(
+            dir.path().join("backups"),
+            BackupConfig { retain_count: 0, ..Default::default() },
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidInput);
     }
 
     #[test]
@@ -585,6 +628,90 @@ mod tests {
     }
 
     #[test]
+    fn restore_rejects_logically_modified_image_before_publication() {
+        let dir = TempDir::new().unwrap();
+        let (source, conn) = create_test_db(dir.path());
+        let manager =
+            BackupManager::new(dir.path().join("backups"), BackupConfig::default()).unwrap();
+        let backup = manager.backup(&conn, &source).unwrap();
+        let image = Connection::open(&backup.path).unwrap();
+        image.execute("UPDATE test SET value = 'unauthorized'", []).unwrap();
+        drop(image);
+        let target = dir.path().join("restored.db");
+        assert!(manager.restore(&conn, &backup.path, &target).is_err());
+        assert!(!target.exists());
+        // Old .meta backups must also bind the copied bytes to their digest.
+        fs::remove_file(crate::maintenance::manifest_path_for(&backup.path)).unwrap();
+        assert!(manager.restore(&conn, &backup.path, &target).is_err());
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn legacy_metadata_restore_retains_checksum_and_no_clobber_contract() {
+        let dir = TempDir::new().unwrap();
+        let (source, conn) = create_test_db(dir.path());
+        let manager =
+            BackupManager::new(dir.path().join("backups"), BackupConfig::default()).unwrap();
+        let backup = manager.backup(&conn, &source).unwrap();
+        fs::remove_file(crate::maintenance::manifest_path_for(&backup.path)).unwrap();
+        let target = dir.path().join("restored.db");
+        assert!(manager.restore(&conn, &backup.path, &target).unwrap().success);
+        assert!(manager.restore(&conn, &backup.path, &target).is_err());
+        let restored = Connection::open(&target).unwrap();
+        assert_eq!(
+            restored
+                .query_row("SELECT value FROM test", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "hello"
+        );
+        drop(restored);
+        fs::remove_file(&target).unwrap();
+        fs::write(backup.path.with_extension("meta"), b"malformed metadata").unwrap();
+        assert!(manager.restore(&conn, &backup.path, &target).is_err());
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn retention_cannot_follow_edited_metadata_outside_backup_directory() {
+        let dir = TempDir::new().unwrap();
+        let (source, conn) = create_test_db(dir.path());
+        let manager =
+            BackupManager::new(dir.path().join("backups"), BackupConfig::default()).unwrap();
+        let backup = manager.backup(&conn, &source).unwrap();
+        let victim = dir.path().join("test_20000101_000000.db");
+        fs::write(&victim, b"unrelated file").unwrap();
+        let mut altered = backup.metadata;
+        altered.filename = victim.to_str().unwrap().into();
+        fs::write(backup.path.with_extension("meta"), serde_json::to_vec(&altered).unwrap())
+            .unwrap();
+        assert!(manager.list_backups().unwrap().is_empty());
+        manager.cleanup_old_backups("test").unwrap();
+        assert_eq!(fs::read(victim).unwrap(), b"unrelated file");
+    }
+
+    #[test]
+    fn retention_keeps_other_database_prefixes_and_removes_all_snapshot_sidecars() {
+        let dir = TempDir::new().unwrap();
+        let (_, conn) = create_test_db(dir.path());
+        let manager = BackupManager::new(
+            dir.path().join("backups"),
+            BackupConfig { retain_count: 1, ..Default::default() },
+        )
+        .unwrap();
+        let other = manager.backup(&conn, "storefront.db").unwrap();
+        let timestamp_named_store = manager.backup(&conn, "store_20000101_000000.db").unwrap();
+        let first = manager.backup(&conn, "store.db").unwrap();
+        let second = manager.backup(&conn, "store.db").unwrap();
+        assert!(other.path.exists());
+        assert!(timestamp_named_store.path.exists());
+        assert!(second.path.exists());
+        assert!(!first.path.exists());
+        assert!(!first.path.with_extension("meta").exists());
+        assert!(!crate::maintenance::manifest_path_for(&first.path).exists());
+        assert!(!second.metadata.compressed, "SQLite images are never marked compressed");
+    }
+
+    #[test]
     fn test_restore_nonexistent_backup_fails() {
         let temp_dir = TempDir::new().unwrap();
         let backup_dir = temp_dir.path().join("backups");
@@ -597,7 +724,7 @@ mod tests {
         let result = manager.restore(&conn, &missing, &restore_path);
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
-        assert!(err_msg.contains("not found"), "Expected 'not found' in: {err_msg}");
+        assert!(err_msg.contains("does_not_exist.db"), "Expected missing path in: {err_msg}");
     }
 
     #[test]
@@ -810,6 +937,44 @@ mod tests {
         );
         assert!(r1.path.exists());
         assert!(r2.path.exists());
+    }
+
+    #[test]
+    fn independent_workers_can_back_up_the_same_store_concurrently() {
+        use std::sync::{Arc, Barrier};
+        let dir = TempDir::new().unwrap();
+        let (source, conn) = create_test_db(dir.path());
+        drop(conn);
+        let manager = Arc::new(
+            BackupManager::new(
+                dir.path().join("backups"),
+                BackupConfig { retain_count: 100, ..Default::default() },
+            )
+            .unwrap(),
+        );
+        let barrier = Arc::new(Barrier::new(4));
+        let workers: Vec<_> = (0..4)
+            .map(|_| {
+                let (manager, barrier, source) = (manager.clone(), barrier.clone(), source.clone());
+                std::thread::spawn(move || {
+                    let conn = Connection::open(&source).unwrap();
+                    barrier.wait();
+                    manager.backup(&conn, &source).unwrap()
+                })
+            })
+            .collect();
+        let backups: Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
+        let names: std::collections::HashSet<_> =
+            backups.iter().map(|backup| &backup.metadata.filename).collect();
+        assert_eq!(names.len(), 4);
+        for backup in &backups {
+            assert!(backup.path.exists());
+            assert_eq!(
+                crate::maintenance::read_manifest(&backup.path).unwrap().checksum,
+                backup.metadata.checksum
+            );
+        }
+        assert_eq!(manager.list_backups().unwrap().len(), 4);
     }
 
     #[test]

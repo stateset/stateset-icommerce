@@ -217,6 +217,11 @@ criteria = "safe-to-deploy"
 version = "1.1.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.chacha20]]
+version = "0.10.2"
+criteria = "safe-to-deploy"
+notes = "Replaces yanked 0.10.0, which has an imported ISRG audit; the configured feeds do not cover this patch version. Exact-version bootstrap exemption for the patched resolution. A full source and cryptographic audit remains outstanding."
+
 [[exemptions.chrono]]
 version = "0.4.44"
 criteria = "safe-to-deploy"
@@ -354,8 +359,9 @@ version = "0.1.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.der]]
-version = "0.8.0"
+version = "0.8.2"
 criteria = "safe-to-deploy"
+notes = "Carries the existing bootstrap exemption forward from yanked 0.8.0 to the patched resolution. Retains Rust 1.85 support and has no build script. A full source audit remains outstanding."
 
 [[exemptions.digest]]
 version = "0.10.7"
@@ -386,8 +392,9 @@ version = "0.8.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.event-listener]]
-version = "5.4.1"
+version = "5.4.2"
 criteria = "safe-to-deploy"
+notes = "Carries the existing bootstrap exemption forward from 5.4.1 to the unsoundness fix in 5.4.2. Retains Rust 1.60 support and has no build script. A full source audit remains outstanding."
 
 [[exemptions.find-msvc-tools]]
 version = "0.1.9"
@@ -838,8 +845,9 @@ version = "0.11.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.quinn-proto]]
-version = "0.11.15"
+version = "0.11.18"
 criteria = "safe-to-deploy"
+notes = "Security update from previously exempt 0.11.15 for RUSTSEC-2026-0338 through RUSTSEC-2026-0342. Present through reqwest's optional HTTP/3 dependencies; cargo tree --workspace --all-features --target all confirms no enabled path. Upstream manifest retains Rust 1.85 and has no build script. A full source audit remains outstanding."
 
 [[exemptions.r-efi]]
 version = "5.3.0"
@@ -872,6 +880,11 @@ criteria = "safe-to-deploy"
 [[exemptions.rand]]
 version = "0.10.3"
 criteria = "safe-to-deploy"
+
+[[exemptions.rand_pcg]]
+version = "0.10.2"
+criteria = "safe-to-deploy"
+notes = "New transitive dependency of the quinn-proto 0.11.18 security update, used for BBR congestion-control randomization and upstream tests. The optional HTTP/3 branch is not enabled in this workspace, including all workspace features and targets. Upstream manifest requires Rust 1.85 and has no build script. A full source audit remains outstanding."
 
 [[exemptions.redox_syscall]]
 version = "0.5.18"
@@ -1043,8 +1056,9 @@ version = "0.6.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.spin]]
-version = "0.9.8"
+version = "0.9.9"
 criteria = "safe-to-deploy"
+notes = "Carries the existing bootstrap exemption forward from yanked 0.9.8 to the patched resolution. Retains Rust 1.38 support and has no build script. A full source audit remains outstanding."
 
 [[exemptions.spki]]
 version = "0.7.3"

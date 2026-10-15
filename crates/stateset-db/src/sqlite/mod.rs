@@ -182,23 +182,6 @@ pub struct SqliteDatabase {
     pool: Pool<SqliteConnectionManager>,
 }
 
-/// Best-effort cleanup for `:memory:` databases, which are backed by private
-/// temp files (see the pool construction below for why).
-#[derive(Debug)]
-struct EphemeralDbGuard {
-    path: std::path::PathBuf,
-}
-
-impl Drop for EphemeralDbGuard {
-    fn drop(&mut self) {
-        for suffix in ["", "-wal", "-shm"] {
-            let mut p = self.path.as_os_str().to_owned();
-            p.push(suffix);
-            let _ = std::fs::remove_file(std::path::PathBuf::from(p));
-        }
-    }
-}
-
 /// Database health status returned by [`SqliteDatabase::health_check`].
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DbHealthStatus {
@@ -279,11 +262,7 @@ impl Drop for PragmaScope {
 impl SqliteDatabase {
     /// Create a new SQLite database connection
     pub fn new(config: &DatabaseConfig) -> Result<Self, CommerceError> {
-        use std::sync::atomic::{AtomicU64, Ordering};
         use std::time::Duration;
-
-        // Counter to generate unique database names for each in-memory instance
-        static MEMORY_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
         // `:memory:` databases are backed by a PRIVATE TEMP FILE, not SQLite
         // shared-cache. Shared-cache (the only way a connection pool can see
@@ -297,10 +276,22 @@ impl SqliteDatabase {
         let is_memory = config.url == ":memory:";
         let mut ephemeral = None;
         let (manager, max_connections) = if is_memory {
-            let db_id = MEMORY_DB_COUNTER.fetch_add(1, Ordering::SeqCst);
-            let path = std::env::temp_dir()
-                .join(format!("stateset_memdb_{}_{db_id}.db", std::process::id()));
-            ephemeral = Some(std::sync::Arc::new(EphemeralDbGuard { path: path.clone() }));
+            // A PID/counter filename in a shared temp directory is predictable
+            // and can be pre-created or symlinked by another local user. Keep
+            // the whole SQLite file family in an exclusively created private
+            // directory (0700 on Unix), including future WAL/journal files.
+            let mut directory_builder = tempfile::Builder::new();
+            directory_builder.prefix("stateset_memdb_");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                directory_builder.permissions(std::fs::Permissions::from_mode(0o700));
+            }
+            let directory = directory_builder.tempdir().map_err(|error| {
+                CommerceError::DatabaseError(format!("create private SQLite directory: {error}"))
+            })?;
+            let path = directory.path().join("store.db");
+            ephemeral = Some(std::sync::Arc::new(directory));
             let manager = SqliteConnectionManager::file(&path).with_flags(
                 OpenFlags::SQLITE_OPEN_READ_WRITE
                     | OpenFlags::SQLITE_OPEN_CREATE
@@ -316,12 +307,23 @@ impl SqliteDatabase {
             (manager, config.max_connections)
         };
         let manager = manager.with_init(move |conn| {
-            // Keep the ephemeral-file guard alive as long as the POOL does
-            // (the init closure lives inside the connection manager). Tying
-            // it to `SqliteDatabase` instead deleted the temp file while
-            // accessor repos still held pool clones — lazily opened
-            // connections then recreated an EMPTY database ("no such table").
-            let _keep_ephemeral_alive = &ephemeral;
+            // The manager keeps the directory alive for future connections.
+            // Each connection also owns a guard through SQLite's safe function
+            // userdata API: r2d2 drops its manager before its idle connections,
+            // and Windows cannot remove a directory containing open DB files.
+            // SQLite releases function userdata after closing its B-trees.
+            if let Some(directory) = ephemeral.clone() {
+                conn.create_scalar_function(
+                    "__stateset_ephemeral_owner",
+                    0,
+                    rusqlite::functions::FunctionFlags::SQLITE_UTF8
+                        | rusqlite::functions::FunctionFlags::SQLITE_DIRECTONLY,
+                    move |_| {
+                        let _keep_directory_alive = &directory;
+                        Ok(0_i32)
+                    },
+                )?;
+            }
             // Use longer busy_timeout for high concurrency scenarios
             conn.execute_batch(&format!(
                 "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = {};",

@@ -25,6 +25,13 @@ rolled back to a known-good backup. Never restore over a database that a live
    `commerce.maintenance().restore_from(backup, target, options)`. Keep checksum
    verification enabled and `allow_newer_schema` disabled. A newer-schema
    rejection means the operator must use a compatible engine build.
+   Native restore checks the exact staged bytes, SQLite integrity, actual
+   migration metadata, and the manifest before publishing. Checksum bypass for
+   a lost manifest still enforces integrity and the actual schema version.
+   Existing files (including empty placeholders) require explicit native
+   `overwrite`; symlinks and targets with `-wal`, `-shm`, or `-journal` entries
+   are always refused. Stop every connection before overwriting an offline
+   database. Do not remove journals from an active database to force a restore.
 3. Open the restored path with a new `Commerce` instance. Run
    `PRAGMA integrity_check` and require the single result `ok`.
 4. Verify the manifest schema version and migration count, then validate
@@ -92,6 +99,22 @@ target supplies `down_sql`.
    execute successfully.
 
 ## Automated drill
+
+The drill terminates real SQLite worker processes at two boundaries: after
+dirty pages spill into the WAL before commit, and after a governed reservation
+commits before the caller receives its receipt. Reopening must discard the
+first transaction and replay the second without another reservation or event.
+Four independent processes also retry 64 exact fractional reservations (256
+attempts), verifying 64 effects, stock conservation, the receipt audit chain,
+SQLite integrity, and foreign keys. This is a bounded contention check, not a
+production throughput SLO or a host power-loss test. The default SQLite pool
+uses WAL with `synchronous=NORMAL`; host power-loss durability requires a
+separately reviewed storage and synchronous-mode configuration.
+
+For a larger local workload, run
+`STATESET_RECOVERY_KEYS=10000 cargo test --locked -p stateset-db --test sqlite_process_recovery multiple_processes -- --nocapture`.
+Elapsed time is diagnostic and includes worker startup; it is not a latency
+percentile. The standard evidence drill uses the default 64-key workload.
 
 The drill also exercises authenticated HTTP order creation, payment and partial
 refund in a file-backed tenant store. Retry receipts live in that same tenant

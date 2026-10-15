@@ -214,7 +214,7 @@ pub(crate) fn create_product_safe(
         .products()
         .create(input)
         .map_err(|e| set_commerce_error(&e))
-        .and_then(|p| FfiProduct::try_from_domain(&p))
+        .and_then(|p| product_summary(engine, &p))
 }
 
 /// Get a product by ID (safe implementation).
@@ -223,13 +223,31 @@ pub(crate) fn get_product_safe(engine: &Commerce, id: FfiUuid) -> Result<FfiProd
 
     let product_id: ProductId = id.into();
     match engine.products().get(product_id) {
-        Ok(Some(p)) => FfiProduct::try_from_domain(&p),
+        Ok(Some(p)) => product_summary(engine, &p),
         Ok(None) => {
             set_last_error("product not found");
             Err(FfiErrorCode::NotFound)
         }
         Err(e) => Err(set_commerce_error(&e)),
     }
+}
+
+fn product_summary(
+    engine: &Commerce,
+    product: &stateset_core::models::product::Product,
+) -> Result<FfiProduct, FfiErrorCode> {
+    let mut variants =
+        engine.products().get_variants(product.id).map_err(|e| set_commerce_error(&e))?;
+    variants.sort_by_key(|variant| (!variant.is_default, variant.created_at, variant.id));
+    let Some(variant) = variants.first() else {
+        return FfiProduct::try_from_domain(product);
+    };
+    let settings = engine.currency().get_settings().map_err(|e| set_commerce_error(&e))?;
+    let currency = settings.base_currency.code().parse().map_err(|_| {
+        set_last_error("store base currency cannot be represented by the product ABI");
+        FfiErrorCode::InvalidArgument
+    })?;
+    FfiProduct::try_from_variant(product, variant, currency)
 }
 
 /// Get inventory for a SKU (safe implementation).
@@ -758,6 +776,90 @@ mod tests {
         let engine = init_engine(":memory:").unwrap();
         let result = get_product_safe(&engine, FfiUuid::from(uuid::Uuid::new_v4()));
         assert_eq!(result.unwrap_err(), FfiErrorCode::NotFound);
+    }
+
+    #[test]
+    fn product_summary_uses_default_variant_and_store_currency() {
+        use rust_decimal_macros::dec;
+        use stateset_core::{CreateProduct, CreateProductVariant, Currency};
+        let engine = init_engine(":memory:").unwrap();
+        engine.currency().set_base_currency(Currency::EUR).unwrap();
+        let product = engine
+            .products()
+            .create(CreateProduct {
+                name: "Priced widget".into(),
+                variants: Some(vec![
+                    CreateProductVariant {
+                        sku: "OTHER-SKU".into(),
+                        price: dec!(5),
+                        is_default: Some(false),
+                        ..Default::default()
+                    },
+                    CreateProductVariant {
+                        sku: "REAL-SKU".into(),
+                        price: dec!(19.99),
+                        is_default: Some(true),
+                        ..Default::default()
+                    },
+                ]),
+                ..Default::default()
+            })
+            .unwrap();
+        let summary = get_product_safe(&engine, product.id.into()).unwrap();
+        assert_eq!(&summary.sku[..9], b"REAL-SKU\0");
+        assert_eq!(summary.price.currency, *b"EUR");
+        assert_eq!(summary.price.amount_cents, 1999);
+        unsafe { crate::types::product::stateset_product_free(summary) };
+    }
+
+    #[test]
+    fn product_summary_refuses_unrepresentable_money_and_skus() {
+        use rust_decimal_macros::dec;
+        use stateset_core::{CreateProduct, CreateProductVariant, Currency};
+        let engine = init_engine(":memory:").unwrap();
+        let product = engine
+            .products()
+            .create(CreateProduct {
+                name: "Exact widget".into(),
+                variants: Some(vec![CreateProductVariant {
+                    sku: "EXACT-SKU".into(),
+                    price: dec!(0.001),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            get_product_safe(&engine, product.id.into()).unwrap_err(),
+            FfiErrorCode::InvalidArgument
+        );
+        engine.currency().set_base_currency(Currency::BTC).unwrap();
+        let summary = get_product_safe(&engine, product.id.into()).unwrap();
+        assert_eq!(summary.price.currency, *b"BTC");
+        assert_eq!(summary.price.amount_cents, 100_000);
+        unsafe { crate::types::product::stateset_product_free(summary) };
+
+        let mut variant = engine.products().get_variants(product.id).unwrap().remove(0);
+        variant.sku = "X".repeat(64);
+        assert_eq!(
+            FfiProduct::try_from_variant(
+                &product,
+                &variant,
+                stateset_primitives::CurrencyCode::USD
+            )
+            .unwrap_err(),
+            FfiErrorCode::InvalidArgument
+        );
+        variant.sku = "BROKEN\0SKU".into();
+        assert_eq!(
+            FfiProduct::try_from_variant(
+                &product,
+                &variant,
+                stateset_primitives::CurrencyCode::USD
+            )
+            .unwrap_err(),
+            FfiErrorCode::InvalidArgument
+        );
     }
 
     #[test]

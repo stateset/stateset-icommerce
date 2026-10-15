@@ -311,7 +311,7 @@ async function main() {
 
   // Build one server at boot so the first real request does not pay for the
   // ~940 one-time schema conversions cached inside the factory.
-  createStatesetV2McpServer({
+  const warmupServer = createStatesetV2McpServer({
     commerce,
     dbPath: storageDbPath,
     allowApply,
@@ -325,6 +325,7 @@ async function main() {
       : [],
     createServer: createStatesetMcpServer,
   });
+  await warmupServer.close();
 
   const startedAt = Date.now();
 
