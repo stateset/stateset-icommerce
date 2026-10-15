@@ -93,7 +93,7 @@ workspace membership because they require host runtimes or headers.
 | `tools` | 98 |
 | `commands` | 89 |
 | `a2a` | 62 |
-| `mcp` | 33 |
+| `mcp` | 34 |
 | `channels` | 29 |
 | `sync` | 26 |
 | `adapters` | 20 |
