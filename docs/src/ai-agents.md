@@ -543,6 +543,10 @@ then require `--apply`), `--read-only` to disable writes, `--no-seed` for an
 empty store, `--strict-protocol` to refuse 2025-era clients.
 `GET /health` reports status for deploy probes.
 
+Use `--host ::1` for IPv6 loopback (`http://[::1]:8090/mcp`). Pass `--port 0`
+to let the OS choose an available port; the startup message reports the actual
+endpoint. Port arguments must contain only decimal digits in the range 0–65535.
+
 Three request guards sit in front of the MCP handler, in the order
 Host → Origin → Auth:
 

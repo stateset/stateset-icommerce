@@ -63,6 +63,7 @@ import {
   keyFingerprint,
 } from '../src/mcp/http-api-keys.js';
 import { DEFAULT_MCP_TOOL_PROFILE } from '../src/mcp/default-tool-profile.js';
+import { listenUrl, parseListenPort, requestPath } from '../src/mcp/http-listen.js';
 
 const HELP = `
 StateSet Commerce MCP Server — Streamable HTTP (protocol 2026-07-28)  v${CLI_VERSION}
@@ -72,7 +73,7 @@ USAGE:
 
 OPTIONS:
   --host <host>          Bind host (default: 127.0.0.1; use 0.0.0.0 to expose)
-  --port <port>          Bind port (default: 8090)
+  --port <port>          Bind port (default: 8090; 0 chooses an available port)
   --db <path>            Shared store path (default: :memory:, seeded at boot)
   --profile <name>       Tool profile: core, operations, finance, agents, all
                          (default: core -- the stable tier; all = every tier)
@@ -170,6 +171,10 @@ async function main() {
     process.exit(0);
   }
 
+  // Validate the entire argument before loading the native engine or opening
+  // a store. parseInt would silently accept values such as "8090garbage".
+  const port = parseListenPort(values.port);
+
   const [
     { Commerce },
     { createMcpHandler },
@@ -189,7 +194,6 @@ async function main() {
   ]);
 
   const host = values.host || '127.0.0.1';
-  const port = Number.parseInt(values.port || '8090', 10);
   const dbPath = values.db || ':memory:';
   const ephemeralDb = dbPath === ':memory:';
   // Native Commerce and the JS A2A runtime use independent SQLite
@@ -339,9 +343,13 @@ async function main() {
 
   const server = createServer((req, res) => {
     void (async () => {
-      const url = new URL(req.url || '/', `http://${host}:${port}`);
+      const pathname = requestPath(req.url);
+      if (pathname === null) {
+        sendJson(res, 400, { error: 'invalid request target' });
+        return;
+      }
 
-      if (url.pathname === '/health') {
+      if (pathname === '/health') {
         // Open for deploy probes, but once auth is on the operational details
         // (store path, write mode) are only for authenticated callers.
         const authed = !validateAuth || validateAuth(req, nullRes());
@@ -370,7 +378,7 @@ async function main() {
         return;
       }
 
-      if (url.pathname !== '/mcp') {
+      if (pathname !== '/mcp') {
         sendJson(res, 404, { error: 'not found', hint: 'MCP endpoint is /mcp; status is /health' });
         return;
       }
@@ -397,8 +405,12 @@ async function main() {
     server.listen(port, host, () => resolve());
   });
 
+  const address = server.address();
+  const boundPort = typeof address === 'object' && address ? address.port : port;
+  const baseUrl = listenUrl(host, boundPort);
+
   console.error(
-    `[stateset-mcp-http] stateless MCP (protocol 2026-07-28) on http://${host}:${port}/mcp ` +
+    `[stateset-mcp-http] stateless MCP (protocol 2026-07-28) on ${baseUrl}/mcp ` +
       `(db: ${dbPath}, seed: ${seed && ephemeralDb ? 'demo data' : 'none'}, ` +
       `writes: ${allowApply ? 'enabled' : 'read-only'}, ` +
       `legacy 2025 clients: ${values['strict-protocol'] ? 'rejected' : 'served statelessly'}, ` +
