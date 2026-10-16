@@ -606,15 +606,18 @@ async fn completion_requires_dispositions_and_quarantine_holds_without_bins() {
         )
         .await
         .unwrap();
-    let events = db.kernel_outbox().pending_async(1000).await.unwrap();
-    let completion = events
-        .iter()
-        .find(|e| {
-            e.aggregate_id == ret.id.to_string()
-                && e.payload["status_after"] == ReturnStatus::Completed.to_string()
-        })
-        .expect("completion event");
-    assert_eq!(completion.payload["undispositioned_units"], 3);
+    // Looked up by aggregate: a window over the shared outbox
+    // (`pending_async(n)`) misses the fact once other suites fill it.
+    let completion: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM kernel_outbox WHERE aggregate_id = $1 \
+         AND payload->>'status_after' = $2",
+    )
+    .bind(ret.id.to_string())
+    .bind(ReturnStatus::Completed.to_string())
+    .fetch_one(db.pool())
+    .await
+    .expect("completion event");
+    assert_eq!(completion["undispositioned_units"], 3);
 }
 
 #[tokio::test]
