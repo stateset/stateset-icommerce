@@ -37,7 +37,7 @@ sqlx = { workspace = true, optional = true, default-features = false, features =
 
 # Event streaming dependencies
 reqwest = { version = "0.12", features = ["json"], default-features = false, optional = true }
-hmac = { version = "0.12", optional = true }
+hmac = { version = "0.13", optional = true }
 sha2 = { version = "0.10", optional = true }
 hex = { version = "0.4", optional = true }
 
