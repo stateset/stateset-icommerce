@@ -94,8 +94,7 @@ async fn stock_posting_refuses_suppressed_or_rewritten_inventory_writes() {
             .await
             .unwrap();
         let sku = format!("POST-FAIL-{unique}");
-        let item = db
-            .inventory()
+        db.inventory()
             .create_item_async(CreateInventoryItem {
                 sku: sku.clone(),
                 name: "Posting".into(),
@@ -140,13 +139,16 @@ async fn stock_posting_refuses_suppressed_or_rewritten_inventory_writes() {
         };
         let facts_before = event_count().await.unwrap();
         let name = format!("posting_{}", unique.simple());
+        // Select only this locally generated fixture SKU. Keep database-derived
+        // identifiers in bound queries rather than interpolating them into DDL.
+        let item_selector = format!("(SELECT id FROM inventory_items WHERE sku = '{sku}')");
         let (table, operation, timing, body) = match case {
             0 => (
                 "inventory_reservations",
                 "UPDATE",
                 "BEFORE",
                 format!(
-                    "IF NEW.id = '{hold_id}' AND NEW.status = 'fulfilled' THEN RETURN NULL; END IF;"
+                    "IF NEW.item_id = {item_selector} AND NEW.status = 'fulfilled' THEN RETURN NULL; END IF;"
                 ),
             ),
             1 => (
@@ -154,8 +156,7 @@ async fn stock_posting_refuses_suppressed_or_rewritten_inventory_writes() {
                 "INSERT",
                 "BEFORE",
                 format!(
-                    "IF NEW.reference_id = '{}' AND NEW.transaction_type = 'shipment' THEN RETURN NULL; END IF;",
-                    order.id
+                    "IF NEW.item_id = {item_selector} AND NEW.transaction_type = 'shipment' THEN RETURN NULL; END IF;"
                 ),
             ),
             2 => (
@@ -163,22 +164,23 @@ async fn stock_posting_refuses_suppressed_or_rewritten_inventory_writes() {
                 "UPDATE",
                 "BEFORE",
                 format!(
-                    "IF NEW.id = '{hold_id}' AND NEW.status = 'fulfilled' THEN NEW.status := OLD.status; END IF;"
+                    "IF NEW.item_id = {item_selector} AND NEW.status = 'fulfilled' THEN NEW.status := OLD.status; END IF;"
                 ),
             ),
             3 => (
                 "inventory_balances",
                 "UPDATE",
                 "BEFORE",
-                format!("IF NEW.item_id = {} THEN NEW.quantity_on_hand := 99; END IF;", item.id),
+                format!(
+                    "IF NEW.item_id = {item_selector} THEN NEW.quantity_on_hand := 99; END IF;"
+                ),
             ),
             4 => (
                 "inventory_transactions",
                 "INSERT",
                 "BEFORE",
                 format!(
-                    "IF NEW.reference_id = '{}' AND NEW.transaction_type = 'shipment' THEN NEW.quantity := 0; END IF;",
-                    order.id
+                    "IF NEW.item_id = {item_selector} AND NEW.transaction_type = 'shipment' THEN NEW.quantity := 0; END IF;"
                 ),
             ),
             _ => (
@@ -186,8 +188,7 @@ async fn stock_posting_refuses_suppressed_or_rewritten_inventory_writes() {
                 "INSERT",
                 "AFTER",
                 format!(
-                    "IF NEW.aggregate_id = '{hold_id}' AND NEW.event_type = 'inventory.reservation_fulfilled.v1' THEN UPDATE inventory_balances SET quantity_on_hand = 99 WHERE item_id = {}; END IF;",
-                    item.id
+                    "IF NEW.aggregate_id IN (SELECT id::text FROM inventory_reservations WHERE item_id = {item_selector}) AND NEW.event_type = 'inventory.reservation_fulfilled.v1' THEN UPDATE inventory_balances SET quantity_on_hand = 99 WHERE item_id = {item_selector}; END IF;"
                 ),
             ),
         };

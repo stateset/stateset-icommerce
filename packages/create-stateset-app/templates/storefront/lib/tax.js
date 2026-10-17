@@ -47,7 +47,7 @@ function normalizeRateTable(rates) {
   );
 }
 
-function calculateCartWithRates(items, stateCode, rates, decimals = 6) {
+function calculateCartWithRates(items, stateCode, rates, decimals = 2) {
   const code = String(stateCode || '').toUpperCase();
   if (!Object.prototype.hasOwnProperty.call(rates, code)) {
     throw new Error(`Tax is not configured for ${code || 'the shipping jurisdiction'}`);
@@ -83,7 +83,7 @@ export function createRateTableTaxProvider(rates, source = 'operator') {
         String(stateCode || '').toUpperCase(),
       );
     },
-    calculateCart(items, stateCode, decimals = 6) {
+    calculateCart(items, stateCode, decimals = 2) {
       return calculateCartWithRates(items, stateCode, normalizedRates, decimals);
     },
   });
@@ -105,7 +105,7 @@ export function hasConfiguredTaxRate(stateCode) {
   return createRateTableTaxProvider(STARTER_TAX_RATES, 'starter').hasJurisdiction(stateCode);
 }
 
-export function calculateTax(subtotal, stateCode, decimals = 6) {
+export function calculateTax(subtotal, stateCode, decimals = 2) {
   const rate = STARTER_TAX_RATES[String(stateCode || '').toUpperCase()] || '0';
   const subtotalUnits = decimalToUnits(subtotal, decimals);
   const rateUnits = decimalToUnits(rate, 6);
@@ -117,7 +117,7 @@ export function calculateTax(subtotal, stateCode, decimals = 6) {
   };
 }
 
-export function calculateCartTax(items, stateCode, decimals = 6) {
+export function calculateCartTax(items, stateCode, decimals = 2) {
   return createRateTableTaxProvider(STARTER_TAX_RATES, 'starter').calculateCart(
     items,
     stateCode,

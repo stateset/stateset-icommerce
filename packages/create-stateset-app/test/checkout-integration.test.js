@@ -7,6 +7,7 @@ import {
 } from '../templates/storefront/lib/checkout-service.js';
 import { getTaxProvider } from '../templates/storefront/lib/tax.js';
 import { getShippingProvider } from '../templates/storefront/lib/shipping.js';
+import { addDecimals, multiplyDecimal } from '../templates/storefront/lib/money.js';
 
 const txHash = `0x${'ab'.repeat(32)}`;
 const payerAddress = '0x1111111111111111111111111111111111111111';
@@ -77,6 +78,12 @@ function createStatefulCommerce({ failPaymentCompletionOnce = false } = {}) {
           orderNumber: `ORD-${state.orders.length + 1}`,
           status: 'pending',
           ...input,
+          totalAmountExact: addDecimals(
+            input.items.flatMap((item) => [
+              multiplyDecimal(item.unitPrice, item.quantity),
+              item.taxAmount || '0',
+            ]),
+          ),
         };
         state.orders.push(order);
         return order;
@@ -161,6 +168,7 @@ test('complete checkout records one customer, order, payment, and closed cart', 
   assert.equal(state.customers[0].email, 'ada@example.com');
   assert.equal(state.orders.length, 1);
   assert.equal(state.orders[0].stockPolicy, 'reject_if_insufficient');
+  assert.equal(state.orders[0].currency, 'USD');
   assert.deepEqual(state.orders[0].shippingAddress, {
     line1: '123 Computing Way',
     line2: 'Suite 2',
@@ -171,6 +179,7 @@ test('complete checkout records one customer, order, payment, and closed cart', 
   });
   assert.equal(state.payments.length, 1);
   assert.equal(state.payments[0].amountExact, '21.45');
+  assert.equal(state.payments[0].currency, 'USD');
   assert.equal(state.payments[0].status, 'completed');
   assert.equal(state.carts.get('cart-1').status, 'cancelled');
 });
@@ -277,4 +286,50 @@ test('shipping validation rejects malformed ZIP codes before settlement', async 
     }),
     (error) => error instanceof CheckoutError && error.status === 422,
   );
+});
+
+test('fractional-cent taxes settle the exact sum of posted USD line amounts', async () => {
+  const { commerce, state } = createStatefulCommerce();
+  state.cartItems.set('cart-1', [
+    { sku: 'SKU-1', quantity: 1, unitPriceExact: '29.99' },
+    { sku: 'SKU-2', quantity: 1, unitPriceExact: '0.05' },
+  ]);
+  const input = checkoutInput(commerce);
+  input.verifySettlement = async ({ totals }) => {
+    assert.equal(totals.subtotal, '30.04');
+    assert.equal(totals.tax, '2.17');
+    assert.equal(totals.total, '32.21');
+    assert.deepEqual(
+      totals.lines.map((line) => line.tax),
+      ['2.17', '0'],
+    );
+    return { confirmations: 3, logIndex: 7 };
+  };
+  await executeCheckout(input);
+  assert.equal(state.orders[0].totalAmountExact, '32.21');
+  assert.equal(state.payments[0].amountExact, '32.21');
+  assert.deepEqual(
+    state.orders[0].items.map((item) => item.taxAmount),
+    ['2.17', '0'],
+  );
+});
+
+test('fractional-cent shipping is rejected in configuration and before settlement', async () => {
+  assert.throws(
+    () =>
+      getShippingProvider({
+        STATESET_SHIPPING_METHODS_JSON: '[{"id":"ground","label":"Ground","amount":"0.001"}]',
+      }),
+    /more than 2 decimal places/,
+  );
+  const { commerce, state } = createStatefulCommerce();
+  const input = checkoutInput(commerce);
+  input.shippingProvider = { quote: () => ({ id: 'ground', label: 'Ground', amount: '0.001' }) };
+  input.verifySettlement = async () => assert.fail('invalid USD quote must not verify');
+  await assert.rejects(
+    executeCheckout(input),
+    (error) => error instanceof CheckoutError && error.status === 422,
+  );
+  assert.equal(state.orders.length, 0);
+  assert.equal(state.payments.length, 0);
 });

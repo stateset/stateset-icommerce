@@ -84,9 +84,39 @@ test('cart tax is calculated from authoritative exact line amounts', () => {
     { subtotal: result.subtotal, tax: result.tax, total: result.total },
     {
       subtotal: '20.5',
-      tax: '1.48625',
-      total: '21.98625',
+      tax: '1.48',
+      total: '21.98',
     },
+  );
+});
+
+test('USD line taxes round half-up to cents before their posted total is summed', () => {
+  const result = getTaxProvider({ STATESET_TAX_RATES_JSON: '{"CA":"0.1"}' }).calculateCart(
+    [
+      { unitPrice: '0.05', quantity: 1 },
+      { unitPrice: '0.05', quantity: 1 },
+    ],
+    'CA',
+  );
+  assert.deepEqual(
+    result.lines.map((line) => line.tax),
+    ['0.01', '0.01'],
+  );
+  assert.equal(result.tax, '0.02');
+  assert.equal(result.total, '0.12');
+});
+
+test('checkout cart identity must match a complete notes field, not a cart-id prefix', async () => {
+  await assert.rejects(
+    finishRecordedCheckout(
+      {
+        orders: { get: async () => ({ id: 'order-1', notes: 'Cart: cart-10', status: 'pending' }) },
+        payments: { markCompleted: async () => assert.fail('conflicting payment must not change') },
+      },
+      { id: 'payment-1', orderId: 'order-1', status: 'pending' },
+      'cart-1',
+    ),
+    /already used for another checkout/,
   );
 });
 

@@ -4,7 +4,7 @@ import {
   finishRecordedCheckout,
 } from './checkout-finalization.js';
 import { getTaxProvider } from './tax.js';
-import { addDecimals } from './money.js';
+import { addDecimals, decimalToUnits } from './money.js';
 import { getShippingProvider, validateShippingAddress } from './shipping.js';
 
 export class CheckoutError extends Error {
@@ -122,10 +122,22 @@ export async function executeCheckout({
     quantity: item.quantity,
     unitPrice: item.unitPriceExact || String(item.unitPrice),
   }));
-  const itemTotals = taxProvider.calculateCart(pricedItems, normalizedAddress.state);
+  let itemTotals;
+  try {
+    // Round each line's tax in USD cents, then sum those exact posted amounts.
+    itemTotals = taxProvider.calculateCart(pricedItems, normalizedAddress.state, 2);
+    for (const item of itemTotals.lines) {
+      decimalToUnits(item.unitPrice, 2);
+      decimalToUnits(item.tax, 2);
+    }
+    decimalToUnits(itemTotals.total, 2);
+  } catch (error) {
+    throw new CheckoutError(error instanceof Error ? error.message : 'Invalid USD tax quote', 422);
+  }
   let shippingQuote;
   try {
     shippingQuote = shippingProvider.quote(normalizedAddress, shippingMethodId);
+    decimalToUnits(shippingQuote.amount, 2);
   } catch (error) {
     throw new CheckoutError(
       error instanceof Error ? error.message : 'Invalid shipping method',

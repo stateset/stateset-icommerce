@@ -113,7 +113,8 @@ function normalizeMethods(methods) {
       if (typeof method.amount !== 'string')
         throw new Error('Shipping amounts must be decimal strings');
       const amount = String(method.amount ?? '').trim();
-      decimalToUnits(amount, 6);
+      // The ledger is USD; settlement precision must not admit fractional cents.
+      decimalToUnits(amount, 2);
       const countries = (method.countries || ['US']).map((country) =>
         String(country).trim().toUpperCase(),
       );

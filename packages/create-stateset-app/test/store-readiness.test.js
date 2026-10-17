@@ -74,6 +74,7 @@ for (const [key, value] of [
   ['STATESET_TAX_RATES_JSON', '{"CA":"1.01"}'],
   ['STATESET_SHIPPING_METHODS_JSON', '[{"id":"ground","label":"Ground","amount":1.25}]'],
   ['STATESET_SHIPPING_METHODS_JSON', '[{"id":"ground","label":"Ground","amount":"1.0000001"}]'],
+  ['STATESET_SHIPPING_METHODS_JSON', '[{"id":"ground","label":"Ground","amount":"0.001"}]'],
   [
     'STATESET_SHIPPING_METHODS_JSON',
     '[{"id":"ground","label":"Ground","amount":"0","countries":["CA"]}]',

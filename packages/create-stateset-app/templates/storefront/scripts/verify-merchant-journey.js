@@ -19,7 +19,7 @@ try {
   const product = await commerce.products.create({
     name: 'Merchant check',
     slug: 'merchant-check',
-    variants: [{ sku, priceExact: '10.00', isDefault: true }],
+    variants: [{ sku, priceExact: '29.99', isDefault: true }],
   });
   await commerce.products.activate(product.id);
   await commerce.inventory.createItem({ sku, name: 'Merchant check', initialQuantity: 3 });
@@ -29,7 +29,7 @@ try {
     sku,
     name: 'Merchant check',
     quantity: 2,
-    unitPrice: '10.00',
+    unitPrice: '29.99',
   });
   const request = {
     cartId: cart.id,
@@ -46,16 +46,16 @@ try {
       country: 'US',
     },
     shippingMethodId: 'ground',
-    taxProvider: getTaxProvider({ STATESET_TAX_RATES_JSON: '{"CA":"0.10"}' }),
+    taxProvider: getTaxProvider({ STATESET_TAX_RATES_JSON: '{"CA":"0.0725"}' }),
     shippingProvider: getShippingProvider({
       STATESET_SHIPPING_METHODS_JSON:
         '[{"id":"ground","label":"Ground","amount":"5","countries":["US"]}]',
     }),
     verifySettlement: async ({ totals }) => {
-      assert.equal(totals.subtotal, '20');
-      assert.equal(totals.tax, '2');
+      assert.equal(totals.subtotal, '59.98');
+      assert.equal(totals.tax, '4.35');
       assert.equal(totals.shipping, '5');
-      assert.equal(totals.total, '27');
+      assert.equal(totals.total, '69.33');
       return { confirmations: 3, logIndex: 1 };
     },
   };
@@ -70,7 +70,9 @@ try {
   const stock = await commerce.inventory.getStock(sku);
   assert.equal(stock.totalAvailable, '1');
   const [payment] = await commerce.payments.list();
-  assert.equal(decimalToUnits(payment.amountExact), 27000000n);
+  assert.equal(payment.currency.toUpperCase(), 'USD');
+  assert.equal((await commerce.orders.get(checkedOut.orderId)).currency.toUpperCase(), 'USD');
+  assert.equal(decimalToUnits(payment.amountExact), 69330000n);
   await commerce.orders.updateStatus(checkedOut.orderId, 'processing');
   const refundRequest = {
     paymentId: payment.id,
@@ -100,7 +102,7 @@ try {
       result: 'passed',
       settlement: 'simulated-no-funds-transferred',
       assertions: [
-        'native checkout with exact tax and paid shipping',
+        'native USD checkout with rounded fractional-cent tax and paid shipping',
         'one customer/order/payment on replay',
         'inventory allocation conserved',
         'refund retry changes balance once',

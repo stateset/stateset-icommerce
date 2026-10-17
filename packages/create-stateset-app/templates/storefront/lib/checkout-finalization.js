@@ -27,11 +27,18 @@ export async function claimPaymentForOrder({ commerce, order, paymentInput }) {
   return { conflict: false, payment };
 }
 
+export function orderMatchesCheckoutCart(order, cartId) {
+  return (
+    typeof order.notes === 'string' &&
+    order.notes.split(';').some((part) => part.trim() === `Cart: ${cartId}`)
+  );
+}
+
 export async function finishRecordedCheckout(commerce, payment, cartId) {
   if (!payment.orderId) throw new Error('Settlement claim has no order');
   const order = await commerce.orders.get(payment.orderId);
   if (!order) throw new Error('Settlement order was not found');
-  if (!order.notes?.includes(`Cart: ${cartId}`)) {
+  if (!orderMatchesCheckoutCart(order, cartId)) {
     throw new Error('Settlement was already used for another checkout');
   }
   const paymentStatus = String(payment.status).toLowerCase();

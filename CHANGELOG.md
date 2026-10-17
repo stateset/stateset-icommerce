@@ -10,6 +10,11 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Fixed
 
+- Include all six simulation tools in the lazy tool registry, preserving parity
+  with the static MCP catalog.
+- Round starter storefront line taxes to USD cents before quoting settlement
+  or creating native orders, and reject fractional-cent shipping charges before
+  settlement verification. Match complete cart identities on checkout retries.
 - Require isolated, wheel-only Python package smoke installs so source builds
   cannot hide incompatible wheels or workspace imports. Use host-native wheel
   tags for local package validation.

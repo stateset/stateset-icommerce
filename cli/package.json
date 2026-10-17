@@ -113,7 +113,7 @@
     "demo:merchant": "node examples/durable-merchant.mjs",
     "demo:purchase": "node examples/durable-purchase.mjs",
     "test:integration": "node --test test/integration/*.test.js",
-    "test:api-coverage": "node --test test/integration/mcp-tool-coverage.test.js test/integration/mcp-api-coverage.test.js test/integration/mcp-server-registry.test.js test/integration/tool-domain-registry.test.js test/integration/commands.test.js test/integration/api-command-coverage.test.js test/integration/tool-backed-command-coverage.test.js test/integration/tool-backed-command-dispatch.test.js test/unit/http-gateway-route-registry.test.js",
+    "test:api-coverage": "node --test test/integration/mcp-tool-coverage.test.js test/integration/mcp-api-coverage.test.js test/integration/mcp-server-registry.test.js test/integration/tool-domain-registry.test.js test/integration/commands.test.js test/integration/api-command-coverage.test.js test/integration/tool-backed-command-coverage.test.js test/integration/tool-backed-command-dispatch.test.js test/unit/http-gateway-route-registry.test.js test/unit/tool-registry.test.js",
     "test:e2e": "node --test test/e2e/*.test.js",
     "test:plugins": "node --test tests/plugin-system.test.js",
     "test:skills": "node --test tests/skills-system.test.js",

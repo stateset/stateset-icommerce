@@ -105,9 +105,11 @@ The tax provider is intentionally fail-closed: checkout is enabled only for
 explicitly configured states. `STATESET_TAX_RATES_JSON` replaces the complete
 starter table, including support for configured zero-rate jurisdictions. For
 production tax engines, implement the same provider interface in `lib/tax.js`.
+Line taxes round half-up to USD cents before being summed; the tax quote,
+verified USDC settlement and native order all use those same posted amounts.
 
 Shipping uses the same operator-owned pattern. The JSON configuration replaces
-the free starter method, validates method identifiers and exact amounts, and is
+the free starter method, validates method identifiers and exact USD-cent amounts, and is
 recomputed by the server during settlement verification. Carrier API adapters
 can implement the provider interface in `lib/shipping.js`.
 
