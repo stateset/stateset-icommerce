@@ -656,6 +656,70 @@ fn receipt_insert_failure_rolls_back_payment_and_event() {
 }
 
 #[test]
+fn silently_suppressed_required_rows_roll_back_apply_and_preserve_preview() {
+    for (trigger, promotion) in [
+        (
+            "CREATE TRIGGER suppress_required BEFORE INSERT ON kernel_outbox BEGIN SELECT RAISE(IGNORE); END;",
+            false,
+        ),
+        (
+            "CREATE TRIGGER suppress_required BEFORE INSERT ON kernel_receipt_audit_log BEGIN SELECT RAISE(IGNORE); END;",
+            false,
+        ),
+        (
+            "CREATE TRIGGER suppress_required BEFORE INSERT ON kernel_receipts BEGIN SELECT RAISE(IGNORE); END;",
+            false,
+        ),
+        (
+            "CREATE TRIGGER suppress_required BEFORE UPDATE ON kernel_receipts BEGIN SELECT RAISE(IGNORE); END;",
+            true,
+        ),
+    ] {
+        let db = SqliteDatabase::in_memory().unwrap();
+        let executor = db.kernel_executor(payment_policy());
+        let mut command = payment_command("suppressed-required-row", dec!(0.10));
+        if promotion {
+            assert_eq!(
+                executor.execute_create_payment(&command).unwrap().status,
+                ExecutionStatus::Previewed
+            );
+        }
+        db.conn().unwrap().execute_batch(trigger).unwrap();
+        command.mode = ExecutionMode::Apply;
+        assert!(executor.execute_create_payment(&command).is_err());
+        let counts = || {
+            let conn = db.conn().unwrap();
+            conn.query_row(
+                "SELECT (SELECT COUNT(*) FROM payments), (SELECT COUNT(*) FROM kernel_outbox),
+                    (SELECT COUNT(*) FROM kernel_receipts), (SELECT COUNT(*) FROM kernel_receipt_audit_log)",
+                [], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?)),
+            ).unwrap()
+        };
+        let retained = i64::from(promotion);
+        assert_eq!(counts(), (0, 0, retained, retained));
+        assert!(db.kernel_outbox().verify_audit_chain().unwrap().valid);
+        if promotion {
+            let preview = db
+                .kernel_outbox()
+                .receipt_by_idempotency_key(&command.idempotency_key)
+                .unwrap()
+                .unwrap();
+            assert_eq!(preview.receipt["status"], "previewed");
+        }
+        db.conn().unwrap().execute_batch("DROP TRIGGER suppress_required").unwrap();
+        let first = executor.execute_create_payment(&command).unwrap();
+        assert_eq!(first.status, ExecutionStatus::Succeeded);
+        let committed = counts();
+        assert_eq!(committed.0, 1);
+        assert_eq!(committed.2, 1);
+        assert_eq!(committed.3, retained + 1);
+        assert_eq!(executor.execute_create_payment(&command).unwrap().receipt_id, first.receipt_id);
+        assert_eq!(counts(), committed);
+        assert!(db.kernel_outbox().verify_audit_chain().unwrap().valid);
+    }
+}
+
+#[test]
 fn reservation_lifecycle_emits_exact_transactional_events() {
     let db = SqliteDatabase::in_memory().expect("create database");
     db.inventory()

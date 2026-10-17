@@ -1,4 +1,5 @@
 import { decimalToUnits, unitsToDecimal } from './money.js';
+import { isSupportedUsState } from './shipping.js';
 
 // Starter rates are intentionally explicit. Production stores should replace
 // this table with an operator-owned tax service and nexus configuration.
@@ -24,11 +25,17 @@ function normalizeRateTable(rates) {
   if (!rates || typeof rates !== 'object' || Array.isArray(rates)) {
     throw new Error('Tax rates must be an object keyed by two-letter jurisdiction code');
   }
+  const jurisdictions = new Set();
   return Object.freeze(
     Object.fromEntries(
       Object.entries(rates).map(([jurisdiction, rate]) => {
         const code = String(jurisdiction).trim().toUpperCase();
-        if (!/^[A-Z]{2}$/.test(code)) throw new Error(`Invalid tax jurisdiction: ${jurisdiction}`);
+        if (!isSupportedUsState(code))
+          throw new Error('Tax jurisdictions must be supported US state codes');
+        if (jurisdictions.has(code))
+          throw new Error('Tax jurisdiction codes must be unique after normalization');
+        jurisdictions.add(code);
+        if (typeof rate !== 'string') throw new Error('Tax rates must be decimal strings');
         const exactRate = String(rate).trim();
         const rateUnits = decimalToUnits(exactRate, 6);
         if (rateUnits < 0n || rateUnits > 1000000n) {

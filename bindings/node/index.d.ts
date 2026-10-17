@@ -3611,16 +3611,22 @@ export interface CreatePurchaseOrderItemInput {
   sku: string
   name: string
   quantity: number
-  unitCost: number
+  /** Legacy float input. Prefer `unitCostExact` for money. */
+  unitCost?: number
+  /** Exact base-10 unit cost; takes precedence over `unitCost`. */
+  unitCostExact?: string
 }
 export interface CreatePurchaseOrderInput {
   supplierId: string
   items: Array<CreatePurchaseOrderItemInput>
   notes?: string
+  /** ISO 4217 currency code; defaults to the supplier currency. */
+  currency?: string
 }
 export interface PurchaseOrderOutput {
   id: string
   poNumber: string
+  currency: string
   supplierId: string
   status: PurchaseOrderStatus
   /** @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0. */
@@ -3633,6 +3639,19 @@ export interface PurchaseOrderOutput {
   totalExact: string
   createdAt: string
   updatedAt: string
+}
+/** Exact purchase-order line quantities and money, suitable for planning. */
+export interface PurchaseOrderItemOutput {
+  id: string
+  sku: string
+  quantityOrderedExact: string
+  quantityReceivedExact: string
+  unitCostExact: string
+  lineTotalExact: string
+}
+export interface ReceivePurchaseOrderItemInput {
+  itemId: string
+  quantityReceivedExact: string
 }
 export interface IngestLineItemInput {
   externalSku: string
@@ -6102,7 +6121,9 @@ export declare class Backorders {
    * available at its source location.
    *
    * Returns the allocations created, which is empty when nothing is
-   * available or no backorder is open. Call it after stock arrives.
+   * available or no unallocated backorder is open. Inventory receipts
+   * trigger this sweep automatically; call it to retry a failed sweep or
+   * after changing a backorder's source location.
    */
   autoAllocateInventory(sku: string): Promise<Array<BackorderAllocationOutput>>
   /** Reserve a specific quantity of stock against one backorder. */
@@ -6687,6 +6708,11 @@ export declare class Inventory {
   adjust(sku: string, quantity: number, reason: string): Promise<void>
   reserve(sku: string, quantity: number, referenceType: string, referenceId: string, expiresInSeconds?: number | undefined | null): Promise<ReservationOutput>
   confirmReservation(reservationId: string): Promise<void>
+  /**
+   * Atomically consume confirmed holds after full shipment. Safe to retry;
+   * shipping status alone does not post the physical stock transaction.
+   */
+  fulfillOrderStock(orderId: string): Promise<void>
   releaseReservation(reservationId: string): Promise<void>
 }
 export declare class Invoices {
@@ -7001,6 +7027,13 @@ export declare class PurchaseOrders {
   approve(id: string, approvedBy: string): Promise<PurchaseOrderOutput>
   send(id: string): Promise<PurchaseOrderOutput>
   cancel(id: string): Promise<PurchaseOrderOutput>
+  /** Read the persisted purchase-order lines with exact decimal fields. */
+  getItems(id: string): Promise<Array<PurchaseOrderItemOutput>>
+  /**
+   * Record received quantities on a sent purchase order. This updates the PO;
+   * warehouse stock must be posted separately through inventory/receiving.
+   */
+  receive(id: string, items: Array<ReceivePurchaseOrderItemInput>): Promise<PurchaseOrderOutput>
   count(): Promise<number>
 }
 export declare class Purgatory {

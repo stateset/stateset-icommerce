@@ -143,7 +143,7 @@ export async function executeCheckout({
   if (existingPayment) {
     if (
       existingPayment.amountExact !== totals.total ||
-      String(existingPayment.currency).toUpperCase() !== 'USDC'
+      String(existingPayment.currency).toUpperCase() !== 'USD'
     ) {
       throw new CheckoutError('Settlement was already used for another checkout', 409);
     }
@@ -167,10 +167,12 @@ export async function executeCheckout({
     normalizedAddress.firstName,
     normalizedAddress.lastName,
   );
+  // Prices and the commerce ledger are denominated in USD. Settlement uses
+  // USDC on Base at the storefront's explicit one-token-per-dollar rate.
   const order = await commerce.orders.createExact({
     customerId: customer.id,
     cartId,
-    currency: 'USDC',
+    currency: 'USD',
     stockPolicy: 'reject_if_insufficient',
     shippingMethod: shippingQuote.id,
     shippingAddress: {
@@ -213,7 +215,7 @@ export async function executeCheckout({
       customerId: customer.id,
       idempotencyKey,
       amount: totals.total,
-      currency: 'USDC',
+      currency: 'USD',
       paymentMethod: 'crypto',
     },
   });

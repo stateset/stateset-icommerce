@@ -62,6 +62,7 @@ export const EXPERIMENTAL_REASONS = Object.freeze({
 export const DOMAIN_TIERS = Object.freeze({
   // core -- the default surface
   customers: 'core',
+  simulations: 'core',
   orders: 'core',
   products: 'core',
   inventory: 'core',

@@ -2,10 +2,198 @@
 
 AI-powered command-line interface for autonomous commerce operations.
 
-**Version:** 1.38.2
+**Version:** 1.39.0
 
 [![npm version](https://img.shields.io/npm/v/@stateset/cli.svg)](https://www.npmjs.com/package/@stateset/cli)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
+
+## Native commerce and inventory simulations
+
+Give an agent bounded what-if scenarios using the embedded engine. The core MCP
+profile includes `get_simulation_kernel_contract`, `simulate_inventory_plan`, `compare_inventory_plans`, `simulate_inventory_experiment`,
+`simulate_commerce_scenario`, and `compare_commerce_scenarios`. These tools use
+fresh private SQLite stores, leave the live commerce store untouched, and need
+no `--apply`. Demand, purchase orders, receipts, paid sales, physical stock
+postings, refunds, and retries run through native APIs.
+
+Start with `get_simulation_kernel_contract` to discover action/plan JSON schemas,
+limits, observation formats and failure semantics. A model can form a hypothesis,
+run an episode, inspect intermediate state, compare alternatives, and revise the
+inputs. Episodes accept typed actions such as `purchase_inventory`,
+`receive_purchase_order`, `ship_order` and `inspect_state`; they expose persisted
+native records using stable aliases. Each new episode starts from its supplied
+initial conditions. Unexpected refusals leave `expectationsMet: false` and later
+actions still run, so the model can examine the resulting state.
+
+Simulation admission checks the full input before schema parsing: at most
+128 KiB, 16384 data nodes and 32 nesting levels, with the root at level one.
+SDK and MCP execution schemas share these checks. Inputs must be plain objects,
+arrays and finite JSON scalars; cyclic references, accessors, proxies and
+serialization hooks are refused. Optional JavaScript `undefined` fields remain
+supported and count as `null` for the byte budget. Oversized comparisons are
+checked as a whole, and canonical requests are checked again after defaults.
+
+Inventory plans and experiment runs include `cashFlow`: daily opening cash,
+sales receipts, prepaid purchase spending, closing cash and minimum cash, from
+day zero through the last simulated day. `summary.minimumCash` and
+`cashFlow.minimumCashAt` expose the lowest balance and its first occurrence.
+These flows reconcile independently against the native-backed timeline and
+reported totals. Experiment goal `minCashBalance: "5.00"` checks that balance
+never falls below 5.00 in the experiment currency, even when ending cash is
+higher. It evaluates the policy; it does not constrain purchasing or reserve
+cash. Compare its exact metrics and goal checks across policies and seeds.
+Run the [liquidity example](examples/inventory-liquidity-experiment.json) with
+`stateset-simulate --inventory-experiment cli/examples/inventory-liquidity-experiment.json --json`
+from the repository root to compare a fully prepaid policy with smaller orders.
+
+Plans and experiment runs also include `inventoryFlow`. Its `daily` rows cover
+day zero through the horizon, with a `products` array in purchase-priority order.
+Each SKU shows opening physical stock and inbound units, actual receipts,
+demand, sold and lost units, newly ordered units, closing stock and remaining
+`onOrder`. `firstStockout` identifies the first unmet-demand event, or is `null`;
+ending a day with zero stock alone is not a stockout.
+
+An independent replay checks projected demand, placement-day supplier terms,
+receipt identities and timing, full or split quantities, sales availability,
+inventory positions and final native balances. All daily receipts must precede
+sales, and all daily sales must precede purchases. Reports set
+`reconciliation.inventoryFlowBalanced: true` only after these checks pass;
+experiment aggregation requires that evidence. This exposes stockouts and
+prepaid inbound inventory even when an ending balance would hide them.
+
+To change spending behavior, set plan-level `cashReserve: "5.00"`. Purchases
+share `max(cash - cashReserve, 0)` across products, in input purchase priority.
+Minimum quantities, case packs and the inventory-position cap apply first;
+whole orders then pass actual-cash and reserve checks. A reserve block creates
+no purchase order, spends nothing and does not shrink the order. Later sales
+can fund a retry. Reports expose `purchase_reserve_blocked`,
+`reserveBlockedPurchases`, experiment `reserveBlockedRuns` and `sameCashReserve`.
+Omitting the reserve preserves existing behavior. A reserve above starting cash
+does not create funds or prevent free purchases; check `minCashBalance` to
+evaluate whether the entire run, including opening cash, meets your target.
+See [inventory-cash-reserve-experiment.json](examples/inventory-cash-reserve-experiment.json).
+
+Use `simulate_inventory_experiment` to test one to three policies across two to
+eight shared demand seeds. Every policy/seed pair runs the native engine in an
+independent store. Reports include empirical p10/p50/p90 outcomes, stockout and
+budget-blocked run counts, and paired differences against the first policy.
+Money means use exact `{ numerator, denominator }` fractions. At most 12 runs
+and 180 total product-days fit in one experiment. Supply seeds once at experiment
+level; per-plan seed fields are rejected. Sample percentiles describe the chosen
+runs and are not calibrated confidence bounds.
+
+To replay a forecast, promotion spike, seasonal scenario or shutdown exactly,
+set product `demand` to `{ "dailyUnits": [0, 0, 8, 0, 0, 2] }` and `days` to 6. Entries represent virtual days one through six, with integers from 0 to 10000. The schedule must match the full horizon and is never resampled; demand
+seeds do not change it. Sampled supplier conditions still use the supplied seed.
+Reports label this mode `explicit-daily-units`. See the native purchasing
+comparison in [inventory-demand-spike-experiment.json](examples/inventory-demand-spike-experiment.json).
+
+Policy `pathDiversity` reports distinct projected `demandPaths`, `supplyPaths`
+and `jointPaths`, plus `duplicateJointPathRuns`. Fixed schedules and fixed
+suppliers can repeat the same trajectory across different seeds. These counts
+disclose duplication; they do not estimate statistical independence or an
+effective sample size. Every supplied seed retains its original sample weight.
+
+Optional experiment `goals` set inclusive per-run thresholds: `minFillRateBps`
+(0–10000), `minEndingCash`, `minCashBalance`, `minGrossMargin`, and `maxPurchasingSpend`. Money
+thresholds are decimal strings in the experiment currency; a margin threshold
+may be negative. Each run returns its actual values and `met`, `missed`, or
+`not-evaluable` checks. Policy counts require all goals to hold in the same run.
+Missing a goal is a valid simulation result, so execution still succeeds.
+`serviceLevel.fillRate` is an exact sold/demanded fraction, pooled across seeds;
+no demand yields `null` and a fill-rate goal is not evaluable. Reports also
+compare opening cash/inventory, unit prices/costs, and product purchase priority.
+See [inventory-experiment.json](examples/inventory-experiment.json).
+
+Protect critical products with `goals.productFillRates`, for example
+`[{ "sku": "CRITICAL", "minFillRateBps": 10000 }]`. Supply one to eight unique
+SKUs present in every policy. Each target must pass on the same seed as the other
+goals; overall sales cannot offset a targeted SKU's miss. Per-run
+`evaluation.checks.productFillRates.products` reports exact fractions and statuses;
+policy `evaluation.byGoal.productFillRates.products` adds per-SKU run counts and
+pooled service levels. Zero demand stays not evaluable, including at threshold
+zero. The [critical-product example](examples/inventory-product-service-experiment.json)
+shows a policy meeting 99% overall service while missing its critical SKU entirely.
+
+Single-run comparison rows and experiment policies include `comparisonToBaseline`.
+It checks horizon, opening cash and inventory, prices/costs, purchase priority,
+cash reserve and projected demand/supply paths against the first plan. Its
+`changedConditions` lists mismatches for that alternative; global flags require
+every alternative to match. A third policy with different capital therefore
+does not hide a second policy whose checked conditions still match. Exact money
+normalizes decimal representations, and SKU facts compare independently of
+product order; purchase priority is disclosed separately. Path matches describe
+the supplied runs and do not establish equivalent generating assumptions or
+causal attribution. See the [three-policy example](examples/inventory-comparison-context-experiment.json).
+
+Purchasing plans also support supply uncertainty: `leadTimeDays` can be a fixed
+integer or `{ min, max }` range. Optional `delivery` takes `firstReceiptBps`
+(fixed or ranged basis points, 0–10000) and `remainderDelayDays`. First deliveries
+round down to whole units; undelivered balances arrive later and remain prepaid
+in-transit inventory until received. Native PO lines, physical stock and each
+inventory-value component must reconcile. Supplier paths use independent seeded
+streams indexed by SKU and order-placement day, keeping demand paths stable.
+Experiment reports include `sameSupplyPaths`, supply hashes and disruption counts.
+
+To replay a specific supplier disruption, set `leadTimeDays` or
+`delivery.firstReceiptBps` to `{ "dailyValues": [...] }`. Each schedule has
+exactly `days + 1` entries for **order-placement days zero through `days`**.
+For a four-day plan, `{ "dailyValues": [3, 9, 9, 1, 9] }` gives a day-zero
+order a three-day lead time and a day-three order a one-day lead time.
+First-fill schedules use integer basis points from 0 to 10000. Schedules are
+never repeated, clipped or resampled, and later values do not alter an existing
+order. Explicit fields ignore seeds; any remaining ranged fields keep their
+original independent sampled streams. Supply products report `leadTimeMethod`
+and `firstReceiptMethod`. Fully fixed or explicit supplier paths can repeat
+across seeds; inspect `pathDiversity` before interpreting experiment samples.
+See [inventory-supply-calendar-experiment.json](examples/inventory-supply-calendar-experiment.json).
+See [inventory-supply-experiment.json](examples/inventory-supply-experiment.json).
+
+Per-product `purchasing` models review schedules, supplier minimums and case packs.
+
+Set `purchasing.reviewIntervalDays` to review replenishment less frequently:
+`7` permits purchases on virtual days 0, 7, 14, and so on. Omitted or `1` means
+daily, preserving the existing policy. Inventory position above the reorder point takes
+no action. Eligible low-stock attempts on other days emit
+`purchase_review_deferred` with `inventoryPosition`, `reviewIntervalDays`,
+`nextReviewDay` and unchanged cash. They create no native PO, spend nothing,
+and do not reserve stock or freeze an order quantity. The next review computes
+the current stock position, quantity and cost again, then applies the existing
+sizing, capacity, cash and reserve checks. Supplier terms use the actual order
+placement day. A next review beyond the horizon is reported without executing it.
+
+`deferredPurchaseReviews` counts low-stock deferral attempts, including repeated
+off-review days. Experiments add `reviewDeferredRuns` and paired count metrics;
+inventory replay rejects off-schedule purchase orders or capacity/cash blocks.
+Intervals model a schedule anchored at day zero, rather than weekday or holiday
+calendars. See the [daily versus periodic example](examples/inventory-review-interval-experiment.json).
+
+`minimumOrderQuantity` and `orderMultiple` default to one. Orders round upward
+before checking the optional `maximumInventoryPosition` (available plus inbound
+plus the proposed order), followed by the whole-order cash budget. Reports show
+constraint refusals, cash refusals, rounding and actual extra units purchased;
+native purchase quantities must match the supplied constraints. See
+[inventory-purchasing-experiment.json](examples/inventory-purchasing-experiment.json).
+
+```bash
+stateset-simulate --inventory-plan plan.json --json
+stateset-simulate --commerce scenario.json --json
+stateset-simulate --inventory-experiment experiment.json --json
+```
+
+Plans supply exact money strings, opening inventory/cash, daily demand ranges,
+historical daily units or explicit daily schedules, supplier lead times, reorder points and target stock.
+An array compares up to three plans. The same seed, SKU and demand inputs give
+matching demand paths across policy changes and product ordering. Reports include stockouts,
+lost revenue, purchases, remaining stock, projected cash, daily demand projections
+and their assumptions. Stock, cash and inventory value must reconcile before
+a planning run reports success. All daily sales fund end-of-day purchases;
+product input order defines purchase priority when cash is limited.
+These are conditional single-path projections without forecast calibration or
+confidence intervals; payments and purchases contact no external providers.
+See the [agent guide](../docs/src/ai-agents.md#embedded-engine-simulations) and
+repository examples [inventory-plan.json](examples/inventory-plan.json) and
+[commerce-scenario.json](examples/commerce-scenario.json).
 
 ## Highlights
 
@@ -33,6 +221,7 @@ The StateSet CLI is built on the premise that commerce infrastructure should be 
 ## Features
 
 ### Core
+
 - **Natural Language Interface** - Ask Claude to perform commerce operations
 - **Multi-Agent Routing** - Domain specialists auto-route to the best handler
 - **Generated MCP Tool Registry** - Full commerce API exposed to Claude and other MCP-compatible runtimes
@@ -43,18 +232,21 @@ The StateSet CLI is built on the premise that commerce infrastructure should be 
 - **Interactive Chat** - REPL for exploratory work
 
 ### Sync & Streaming
+
 - **VES Protocol v1.0** - Verifiable Event Sync with Ed25519 signatures
 - **gRPC Streaming** - Real-time bidirectional sync with sequencer
 - **Event Outbox** - SQLite-backed event sourcing with conflict resolution
 - **Optimistic Concurrency** - Base version tracking for safe multi-agent updates
 
 ### Payments
+
 - **Multi-Chain Stablecoins** - USDC on Solana, Base, Ethereum, Arbitrum
 - **SET Chain ssUSD** - Yield-bearing stablecoin on StateSet L2
 - **Bitcoin & Zcash** - Native BTC and ZEC support
 - **VES Key Derivation** - Deterministic wallet addresses per agent
 
 ### Infrastructure
+
 - **Batch Processing** - Sequential or parallel request processing
 - **Interactive Tutorials** - Guided onboarding for new users
 - **SQLite/PostgreSQL** - Flexible storage backends
@@ -290,51 +482,51 @@ stateset --apply --batch orders.txt --parallel 3
 
 ### Primary Commands
 
-| Command | Description |
-|---------|-------------|
-| `stateset "<request>"` | AI-powered interface (auto-routes to best agent) |
-| `stateset-chat` | Multi-turn interactive REPL |
-| `stateset-direct <resource> <action>` | Direct CLI (no AI required) |
+| Command                               | Description                                      |
+| ------------------------------------- | ------------------------------------------------ |
+| `stateset "<request>"`                | AI-powered interface (auto-routes to best agent) |
+| `stateset-chat`                       | Multi-turn interactive REPL                      |
+| `stateset-direct <resource> <action>` | Direct CLI (no AI required)                      |
 
 ### Specialized Agent Commands
 
-| Command | Agent | Description |
-|---------|-------|-------------|
-| `stateset-checkout` | checkout | Shopping cart and embedded checkout flow |
-| `stateset-orders` | orders | Order lifecycle management |
-| `stateset-inventory` | inventory | Stock & reservation management |
-| `stateset-returns` | returns | RMA & refund processing |
-| `stateset-analytics` | analytics | Sales metrics & forecasting |
-| `stateset-promotions` | promotions | Promotions, discounts & coupons |
-| `stateset-subscriptions` | subscriptions | Subscription plans & recurring billing |
-| `stateset-create` | storefront | Scaffold e-commerce storefronts |
-| `stateset-manufacturing` | manufacturing | BOM & work order management |
-| `stateset-payments` | payments | Payment processing & refunds |
-| `stateset-shipments` | shipments | Shipment tracking & delivery |
-| `stateset-suppliers` | suppliers | Supplier & purchase order management |
-| `stateset-invoices` | invoices | B2B invoice management |
-| `stateset-warranties` | warranties | Product warranty & claims |
-| `stateset-currency` | currency | Multi-currency & exchange rates |
-| `stateset-tax` | tax | Tax calculation & compliance |
-| `stateset-pay` | stablecoin | Native crypto payments (USDC, ssUSD, BTC, ZEC) |
+| Command                  | Agent         | Description                                    |
+| ------------------------ | ------------- | ---------------------------------------------- |
+| `stateset-checkout`      | checkout      | Shopping cart and embedded checkout flow       |
+| `stateset-orders`        | orders        | Order lifecycle management                     |
+| `stateset-inventory`     | inventory     | Stock & reservation management                 |
+| `stateset-returns`       | returns       | RMA & refund processing                        |
+| `stateset-analytics`     | analytics     | Sales metrics & forecasting                    |
+| `stateset-promotions`    | promotions    | Promotions, discounts & coupons                |
+| `stateset-subscriptions` | subscriptions | Subscription plans & recurring billing         |
+| `stateset-create`        | storefront    | Scaffold e-commerce storefronts                |
+| `stateset-manufacturing` | manufacturing | BOM & work order management                    |
+| `stateset-payments`      | payments      | Payment processing & refunds                   |
+| `stateset-shipments`     | shipments     | Shipment tracking & delivery                   |
+| `stateset-suppliers`     | suppliers     | Supplier & purchase order management           |
+| `stateset-invoices`      | invoices      | B2B invoice management                         |
+| `stateset-warranties`    | warranties    | Product warranty & claims                      |
+| `stateset-currency`      | currency      | Multi-currency & exchange rates                |
+| `stateset-tax`           | tax           | Tax calculation & compliance                   |
+| `stateset-pay`           | stablecoin    | Native crypto payments (USDC, ssUSD, BTC, ZEC) |
 
 ### Utility Commands
 
-| Command | Description |
-|---------|-------------|
-| `stateset-channels` | Multi-channel gateway runtime |
-| `stateset-autonomous` | Autonomous engine (scheduler, workflows, policies, approvals) |
-| `stateset-config` | Profile and configuration management |
-| `stateset-daemon` | Systemd service manager for the gateway |
-| `stateset-install-service` | Install gateway as a system service (systemd/launchd) |
-| `stateset-doctor` | Health check and diagnostics |
-| `stateset-events` | Event management and webhooks |
-| `stateset-mcp-events` | MCP event gateway (SSE + history + subscriptions) |
-| `stateset-sync` | Verifiable Event Sync with sequencer |
-| `stateset-tutorial` | Interactive tutorials and onboarding |
-| `stateset-completion` | Shell completion scripts (bash/zsh/fish) |
-| `stateset-x402` | x402 config + key setup |
-| `stateset-x402-mcp` | MCP server for x402 paid API calls |
+| Command                    | Description                                                   |
+| -------------------------- | ------------------------------------------------------------- |
+| `stateset-channels`        | Multi-channel gateway runtime                                 |
+| `stateset-autonomous`      | Autonomous engine (scheduler, workflows, policies, approvals) |
+| `stateset-config`          | Profile and configuration management                          |
+| `stateset-daemon`          | Systemd service manager for the gateway                       |
+| `stateset-install-service` | Install gateway as a system service (systemd/launchd)         |
+| `stateset-doctor`          | Health check and diagnostics                                  |
+| `stateset-events`          | Event management and webhooks                                 |
+| `stateset-mcp-events`      | MCP event gateway (SSE + history + subscriptions)             |
+| `stateset-sync`            | Verifiable Event Sync with sequencer                          |
+| `stateset-tutorial`        | Interactive tutorials and onboarding                          |
+| `stateset-completion`      | Shell completion scripts (bash/zsh/fish)                      |
+| `stateset-x402`            | x402 config + key setup                                       |
+| `stateset-x402-mcp`        | MCP server for x402 paid API calls                            |
 
 ## x402 MCP Server
 
@@ -373,6 +565,7 @@ stateset-x402-mcp
 ```
 
 Tools exposed:
+
 - `x402_call`
 - `x402_budget_status`
 - `x402_history`
@@ -383,6 +576,7 @@ Tools exposed:
 
 The current CLI binary count, source-group breakdown, agent registry, and MCP surface are
 tracked in generated inventories:
+
 - [Agent Inventory](../docs/src/appendix/agent-inventory.md)
 - [Workspace Inventory](../docs/src/appendix/workspace-inventory.md)
 - [MCP Tool Inventory](../docs/src/appendix/mcp-tool-inventory.md)
@@ -434,51 +628,51 @@ stateset-icommerce/
 
 ### Commerce Operations
 
-| Domain | Operations |
-|--------|------------|
-| **Orders** | Create, confirm, process, ship, deliver, cancel |
-| **Customers** | Profiles, addresses, preferences, history |
-| **Products** | Catalog with variants and attributes |
+| Domain        | Operations                                      |
+| ------------- | ----------------------------------------------- |
+| **Orders**    | Create, confirm, process, ship, deliver, cancel |
+| **Customers** | Profiles, addresses, preferences, history       |
+| **Products**  | Catalog with variants and attributes            |
 | **Inventory** | Multi-location stock, reservations, adjustments |
-| **Carts** | Shopping cart with embedded checkout flow |
-| **Returns** | RMA processing with refund management |
-| **Shipments** | Fulfillment tracking with carrier integration |
+| **Carts**     | Shopping cart with embedded checkout flow       |
+| **Returns**   | RMA processing with refund management           |
+| **Shipments** | Fulfillment tracking with carrier integration   |
 
 ### Manufacturing Operations
 
-| Domain | Operations |
-|--------|------------|
+| Domain                | Operations                    |
+| --------------------- | ----------------------------- |
 | **Bill of Materials** | Create, manage, activate BOMs |
-| **Work Orders** | Production job management |
-| **Components** | Track component requirements |
+| **Work Orders**       | Production job management     |
+| **Components**        | Track component requirements  |
 
 ### Financial Operations
 
-| Domain | Operations |
-|--------|------------|
-| **Multi-Currency** | 35+ currencies (USD, EUR, GBP, JPY, BTC, ETH, USDC) |
-| **Payments** | Credit card, PayPal, cryptocurrency |
-| **Refunds** | Multiple payout methods |
-| **Invoices** | B2B invoice management with payment terms |
-| **Purchase Orders** | Supplier management and procurement |
-| **Tax** | Multi-jurisdiction tax calculation (US, EU, CA) |
-| **General Ledger** | Chart of accounts, journal entries, trial balance, statements, month-end close (dry run supported) |
-| **Accounts Payable** | Bills, approvals, 3-way match, AP aging |
-| **Accounts Receivable** | Credit memos, AR aging, DSO |
-| **Fixed Assets** | Depreciation schedules, disposals, write-offs |
-| **Revenue Recognition** | Contracts, schedules, recognition runs |
+| Domain                  | Operations                                                                                         |
+| ----------------------- | -------------------------------------------------------------------------------------------------- |
+| **Multi-Currency**      | 35+ currencies (USD, EUR, GBP, JPY, BTC, ETH, USDC)                                                |
+| **Payments**            | Credit card, PayPal, cryptocurrency                                                                |
+| **Refunds**             | Multiple payout methods                                                                            |
+| **Invoices**            | B2B invoice management with payment terms                                                          |
+| **Purchase Orders**     | Supplier management and procurement                                                                |
+| **Tax**                 | Multi-jurisdiction tax calculation (US, EU, CA)                                                    |
+| **General Ledger**      | Chart of accounts, journal entries, trial balance, statements, month-end close (dry run supported) |
+| **Accounts Payable**    | Bills, approvals, 3-way match, AP aging                                                            |
+| **Accounts Receivable** | Credit memos, AR aging, DSO                                                                        |
+| **Fixed Assets**        | Depreciation schedules, disposals, write-offs                                                      |
+| **Revenue Recognition** | Contracts, schedules, recognition runs                                                             |
 
 ### Warehouse Operations
 
-| Domain | Operations |
-|--------|------------|
-| **Warehouses** | Warehouses, bin locations, location-level availability |
-| **Fulfillment** | Waves, pick tasks, ready-to-pack/ship checks |
-| **Receiving** | Receipts (incl. from POs), receiving lifecycle |
-| **Cycle Counts** | Plan, record, complete with variance posting |
-| **Lots & Serials** | Expiry tracking, quarantine, serial availability |
-| **Quality** | Inspections, NCRs, quality holds |
-| **Supply Chain** | Transfer orders, inbound shipments, supplier SKUs, price schedules/levels, EDI documents |
+| Domain             | Operations                                                                               |
+| ------------------ | ---------------------------------------------------------------------------------------- |
+| **Warehouses**     | Warehouses, bin locations, location-level availability                                   |
+| **Fulfillment**    | Waves, pick tasks, ready-to-pack/ship checks                                             |
+| **Receiving**      | Receipts (incl. from POs), receiving lifecycle                                           |
+| **Cycle Counts**   | Plan, record, complete with variance posting                                             |
+| **Lots & Serials** | Expiry tracking, quarantine, serial availability                                         |
+| **Quality**        | Inspections, NCRs, quality holds                                                         |
+| **Supply Chain**   | Transfer orders, inbound shipments, supplier SKUs, price schedules/levels, EDI documents |
 
 ### Promotions & Discounts
 
@@ -583,14 +777,14 @@ stateset-direct --apply inventory adjust WIDGET-001 -5 "Sold 5 units"
 
 ### Permission Controls
 
-| Feature | Description |
-|---------|-------------|
-| **Preview Mode** | Default read-only operation |
+| Feature                     | Description                                            |
+| --------------------------- | ------------------------------------------------------ |
+| **Preview Mode**            | Default read-only operation                            |
 | **Confirmation Thresholds** | High-value operations (>$1000) prompt for confirmation |
-| **Permission Gating** | Five levels: none, read, preview, write, admin |
-| **Spending Limits** | Max order value, daily totals |
-| **Rate Limiting** | Tool calls/minute, write ops/minute |
-| **Audit Logging** | Complete operation history |
+| **Permission Gating**       | Five levels: none, read, preview, write, admin         |
+| **Spending Limits**         | Max order value, daily totals                          |
+| **Rate Limiting**           | Tool calls/minute, write ops/minute                    |
+| **Audit Logging**           | Complete operation history                             |
 
 ## Observability
 
@@ -813,13 +1007,15 @@ const client = new GrpcSequencerClient({
 await client.connect();
 
 // Push events
-await client.pushEvents([{
-  entityType: 'order',
-  entityId: 'ORD-123',
-  eventType: 'OrderCreated',
-  payload: { status: 'pending', amount: 99.99 },
-  baseVersion: 0,
-}]);
+await client.pushEvents([
+  {
+    entityType: 'order',
+    entityId: 'ORD-123',
+    eventType: 'OrderCreated',
+    payload: { status: 'pending', amount: 99.99 },
+    baseVersion: 0,
+  },
+]);
 
 // Subscribe to real-time updates
 client.onEvent((event) => {
@@ -830,6 +1026,7 @@ await client.startSyncStream();
 ```
 
 **VES Protocol Features:**
+
 - Ed25519 cryptographic signatures for event integrity
 - Domain-separated hashing (`VES_PAYLOAD_PLAIN_V1`)
 - Optimistic concurrency with base version tracking
@@ -847,6 +1044,7 @@ tool access are generated from code in the
 ### Auto-Routing
 
 The main `stateset` command automatically routes requests to the best agent based on:
+
 - Request content analysis
 - Confidence scoring
 - Domain keyword matching
@@ -861,14 +1059,14 @@ generated from the live MCP server export in `cli/src/mcp-server.js`. See the ge
 Highlights by area
 (see [docs/TOOLS.md](docs/TOOLS.md) for the complete per-tool catalog):
 
-| Area | Domains | Examples |
-|------|---------|----------|
-| **Core commerce** | customers, orders, products, inventory, returns, carts, checkout, shipments | `create_order`, `ship_order`, `complete_checkout` |
-| **Finance** | general-ledger, accounts-payable, accounts-receivable, fixed-assets, revenue-recognition, cost-accounting, credit, prepayments, vendor-credits | `close_month`, `three_way_match_bill`, `get_trial_balance`, `post_depreciation`, `recognize_revenue` |
-| **Warehouse (WMS)** | warehouse, fulfillment, receiving, cycle-counts, backorders, lots, serials, quality | `create_fulfillment_wave`, `create_receipt_from_purchase_order`, `complete_cycle_count`, `quarantine_lot` |
-| **Supply chain** | suppliers, supplier-skus, inbound-shipments, transfer-orders, production-batches, price-schedules, price-levels, edi-documents | `create_transfer_order`, `receive_inbound_shipment_line`, `resolve_scheduled_price`, `get_edi_summary` |
-| **Growth** | analytics, promotions, subscriptions, loyalty, gift-cards, store-credits, segments, reviews, wishlists | `get_revenue_forecast`, `create_promotion`, `create_subscription` |
-| **Payments & agent commerce** | payments, stablecoin, treasury, x402, erc8004, a2a, agent-cards, policies, audit, proofs | `create_refund`, `create_stablecoin_payment`, `x402_create_payment_intent` |
+| Area                          | Domains                                                                                                                                        | Examples                                                                                                  |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| **Core commerce**             | customers, orders, products, inventory, returns, carts, checkout, shipments                                                                    | `create_order`, `ship_order`, `complete_checkout`                                                         |
+| **Finance**                   | general-ledger, accounts-payable, accounts-receivable, fixed-assets, revenue-recognition, cost-accounting, credit, prepayments, vendor-credits | `close_month`, `three_way_match_bill`, `get_trial_balance`, `post_depreciation`, `recognize_revenue`      |
+| **Warehouse (WMS)**           | warehouse, fulfillment, receiving, cycle-counts, backorders, lots, serials, quality                                                            | `create_fulfillment_wave`, `create_receipt_from_purchase_order`, `complete_cycle_count`, `quarantine_lot` |
+| **Supply chain**              | suppliers, supplier-skus, inbound-shipments, transfer-orders, production-batches, price-schedules, price-levels, edi-documents                 | `create_transfer_order`, `receive_inbound_shipment_line`, `resolve_scheduled_price`, `get_edi_summary`    |
+| **Growth**                    | analytics, promotions, subscriptions, loyalty, gift-cards, store-credits, segments, reviews, wishlists                                         | `get_revenue_forecast`, `create_promotion`, `create_subscription`                                         |
+| **Payments & agent commerce** | payments, stablecoin, treasury, x402, erc8004, a2a, agent-cards, policies, audit, proofs                                                       | `create_refund`, `create_stablecoin_payment`, `x402_create_payment_intent`                                |
 
 ### Partial-shipment recovery
 
@@ -909,19 +1107,19 @@ stateset --db :memory: "list customers"
 
 ### Flags Reference
 
-| Flag | Description |
-|------|-------------|
-| `--db <path>` | Database path |
-| `--apply` | Enable write operations |
-| `--model <name>` | Claude model to use |
-| `--resume <id>` | Resume previous session |
-| `--json` | JSON output |
-| `--verbose` | Real-time telemetry |
-| `--stats` | Execution statistics |
+| Flag             | Description                        |
+| ---------------- | ---------------------------------- |
+| `--db <path>`    | Database path                      |
+| `--apply`        | Enable write operations            |
+| `--model <name>` | Claude model to use                |
+| `--resume <id>`  | Resume previous session            |
+| `--json`         | JSON output                        |
+| `--verbose`      | Real-time telemetry                |
+| `--stats`        | Execution statistics               |
 | `--parallel <n>` | Process batch requests in parallel |
-| `--batch <file>` | Read requests from file |
-| `--stdin` | Read requests from stdin |
-| `--help` | Show help |
+| `--batch <file>` | Read requests from file            |
+| `--stdin`        | Read requests from stdin           |
+| `--help`         | Show help                          |
 
 ## Session Management
 
@@ -1349,11 +1547,7 @@ stateset-doctor
 The CLI modules can be used programmatically:
 
 ```javascript
-import {
-  runAgentLoop,
-  createAgentSession,
-  withContext,
-} from '@stateset/cli';
+import { runAgentLoop, createAgentSession, withContext } from '@stateset/cli';
 
 // Run an agent request
 const result = await runAgentLoop({

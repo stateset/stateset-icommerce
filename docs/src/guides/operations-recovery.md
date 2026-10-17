@@ -111,10 +111,51 @@ production throughput SLO or a host power-loss test. The default SQLite pool
 uses WAL with `synchronous=NORMAL`; host power-loss durability requires a
 separately reviewed storage and synchronous-mode configuration.
 
+### Choose and inspect durability
+
+Set `STATESET_SQLITE_SYNCHRONOUS=FULL` before starting the application to sync
+the WAL on each commit. This applies to `SqliteDatabase::new`, including native
+bindings, and to every connection the pool opens. `NORMAL` retains the existing
+default; invalid settings, including `OFF`, fail before opening the store.
+In Rust, use `SqliteDatabase::new_with_durability(&config,
+SqliteDurability::Full)` to select a policy without changing the environment.
+`db.storage_status()` reports the effective journal mode, numeric synchronous
+mode (`1` NORMAL, `2` FULL), lock timeout, and WAL checkpoint threshold.
+
+`FULL` depends on the filesystem and device honoring synchronization. It does
+not certify host power-loss behavior. Revalidate after storage or deployment
+changes. Shutdown now returns an error if a reader or writer blocks the WAL
+checkpoint; close the other connections and retry rather than assuming the
+checkpoint completed.
+
+The drill bounds SQLite storage with `max_page_count` and forces `SQLITE_FULL`
+during refund settlement. It verifies rollback, exact money, integrity and a
+retry that applies once. This never fills the host disk and does not simulate
+every OS/filesystem I/O error.
+
+Refund retry keys also compare the payment, explicit exact amount, reason,
+external identifier and notes. Changed fields return a conflict on both
+backends. An omitted amount retains the original resolved remaining amount on
+replay; it does not recalculate against the later payment balance. Concurrent
+identical refund requests produce one refund and one creation event.
+
 For a larger local workload, run
 `STATESET_RECOVERY_KEYS=10000 cargo test --locked -p stateset-db --test sqlite_process_recovery multiple_processes -- --nocapture`.
-Elapsed time is diagnostic and includes worker startup; it is not a latency
-percentile. The standard evidence drill uses the default 64-key workload.
+The worker workload also records per-operation latency samples and reports
+p50/p95/p99/max in microseconds, excluding worker startup. These samples mix
+first executions and receipt replays. Overall elapsed time includes startup.
+The standard evidence drill uses 64 keys and one round; its JSON retains
+latencies, actual synchronous mode, toolchain, host and source provenance.
+The hashed workload log retains raw samples; the evidence runner independently
+recomputes the reported percentiles and rejects inconsistent observations.
+
+Use `STATESET_RECOVERY_ROUNDS=10 STATESET_RECOVERY_KEYS=256` for repeated
+contention: four processes make 10,240 attempts for 256 effects and 9,984
+replays. Run separately with `STATESET_SQLITE_SYNCHRONOUS=NORMAL` and `FULL`
+on the same hardware. Keys must be 1..100,000, rounds 1..1,000, and their product
+at most 1,000,000; workers have a bounded completion timeout. Retain logs and
+resource measurements and record errors rather than dropping failed runs.
+These observations do not define a production SLO or complete a deployment soak.
 
 The drill also exercises authenticated HTTP order creation, payment and partial
 refund in a file-backed tenant store. Retry receipts live in that same tenant
@@ -128,6 +169,64 @@ receipt. A retry with the same key returns 409; using a new key risks a second
 mutation. A completed response can be recorded with the idempotency repository's
 `complete` operation once verified. Delete a pending receipt only after proving
 the original mutation did not occur and the original worker cannot resume.
+
+### Inspect and resolve pending receipts
+
+The native operator example opens an existing store without creating it or
+running migrations. Inspection is read only and tenant scoped (an empty tenant
+is explicit for single-tenant stores); it returns at most 1,000 oldest pending
+receipt summaries, including their exact reservation timestamps:
+
+```bash
+cargo run --locked -p stateset-db --example http_receipts -- ./store.db list 'tenant:merchant'
+```
+
+Library callers can use `HttpIdempotencyRepository::list_pending` on SQLite
+and PostgreSQL, or SQLite's `reconciliation::pending_http_receipts` on a read-only
+connection. Inspection does not expire completed responses or change pending
+state. An old timestamp alone does not establish that an operation failed.
+
+After stopping the original worker and verifying business/provider records,
+prepare operator-owned JSON matching `reconciliation::HttpReceiptResolution`:
+`tenant`, `idempotency_key`, `request_fingerprint`, `reserved_at` (RFC3339 with
+the original precision), `response_status` (200..599), `content_type` (or null),
+`response_body` (the verified original bytes as a JSON byte array), `actor`, and
+`evidence` (an incident/provider-evidence reference without secrets).
+
+```bash
+# Preview; opens the store read only.
+cargo run --locked -p stateset-db --example http_receipts -- ./store.db resolve ./resolution.json
+# Apply only after stopping the original worker and verifying the outcome.
+cargo run --locked -p stateset-db --example http_receipts -- ./store.db resolve ./resolution.json --apply --worker-stopped
+```
+
+SQLite completion compares tenant, original key, fingerprint, exact reservation
+time and pending status atomically. It writes the verified response and a
+required audit entry in one transaction, with `FULL` synchronization in the
+operator example. Audit failure leaves the receipt pending; stale evidence or
+a second completion returns a conflict. Audit details retain operator/evidence,
+tenant, fingerprint, original time, status and response hash, not the response
+payload. No mutation is re-executed, and no pending receipt is deleted.
+
+The helper cannot prove worker termination or external settlement. It is an
+operator-only API, outside the MCP tool catalog; keep its database and evidence
+files access controlled. PostgreSQL has pending inspection and its existing
+fingerprint-checked completion API; this audited operator helper is SQLite only.
+
+Canonical migration `101_audit_log` installs the helper's table and indexes on
+new and upgraded engine stores, preserving compatible pre-existing history.
+Stores that predate this migration must be opened through the engine or the
+canonical migrator before using the operator helper; inspection/completion
+commands deliberately do not run migrations. Missing or incompatible audit
+storage causes completion to fail and leaves the receipt pending.
+
+General SQLite audit logging is opt-in and best effort, without automatic
+coverage of every repository mutation. Governed receipt audit chains and
+domain outbox events are separate mechanisms. Export the process-wide
+`stateset_db::audit::audit_write_failures()` monotonic counter and alert on
+increases across all stores in the process. A zero count does not prove complete
+audit coverage. Operations that require audit atomicity can call
+`record_audit_required` inside their business transaction, as reconciliation does.
 
 A backup only contains receipts and business records committed at its snapshot.
 Reconcile post-backup external payments before admitting traffic to an older

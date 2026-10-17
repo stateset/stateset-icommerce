@@ -486,25 +486,30 @@ impl PgInventoryRepository {
             });
         }
 
-        if quantity == res.quantity {
+        let reservation_update = if quantity == res.quantity {
             sqlx::query("UPDATE inventory_reservations SET status = 'fulfilled' WHERE id = $1")
                 .bind(reservation_id)
                 .execute(tx.as_mut())
                 .await
-                .map_err(map_db_error)?;
+                .map_err(map_db_error)?
         } else {
             sqlx::query("UPDATE inventory_reservations SET quantity = $1 WHERE id = $2")
                 .bind(res.quantity - quantity)
                 .bind(reservation_id)
                 .execute(tx.as_mut())
                 .await
-                .map_err(map_db_error)?;
+                .map_err(map_db_error)?
+        };
+        if reservation_update.rows_affected() != 1 {
+            return Err(CommerceError::DatabaseError(
+                "Shipment reservation update was not persisted".into(),
+            ));
         }
 
-        sqlx::query(
+        let transaction_id = sqlx::query_scalar::<_, i64>(
             "INSERT INTO inventory_transactions (item_id, location_id, transaction_type, quantity,
                  reference_type, reference_id, reason, created_at)
-             VALUES ($1, $2, 'shipment', $3, $4, $5, $6, $7)",
+             VALUES ($1, $2, 'shipment', $3, $4, $5, $6, $7) RETURNING id",
         )
         .bind(res.item_id)
         .bind(res.location_id)
@@ -513,9 +518,12 @@ impl PgInventoryRepository {
         .bind(&res.reference_id)
         .bind(reason)
         .bind(now)
-        .execute(tx.as_mut())
+        .fetch_optional(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
+        .map_err(map_db_error)?
+        .ok_or_else(|| {
+            CommerceError::DatabaseError("Shipment inventory transaction was not persisted".into())
+        })?;
 
         let event = KernelOutboxEvent::domain(
             "inventory.reservation_fulfilled.v1",
@@ -532,6 +540,63 @@ impl PgInventoryRepository {
             None,
         );
         append_kernel_event_tx(tx.as_mut(), &event).await?;
+
+        // Check final stored values after triggers on all four writes have run.
+        let expected_status =
+            if quantity == res.quantity { "fulfilled" } else { res.status.as_str() };
+        let expected_quantity =
+            if quantity == res.quantity { res.quantity } else { res.quantity - quantity };
+        let reservation_persisted = sqlx::query_as::<_, ReservationRow>(
+            "SELECT * FROM inventory_reservations WHERE id = $1",
+        )
+        .bind(reservation_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .is_some_and(|row| {
+            row.item_id == res.item_id
+                && row.location_id == res.location_id
+                && row.quantity == expected_quantity
+                && row.status == expected_status
+                && row.reference_type == res.reference_type
+                && row.reference_id == res.reference_id
+        });
+        let balance_persisted = sqlx::query_as::<_, InventoryBalanceRow>(
+            "SELECT * FROM inventory_balances WHERE item_id = $1 AND location_id = $2",
+        )
+        .bind(res.item_id)
+        .bind(res.location_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .is_some_and(|row| {
+            row.quantity_on_hand == new_on_hand
+                && row.quantity_allocated == new_allocated
+                && row.quantity_available == new_on_hand - new_allocated
+                && row.version == current_version + 1
+        });
+        let transaction_persisted = sqlx::query_as::<_, TransactionRow>(
+            "SELECT * FROM inventory_transactions WHERE id = $1",
+        )
+        .bind(transaction_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .is_some_and(|row| {
+            row.item_id == res.item_id
+                && row.location_id == res.location_id
+                && row.transaction_type == "shipment"
+                && row.quantity == -quantity
+                && row.reference_type.as_deref() == Some(res.reference_type.as_str())
+                && row.reference_id.as_deref() == Some(res.reference_id.as_str())
+                && row.reason.as_deref() == Some(reason)
+        });
+        if !reservation_persisted || !balance_persisted || !transaction_persisted {
+            return Err(CommerceError::DatabaseError(
+                "Shipment stock, reservation and inventory transaction did not persist as expected"
+                    .into(),
+            ));
+        }
         Ok(event.id)
     }
 
@@ -1651,6 +1716,25 @@ impl PgInventoryRepository {
         Ok(result)
     }
 
+    /// Atomically post physical stock for a fully shipped order. Retrying is a no-op.
+    pub async fn fulfill_order_stock_async(&self, order_id: Uuid) -> Result<()> {
+        with_pg_inventory_retry(|| async {
+            let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+            let status: Option<(String,)> = sqlx::query_as("SELECT status FROM orders WHERE id = $1 FOR UPDATE").bind(order_id).fetch_optional(tx.as_mut()).await.map_err(map_db_error)?;
+            let status = status.ok_or(CommerceError::OrderNotFound(order_id))?.0;
+            if !matches!(status.as_str(), "shipped" | "delivered") {
+                return Err(CommerceError::Conflict("Physical stock posting requires a fully shipped or delivered order".into()));
+            }
+            let holds: Vec<(Uuid, Decimal)> = sqlx::query_as("SELECT id, quantity FROM inventory_reservations WHERE reference_type = 'order' AND reference_id = $1 AND status = 'confirmed' ORDER BY item_id, location_id, id FOR UPDATE").bind(order_id.to_string()).fetch_all(tx.as_mut()).await.map_err(map_db_error)?;
+            let now = Utc::now();
+            for (id, quantity) in holds {
+                Self::fulfil_reservation_in_tx(&mut tx, id, quantity, "Physical shipment stock posting", now).await?;
+            }
+            tx.commit().await.map_err(map_db_error)?;
+            Ok(())
+        }).await
+    }
+
     /// Get transaction history (async)
     pub async fn get_transactions_async(
         &self,
@@ -1974,6 +2058,10 @@ impl InventoryRepository for PgInventoryRepository {
 
     fn confirm_reservation(&self, reservation_id: Uuid) -> Result<()> {
         super::block_on(self.confirm_reservation_async(reservation_id))
+    }
+
+    fn fulfill_order_stock(&self, order_id: Uuid) -> Result<()> {
+        super::block_on(self.fulfill_order_stock_async(order_id))
     }
 
     fn list_reservations_by_reference(

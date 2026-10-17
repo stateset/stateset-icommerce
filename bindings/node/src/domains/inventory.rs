@@ -187,6 +187,18 @@ impl Inventory {
         Ok(())
     }
 
+    /// Atomically consume confirmed holds after full shipment. Safe to retry;
+    /// shipping status alone does not post the physical stock transaction.
+    #[napi]
+    pub async fn fulfill_order_stock(&self, order_id: String) -> Result<()> {
+        let commerce = self.commerce.get()?;
+        let id = order_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid order UUID"))?;
+        commerce
+            .inventory()
+            .fulfill_order_stock(id)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to post order stock", e))
+    }
+
     #[napi]
     pub async fn release_reservation(&self, reservation_id: String) -> Result<()> {
         let commerce = self.commerce.get()?;

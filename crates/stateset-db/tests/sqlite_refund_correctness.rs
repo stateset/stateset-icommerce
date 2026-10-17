@@ -24,6 +24,95 @@ fn db() -> SqliteDatabase {
     SqliteDatabase::in_memory().expect("create in-memory sqlite db")
 }
 
+#[test]
+fn concurrent_identical_full_refund_creates_one_refund_and_one_event() {
+    let db = std::sync::Arc::new(db());
+    let payment = completed_payment(&db, dec!(1.00));
+    let request = CreateRefund {
+        payment_id: payment.id,
+        amount: Some(dec!(1.00)),
+        idempotency_key: Some("concurrent-full-refund".into()),
+        ..Default::default()
+    };
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+    let workers: Vec<_> = (0..4)
+        .map(|_| {
+            let db = db.clone();
+            let barrier = barrier.clone();
+            let request = request.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                db.payments().create_refund(request).unwrap()
+            })
+        })
+        .collect();
+    let refunds: Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
+    assert!(refunds.iter().all(|refund| refund.id == refunds[0].id));
+    assert_eq!(db.payments().get_refunds(payment.id).unwrap().len(), 1);
+    let events: i64 = db.conn().unwrap().query_row(
+        "SELECT COUNT(*) FROM kernel_outbox WHERE idempotency_key='concurrent-full-refund' AND event_type='payments.refund_created.v1'",
+        [], |row| row.get(0)).unwrap();
+    assert_eq!(events, 1);
+}
+
+#[test]
+fn implicit_amount_retry_preserves_the_original_resolved_remaining_refund() {
+    let db = db();
+    let payment = completed_payment(&db, dec!(1.00));
+    let partial = db
+        .payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(0.20)),
+            ..Default::default()
+        })
+        .unwrap();
+    db.payments().complete_refund(partial.id).unwrap();
+    let request = CreateRefund {
+        payment_id: payment.id,
+        amount: None,
+        idempotency_key: Some("implicit-remaining".into()),
+        ..Default::default()
+    };
+    let original = db.payments().create_refund(request.clone()).unwrap();
+    assert_eq!(original.amount, dec!(0.80));
+    db.payments().complete_refund(original.id).unwrap();
+    assert_eq!(db.payments().create_refund(request).unwrap().id, original.id);
+}
+
+#[test]
+fn refund_retry_key_cannot_switch_payment_amount_or_immutable_details() {
+    let db = db();
+    let payment = completed_payment(&db, dec!(1.00));
+    let other = completed_payment(&db, dec!(1.00));
+    let request = CreateRefund {
+        payment_id: payment.id,
+        amount: Some(dec!(0.10)),
+        reason: Some("verified return".into()),
+        external_id: Some("processor-refund".into()),
+        notes: Some("original request".into()),
+        idempotency_key: Some("refund-bound-request".into()),
+    };
+    let original = db.payments().create_refund(request.clone()).unwrap();
+    assert_eq!(db.payments().create_refund(request.clone()).unwrap().id, original.id);
+    for field in ["payment", "amount", "reason", "external", "notes"] {
+        let mut changed = request.clone();
+        match field {
+            "payment" => changed.payment_id = other.id,
+            "amount" => changed.amount = Some(dec!(0.20)),
+            "reason" => changed.reason = None,
+            "external" => changed.external_id = None,
+            _ => changed.notes = None,
+        }
+        assert!(
+            matches!(db.payments().create_refund(changed), Err(CommerceError::Conflict(_))),
+            "{field}"
+        );
+    }
+    assert_eq!(db.payments().get_refunds(payment.id).unwrap().len(), 1);
+    assert!(db.payments().get_refunds(other.id).unwrap().is_empty());
+}
+
 /// Create a payment and advance it to `Completed` (the only state from which a
 /// payment normally becomes refundable).
 fn completed_payment(db: &SqliteDatabase, amount: rust_decimal::Decimal) -> stateset_core::Payment {
@@ -36,6 +125,164 @@ fn completed_payment(db: &SqliteDatabase, amount: rust_decimal::Decimal) -> stat
         })
         .expect("create payment");
     db.payments().mark_completed(payment.id).expect("mark payment completed")
+}
+
+#[test]
+fn refund_settlement_requires_the_transition_balance_and_fact_to_commit_together() {
+    let db = db();
+    for complete in [false, true] {
+        for fault in ["fact_error", "fact_ignore", "refund_ignore", "payment_ignore"] {
+            if !complete && fault == "payment_ignore" {
+                continue;
+            }
+            let payment = completed_payment(&db, dec!(0.30));
+            let refund = db
+                .payments()
+                .create_refund(CreateRefund {
+                    payment_id: payment.id,
+                    amount: Some(dec!(0.10)),
+                    ..Default::default()
+                })
+                .unwrap();
+            let event =
+                if complete { "payments.refund_completed.v1" } else { "payments.refund_failed.v1" };
+            let status = if complete { "completed" } else { "failed" };
+            let before = serde_json::json!({ "payment": db.payments().get(payment.id).unwrap(), "refund": refund });
+            let (table, operation, predicate) = match fault {
+                "refund_ignore" => (
+                    "refunds",
+                    "UPDATE",
+                    format!("NEW.id = '{}' AND NEW.status = '{status}'", refund.id),
+                ),
+                "payment_ignore" => ("payments", "UPDATE", format!("NEW.id = '{}'", payment.id)),
+                _ => (
+                    "kernel_outbox",
+                    "INSERT",
+                    format!("NEW.aggregate_id = '{}' AND NEW.event_type = '{event}'", refund.id),
+                ),
+            };
+            let refusal = if fault == "fact_error" {
+                "RAISE(ABORT, 'settlement fact unavailable')"
+            } else {
+                "RAISE(IGNORE)"
+            };
+            db.conn()
+                .unwrap()
+                .execute_batch(&format!(
+                    "CREATE TRIGGER reject_settlement BEFORE {operation} ON {table}
+                 WHEN {predicate} BEGIN SELECT {refusal}; END;"
+                ))
+                .unwrap();
+            let settle = || {
+                if complete {
+                    db.payments().complete_refund(refund.id)
+                } else {
+                    db.payments().fail_refund(refund.id, "private processor reason")
+                }
+            };
+            let result = settle();
+            db.conn().unwrap().execute_batch("DROP TRIGGER reject_settlement").unwrap();
+            assert!(result.is_err(), "complete={complete}, fault={fault}");
+            assert_eq!(
+                serde_json::json!({ "payment": db.payments().get(payment.id).unwrap(), "refund": db.payments().get_refund(refund.id).unwrap() }),
+                before
+            );
+            let count = || {
+                db.conn().unwrap().query_row(
+                "SELECT COUNT(*) FROM kernel_outbox WHERE aggregate_id = ?1 AND event_type = ?2",
+                rusqlite::params![refund.id.to_string(), event], |row| row.get::<_, i64>(0),
+            ).unwrap()
+            };
+            assert_eq!(count(), 0);
+            let settled = settle().unwrap();
+            assert_eq!(settled.status.to_string(), status);
+            assert_eq!(
+                serde_json::to_value(settle().unwrap()).unwrap(),
+                serde_json::to_value(&settled).unwrap()
+            );
+            assert_eq!(count(), 1);
+            let payload: String = db
+                .conn()
+                .unwrap()
+                .query_row(
+                    "SELECT payload FROM kernel_outbox WHERE aggregate_id = ?1 AND event_type = ?2",
+                    rusqlite::params![refund.id.to_string(), event],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+            assert_eq!(payload["refund_id"], refund.id.to_string());
+            assert_eq!(payload["payment_id"], payment.id.to_string());
+            assert_eq!(payload["status"], status);
+            assert_eq!(payload["previous_status"], "pending");
+            assert_eq!(
+                payload["amount"].as_str().unwrap().parse::<rust_decimal::Decimal>().unwrap(),
+                dec!(0.10)
+            );
+            assert_eq!(payload["currency"], "USD");
+            assert!(!payload.to_string().contains("private processor reason"));
+            assert_eq!(
+                db.payments().get(payment.id).unwrap().unwrap().amount_refunded,
+                if complete { dec!(0.10) } else { dec!(0) }
+            );
+            let opposite = if complete {
+                db.payments().fail_refund(refund.id, "late failure")
+            } else {
+                db.payments().complete_refund(refund.id)
+            };
+            assert!(opposite.is_err());
+            assert_eq!(count(), 1);
+        }
+    }
+}
+
+#[test]
+fn competing_refund_completion_and_failure_emit_one_terminal_fact() {
+    let db = std::sync::Arc::new(db());
+    let payment = completed_payment(&db, dec!(0.30));
+    let refund = db
+        .payments()
+        .create_refund(CreateRefund {
+            payment_id: payment.id,
+            amount: Some(dec!(0.10)),
+            ..Default::default()
+        })
+        .unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+    let workers: Vec<_> = (0..4)
+        .map(|operation| {
+            let db = db.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                if operation % 2 == 0 {
+                    db.payments().complete_refund(refund.id)
+                } else {
+                    db.payments().fail_refund(refund.id, "processor refusal")
+                }
+            })
+        })
+        .collect();
+    for worker in workers {
+        match worker.join().unwrap() {
+            Ok(_) | Err(CommerceError::ValidationError(_)) => {}
+            other => panic!("unexpected settlement outcome: {other:?}"),
+        }
+    }
+    let settled = db.payments().get_refund(refund.id).unwrap().unwrap();
+    assert!(matches!(
+        settled.status,
+        stateset_core::RefundStatus::Completed | stateset_core::RefundStatus::Failed
+    ));
+    let count: i64 = db.conn().unwrap().query_row(
+        "SELECT COUNT(*) FROM kernel_outbox WHERE aggregate_id = ? AND event_type IN ('payments.refund_completed.v1', 'payments.refund_failed.v1')",
+        [refund.id.to_string()], |row| row.get(0),
+    ).unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(
+        db.payments().get(payment.id).unwrap().unwrap().amount_refunded,
+        if settled.status == stateset_core::RefundStatus::Completed { dec!(0.10) } else { dec!(0) }
+    );
 }
 
 /// An over-refund must surface as the typed invariant error carrying the

@@ -591,7 +591,7 @@ pub(crate) fn append_kernel_event_tx(
 ) -> rusqlite::Result<()> {
     let payload = serde_json::to_string(&event.payload)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-    tx.execute(
+    let inserted = tx.execute(
         "INSERT INTO kernel_outbox (
             id, event_type, aggregate_type, aggregate_id, payload, command_id,
             idempotency_key, principal_type, principal_id, correlation_id,
@@ -616,7 +616,14 @@ pub(crate) fn append_kernel_event_tx(
             event.tier,
         ],
     )?;
+    require_inserted_row(inserted)?;
     Ok(())
+}
+
+// A BEFORE trigger may use RAISE(IGNORE), returning success with no persisted
+// row. Required facts and receipts must fail the surrounding transaction.
+const fn require_inserted_row(rows: usize) -> rusqlite::Result<()> {
+    if rows == 1 { Ok(()) } else { Err(rusqlite::Error::StatementChangedRows(rows)) }
 }
 
 /// Record an ordinary mutation's fact inside the caller's transaction.
@@ -677,7 +684,7 @@ pub(crate) fn append_kernel_receipt_tx(
         })?;
     let audit_receipt = serde_json::to_string(&record.receipt)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-    tx.execute(
+    let inserted = tx.execute(
         "INSERT INTO kernel_receipt_audit_log (
             receipt_id, command_id, idempotency_key, request_hash,
             previous_audit_hash, audit_hash, receipt, created_at
@@ -693,13 +700,14 @@ pub(crate) fn append_kernel_receipt_tx(
             record.completed_at.to_rfc3339(),
         ],
     )?;
+    require_inserted_row(inserted)?;
     let mut sealed_receipt = record.receipt.clone();
     if let Some(object) = sealed_receipt.as_object_mut() {
         object.insert("audit_hash".into(), serde_json::Value::String(audit_hash.clone()));
     }
     let receipt = serde_json::to_string(&sealed_receipt)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-    tx.execute(
+    let inserted = tx.execute(
         "INSERT INTO kernel_receipts (
             command_id, idempotency_key, command_type, contract_version,
             request_hash, status, receipt, created_at, completed_at
@@ -724,6 +732,7 @@ pub(crate) fn append_kernel_receipt_tx(
             record.completed_at.to_rfc3339(),
         ],
     )?;
+    require_inserted_row(inserted)?;
     Ok(audit_hash)
 }
 

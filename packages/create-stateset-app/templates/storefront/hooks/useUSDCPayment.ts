@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseUnits } from 'viem';
 import { USDC_ADDRESS, USDC_DECIMALS, MERCHANT_ADDRESS, ERC20_ABI, activeChain } from '@/lib/wagmi';
+import { assertCheckoutAvailable } from '@/lib/payment-readiness.js';
 
 type PaymentStatus = 'idle' | 'confirming' | 'pending' | 'success' | 'error';
 
@@ -51,7 +52,10 @@ export function useUSDCPayment() {
         setPaymentStatus('confirming');
         setError(undefined);
 
-        if (/^0x0{40}$/i.test(MERCHANT_ADDRESS)) throw new Error('Store wallet is not configured');
+        await assertCheckoutAvailable({
+          merchantAddress: MERCHANT_ADDRESS,
+          chainId: activeChain.id,
+        });
         const amountInUnits = parseUnits(amount, USDC_DECIMALS);
 
         const hash = await writeContractAsync({

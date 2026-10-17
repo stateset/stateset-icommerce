@@ -13,6 +13,7 @@ export const MCP_TOOL_PROFILES = Object.freeze({
   core: Object.freeze(TOOL_MODULE_NAMES.filter((domain) => DOMAIN_TIERS[domain] === 'core')),
   operations: [
     'inventory',
+    'simulations',
     'manufacturing',
     'shipments',
     'suppliers',
@@ -47,6 +48,7 @@ export const MCP_TOOL_PROFILES = Object.freeze({
     'payment-obligations',
   ],
   agents: [
+    'simulations',
     'agent-runtime',
     'agent-cards',
     'agent-receipt',

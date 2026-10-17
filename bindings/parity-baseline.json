@@ -404,6 +404,7 @@
         "adjust",
         "confirm_reservation",
         "create_item",
+        "fulfill_order_stock",
         "get_stock",
         "release_reservation",
         "reserve"
@@ -593,9 +594,11 @@
         "create",
         "create_supplier",
         "get",
+        "get_items",
         "get_supplier",
         "list",
         "list_suppliers",
+        "receive",
         "send",
         "submit"
       ],
@@ -1858,6 +1861,9 @@
         "list_periods",
         "void_journal_entry"
       ],
+      "inventory": [
+        "fulfill_order_stock"
+      ],
       "lots": [
         "count",
         "get_active_lots",
@@ -1897,6 +1903,10 @@
       "promotions": [
         "is_valid",
         "update"
+      ],
+      "purchase_orders": [
+        "get_items",
+        "receive"
       ],
       "quality": [
         "count_active_holds",
@@ -2309,6 +2319,7 @@
       ],
       "inventory": [
         "confirm_reservation",
+        "fulfill_order_stock",
         "release_reservation",
         "reserve"
       ],
@@ -2469,7 +2480,9 @@
         "validate_coupon"
       ],
       "purchase_orders": [
-        "count"
+        "count",
+        "get_items",
+        "receive"
       ],
       "purgatory": [
         "delete",

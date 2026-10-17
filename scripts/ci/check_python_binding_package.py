@@ -184,17 +184,25 @@ def validate_sdist(sdist_path: Path) -> None:
 
 
 def build_dist(bindings_dir: Path, python_bin: str, dist_dir: Path) -> None:
-    run([python_bin, "-m", "maturin", "build", "--interpreter", python_bin, "--out", str(dist_dir)], cwd=bindings_dir)
+    # This branch validates a local build on its own host. Maturin's automatic
+    # manylinux policy can select a tag newer than this host even when the
+    # extension imports here. Published artifacts enter through --dist-dir and
+    # retain their audited platform tags.
+    command = [python_bin, "-m", "maturin", "build", "--interpreter", python_bin]
+    if sys.platform.startswith("linux"):
+        command.extend(["--compatibility", "linux"])
+    run([*command, "--out", str(dist_dir)], cwd=bindings_dir)
     run([python_bin, "-m", "maturin", "sdist", "--out", str(dist_dir)], cwd=bindings_dir)
 
 
 def smoke_install(dist_dir: Path, python_bin: str) -> None:
     venv_dir = dist_dir / "wheel-smoke-venv"
-    run([python_bin, "-m", "venv", str(venv_dir)])
+    run([python_bin, "-I", "-m", "venv", str(venv_dir)])
 
     venv_python = venv_dir / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
     run([
         str(venv_python),
+        "-I",
         "-m",
         "pip",
         "install",
@@ -202,9 +210,10 @@ def smoke_install(dist_dir: Path, python_bin: str) -> None:
         "--find-links",
         str(dist_dir),
         "--no-deps",
+        "--only-binary=:all:",
         "stateset-embedded",
     ])
-    run([str(venv_python), "-c", IMPORT_SMOKE])
+    run([str(venv_python), "-I", "-c", IMPORT_SMOKE])
 
 
 def main() -> None:

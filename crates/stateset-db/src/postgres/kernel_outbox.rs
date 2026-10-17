@@ -507,7 +507,7 @@ pub(crate) async fn append_kernel_event_tx(
     let attempts = i32::try_from(event.attempts).map_err(|error| {
         CommerceError::DatabaseError(format!("kernel outbox attempt count overflow: {error}"))
     })?;
-    sqlx::query(
+    let inserted = sqlx::query(
         "INSERT INTO kernel_outbox (
             id, event_type, aggregate_type, aggregate_id, payload, command_id,
             idempotency_key, principal_type, principal_id, correlation_id,
@@ -533,6 +533,11 @@ pub(crate) async fn append_kernel_event_tx(
     .execute(tx)
     .await
     .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+    if inserted.rows_affected() != 1 {
+        return Err(CommerceError::DatabaseError(
+            "required kernel outbox insert did not persist one row".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -597,7 +602,7 @@ pub(crate) async fn append_kernel_receipt_tx(
         .ok_or_else(|| CommerceError::DatabaseError("receipt_id missing from receipt".into()))?
         .parse::<Uuid>()
         .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-    sqlx::query(
+    let inserted = sqlx::query(
         "INSERT INTO kernel_receipt_audit_log (
             receipt_id, command_id, idempotency_key, request_hash,
             previous_audit_hash, audit_hash, receipt, created_at
@@ -614,11 +619,16 @@ pub(crate) async fn append_kernel_receipt_tx(
     .execute(&mut *tx)
     .await
     .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+    if inserted.rows_affected() != 1 {
+        return Err(CommerceError::DatabaseError(
+            "required kernel audit insert did not persist one row".into(),
+        ));
+    }
     let mut sealed_receipt = record.receipt.clone();
     if let Some(object) = sealed_receipt.as_object_mut() {
         object.insert("audit_hash".into(), Value::String(audit_hash.clone()));
     }
-    sqlx::query(
+    let inserted = sqlx::query(
         "INSERT INTO kernel_receipts (
             command_id, idempotency_key, command_type, contract_version,
             request_hash, status, receipt, created_at, completed_at
@@ -644,6 +654,11 @@ pub(crate) async fn append_kernel_receipt_tx(
     .execute(tx)
     .await
     .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+    if inserted.rows_affected() != 1 {
+        return Err(CommerceError::DatabaseError(
+            "required kernel receipt insert did not persist one row".into(),
+        ));
+    }
     Ok(audit_hash)
 }
 

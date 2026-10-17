@@ -22,6 +22,7 @@ mod credit;
 mod currency;
 mod custom_objects;
 mod customers;
+mod durability;
 mod edi_documents;
 mod fixed_assets;
 mod fraud;
@@ -106,6 +107,7 @@ pub use credit::*;
 pub use currency::*;
 pub use custom_objects::*;
 pub use customers::*;
+pub use durability::{SQLITE_SYNCHRONOUS_ENV, SqliteDurability, SqliteStorageStatus};
 pub use edi_documents::*;
 pub use fixed_assets::*;
 pub use fraud::*;
@@ -262,6 +264,16 @@ impl Drop for PragmaScope {
 impl SqliteDatabase {
     /// Create a new SQLite database connection
     pub fn new(config: &DatabaseConfig) -> Result<Self, CommerceError> {
+        Self::new_with_durability(config, SqliteDurability::from_env()?)
+    }
+
+    /// Open a store with an explicit policy applied to every current and future
+    /// pooled connection. This overrides `STATESET_SQLITE_SYNCHRONOUS` without
+    /// changing process-global environment state.
+    pub fn new_with_durability(
+        config: &DatabaseConfig,
+        durability: SqliteDurability,
+    ) -> Result<Self, CommerceError> {
         use std::time::Duration;
 
         // `:memory:` databases are backed by a PRIVATE TEMP FILE, not SQLite
@@ -330,10 +342,10 @@ impl SqliteDatabase {
                 crate::DEFAULT_TRANSACTION_TIMEOUT_MS
             ))?;
             conn.execute_batch("PRAGMA journal_mode = WAL;")?;
-            // Performance tuning: reduce fsync overhead and increase cache
+            conn.execute_batch(durability.synchronous_pragma())?;
+            // Performance tuning independent of the operator's durability choice.
             conn.execute_batch(
-                "PRAGMA synchronous = NORMAL;\
-                 PRAGMA cache_size = -16000;\
+                "PRAGMA cache_size = -16000;\
                  PRAGMA temp_store = MEMORY;\
                  PRAGMA mmap_size = 268435456;\
                  PRAGMA wal_autocheckpoint = 10000;",
@@ -405,18 +417,43 @@ impl SqliteDatabase {
         })
     }
 
+    /// Inspect effective connection settings, rather than reporting a requested policy.
+    pub fn storage_status(&self) -> Result<SqliteStorageStatus, CommerceError> {
+        let conn = self.conn()?;
+        let read = || -> rusqlite::Result<SqliteStorageStatus> {
+            Ok(SqliteStorageStatus {
+                journal_mode: conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?,
+                synchronous: conn.query_row("PRAGMA synchronous", [], |row| row.get(0))?,
+                busy_timeout_ms: conn.query_row("PRAGMA busy_timeout", [], |row| row.get(0))?,
+                wal_autocheckpoint_pages: conn.query_row(
+                    "PRAGMA wal_autocheckpoint",
+                    [],
+                    |row| row.get(0),
+                )?,
+            })
+        };
+        read().map_err(|error| CommerceError::DatabaseError(error.to_string()))
+    }
+
     /// Graceful shutdown: checkpoint WAL and optimize before closing.
     ///
     /// Call this before dropping the database to ensure all WAL data is
     /// flushed to the main database file. Safe to call multiple times.
     pub fn shutdown(&self) -> Result<(), CommerceError> {
         let conn = self.conn()?;
-        // Checkpoint WAL to main database file
-        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
-            .map_err(|e| CommerceError::DatabaseError(format!("WAL checkpoint failed: {e}")))?;
-        // Run optimize to update query planner statistics
+        // Optimizing can write planner statistics into the WAL, so it must run
+        // before the final checkpoint rather than repopulating it afterwards.
         conn.execute_batch("PRAGMA optimize")
             .map_err(|e| CommerceError::DatabaseError(format!("PRAGMA optimize failed: {e}")))?;
+        // Checkpoint WAL to main database file, including any new statistics.
+        let busy: i64 = conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
+            .map_err(|e| CommerceError::DatabaseError(format!("WAL checkpoint failed: {e}")))?;
+        if busy != 0 {
+            return Err(CommerceError::DatabaseError(
+                "WAL checkpoint blocked by an active reader or writer; close other connections and retry shutdown".into(),
+            ));
+        }
         tracing::info!("Database shutdown: WAL checkpointed and optimized");
         Ok(())
     }

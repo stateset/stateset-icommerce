@@ -604,6 +604,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`PromotionUsageFilterInput`](#promotionusagefilterinput)
   - [`PromotionUsageOutput`](#promotionusageoutput)
   - [`PurchaseOrderFilterInput`](#purchaseorderfilterinput)
+  - [`PurchaseOrderItemOutput`](#purchaseorderitemoutput)
   - [`PurchaseOrderOutput`](#purchaseorderoutput)
   - [`PurchaseOrderStatus`](#purchaseorderstatus)
   - [`PurgatoryFilterInput`](#purgatoryfilterinput)
@@ -623,6 +624,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`ReceiptType`](#receipttype)
   - [`ReceiptTypeFilter`](#receipttypefilter)
   - [`ReceiptTypeInput`](#receipttypeinput)
+  - [`ReceivePurchaseOrderItemInput`](#receivepurchaseorderiteminput)
   - [`RecognitionMethod`](#recognitionmethod)
   - [`RecognitionMethodOutput`](#recognitionmethodoutput)
   - [`RecordActivityInput`](#recordactivityinput)
@@ -1273,6 +1275,11 @@ Class `Inventory`.
 
 - **`confirmReservation(reservationId: string): Promise<void>`**
 
+- **`fulfillOrderStock(orderId: string): Promise<void>`**
+
+  Atomically consume confirmed holds after full shipment. Safe to retry;
+  shipping status alone does not post the physical stock transaction.
+
 - **`releaseReservation(reservationId: string): Promise<void>`**
 
 ### commerce.returns
@@ -1874,6 +1881,19 @@ Class `PurchaseOrders`.
 - **`cancel(id: string): Promise<PurchaseOrderOutput>`**
 
   Types: [`PurchaseOrderOutput`](#purchaseorderoutput)
+
+- **`getItems(id: string): Promise<Array<PurchaseOrderItemOutput>>`**
+
+  Read the persisted purchase-order lines with exact decimal fields.
+
+  Types: [`PurchaseOrderItemOutput`](#purchaseorderitemoutput)
+
+- **`receive(id: string, items: Array<ReceivePurchaseOrderItemInput>): Promise<PurchaseOrderOutput>`**
+
+  Record received quantities on a sent purchase order. This updates the PO;
+  warehouse stock must be posted separately through inventory/receiving.
+
+  Types: [`ReceivePurchaseOrderItemInput`](#receivepurchaseorderiteminput), [`PurchaseOrderOutput`](#purchaseorderoutput)
 
 - **`count(): Promise<number>`**
 
@@ -3477,7 +3497,9 @@ Class `Backorders`. Also available as `commerce.backorders`.
   available at its source location.
 
   Returns the allocations created, which is empty when nothing is
-  available or no backorder is open. Call it after stock arrives.
+  available or no unallocated backorder is open. Inventory receipts
+  trigger this sweep automatically; call it to retry a failed sweep or
+  after changing a backorder's source location.
 
   Types: [`BackorderAllocationOutput`](#backorderallocationoutput)
 
@@ -7540,6 +7562,7 @@ Input for creating a promotion
 | `supplierId` | `string` |  |
 | `items` | `Array<CreatePurchaseOrderItemInput>` | Types: [`CreatePurchaseOrderItemInput`](#createpurchaseorderiteminput) |
 | `notes?` | `string` |  |
+| `currency?` | `string` | ISO 4217 currency code; defaults to the supplier currency. |
 
 ### CreatePurchaseOrderItemInput
 
@@ -7548,7 +7571,8 @@ Input for creating a promotion
 | `sku` | `string` |  |
 | `name` | `string` |  |
 | `quantity` | `number` |  |
-| `unitCost` | `number` |  |
+| `unitCost?` | `number` | Legacy float input. Prefer `unitCostExact` for money. |
+| `unitCostExact?` | `string` | Exact base-10 unit cost; takes precedence over `unitCost`. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 
 ### CreateQualityHoldInput
 
@@ -11349,12 +11373,26 @@ Filter for `purchaseOrders.list()`
 | `offset?` | `number` |  |
 | `afterCursor?` | `Array<string>` | Keyset cursor: `[orderDate, id]` |
 
+### PurchaseOrderItemOutput
+
+Exact purchase-order line quantities and money, suitable for planning.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `sku` | `string` |  |
+| `quantityOrderedExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `quantityReceivedExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `unitCostExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `lineTotalExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+
 ### PurchaseOrderOutput
 
 | Field | Type | Description |
 |---|---|---|
 | `id` | `string` |  |
 | `poNumber` | `string` |  |
+| `currency` | `string` |  |
 | `supplierId` | `string` |  |
 | `status` | `PurchaseOrderStatus` | Types: [`PurchaseOrderStatus`](#purchaseorderstatus) |
 | `subtotal` | `number` | **Deprecated.** Use the `subtotalExact` twin; float money will be removed in 2.0. |
@@ -11581,6 +11619,13 @@ type ReceiptTypeInput = 'purchase_order' | 'purchaseorder' | 'po' | 'return' | '
 ```
 
 One of: `'purchase_order'`, `'purchaseorder'`, `'po'`, `'return'`, `'customer_return'`, `'transfer'`, `'adjustment'`.
+
+### ReceivePurchaseOrderItemInput
+
+| Field | Type | Description |
+|---|---|---|
+| `itemId` | `string` |  |
+| `quantityReceivedExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 
 ### RecognitionMethod
 

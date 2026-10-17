@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { createMcpHandler, InMemoryTransport } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { createStatesetV2McpServer } from '../../src/mcp/v2-server.js';
+import { ALL_DOMAIN_TOOLS } from '../../src/tools/domain-registry.js';
+import { AGENTIC_RUNTIME_TOOLS } from '../../src/mcp/agentic-runtime-tools.js';
+import { assertRequiredArgumentsContract } from '../helpers/mcp-safety-contract.js';
 
 const ENVELOPE = {
   'io.modelcontextprotocol/protocolVersion': '2026-07-28',
@@ -11,22 +14,26 @@ const ENVELOPE = {
 };
 
 function fixture(inputSchema, name = 'schema_test', serverOptions = {}) {
+  return collectionFixture(
+    [{ name, description: 'Test schema adaptation', inputSchema }],
+    serverOptions,
+  );
+}
+
+function collectionFixture(tools, serverOptions = {}) {
   const calls = [];
   const handler = createMcpHandler(() =>
     createStatesetV2McpServer({
       createServer: () => ({
         ...serverOptions,
-        getAdaptedTools: () => [
-          {
-            name,
-            description: 'Test schema adaptation',
-            inputSchema,
+        getAdaptedTools: () =>
+          tools.map((tool) => ({
+            ...tool,
             handler: async (args) => {
               calls.push(args);
               return { content: [{ type: 'text', text: JSON.stringify(args) }] };
             },
-          },
-        ],
+          })),
       }),
     }),
   );
@@ -55,11 +62,40 @@ function fixture(inputSchema, name = 'schema_test', serverOptions = {}) {
   return {
     calls,
     list: () => request('tools/list'),
-    call: (args = {}) => request('tools/call', { name, arguments: args }),
+    call: (args = {}) => request('tools/call', { name: tools[0].name, arguments: args }),
+    callNamed: (toolName, args = {}) => request('tools/call', { name: toolName, arguments: args }),
   };
 }
 
 describe('MCP v2 schema adaptation', () => {
+  it(
+    'refuses missing required inputs across the complete catalog without invoking handlers',
+    { timeout: 150_000 },
+    async (t) => {
+      // Use every real schema but replace every handler: external/demo domains
+      // must never initialize or execute merely to validate their arguments.
+      const definitions = [...ALL_DOMAIN_TOOLS, ...AGENTIC_RUNTIME_TOOLS];
+      const catalog = collectionFixture(definitions);
+      const listing = await catalog.list();
+      assert.ok(!listing.error, JSON.stringify(listing.error));
+      assert.deepEqual(
+        listing.result.tools.map((tool) => tool.name).sort(),
+        definitions.map((tool) => tool.name).sort(),
+      );
+      const checked = await assertRequiredArgumentsContract(
+        listing.result.tools,
+        async (name, args) => {
+          const response = await catalog.callNamed(name, args);
+          assert.ok(!response.error, `${name}: ${JSON.stringify(response.error)}`);
+          return response.result;
+        },
+      );
+      assert.equal(catalog.calls.length, 0);
+      t.diagnostic(
+        `catalog-validation-proof advertised=${definitions.length} required_refusals=${checked} handler_calls=0`,
+      );
+    },
+  );
   it('preserves custom decimal checks before calling the handler', async () => {
     const tool = fixture(
       {
@@ -73,6 +109,10 @@ describe('MCP v2 schema adaptation', () => {
 
     const refused = await tool.call({ amount: '0.00' });
     assert.equal(refused.result.isError, true);
+    assert.equal(refused.result.structuredContent.ok, false);
+    assert.equal(refused.result.structuredContent.preview, false);
+    assert.equal(refused.result.structuredContent.error.code, 'INVALID_INPUT');
+    assert.equal(refused.result.structuredContent.error.retryable, false);
     assert.match(refused.result.content[0].text, /Amount must be positive/);
     assert.equal(tool.calls.length, 0);
 
@@ -131,6 +171,10 @@ describe('MCP v2 schema adaptation', () => {
       'json_schema',
     );
     assert.equal((await tool.call({ quantity: 0 })).result.isError, true);
+    assert.equal(
+      (await tool.call({ quantity: 0 })).result.structuredContent.error.code,
+      'INVALID_INPUT',
+    );
     assert.equal(tool.calls.length, 0);
     assert.notEqual((await tool.call({ quantity: 2 })).result.isError, true);
     assert.deepEqual(tool.calls, [{ quantity: 2 }]);
@@ -144,9 +188,30 @@ describe('MCP v2 schema adaptation', () => {
       assert.deepEqual(tool.calls, [{}]);
     }
   });
+
+  it('keeps unknown and prototype-named tools as protocol errors without execution', async () => {
+    const tool = fixture({}, 'registered');
+    for (const name of ['unknown_tool', '__proto__', 'constructor']) {
+      const response = await tool.callNamed(name);
+      assert.equal(response.error.code, -32602);
+    }
+    assert.equal(tool.calls.length, 0);
+  });
 });
 
 describe('MCP v2 lifecycle', () => {
+  it('reports failed initialization with a contract and never executes the handler', async () => {
+    const servicesReady = Promise.reject(new Error('initialization unavailable'));
+    // Observe immediately; the per-request factory awaits the original promise.
+    servicesReady.catch(() => {});
+    const tool = fixture({}, 'unavailable', { servicesReady });
+    const response = await tool.call();
+    assert.equal(response.result.isError, true);
+    assert.equal(response.result.structuredContent.ok, false);
+    assert.equal(response.result.structuredContent.error.code, 'TOOL_ERROR');
+    assert.match(response.result.structuredContent.error.message, /initialization unavailable/);
+    assert.equal(tool.calls.length, 0);
+  });
   it('waits for service initialization before executing a tool, while discovery stays available', async () => {
     let finishInitialization;
     const servicesReady = new Promise((resolve) => {

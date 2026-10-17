@@ -41,16 +41,20 @@
 //! in the `error_helpers` module for converting backend-specific errors.
 
 pub(crate) mod a2a_participants;
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
+mod customer_facts;
 pub mod error_helpers;
 pub mod http_idempotency;
 pub mod kernel;
 pub mod kernel_outbox;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
+mod refund_replay;
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod shipment_allocations;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod shipment_updates;
 pub(crate) mod x402_claim;
-pub use http_idempotency::{HttpIdempotencyRecord, HttpIdempotencyRepository};
+pub use http_idempotency::{HttpIdempotencyRecord, HttpIdempotencyRepository, PendingHttpReceipt};
 pub use kernel_outbox::{KernelOutboxEvent, KernelReceiptRecord};
 
 #[cfg(feature = "sqlite")]
@@ -63,6 +67,8 @@ pub mod maintenance;
 pub mod migrations;
 pub mod portability;
 #[cfg(feature = "sqlite")]
+pub mod reconciliation;
+#[cfg(feature = "sqlite")]
 pub mod sqlite;
 
 #[cfg(feature = "postgres")]
@@ -71,7 +77,7 @@ pub mod postgres;
 pub mod transactions;
 
 #[cfg(feature = "sqlite")]
-pub use sqlite::SqliteDatabase;
+pub use sqlite::{SQLITE_SYNCHRONOUS_ENV, SqliteDatabase, SqliteDurability, SqliteStorageStatus};
 
 #[cfg(feature = "postgres")]
 pub use postgres::PostgresDatabase;

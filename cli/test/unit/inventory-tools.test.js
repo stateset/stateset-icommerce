@@ -480,3 +480,33 @@ describe('release_reservation', () => {
     }
   });
 });
+
+describe('fulfill_order_stock', () => {
+  const tool = findTool(inventoryTools, 'fulfill_order_stock');
+  it('requires apply before accessing the live engine', async () => {
+    const result = await tool.handler({
+      commerce: new Proxy(
+        {},
+        {
+          get() {
+            throw new Error('Live engine accessed');
+          },
+        },
+      ),
+      params: { orderId: 'order' },
+      allowApply: false,
+    });
+    assert.equal(result.success, false);
+    assert.ok(result.error.includes('--apply'));
+  });
+  it('posts only the selected order through the native inventory API', async () => {
+    const calls = [];
+    const result = await tool.handler({
+      commerce: { inventory: { fulfillOrderStock: async (id) => calls.push(id) } },
+      params: { orderId: 'selected-order' },
+      allowApply: true,
+    });
+    assert.equal(result.success, true);
+    assert.deepEqual(calls, ['selected-order']);
+  });
+});

@@ -288,6 +288,74 @@ fn payment_command(key: String) -> CommandEnvelope<CreatePayment> {
     command
 }
 
+#[tokio::test]
+async fn postgres_silently_suppressed_required_rows_roll_back_apply_and_preserve_preview() {
+    use sqlx::Executor;
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping required-row proof");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.unwrap();
+    for (table, promotion) in [
+        ("kernel_outbox", false),
+        ("kernel_receipt_audit_log", false),
+        ("kernel_receipts", false),
+        ("kernel_receipts", true),
+    ] {
+        let suffix = Uuid::new_v4().simple().to_string();
+        let name = format!("suppress_required_{suffix}");
+        let key = format!("required-row-{suffix}");
+        let mut command = payment_command(key.clone());
+        let executor = db.kernel_executor(policy());
+        if promotion {
+            command.mode = ExecutionMode::Preview;
+            assert_eq!(
+                executor.execute_create_payment_async(&command).await.unwrap().status,
+                ExecutionStatus::Previewed
+            );
+        }
+        let operation = if promotion { "UPDATE" } else { "INSERT" };
+        let sql = format!("CREATE FUNCTION {name}() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN
+            IF NEW.idempotency_key = '{key}' THEN RETURN NULL; END IF; RETURN NEW; END; $$;
+            CREATE TRIGGER {name} BEFORE {operation} ON {table} FOR EACH ROW EXECUTE PROCEDURE {name}();");
+        db.pool().execute(sql.as_str()).await.unwrap();
+        command.mode = ExecutionMode::Apply;
+        let result = executor.execute_create_payment_async(&command).await;
+        // Remove only this test's scoped trigger, even when an assertion fails.
+        let sql = format!("DROP TRIGGER {name} ON {table}; DROP FUNCTION {name}();");
+        db.pool().execute(sql.as_str()).await.unwrap();
+        assert!(result.is_err(), "{table}, promotion={promotion}");
+        let counts = sqlx::query_as::<_, (i64, i64, i64, i64)>(
+            "SELECT (SELECT COUNT(*) FROM payments WHERE idempotency_key=$1),
+                (SELECT COUNT(*) FROM kernel_outbox WHERE idempotency_key=$1),
+                (SELECT COUNT(*) FROM kernel_receipts WHERE idempotency_key=$1),
+                (SELECT COUNT(*) FROM kernel_receipt_audit_log WHERE idempotency_key=$1)",
+        )
+        .bind(&key)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        let retained = i64::from(promotion);
+        assert_eq!(counts, (0, 0, retained, retained));
+        let first = executor.execute_create_payment_async(&command).await.unwrap();
+        assert_eq!(first.status, ExecutionStatus::Succeeded);
+        assert_eq!(
+            executor.execute_create_payment_async(&command).await.unwrap().receipt_id,
+            first.receipt_id
+        );
+        let counts = sqlx::query_as::<_, (i64, i64, i64)>(
+            "SELECT (SELECT COUNT(*) FROM payments WHERE idempotency_key=$1),
+                (SELECT COUNT(*) FROM kernel_receipts WHERE idempotency_key=$1),
+                (SELECT COUNT(*) FROM kernel_receipt_audit_log WHERE idempotency_key=$1)",
+        )
+        .bind(&key)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        assert_eq!(counts, (1, 1, retained + 1));
+    }
+}
+
 fn refund_command(
     key: String,
     payment_id: stateset_core::PaymentId,

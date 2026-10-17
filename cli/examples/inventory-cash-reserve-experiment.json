@@ -1,0 +1,42 @@
+{
+  "name": "protect-operating-cash",
+  "seeds": [7, 42],
+  "goals": { "minCashBalance": "1.00", "minFillRateBps": 10000 },
+  "plans": [
+    {
+      "name": "unreserved",
+      "days": 2,
+      "startingCash": "2.00",
+      "products": [
+        {
+          "sku": "RESERVE",
+          "initialStock": 1,
+          "unitPrice": "3.00",
+          "unitCost": "1.00",
+          "demand": { "dailyUnits": [1, 1] },
+          "reorderPoint": 1,
+          "targetStock": 3,
+          "leadTimeDays": 1
+        }
+      ]
+    },
+    {
+      "name": "reserved",
+      "days": 2,
+      "startingCash": "2.00",
+      "cashReserve": "1.00",
+      "products": [
+        {
+          "sku": "RESERVE",
+          "initialStock": 1,
+          "unitPrice": "3.00",
+          "unitCost": "1.00",
+          "demand": { "dailyUnits": [1, 1] },
+          "reorderPoint": 1,
+          "targetStock": 3,
+          "leadTimeDays": 1
+        }
+      ]
+    }
+  ]
+}

@@ -34,13 +34,18 @@ export async function finishRecordedCheckout(commerce, payment, cartId) {
   if (!order.notes?.includes(`Cart: ${cartId}`)) {
     throw new Error('Settlement was already used for another checkout');
   }
-  if (String(payment.status).toLowerCase() !== 'completed') {
+  const paymentStatus = String(payment.status).toLowerCase();
+  const settled = ['completed', 'partially_refunded', 'refunded', 'disputed'];
+  if (!settled.includes(paymentStatus)) {
     await commerce.payments.markCompleted(payment.id);
   }
+  // A late delivery of the original checkout must not undo fulfillment,
+  // refunds, cancellation or a dispute. Only finish the initial pending order.
   const confirmed =
-    String(order.status).toLowerCase() === 'confirmed'
-      ? order
-      : await commerce.orders.updateStatus(order.id, 'confirmed');
+    String(order.status).toLowerCase() === 'pending' &&
+    !['partially_refunded', 'refunded', 'disputed'].includes(paymentStatus)
+      ? await commerce.orders.updateStatus(order.id, 'confirmed')
+      : order;
   const cart = await commerce.carts.get(cartId);
   if (cart?.status === 'active') await commerce.carts.cancel(cartId);
   return confirmed;

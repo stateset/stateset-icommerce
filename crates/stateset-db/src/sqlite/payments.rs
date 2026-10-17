@@ -287,7 +287,8 @@ pub(crate) fn refundable_remaining_in_tx(
 /// must settle a refund in the SAME commit as their own state change. Applies
 /// the same rules: refundable status, positive amount, and `amount` within the
 /// remaining balance net of in-flight refunds. `idempotency_key` is honoured
-/// inside the transaction: an existing refund with the key is returned as-is.
+/// inside the transaction: an existing refund is returned only when its
+/// immutable request fields match.
 pub(crate) fn create_refund_in_tx(
     tx: &rusqlite::Transaction<'_>,
     payment: &Payment,
@@ -298,11 +299,27 @@ pub(crate) fn create_refund_in_tx(
     now: chrono::DateTime<chrono::Utc>,
 ) -> rusqlite::Result<Uuid> {
     if let Some(key) = idempotency_key {
-        let existing: Option<String> = tx
-            .query_row("SELECT id FROM refunds WHERE idempotency_key = ?", [key], |row| row.get(0))
+        let existing: Option<Refund> = tx
+            .query_row(
+                "SELECT * FROM refunds WHERE idempotency_key = ?",
+                [key],
+                SqlitePaymentRepository::row_to_refund,
+            )
             .optional()?;
-        if let Some(id) = existing {
-            return parse_uuid_row(&id, "refund", "id");
+        if let Some(existing) = existing {
+            crate::refund_replay::check_refund_replay(
+                &existing,
+                &CreateRefund {
+                    payment_id: payment.id,
+                    amount: Some(amount),
+                    reason: reason.map(str::to_owned),
+                    idempotency_key: Some(key.into()),
+                    notes: notes.map(str::to_owned),
+                    ..Default::default()
+                },
+            )
+            .map_err(domain_err)?;
+            return Ok(existing.id);
         }
     }
     let smuggle = |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
@@ -1227,6 +1244,7 @@ impl PaymentRepository for SqlitePaymentRepository {
     fn create_refund(&self, input: CreateRefund) -> Result<Refund> {
         if let Some(key) = input.idempotency_key.as_deref() {
             if let Some(existing) = self.get_refund_by_idempotency_key(key)? {
+                crate::refund_replay::check_refund_replay(&existing, &input)?;
                 return Ok(existing);
             }
         }
@@ -1249,7 +1267,23 @@ impl PaymentRepository for SqlitePaymentRepository {
         // Domain failures (`NotFound`, `validate_refund`'s `ValidationError`)
         // are smuggled out of the closure as `ToSqlConversionFailure(CommerceError)`
         // and unwrapped back to their original variants by `map_db_error`.
-        with_immediate_transaction(&self.pool, |tx| {
+        let resolved_id = with_immediate_transaction(&self.pool, |tx| {
+            // Recheck after acquiring the writer lock: concurrent identical
+            // requests may both miss the inexpensive lookup above.
+            if let Some(key) = input.idempotency_key.as_deref() {
+                let existing = tx
+                    .query_row(
+                        "SELECT * FROM refunds WHERE idempotency_key = ?",
+                        [key],
+                        Self::row_to_refund,
+                    )
+                    .optional()?;
+                if let Some(existing) = existing {
+                    crate::refund_replay::check_refund_replay(&existing, &input)
+                        .map_err(domain_err)?;
+                    return Ok(existing.id);
+                }
+            }
             let mut payment = tx
                 .query_row(
                     "SELECT * FROM payments WHERE id = ?",
@@ -1338,10 +1372,10 @@ impl PaymentRepository for SqlitePaymentRepository {
             );
             append_kernel_event_tx(tx, &outbox_event)?;
 
-            Ok(())
+            Ok(id)
         })?;
 
-        self.get_refund(id)?.ok_or(CommerceError::NotFound)
+        self.get_refund(resolved_id)?.ok_or(CommerceError::NotFound)
     }
 
     fn get_refund(&self, id: Uuid) -> Result<Option<Refund>> {
@@ -1403,7 +1437,7 @@ impl PaymentRepository for SqlitePaymentRepository {
                 )));
             }
 
-            tx.execute(
+            let rows = tx.execute(
                 "UPDATE refunds SET status = ?, refunded_at = ?, updated_at = ? WHERE id = ?",
                 params![
                     RefundStatus::Completed.to_string(),
@@ -1412,6 +1446,11 @@ impl PaymentRepository for SqlitePaymentRepository {
                     id.to_string()
                 ],
             )?;
+            if rows != 1 {
+                return Err(domain_err(CommerceError::DatabaseError(
+                    "refund completion did not persist its status transition".into(),
+                )));
+            }
 
             // Update payment amount_refunded.
             //
@@ -1463,6 +1502,20 @@ impl PaymentRepository for SqlitePaymentRepository {
             }
             sync_order_payment_status_for_payment_tx(tx, &refund.payment_id.to_string(), now)?;
 
+            super::kernel_outbox::record_outbox_fact(
+                tx,
+                crate::kernel_outbox::RecordedFact {
+                    event_type: "payments.refund_completed.v1",
+                    aggregate_type: "refund",
+                    aggregate_id: &id.to_string(),
+                    payload: serde_json::json!({
+                        "refund_id": id, "payment_id": refund.payment_id,
+                        "amount": refund.amount.to_string(), "currency": refund.currency,
+                        "previous_status": current_status, "status": RefundStatus::Completed,
+                    }),
+                },
+            )?;
+
             Ok(())
         })?;
 
@@ -1472,31 +1525,57 @@ impl PaymentRepository for SqlitePaymentRepository {
     fn fail_refund(&self, id: Uuid, reason: &str) -> Result<Refund> {
         let now = chrono::Utc::now();
 
-        // Only an in-flight refund can fail. A `Completed` refund has already
-        // been folded into `payments.amount_refunded`; flipping it to `failed`
-        // would leave that balance inflated while the refund ledger no longer
-        // shows the money (Σ completed refunds != amount_refunded). The status
-        // guard lives in the UPDATE itself so a concurrent completion cannot
-        // slip between a read and the write.
-        let rows = {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
+        // Serialize the status check, write and required fact with completion.
+        // A completed refund is already included in the payment's balance.
+        with_immediate_transaction(&self.pool, |tx| {
+            let refund = tx
+                .query_row(
+                    "SELECT * FROM refunds WHERE id = ?",
+                    [id.to_string()],
+                    Self::row_to_refund,
+                )
+                .map_err(|error| match error {
+                    rusqlite::Error::QueryReturnedNoRows => domain_err(CommerceError::NotFound),
+                    error => error,
+                })?;
+            if refund.status == RefundStatus::Failed {
+                return Ok(refund);
+            }
+            if !matches!(refund.status, RefundStatus::Pending | RefundStatus::Processing) {
+                return Err(domain_err(CommerceError::ValidationError(format!(
+                    "Cannot fail a {} refund",
+                    refund.status
+                ))));
+            }
+            let rows = tx.execute(
                 "UPDATE refunds SET status = ?, failure_reason = ?, updated_at = ? \
                  WHERE id = ? AND status IN ('pending', 'processing')",
                 params![RefundStatus::Failed.to_string(), reason, now.to_rfc3339(), id.to_string()],
+            )?;
+            if rows != 1 {
+                return Err(domain_err(CommerceError::DatabaseError(
+                    "refund failure did not persist its status transition".into(),
+                )));
+            }
+            super::kernel_outbox::record_outbox_fact(
+                tx,
+                crate::kernel_outbox::RecordedFact {
+                    event_type: "payments.refund_failed.v1",
+                    aggregate_type: "refund",
+                    aggregate_id: &id.to_string(),
+                    payload: serde_json::json!({
+                        "refund_id": id, "payment_id": refund.payment_id,
+                        "amount": refund.amount.to_string(), "currency": refund.currency,
+                        "previous_status": refund.status, "status": RefundStatus::Failed,
+                    }),
+                },
+            )?;
+            tx.query_row(
+                "SELECT * FROM refunds WHERE id = ?",
+                [id.to_string()],
+                Self::row_to_refund,
             )
-            .map_err(map_db_error)?
-        };
-
-        let refund = self.get_refund(id)?.ok_or(CommerceError::NotFound)?;
-        // Idempotent: failing an already-failed refund is a no-op.
-        if rows == 0 && refund.status != RefundStatus::Failed {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot fail a {} refund",
-                refund.status
-            )));
-        }
-        Ok(refund)
+        })
     }
 
     fn create_payment_method(&self, input: CreatePaymentMethod) -> Result<PaymentMethod> {

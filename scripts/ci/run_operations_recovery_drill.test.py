@@ -17,6 +17,7 @@ import unittest
 SCRIPTS = Path(__file__).resolve().parent
 MOCK_TOOL = r'''
 import os
+import json
 from pathlib import Path
 import signal
 import sys
@@ -44,6 +45,10 @@ if os.environ.get("MUTATE") and package == "stateset-embedded":
 if os.environ.get("FAIL") == package:
     print("intentional fixture failure")
     sys.exit(17)
+target = sys.argv[sys.argv.index("--test") + 1] if "--test" in sys.argv else None
+if os.environ.get("FAIL_TEST") == target and target is not None:
+    print("intentional target failure")
+    sys.exit(18)
 markers = {
     "stateset-embedded": ["recovery-proof checksum=abc schema=1 migrations=1 bytes=5 integrity=ok"],
     "stateset-migrations": ["migration-proof path=db rollback=3,2 target=1 remigrated=2,3 data_preserved=true integrity=ok"],
@@ -51,16 +56,29 @@ markers = {
                       "tenant-receipt-failure-proof payments=1 reservation=pending"],
     "stateset-db": ["process-recovery-proof boundary=before_commit stock=unchanged uncommitted=discarded integrity=ok",
                     "process-recovery-proof boundary=after_commit receipt=replayed reservations=1 events=1 integrity=ok",
-                    "process-workload-proof workers=4 keys=64 attempts=256 effects=64 replays=192 elapsed_ms=123 integrity=ok audit=valid"],
+                    "process-workload-proof workers=4 keys=64 attempts=256 effects=64 replays=192 elapsed_ms=123 integrity=ok audit=valid",
+                    "process-latency-proof samples=256 p50_us=100 p95_us=200 p99_us=300 max_us=400 synchronous=1",
+                    "process-latency-samples " + json.dumps([100] * 128 + [200] * 116 + [300] * 10 + [400] * 2)],
 }
+test_count = 3 if package == "stateset-db" else len(markers[package])
+if target == "sqlite_storage_resilience":
+    markers[package] = ["storage-resilience-proof sqlite_full=rollback refund_retry=once integrity=ok"]
+    test_count = 4
+elif target == "sqlite_http_reconciliation":
+    markers[package] = ["reconciliation-proof response=verified audit=atomic duplicate=refused tenant=scoped"]
+    test_count = 7
 if not os.environ.get("NO_MARKERS"):
     for marker in markers[package]:
+        if os.environ.get("BAD_LATENCIES"):
+            marker = marker.replace("p95_us=200", "p95_us=50")
+        if os.environ.get("WRONG_LATENCIES"):
+            marker = marker.replace("p95_us=200", "p95_us=250")
         if os.environ.get("HARNESS_PREFIX") and package == "stateset-db":
             marker = "test serial_worker ... " + marker
         if os.environ.get("SPLIT_MARKER"):
             marker = marker.replace(" integrity=ok", "\n integrity=ok")
         print(marker)
-count = 0 if os.environ.get("ZERO_TESTS") else len(markers[package])
+count = 0 if os.environ.get("ZERO_TESTS") else test_count
 print(f"test result: ok. {count} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
 '''
 
@@ -130,7 +148,7 @@ class RecoveryEvidenceTests(unittest.TestCase):
         self.assertIn('"test"\\path\nsecond line', report["toolchain"]["cargo"])
         self.assertEqual(report["github_run_id"], 'run "quoted"\nnext')
         self.assertEqual(self.calls.read_text().splitlines(),
-                         ["stateset-embedded", "stateset-migrations", "stateset-http", "stateset-db"])
+                         ["stateset-embedded", "stateset-migrations", "stateset-http", "stateset-db", "stateset-db", "stateset-db"])
 
     def test_failed_rerun_replaces_success_without_reusing_logs(self):
         old = self.assert_success(self.invoke())
@@ -144,7 +162,8 @@ class RecoveryEvidenceTests(unittest.TestCase):
         self.assertEqual(check["result"], "failed")
         self.assertEqual(check["log_sha256"],
                          hashlib.sha256((self.output / check["log"]).read_bytes()).hexdigest())
-        for name in ("migration_rollback", "tenant_http_recovery", "sqlite_process_recovery"):
+        for name in ("migration_rollback", "tenant_http_recovery", "sqlite_process_recovery",
+                     "sqlite_storage_resilience", "sqlite_http_reconciliation"):
             self.assertEqual(report["checks"][name]["result"], "not_run")
             self.assertIsNone(report["checks"][name]["log_sha256"])
             self.assertFalse((self.output / report["checks"][name]["log"]).exists())
@@ -164,8 +183,37 @@ class RecoveryEvidenceTests(unittest.TestCase):
         self.assertEqual(report["result"], "failed")
         self.assertEqual(report["checks"]["sqlite_process_recovery"]["result"], "failed")
         self.assertEqual(report["checks"]["sqlite_process_recovery"]["exit_code"], 17)
-        self.assertTrue(all(check["result"] == "passed" for name, check in report["checks"].items()
-                            if name != "sqlite_process_recovery"))
+        for name in ("backup_restore", "migration_rollback", "tenant_http_recovery"):
+            self.assertEqual(report["checks"][name]["result"], "passed")
+        for name in ("sqlite_storage_resilience", "sqlite_http_reconciliation"):
+            self.assertEqual(report["checks"][name]["result"], "not_run")
+
+    def test_storage_failure_blocks_success_after_process_recovery_passed(self):
+        result = self.invoke(FAIL_TEST="sqlite_storage_resilience")
+        self.assertNotEqual(result.returncode, 0)
+        checks = self.report()["checks"]
+        self.assertEqual(checks["sqlite_process_recovery"]["result"], "passed")
+        self.assertEqual(checks["sqlite_storage_resilience"]["exit_code"], 18)
+        self.assertEqual(checks["sqlite_http_reconciliation"]["result"], "not_run")
+
+    def test_latency_evidence_is_structured_and_cannot_have_inverted_percentiles(self):
+        report = self.assert_success(self.invoke())
+        check = report["checks"]["sqlite_process_recovery"]
+        self.assertEqual(check["operation_latency_us"],
+                         {"samples": 256, "p50": 100, "p95": 200, "p99": 300, "max": 400})
+        self.assertEqual(check["sqlite_synchronous"], 1)
+        self.assertIn("architecture", report["host"])
+        self.assertNotEqual(self.invoke(BAD_LATENCIES="1").returncode, 0)
+        self.assertIn("percentiles are inconsistent", self.report()["error"])
+        self.assertNotEqual(self.invoke(WRONG_LATENCIES="1").returncode, 0)
+        self.assertIn("do not match raw samples", self.report()["error"])
+
+    def test_reconciliation_failure_blocks_success_after_storage_checks_passed(self):
+        result = self.invoke(FAIL_TEST="sqlite_http_reconciliation")
+        self.assertNotEqual(result.returncode, 0)
+        checks = self.report()["checks"]
+        self.assertEqual(checks["sqlite_storage_resilience"]["result"], "passed")
+        self.assertEqual(checks["sqlite_http_reconciliation"]["exit_code"], 18)
 
     def test_missing_marker_fails_even_with_zero_exit(self):
         self.assertNotEqual(self.invoke(NO_MARKERS="1").returncode, 0)

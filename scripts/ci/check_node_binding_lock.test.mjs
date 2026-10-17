@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-const current = '1.38.2';
+const current = '1.39.0';
 const previous = '1.37.0';
 const platforms = ['@stateset/embedded-darwin-arm64', '@stateset/embedded-linux-x64-gnu'];
 

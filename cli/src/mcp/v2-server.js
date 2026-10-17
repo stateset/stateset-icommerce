@@ -18,10 +18,17 @@
  *     context in the second slot. It is forwarded unchanged — our wrappers only
  *     read optional fields off it (`sessionId`, auth metadata).
  */
-import { McpServer, fromJsonSchema } from '@modelcontextprotocol/server';
+import {
+  McpServer,
+  ProtocolError,
+  ProtocolErrorCode,
+  fromJsonSchema,
+  isInputRequiredResult,
+} from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { CLI_VERSION } from '../config.js';
+import { attachContractToResponse, normalizeToolError } from './tool-result-contract.js';
 
 /**
  * Tool schemas are static, but the server is rebuilt per request — converting
@@ -123,6 +130,61 @@ function registerAdaptedTool(server, toolDef, servicesReady) {
 }
 
 /**
+ * Use the SDK's public low-level handler API to retain our result contract
+ * for schema refusals as well as handler outcomes. The high-level SDK turns
+ * validation failures into text-only errors before our tool wrapper runs.
+ * Discovery and parsing still use the same cached Standard Schema; invalid
+ * input never reaches a handler, policy gate or commerce mutation.
+ */
+function installToolCallContract(server, tools, servicesReady) {
+  if (tools.length === 0) return;
+  const byName = new Map(tools.map((tool) => [tool.name, tool]));
+  server.server.setRequestHandler('tools/call', async (request, ctx) => {
+    const tool = byName.get(request.params.name);
+    if (!tool) {
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidParams,
+        `Tool ${request.params.name} not found`,
+      );
+    }
+    try {
+      const inputSchema = tool.inputSchema;
+      const schema = standardSchemaFor(
+        inputSchema && typeof inputSchema === 'object' ? inputSchema : EMPTY_SCHEMA,
+      );
+      const parsed = await schema['~standard'].validate(request.params.arguments ?? {});
+      if (parsed.issues) {
+        const message = `Invalid parameters for tool ${tool.name}: ${JSON.stringify(parsed.issues)}`;
+        return attachContractToResponse(
+          { content: [{ type: 'text', text: JSON.stringify({ success: false, error: message }) }] },
+          normalizeToolError({ code: 'INVALID_INPUT', message }),
+        );
+      }
+      await servicesReady;
+      const result = await tool.handler(parsed.value, ctx);
+      return isInputRequiredResult(result)
+        ? result
+        : server.server.projectCallToolResult(result, undefined);
+    } catch (error) {
+      if (error instanceof ProtocolError && error.code === ProtocolErrorCode.UrlElicitationRequired)
+        throw error;
+      const outcome = normalizeToolError(error);
+      return attachContractToResponse(
+        {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ success: false, error: outcome.error.message }),
+            },
+          ],
+        },
+        outcome,
+      );
+    }
+  });
+}
+
+/**
  * Build a protocol-2026-07-28 MCP server exposing the full commerce tool surface.
  *
  * Use this as the factory for either v2 serving entry point — `createMcpHandler`
@@ -174,6 +236,7 @@ export function createStatesetV2McpServer({ createServer, ...serverOptions }) {
     for (const toolDef of tools) {
       registerAdaptedTool(server, toolDef, stateset.servicesReady);
     }
+    installToolCallContract(server, tools, stateset.servicesReady);
     return server;
   } catch (error) {
     // Schema conversion and registration can fail after the underlying

@@ -54,6 +54,10 @@ const US_STATE_CODES = new Set([
   'DC',
 ]);
 
+export function isSupportedUsState(value) {
+  return US_STATE_CODES.has(value);
+}
+
 export const STARTER_SHIPPING_METHODS = Object.freeze([
   Object.freeze({
     id: 'standard',
@@ -106,6 +110,8 @@ function normalizeMethods(methods) {
       ids.add(id);
       const label = String(method.label || '').trim();
       if (!label) throw new Error(`Shipping method ${id} requires a label`);
+      if (typeof method.amount !== 'string')
+        throw new Error('Shipping amounts must be decimal strings');
       const amount = String(method.amount ?? '').trim();
       decimalToUnits(amount, 6);
       const countries = (method.countries || ['US']).map((country) =>

@@ -1,0 +1,52 @@
+{
+  "name": "replenishment-under-demand-variation",
+  "seeds": [41, 42, 43],
+  "goals": {
+    "minFillRateBps": 9500,
+    "minEndingCash": "15.00",
+    "minGrossMargin": "5.00",
+    "maxPurchasingSpend": "20.00"
+  },
+  "plans": [
+    {
+      "name": "quick-replenishment",
+      "days": 5,
+      "startingCash": "20.00",
+      "products": [
+        {
+          "sku": "COFFEE",
+          "initialStock": 2,
+          "unitPrice": "2.50",
+          "unitCost": "1.25",
+          "demand": {
+            "min": 0,
+            "max": 3
+          },
+          "reorderPoint": 2,
+          "targetStock": 6,
+          "leadTimeDays": 1
+        }
+      ]
+    },
+    {
+      "name": "slow-replenishment",
+      "days": 5,
+      "startingCash": "20.00",
+      "products": [
+        {
+          "sku": "COFFEE",
+          "initialStock": 2,
+          "unitPrice": "2.50",
+          "unitCost": "1.25",
+          "demand": {
+            "min": 0,
+            "max": 3
+          },
+          "reorderPoint": 2,
+          "targetStock": 6,
+          "leadTimeDays": 3
+        }
+      ]
+    }
+  ]
+}

@@ -5,25 +5,25 @@
 
 Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/tool-tiers.js` (tiers).
 
-**942 tools** across **88 domains**, plus 15 agentic runtime tools.
+**951 tools** across **89 domains**, plus 15 agentic runtime tools.
 
 ## Stability tiers
 
 | Tier | Tools | Meaning |
 | --- | ---: | --- |
-| core | 202 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
-| extended | 491 | Real, specialised domains (finance, manufacturing, WMS, B2B, engagement). Opt in with `--profile` or `--domains`. |
+| core | 209 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
+| extended | 493 | Real, specialised domains (finance, manufacturing, WMS, B2B, engagement). Opt in with `--profile` or `--domains`. |
 | experimental | 264 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete. Only `--profile all`, a curated profile naming the domain, or `--domains`. |
 
 ## Profiles
 
 | Profile | Tools | Domains |
 | --- | ---: | --- |
-| all | 957 | every domain |
-| core (default) | 202 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain |
-| operations | 195 | inventory, manufacturing, shipments, suppliers, warranties, warehouse, receiving, fulfillment, quality, lots, serials, cycle-counts, transfer-orders, production-batches, supplier-skus, inbound-shipments, backorders, vendor-returns |
+| all | 966 | every domain |
+| core (default) | 209 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain, simulations |
+| operations | 204 | inventory, simulations, manufacturing, shipments, suppliers, warranties, warehouse, receiving, fulfillment, quality, lots, serials, cycle-counts, transfer-orders, production-batches, supplier-skus, inbound-shipments, backorders, vendor-returns |
 | finance | 134 | payments, invoices, treasury, accounts-payable, accounts-receivable, cost-accounting, credit, general-ledger, fixed-assets, revenue-recognition, prepayments, vendor-credits, payment-obligations |
-| agents | 251 | agent-runtime, agent-cards, agent-receipt, a2a, a2a-platform, a2a-automation, a2a-observability, a2a-intelligence, x402, stablecoin, erc8004, treasury, payment-obligations, proofs, audit, policies |
+| agents | 257 | simulations, agent-runtime, agent-cards, agent-receipt, a2a, a2a-platform, a2a-automation, a2a-observability, a2a-intelligence, x402, stablecoin, erc8004, treasury, payment-obligations, proofs, audit, policies |
 
 `core` is exactly the core tier, agentic runtime tools included. The curated profiles
 expose every tool in their domains, whatever its tier, plus the agentic runtime tools.
@@ -35,7 +35,7 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | [customers](#customers) | core | 11 |
 | [orders](#orders) | core | 6 |
 | [products](#products) | core | 14 |
-| [inventory](#inventory) | core | 6 |
+| [inventory](#inventory) | core | 7 |
 | [custom-objects](#custom-objects) | extended | 12 |
 | [returns](#returns) | core | 12 |
 | [carts](#carts) | core | 30 |
@@ -55,7 +55,7 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | [a2a](#a2a) | experimental | 59 |
 | [agent-runtime](#agent-runtime) | experimental | 29 |
 | [shipments](#shipments) | core | 18 |
-| [suppliers](#suppliers) | extended | 10 |
+| [suppliers](#suppliers) | extended | 12 |
 | [invoices](#invoices) | extended | 7 |
 | [warranties](#warranties) | extended | 7 |
 | [import](#import) | experimental | 10 |
@@ -120,6 +120,7 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | [supplier-skus](#supplier-skus) | extended | 7 |
 | [inbound-shipments](#inbound-shipments) | extended | 8 |
 | [explain](#explain) | core | 2 |
+| [simulations](#simulations) | core | 6 |
 
 ## customers
 
@@ -179,6 +180,7 @@ Tier: **core**
 
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
+| `fulfill_order_stock` | core | write | Post physical inventory for a fully shipped or delivered order. Atomically consume its confirmed holds, reducing on-hand and allocated together. Shipping status remains separate. Safe to retry; already fulfilled holds are ignored. |
 | `get_stock` | core | read | Get current stock level for a SKU. Shows on-hand, allocated, and available quantities. |
 | `create_inventory_item` | core | write | Create a new inventory item for a SKU. |
 | `adjust_inventory` | core | write | Adjust inventory quantity for a SKU. Use positive numbers to add stock, negative to remove. |
@@ -669,6 +671,8 @@ Tier: **extended**
 | `approve_purchase_order` | extended | write | Approve a purchase order. |
 | `send_purchase_order` | extended | write | Send a PO to the supplier. |
 | `cancel_purchase_order` | extended | write | Cancel a purchase order. |
+| `get_purchase_order_items` | extended | read | Read persisted purchase-order lines with exact costs and ordered/received quantities. |
+| `receive_purchase_order` | extended | write | Record exact received quantities against sent PO lines. This updates the purchase order only; inventory stock must be posted separately through the inventory or warehouse workflow. |
 
 ## invoices
 
@@ -1678,6 +1682,19 @@ Tier: **core**
 | --- | --- | --- | --- |
 | `explain_order` | core | read | Explain an order to a customer or merchant: one chronological timeline (checkout, payments, shipments, returns, refunds, fraud, activity), the money charged/refunded/net as exact strings, tax recomputed from the address, and flags for inconsistencies (e.g. paid but paymentStatus pending, refunded more than charged). Read-only; lists what it cannot see. |
 | `explain_cart_pricing` | core | read | Explain why a cart costs what it costs: lines, subtotal, promotions applied and REFUSED with reason codes, tax by jurisdiction, shipping, and a check that the explained total equals the stored grand total. Pass couponCodes to ask why a code does or does not apply. Read-only: nothing is written to the cart. |
+
+## simulations
+
+Tier: **core**
+
+| Tool | Tier | Permission | Description |
+| --- | --- | --- | --- |
+| `simulate_inventory_experiment` | core | read | Evaluate one to three inventory policies across shared seeds through independent native embedded stores. Demand may be sampled or an explicit daily forecast schedule. Supplier lead times and first fills may be fixed, sampled or explicit dailyValues schedules indexed by order-placement days 0..days. Supports split deliveries, purchasing constraints, per-SKU reviewIntervalDays and a shared cashReserve spending policy. Reviews start on day zero; off-review low-stock attempts defer without native POs or spending. Reports deferredPurchaseReviews and reviewDeferredRuns. Returns empirical percentiles, exact money means and unit fill rates, paired deltas, global and per-policy comparison conditions, path-diversity counts, daily cash and per-SKU inventory flows, first stockouts, minimum cash and reserve-blocked counts. Independent replay checks receipt timing and physical availability before sales as well as final balances. Each comparisonToBaseline lists changedConditions for capital, stock, prices, priority, reserve, horizon and realized paths. Optional per-seed goals include minCashBalance and productFillRates: unique {sku,minFillRateBps} targets present in every policy. Reports expose per-target checks and pooled service; all targets must pass on the same seed, and overall fill cannot hide a critical SKU miss. Zero-demand targets are not evaluable. At most 12 runs and 180 total product-days. Path matches do not establish equivalent assumptions, independence or confidence bounds. No live-store reads, real purchases or external services. |
+| `get_simulation_kernel_contract` | core | read | Discover the embedded commerce simulation kernel: typed action and planning schemas, execution limits, observations, failure and time semantics, and the model iteration workflow. Pure discovery; no live store or worker access. |
+| `simulate_commerce_scenario` | core | read | Execute a bounded synthetic commerce episode using the real embedded engine in a fresh private store. Typed purchases, receipts, orders, shipment stock postings, captures, refunds, retries and state inspection. No live-store access or external payments. Discover schemas with get_simulation_kernel_contract. |
+| `compare_commerce_scenarios` | core | read | Compare two or three bounded what-if commerce scenarios in separate private native stores. All scenarios use one currency and at most 100 total steps. The live store and external services are never used. |
+| `simulate_inventory_plan` | core | read | Project demand, stockouts, sales, purchase orders, split receipts and cash through the real embedded engine in a private store. Supply demand ranges, history or an exact dailyUnits forecast schedule, exact costs and reorder policy. Lead times and first-delivery fills accept fixed values, ranges or dailyValues schedules with exactly days+1 entries for order-placement days 0..days. Optional purchasing sets reviewIntervalDays (1..60, omitted means daily), minimum quantities, case packs and an inventory-position cap. Reviews occur on day zero and interval multiples; off-review low-stock attempts defer with nextReviewDay and unchanged cash before sizing or financial checks. Reports deferredPurchaseReviews; orders recompute current stock on review days before whole-order cash. Optional plan cashReserve withholds shared cash without shrinking orders. Reports daily cash and inventory flows, first stockout, minimum cash, supplier methods and reserve-blocked attempts. Inventory replay checks projected demand, purchase/receipt identities, supplier terms, daily event ordering and physical availability before sales against final native balances. Native purchase lines, sizing constraints, stock, reserves, cash flows and financial values must reconcile. Conditional projections; no live store or supplier access. |
+| `compare_inventory_plans` | core | read | Compare two or three inventory and purchasing policies using independent private embedded stores. The same seed, SKU and demand assumptions produce common demand paths across policy changes and product ordering. Returns exact metric deltas and global condition flags, plus each row comparisonToBaseline with changedConditions for opening cash, inventory, unit economics, purchase priority, cash reserve, horizon and realized demand/supply paths. Money is compared exactly; SKU facts are independent of product ordering, while purchase priority is checked separately. At most 180 product-days total; no real purchases or live-store writes. |
 
 ## agentic-runtime
 

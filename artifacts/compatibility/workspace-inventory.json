@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.38.2",
+    "version": "1.39.0",
     "memberCount": 31,
     "defaultMemberCount": 19,
     "rustCrateCount": 23,
@@ -580,11 +580,11 @@
     "topLevelSourceCounts": [
       {
         "name": "tools",
-        "count": 98
+        "count": 99
       },
       {
         "name": "commands",
-        "count": 89
+        "count": 90
       },
       {
         "name": "a2a",
@@ -592,7 +592,7 @@
       },
       {
         "name": "mcp",
-        "count": 34
+        "count": 35
       },
       {
         "name": "channels",
@@ -604,6 +604,10 @@
       },
       {
         "name": "adapters",
+        "count": 20
+      },
+      {
+        "name": "simulation",
         "count": 20
       },
       {
@@ -1011,7 +1015,7 @@
         "count": 1
       }
     ],
-    "toolModuleCount": 98,
+    "toolModuleCount": 99,
     "a2aModuleCount": 62
   },
   "admin": {

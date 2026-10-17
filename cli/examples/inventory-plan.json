@@ -1,0 +1,19 @@
+{
+  "name": "coffee-replenishment",
+  "currency": "USD",
+  "days": 14,
+  "seed": 42,
+  "startingCash": "1000.00",
+  "products": [
+    {
+      "sku": "COFFEE-250G",
+      "initialStock": 30,
+      "unitPrice": "12.50",
+      "unitCost": "5.25",
+      "demand": { "history": [3, 5, 4, 8, 6, 9, 4] },
+      "reorderPoint": 15,
+      "targetStock": 50,
+      "leadTimeDays": 2
+    }
+  ]
+}
