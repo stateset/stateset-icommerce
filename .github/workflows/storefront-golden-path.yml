@@ -15,6 +15,7 @@ on:
       - 'scripts/ci/storefront_evidence*'
       - 'scripts/ci/run_operations_recovery_drill.py'
       - 'scripts/ci/npm-audit-allowlist.json'
+      - 'scripts/ci/enforce_npm_audit_allowlist*'
       - 'docs/RELEASE_EVIDENCE.md'
   push:
     branches: [master]
@@ -31,6 +32,7 @@ on:
       - 'scripts/ci/storefront_evidence*'
       - 'scripts/ci/run_operations_recovery_drill.py'
       - 'scripts/ci/npm-audit-allowlist.json'
+      - 'scripts/ci/enforce_npm_audit_allowlist*'
       - 'docs/RELEASE_EVIDENCE.md'
   workflow_dispatch:
 
@@ -71,6 +73,9 @@ jobs:
 
       - name: Test source-bound evidence refusal paths
         run: python3 scripts/ci/storefront_evidence.test.py
+
+      - name: Test dependency audit refusal paths
+        run: node --test scripts/ci/enforce_npm_audit_allowlist.test.mjs
 
       - name: Run public storefront golden path
         env:
