@@ -1396,6 +1396,9 @@ jobs:
         working-directory: cli
         run: npm ci
 
+      - name: Test dependency audit refusal paths
+        run: node --test scripts/ci/enforce_npm_audit_allowlist.test.mjs
+
       - name: Generate crate compatibility report
         env:
           COMPAT_REPORT_DIR: artifacts/compatibility

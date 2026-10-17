@@ -42,10 +42,9 @@ run_logged() {
 }
 
 # `npm audit` exits non-zero both when it finds vulnerabilities and when the
-# registry's audit endpoint is unreachable, so a registry outage used to read
-# as "the storefront has a high-severity vulnerability" and fail the gate. Tell
-# the two apart: a real report is JSON we can parse, a service error is not.
-# Retry the transport, then fail only on findings we can actually see.
+# registry's audit endpoint is unreachable. The shared gate validates report
+# structure and exit status: JSON alone does not prove a successful audit.
+# Exit 2 means unavailable evidence; retry it, then fail closed on exhaustion.
 run_audit_with_retries() {
   local attempt
   for attempt in 1 2 3; do
@@ -61,16 +60,17 @@ run_audit_with_retries() {
       # Parsed success is final: do not retry further attempts.
       return 0
     fi
-    # Retry ONLY on registry/transport issues or unparsable responses.
-    if printf '%s' "${out}" | grep -qE 'did not return JSON|failed to invoke npm audit'; then
-      echo "warning: npm audit gate could not obtain/parse a report (attempt ${attempt})" | tee -a "${LOG_PATH}"
+    # Retry unavailable audit evidence, never a policy violation (exit 1).
+    if [[ ${rc} -eq 2 ]]; then
+      echo "warning: npm audit gate could not obtain a valid report (attempt ${attempt})" | tee -a "${LOG_PATH}"
       [[ ${attempt} -lt 3 ]] && sleep $((attempt * 5)) && continue
+      echo "error: npm audit gate failed after 3 attempts (no valid report)" >&2
+      return 1
     fi
     # Parsed failure is final: do not retry.
     echo "error: npm audit allowlist gate failed with a parsed report" | tee -a "${LOG_PATH}"
     return 1
   done
-  echo "error: npm audit allowlist gate failed after 3 attempts (no parseable report)" >&2
   return 1
 }
 
