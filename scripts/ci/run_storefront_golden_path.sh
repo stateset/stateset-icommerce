@@ -20,7 +20,8 @@ export REPO_ROOT
 mkdir -p "${OUTPUT_DIR}"
 WORK_DIR=""
 GOLDEN_PATH_RESULT=running
-export GOLDEN_PATH_INVOCATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+GOLDEN_PATH_INVOCATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+export GOLDEN_PATH_INVOCATION_ID
 cleanup() {
   local result=$?
   if [[ "${GOLDEN_PATH_RESULT}" != passed ]]; then
