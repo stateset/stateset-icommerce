@@ -31,7 +31,7 @@ uuid = { workspace = true }
 # ECMAScript Number::toString formatting for RFC 8785 §3.2.2.3 (the same
 # algorithm serde_jcs used; the rest of JCS is hand-rolled in canonicalize.rs
 # because serde_jcs 0.1.0 sorts object keys by escaped form — see that module).
-ryu-js = "0.2"
+ryu-js = "1.0"
 aes-gcm = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 hkdf = "0.12"
