@@ -86,6 +86,17 @@ function createEvmProvider(chainId) {
   return new JsonRpcProvider(chain.rpcUrl, chain.chainId || undefined);
 }
 
+// Each operation owns its provider, including its network-discovery retries.
+// Return plain results only, then release timers on success and failure alike.
+async function withEvmProvider(chainId, operation) {
+  const provider = createEvmProvider(chainId);
+  try {
+    return await operation(provider);
+  } finally {
+    provider.destroy();
+  }
+}
+
 async function loadSolanaSdk() {
   if (!solanaSdkPromise) {
     solanaSdkPromise = import('@solana/web3.js')
@@ -561,49 +572,50 @@ async function buildSolanaTransaction(intent, wallet, chainId) {
 async function buildEvmTransaction(intent, wallet, chainId) {
   requireEvmExecution(chainId);
   const chain = getChain(chainId);
-  const provider = createEvmProvider(chainId);
-  const signer = createEvmSigner(wallet, provider);
-  const feeData = await provider.getFeeData();
-  const nonce = await provider.getTransactionCount(intent.fromAddress, 'pending');
+  return withEvmProvider(chainId, async (provider) => {
+    const signer = createEvmSigner(wallet, provider);
+    const feeData = await provider.getFeeData();
+    const nonce = await provider.getTransactionCount(intent.fromAddress, 'pending');
 
-  const request = {
-    chainId: chain.chainId,
-    nonce,
-    from: intent.fromAddress,
-  };
+    const request = {
+      chainId: chain.chainId,
+      nonce,
+      from: intent.fromAddress,
+    };
 
-  if (!intent.tokenAddress || intent.tokenAddress === 'native') {
-    request.to = intent.toAddress;
-    request.value = intent.amountSmallest;
+    if (!intent.tokenAddress || intent.tokenAddress === 'native') {
+      request.to = intent.toAddress;
+      request.value = intent.amountSmallest;
+      const gasEstimate = await provider.estimateGas(request);
+      request.gasLimit = addGasMargin(gasEstimate);
+      applyFeeData(request, feeData);
+
+      return {
+        type: 'evm_native_transfer',
+        request,
+        signerAddress: signer.address,
+      };
+    }
+
+    const contract = new Contract(intent.tokenAddress, ERC20_ABI, provider);
+    const populated = await contract.transfer.populateTransaction(
+      intent.toAddress,
+      intent.amountSmallest,
+    );
+
+    request.to = intent.tokenAddress;
+    request.data = populated.data || '0x';
+    request.value = 0n;
     const gasEstimate = await provider.estimateGas(request);
     request.gasLimit = addGasMargin(gasEstimate);
     applyFeeData(request, feeData);
 
     return {
-      type: 'evm_native_transfer',
+      type: 'evm_erc20_transfer',
       request,
       signerAddress: signer.address,
     };
-  }
-
-  const contract = new Contract(intent.tokenAddress, ERC20_ABI, provider);
-  const populated = await contract.transfer.populateTransaction(
-    intent.toAddress,
-    intent.amountSmallest,
-  );
-
-  request.to = intent.tokenAddress;
-  request.data = populated.data || '0x';
-  request.value = 0n;
-  const gasEstimate = await provider.estimateGas(request);
-  request.gasLimit = addGasMargin(gasEstimate);
-  applyFeeData(request, feeData);
-
-  return {
-    type: 'evm_erc20_transfer',
-    request,
-    signerAddress: signer.address,
-  };
+  });
 }
 
 async function signTransaction(txData, wallet, chainId) {
@@ -658,13 +670,14 @@ async function submitTransaction(signedTx, chainId) {
 
   requireEvmExecution(chainId);
 
-  const provider = createEvmProvider(chainId);
-  const response = await provider.broadcastTransaction(signedTx.signedRawTransaction);
+  return withEvmProvider(chainId, async (provider) => {
+    const response = await provider.broadcastTransaction(signedTx.signedRawTransaction);
 
-  return {
-    txHash: response.hash,
-    submittedAt: new Date().toISOString(),
-  };
+    return {
+      txHash: response.hash,
+      submittedAt: new Date().toISOString(),
+    };
+  });
 }
 
 async function waitForConfirmation(txHash, chainId, options = {}) {
@@ -755,29 +768,30 @@ export async function getTransactionStatus(txHash, chainId, options = {}) {
 
   requireEvmExecution(chainId);
 
-  const provider = createEvmProvider(chainId);
-  const receipt = await provider.getTransactionReceipt(txHash);
+  return withEvmProvider(chainId, async (provider) => {
+    const receipt = await provider.getTransactionReceipt(txHash);
 
-  if (!receipt) {
+    if (!receipt) {
+      return {
+        confirmed: false,
+        confirmations: 0,
+      };
+    }
+
+    if (receipt.status === 0) {
+      throw new Error(`Transaction ${txHash} reverted on-chain`);
+    }
+
+    const latestBlock = await provider.getBlockNumber();
+    const confirmations = Math.max(0, latestBlock - receipt.blockNumber + 1);
+
     return {
-      confirmed: false,
-      confirmations: 0,
+      confirmed: true,
+      blockNumber: receipt.blockNumber,
+      confirmations,
+      confirmedAt: new Date().toISOString(),
     };
-  }
-
-  if (receipt.status === 0) {
-    throw new Error(`Transaction ${txHash} reverted on-chain`);
-  }
-
-  const latestBlock = await provider.getBlockNumber();
-  const confirmations = Math.max(0, latestBlock - receipt.blockNumber + 1);
-
-  return {
-    confirmed: true,
-    blockNumber: receipt.blockNumber,
-    confirmations,
-    confirmedAt: new Date().toISOString(),
-  };
+  });
 }
 
 /**
@@ -828,17 +842,17 @@ export async function getBalance(address, chainId, tokenSymbol, options = {}) {
     balanceSmallest = await getZcashBalance(address, chainId, options);
   } else {
     requireEvmExecution(chainId);
-    const provider = createEvmProvider(chainId);
+    balanceSmallest = await withEvmProvider(chainId, async (provider) => {
+      let rawBalance;
+      if (!token.address || token.address === 'native') {
+        rawBalance = await provider.getBalance(address);
+      } else {
+        const contract = new Contract(token.address, ERC20_ABI, provider);
+        rawBalance = await contract.balanceOf(address);
+      }
 
-    let rawBalance;
-    if (!token.address || token.address === 'native') {
-      rawBalance = await provider.getBalance(address);
-    } else {
-      const contract = new Contract(token.address, ERC20_ABI, provider);
-      rawBalance = await contract.balanceOf(address);
-    }
-
-    balanceSmallest = typeof rawBalance === 'bigint' ? rawBalance : BigInt(rawBalance.toString());
+      return typeof rawBalance === 'bigint' ? rawBalance : BigInt(rawBalance.toString());
+    });
   }
   return {
     balance: fromSmallestUnit(balanceSmallest, token.decimals),
