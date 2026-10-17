@@ -265,7 +265,7 @@ for (const [name, response] of [
   ['null latest version', { value: null }],
   ['object latest version', { value: { error: 'unavailable' } }],
   ['empty latest version', { value: '' }],
-  ['unparseable registry response', { raw: 'unavailable' }],
+  ['unparsable registry response', { raw: 'unavailable' }],
   ['registry lookup failure', { value: null, status: 1 }],
 ]) {
   test(`${name} cannot authorize an exception`, (t) => {
