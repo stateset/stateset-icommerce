@@ -829,6 +829,10 @@ jobs:
         # Optional integrations ship with the CLI and must be audited too.
         run: npm audit --audit-level=high
 
+      - name: Check optional SDK dependency contracts
+        working-directory: cli
+        run: node scripts/check-optional-dependency-security.mjs
+
       - name: Install root tooling (ESLint, Prettier)
         # Disable husky git hook installation in CI.
         run: HUSKY=0 npm ci
