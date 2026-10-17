@@ -7,8 +7,12 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const require = createRequire(import.meta.url);
-const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+// An explicit manifest checks the installed consumer tree, not this checkout.
+const manifestPath = process.argv[2]
+  ? path.resolve(process.argv[2])
+  : new URL('../package.json', import.meta.url);
+const require = createRequire(manifestPath);
+const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 
 function packageVersion(entry, name) {
   let directory = path.dirname(entry);
@@ -51,6 +55,30 @@ assert.equal(response.id, request.id);
 assert.equal(response.result, 42);
 assert.equal(request.method, 'getBalance');
 console.log(`Jayson request/response and nested uuid ${uuidVersion}: passed`);
+
+// Exercise the public Solana API as well as Jayson's direct client. A packed
+// tree must still load the SDK and its WebSocket dependencies on the host.
+const { Connection, PublicKey } = require('@solana/web3.js');
+let sdkRequest;
+const connection = new Connection('http://127.0.0.1:1', {
+  fetch: async (_url, options) => {
+    sdkRequest = JSON.parse(options.body);
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () =>
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: sdkRequest.id,
+          result: { context: { slot: 1 }, value: 42 },
+        }),
+    };
+  },
+});
+assert.equal(await connection.getBalance(new PublicKey('11111111111111111111111111111111')), 42);
+assert.equal(sdkRequest.method, 'getBalance');
+console.log('Solana public SDK getBalance with an offline transport: passed');
 
 // Baileys uses parseBuffer for audio duration. Exercise its resolved parser
 // against a complete PCM WAV fixture without connecting to WhatsApp.

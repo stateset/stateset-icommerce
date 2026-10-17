@@ -54,6 +54,20 @@ When it accepts, it pushes all three tags atomically:
 Do not push these tags by hand. A tag pushed outside the script is the one case
 the guards below exist to catch.
 
+The CLI workflow publishes the exact tarball produced by
+`scripts/ci/pack_cli_release.mjs` and checked by
+`scripts/ci/check_cli_consumer.mjs`. The packer replaces the local embedded
+binding link in a disposable stage and bundles the verified Solana dependency
+tree, including its patched UUID dependency. Consumer installs ignore the
+CLI's root-only npm overrides; a repository install alone is insufficient
+release evidence. Native engine and SQLite packages remain separate so npm
+can select them for the consumer's platform. The consumer gate installs every
+optional integration with lifecycle scripts enabled, exercises both native
+engines, checks the affected SDK APIs, and audits the installed dependency tree.
+PR checks use the current published embedded version; publication repeats the
+gate against the exact native version from the release checkout. Do not replace
+the tarball publish with an implicit repack of the repository directory.
+
 ### After the publishes land
 
 `bindings/node/package.json` pins each `@stateset/embedded-<platform>`
