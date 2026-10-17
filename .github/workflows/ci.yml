@@ -114,6 +114,7 @@ jobs:
           cargo test --locked -p stateset-core kernel::tests
           cargo test --locked -p stateset-db --test sqlite_kernel_outbox
           cargo test --locked -p stateset-db --features postgres --test postgres_kernel_executor
+          cargo test --locked -p stateset-db --features postgres --test customer_audit_contract
           cargo test --locked -p stateset-db --test snapshot_migrations
 
   fmt:

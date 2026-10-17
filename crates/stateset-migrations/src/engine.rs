@@ -500,6 +500,7 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         // territories; QST no longer compounds on GST.
         ("099_canadian_sales_tax", include_str!("../migrations/099_canadian_sales_tax.sql")),
         ("100_shipment_version", include_str!("../migrations/100_shipment_version.sql")),
+        ("101_audit_log", include_str!("../migrations/101_audit_log.sql")),
     ]
 }
 

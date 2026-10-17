@@ -8,6 +8,7 @@ import fcntl
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import re
 import signal
@@ -56,7 +57,8 @@ CHECKS = {
                     "sqlite_process_recovery", "--", "--nocapture"],
         "markers": [r"^(?:test [a-zA-Z0-9_:]+ \.\.\. )?process-recovery-proof boundary=before_commit stock=unchanged uncommitted=discarded integrity=ok$",
                     r"^(?:test [a-zA-Z0-9_:]+ \.\.\. )?process-recovery-proof boundary=after_commit receipt=replayed reservations=1 events=1 integrity=ok$",
-                    r"^(?:test [a-zA-Z0-9_:]+ \.\.\. )?process-workload-proof workers=4 keys=64 attempts=256 effects=64 replays=192 elapsed_ms=[0-9]+ integrity=ok audit=valid$"],
+                    r"^(?:test [a-zA-Z0-9_:]+ \.\.\. )?process-workload-proof workers=4 keys=64 attempts=256 effects=64 replays=192 elapsed_ms=[0-9]+ integrity=ok audit=valid$",
+                    r"^(?:test [a-zA-Z0-9_:]+ \.\.\. )?process-latency-proof samples=256 p50_us=[0-9]+ p95_us=[0-9]+ p99_us=[0-9]+ max_us=[0-9]+ synchronous=[12]$"],
         "minimum_tests": 3,
         "assertions": ["killed writer discards uncommitted WAL pages",
                        "kill after commit before acknowledgment preserves retry receipt",
@@ -64,6 +66,30 @@ CHECKS = {
                        "exact fractional stock conservation", "receipt audit chain valid",
                        "PRAGMA integrity_check=ok and foreign_key_check empty"],
         "log": "sqlite-process-recovery.log",
+    },
+    "sqlite_storage_resilience": {
+        "command": ["cargo", "test", "--locked", "-p", "stateset-db", "--test",
+                    "sqlite_storage_resilience", "--", "--nocapture"],
+        "markers": [r"^(?:test [a-zA-Z0-9_:]+ \.\.\. )?storage-resilience-proof sqlite_full=rollback refund_retry=once integrity=ok$"],
+        "minimum_tests": 4,
+        "assertions": ["NORMAL/FULL policy applies across the pool and reopen",
+                       "invalid environment policy fails before store creation",
+                       "blocked checkpoint fails and can retry after reader closes",
+                       "bounded SQLITE_FULL rolls back refund and permits one retry effect"],
+        "log": "sqlite-storage-resilience.log",
+    },
+    "sqlite_http_reconciliation": {
+        "command": ["cargo", "test", "--locked", "-p", "stateset-db", "--test",
+                    "sqlite_http_reconciliation", "--", "--nocapture"],
+        "markers": [r"^(?:test [a-zA-Z0-9_:]+ \.\.\. )?reconciliation-proof response=verified audit=atomic duplicate=refused tenant=scoped$"],
+        "minimum_tests": 7,
+        "assertions": ["read-only tenant-scoped bounded pending inspection",
+                       "verified response and required audit commit atomically",
+                       "stale identity or reservation time cannot complete a receipt",
+                       "failed audit insert preserves pending state and increments failure counter",
+                       "competing operators commit one response and audit",
+                       "legacy reservation supported", "invalid response/evidence rejected"],
+        "log": "sqlite-http-reconciliation.log",
     },
 }
 
@@ -215,7 +241,10 @@ def run(output: Path) -> int:
         "github_run_id": os.environ.get("GITHUB_RUN_ID", "local"),
         "github_run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", "local"),
         "source_before": None, "source_after": None, "source_unchanged": None,
-        "toolchain": {}, "runbook": "docs/src/guides/operations-recovery.md",
+        "toolchain": {},
+        "host": {"os": platform.system(), "release": platform.release(),
+                 "architecture": platform.machine(), "logical_cpus": os.cpu_count()},
+        "runbook": "docs/src/guides/operations-recovery.md",
         "checks": {name: {"result": "not_run", "command": check["command"],
                            "assertions": check["assertions"], "log": str(logs / check["log"]),
                            "log_sha256": None, "exit_code": None}
@@ -255,6 +284,29 @@ def run(output: Path) -> int:
                 r"^test result: ok\. ([0-9]+) passed; 0 failed;", transcript, re.MULTILINE))
             if passed < specification["minimum_tests"]:
                 raise RuntimeError(f"{name} did not report enough successful tests")
+            if name == "sqlite_process_recovery":
+                match = re.search(
+                    r"process-latency-proof samples=(\d+) p50_us=(\d+) p95_us=(\d+) "
+                    r"p99_us=(\d+) max_us=(\d+) synchronous=([12])", transcript)
+                samples, p50, p95, p99, maximum, synchronous = map(int, match.groups())
+                if not (p50 <= p95 <= p99 <= maximum):
+                    raise RuntimeError("process latency percentiles are inconsistent")
+                raw = re.findall(
+                    r"^(?:test [a-zA-Z0-9_:]+ \.\.\. )?process-latency-samples (\[[^\r\n]*\])$",
+                    transcript, re.MULTILINE)
+                if len(raw) != 1:
+                    raise RuntimeError("process raw latency samples missing or ambiguous")
+                values = json.loads(raw[0])
+                if len(values) != samples or not all(type(value) is int and value >= 0 for value in values):
+                    raise RuntimeError("process raw latency sample count or values invalid")
+                values.sort()
+                measured = [values[(samples * percentile + 99) // 100 - 1]
+                            for percentile in (50, 95, 99)] + [values[-1]]
+                if measured != [p50, p95, p99, maximum]:
+                    raise RuntimeError("process latency percentiles do not match raw samples")
+                current["operation_latency_us"] = {"samples": samples, "p50": p50,
+                    "p95": p95, "p99": p99, "max": maximum}
+                current["sqlite_synchronous"] = synchronous
             current["result"] = "passed"
             save_report(output, report)
             current = None

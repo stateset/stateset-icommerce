@@ -2616,6 +2616,47 @@ mod tests {
     }
 
     #[test]
+    fn create_subscription_billing_event_failure_rolls_back_subscription_and_cycle() {
+        let db = SqliteDatabase::in_memory().unwrap();
+        let repo = db.subscriptions();
+        let customer = CustomerId::new();
+        seed_customer(&repo, customer);
+        let plan = repo.create_plan(plan_input()).unwrap();
+        repo.activate_plan(plan.id).unwrap();
+        db.conn()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER fail_initial_billing_event BEFORE INSERT ON kernel_outbox
+             WHEN NEW.event_type = 'billing_cycle.scheduled'
+             BEGIN SELECT RAISE(ABORT, 'billing outbox unavailable'); END;",
+            )
+            .unwrap();
+        let error =
+            repo.create_subscription(create_subscription_input(customer, plan.id)).unwrap_err();
+        assert!(error.to_string().contains("billing outbox unavailable"), "{error}");
+        let conn = db.conn().unwrap();
+        for query in [
+            "SELECT COUNT(*) FROM subscriptions",
+            "SELECT COUNT(*) FROM billing_cycles",
+            "SELECT COUNT(*) FROM subscription_events",
+        ] {
+            let count: i64 = conn.query_row(query, [], |row| row.get(0)).unwrap();
+            assert_eq!(count, 0, "failed subscribe leaked rows: {query}");
+        }
+        conn.execute_batch("DROP TRIGGER fail_initial_billing_event").unwrap();
+        drop(conn);
+        let sub = repo.create_subscription(create_subscription_input(customer, plan.id)).unwrap();
+        let cycles = repo
+            .list_billing_cycles(BillingCycleFilter {
+                subscription_id: Some(sub.id),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(cycles.len(), 1);
+        assert_eq!(cycles[0].total, dec!(10.00));
+    }
+
+    #[test]
     fn billing_cycle_snapshots_price_and_discount_at_insert() {
         let repo = SqliteDatabase::in_memory().expect("in-memory").subscriptions();
         let customer = CustomerId::new();

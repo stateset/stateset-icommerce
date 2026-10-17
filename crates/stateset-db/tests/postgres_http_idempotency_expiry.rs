@@ -12,6 +12,55 @@ fn postgres_url() -> Option<String> {
 }
 
 #[test]
+fn postgres_pending_inspection_is_tenant_scoped_bounded_and_nanosecond_exact() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let db = runtime.block_on(PostgresDatabase::connect(&url)).unwrap();
+    let tenant = format!("pending-test-{}", Uuid::new_v4());
+    let repo = db.http_idempotency();
+    let first = HttpIdempotencyRecord {
+        tenant: tenant.clone(),
+        idempotency_key: "first".into(),
+        request_fingerprint: "f".repeat(64),
+        response_status: 0,
+        content_type: None,
+        response_body: vec![],
+        created_at: DateTime::from_timestamp(1_700_000_000, 100).unwrap(),
+    };
+    let mut later = first.clone();
+    later.idempotency_key = "later".into();
+    later.created_at += chrono::Duration::nanoseconds(1);
+    let mut other = first.clone();
+    other.tenant = format!("{tenant}-other");
+    let mut completed = first.clone();
+    completed.idempotency_key = "completed".into();
+    completed.response_status = 201;
+    for record in [&first, &later, &other, &completed] {
+        assert!(repo.put(record).unwrap());
+    }
+    let rows = repo.list_pending(&tenant, first.created_at, 100).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].idempotency_key, "first");
+    assert_eq!(rows[0].reserved_at, first.created_at);
+    let rows = repo.list_pending(&tenant, Utc::now(), 1).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].idempotency_key, "first");
+    assert_eq!(repo.list_pending(&other.tenant, Utc::now(), 100).unwrap().len(), 1);
+    for limit in [0, 1001, u32::MAX] {
+        assert!(repo.list_pending(&tenant, Utc::now(), limit).is_err());
+    }
+    assert!(
+        repo.get(&tenant, "completed", first.created_at - chrono::Duration::hours(1))
+            .unwrap()
+            .is_some(),
+        "inspection does not expire completed rows"
+    );
+}
+
+#[test]
 fn postgres_unresolved_reservation_survives_expiry_and_completes_once() {
     let Some(url) = postgres_url() else {
         eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");

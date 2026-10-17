@@ -35,8 +35,10 @@ const POSTGRES_UNSUPPORTED_ALLOWLIST: &[&str] = &[];
 ///
 /// - `money_agg.rs`: sqlite-side money aggregation helpers (postgres uses SQL).
 /// - `parse_helpers.rs`: rusqlite row-parsing helpers.
+/// - `durability.rs`: SQLite-specific WAL/synchronous configuration and diagnostics.
 /// - `vector.rs`: sqlite-only vector search store (behind the `vector` feature).
-const SQLITE_ONLY_FILES: &[&str] = &["money_agg.rs", "parse_helpers.rs", "vector.rs"];
+const SQLITE_ONLY_FILES: &[&str] =
+    &["durability.rs", "money_agg.rs", "parse_helpers.rs", "vector.rs"];
 
 /// Extract the variant identifiers of `pub enum DatabaseCapability` from lib.rs.
 fn capability_variants() -> Vec<String> {

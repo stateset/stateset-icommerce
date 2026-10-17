@@ -1,0 +1,41 @@
+{
+  "name": "prepaid-purchase-cash-reserve",
+  "seeds": [7, 42],
+  "goals": { "minEndingCash": "3.00", "minCashBalance": "1.00" },
+  "plans": [
+    {
+      "name": "fully-prepaid",
+      "days": 2,
+      "startingCash": "2.00",
+      "products": [
+        {
+          "sku": "CASH",
+          "initialStock": 0,
+          "unitPrice": "3.00",
+          "unitCost": "1.00",
+          "demand": { "dailyUnits": [2, 0] },
+          "reorderPoint": 0,
+          "targetStock": 2,
+          "leadTimeDays": 1
+        }
+      ]
+    },
+    {
+      "name": "smaller-purchases",
+      "days": 2,
+      "startingCash": "2.00",
+      "products": [
+        {
+          "sku": "CASH",
+          "initialStock": 0,
+          "unitPrice": "3.00",
+          "unitCost": "1.00",
+          "demand": { "dailyUnits": [2, 0] },
+          "reorderPoint": 0,
+          "targetStock": 1,
+          "leadTimeDays": 1
+        }
+      ]
+    }
+  ]
+}

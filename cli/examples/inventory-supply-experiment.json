@@ -1,0 +1,66 @@
+{
+  "name": "supplier-delays-and-split-deliveries",
+  "seeds": [7, 42, 99],
+  "plans": [
+    {
+      "name": "lean-stock",
+      "days": 7,
+      "startingCash": "20.00",
+      "products": [
+        {
+          "sku": "COFFEE",
+          "initialStock": 1,
+          "unitPrice": "2.50",
+          "unitCost": "1.25",
+          "demand": {
+            "min": 1,
+            "max": 3
+          },
+          "reorderPoint": 1,
+          "targetStock": 4,
+          "leadTimeDays": {
+            "min": 1,
+            "max": 3
+          },
+          "delivery": {
+            "firstReceiptBps": {
+              "min": 2500,
+              "max": 10000
+            },
+            "remainderDelayDays": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "buffer-stock",
+      "days": 7,
+      "startingCash": "20.00",
+      "products": [
+        {
+          "sku": "COFFEE",
+          "initialStock": 1,
+          "unitPrice": "2.50",
+          "unitCost": "1.25",
+          "demand": {
+            "min": 1,
+            "max": 3
+          },
+          "reorderPoint": 3,
+          "targetStock": 8,
+          "leadTimeDays": {
+            "min": 1,
+            "max": 3
+          },
+          "delivery": {
+            "firstReceiptBps": {
+              "min": 2500,
+              "max": 10000
+            },
+            "remainderDelayDays": 2
+          }
+        }
+      ]
+    }
+  ]
+}

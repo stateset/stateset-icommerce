@@ -14,14 +14,14 @@ MCP-native clients.
 ## Install
 
 ```bash
-npm install @stateset/cli@1.38.2 @stateset/embedded@1.38.2
+npm install @stateset/cli@1.39.0 @stateset/embedded@1.39.0
 ```
 
 For Python runtimes:
 
 ```bash
-pip install stateset-embedded==1.38.2
-pip install "stateset-embedded[agents]==1.38.2"
+pip install stateset-embedded==1.39.0
+pip install "stateset-embedded[agents]==1.39.0"
 ```
 
 From the repo checkout, the examples under `examples/agents/` also run against
@@ -488,7 +488,7 @@ The setup creates a configuration entry in your MCP client's config file:
   "mcpServers": {
     "stateset-commerce": {
       "command": "npx",
-      "args": ["-y", "-p", "@stateset/cli@1.38.2", "stateset-mcp", "--db", "./store.db"]
+      "args": ["-y", "-p", "@stateset/cli@1.39.0", "stateset-mcp", "--db", "./store.db"]
     }
   }
 }
@@ -504,10 +504,10 @@ agentic planning and replay tools. Every core tool is driven through the real
 server on a fresh store in CI and must work or refuse cleanly — no crashes, no
 known-defect backlog.
 
-| Tier | Exposed by | Contents |
-|---|---|---|
-| `core` | default (`--profile core`) | the commerce loop above |
-| `extended` | `--profile all`, a curated profile, or `--domains` | finance suite, manufacturing, WMS, B2B, subscriptions, reviews, loyalty, integrations |
+| Tier           | Exposed by                                         | Contents                                                                                                                    |
+| -------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `core`         | default (`--profile core`)                         | the commerce loop above                                                                                                     |
+| `extended`     | `--profile all`, a curated profile, or `--domains` | finance suite, manufacturing, WMS, B2B, subscriptions, reviews, loyalty, integrations                                       |
 | `experimental` | `--profile all`, a curated profile, or `--domains` | A2A, agent receipts, sync, vector search, on-chain treasury — tools that need a wallet, a chain, an API key or a demo stack |
 
 `--profile finance`, `operations` and `agents` expose every tool in their
@@ -556,8 +556,9 @@ Host → Origin → Auth:
   `--insecure-allow-any-host` only behind a proxy that already pins the Host
   header.
 - **Origin (browser cross-origin)** — `--allowed-origin <origin>` (repeatable;
-  a full origin like `https://agent.example.com` or a bare hostname, matched by
-  hostname). A request carrying any other `Origin` gets `403`. A loopback bind
+  a full origin like `https://agent.example.com:8443`, matched by scheme,
+  hostname and port). Explicit bare hostnames retain HTTP(S), any-port matching
+  for compatibility. Malformed, opaque, duplicate or unlisted origins get `403`. A loopback bind
   allows localhost origins by default; an exposed bind allows none. Requests
   with no `Origin` header — every non-browser MCP client — always pass.
 - **Auth (API key)** — `--api-key <key>` (repeatable), `STATESET_MCP_API_KEYS`
@@ -617,6 +618,482 @@ them with an unsupported-protocol-version error.
 | `stateset-mcp-http`   | Streamable HTTP, 2026-07-28, stateless | shared `--db`, seeded when `:memory:` | enabled on `:memory:`, else `--apply` |
 | `stateset-mcp-events` | stdio + HTTP event sidecar             | your database                         | preview-only unless `--apply`         |
 | `stateset-x402-mcp`   | stdio                                  | x402 payment tools only               | per its flags                         |
+
+## Embedded-engine simulations
+
+Agents can run what-if scenarios through the native engine without reading or
+changing their live store. The `simulations` domain is included in the core, operations and
+agents MCP profiles. It provides six tools:
+
+| Tool                             | Purpose                                                                                      |
+| -------------------------------- | -------------------------------------------------------------------------------------------- |
+| `get_simulation_kernel_contract` | Discover action/plan schemas, limits, observations and iteration semantics                   |
+| `simulate_inventory_experiment`  | Evaluate policies across shared demand seeds with empirical percentiles and paired deltas    |
+| `simulate_inventory_plan`        | Project demand, stockouts, purchases, receipts, sales and cash                               |
+| `compare_inventory_plans`        | Compare two or three replenishment policies or demand assumptions                            |
+| `simulate_commerce_scenario`     | Execute typed purchasing, receiving, order, shipment, payment, refund and inspection actions |
+| `compare_commerce_scenarios`     | Compare two or three commerce scenarios                                                      |
+
+`simulate_inventory_experiment` adds shared-seed, multi-path policy evaluation.
+Each run creates private SQLite files in a bounded child process. There is no
+model-supplied database path, executable code, provider callback, or live-store
+handle. The tools are reads relative to the operator store, so they work without
+`--apply`; all mutations take place in disposable simulation stores. Purchases,
+receipts, paid orders, and stock-consuming shipments use native engine APIs.
+Purchase receipt quantities and inventory postings are separate transactions.
+Shipping confirms holds; the runner then calls `inventory.fulfillOrderStock`
+to post physical stock atomically for the fully shipped order. This explicit
+operation is also available as the apply-gated `fulfill_order_stock` MCP tool
+and is safe to retry.
+Captures and refunds update the local ledger and transfer no money.
+
+Use it as an execution kernel for a model's commerce hypotheses: discover the
+contract, construct a baseline, run typed actions, inspect observations, compare
+alternatives, and revise the inputs. `inspect_state` reads native stock, order
+and payment status, plus purchase lines and received quantities at that point
+in the episode. The final `state` is also returned. `purchase_inventory` takes
+an `id` alias and items with `sku`, integer `quantity` and decimal-string
+`unitCost`; `receive_purchase_order` references that purchase alias.
+`ship_order` references an order alias and explicitly posts its physical stock.
+Manual episodes record purchasing without a cash-budget rule; planning episodes
+enforce the prepaid purchasing budget described below.
+
+An action can specify `expect: "rejected"` to test a refusal. Unexpected
+refusals set `expectationsMet: false` while later actions continue, allowing
+state inspection after failures. Overall `success` means the worker completed;
+check `expectationsMet` before accepting a manual episode. Runs are stateless:
+revise the input and replay a fresh episode rather than retaining a session.
+Native timestamps use wall time; virtual planning days order events without
+changing the native clock.
+
+Run the included examples from the repository root:
+
+```bash
+node cli/bin/stateset-simulate.js --inventory-plan cli/examples/inventory-plan.json --json
+node cli/bin/stateset-simulate.js --commerce cli/examples/commerce-scenario.json --json
+```
+
+A JSON array compares inputs. The same seed, SKU and demand inputs
+produce common demand paths for policy comparisons, even when products are
+reordered or another SKU is added. Demand reports name the generator version
+and show conditional expected units alongside the actual seeded daily path. The existing A2A
+`--scenario` mode remains available separately; native modes reject live
+settlement and operator database paths.
+
+A planning request supplies daily demand ranges (`{"min":3,"max":8}`),
+historical daily units (`{"history":[3,5,4,8,6,9,4]}`), or an explicit schedule
+(`{"dailyUnits":[0,0,8,0,0,2]}` for a six-day horizon), opening stock, exact
+sale/cost strings, available cash, reorder point, target stock and lead time.
+Historical mode resamples observed daily units with a seeded generator. Initial
+replenishments are placed on day zero; receipts arrive before daily demand.
+When available stock plus outstanding purchases reaches the reorder point,
+the policy orders up to target if cash covers the whole order. All daily sales
+are captured before end-of-day purchasing; product input order defines purchase
+priority when cash is limited. Purchases are
+prepaid, sales capture immediately, and unmet demand becomes lost sales.
+
+Explicit schedules replay the supplied trajectory in order: entry zero is
+virtual day one, and there is no demand entry for day zero. They must contain
+exactly `days` integer entries, each between 0 and 10000. Missing/extra days and
+mixed demand modes are rejected before execution. The runner never truncates,
+repeats or resamples a schedule, so demand seeds do not alter it. Reports label
+both the projection and its assumptions `explicit-daily-units`; expected horizon
+units equal the supplied sum. An agent can use this mode for a forecast curve,
+promotion, launch, seasonal scenario or outage. The curve is an input assumption,
+not an automatically fitted forecast. Different seeds still vary any sampled
+supplier conditions.
+
+The [promotion-spike experiment](../../cli/examples/inventory-demand-spike-experiment.json)
+compares lean stock with a buffer under the same six-day schedule, including
+real native purchases, arrivals, payments and shipment stock postings:
+
+```bash
+node cli/bin/stateset-simulate.js --inventory-experiment cli/examples/inventory-demand-spike-experiment.json --json
+```
+
+Opening inventory is already paid for; gross margin values sold units at the
+supplied constant unit cost. Reports expose these assumptions, daily events,
+stockouts, outstanding orders, exact cash totals and the input hash. Each run
+reconciles native stock and record counts, cash movements, and inventory value
+before reporting success. Comparisons include a metric table and exact money
+deltas against the first plan, with explicit flags for matching horizons and
+demand paths; they do not automatically select a purchasing policy.
+
+These are conditional planning projections, not calibrated forecasts or
+purchasing recommendations. Each input yields one demand path, without
+confidence intervals, trend/seasonality fitting, permanent supplier losses, taxes,
+fees or holding costs. No production data is imported implicitly. Single plans
+allow 120 product-days; comparisons allow 180 across at most three plans.
+Commerce scenarios allow 100 total actions. Runs time out after 30 seconds,
+with at most two active workers per process. Temporary stores are removed after
+worker exit during normal completion, failures and timeouts.
+
+Admission is also bounded before schema validation, across the SDK and MCP
+execution schemas. The entire request must fit 128 KiB, 16384 data nodes and
+32 nesting levels (the root is level one). JSON string escapes and UTF-8 bytes
+count toward the byte limit. Plain objects, arrays and finite JSON scalars are
+accepted for typed validation; cycles, accessors, proxies, class instances,
+symbol/custom array properties and executable values are refused. Ordinary
+repeated references in SDK inputs are counted each time, without being mistaken
+for cycles. Optional JavaScript `undefined` values remain supported and count
+as `null`, conservatively including their fields in the budget. The full
+comparison is checked before its cases, and the canonical request is checked
+again after defaults. Invalid inputs do not allocate a simulation worker or
+private database; MCP returns a structured non-retryable input refusal.
+
+Inventory plans and every experiment run expose `cashFlow.daily`, with one row
+for day zero and each simulated day: `openingCash`, `salesReceipts`,
+`purchasingSpend`, `closingCash` and `minimumCash`. Opening cash participates in
+the minimum, as does the balance after every native-backed sale and prepaid
+purchase. `summary.minimumCash` is the overall low point;
+`cashFlow.minimumCashAt` identifies its first occurrence, including SKU and
+purchase alias when applicable. Equal minima retain the first occurrence.
+Receipts, missed deliveries and blocked purchase attempts do not move cash.
+Flows must reconcile independently against the recorded timeline and totals
+before `reconciliation.cashFlowBalanced` is set.
+
+Add `"minCashBalance": "5.00"` to experiment `goals` to check a minimum cash
+reserve throughout each run. This can miss even when `minEndingCash` is met:
+prepaying purchases can exhaust cash before sales replenish it. The threshold
+is inclusive, uses exact decimal strings in the experiment currency, and is
+evaluated jointly with the other per-run goals. It does not modify the policy
+or prevent a purchase that would breach the requested reserve. Comparisons and
+experiment distributions include `minimumCash` as an exact monetary metric.
+
+To enforce a purchasing reserve, set `cashReserve` on each inventory plan or
+experiment policy, for example `"cashReserve": "5.00"`. This optional exact
+decimal amount uses the plan currency and defaults to zero when omitted.
+All products share `max(cash - cashReserve, 0)` in the existing purchase
+priority. The engine checks rounded whole-order quantities and inventory caps
+first, then actual cash, then the reserve. It never shrinks an order to fit.
+Blocked attempts create no native PO and spend nothing; later sales can make
+the same policy affordable. Zero-cost orders remain possible when cash is
+below the reserve. Starting below the reserve is allowed and creates no funds;
+`minCashBalance` still evaluates the observed shortfall.
+
+`purchase_reserve_blocked` timeline events include the required cost, cash,
+reserve and spendable cash. `summary.reserveBlockedPurchases` counts attempts,
+including repeated attempts on later days; experiment `reserveBlockedRuns`
+counts runs with at least one such block. These are separate from insufficient
+actual-cash and inventory-cap blocks. `sameCashReserve` compares normalized
+reserve amounts across policies (omitted and explicit zero are equivalent).
+Independent cash-flow reconciliation checks reserve compliance, block evidence
+and counts before accepting results. A complete comparison is provided in
+`cli/examples/inventory-cash-reserve-experiment.json`.
+
+Supplier lead times accept a fixed integer or a bounded range such as
+`"leadTimeDays": { "min": 1, "max": 4 }`. Add optional delivery assumptions:
+
+```json
+"delivery": {
+  "firstReceiptBps": { "min": 2500, "max": 10000 },
+  "remainderDelayDays": 2
+}
+```
+
+Both `leadTimeDays` and `delivery.firstReceiptBps` also accept an explicit
+`{ "dailyValues": [...] }` schedule. For a four-day plan:
+
+```json
+{
+  "leadTimeDays": { "dailyValues": [3, 9, 9, 1, 9] },
+  "delivery": {
+    "firstReceiptBps": { "dailyValues": [5000, 0, 0, 10000, 0] },
+    "remainderDelayDays": 1
+  }
+}
+```
+
+There must be exactly `days + 1` integer entries, indexed by **order-placement
+day**, including initial purchases on day zero. Lead times stay within 1..60;
+first-fill values stay within 0..10000. In this example a day-zero order arrives
+on day three with half its units first; a day-three order arrives on day four
+in full. Array index is neither arrival day nor purchase-order number. Existing
+orders retain the conditions selected at placement. Values for days with no
+orders are unused; schedules are never cycled, truncated or resampled.
+
+Explicit fields ignore seeds while other sampled fields retain their original
+independent streams. Supply projections expose `leadTimeMethod` and
+`firstReceiptMethod` as `fixed`, `uniform-integer` or `explicit-daily-values`.
+Path hashes reflect projected values, so equivalent scalar and scheduled paths
+match. Repeated seeds with fully fixed or explicit supply do not create extra
+distinct paths. Combine supplier schedules with `demand.dailyUnits` to test a
+specific simultaneous demand and supply shock. See
+`cli/examples/inventory-supply-calendar-experiment.json`.
+
+Basis points divide by 10000: 2500 represents a 25% first delivery. The first
+quantity is rounded down to whole units; the balance arrives after the remainder
+delay. A zero first delivery logs `purchase_delivery_missed` without submitting
+a native zero receipt. These are delayed balances, not permanent supplier loss
+or supplier refunds. Unreceived units remain prepaid in-transit inventory at the
+horizon. Reports distinguish `partialReceipts`, `missedDeliveries`, receipt-event
+counts and fully received purchase orders. Outstanding orders expose ordered,
+received and remaining quantities plus the next arrival day.
+
+`mulberry32-supply-v1` uses independent streams per SKU and order-placement day,
+including day zero. Changing reorder policy, quantities or product ordering
+preserves common supplier conditions when assumptions and seed match, and does
+not perturb the existing demand stream. Supply paths expose sampled daily lead
+times and first-delivery basis points. Each report verifies native PO status,
+line quantities, unit cost and total, as well as native stock and exact cash,
+on-hand value, in-transit value and cost of goods sold.
+
+Full plan reports retain normalized native `purchases` rows with status, exact
+costs and ordered/received quantities. Experiment `disruptedSupplyRuns` counts
+runs where at least one partial or missed first delivery occurred within the
+horizon; supplier delays also affect the stockout and lost-sales metrics.
+
+```bash
+node cli/bin/stateset-simulate.js --inventory-experiment cli/examples/inventory-supply-experiment.json --json
+```
+
+Per-product `purchasing` supplies minimum-order and case-pack assumptions:
+
+```json
+{
+  "purchasing": {
+    "minimumOrderQuantity": 5,
+    "orderMultiple": 4,
+    "maximumInventoryPosition": 12
+  }
+}
+```
+
+When the reorder trigger fires, take the larger of the target shortfall and
+minimum quantity, then round upward to an order multiple. A one-unit shortfall
+with a five-unit minimum and four-unit case pack orders eight units. This may
+exceed target stock. The optional inventory-position cap checks available stock
+plus outstanding quantities plus the rounded order; only then does the policy
+check cash for the whole order. The simulation bounds rounded orders to one
+million units. Minimum quantities and pack sizes default to one.
+
+These are model-supplied scenario assumptions. A blocked attempt creates no
+native PO or purchasing spend. `purchase_constraint_blocked` events explain the
+requested and rounded quantities, current position, required position and cap;
+`purchase_budget_blocked` events use the rounded cost. Capacity takes precedence
+if both limits block the attempt. `constraintBlockedPurchases` counts attempts,
+including repeated eligible days. `roundedPurchaseOrders` and
+`extraPurchasedUnits` count actual orders and cumulative units added by sizing,
+rather than end-of-horizon excess inventory. Experiments expose
+`constraintBlockedRuns` and paired quantity/constraint metric deltas. Every native
+PO must satisfy the supplied minimum, multiple and position cap before the
+report sets `purchasingConstraintsBalanced: true`.
+
+```bash
+node cli/bin/stateset-simulate.js --inventory-experiment cli/examples/inventory-purchasing-experiment.json --json
+```
+
+Purchasing policies may also set `purchasing.reviewIntervalDays`, an integer
+from 1 to 60. Reviews are anchored at virtual day zero: `7` allows replenishment
+on days 0, 7, 14, and so on. Omitted or `1` retains daily review. These intervals
+do not represent weekdays, holidays or an external supplier calendar.
+
+If inventory position is above the reorder point there is no action. Otherwise,
+off-review days emit `purchase_review_deferred`, with `inventoryPosition`,
+`reviewIntervalDays`, `nextReviewDay`, and unchanged `cash`. These attempts create
+no native PO, receipt or payment. They do not reserve stock, reserve cash or
+freeze a pending purchase quantity. On the next review, the planner recomputes
+current available-plus-inbound stock and quantity before MOQ/pack sizing,
+capacity, actual cash and reserve checks. Supplier terms are selected on that
+actual placement day. Reviews beyond the planning horizon remain unexecuted.
+
+`summary.deferredPurchaseReviews` counts eligible low-stock attempts deferred
+off schedule, including repeated days. Experiments expose its empirical and
+paired metrics, plus `reviewDeferredRuns`. Independent inventory replay checks
+review dates, deferral evidence and counts; cash replay checks the unchanged
+balance. Schedule checks precede sizing and financial blocks, so a low-stock
+off-review day is a deferral even when capacity or cash would also block a PO.
+
+The example below keeps projected demand and supplier paths identical and
+changes only the review interval. Daily review fills all four units; a three-day
+review fills three and misses day-three demand, with purchases on days 0 and 3:
+
+```bash
+node cli/bin/stateset-simulate.js --inventory-experiment cli/examples/inventory-review-interval-experiment.json --json
+```
+
+For multiple demand paths, call `simulate_inventory_experiment` with
+`{ name, plans, seeds }`. Plans have the same fields as a single inventory plan,
+except `seed` is omitted and rejected: supply two to eight distinct shared seeds
+at experiment level. Each plan/seed pair runs in its own private database.
+At most three plans, 12 total runs and 180 total product-days are allowed.
+
+The `experiment` result contains per-policy metrics, observed p10/p50/p90
+percentiles, `stockoutRuns` and `budgetBlockedRuns`, plus paired metric deltas
+against the first policy for matching seed positions. Delta signs are raw
+positive/zero/negative counts; their desirability depends on the metric. Check
+`sameHorizon`, `sameDemandPaths` and `sameSupplyPaths` before treating differences as policy effects.
+Money percentiles are exact decimal strings. Money means are exact rational
+objects, for example `{ "numerator": "10.01", "denominator": 3 }`, without
+rounding the amount to a float. Percentiles use nearest rank over the supplied
+sample, so small samples are coarse and never constitute calibrated confidence
+bounds or a policy recommendation.
+
+Each inventory plan report and experiment run includes `inventoryFlow` alongside
+`cashFlow`. `inventoryFlow.daily` covers virtual days zero through the horizon.
+Each day has a `products` array in supplied purchase-priority order, with:
+
+- `sku`, `openingStock`, and `openingOnOrder`;
+- `receivedUnits`, `demanded`, `sold`, and `lostSales`;
+- `orderedUnits`, `closingStock`, and remaining `onOrder`.
+
+Stock means physical available units; inbound units remain separate until an
+actual receipt. A missed first delivery receives zero units and leaves the
+balance inbound. `firstStockout` returns the first unmet-demand event as
+`{ day, sku, demanded, sold, lostSales }`, or `null` when all demand is met.
+If several SKUs first miss demand on the same day, supplied product order breaks
+the tie. Zero closing stock without lost demand is not a stockout.
+
+The kernel independently replays these movements against projected demand,
+supplier terms selected on each order-placement day, purchase aliases, split
+receipt quantities and dates, native inventory positions and final balances.
+It rejects sales before stock exists, missing or repeated demand observations,
+receipts without a matching order, and offsetting daily errors even when final
+totals balance. Receipts precede all sales; sales precede all purchasing.
+`reconciliation.inventoryFlowBalanced` is `true` only after replay succeeds,
+and experiment aggregation requires it. The
+`cli/examples/inventory-supply-calendar-experiment.json` report shows the
+delayed receipt, first lost sales and subsequent recovery day by day.
+
+Each policy's `pathDiversity` reports unique full projected `demandPaths`,
+`supplyPaths` and demand/supply `jointPaths`, plus `duplicateJointPathRuns`.
+These counts use the normalized trajectory hashes, excluding seed labels;
+fixed demand and fixed supply therefore yield one joint path even with several
+different seeds. Counts describe full supplier conditions for all possible
+order-placement days, not just observed receipts or unique financial results.
+Identical paths retain each supplied seed's sample weight in metrics and goal
+counts. Path counts do not measure independence or an effective sample size;
+inspect them before treating repeated successful runs as additional evidence.
+
+Experiments may supply shared business `goals`:
+
+```json
+{
+  "minFillRateBps": 9500,
+  "minEndingCash": "15.00",
+  "minGrossMargin": "5.00",
+  "maxPurchasingSpend": "20.00"
+}
+```
+
+All fields are optional, but a supplied `goals` object must contain at least
+one. Money thresholds use decimal strings in the experiment currency;
+`minGrossMargin` also permits negative amounts. Comparisons are inclusive and
+exact. `minEndingCash` tests the final balance, not the lowest balance during
+the episode. `minFillRateBps` compares sold/demanded against basis points
+(9500 means 95%) without rounding a percentage.
+
+Use `goals.productFillRates` to protect specific SKUs when overall service can
+hide a critical stockout:
+
+```json
+{
+  "minFillRateBps": 9900,
+  "productFillRates": [{ "sku": "CRITICAL", "minFillRateBps": 10000 }]
+}
+```
+
+Supply one to eight unique targets, each naming a SKU present in every policy.
+Each target compares that SKU's sold and demanded units on every seed, with the
+same inclusive integer basis-point comparison as overall fill rate. All product
+targets and other goals must pass on the same seed. A zero-demand SKU is
+`not-evaluable`, even with a zero threshold; sales of other products cannot
+compensate for it or for a known miss.
+
+Run `evaluation.checks.productFillRates.products` contains each SKU, threshold,
+exact `actual` fraction (or `null`) and status. Policy
+`evaluation.byGoal.productFillRates.products` adds individual
+`metRuns`, `missedRuns`, `notEvaluableRuns` and `serviceLevel` pooled across the
+supplied seeds. The enclosing product goal counts runs where all targets pass
+together. Pooled per-SKU service does not replace per-seed goal checks.
+
+The example below contrasts on-time and delayed delivery of one critical unit
+against 99 units of bulk demand. Both policies meet the 99% overall threshold;
+only on-time supply meets the critical SKU's 100% target:
+
+```bash
+node cli/bin/stateset-simulate.js --inventory-experiment cli/examples/inventory-product-service-experiment.json --json
+```
+
+Each run's `evaluation` contains its status and `checks` keyed by goal, with
+the threshold, actual value and `met`, `missed`, or `not-evaluable` status.
+Policy `evaluation` includes `metRuns`, `missedRuns`, `notEvaluableRuns`,
+`allRunsMet`, and `byGoal` counts. A run meets the goals only when all checks
+pass on that same seed. A known miss makes the run `missed` even if another
+check is not evaluable. These business outcomes leave execution `success`
+unchanged. With no supplied goals, `evaluation` is `null`.
+
+Run and policy `serviceLevel` reports contain demanded/sold/lost units and an
+exact `fillRate: { numerator, denominator }`. Policy fill rate pools units
+across seeds; it does not average per-run percentages. A zero-demand run has
+`fillRate: null`; its fill-rate goal is `not-evaluable`, including a zero
+threshold. `zeroDemandRuns` identifies these cases at policy level. Counts
+describe the sampled seeds, not probabilities of meeting goals in production.
+
+Before attributing outcome differences to replenishment alone, also inspect
+`sameOpeningCash`, `sameOpeningInventory`, `sameUnitEconomics`, and
+`sameProductPriority`. The first three compare exact amounts and SKU facts;
+product order is checked separately because it controls cash allocation.
+Changing these assumptions is allowed and explicitly disclosed. Goals do not
+rank policies or authorize changes to the live store.
+
+Both single-run comparisons and experiments now use these same condition checks.
+Each single-run comparison row and experiment policy includes
+`comparisonToBaseline`, with `sameHorizon`, `sameOpeningCash`, `sameCashReserve`,
+`sameOpeningInventory`, `sameUnitEconomics`, `sameProductPriority`,
+`sameDemandPaths`, and `sameSupplyPaths`. Its `changedConditions` array lists
+mismatches as `horizon`, `openingCash`, `cashReserve`, `openingInventory`,
+`unitEconomics`, `productPriority`, `demandPath`, or `supplyPath`. An empty array
+means these checks match the first plan. Purchasing rules remain visible in the
+supplied plans. Global flags require all alternatives to match; per-policy
+diagnostics remain specific to each alternative when a third policy changes
+conditions.
+
+Money comparisons normalize decimal representations exactly, including
+sub-cent differences beyond JavaScript's safe integer range. Opening stock and
+prices/costs compare facts by SKU, while input product order is checked
+separately as purchase priority. Experiment path checks pair every run by seed.
+Matching paths describe realized projections for the supplied seeds; they do
+not establish equivalent generating assumptions, causal attribution or
+statistical significance. Single-run top-level path fields retain their names
+`sameDemandPath` and `sameSupplyPath`; the nested diagnostics use the plural
+names shared with experiments. See
+`cli/examples/inventory-comparison-context-experiment.json` for a three-policy
+example that separates a policy alternative from changed capital and prices.
+
+Per-seed summaries include stock/cash/asset reconciliation and a normalized
+demand and supply hashes. Replay a case with `runInventorySimulation({ ...plan, seed })` to
+inspect its full timeline and demand path. The SDK exports
+`runInventoryExperiment(experiment)` from `@stateset/cli/simulation`.
+
+```bash
+node cli/bin/stateset-simulate.js --inventory-experiment cli/examples/inventory-experiment.json --json
+```
+
+Applications that install `@stateset/cli` can use the same runner directly:
+
+```javascript
+import { getSimulationKernelContract, runInventorySimulation } from '@stateset/cli/simulation';
+const kernel = getSimulationKernelContract(); // Pure discovery, including JSON schemas
+const report = await runInventorySimulation({
+  name: 'coffee',
+  days: 14,
+  seed: 42,
+  startingCash: '1000.00',
+  products: [
+    {
+      sku: 'COFFEE',
+      initialStock: 30,
+      unitPrice: '12.50',
+      unitCost: '5.25',
+      demand: { min: 3, max: 8 },
+      reorderPoint: 15,
+      targetStock: 50,
+      leadTimeDays: 2,
+    },
+  ],
+});
+```
 
 ## Which Approach Should I Use?
 

@@ -1344,6 +1344,7 @@ impl PgPaymentRepository {
     pub async fn create_refund_async(&self, input: CreateRefund) -> Result<Refund> {
         if let Some(key) = input.idempotency_key.as_deref() {
             if let Some(existing) = self.get_refund_by_idempotency_key_async(key).await? {
+                crate::refund_replay::check_refund_replay(&existing, &input)?;
                 return Ok(existing);
             }
         }
@@ -1370,6 +1371,21 @@ impl PgPaymentRepository {
         .map_err(map_db_error)?
         .ok_or(CommerceError::NotFound)?;
         let mut payment = Self::row_to_payment(row)?;
+        // A concurrent identical request may have inserted its refund while
+        // we waited for this payment's row lock. Replay before capacity checks.
+        if let Some(key) = input.idempotency_key.as_deref() {
+            let existing = sqlx::query_as::<_, RefundRow>(
+                "SELECT id, refund_number, payment_id, status, amount, currency, reason, external_id,
+                        idempotency_key, failure_reason, notes, refunded_at, created_at, updated_at
+                 FROM refunds WHERE idempotency_key = $1"
+            ).bind(key).fetch_optional(tx.as_mut()).await.map_err(map_db_error)?;
+            if let Some(existing) = existing {
+                let existing = Self::row_to_refund(existing)?;
+                crate::refund_replay::check_refund_replay(&existing, &input)?;
+                tx.commit().await.map_err(map_db_error)?;
+                return Ok(existing);
+            }
+        }
         input.validate_for_currency(payment.currency)?;
 
         // Reserve against in-flight (non-terminal) refunds as well as the
@@ -1521,7 +1537,17 @@ impl PgPaymentRepository {
         // duplicated payment-processor webhook or a retry must NOT re-add the
         // amount to the payment's `amount_refunded`).
         if current_status == RefundStatus::Completed {
-            return self.get_refund_async(id).await?.ok_or(CommerceError::NotFound);
+            // Read on the held connection: acquiring a second connection here
+            // would time out for a single-connection pool while this row lock
+            // and transaction still own its only connection.
+            let row = sqlx::query_as::<_, RefundRow>("SELECT * FROM refunds WHERE id = $1")
+                .bind(id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            let refund = Self::row_to_refund(row)?;
+            tx.commit().await.map_err(map_db_error)?;
+            return Ok(refund);
         }
         // A failed/cancelled refund is terminal and cannot be completed.
         if current_status.is_terminal() {
@@ -1530,7 +1556,7 @@ impl PgPaymentRepository {
             )));
         }
 
-        sqlx::query(
+        let rows = sqlx::query(
             "UPDATE refunds SET status = $1, refunded_at = $2, updated_at = $3 WHERE id = $4",
         )
         .bind(RefundStatus::Completed.to_string())
@@ -1540,6 +1566,11 @@ impl PgPaymentRepository {
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        if rows.rows_affected() != 1 {
+            return Err(CommerceError::DatabaseError(
+                "refund completion did not persist its status transition".into(),
+            ));
+        }
 
         // Update payment amount_refunded.
         //
@@ -1590,6 +1621,21 @@ impl PgPaymentRepository {
         }
         sync_order_payment_status_for_payment_pg(tx.as_mut(), payment_id, now).await?;
 
+        super::kernel_outbox::record_outbox_fact(
+            tx.as_mut(),
+            crate::kernel_outbox::RecordedFact {
+                event_type: "payments.refund_completed.v1",
+                aggregate_type: "refund",
+                aggregate_id: &id.to_string(),
+                payload: serde_json::json!({
+                    "refund_id": id, "payment_id": refund.payment_id,
+                    "amount": refund.amount.to_string(), "currency": refund.currency,
+                    "previous_status": current_status, "status": RefundStatus::Completed,
+                }),
+            },
+        )
+        .await?;
+
         tx.commit().await.map_err(map_db_error)?;
 
         self.get_refund_async(id).await?.ok_or(CommerceError::NotFound)
@@ -1599,8 +1645,26 @@ impl PgPaymentRepository {
     pub async fn fail_refund_async(&self, id: Uuid, reason: &str) -> Result<Refund> {
         let now = Utc::now();
 
-        // Only an in-flight refund can fail; a `Completed` refund is already
-        // folded into `payments.amount_refunded` (see the SQLite backend).
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let refund =
+            sqlx::query_as::<_, RefundRow>("SELECT * FROM refunds WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        let refund = Self::row_to_refund(refund)?;
+        if refund.status == RefundStatus::Failed {
+            return Ok(refund);
+        }
+        if !matches!(refund.status, RefundStatus::Pending | RefundStatus::Processing) {
+            return Err(CommerceError::ValidationError(format!(
+                "Cannot fail a {} refund",
+                refund.status
+            )));
+        }
+
+        // Lock and update on the same transaction used for the required fact.
         let rows = sqlx::query(
             "UPDATE refunds SET status = $1, failure_reason = $2, updated_at = $3 \
              WHERE id = $4 AND status IN ('pending', 'processing')",
@@ -1609,18 +1673,37 @@ impl PgPaymentRepository {
         .bind(reason)
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?
         .rows_affected();
 
-        let refund = self.get_refund_async(id).await?.ok_or(CommerceError::NotFound)?;
-        if rows == 0 && refund.status != RefundStatus::Failed {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot fail a {} refund",
-                refund.status
-            )));
+        if rows != 1 {
+            return Err(CommerceError::DatabaseError(
+                "refund failure did not persist its status transition".into(),
+            ));
         }
+        super::kernel_outbox::record_outbox_fact(
+            tx.as_mut(),
+            crate::kernel_outbox::RecordedFact {
+                event_type: "payments.refund_failed.v1",
+                aggregate_type: "refund",
+                aggregate_id: &id.to_string(),
+                payload: serde_json::json!({
+                    "refund_id": id, "payment_id": refund.payment_id,
+                    "amount": refund.amount.to_string(), "currency": refund.currency,
+                    "previous_status": refund.status, "status": RefundStatus::Failed,
+                }),
+            },
+        )
+        .await?;
+        let row = sqlx::query_as::<_, RefundRow>("SELECT * FROM refunds WHERE id = $1")
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        let refund = Self::row_to_refund(row)?;
+        tx.commit().await.map_err(map_db_error)?;
         Ok(refund)
     }
 

@@ -1,0 +1,45 @@
+{
+  "name": "forecast-promotion-spike",
+  "seeds": [7, 42],
+  "goals": {
+    "minFillRateBps": 9500,
+    "minGrossMargin": "10.00",
+    "maxPurchasingSpend": "20.00"
+  },
+  "plans": [
+    {
+      "name": "lean-stock",
+      "days": 6,
+      "startingCash": "20.00",
+      "products": [
+        {
+          "sku": "COFFEE",
+          "initialStock": 2,
+          "unitPrice": "2.50",
+          "unitCost": "1.25",
+          "demand": { "dailyUnits": [0, 0, 8, 0, 0, 2] },
+          "reorderPoint": 0,
+          "targetStock": 2,
+          "leadTimeDays": 2
+        }
+      ]
+    },
+    {
+      "name": "spike-buffer",
+      "days": 6,
+      "startingCash": "20.00",
+      "products": [
+        {
+          "sku": "COFFEE",
+          "initialStock": 2,
+          "unitPrice": "2.50",
+          "unitCost": "1.25",
+          "demand": { "dailyUnits": [0, 0, 8, 0, 0, 2] },
+          "reorderPoint": 2,
+          "targetStock": 10,
+          "leadTimeDays": 2
+        }
+      ]
+    }
+  ]
+}

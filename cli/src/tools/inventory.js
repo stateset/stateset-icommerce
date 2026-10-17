@@ -6,11 +6,28 @@
  */
 
 import { z } from 'zod';
+import { applyRequired } from '../utils/apply-guard.js';
 
 /**
  * Inventory tool definitions
  */
 export const inventoryTools = [
+  {
+    name: 'fulfill_order_stock',
+    description:
+      'Post physical inventory for a fully shipped or delivered order. Atomically consume its confirmed holds, reducing on-hand and allocated together. Shipping status remains separate. Safe to retry; already fulfilled holds are ignored.',
+    inputSchema: { orderId: z.string().uuid().describe('Fully shipped order ID') },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) return applyRequired('Post physical order stock', params);
+      await commerce.inventory.fulfillOrderStock(params.orderId);
+      return {
+        success: true,
+        orderId: params.orderId,
+        message: 'Physical shipment stock posted; already fulfilled holds were unchanged.',
+      };
+    },
+  },
   {
     name: 'get_stock',
     description:

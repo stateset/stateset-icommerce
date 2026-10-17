@@ -20,6 +20,7 @@ fn standalone_and_engine_open_the_same_store_in_both_orders() {
             "SELECT type FROM gift_card_transactions LIMIT 0",
             "SELECT priority FROM shipping_zones LIMIT 0",
             "SELECT original_balance, note FROM store_credits LIMIT 0",
+            "SELECT action, entity_type, entity_id, actor, details FROM audit_log LIMIT 0",
         ] {
             connection.prepare(sql).unwrap();
         }
@@ -33,6 +34,119 @@ fn standalone_and_engine_open_the_same_store_in_both_orders() {
         engine::run_migrations(&connection).unwrap();
         migrator.validate(&connection).unwrap();
         custom.validate(&connection).unwrap();
+    }
+}
+
+fn store_before_general_audit_migration() -> rusqlite::Connection {
+    let connection = rusqlite::Connection::open_in_memory().unwrap();
+    engine::run_migrations(&connection).unwrap();
+    connection.execute_batch(
+        "INSERT INTO customers (id, email, first_name, last_name)
+         VALUES ('00000000-0000-4000-8000-000000000101', 'retained@example.test', 'Retained', 'Customer');
+         DROP TABLE audit_log;
+         DELETE FROM _migrations WHERE name = '101_audit_log';"
+    ).unwrap();
+    connection
+}
+
+#[test]
+fn engine_upgrade_installs_general_audit_storage_without_losing_business_data() {
+    let connection = store_before_general_audit_migration();
+    engine::run_migrations(&connection).unwrap();
+    connection
+        .execute(
+            "INSERT INTO audit_log (action, entity_type, entity_id, actor, details)
+        VALUES ('upgrade.verified', 'database', 'store', 'operator', '{\"verified\":true}')",
+            [],
+        )
+        .unwrap();
+    engine::run_migrations(&connection).unwrap();
+    let email: String = connection
+        .query_row(
+            "SELECT email FROM customers WHERE id='00000000-0000-4000-8000-000000000101'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(email, "retained@example.test");
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM audit_log", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    let indexes: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND tbl_name='audit_log'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(indexes, 4);
+}
+
+#[test]
+fn engine_upgrade_preserves_compatible_application_audit_history() {
+    let connection = store_before_general_audit_migration();
+    connection.execute_batch(include_str!("../migrations/101_audit_log.sql")).unwrap();
+    connection
+        .execute(
+            "INSERT INTO audit_log (action, entity_type, entity_id, actor)
+        VALUES ('historical.action', 'order', 'original-order', 'original-operator')",
+            [],
+        )
+        .unwrap();
+    let migrator = SqliteMigrator::new(builtin_registry().unwrap());
+    migrator.migrate(&connection).unwrap();
+    engine::run_migrations(&connection).unwrap();
+    let (action, actor): (String, String) = connection
+        .query_row(
+            "SELECT action, actor FROM audit_log WHERE entity_id='original-order'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(action, "historical.action");
+    assert_eq!(actor, "original-operator");
+    let applied: i64 = connection
+        .query_row("SELECT COUNT(*) FROM _migrations WHERE name='101_audit_log'", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(applied, 1);
+    assert!(migrator.status(&connection).unwrap().checksum_valid);
+}
+
+#[test]
+fn audit_schema_missing_required_columns_is_rejected_without_recording_upgrade() {
+    for schema in [
+        "CREATE TABLE audit_log (unrelated TEXT); INSERT INTO audit_log VALUES ('preserved');",
+        "CREATE TABLE audit_log (id INTEGER PRIMARY KEY, action TEXT, entity_type TEXT,
+         entity_id TEXT, actor TEXT, created_at TEXT, unrelated TEXT);
+         INSERT INTO audit_log (unrelated) VALUES ('preserved');",
+    ] {
+        let connection = store_before_general_audit_migration();
+        connection.execute_batch(schema).unwrap();
+        assert!(engine::run_migrations(&connection).is_err());
+        let applied: i64 = connection
+            .query_row("SELECT COUNT(*) FROM _migrations WHERE name='101_audit_log'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(applied, 0);
+        let retained: String =
+            connection.query_row("SELECT unrelated FROM audit_log", [], |row| row.get(0)).unwrap();
+        assert_eq!(retained, "preserved");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM customers WHERE email='retained@example.test'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1
+        );
     }
 }
 

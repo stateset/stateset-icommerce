@@ -14,9 +14,9 @@ const byName = Object.fromEntries(supplierTools.map((t) => [t.name, t]));
 // ---------------------------------------------------------------------------
 
 describe('supplierTools — module exports', () => {
-  it('exports an array of 10 tools', () => {
+  it('exports an array of 12 tools', () => {
     assert.ok(Array.isArray(supplierTools));
-    assert.equal(supplierTools.length, 10);
+    assert.equal(supplierTools.length, 12);
   });
 
   it('exports expected tool names', () => {
@@ -32,6 +32,8 @@ describe('supplierTools — module exports', () => {
       'approve_purchase_order',
       'send_purchase_order',
       'cancel_purchase_order',
+      'get_purchase_order_items',
+      'receive_purchase_order',
     ]);
   });
 
@@ -215,4 +217,58 @@ describe('supplierTools — error handling', () => {
     assert.equal(result.success, false);
     assert.ok(result.error.includes('Invalid items JSON'));
   });
+});
+
+// PO receipt permission must be checked before a live engine method is touched.
+it('receipt preview never posts quantities or stock', async () => {
+  const result = await byName.receive_purchase_order.handler({
+    commerce: new Proxy(
+      {},
+      {
+        get() {
+          throw new Error('Live write accessed');
+        },
+      },
+    ),
+    params: { purchaseOrderId: 'po', items: [] },
+    allowApply: false,
+  });
+  assert.equal(result.success, false);
+  assert.ok(result.error.includes('--apply'));
+});
+
+it('MCP purchase creation refuses float costs and passes exact strings unchanged', async () => {
+  let written;
+  const commerce = {
+    purchaseOrders: {
+      create: async (input) => {
+        written = input;
+        return { id: 'po' };
+      },
+    },
+  };
+  const base = {
+    supplierId: 'supplier',
+    items: JSON.stringify([
+      { sku: 'EXACT', name: 'Exact', quantity: 3, unitCostExact: '0.100001' },
+    ]),
+  };
+  const result = await byName.create_purchase_order.handler({
+    commerce,
+    params: base,
+    allowApply: true,
+  });
+  assert.equal(result.success, true);
+  assert.equal(written.items[0].unitCostExact, '0.100001');
+  written = null;
+  const refused = await byName.create_purchase_order.handler({
+    commerce,
+    params: {
+      ...base,
+      items: JSON.stringify([{ sku: 'X', name: 'X', quantity: 1, unitCost: 0.1 }]),
+    },
+    allowApply: true,
+  });
+  assert.equal(refused.success, false);
+  assert.equal(written, null);
 });

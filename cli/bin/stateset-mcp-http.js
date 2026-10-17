@@ -29,7 +29,7 @@
  *     any other bind REQUIRES `--allowed-host` (repeatable) and refuses to start
  *     without it, unless `--insecure-allow-any-host` is passed explicitly.
  *   - Origin (browser cross-origin): a request that carries an `Origin` header is
- *     rejected with 403 unless its hostname is allowed. A loopback bind allows
+ *     rejected with 403 unless its origin is allowed. A loopback bind allows
  *     localhost origins; anything else must be listed via `--allowed-origin`
  *     (repeatable). Requests with no `Origin` — every non-browser MCP client —
  *     always pass.
@@ -64,6 +64,7 @@ import {
 } from '../src/mcp/http-api-keys.js';
 import { DEFAULT_MCP_TOOL_PROFILE } from '../src/mcp/default-tool-profile.js';
 import { listenUrl, parseListenPort, requestPath } from '../src/mcp/http-listen.js';
+import { createOriginGuard } from '../src/mcp/http-origins.js';
 
 const HELP = `
 StateSet Commerce MCP Server — Streamable HTTP (protocol 2026-07-28)  v${CLI_VERSION}
@@ -97,8 +98,9 @@ OPTIONS:
                          the Host header. Never expose such a server directly.
   --allowed-origin <origin>
                          Allowed browser Origin (repeatable; a full origin such
-                         as https://agent.example.com or a bare hostname —
-                         matched by hostname, port-agnostic). Requests carrying
+                         as https://agent.example.com:8443, matched by scheme,
+                         hostname and port). A bare hostname explicitly allows
+                         HTTP(S) on any port for compatibility. Requests carrying
                          any other Origin get 403. Default: localhost origins
                          on a loopback bind, none otherwise. Requests with no
                          Origin header (non-browser clients) always pass.
@@ -118,27 +120,6 @@ CONNECT (Claude Desktop / any Streamable-HTTP MCP client):
   { "mcpServers": { "stateset": { "url": "https://mcp.example.com/mcp",
       "headers": { "Authorization": "Bearer <key>" } } } }
 `;
-
-/**
- * Reduce an `--allowed-origin` value to the hostname the SDK guard compares on.
- * Accepts a full origin (`https://agent.example.com:8443`) or a bare hostname.
- * @param {string} value
- * @returns {string}
- */
-function originHostname(value) {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error('--allowed-origin must not be empty');
-  }
-  if (!trimmed.includes('://')) return trimmed;
-  try {
-    const { hostname } = new URL(trimmed);
-    if (!hostname) throw new Error('no hostname');
-    return hostname;
-  } catch {
-    throw new Error(`--allowed-origin "${value}" is not a valid origin URL or hostname`);
-  }
-}
 
 async function main() {
   const { values } = parseArgs({
@@ -174,12 +155,15 @@ async function main() {
   // Validate the entire argument before loading the native engine or opening
   // a store. parseInt would silently accept values such as "8090garbage".
   const port = parseListenPort(values.port);
+  const host = values.host || '127.0.0.1';
+  const loopback = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  const allowedOrigins = values['allowed-origin'] ?? [];
+  const validateOrigin = createOriginGuard(allowedOrigins, { allowLocalhost: loopback });
 
   const [
     { Commerce },
     { createMcpHandler },
-    { toNodeHandler, hostHeaderValidation, localhostHostValidation, originValidation },
-    { localhostAllowedOrigins },
+    { toNodeHandler, hostHeaderValidation, localhostHostValidation },
     { createStatesetMcpServer },
     { createStatesetV2McpServer },
     { seedDemoData },
@@ -187,13 +171,11 @@ async function main() {
     import('@stateset/embedded'),
     import('@modelcontextprotocol/server'),
     import('@modelcontextprotocol/node'),
-    import('@modelcontextprotocol/server'),
     import('../src/mcp-server.js'),
     import('../src/mcp/v2-server.js'),
     import('../src/seeds/demo.js'),
   ]);
 
-  const host = values.host || '127.0.0.1';
   const dbPath = values.db || ':memory:';
   const ephemeralDb = dbPath === ':memory:';
   // Native Commerce and the JS A2A runtime use independent SQLite
@@ -226,7 +208,6 @@ async function main() {
   // --allowed-host — and FAILS CLOSED without one rather than silently serving
   // any Host. `--insecure-allow-any-host` is the deliberate escape hatch.
   const explicitHosts = values['allowed-host'] ?? [];
-  const loopback = host === '127.0.0.1' || host === 'localhost' || host === '::1';
   let validateHost;
   if (explicitHosts.length > 0) {
     validateHost = hostHeaderValidation(explicitHosts);
@@ -246,15 +227,6 @@ async function main() {
         'already pins the Host header) pass --insecure-allow-any-host.',
     );
   }
-
-  // Browser cross-origin protection: a web page must not drive this server from
-  // an origin the operator has not listed. Non-browser clients send no Origin
-  // and always pass. Values may be full origins or bare hostnames; the SDK
-  // matches by hostname, so scheme and port are irrelevant.
-  const explicitOrigins = (values['allowed-origin'] ?? []).map(originHostname);
-  const allowedOrigins =
-    explicitOrigins.length > 0 ? explicitOrigins : loopback ? localhostAllowedOrigins() : [];
-  const validateOrigin = originValidation(allowedOrigins);
 
   // Authentication: an exposed bind is reachable by anyone who can route to
   // it, so it FAILS CLOSED without a key. `--insecure-no-auth` is the
@@ -416,7 +388,7 @@ async function main() {
       `legacy 2025 clients: ${values['strict-protocol'] ? 'rejected' : 'served statelessly'}, ` +
       `hosts: ${explicitHosts.length > 0 ? explicitHosts.join(',') : loopback ? 'localhost' : 'ANY (insecure)'}, ` +
       `auth: ${validateAuth ? `required (${apiKeys.length} key${apiKeys.length === 1 ? '' : 's'}: ${apiKeys.map(keyFingerprint).join(',')})` : loopback ? 'off' : 'OFF (insecure)'}, ` +
-      `origins: ${allowedOrigins.length > 0 ? allowedOrigins.join(',') : 'none (Origin-bearing requests rejected)'})`,
+      `origins: ${allowedOrigins.length > 0 ? allowedOrigins.join(',') : loopback ? 'localhost (HTTP(S), any port)' : 'none (Origin-bearing requests rejected)'})`,
   );
 }
 

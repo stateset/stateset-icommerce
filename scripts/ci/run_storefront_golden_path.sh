@@ -15,12 +15,26 @@ EMBEDDED_SOURCE="${GOLDEN_PATH_EMBEDDED_SOURCE:-local-tarball}"
 # Local escape hatch for a machine without a Rust toolchain: reuse an already
 # built bindings/node/*.node instead of rebuilding it. CI always builds.
 SKIP_EMBEDDED_BUILD="${GOLDEN_PATH_SKIP_EMBEDDED_BUILD:-0}"
-WORK_DIR="$(mktemp -d)"
-PROJECT_DIR="${WORK_DIR}/golden-store"
 LOG_PATH="${OUTPUT_DIR}/golden-path.log"
 export REPO_ROOT
 mkdir -p "${OUTPUT_DIR}"
-trap 'rm -rf "${WORK_DIR}"' EXIT
+WORK_DIR=""
+GOLDEN_PATH_RESULT=running
+GOLDEN_PATH_INVOCATION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+export GOLDEN_PATH_INVOCATION_ID
+cleanup() {
+  local result=$?
+  if [[ "${GOLDEN_PATH_RESULT}" != passed ]]; then
+    python3 "${REPO_ROOT}/scripts/ci/storefront_evidence.py" fail "${OUTPUT_DIR}" "${result}" || true
+  fi
+  if [[ -n "${WORK_DIR}" ]]; then rm -rf "${WORK_DIR}"; fi
+  exit "${result}"
+}
+trap cleanup EXIT
+: > "${LOG_PATH}"
+python3 "${REPO_ROOT}/scripts/ci/storefront_evidence.py" begin "${OUTPUT_DIR}"
+WORK_DIR="$(mktemp -d)"
+PROJECT_DIR="${WORK_DIR}/golden-store"
 
 run_logged() {
   echo "+ $*" | tee -a "${LOG_PATH}"
@@ -61,7 +75,6 @@ run_audit_with_retries() {
 }
 
 cd "${REPO_ROOT}"
-: > "${LOG_PATH}"
 run_logged node ./scripts/check-node.mjs 20.20.0
 
 EMBEDDED_TARBALL=""
@@ -149,6 +162,15 @@ if [[ "${SKIP_DEPENDENCIES}" != "1" ]]; then
   cp package-lock.json "${OUTPUT_DIR}/resolved-package-lock.json"
   RESOLVED_LOCK_SHA256="$(sha256sum package-lock.json | cut -d ' ' -f 1)"
   run_audit_with_retries
+  # All merchant checks use this disposable project's store and fixture config.
+  # Never inherit an operator's real database path or payment configuration.
+  export STATESET_DB_PATH="${PROJECT_DIR}/store.db"
+  export NEXT_PUBLIC_STORE_WALLET_ADDRESS=0x1111111111111111111111111111111111111111
+  export NEXT_PUBLIC_BASE_URL=https://store.example.test
+  export STATESET_BASE_RPC_URL=https://rpc.example.test
+  export STATESET_USDC_CONFIRMATIONS=2
+  export STATESET_TAX_RATES_JSON='{"CA":"0.10"}'
+  export STATESET_SHIPPING_METHODS_JSON='[{"id":"ground","label":"Ground","amount":"5","countries":["US"]}]'
   run_logged npm run seed
   # The single-quoted JavaScript intentionally contains JS template literals.
   # shellcheck disable=SC2016
@@ -163,9 +185,12 @@ if [[ "${SKIP_DEPENDENCIES}" != "1" ]]; then
     }
     console.log(JSON.stringify({ products: products.length, sku: "CLASSIC-T-SHIRT", stock: "100" }));
   '
+  run_logged npm run doctor:launch
+  printf 'storefront-configuration-proof mode=launch result=passed\n' | tee -a "${LOG_PATH}"
+  run_logged npm run verify:journey
   run_logged npm run typecheck
   run_logged npm run build
-  LEVEL="install-seed-query-typecheck-build"
+  LEVEL="install-seed-doctor-journey-typecheck-build"
 fi
 
 cd "${REPO_ROOT}"
@@ -177,14 +202,16 @@ EMBEDDED_VERSION="$(node -p "require('./bindings/node/package.json').version")"
 export LEVEL CREATED_AT COMMIT_SHA GENERATOR_VERSION EMBEDDED_VERSION LOG_SHA256
 export GENERATOR_TARBALL_SHA256 RESOLVED_LOCK_SHA256
 export EMBEDDED_SOURCE EMBEDDED_TARBALL_SHA256
+export SKIP_EMBEDDED_BUILD
 
 node --input-type=module - "${OUTPUT_DIR}/evidence.json" <<'NODE'
 import fs from 'node:fs';
 
 const output = process.argv[2];
 const evidence = {
-  schema_version: 1,
-  result: 'passed',
+  ...JSON.parse(fs.readFileSync(output, 'utf8')),
+  schema_version: 2,
+  result: 'running',
   level: process.env.LEVEL,
   created_at: process.env.CREATED_AT,
   commit_sha: process.env.COMMIT_SHA,
@@ -193,6 +220,7 @@ const evidence = {
   generator_version: process.env.GENERATOR_VERSION,
   embedded_version: process.env.EMBEDDED_VERSION,
   embedded_source: process.env.EMBEDDED_SOURCE,
+  native_build: process.env.EMBEDDED_SOURCE === 'registry' ? 'registry' : process.env.SKIP_EMBEDDED_BUILD === '1' ? 'reused' : 'rebuilt',
   embedded_tarball_sha256: process.env.EMBEDDED_TARBALL_SHA256 || null,
   generator_tarball_sha256: process.env.GENERATOR_TARBALL_SHA256,
   resolved_package_lock: process.env.RESOLVED_LOCK_SHA256
@@ -207,12 +235,16 @@ const evidence = {
       : [
           'packed public CLI executed',
           process.env.EMBEDDED_SOURCE === 'local-tarball'
-            ? 'locally built @stateset/embedded installed from a packed tarball'
+            ? process.env.SKIP_EMBEDDED_BUILD === '1'
+              ? 'existing local @stateset/embedded binary packaged; source freshness unverified'
+              : 'locally built @stateset/embedded installed from a packed tarball'
             : 'published @stateset/embedded installed from the registry',
           'dependencies installed',
           'high-severity audit passed',
           '10 products seeded and queried',
           'inventory stock verified',
+          'launch configuration checked using fixture settings, without contacting providers',
+          'native checkout, replay, inventory and refund verified in a private store with simulated settlement',
           'TypeScript passed',
           'production build passed',
         ],
@@ -221,5 +253,7 @@ const evidence = {
 };
 fs.writeFileSync(output, `${JSON.stringify(evidence, null, 2)}\n`);
 NODE
+python3 "${REPO_ROOT}/scripts/ci/storefront_evidence.py" finish "${OUTPUT_DIR}"
+GOLDEN_PATH_RESULT=passed
 
 echo "Storefront golden-path evidence written to ${OUTPUT_DIR}"

@@ -30,6 +30,16 @@ fn map_err(e: rusqlite::Error) -> CommerceError {
 }
 
 impl HttpIdempotencyRepository for SqliteHttpIdempotencyRepository {
+    fn list_pending(
+        &self,
+        tenant: &str,
+        older_than: DateTime<Utc>,
+        limit: u32,
+    ) -> Result<Vec<crate::PendingHttpReceipt>> {
+        let conn = self.conn()?;
+        crate::reconciliation::pending_http_receipts(&conn, tenant, older_than, limit)
+    }
+
     fn get(
         &self,
         tenant: &str,

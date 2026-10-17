@@ -12,6 +12,54 @@ import {
   finishRecordedCheckout,
 } from '../templates/storefront/lib/checkout-finalization.js';
 
+test('late checkout retries preserve refunded/disputed money and later order states', async () => {
+  for (const paymentStatus of ['completed', 'partially_refunded', 'refunded', 'disputed']) {
+    for (const orderStatus of ['processing', 'shipped', 'delivered', 'cancelled']) {
+      const order = {
+        id: 'order-1',
+        status: orderStatus,
+        notes: 'Verified settlement; Cart: cart-1',
+      };
+      const commerce = {
+        orders: {
+          get: async () => order,
+          updateStatus: async () => assert.fail('replay must preserve order state'),
+        },
+        payments: {
+          markCompleted: async () => assert.fail('replay must not recapture or resolve a dispute'),
+        },
+        carts: {
+          get: async () => ({ status: 'cancelled' }),
+          cancel: async () => assert.fail('closed cart must remain closed'),
+        },
+      };
+      assert.equal(
+        await finishRecordedCheckout(
+          commerce,
+          { id: 'payment-1', orderId: order.id, status: paymentStatus },
+          'cart-1',
+        ),
+        order,
+      );
+    }
+  }
+  for (const status of ['partially_refunded', 'refunded', 'disputed']) {
+    const order = { id: 'order-1', status: 'pending', notes: 'Cart: cart-1' };
+    await finishRecordedCheckout(
+      {
+        orders: {
+          get: async () => order,
+          updateStatus: async () => assert.fail('operator intervention must not be undone'),
+        },
+        payments: { markCompleted: async () => assert.fail('payment must not be changed') },
+        carts: { get: async () => ({ status: 'cancelled' }) },
+      },
+      { id: 'payment-1', orderId: order.id, status },
+      'cart-1',
+    );
+  }
+});
+
 const usdcContract = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const payer = '0x1111111111111111111111111111111111111111';
 const merchant = '0x2222222222222222222222222222222222222222';
@@ -36,9 +84,39 @@ test('cart tax is calculated from authoritative exact line amounts', () => {
     { subtotal: result.subtotal, tax: result.tax, total: result.total },
     {
       subtotal: '20.5',
-      tax: '1.48625',
-      total: '21.98625',
+      tax: '1.48',
+      total: '21.98',
     },
+  );
+});
+
+test('USD line taxes round half-up to cents before their posted total is summed', () => {
+  const result = getTaxProvider({ STATESET_TAX_RATES_JSON: '{"CA":"0.1"}' }).calculateCart(
+    [
+      { unitPrice: '0.05', quantity: 1 },
+      { unitPrice: '0.05', quantity: 1 },
+    ],
+    'CA',
+  );
+  assert.deepEqual(
+    result.lines.map((line) => line.tax),
+    ['0.01', '0.01'],
+  );
+  assert.equal(result.tax, '0.02');
+  assert.equal(result.total, '0.12');
+});
+
+test('checkout cart identity must match a complete notes field, not a cart-id prefix', async () => {
+  await assert.rejects(
+    finishRecordedCheckout(
+      {
+        orders: { get: async () => ({ id: 'order-1', notes: 'Cart: cart-10', status: 'pending' }) },
+        payments: { markCompleted: async () => assert.fail('conflicting payment must not change') },
+      },
+      { id: 'payment-1', orderId: 'order-1', status: 'pending' },
+      'cart-1',
+    ),
+    /already used for another checkout/,
   );
 });
 
@@ -101,7 +179,7 @@ test('a payment unique-key race recovers the winning payment', async () => {
     orderId: 'order-1',
     idempotencyKey: 'base:tx:1',
     amountExact: '10',
-    currency: 'USDC',
+    currency: 'USD',
   };
   const commerce = {
     payments: {
@@ -116,7 +194,7 @@ test('a payment unique-key race recovers the winning payment', async () => {
   const result = await claimPaymentForOrder({
     commerce,
     order: { id: 'order-1', status: 'pending' },
-    paymentInput: { idempotencyKey: 'base:tx:1', amount: '10', currency: 'USDC' },
+    paymentInput: { idempotencyKey: 'base:tx:1', amount: '10', currency: 'USD' },
   });
   assert.deepEqual(result, { conflict: false, payment: winner });
 });
@@ -130,7 +208,7 @@ test('reuse across carts cancels the unbacked losing order', async () => {
         orderId: 'winning-order',
         idempotencyKey: 'base:tx:1',
         amountExact: '10',
-        currency: 'USDC',
+        currency: 'USD',
       }),
     },
     orders: { cancel: async (id) => (cancelled = id) },
@@ -139,7 +217,7 @@ test('reuse across carts cancels the unbacked losing order', async () => {
   const result = await claimPaymentForOrder({
     commerce,
     order: { id: 'losing-order', status: 'pending' },
-    paymentInput: { idempotencyKey: 'base:tx:1', amount: '10', currency: 'USDC' },
+    paymentInput: { idempotencyKey: 'base:tx:1', amount: '10', currency: 'USD' },
   });
   assert.equal(result.conflict, true);
   assert.equal(cancelled, 'losing-order');

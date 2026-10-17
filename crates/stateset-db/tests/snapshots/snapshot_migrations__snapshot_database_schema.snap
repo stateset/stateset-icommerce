@@ -1,6 +1,5 @@
 ---
 source: crates/stateset-db/tests/snapshot_migrations.rs
-assertion_line: 70
 expression: tables
 ---
 [
@@ -111,6 +110,10 @@ expression: tables
     (
         "ar_write_offs",
         "CREATE TABLE ar_write_offs (\n    id TEXT PRIMARY KEY,\n    write_off_number TEXT UNIQUE NOT NULL,\n    invoice_id TEXT NOT NULL,\n    customer_id TEXT NOT NULL,\n    amount TEXT NOT NULL,\n    reason TEXT NOT NULL DEFAULT 'uncollectible',\n    notes TEXT,\n    write_off_date TEXT NOT NULL,\n    approved_by TEXT,\n    approved_at TEXT,\n    reversed_at TEXT,\n    gl_journal_entry_id TEXT,\n    created_at TEXT NOT NULL,\n    FOREIGN KEY (invoice_id) REFERENCES invoices(id)\n)",
+    ),
+    (
+        "audit_log",
+        "CREATE TABLE audit_log (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    action TEXT NOT NULL,\n    entity_type TEXT NOT NULL,\n    entity_id TEXT NOT NULL,\n    actor TEXT,\n    details TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now'))\n)",
     ),
     (
         "backorder_allocations",

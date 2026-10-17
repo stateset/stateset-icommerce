@@ -486,21 +486,26 @@ impl SqliteInventoryRepository {
             });
         }
 
-        if quantity == reserved {
+        let reservation_rows = if quantity == reserved {
             tx.execute(
                 "UPDATE inventory_reservations SET status = 'fulfilled' WHERE id = ?",
                 [reservation_id.to_string()],
             )
-            .map_err(map_db_error)?;
+            .map_err(map_db_error)?
         } else {
             tx.execute(
                 "UPDATE inventory_reservations SET quantity = ? WHERE id = ?",
                 rusqlite::params![(reserved - quantity).to_string(), reservation_id.to_string()],
             )
-            .map_err(map_db_error)?;
+            .map_err(map_db_error)?
+        };
+        if reservation_rows != 1 {
+            return Err(CommerceError::DatabaseError(
+                "Shipment reservation update was not persisted".into(),
+            ));
         }
 
-        tx.execute(
+        let transaction_rows = tx.execute(
             "INSERT INTO inventory_transactions (item_id, location_id, transaction_type, quantity, reference_type, reference_id, reason, created_at)
              VALUES (?, ?, 'shipment', ?, ?, ?, ?, ?)",
             rusqlite::params![
@@ -514,6 +519,12 @@ impl SqliteInventoryRepository {
             ],
         )
         .map_err(map_db_error)?;
+        let transaction_id = tx.last_insert_rowid();
+        if transaction_rows != 1 {
+            return Err(CommerceError::DatabaseError(
+                "Shipment inventory transaction was not persisted".into(),
+            ));
+        }
 
         let event = KernelOutboxEvent::domain(
             "inventory.reservation_fulfilled.v1",
@@ -530,6 +541,46 @@ impl SqliteInventoryRepository {
             None,
         );
         append_kernel_event_tx(tx, &event).map_err(map_db_error)?;
+
+        // Verify after every write, including the required event: an AFTER
+        // trigger can rewrite an earlier row even when affected-row counts agree.
+        let expected_status = if quantity == reserved { "fulfilled" } else { status_str.as_str() };
+        let expected_quantity = if quantity == reserved { reserved } else { reserved - quantity };
+        let reservation_persisted = tx.query_row(
+            "SELECT item_id, location_id, quantity, status, reference_type, reference_id FROM inventory_reservations WHERE id = ?",
+            [reservation_id.to_string()],
+            |row| Ok(row.get::<_, i64>(0)? == item_id
+                && row.get::<_, i32>(1)? == location_id
+                && parse_decimal_row(&row.get::<_, String>(2)?, "inventory_reservation", "quantity")? == expected_quantity
+                && row.get::<_, String>(3)? == expected_status
+                && row.get::<_, String>(4)? == reference_type
+                && row.get::<_, String>(5)? == reference_id),
+        ).optional().map_err(map_db_error)?.unwrap_or(false);
+        let balance_persisted = tx.query_row(
+            "SELECT quantity_on_hand, quantity_allocated, quantity_available, version FROM inventory_balances WHERE item_id = ? AND location_id = ?",
+            rusqlite::params![item_id, location_id],
+            |row| Ok(parse_decimal_row(&row.get::<_, String>(0)?, "inventory_balance", "quantity_on_hand")? == new_on_hand
+                && parse_decimal_row(&row.get::<_, String>(1)?, "inventory_balance", "quantity_allocated")? == new_allocated
+                && parse_decimal_row(&row.get::<_, String>(2)?, "inventory_balance", "quantity_available")? == new_available
+                && row.get::<_, i32>(3)? == current_version + 1),
+        ).optional().map_err(map_db_error)?.unwrap_or(false);
+        let transaction_persisted = tx.query_row(
+            "SELECT item_id, location_id, transaction_type, quantity, reference_type, reference_id, reason FROM inventory_transactions WHERE id = ?",
+            [transaction_id],
+            |row| Ok(row.get::<_, i64>(0)? == item_id
+                && row.get::<_, i32>(1)? == location_id
+                && row.get::<_, String>(2)? == "shipment"
+                && parse_decimal_row(&row.get::<_, String>(3)?, "inventory_transaction", "quantity")? == -quantity
+                && row.get::<_, Option<String>>(4)?.as_deref() == Some(reference_type.as_str())
+                && row.get::<_, Option<String>>(5)?.as_deref() == Some(reference_id.as_str())
+                && row.get::<_, Option<String>>(6)?.as_deref() == Some(reason)),
+        ).optional().map_err(map_db_error)?.unwrap_or(false);
+        if !reservation_persisted || !balance_persisted || !transaction_persisted {
+            return Err(CommerceError::DatabaseError(
+                "Shipment stock, reservation and inventory transaction did not persist as expected"
+                    .into(),
+            ));
+        }
         Ok(event.id)
     }
 
@@ -1768,6 +1819,53 @@ impl InventoryRepository for SqliteInventoryRepository {
         }
     }
 
+    fn fulfill_order_stock(&self, order_id: Uuid) -> Result<()> {
+        with_inventory_retry(|| {
+            with_immediate_transaction(&self.pool, |tx| {
+                let smuggle = |error| rusqlite::Error::ToSqlConversionFailure(Box::new(error));
+                let status: Option<String> = tx
+                    .query_row(
+                        "SELECT status FROM orders WHERE id = ?",
+                        [order_id.to_string()],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                let status =
+                    status.ok_or_else(|| smuggle(CommerceError::OrderNotFound(order_id)))?;
+                if !matches!(status.as_str(), "shipped" | "delivered") {
+                    return Err(smuggle(CommerceError::Conflict(
+                        "Physical stock posting requires a fully shipped or delivered order".into(),
+                    )));
+                }
+                let holds = {
+                    let mut statement = tx.prepare("SELECT id, quantity FROM inventory_reservations WHERE reference_type = 'order' AND reference_id = ? AND status = 'confirmed' ORDER BY item_id, location_id, id")?;
+                    let rows = statement.query_map([order_id.to_string()], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    })?;
+                    rows.collect::<rusqlite::Result<Vec<_>>>()?
+                };
+                let now = Utc::now();
+                for (id, quantity) in holds {
+                    let id = id.parse().map_err(|_| {
+                        smuggle(CommerceError::DatabaseError("Invalid reservation UUID".into()))
+                    })?;
+                    let quantity =
+                        parse_decimal_strict(&quantity, "inventory_reservation", "quantity")
+                            .map_err(smuggle)?;
+                    Self::fulfil_reservation_in_tx(
+                        tx,
+                        id,
+                        quantity,
+                        "Physical shipment stock posting",
+                        now,
+                    )
+                    .map_err(smuggle)?;
+                }
+                Ok(())
+            })
+        })
+    }
+
     fn list_reservations_by_reference(
         &self,
         reference_type: &str,
@@ -2714,6 +2812,64 @@ mod tests {
         let after_release = repo.get_stock("RESERVE-001").expect("ok").expect("found");
         assert_eq!(after_release.total_allocated, dec!(0));
         assert_eq!(after_release.total_available, dec!(10));
+    }
+
+    #[test]
+    fn partial_fulfillment_rolls_back_when_reservation_quantity_is_suppressed() {
+        let repo = fresh_repo();
+        repo.create_item(item("PARTIAL-PERSIST")).unwrap();
+        let hold = repo
+            .reserve(ReserveInventory {
+                sku: "PARTIAL-PERSIST".into(),
+                location_id: Some(1),
+                quantity: dec!(4),
+                reference_type: "order".into(),
+                reference_id: "partial".into(),
+                expires_in_seconds: None,
+            })
+            .unwrap();
+        {
+            let mut connection = repo.pool.get().unwrap();
+            connection.execute_batch("CREATE TRIGGER suppress_partial BEFORE UPDATE OF quantity ON inventory_reservations BEGIN SELECT RAISE(IGNORE); END;").unwrap();
+            let tx = connection.transaction().unwrap();
+            assert!(
+                SqliteInventoryRepository::fulfil_reservation_in_tx(
+                    &tx,
+                    hold.id,
+                    dec!(2),
+                    "partial shipment",
+                    Utc::now()
+                )
+                .is_err()
+            );
+            tx.rollback().unwrap();
+            connection.execute_batch("DROP TRIGGER suppress_partial").unwrap();
+        }
+        let stock = repo.get_stock("PARTIAL-PERSIST").unwrap().unwrap();
+        assert_eq!(
+            (stock.total_on_hand, stock.total_allocated, stock.total_available),
+            (dec!(10), dec!(4), dec!(6))
+        );
+        assert_eq!(repo.get_reservation(hold.id).unwrap().unwrap().quantity, dec!(4));
+        {
+            let mut connection = repo.pool.get().unwrap();
+            let tx = connection.transaction().unwrap();
+            SqliteInventoryRepository::fulfil_reservation_in_tx(
+                &tx,
+                hold.id,
+                dec!(2),
+                "partial shipment",
+                Utc::now(),
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        let stock = repo.get_stock("PARTIAL-PERSIST").unwrap().unwrap();
+        assert_eq!(
+            (stock.total_on_hand, stock.total_allocated, stock.total_available),
+            (dec!(8), dec!(2), dec!(6))
+        );
+        assert_eq!(repo.get_reservation(hold.id).unwrap().unwrap().quantity, dec!(2));
     }
 
     #[test]

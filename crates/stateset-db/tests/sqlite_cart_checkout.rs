@@ -202,7 +202,28 @@ fn sqlite_cart_checkout_rolls_back_order_when_cart_finalize_fails() {
         "order insert should have rolled back with cart finalization failure"
     );
 
-    let cart = carts.get(cart.id).expect("reload cart").expect("cart exists");
-    assert_ne!(cart.status, stateset_core::CartStatus::Completed);
-    assert!(cart.order_id.is_none());
+    let reloaded = carts.get(cart.id).expect("reload cart").expect("cart exists");
+    assert_ne!(reloaded.status, stateset_core::CartStatus::Completed);
+    assert!(reloaded.order_id.is_none());
+    assert_eq!(reloaded.items.len(), 1, "failed completion preserves cart contents");
+    let events: i64 = db
+        .conn()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM kernel_outbox WHERE event_type = 'cart.checked_out'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(events, 0, "failed completion must not publish an order event");
+    db.conn().unwrap().execute_batch("DROP TRIGGER abort_cart_completion").unwrap();
+    let checkout = carts.complete(cart.id).expect("retry after finalization recovers");
+    let replay = carts.complete(cart.id).expect("duplicate checkout reuses the completed order");
+    assert_eq!(checkout.order_id, replay.order_id);
+    let order = orders.get_by_cart_id(cart.id.into()).unwrap().unwrap();
+    assert_eq!(order.total_amount, dec!(29.99));
+    let events: i64 = db.conn().unwrap().query_row(
+        "SELECT COUNT(*) FROM kernel_outbox WHERE event_type='cart.checked_out' AND aggregate_id=?",
+        [cart.id.to_string()], |row| row.get(0)).unwrap();
+    assert_eq!(events, 1, "retry and replay publish one checkout fact");
 }

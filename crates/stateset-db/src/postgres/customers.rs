@@ -93,6 +93,16 @@ pub(crate) async fn get_or_create_customer_with_conn_pg(
     .map_err(map_db_error)?;
 
     if let Some(row) = inserted {
+        super::kernel_outbox::record_outbox_fact(
+            conn,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "customer.created",
+                aggregate_type: "customer",
+                aggregate_id: &id.to_string(),
+                payload: serde_json::json!({ "id": id, "email": email }),
+            },
+        )
+        .await?;
         return Ok((PgCustomerRepository::row_to_customer(row)?, true));
     }
 
@@ -328,9 +338,20 @@ impl PgCustomerRepository {
         .bind(&input.metadata)
         .bind(now)
         .bind(now)
-        .execute(conn)
+        .execute(&mut *conn)
         .await
         .map_err(map_db_error)?;
+
+        super::kernel_outbox::record_outbox_fact(
+            conn,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "customer.created",
+                aggregate_type: "customer",
+                aggregate_id: &id.to_string(),
+                payload: serde_json::json!({ "id": id, "email": email }),
+            },
+        )
+        .await?;
 
         Ok(Customer {
             id,
@@ -430,6 +451,21 @@ impl PgCustomerRepository {
             });
         }
 
+        super::kernel_outbox::record_outbox_fact(
+            conn,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "customer.updated",
+                aggregate_type: "customer",
+                aggregate_id: &id.to_string(),
+                payload: serde_json::json!({
+                    "id": id,
+                    "changed_fields": crate::customer_facts::changed_fields(input),
+                    "previous_status": existing.status,
+                    "status": input.status.unwrap_or(existing.status),
+                }),
+            },
+        )
+        .await?;
         Self::fetch_customer(conn, id).await
     }
 
@@ -455,16 +491,82 @@ impl PgCustomerRepository {
                 "cannot delete customer {id}: {open} open order(s) still reference it"
             )));
         }
-        sqlx::query(
+        let deleted = sqlx::query(
             "UPDATE customers SET status = 'deleted', email = $1, email_key = NULL, updated_at = $2, version = version + 1 WHERE id = $3",
         )
         .bind(Customer::tombstone_email(id))
         .bind(Utc::now())
         .bind(id.into_uuid())
-        .execute(conn)
+        .execute(&mut *conn)
         .await
         .map_err(map_db_error)?;
+        if deleted.rows_affected() != 1 {
+            return Err(CommerceError::DatabaseError(
+                "customer deletion did not persist its status transition".into(),
+            ));
+        }
+        super::kernel_outbox::record_outbox_fact(
+            conn,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "customer.deleted",
+                aggregate_type: "customer",
+                aggregate_id: &id.to_string(),
+                payload: serde_json::json!({ "id": id, "previous_status": status, "status": "deleted" }),
+            },
+        )
+        .await?;
         Ok(true)
+    }
+
+    /// Lock the parent before any address row, matching anonymization's lock
+    /// order. Deleting existing contact data remains allowed after deletion.
+    async fn lock_customer_for_addresses(
+        conn: &mut PgConnection,
+        id: CustomerId,
+        allow_deleted: bool,
+    ) -> Result<()> {
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM customers WHERE id = $1 FOR UPDATE")
+                .bind(id.into_uuid())
+                .fetch_optional(conn)
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::CustomerNotFound(id.into_uuid()))?;
+        let status: CustomerStatus = status.parse().map_err(|error| {
+            CommerceError::DatabaseError(format!("Invalid customer.status '{status}': {error}"))
+        })?;
+        if status.is_terminal() && !allow_deleted {
+            return Err(CommerceError::Conflict(format!(
+                "customer {id} is deleted and its addresses can no longer be edited"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Resolve ownership without locking the child, then lock the parent.
+    /// Callers re-read/lock the address afterwards so a concurrent deletion is
+    /// still reported as `NotFound`. Never lock child then parent: anonymization
+    /// locks parent then removes children, which would otherwise deadlock.
+    async fn lock_address_owner_for_update(
+        conn: &mut PgConnection,
+        address_id: Uuid,
+        expected_owner: Option<CustomerId>,
+        allow_deleted: bool,
+    ) -> Result<()> {
+        let owner: Uuid =
+            sqlx::query_scalar("SELECT customer_id FROM customer_addresses WHERE id = $1")
+                .bind(address_id)
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        let owner = CustomerId::from(owner);
+        if expected_owner.is_some_and(|expected| expected != owner) {
+            return Err(CommerceError::ValidationError(
+                "Address does not belong to customer".into(),
+            ));
+        }
+        Self::lock_customer_for_addresses(conn, owner, allow_deleted).await
     }
 
     /// Re-derive every `customer_addresses.is_default` flag from the two
@@ -713,24 +815,47 @@ impl PgCustomerRepository {
         Self::delete_customer_tx(tx.as_mut(), id).await?;
 
         sqlx::query(
-            "UPDATE customers SET first_name = 'Deleted', last_name = 'Customer', phone = NULL,
+            "UPDATE customers SET status = 'deleted', email = $1, email_key = NULL,
+                    first_name = 'Deleted', last_name = 'Customer', phone = NULL,
                     accepts_marketing = false, email_verified = false, tags = '[]'::jsonb, metadata = NULL,
                     default_shipping_address_id = NULL, default_billing_address_id = NULL,
-                    updated_at = $1, version = version + 1
-             WHERE id = $2",
+                    updated_at = $2, version = version + 1
+             WHERE id = $3",
         )
+        .bind(Customer::tombstone_email(id))
         .bind(Utc::now())
         .bind(id.into_uuid())
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
-        sqlx::query("DELETE FROM customer_addresses WHERE customer_id = $1")
-            .bind(id.into_uuid())
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        let removed_addresses =
+            sqlx::query("DELETE FROM customer_addresses WHERE customer_id = $1")
+                .bind(id.into_uuid())
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .rows_affected();
+
+        super::kernel_outbox::record_outbox_fact(
+            tx.as_mut(),
+            crate::kernel_outbox::RecordedFact {
+                event_type: "customer.anonymized",
+                aggregate_type: "customer",
+                aggregate_id: &id.to_string(),
+                payload: serde_json::json!({ "id": id, "removed_addresses": removed_addresses }),
+            },
+        )
+        .await?;
 
         let customer = Self::fetch_customer(tx.as_mut(), id).await?;
+        let has_addresses = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM customer_addresses WHERE customer_id = $1)",
+        )
+        .bind(id.into_uuid())
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        crate::customer_facts::ensure_anonymized(&customer, has_addresses)?;
         tx.commit().await.map_err(map_db_error)?;
         Ok(customer)
     }
@@ -745,15 +870,7 @@ impl PgCustomerRepository {
         let is_default = input.is_default.unwrap_or(false);
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        let customer_exists: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM customers WHERE id = $1)")
-                .bind(input.customer_id.into_uuid())
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        if !customer_exists {
-            return Err(CommerceError::CustomerNotFound(input.customer_id.into_uuid()));
-        }
+        Self::lock_customer_for_addresses(tx.as_mut(), input.customer_id, false).await?;
 
         sqlx::query(
             r#"
@@ -799,8 +916,20 @@ impl PgCustomerRepository {
             .await
             .map_err(map_db_error)?;
 
+        let address = Self::row_to_address(row)?;
+        super::kernel_outbox::record_outbox_fact(
+            tx.as_mut(),
+            crate::kernel_outbox::RecordedFact {
+                event_type: "customer_address.created",
+                aggregate_type: "customer_address",
+                aggregate_id: &id.to_string(),
+                payload: serde_json::json!({ "id": id, "customer_id": input.customer_id,
+                    "address_type": address.address_type, "is_default": address.is_default }),
+            },
+        )
+        .await?;
         tx.commit().await.map_err(map_db_error)?;
-        Self::row_to_address(row)
+        Ok(address)
     }
 
     /// Get customer addresses (async)
@@ -830,6 +959,14 @@ impl PgCustomerRepository {
 
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        Self::lock_address_owner_for_update(
+            tx.as_mut(),
+            address_id,
+            Some(input.customer_id),
+            false,
+        )
+        .await?;
 
         let current: Option<(Uuid, String)> = sqlx::query_as(
             "SELECT customer_id, address_type FROM customer_addresses WHERE id = $1 FOR UPDATE",
@@ -912,13 +1049,27 @@ impl PgCustomerRepository {
             .await
             .map_err(map_db_error)?
             .ok_or(CommerceError::NotFound)?;
+        let address = Self::row_to_address(row)?;
+        super::kernel_outbox::record_outbox_fact(
+            tx.as_mut(),
+            crate::kernel_outbox::RecordedFact {
+                event_type: "customer_address.updated",
+                aggregate_type: "customer_address",
+                aggregate_id: &address_id.to_string(),
+                payload: serde_json::json!({ "id": address_id, "customer_id": input.customer_id,
+                    "address_type": address.address_type, "is_default": address.is_default }),
+            },
+        )
+        .await?;
         tx.commit().await.map_err(map_db_error)?;
-        Self::row_to_address(row)
+        Ok(address)
     }
 
     /// Delete a customer address (async)
     pub async fn delete_address_async(&self, address_id: Uuid) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        Self::lock_address_owner_for_update(tx.as_mut(), address_id, None, true).await?;
 
         let owner: Option<Uuid> = sqlx::query_scalar(
             "SELECT customer_id FROM customer_addresses WHERE id = $1 FOR UPDATE",
@@ -940,6 +1091,16 @@ impl PgCustomerRepository {
             .map_err(map_db_error)?;
         Self::sync_default_flags(tx.as_mut(), customer_id).await?;
 
+        super::kernel_outbox::record_outbox_fact(
+            tx.as_mut(),
+            crate::kernel_outbox::RecordedFact {
+                event_type: "customer_address.deleted",
+                aggregate_type: "customer_address",
+                aggregate_id: &address_id.to_string(),
+                payload: serde_json::json!({ "id": address_id, "customer_id": customer_id }),
+            },
+        )
+        .await?;
         tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }
@@ -952,6 +1113,9 @@ impl PgCustomerRepository {
         address_type: AddressType,
     ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        Self::lock_address_owner_for_update(tx.as_mut(), address_id, Some(customer_id), false)
+            .await?;
 
         let row: Option<(Uuid, String)> = sqlx::query_as(
             "SELECT customer_id, address_type FROM customer_addresses WHERE id = $1 FOR UPDATE",
@@ -977,6 +1141,17 @@ impl PgCustomerRepository {
         Self::set_default_pointer_tx(tx.as_mut(), customer_id, address_id, row_type, address_type)
             .await?;
 
+        super::kernel_outbox::record_outbox_fact(
+            tx.as_mut(),
+            crate::kernel_outbox::RecordedFact {
+                event_type: "customer.default_address_changed",
+                aggregate_type: "customer",
+                aggregate_id: &customer_id.to_string(),
+                payload: serde_json::json!({ "id": customer_id, "address_id": address_id,
+                    "address_type": address_type }),
+            },
+        )
+        .await?;
         tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }

@@ -3090,6 +3090,41 @@ mod tests {
     }
 
     #[test]
+    fn post_journal_entry_outbox_failure_rolls_back_balances_and_can_retry() {
+        let repo = fresh_repo();
+        let _period = fy_period(&repo);
+        let cash = make_account(&repo, "1000", AccountType::Asset);
+        let revenue = make_account(&repo, "4000", AccountType::Revenue);
+        let entry = make_balanced_entry(&repo, &cash, &revenue, dec!(0.30));
+        repo.pool
+            .get()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER fail_post_event BEFORE INSERT ON kernel_outbox
+             WHEN NEW.event_type = 'ledger.journal_entry_posted.v1'
+             BEGIN SELECT RAISE(ABORT, 'ledger outbox unavailable'); END;",
+            )
+            .unwrap();
+        let error = repo.post_journal_entry(entry.id, "operator").unwrap_err();
+        assert!(error.to_string().contains("ledger outbox unavailable"), "{error}");
+        assert_eq!(
+            repo.get_journal_entry(entry.id).unwrap().unwrap().status,
+            JournalEntryStatus::Draft
+        );
+        assert_eq!(account_balance(&repo, cash.id), dec!(0));
+        assert_eq!(account_balance(&repo, revenue.id), dec!(0));
+        repo.pool.get().unwrap().execute_batch("DROP TRIGGER fail_post_event").unwrap();
+        repo.post_journal_entry(entry.id, "operator").unwrap();
+        assert!(repo.post_journal_entry(entry.id, "duplicate").is_err());
+        assert_eq!(account_balance(&repo, cash.id), dec!(0.30));
+        assert_eq!(account_balance(&repo, revenue.id), dec!(0.30));
+        let events: i64 = repo.pool.get().unwrap().query_row(
+            "SELECT COUNT(*) FROM kernel_outbox WHERE aggregate_id = ? AND event_type = 'ledger.journal_entry_posted.v1'",
+            [entry.id.to_string()], |row| row.get(0)).unwrap();
+        assert_eq!(events, 1);
+    }
+
+    #[test]
     fn post_journal_entry_rejects_already_posted_and_keeps_balances() {
         let repo = fresh_repo();
         let _period = fy_period(&repo);

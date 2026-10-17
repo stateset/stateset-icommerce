@@ -63,11 +63,12 @@ STATESET_BASE_RPC_URL=https://mainnet.base.org
 STATESET_USDC_CONFIRMATIONS=2
 
 # Operator-owned state tax rates as exact decimal strings. When omitted, the
-# documented starter table is used and unsupported states fail closed.
+# demo starter table is used. Set reviewed rates before launch.
 # STATESET_TAX_RATES_JSON={"CA":"0.0725","OR":"0"}
 
 # Operator-owned shipping methods with exact amounts. The starter method is
 # free standard shipping when this setting is omitted.
+# Launch checks require an explicit operator-owned method, including free shipping.
 # STATESET_SHIPPING_METHODS_JSON=[{"id":"ground","label":"Ground","amount":"7.50","carrier":"UPS","estimatedDays":"3-5 business days","countries":["US"]}]
 
 # Store wallet address for receiving USDC payments (Base chain)
@@ -95,11 +96,13 @@ function printNextSteps(projectName, pm) {
   print(`    ${cyan(`cd ${projectName}`)}`);
   print(`    ${cyan('cp .env.example .env.local')}`);
   print(`    ${cyan(`${run} seed`)}`);
+  print(`    ${cyan(`${run} doctor`)}`);
   print(`    ${cyan(`${run} dev`)}`);
   print('');
   print(`  Then open ${cyan('http://localhost:3000')}`);
   print('');
   print(`  ${dim('Configure your store by editing .env.local')}`);
+  print(`  ${dim(`Before launch: ${run} doctor:launch`)}`);
   print(`  ${dim('Learn more: https://docs.stateset.com')}`);
   print('');
 }

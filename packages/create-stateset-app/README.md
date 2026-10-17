@@ -11,6 +11,8 @@ npx create-stateset-app my-store
 cd my-store
 cp .env.example .env.local
 npm run seed
+npm run doctor
+npm run verify:journey
 npm run dev
 ```
 
@@ -37,6 +39,31 @@ A production-oriented Next.js 16 starter storefront with:
 | AI Chat   | @ai-sdk/anthropic (Claude)      |
 | Styling   | Tailwind CSS 3                  |
 | State     | React Query 5, React Context    |
+
+## Readiness and local acceptance
+
+`npm run doctor` checks local configuration and reads the existing SQLite file
+header without opening the engine, migrating, or seeding. `npm run doctor:launch`
+also requires explicit tax/shipping configuration, a public HTTPS URL, HTTPS
+RPC, valid merchant address and persistent database. It exits nonzero on failed
+checks and supports `-- --json`. It loads Next.js environment files with the
+same precedence as the storefront and reports no secret values. Configuration
+checks do not prove provider connectivity, tax compliance, or database integrity.
+The optional chat API key does not block checkout readiness.
+
+`npm run verify:journey` creates a disposable private native store and exercises
+cart pricing, inventory reservation, checkout retry, partial refund and reopen
+recovery. Settlement is simulated: it calls no external providers, transfers no
+funds and ignores the operator database path. The normal seed script honors
+`.env.local`, preserves existing stock on repeat runs, repairs missing sample
+inventory and exits nonzero on catalog conflicts. Newly created samples are
+activated; existing products keep their operator-selected status.
+
+The commerce ledger and prices use USD; the USDC payment rail assumes one token
+per dollar and verifies the exact token amount. `/api/store/status` exposes only
+checkout availability and the configured merchant/chain. The wallet checks it
+before requesting a transfer, so missing launch configuration can be corrected
+before a customer sends funds.
 
 ## Options
 
@@ -78,9 +105,11 @@ The tax provider is intentionally fail-closed: checkout is enabled only for
 explicitly configured states. `STATESET_TAX_RATES_JSON` replaces the complete
 starter table, including support for configured zero-rate jurisdictions. For
 production tax engines, implement the same provider interface in `lib/tax.js`.
+Line taxes round half-up to USD cents before being summed; the tax quote,
+verified USDC settlement and native order all use those same posted amounts.
 
 Shipping uses the same operator-owned pattern. The JSON configuration replaces
-the free starter method, validates method identifiers and exact amounts, and is
+the free starter method, validates method identifiers and exact USD-cent amounts, and is
 recomputed by the server during settlement verification. Carrier API adapters
 can implement the provider interface in `lib/shipping.js`.
 

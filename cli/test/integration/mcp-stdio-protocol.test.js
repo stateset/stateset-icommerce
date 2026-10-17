@@ -21,6 +21,7 @@ import { ALL_DOMAIN_TOOLS } from '../../src/tools/domain-registry.js';
 import { AGENTIC_RUNTIME_TOOLS } from '../../src/mcp/agentic-runtime-tools.js';
 import { toolTier } from '../../src/tools/tool-tiers.js';
 import { startupBudgetMs } from '../helpers/startup-budget.js';
+import { assertPreviewSafetyContract } from '../helpers/mcp-safety-contract.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(__dirname, '../../bin/stateset-mcp.js');
@@ -136,6 +137,20 @@ describe('mcp stdio — protocol 2026-07-28', () => {
     assert.equal(res.result.isError, true);
     assert.match(res.result.content[0].text, /Amount must be positive/);
   });
+
+  it('satisfies the shared preview, validation and exact-money safety contract', async (t) => {
+    let id = 20;
+    const listing = await modern(client, id++, 'tools/list');
+    assert.ok(!listing.error, JSON.stringify(listing.error));
+    const checked = await assertPreviewSafetyContract(async (name, args) => {
+      const response = await modern(client, id++, 'tools/call', { name, arguments: args });
+      assert.ok(!response.error, JSON.stringify(response.error));
+      return response.result;
+    }, listing.result.tools);
+    t.diagnostic(
+      `catalog-validation-proof transport=stdio era=modern required_refusals=${checked}`,
+    );
+  });
 });
 
 describe('mcp stdio — 2025-era clients', () => {
@@ -180,6 +195,30 @@ describe('mcp stdio — 2025-era clients', () => {
     });
     assert.equal(res.result.isError, true);
     assert.match(res.result.content[0].text, /Amount must be positive/);
+  });
+
+  it('satisfies the same safety contract for legacy clients', async (t) => {
+    let id = 20;
+    const listing = await client.request({
+      jsonrpc: '2.0',
+      id: id++,
+      method: 'tools/list',
+      params: {},
+    });
+    assert.ok(!listing.error, JSON.stringify(listing.error));
+    const checked = await assertPreviewSafetyContract(async (name, args) => {
+      const response = await client.request({
+        jsonrpc: '2.0',
+        id: id++,
+        method: 'tools/call',
+        params: { name, arguments: args },
+      });
+      assert.ok(!response.error, JSON.stringify(response.error));
+      return response.result;
+    }, listing.result.tools);
+    t.diagnostic(
+      `catalog-validation-proof transport=stdio era=legacy required_refusals=${checked}`,
+    );
   });
 });
 

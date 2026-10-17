@@ -12,12 +12,16 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
+    "doctor": "node scripts/check-store.js",
+    "doctor:launch": "node scripts/check-store.js --launch",
+    "verify:journey": "node scripts/verify-merchant-journey.js",
     "seed": "node scripts/seed.js"
   },
   "dependencies": {
+    "@next/env": "16.3.8",
     "@ai-sdk/anthropic": "3.0.114",
     "@ai-sdk/react": "3.0.273",
-    "@stateset/embedded": "^1.38.2",
+    "@stateset/embedded": "^1.39.0",
     "@tanstack/react-query": "^5.90.12",
     "ai": "6.0.270",
     "lucide-react": "^0.563.0",

@@ -13,9 +13,9 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 
 | Metric | Value |
 | --- | --- |
-| Tool modules | 91 |
-| Command modules on disk | 88 |
-| Command modules in registry | 88 |
+| Tool modules | 92 |
+| Command modules on disk | 89 |
+| Command modules in registry | 89 |
 | Tool-backed command modules | 8 |
 | Uncovered tool modules | 3 |
 | Uncovered tool-backed actions | 0 |
@@ -96,6 +96,7 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 | `serials` | custom | 8 | 2 | - |
 | `shipments` | custom | 13 | 3 | - |
 | `shipping-zones` | custom | 7 | 2 | - |
+| `simulations` | tool-backed | 6 | 0 | - |
 | `stablecoin` | custom | 4 | 2 | - |
 | `stock-snapshots` | tool-backed | 5 | 0 | - |
 | `store-credits` | custom | 5 | 2 | - |

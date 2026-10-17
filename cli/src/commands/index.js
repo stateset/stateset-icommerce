@@ -91,6 +91,7 @@ import * as topologySnapshots from './topology-snapshots.js';
 import * as transferOrders from './transfer-orders.js';
 import * as unitsOfMeasure from './units-of-measure.js';
 import * as explain from './explain.js';
+import * as simulations from './simulations.js';
 import * as vendorCredits from './vendor-credits.js';
 import * as vendorReturns from './vendor-returns.js';
 
@@ -98,6 +99,7 @@ import * as vendorReturns from './vendor-returns.js';
  * All registered commands
  */
 export const commands = {
+  simulations,
   'activity-logs': activityLogs,
   channels: channels,
   companies: companies,

@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 975,
+  "totalTools": 984,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 957
+      "count": 966
     },
     {
       "name": "stateset-scaffold",
@@ -19,7 +19,7 @@
       "count": 5
     }
   ],
-  "domainCount": 90,
+  "domainCount": 91,
   "domains": [
     {
       "name": "a2a",
@@ -187,7 +187,7 @@
     },
     {
       "name": "inventory",
-      "count": 6
+      "count": 7
     },
     {
       "name": "invoices",
@@ -306,6 +306,10 @@
       "count": 7
     },
     {
+      "name": "simulations",
+      "count": 6
+    },
+    {
       "name": "stablecoin",
       "count": 4
     },
@@ -327,7 +331,7 @@
     },
     {
       "name": "suppliers",
-      "count": 10
+      "count": 12
     },
     {
       "name": "sync",
@@ -393,18 +397,18 @@
     },
     {
       "name": "read",
-      "count": 480
+      "count": 487
     },
     {
       "name": "write",
-      "count": 427
+      "count": 429
     }
   ],
   "permissionCounts": {
     "admin": 47,
     "delete": 21,
-    "read": 480,
-    "write": 427
+    "read": 487,
+    "write": 429
   },
   "tools": [
     {
@@ -3144,6 +3148,24 @@
       "permission": "write"
     },
     {
+      "name": "compare_commerce_scenarios",
+      "description": "Compare two or three bounded what-if commerce scenarios in separate private native stores. All scenarios use one currency and at most 100 total steps. The live store and external services are never used.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__compare_commerce_scenarios",
+      "policyDomain": "simulations",
+      "permission": "read"
+    },
+    {
+      "name": "compare_inventory_plans",
+      "description": "Compare two or three inventory and purchasing policies using independent private embedded stores. The same seed, SKU and demand assumptions produce common demand paths across policy changes and product ordering. Returns exact metric deltas and global condition flags, plus each row comparisonToBaseline with changedConditions for opening cash, inventory, unit economics, purchase priority, cash reserve, horizon and realized demand/supply paths. Money is compared exactly; SKU facts are independent of product ordering, while purchase priority is checked separately. At most 180 product-days total; no real purchases or live-store writes.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__compare_inventory_plans",
+      "policyDomain": "simulations",
+      "permission": "read"
+    },
+    {
       "name": "complete_checkout",
       "description": "Complete the checkout process and convert the cart to an order. This is the final step in the checkout flow.",
       "serverName": "stateset-commerce",
@@ -4647,6 +4669,15 @@
       "permission": "write"
     },
     {
+      "name": "fulfill_order_stock",
+      "description": "Post physical inventory for a fully shipped or delivered order. Atomically consume its confirmed holds, reducing on-hand and allocated together. Shipping status remains separate. Safe to retry; already fulfilled holds are ignored.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__fulfill_order_stock",
+      "policyDomain": "inventory",
+      "permission": "write"
+    },
+    {
       "name": "generate_1099k",
       "description": "Generate a 1099-K tax report for an agent. Summarizes gross payment amounts, transaction counts, and monthly breakdowns for a given tax year.",
       "serverName": "stateset-commerce",
@@ -5493,6 +5524,15 @@
       "permission": "read"
     },
     {
+      "name": "get_purchase_order_items",
+      "description": "Read persisted purchase-order lines with exact costs and ordered/received quantities.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_purchase_order_items",
+      "policyDomain": "suppliers",
+      "permission": "read"
+    },
+    {
       "name": "get_purgatory_order",
       "description": "Get a purgatory order by ID.",
       "serverName": "stateset-commerce",
@@ -5652,6 +5692,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_shipping_zone",
       "policyDomain": "shipping_zones",
+      "permission": "read"
+    },
+    {
+      "name": "get_simulation_kernel_contract",
+      "description": "Discover the embedded commerce simulation kernel: typed action and planning schemas, execution limits, observations, failure and time semantics, and the model iteration workflow. Pure discovery; no live store or worker access.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_simulation_kernel_contract",
+      "policyDomain": "simulations",
       "permission": "read"
     },
     {
@@ -7473,6 +7522,15 @@
       "permission": "write"
     },
     {
+      "name": "receive_purchase_order",
+      "description": "Record exact received quantities against sent PO lines. This updates the purchase order only; inventory stock must be posted separately through the inventory or warehouse workflow.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__receive_purchase_order",
+      "policyDomain": "suppliers",
+      "permission": "write"
+    },
+    {
       "name": "receive_transfer_order_line",
       "description": "Receive a quantity against a transfer order line at the destination.",
       "serverName": "stateset-commerce",
@@ -8056,6 +8114,33 @@
       "qualifiedName": "mcp__stateset-commerce__sign_wasm_connector_attestation",
       "policyDomain": "connectors",
       "permission": "admin"
+    },
+    {
+      "name": "simulate_commerce_scenario",
+      "description": "Execute a bounded synthetic commerce episode using the real embedded engine in a fresh private store. Typed purchases, receipts, orders, shipment stock postings, captures, refunds, retries and state inspection. No live-store access or external payments. Discover schemas with get_simulation_kernel_contract.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__simulate_commerce_scenario",
+      "policyDomain": "simulations",
+      "permission": "read"
+    },
+    {
+      "name": "simulate_inventory_experiment",
+      "description": "Evaluate one to three inventory policies across shared seeds through independent native embedded stores. Demand may be sampled or an explicit daily forecast schedule. Supplier lead times and first fills may be fixed, sampled or explicit dailyValues schedules indexed by order-placement days 0..days. Supports split deliveries, purchasing constraints, per-SKU reviewIntervalDays and a shared cashReserve spending policy. Reviews start on day zero; off-review low-stock attempts defer without native POs or spending. Reports deferredPurchaseReviews and reviewDeferredRuns. Returns empirical percentiles, exact money means and unit fill rates, paired deltas, global and per-policy comparison conditions, path-diversity counts, daily cash and per-SKU inventory flows, first stockouts, minimum cash and reserve-blocked counts. Independent replay checks receipt timing and physical availability before sales as well as final balances. Each comparisonToBaseline lists changedConditions for capital, stock, prices, priority, reserve, horizon and realized paths. Optional per-seed goals include minCashBalance and productFillRates: unique {sku,minFillRateBps} targets present in every policy. Reports expose per-target checks and pooled service; all targets must pass on the same seed, and overall fill cannot hide a critical SKU miss. Zero-demand targets are not evaluable. At most 12 runs and 180 total product-days. Path matches do not establish equivalent assumptions, independence or confidence bounds. No live-store reads, real purchases or external services.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__simulate_inventory_experiment",
+      "policyDomain": "simulations",
+      "permission": "read"
+    },
+    {
+      "name": "simulate_inventory_plan",
+      "description": "Project demand, stockouts, sales, purchase orders, split receipts and cash through the real embedded engine in a private store. Supply demand ranges, history or an exact dailyUnits forecast schedule, exact costs and reorder policy. Lead times and first-delivery fills accept fixed values, ranges or dailyValues schedules with exactly days+1 entries for order-placement days 0..days. Optional purchasing sets reviewIntervalDays (1..60, omitted means daily), minimum quantities, case packs and an inventory-position cap. Reviews occur on day zero and interval multiples; off-review low-stock attempts defer with nextReviewDay and unchanged cash before sizing or financial checks. Reports deferredPurchaseReviews; orders recompute current stock on review days before whole-order cash. Optional plan cashReserve withholds shared cash without shrinking orders. Reports daily cash and inventory flows, first stockout, minimum cash, supplier methods and reserve-blocked attempts. Inventory replay checks projected demand, purchase/receipt identities, supplier terms, daily event ordering and physical availability before sales against final native balances. Native purchase lines, sizing constraints, stock, reserves, cash flows and financial values must reconcile. Conditional projections; no live store or supplier access.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__simulate_inventory_plan",
+      "policyDomain": "simulations",
+      "permission": "read"
     },
     {
       "name": "skip_billing_cycle",

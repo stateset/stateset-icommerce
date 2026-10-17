@@ -24,6 +24,7 @@ import { ALL_DOMAIN_TOOLS } from '../../src/tools/domain-registry.js';
 import { AGENTIC_RUNTIME_TOOLS } from '../../src/mcp/agentic-runtime-tools.js';
 import { toolTier } from '../../src/tools/tool-tiers.js';
 import { startupBudgetMs } from '../helpers/startup-budget.js';
+import { assertPreviewSafetyContract } from '../helpers/mcp-safety-contract.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(__dirname, '../../bin/stateset-mcp-http.js');
@@ -264,6 +265,56 @@ const ANY_HOST_PORT = DEFAULT_PORT + 1200;
 const AUTH_PORT = DEFAULT_PORT + 1600;
 const NO_AUTH_PORT = DEFAULT_PORT + 2000;
 
+describe('mcp http — shared preview safety contract', () => {
+  const BASE = `http://127.0.0.1:${DEFAULT_PORT + 2400}`;
+  let child;
+  before(async () => {
+    child = spawnServer(['--port', String(DEFAULT_PORT + 2400), '--read-only', '--no-seed']);
+    await waitForHealth(BASE);
+  });
+  after(() => child?.kill('SIGTERM'));
+
+  for (const era of ['modern', 'legacy']) {
+    it(`enforces validation and previews without mutation over ${era} HTTP`, async (t) => {
+      if (era === 'legacy') await legacyInitialize(BASE);
+      let id = 20;
+      const request = async (method, params = {}) => {
+        if (era === 'modern') {
+          const response = await modern(BASE, { id: id++, method, params });
+          assert.equal(response.status, 200);
+          return response.json;
+        }
+        const response = await fetch(`${BASE}/mcp`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json, text/event-stream',
+            'MCP-Protocol-Version': '2025-06-18',
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: id++,
+            method,
+            params,
+          }),
+        });
+        assert.equal(response.status, 200);
+        return parseBody(await response.text());
+      };
+      const listing = await request('tools/list');
+      assert.ok(!listing.error, JSON.stringify(listing.error));
+      const checked = await assertPreviewSafetyContract(async (name, args) => {
+        const message = await request('tools/call', { name, arguments: args });
+        assert.ok(!message.error, JSON.stringify(message.error));
+        return message.result;
+      }, listing.result.tools);
+      t.diagnostic(
+        `catalog-validation-proof transport=http era=${era} required_refusals=${checked}`,
+      );
+    });
+  }
+});
+
 /** Collect stderr and the exit code of a server that is expected to die. */
 function spawnAndCollect(args) {
   return new Promise((resolve) => {
@@ -309,6 +360,8 @@ describe('mcp http — Origin validation', () => {
       'https://agent.example.com',
       '--allowed-origin',
       'http://studio.example.net:3000',
+      '--allowed-origin',
+      'legacy.example.net',
     ]);
     await waitForHealth(BASE);
   });
@@ -335,8 +388,20 @@ describe('mcp http — Origin validation', () => {
     assert.ok(parseBody(await res.text()).result.tools.length === CORE_TIER.length);
   });
 
-  it('matches allowed origins by hostname, ignoring scheme and port', async () => {
+  it('rejects the wrong scheme or port on an explicitly configured origin', async () => {
     const res = await listWithOrigin(BASE, 'https://studio.example.net');
+    assert.equal(res.status, 403);
+    const wrongPort = await listWithOrigin(BASE, 'http://studio.example.net:3001');
+    assert.equal(wrongPort.status, 403);
+  });
+
+  it('accepts the exact configured scheme and port', async () => {
+    const res = await listWithOrigin(BASE, 'http://studio.example.net:3000');
+    assert.equal(res.status, 200);
+  });
+
+  it('retains explicit bare-host compatibility across HTTP(S) ports', async () => {
+    const res = await listWithOrigin(BASE, 'https://legacy.example.net:8443');
     assert.equal(res.status, 200);
   });
 

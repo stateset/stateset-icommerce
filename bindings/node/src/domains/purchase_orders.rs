@@ -52,7 +52,10 @@ pub struct CreatePurchaseOrderItemInput {
     pub sku: String,
     pub name: String,
     pub quantity: f64,
-    pub unit_cost: f64,
+    /// Legacy float input. Prefer `unitCostExact` for money.
+    pub unit_cost: Option<f64>,
+    /// Exact base-10 unit cost; takes precedence over `unitCost`.
+    pub unit_cost_exact: Option<String>,
 }
 
 #[napi(object)]
@@ -61,6 +64,8 @@ pub struct CreatePurchaseOrderInput {
     pub supplier_id: String,
     pub items: Vec<CreatePurchaseOrderItemInput>,
     pub notes: Option<String>,
+    /// ISO 4217 currency code; defaults to the supplier currency.
+    pub currency: Option<String>,
 }
 
 #[napi(object)]
@@ -68,6 +73,7 @@ pub struct CreatePurchaseOrderInput {
 pub struct PurchaseOrderOutput {
     pub id: String,
     pub po_number: String,
+    pub currency: String,
     pub supplier_id: String,
     #[napi(ts_type = "PurchaseOrderStatus")]
     pub status: String,
@@ -92,6 +98,7 @@ impl TryFrom<stateset_core::PurchaseOrder> for PurchaseOrderOutput {
         Ok(Self {
             id: po.id.to_string(),
             po_number: po.po_number,
+            currency: po.currency.to_string(),
             supplier_id: po.supplier_id.to_string(),
             status: format!("{}", po.status),
             subtotal,
@@ -102,6 +109,25 @@ impl TryFrom<stateset_core::PurchaseOrder> for PurchaseOrderOutput {
             updated_at: po.updated_at.to_rfc3339(),
         })
     }
+}
+
+/// Exact purchase-order line quantities and money, suitable for planning.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PurchaseOrderItemOutput {
+    pub id: String,
+    pub sku: String,
+    pub quantity_ordered_exact: String,
+    pub quantity_received_exact: String,
+    pub unit_cost_exact: String,
+    pub line_total_exact: String,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ReceivePurchaseOrderItemInput {
+    pub item_id: String,
+    pub quantity_received_exact: String,
 }
 
 #[napi]
@@ -174,11 +200,23 @@ impl PurchaseOrders {
             .items
             .into_iter()
             .map(|i| {
+                let quantity = decimal_from_f64(i.quantity, "purchase order item quantity")?;
+                let unit_cost = money_input(
+                    i.unit_cost_exact.as_deref(),
+                    i.unit_cost,
+                    "purchase order item unit cost",
+                )?;
+                if quantity <= Decimal::ZERO || unit_cost < Decimal::ZERO {
+                    return Err(coded(
+                        ErrCode::Validation,
+                        "Purchase quantity must be positive and unit cost must be non-negative",
+                    ));
+                }
                 Ok(stateset_core::CreatePurchaseOrderItem {
                     sku: i.sku,
                     name: i.name,
-                    quantity: decimal_from_f64(i.quantity, "purchase order item quantity")?,
-                    unit_cost: decimal_from_f64(i.unit_cost, "purchase order item unit cost")?,
+                    quantity,
+                    unit_cost,
                     ..Default::default()
                 })
             })
@@ -190,6 +228,12 @@ impl PurchaseOrders {
                 supplier_id,
                 items,
                 notes: input.notes,
+                currency: input
+                    .currency
+                    .map(|value| {
+                        value.parse().map_err(|e| wrap(ErrCode::Validation, "Invalid currency", e))
+                    })
+                    .transpose()?,
                 ..Default::default()
             })
             .map_err(|e| wrap(ErrCode::Internal, "Failed to create PO", e))?;
@@ -283,6 +327,65 @@ impl PurchaseOrders {
             .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel PO", e))?;
 
         convert_output(po)
+    }
+
+    /// Read the persisted purchase-order lines with exact decimal fields.
+    #[napi]
+    pub async fn get_items(&self, id: String) -> Result<Vec<PurchaseOrderItemOutput>> {
+        let commerce = self.commerce.get()?;
+        let id: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid PO UUID"))?;
+        let items = commerce
+            .purchase_orders()
+            .get_items(id)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get PO items", e))?;
+        Ok(items
+            .into_iter()
+            .map(|item| PurchaseOrderItemOutput {
+                id: item.id.to_string(),
+                sku: item.sku,
+                quantity_ordered_exact: item.quantity_ordered.to_string(),
+                quantity_received_exact: item.quantity_received.to_string(),
+                unit_cost_exact: item.unit_cost.to_string(),
+                line_total_exact: item.line_total.to_string(),
+            })
+            .collect())
+    }
+
+    /// Record received quantities on a sent purchase order. This updates the PO;
+    /// warehouse stock must be posted separately through inventory/receiving.
+    #[napi]
+    pub async fn receive(
+        &self,
+        id: String,
+        items: Vec<ReceivePurchaseOrderItemInput>,
+    ) -> Result<PurchaseOrderOutput> {
+        let commerce = self.commerce.get()?;
+        let id: uuid::Uuid =
+            id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid PO UUID"))?;
+        let items = items
+            .into_iter()
+            .map(|item| {
+                Ok(stateset_core::ReceivePurchaseOrderItem {
+                    item_id: item
+                        .item_id
+                        .parse()
+                        .map_err(|_| coded(ErrCode::Validation, "Invalid PO item UUID"))?,
+                    quantity_received: money_input(
+                        Some(&item.quantity_received_exact),
+                        None,
+                        "received quantity",
+                    )?,
+                    notes: None,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        convert_output(
+            commerce
+                .purchase_orders()
+                .receive(id, stateset_core::ReceivePurchaseOrderItems { items, notes: None })
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to receive PO", e))?,
+        )
     }
 
     #[napi]

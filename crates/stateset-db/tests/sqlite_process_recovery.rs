@@ -230,18 +230,36 @@ fn multiple_processes_preserve_exact_stock_and_durable_retry_identity() {
         .map(|value| value.parse::<u32>().expect("integer key count"))
         .unwrap_or(64);
     assert!((1..=100_000).contains(&keys), "key count must be 1..100000");
+    let rounds = std::env::var("STATESET_RECOVERY_ROUNDS")
+        .map(|value| value.parse::<u32>().expect("integer round count"))
+        .unwrap_or(1);
+    assert!(
+        (1..=1000).contains(&rounds) && u64::from(keys) * u64::from(rounds) <= 1_000_000,
+        "rounds must be 1..1000 and keys * rounds <= 1000000"
+    );
     if let Some(path) = std::env::var_os(STORE_ENV) {
         let mut start = String::new();
         std::io::stdin().read_line(&mut start).expect("start barrier");
         assert_eq!(start.trim(), "go");
         let db = database(Path::new(&path));
         let executor = db.kernel_executor(policy());
-        for index in 0..keys {
-            let result = executor
-                .execute_reserve_inventory(&command(&format!("load-reservation-{index}")))
-                .expect("reserve/replay");
-            assert_eq!(result.status, ExecutionStatus::Succeeded);
+        let mut latencies_us = Vec::with_capacity((keys * rounds) as usize);
+        for _round in 0..rounds {
+            for index in 0..keys {
+                let attempt_started = Instant::now();
+                let result = executor
+                    .execute_reserve_inventory(&command(&format!("load-reservation-{index}")))
+                    .expect("reserve/replay");
+                assert_eq!(result.status, ExecutionStatus::Succeeded);
+                latencies_us.push(
+                    u64::try_from(attempt_started.elapsed().as_micros()).expect("latency fits u64"),
+                );
+            }
         }
+        println!(
+            "process-latency-samples {}",
+            serde_json::to_string(&latencies_us).expect("latencies")
+        );
         return;
     }
     let dir = tempfile::tempdir().expect("directory");
@@ -252,6 +270,7 @@ fn multiple_processes_preserve_exact_stock_and_durable_retry_identity() {
     let mut workers: Vec<_> = (0..4)
         .map(|_| spawn("multiple_processes_preserve_exact_stock_and_durable_retry_identity", &path))
         .collect();
+    let mut latencies_us = Vec::<u64>::with_capacity((keys * rounds) as usize * 4);
     for worker in &mut workers {
         worker.0.stdin.as_mut().expect("worker stdin").write_all(b"go\n").expect("release barrier");
     }
@@ -265,6 +284,14 @@ fn multiple_processes_preserve_exact_stock_and_durable_retry_identity() {
         let output =
             receiver.recv_timeout(Duration::from_secs(180)).expect("bounded workload duration");
         assert!(worker.0.wait().expect("worker status").success(), "worker failed: {output:?}");
+        let samples = output
+            .iter()
+            .filter_map(|line| line.as_ref().ok())
+            .find_map(|line| line.split_once("process-latency-samples ").map(|(_, json)| json))
+            .expect("worker reports operation latencies");
+        let samples: Vec<u64> = serde_json::from_str(samples).expect("valid operation samples");
+        assert_eq!(samples.len(), (keys * rounds) as usize);
+        latencies_us.extend(samples);
         reader.join().expect("reader");
     }
     let db = database(&path);
@@ -287,10 +314,26 @@ fn multiple_processes_preserve_exact_stock_and_durable_retry_identity() {
     assert_eq!(events, keys);
     drop(conn);
     integrity(&db);
+    latencies_us.sort_unstable();
+    println!(
+        "process-latency-samples {}",
+        serde_json::to_string(&latencies_us).expect("raw workload latencies")
+    );
+    let percentile =
+        |percent: usize| latencies_us[(latencies_us.len() * percent).div_ceil(100) - 1];
+    println!(
+        "process-latency-proof samples={} p50_us={} p95_us={} p99_us={} max_us={} synchronous={}",
+        latencies_us.len(),
+        percentile(50),
+        percentile(95),
+        percentile(99),
+        latencies_us.last().expect("samples"),
+        db.storage_status().expect("storage settings").synchronous
+    );
     println!(
         "process-workload-proof workers=4 keys={keys} attempts={} effects={keys} replays={} elapsed_ms={} integrity=ok audit=valid",
-        keys * 4,
-        keys * 3,
+        keys * rounds * 4,
+        keys * (rounds * 4 - 1),
         started.elapsed().as_millis()
     );
 }

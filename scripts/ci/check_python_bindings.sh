@@ -18,6 +18,8 @@ if [[ -z "$PYTHON_BIN" ]]; then
   fi
 fi
 
+"$PYTHON_BIN" "$ROOT_DIR/scripts/ci/check_python_binding_package.test.py"
+
 # A repository-local virtualenv may contain an extension compiled from an older
 # checkout. Rebuild it before exercising source tests so the local release gate
 # validates the current Rust binding rather than stale site-packages. CI installs

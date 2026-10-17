@@ -1,4 +1,5 @@
 import { decimalToUnits, unitsToDecimal } from './money.js';
+import { isSupportedUsState } from './shipping.js';
 
 // Starter rates are intentionally explicit. Production stores should replace
 // this table with an operator-owned tax service and nexus configuration.
@@ -24,11 +25,17 @@ function normalizeRateTable(rates) {
   if (!rates || typeof rates !== 'object' || Array.isArray(rates)) {
     throw new Error('Tax rates must be an object keyed by two-letter jurisdiction code');
   }
+  const jurisdictions = new Set();
   return Object.freeze(
     Object.fromEntries(
       Object.entries(rates).map(([jurisdiction, rate]) => {
         const code = String(jurisdiction).trim().toUpperCase();
-        if (!/^[A-Z]{2}$/.test(code)) throw new Error(`Invalid tax jurisdiction: ${jurisdiction}`);
+        if (!isSupportedUsState(code))
+          throw new Error('Tax jurisdictions must be supported US state codes');
+        if (jurisdictions.has(code))
+          throw new Error('Tax jurisdiction codes must be unique after normalization');
+        jurisdictions.add(code);
+        if (typeof rate !== 'string') throw new Error('Tax rates must be decimal strings');
         const exactRate = String(rate).trim();
         const rateUnits = decimalToUnits(exactRate, 6);
         if (rateUnits < 0n || rateUnits > 1000000n) {
@@ -40,7 +47,7 @@ function normalizeRateTable(rates) {
   );
 }
 
-function calculateCartWithRates(items, stateCode, rates, decimals = 6) {
+function calculateCartWithRates(items, stateCode, rates, decimals = 2) {
   const code = String(stateCode || '').toUpperCase();
   if (!Object.prototype.hasOwnProperty.call(rates, code)) {
     throw new Error(`Tax is not configured for ${code || 'the shipping jurisdiction'}`);
@@ -76,7 +83,7 @@ export function createRateTableTaxProvider(rates, source = 'operator') {
         String(stateCode || '').toUpperCase(),
       );
     },
-    calculateCart(items, stateCode, decimals = 6) {
+    calculateCart(items, stateCode, decimals = 2) {
       return calculateCartWithRates(items, stateCode, normalizedRates, decimals);
     },
   });
@@ -98,7 +105,7 @@ export function hasConfiguredTaxRate(stateCode) {
   return createRateTableTaxProvider(STARTER_TAX_RATES, 'starter').hasJurisdiction(stateCode);
 }
 
-export function calculateTax(subtotal, stateCode, decimals = 6) {
+export function calculateTax(subtotal, stateCode, decimals = 2) {
   const rate = STARTER_TAX_RATES[String(stateCode || '').toUpperCase()] || '0';
   const subtotalUnits = decimalToUnits(subtotal, decimals);
   const rateUnits = decimalToUnits(rate, 6);
@@ -110,7 +117,7 @@ export function calculateTax(subtotal, stateCode, decimals = 6) {
   };
 }
 
-export function calculateCartTax(items, stateCode, decimals = 6) {
+export function calculateCartTax(items, stateCode, decimals = 2) {
   return createRateTableTaxProvider(STARTER_TAX_RATES, 'starter').calculateCart(
     items,
     stateCode,

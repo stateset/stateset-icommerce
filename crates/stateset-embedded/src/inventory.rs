@@ -362,6 +362,12 @@ impl Inventory {
         Ok(())
     }
 
+    /// Post confirmed order holds to physical inventory after full shipment.
+    /// This is separate from shipping status and is safe to retry.
+    pub fn fulfill_order_stock(&self, order_id: Uuid) -> Result<()> {
+        self.db.inventory().fulfill_order_stock(order_id)
+    }
+
     /// Fetch one reservation by id.
     ///
     /// Needed by any surface that hands out reservation ids (the HTTP
