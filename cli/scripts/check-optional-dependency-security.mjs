@@ -28,16 +28,15 @@ function packageVersion(entry, name) {
   }
 }
 
-// Resolve through Solana's actual dependency, then through Jayson's resolver.
-// A patched top-level uuid does not protect an older nested copy.
+// Resolve through Solana's actual dependency. Jayson 5 replaces its old UUID
+// and streaming-parser dependencies while retaining the browser client API.
 const solanaRequire = createRequire(require.resolve('@solana/web3.js'));
 const jaysonEntry = solanaRequire.resolve('jayson/lib/client/browser');
-const jaysonRequire = createRequire(jaysonEntry);
-const uuidVersion = packageVersion(jaysonRequire.resolve('uuid'), 'uuid');
+const jaysonVersion = packageVersion(jaysonEntry, 'jayson');
 assert.equal(
-  uuidVersion,
-  manifest.overrides.jayson.uuid,
-  'Jayson must use the declared uuid override',
+  jaysonVersion,
+  manifest.overrides.jayson,
+  'Solana must use the declared Jayson override',
 );
 const Client = solanaRequire('jayson/lib/client/browser');
 let request;
@@ -54,15 +53,28 @@ assert.match(request.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3
 assert.equal(response.id, request.id);
 assert.equal(response.result, 42);
 assert.equal(request.method, 'getBalance');
-console.log(`Jayson request/response and nested uuid ${uuidVersion}: passed`);
+console.log(`Jayson ${jaysonVersion} request/response and UUID generation: passed`);
 
 // Exercise the public Solana API as well as Jayson's direct client. A packed
 // tree must still load the SDK and its WebSocket dependencies on the host.
-const { Connection, PublicKey } = require('@solana/web3.js');
-let sdkRequest;
+const { Connection, PublicKey, SolanaJSONRPCError } = require('@solana/web3.js');
+const sdkRequests = [];
+let refuse = false;
 const connection = new Connection('http://127.0.0.1:1', {
   fetch: async (_url, options) => {
-    sdkRequest = JSON.parse(options.body);
+    const sdkRequest = JSON.parse(options.body);
+    sdkRequests.push(sdkRequest);
+    const results = {
+      getBalance: { context: { slot: 1 }, value: 42 },
+      getLatestBlockhash: {
+        context: { slot: 1 },
+        value: { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 55 },
+      },
+      getBlockHeight: 55,
+      sendTransaction: 'offline-transaction-signature',
+      getSignatureStatuses: { context: { slot: 1 }, value: [null] },
+    };
+    assert.ok(Object.hasOwn(results, sdkRequest.method), sdkRequest.method);
     return {
       ok: true,
       status: 200,
@@ -71,14 +83,33 @@ const connection = new Connection('http://127.0.0.1:1', {
         JSON.stringify({
           jsonrpc: '2.0',
           id: sdkRequest.id,
-          result: { context: { slot: 1 }, value: 42 },
+          ...(refuse
+            ? { error: { code: -32000, message: 'offline refusal' } }
+            : { result: results[sdkRequest.method] }),
         }),
     };
   },
 });
-assert.equal(await connection.getBalance(new PublicKey('11111111111111111111111111111111')), 42);
-assert.equal(sdkRequest.method, 'getBalance');
-console.log('Solana public SDK getBalance with an offline transport: passed');
+const key = new PublicKey('11111111111111111111111111111111');
+assert.equal(await connection.getBalance(key), 42);
+assert.equal((await connection.getLatestBlockhash()).lastValidBlockHeight, 55);
+assert.equal(await connection.getBlockHeight(), 55);
+assert.equal(
+  await connection.sendRawTransaction(Buffer.from([1, 2, 3])),
+  'offline-transaction-signature',
+);
+assert.deepEqual((await connection.getSignatureStatuses(['offline-signature'])).value, [null]);
+refuse = true;
+await assert.rejects(
+  connection.getBalanceAndContext(key),
+  (error) => error instanceof SolanaJSONRPCError && error.code === -32000,
+);
+await assert.rejects(connection.getBalance(key), /offline refusal/);
+for (const rpc of sdkRequests) {
+  assert.match(rpc.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+}
+assert.equal(new Set(sdkRequests.map((rpc) => rpc.id)).size, sdkRequests.length);
+console.log('Solana balance, blockhash, height, send, status and refusal APIs: passed');
 
 // Baileys uses parseBuffer for audio duration. Exercise its resolved parser
 // against a complete PCM WAV fixture without connecting to WhatsApp.
