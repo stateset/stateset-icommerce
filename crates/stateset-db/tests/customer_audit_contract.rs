@@ -137,6 +137,23 @@ struct PgStore {
 
 #[cfg(feature = "postgres")]
 impl PgStore {
+    /// Acquire the strongest table lock before trigger DDL. Concurrent DROP
+    /// TRIGGER statements otherwise upgrade their locks and can deadlock even
+    /// though each fixture owns a different trigger. Only fixture DDL is
+    /// serialized; repository operations and their race tests remain parallel.
+    fn fault_ddl(&self, table: &str, sql: &str) {
+        assert!(matches!(table, "kernel_outbox" | "customers" | "customer_addresses"));
+        self.runtime.block_on(async {
+            let mut transaction = self.db.pool().begin().await.unwrap();
+            sqlx::query(&format!("LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE"))
+                .execute(&mut *transaction)
+                .await
+                .unwrap();
+            sqlx::raw_sql(sql).execute(&mut *transaction).await.unwrap();
+            transaction.commit().await.unwrap();
+        });
+    }
+
     fn open() -> Option<Self> {
         let Some(url) =
             std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
@@ -180,7 +197,6 @@ impl AuditStore for PgStore {
         ).bind(identity).fetch_all(self.db.pool())).unwrap()
     }
     fn reject_fact(&self, event: &str, identity: &str, silently: bool) {
-        use sqlx::Executor;
         self.fault_table.set("kernel_outbox");
         let event = event.replace('\'', "''");
         let identity = identity.replace('\'', "''");
@@ -194,18 +210,16 @@ impl AuditStore for PgStore {
              CREATE TRIGGER {name} BEFORE INSERT ON kernel_outbox
              FOR EACH ROW EXECUTE PROCEDURE {name}();"
         );
-        self.runtime.block_on(self.db.pool().execute(sql.as_str())).unwrap();
+        self.fault_ddl(self.fault_table.get(), &sql);
     }
     fn allow_facts(&self) {
-        use sqlx::Executor;
         let name = &self.trigger;
         let table = self.fault_table.get();
         let sql =
             format!("DROP TRIGGER IF EXISTS {name} ON {table}; DROP FUNCTION IF EXISTS {name}();");
-        self.runtime.block_on(self.db.pool().execute(sql.as_str())).unwrap();
+        self.fault_ddl(table, &sql);
     }
     fn suppress_write(&self, identity: &str, write: SuppressedWrite) {
-        use sqlx::Executor;
         let identity = identity.replace('\'', "''");
         let (table, operation, predicate) = match write {
             SuppressedWrite::AddressRemoval => {
@@ -228,7 +242,7 @@ impl AuditStore for PgStore {
             IF {predicate} THEN RETURN NULL; END IF;
             IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END; $$;
             CREATE TRIGGER {name} BEFORE {operation} ON {table} FOR EACH ROW EXECUTE PROCEDURE {name}();");
-        self.runtime.block_on(self.db.pool().execute(sql.as_str())).unwrap();
+        self.fault_ddl(table, &sql);
     }
 }
 
@@ -727,3 +741,38 @@ macro_rules! backend_contract {
 backend_contract!(sqlite, SqliteStore);
 #[cfg(feature = "postgres")]
 backend_contract!(postgres, PgStore);
+
+/// Fault injection must remain safe when the contract tests run concurrently.
+/// Unique trigger names isolate effects, but do not isolate PostgreSQL's table
+/// locks during CREATE/DROP TRIGGER.
+#[cfg(feature = "postgres")]
+#[test]
+fn postgres_fault_ddl_supports_parallel_fixtures() {
+    let Some(stores) = (0..4).map(|_| PgStore::open()).collect::<Option<Vec<_>>>() else {
+        return;
+    };
+    let start = std::sync::Barrier::new(stores.len());
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = stores
+            .into_iter()
+            .map(|store| {
+                let start = &start;
+                scope.spawn(move || {
+                    let identity = Uuid::new_v4().to_string();
+                    start.wait();
+                    for _ in 0..12 {
+                        store.reject_fact("customer.created", &identity, false);
+                        store.allow_facts();
+                        store.suppress_write(&identity, SuppressedWrite::SoftDelete);
+                        store.allow_facts();
+                        store.suppress_write(&identity, SuppressedWrite::AddressRemoval);
+                        store.allow_facts();
+                    }
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    });
+}
