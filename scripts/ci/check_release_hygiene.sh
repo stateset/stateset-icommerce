@@ -191,9 +191,11 @@ required_release_surface_snippets=(
   ".github/workflows/publish-cli.yml|description: 'Version to release (e.g., ${workspace_version})'"
   ".github/workflows/publish-cli.yml|CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-unknown-linux-gnu-gcc"
   ".github/workflows/publish-cli.yml|- name: Wait for platform package availability"
-  # The published CLI manifest must resolve @stateset/embedded from the
-  # registry even though the repository manifest links ../bindings/node.
-  ".github/workflows/publish-cli.yml|      - name: Point @stateset/embedded at the published range"
+  # Stage the registry native dependency, verify the actual consumer tarball,
+  # and publish that exact artifact instead of repacking the working directory.
+  '.github/workflows/publish-cli.yml|        run: node scripts/ci/pack_cli_release.mjs --output-dir cli'
+  ".github/workflows/publish-cli.yml|          node scripts/ci/check_cli_consumer.mjs \"cli/stateset-cli-\${version}.tgz\""
+  ".github/workflows/publish-cli.yml|            npm publish \"stateset-cli-\${version}.tgz\" --access public --provenance"
   "cli/package.json|\"@stateset/embedded\": \"file:../bindings/node\""
   ".github/workflows/publish-python.yml|description: \"Version to release (e.g., ${workspace_version})\""
   ".github/workflows/publish-rust-crates.yml|description: 'Version to release (e.g., ${workspace_version})'"
