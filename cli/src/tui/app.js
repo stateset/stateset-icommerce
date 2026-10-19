@@ -4,7 +4,7 @@ import { initialState, handleKey, records, PRESETS } from './model.js';
 import { runRecord, scenarioSettings } from './workspace.js';
 import { productEditor } from './basket.js';
 import { readScenarioExport } from './import.js';
-import { render, detailLimit, panelLimit, importReviewLimit } from './render.js';
+import { render, detailLimit, panelLimit, importReviewLimit, contentLimit } from './render.js';
 
 export async function startTerminal({
   dbPath = null,
@@ -32,6 +32,14 @@ export async function startTerminal({
   });
   const draw = () => {
     if (closed || suspended) return;
+    if ((state.help || state.view === 0) && !state.input)
+      state = {
+        ...state,
+        contentOffset: Math.min(
+          state.contentOffset,
+          contentLimit(state, output.columns || 80, output.rows || 24),
+        ),
+      };
     if (state.input?.kind === 'import-review')
       state = {
         ...state,

@@ -1,4 +1,5 @@
 import { VIEWS, records, pageKey, paletteCommands, PRESETS } from './model.js';
+import { editorWindow } from './editor.js';
 import { clean, fit, width, wrap } from './text.js';
 import { PLANNING_FIELDS } from './planning.js';
 import { PRODUCT_FIELDS } from './basket.js';
@@ -163,6 +164,99 @@ function tableRow(view, row, size) {
   return `${fit(row.name, 23)} ${row.note}`;
 }
 
+function staticBody(state) {
+  const body = [];
+  const put = (text = '', tone = 'ink', bold = false) => body.push({ text, tone, bold });
+  if (state.help) {
+    put('KEYBOARD HELP · ↑ ↓ scroll · Esc close', 'accent', true);
+    for (const line of [
+      '1–6 / Tab       Switch view',
+      '↑ ↓ / j k       Select a record or scenario',
+      'Enter           Open details / run selected simulation',
+      'Esc             Back / clear search',
+      '/               Type preview; Enter searches entire view',
+      ': / Ctrl+P      Command palette',
+      'n / p           Next / previous data page',
+      'r               Refresh the store snapshot',
+      'o               Toggle recent / alphabetical sort',
+      'a               Add selected inventory SKU to a plan',
+      't / u / b       Related records / customer / back',
+      'f               Scrollable comparison results',
+      'w / l / h       Save scenario / library / run history',
+      'x / i / c       Export result / import assumptions / cancel run',
+      '/ in library    Filter saved entries without reading the store',
+      'Shift+D / U     Remove saved entry / undo last removal',
+      'p (lab)         Edit selected SKU planning terms',
+      's               Run selected simulation in the lab',
+      'e               Edit planning assumptions',
+      'g               Set a seed directly (1–999999)',
+      '← → Home End    Move within an input field',
+      'Delete / Ctrl+K Delete next character / remaining text',
+      'Ctrl+U          Clear the input field',
+      'Shift+R         Replay last successful simulation inputs',
+      '+ / -           Change the lab seed',
+      'v               Inspect the full simulation report',
+      'Home / End      Jump to the start / end of records or a report',
+      '?               Toggle this help',
+      'q / Ctrl+C      Quit and restore the terminal',
+      '',
+      'Store browsing has no business-write actions.',
+      'Lab runs use fresh private engine databases.',
+      'Projections reflect assumptions; they are not validated forecasts.',
+    ])
+      put(line, line ? 'ink' : 'muted');
+  } else {
+    const counts = state.data?.counts || {},
+      health = state.data?.health;
+    put('COMMERCE AT A GLANCE', 'muted');
+    put(
+      `${fit(counts.orders ?? '—', 12)}${fit(counts.customers ?? '—', 12)}${fit(counts.products ?? '—', 12)}${counts.payments ?? '—'}`,
+      'accent',
+      true,
+    );
+    put(`${fit('ORDERS', 12)}${fit('CUSTOMERS', 12)}${fit('PRODUCTS', 12)}PAYMENTS`, 'muted');
+    put();
+    put('STOCK WATCH', 'muted');
+    put(
+      `${health?.totalSkus ?? '—'} tracked SKUs   ·   ${state.data?.inventoryCount ?? '—'} low-stock signals`,
+      state.data?.inventoryCount > 0 ? 'warn' : 'muted',
+    );
+    put();
+    put('NEEDS ATTENTION', 'muted');
+    const inventory = state.data?.alerts ?? state.data?.inventory;
+    if (inventory?.length)
+      inventory
+        .slice(0, 4)
+        .forEach((item) =>
+          put(
+            `${fit(item.sku, 20)} ${item.available} available / reorder ${item.reorderPoint ?? '—'}`,
+            'warn',
+          ),
+        );
+    else
+      put(
+        inventory ? 'No low-stock items reported by the engine.' : 'Stock signals are unavailable.',
+        inventory ? 'good' : 'muted',
+      );
+    put();
+    put('EXPLORE THE POSSIBILITIES', 'muted');
+    put('6  Open the simulation lab', 'accent');
+    put('Compare demand, supplier delays and cash constraints.');
+    put('Every scenario runs in a separate embedded store.', 'muted');
+    put();
+    put('RECENT ORDERS', 'muted');
+    for (const order of (state.data?.recentOrders || state.data?.orders || []).slice(0, 3))
+      put(
+        `${shortId(order.orderNumber || order.id)}  ${order.status}  ${money(order, 'totalAmountExact')}`,
+      );
+  }
+  return body;
+}
+export function contentLimit(state, _columns = 80, rows = 24) {
+  const available = Math.max(1, Math.min(100, rows - 1) - 8);
+  return Math.max(0, staticBody(state).length - available);
+}
+
 export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   const w = Math.max(1, Math.min(220, columns - 1));
   const h = Math.max(1, Math.min(100, rows - 1));
@@ -223,13 +317,13 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       'accent',
       true,
     );
-    put('Tab / Enter next  ·  Ctrl+U clear  ·  Ctrl+S save  ·  Esc cancel', 'muted');
+    put('← → edit · Home/End · Tab next · Ctrl+S save · Esc cancel', 'muted');
     const visible = Math.max(1, available - 4),
       start = Math.max(0, editor.field - visible + 1);
     for (const [index, field] of fields.slice(start, start + visible).entries()) {
       const active = start + index === editor.field;
       put(
-        `${active ? '›' : ' '} ${fit(field.label, Math.min(23, size - 16))} [${editor.draft[field.key]}]`,
+        `${active ? '›' : ' '} ${fit(field.label, Math.min(23, size - 16))} [${active ? editorWindow(editor.draft[field.key], editor.cursor, Math.max(1, size - Math.min(23, size - 16) - 6)) : editor.draft[field.key]}]`,
         active ? 'accent' : 'ink',
         active,
       );
@@ -291,25 +385,34 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
           : 'No saved entries yet. w saves a scenario; successful runs save history.',
         'muted',
       );
-  } else if (['save', 'export', 'import'].includes(state.input?.kind)) {
+  } else if (['save', 'export', 'import', 'seed'].includes(state.input?.kind)) {
     put(
-      state.input.kind === 'save'
-        ? 'SAVE SCENARIO · enter a name'
-        : state.input.kind === 'import'
-          ? 'IMPORT SCENARIO · enter a local JSON filename'
-          : 'EXPORT RUN · enter a new JSON filename',
+      state.input.kind === 'seed'
+        ? 'SET SIMULATION SEED · 1–999999'
+        : state.input.kind === 'save'
+          ? 'SAVE SCENARIO · enter a name'
+          : state.input.kind === 'import'
+            ? 'IMPORT SCENARIO · enter a local JSON filename'
+            : 'EXPORT RUN · enter a new JSON filename',
       'accent',
       true,
     );
     put('Enter confirm · Esc cancel', 'muted');
     put(
-      state.input.kind === 'save'
-        ? `Saves ${state.selectedPreset} with current seed, assumptions and SKUs.`
-        : state.input.kind === 'import'
-          ? 'Validate and preview exported assumptions. Nothing runs automatically.'
-          : 'Includes executed inputs, input digest and the complete engine report.',
+      state.input.kind === 'seed'
+        ? 'Enter saves a valid seed. Existing results keep their original seed.'
+        : state.input.kind === 'save'
+          ? `Saves ${state.selectedPreset} with current seed, assumptions and SKUs.`
+          : state.input.kind === 'import'
+            ? 'Validate and preview exported assumptions. Nothing runs automatically.'
+            : 'Includes executed inputs, input digest and the complete engine report.',
     );
-    put('Existing files and saved entries are preserved.', 'muted');
+    put(
+      state.input.kind === 'seed'
+        ? 'Use s to run the selected scenario.'
+        : 'Existing files and saved entries are preserved.',
+      'muted',
+    );
   } else if (state.input?.kind === 'palette') {
     put('COMMAND PALETTE', 'accent', true);
     put('↑ ↓ select  ·  Enter open  ·  Type to filter  ·  Esc dismiss', 'muted');
@@ -326,39 +429,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       );
     if (!commands.length) put('No matching commands.', 'muted');
   } else if (state.help) {
-    put('KEYBOARD HELP · ↑ ↓ scroll · Esc close', 'accent', true);
-    for (const line of [
-      '1–6 / Tab       Switch view',
-      '↑ ↓ / j k       Select a record or scenario',
-      'Enter           Open details / run selected simulation',
-      'Esc             Back / clear search',
-      '/               Type preview; Enter searches entire view',
-      ': / Ctrl+P      Command palette',
-      'n / p           Next / previous data page',
-      'r               Refresh the store snapshot',
-      'o               Toggle recent / alphabetical sort',
-      'a               Add selected inventory SKU to a plan',
-      't / u / b       Related records / customer / back',
-      'f               Scrollable comparison results',
-      'w / l / h       Save scenario / library / run history',
-      'x / i / c       Export result / import assumptions / cancel run',
-      '/ in library    Filter saved entries without reading the store',
-      'Shift+D / U     Remove saved entry / undo last removal',
-      'p (lab)         Edit selected SKU planning terms',
-      's               Run selected simulation in the lab',
-      'e               Edit planning assumptions',
-      'Shift+R         Replay last successful simulation inputs',
-      '+ / -           Change the lab seed',
-      'v               Inspect the full simulation report',
-      'Home / End      Jump to the start / end of records or a report',
-      '?               Toggle this help',
-      'q / Ctrl+C      Quit and restore the terminal',
-      '',
-      'Store browsing has no business-write actions.',
-      'Lab runs use fresh private engine databases.',
-      'Projections reflect assumptions; they are not validated forecasts.',
-    ])
-      put(line, line ? 'ink' : 'muted');
+    body.push(...staticBody(state));
   } else if (!state.data && state.error && state.view !== 5) {
     put('THE ENGINE COULD NOT OPEN', 'bad', true);
     put();
@@ -370,49 +441,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     put();
     put('No records have been loaded. The source store is unchanged.', 'muted');
   } else if (state.view === 0) {
-    const counts = state.data?.counts || {},
-      health = state.data?.health;
-    put('COMMERCE AT A GLANCE', 'muted');
-    put(
-      `${fit(counts.orders ?? '—', 12)}${fit(counts.customers ?? '—', 12)}${fit(counts.products ?? '—', 12)}${counts.payments ?? '—'}`,
-      'accent',
-      true,
-    );
-    put(`${fit('ORDERS', 12)}${fit('CUSTOMERS', 12)}${fit('PRODUCTS', 12)}PAYMENTS`, 'muted');
-    put();
-    put('STOCK WATCH', 'muted');
-    put(
-      `${health?.totalSkus ?? '—'} tracked SKUs   ·   ${state.data?.inventoryCount ?? '—'} low-stock signals`,
-      state.data?.inventoryCount > 0 ? 'warn' : 'muted',
-    );
-    put();
-    put('NEEDS ATTENTION', 'muted');
-    const inventory = state.data?.alerts ?? state.data?.inventory;
-    if (inventory?.length)
-      inventory
-        .slice(0, 4)
-        .forEach((item) =>
-          put(
-            `${fit(item.sku, 20)} ${item.available} available / reorder ${item.reorderPoint ?? '—'}`,
-            'warn',
-          ),
-        );
-    else
-      put(
-        inventory ? 'No low-stock items reported by the engine.' : 'Stock signals are unavailable.',
-        inventory ? 'good' : 'muted',
-      );
-    put();
-    put('EXPLORE THE POSSIBILITIES', 'muted');
-    put('6  Open the simulation lab', 'accent');
-    put('Compare demand, supplier delays and cash constraints.');
-    put('Every scenario runs in a separate embedded store.', 'muted');
-    put();
-    put('RECENT ORDERS', 'muted');
-    for (const order of (state.data?.recentOrders || state.data?.orders || []).slice(0, 3))
-      put(
-        `${shortId(order.orderNumber || order.id)}  ${order.status}  ${money(order, 'totalAmountExact')}`,
-      );
+    body.push(...staticBody(state));
   } else if (state.detail) {
     const lines = detailLines(
       state.view === 5 ? state.sim.result : state.focusRecord || records(state)[state.selected],
@@ -430,7 +459,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     const data = records(state),
       field = pageKey(state.view);
     if (state.view === 5) {
-      put(`ISOLATED ENGINE  ·  Seed ${state.seed}  ·  + / - to change`, 'good');
+      put(`ISOLATED ENGINE  ·  Seed ${state.seed}  ·  g set · + / -`, 'good');
       put(
         `${state.planning.days} days · USD ${state.planning.startingCash} cash · e edit assumptions`,
         'muted',
@@ -530,7 +559,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   }
   const errors = state.data?.errors || [];
   add(
-    ` ${['planning', 'product'].includes(state.input?.kind) && state.input.error ? state.input.error : state.error ? `STALE / ERROR  ${state.error}` : errors.length ? `PARTIAL DATA  ${errors.map((e) => e.section).join(', ')}` : state.sim.running ? `RUNNING ${Math.floor((Date.now() - state.sim.startedAt) / 1000)}s · ${state.sim.progress || 'Engine working'} · c cancel` : state.notice || (state.sim.error ? `Run failed: ${state.sim.error}` : state.data ? `Snapshot ${state.data.checkedAt}  ·  r refresh` : 'Loading engine…')}`,
+    ` ${state.input?.error ? state.input.error : state.error ? `STALE / ERROR  ${state.error}` : errors.length ? `PARTIAL DATA  ${errors.map((e) => e.section).join(', ')}` : state.sim.running ? `RUNNING ${Math.floor((Date.now() - state.sim.startedAt) / 1000)}s · ${state.sim.progress || 'Engine working'} · c cancel` : state.notice || (state.sim.error ? `Run failed: ${state.sim.error}` : state.data ? `Snapshot ${state.data.checkedAt}  ·  r refresh` : 'Loading engine…')}`,
     state.error || errors.length || state.input?.error || state.sim.error ? 'warn' : 'muted',
   );
   add(
@@ -539,7 +568,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       : ['planning', 'product'].includes(state.input?.kind)
         ? ' Ctrl+U clear  Tab next  Ctrl+S save  Esc cancel'
         : state.input
-          ? ` ${{ search: '/', palette: ':', save: 'Name: ', export: 'Path: ', import: 'Path: ' }[state.input.kind] || ''} ${clean(state.input.text)}▏  Enter accept · Esc cancel`
+          ? ` ${{ search: '/', palette: ':', save: 'Name: ', export: 'Path: ', import: 'Path: ', seed: 'Seed:' }[state.input.kind] || ''} ${editorWindow(state.input.text, state.input.cursor, Math.max(1, w - 36))}  Enter accept · Esc cancel`
           : state.view === 5
             ? ' e edit  p SKUs  l/h library/history  i import  : commands  ? help'
             : state.view === 2
