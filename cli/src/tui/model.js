@@ -487,6 +487,14 @@ export function handleKey(state, text, key = {}) {
   else if (text === 'b' && state.back.length) effect = 'back';
   else if (name === 'return' && ['scenarios', 'history', 'products'].includes(state.panel))
     effect = 'open-entry';
+  else if (
+    text === 'a' &&
+    state.view === 5 &&
+    !state.sim.running &&
+    ((state.panel === 'history' && records(state)[state.selected]) ||
+      (state.panel === 'results' && state.sim.result))
+  )
+    effect = 'use-run-assumptions';
   else if (text === 'f' && state.view === 5 && state.sim.result) {
     next.panel = 'results';
     next.panelOffset = 0;
@@ -599,6 +607,10 @@ export function paletteCommands(query = '', state) {
                 { label: 'Save scenario', key: 'w' },
                 { label: 'Saved scenarios', key: 'l' },
                 { label: 'Run history', key: 'h' },
+                ...((state.panel === 'history' && records(state)[state.selected]) ||
+                (state.panel === 'results' && state.sim.result)
+                  ? [{ label: 'Use run assumptions as an editable draft', key: 'a' }]
+                  : []),
                 { label: 'Import scenario from JSON', key: 'i' },
               ]
             : [{ label: 'Cancel active simulation', key: 'c' }]),

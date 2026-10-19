@@ -68,7 +68,7 @@ export function resultLines(state, size) {
     add('Previous result retained.');
   }
   add(`RESULTS  ${sim.preset} / seed ${sim.seed}`);
-  add('↑ ↓ / PgUp PgDn scroll · Home End · v raw · x export · Esc lab');
+  add('↑ ↓ / PgUp PgDn scroll · Home End · v raw · x export · a use assumptions · Esc lab');
   for (const report of reports) {
     const s = report.summary;
     add(`${report.name}: fill ${fillRate(s)} · lost ${s.lostSales} units`);
@@ -259,6 +259,7 @@ function staticBody(state) {
       'Delete / Ctrl+K Delete next character / remaining text',
       'Ctrl+U          Clear the input field',
       'Shift+R         Replay last successful simulation inputs',
+      'a (run/history) Load original run assumptions into an editable draft',
       '+ / -           Change the lab seed',
       'v               Inspect the full simulation report',
       'Home / End      Jump to the start / end of records or a report',
@@ -417,7 +418,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     put(
       {
         scenarios: 'SAVED SCENARIOS · Enter load · / filter',
-        history: 'RUN HISTORY · Enter inspect · / filter',
+        history: 'RUN HISTORY · Enter inspect · a use · / filter',
         products: 'SELECTED SKUS · PURCHASE PRIORITY',
       }[state.panel],
       'accent',
@@ -604,6 +605,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       if (sim.result) {
         put(`RESULTS ${sim.preset} / seed ${sim.seed} · f compare · v raw · R replay`, 'good');
         if (
+          (sim.presetId && sim.presetId !== state.selectedPreset) ||
           JSON.stringify(sim.controls) !== JSON.stringify(state.planning) ||
           sim.seed !== state.seed ||
           JSON.stringify(sim.products || []) !== JSON.stringify(state.products)
