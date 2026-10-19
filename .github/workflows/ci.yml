@@ -191,7 +191,7 @@ jobs:
         with:
           node-version-file: '.nvmrc'
       - name: Test audit coverage and failure handling
-        run: node --test scripts/ci/check_rust_audits.test.mjs
+        run: node --test scripts/ci/check_rust_audits.test.mjs scripts/ci/security_audit.test.mjs
       - name: Audit every tracked Rust lockfile and its exception reachability
         # Includes standalone PHP/Ruby bindings and fuzz tooling. The two
         # existing optional-dependency exceptions must remain outside every
