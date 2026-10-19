@@ -344,6 +344,9 @@ payments, and a simulation lab. Use **1–6** or **Tab** to switch views,
 **n/p** for pages, **:** for the command palette, and **?** for help.
 In the lab, **Enter/s** runs a scenario, **+/−** changes its seed, and **v**
 opens the full result for inspection. **q** exits and restores the terminal.
+Search previews matches as you type; **Esc** restores the previous filter.
+The command palette supports arrow-key selection and scrolling. In record and
+report details, **Home/End** jumps to the first/last page.
 The layout adapts to narrow split panes; 40 columns by 14 rows is the minimum.
 
 Demo records are created by the native embedded engine in a private temporary
@@ -361,6 +364,22 @@ displayed assumptions, not validated forecasts. Engine work runs in bounded
 child processes so input and resizing stay responsive; quitting terminates
 those children and removes only the workbench's own temporary directory.
 `--json` emits snapshot data without terminal control sequences.
+
+Press **e** in the simulation lab to edit the planning horizon (1–30 days),
+opening cash (an exact USD decimal string), starting inventory, reorder point,
+target stock, and supplier lead time. **Tab/Enter** moves between fields,
+**Ctrl+U** clears a field, **Ctrl+S** saves valid assumptions, and **Esc** cancels.
+The target must exceed the reorder point. Demand-spike comparisons triple the
+baseline demand range; supplier-delay comparisons add three days to the
+baseline lead time; cash-constraint comparisons use 5% of baseline opening cash.
+
+Results show fill rate, lost units, exact ending cash, purchasing spend and
+margin, with exact cash/margin changes against the baseline. Sold-unit traces
+use a shared scale across both plans; each cell's day span and peak are labeled.
+Zero-demand fill rates are not evaluable. Changing assumptions affects only the
+next run: **Shift+R** replays the last successful run's original preset, seed,
+and assumptions. A failed run retains that successful report. Full reports
+include the executed input plans and keep exact-money fields visible.
 
 ### Interactive Chat
 

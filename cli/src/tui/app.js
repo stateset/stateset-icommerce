@@ -1,7 +1,7 @@
 import readline from 'node:readline';
 import { TerminalBackend } from './backend.js';
 import { initialState, handleKey, records } from './model.js';
-import { render } from './render.js';
+import { render, detailLimit } from './render.js';
 
 export async function startTerminal({
   dbPath = null,
@@ -101,24 +101,37 @@ export async function startTerminal({
       }
     }
   };
-  const simulate = async () => {
+  const simulate = async (replay = false) => {
     if (closed || state.view !== 5 || state.sim.running) return;
-    const preset = records(state)[state.selected];
+    const preset = replay
+      ? { id: state.sim.presetId, name: state.sim.preset }
+      : records(state)[state.selected];
     if (!preset) return;
-    const seed = state.seed;
+    const seed = replay ? state.sim.seed : state.seed;
+    const controls = { ...(replay ? state.sim.controls : state.planning) };
+    const previous = { ...state.sim };
     state = {
       ...state,
-      sim: { running: true, result: null, error: null, preset: preset.name, seed },
+      sim: {
+        ...previous,
+        running: true,
+        error: null,
+        pending: { preset: preset.name, seed, controls },
+      },
     };
     draw();
     try {
-      const result = await backend.request('simulate', { preset: preset.id, seed });
-      if (!closed) state = { ...state, sim: { ...state.sim, result } };
+      const result = await backend.request('simulate', { preset: preset.id, seed, controls });
+      if (!closed)
+        state = {
+          ...state,
+          sim: { ...state.sim, result, preset: preset.name, presetId: preset.id, seed, controls },
+        };
     } catch (error) {
       if (!closed) state = { ...state, sim: { ...state.sim, error: error.message } };
     } finally {
       if (!closed) {
-        state = { ...state, sim: { ...state.sim, running: false } };
+        state = { ...state, sim: { ...state.sim, running: false, pending: null } };
         draw();
       }
     }
@@ -130,12 +143,20 @@ export async function startTerminal({
     }
     const result = handleKey(state, text, key);
     state = result.state;
+    if (state.detail) {
+      const limit = detailLimit(state, output.columns || 80, output.rows || 24);
+      state = {
+        ...state,
+        detailOffset: result.effect === 'detail-end' ? limit : Math.min(state.detailOffset, limit),
+      };
+    }
     if (result.effect === 'quit') {
       void close();
       return;
     }
     if (result.effect === 'refresh') void refresh();
     if (result.effect === 'simulate') void simulate();
+    if (result.effect === 'replay') void simulate(true);
     if (result.effect === 'help') state = { ...state, help: true };
     draw();
   }

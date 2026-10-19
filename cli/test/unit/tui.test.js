@@ -10,9 +10,12 @@ import {
   records,
   simulationPlans,
 } from '../../src/tui/model.js';
-import { render } from '../../src/tui/render.js';
+import { render, detailLimit } from '../../src/tui/render.js';
 import { startTerminal } from '../../src/tui/app.js';
 import { readStore } from '../../src/tui/worker.js';
+import { DEFAULT_PLANNING, planningControls } from '../../src/tui/planning.js';
+import { cashDelta, fillRate, soldTraces } from '../../src/tui/report.js';
+import { inventoryPlanComparisonSchema } from '../../src/simulation/schema.js';
 
 test('untrusted terminal values cannot emit commands, clipboard OSC or bidi overrides', () => {
   const attack = '\x1b]52;c;ZXZpbA==\x07\x1b[2Jhi\r\n\u202ehidden';
@@ -65,6 +68,114 @@ test('palette exposes only fixed actions and never interprets shell input', () =
   assert.equal(state.view, 1);
   state.input = { kind: 'palette', text: '$(touch /tmp/unsafe)' };
   assert.equal(handleKey(state, '', { name: 'return' }).effect, undefined);
+});
+
+test('palette arrow navigation selects a command and filtering resets selection', () => {
+  let state = handleKey(initialState(), ':', {}).state;
+  state = handleKey(state, '', { name: 'down' }).state;
+  state = handleKey(state, '', { name: 'down' }).state;
+  assert.equal(handleKey(state, '', { name: 'return' }).state.view, 2);
+  state = handleKey(state, 'O', { name: 'o' }).state;
+  assert.equal(state.input.selected, 0);
+  state.input.text = 'Orders';
+  assert.equal(handleKey(state, '', { name: 'return' }).state.view, 1);
+});
+
+test('search previews records while typing and Escape restores the committed filter', () => {
+  let state = navigate(initialState(), 1);
+  state.data = { orders: [{ orderNumber: 'ORD-A' }, { orderNumber: 'ORD-B' }] };
+  state = handleKey(state, '/', {}).state;
+  state = handleKey(state, 'ORD-A', {}).state;
+  assert.equal(records(state).length, 1);
+  assert.equal(state.query, '');
+  state = handleKey(state, '', { name: 'escape' }).state;
+  assert.equal(records(state).length, 2);
+});
+
+test('planning editor validates atomically, preserves canceled settings and blocks writes', () => {
+  let state = handleKey(navigate(initialState(), 5), 'e', {}).state;
+  state.input.draft.startingCash = '1e4';
+  state = handleKey(state, '', { name: 's', ctrl: true }).state;
+  assert.match(state.input.error, /decimal string/);
+  assert.deepEqual(state.planning, DEFAULT_PLANNING);
+  state.input.draft.startingCash = '0.01';
+  state.input.draft.days = '3';
+  state = handleKey(state, '', { name: 's', ctrl: true }).state;
+  assert.equal(state.input, null);
+  assert.equal(state.planning.startingCash, '0.01');
+  assert.equal(state.planning.days, 3);
+  state = handleKey(state, 'e', {}).state;
+  state.input.draft.days = '9';
+  state = handleKey(state, '', { name: 'escape' }).state;
+  assert.equal(state.planning.days, 3);
+  assert.throws(() => planningControls({ startingCash: 0.01 }), /decimal string/);
+  assert.throws(() => planningControls({ days: 31 }), /horizon/);
+  assert.throws(() => planningControls({ reorderPoint: 24, targetStock: 24 }), /above/);
+  assert.throws(() => planningControls({ apply: true }), /Unknown/);
+});
+
+test('edited planning inputs produce bounded native scenarios and relative comparisons', () => {
+  const controls = { ...DEFAULT_PLANNING, days: 30, startingCash: '0.01', leadTimeDays: 14 };
+  const plans = simulationPlans('delay', 9, controls);
+  inventoryPlanComparisonSchema.parse(plans);
+  assert.equal(plans[0].days, 30);
+  assert.equal(plans[1].products[0].leadTimeDays, 17);
+  assert.equal(plans[0].startingCash, '0.01');
+  assert.equal(simulationPlans('cash', 9, controls)[1].startingCash, '0.0005');
+  assert.deepEqual(DEFAULT_PLANNING, initialState().planning);
+});
+
+test('financial comparisons remain exact and unit charts share a common scale', () => {
+  const baseline = { currency: 'USD', summary: { endingCash: '9007199254740993.01' } };
+  assert.equal(
+    cashDelta(
+      { currency: 'USD', summary: { endingCash: '9007199254740993.02' } },
+      baseline,
+      'endingCash',
+    ),
+    '+0.01',
+  );
+  assert.equal(
+    cashDelta({ currency: 'EUR', summary: { endingCash: '1.00' } }, baseline, 'endingCash'),
+    'n/a',
+  );
+  assert.equal(fillRate({ sold: 1, demanded: 3 }), '33.33%');
+  assert.equal(fillRate({ sold: 0, demanded: 0 }), 'n/a');
+  const trace = soldTraces(
+    [5, 10].map((sold) => ({ days: 1, timeline: [{ type: 'demand', day: 1, sold }] })),
+  );
+  assert.equal(trace.peak, 10);
+  assert.equal(trace.lines[0], '▄');
+  assert.equal(trace.lines[1], '█');
+});
+
+test('editor and palette keep their active fields visible in small panes', () => {
+  let state = handleKey(navigate(initialState(), 5), 'e', {}).state;
+  state.input.field = 5;
+  let screen = render(state, 55, 14, { color: false });
+  assert.match(screen, /Supplier lead time/);
+  state.input = { kind: 'palette', text: '', selected: 8 };
+  screen = render(state, 55, 14, { color: false });
+  assert.match(screen, /› Quit/);
+  for (const line of screen.split('\n')) assert.ok(width(line) < 55);
+});
+
+test('long reports support bounded Home/End navigation and preserve structured fields', () => {
+  const state = navigate(initialState(), 5);
+  state.detail = true;
+  state.sim.result = {
+    inputs: Array.from({ length: 12 }, (_, i) => ({
+      name: `Plan ${i}`,
+      startingCash: '9007199254740993.01',
+    })),
+    lastField: 'report-end',
+  };
+  const limit = detailLimit(state, 55, 20);
+  assert.ok(limit > 0);
+  assert.equal(handleKey(state, '', { name: 'end' }).effect, 'detail-end');
+  state.detailOffset = limit;
+  assert.match(render(state, 55, 20, { color: false }), /report-end/);
+  assert.equal(handleKey(state, '', { name: 'home' }).state.detailOffset, 0);
 });
 
 test('all scenario inputs use exact money, bounded seeds and independent baseline terms', () => {
@@ -175,4 +286,64 @@ test('terminal exit restores raw mode, cursor and alternate screen and closes ba
   assert.match(frames, /\x1b\[\?1049h/);
   assert.match(frames, /\x1b\[\?25h\x1b\[\?1049l/);
   assert.equal(signals.listenerCount('SIGTERM'), 0);
+});
+
+test('failed runs preserve the successful report and replay its original inputs', async () => {
+  const input = new PassThrough(),
+    output = new PassThrough(),
+    signals = new EventEmitter();
+  input.setRawMode = () => {};
+  output.columns = 100;
+  output.rows = 44;
+  let frames = '',
+    runs = 0;
+  const calls = [];
+  output.on('data', (chunk) => {
+    frames += chunk;
+  });
+  const result = {
+    results: [
+      {
+        name: 'Baseline',
+        currency: 'USD',
+        days: 7,
+        summary: {
+          sold: 1,
+          demanded: 1,
+          lostSales: 0,
+          endingCash: '200.00',
+          purchasingSpend: '0.00',
+          grossMargin: '0.00',
+          purchaseOrders: 0,
+        },
+        timeline: [],
+      },
+    ],
+  };
+  const backend = {
+    close: async () => {},
+    request: async (operation, payload) => {
+      if (operation === 'snapshot') return { counts: {}, errors: [], inventory: [] };
+      calls.push(structuredClone(payload));
+      if (++runs === 2) throw new Error('Fixture run failed');
+      return result;
+    },
+  };
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  const done = startTerminal({ input, output, signals, backend, color: false });
+  await flush();
+  input.emit('keypress', '6', { name: '6' });
+  input.emit('keypress', 's', { name: 's' });
+  await flush();
+  input.emit('keypress', '+', { name: '+' });
+  input.emit('keypress', 's', { name: 's' });
+  await flush();
+  assert.match(frames, /Previous result retained/);
+  assert.equal(calls[1].seed, 43);
+  input.emit('keypress', 'R', { name: 'r', shift: true });
+  await flush();
+  assert.equal(calls[2].seed, 42);
+  assert.deepEqual(calls[2].controls, calls[0].controls);
+  input.emit('keypress', 'q', { name: 'q' });
+  await done;
 });

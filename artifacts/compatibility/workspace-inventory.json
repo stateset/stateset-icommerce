@@ -627,15 +627,15 @@
         "count": 10
       },
       {
+        "name": "tui",
+        "count": 8
+      },
+      {
         "name": "knowledge",
         "count": 6
       },
       {
         "name": "memory",
-        "count": 6
-      },
-      {
-        "name": "tui",
         "count": 6
       },
       {

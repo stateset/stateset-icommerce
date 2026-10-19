@@ -102,9 +102,9 @@ workspace membership because they require host runtimes or headers.
 | `harness` | 14 |
 | `chains` | 10 |
 | `x402` | 10 |
+| `tui` | 8 |
 | `knowledge` | 6 |
 | `memory` | 6 |
-| `tui` | 6 |
 | `skills` | 5 |
 | `treasury` | 5 |
 | `connectors` | 4 |
