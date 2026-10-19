@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 
 macro_rules! lock_commerce {
     ($commerce:expr) => {
-        $commerce.lock().map_err(|e| PhpException::default(format!("Lock error: {}", e)))?
+        $commerce.lock().map_err(|e| PhpException::from_message(format!("Lock error: {}", e)))?
     };
 }
 
@@ -34,8 +34,9 @@ macro_rules! parse_uuid {
         // concrete UUID type (rather than letting inference flow through a later
         // `.into()`) keeps the macro usable both directly and as `uuid.into()` to a
         // typed newtype id (e.g. `OrderId`, `CustomerId`).
-        let parsed: stateset_core::Id =
-            $id.parse().map_err(|_| PhpException::default(format!("Invalid {} UUID", $name)))?;
+        let parsed: stateset_core::Id = $id
+            .parse()
+            .map_err(|_| PhpException::from_message(format!("Invalid {} UUID", $name)))?;
         parsed
     }};
 }
@@ -60,13 +61,13 @@ where
     <T as TryInto<f64>>::Error: std::fmt::Display,
 {
     value.try_into().map_err(|err| {
-        PhpException::default(format!("Failed to convert {} to float: {}", field, err))
+        PhpException::from_message(format!("Failed to convert {} to float: {}", field, err))
     })
 }
 
 fn decimal_from_f64(value: f64, field: &str) -> PhpResult<Decimal> {
     Decimal::from_f64(value).ok_or_else(|| {
-        PhpException::default(format!("Invalid numeric value for {}: {}", field, value))
+        PhpException::from_message(format!("Invalid numeric value for {}: {}", field, value))
     })
 }
 
@@ -81,7 +82,10 @@ fn optional_naive_date(value: Option<&str>, field: &str) -> PhpResult<Option<chr
     value
         .map(|raw| {
             chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d").map_err(|err| {
-                PhpException::default(format!("Invalid {} (expected YYYY-MM-DD): {}", field, err))
+                PhpException::from_message(format!(
+                    "Invalid {} (expected YYYY-MM-DD): {}",
+                    field, err
+                ))
             })
         })
         .transpose()
@@ -92,7 +96,8 @@ fn optional_naive_date(value: Option<&str>, field: &str) -> PhpResult<Option<chr
 // ============================================================================
 
 /// Main Commerce instance for local commerce operations.
-#[php_class(name = "StateSet\\Commerce")]
+#[php_class]
+#[php(name = "StateSet\\Commerce")]
 #[derive(Clone)]
 pub struct Commerce {
     inner: Arc<Mutex<RustCommerce>>,
@@ -101,8 +106,9 @@ pub struct Commerce {
 #[php_impl]
 impl Commerce {
     pub fn __construct(db_path: String) -> PhpResult<Self> {
-        let commerce = RustCommerce::new(&db_path)
-            .map_err(|e| PhpException::default(format!("Failed to initialize commerce: {}", e)))?;
+        let commerce = RustCommerce::new(&db_path).map_err(|e| {
+            PhpException::from_message(format!("Failed to initialize commerce: {}", e))
+        })?;
 
         Ok(Self { inner: Arc::new(Mutex::new(commerce)) })
     }
@@ -232,7 +238,8 @@ impl Commerce {
 // Customer Types
 // ============================================================================
 
-#[php_class(name = "StateSet\\Customer")]
+#[php_class]
+#[php(name = "StateSet\\Customer")]
 #[derive(Clone)]
 pub struct Customer {
     id: String,
@@ -248,47 +255,47 @@ pub struct Customer {
 
 #[php_impl]
 impl Customer {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_email(&self) -> String {
         self.email.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_first_name(&self) -> String {
         self.first_name.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_last_name(&self) -> String {
         self.last_name.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_phone(&self) -> Option<String> {
         self.phone.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_accepts_marketing(&self) -> bool {
         self.accepts_marketing
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_created_at(&self) -> String {
         self.created_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_updated_at(&self) -> String {
         self.updated_at.clone()
     }
@@ -325,7 +332,8 @@ impl From<stateset_core::Customer> for Customer {
 // Customers API
 // ============================================================================
 
-#[php_class(name = "StateSet\\Customers")]
+#[php_class]
+#[php(name = "StateSet\\Customers")]
 #[derive(Clone)]
 pub struct Customers {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -353,7 +361,7 @@ impl Customers {
                 accepts_marketing,
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create customer: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create customer: {}", e)))?;
 
         Ok(customer.into())
     }
@@ -365,7 +373,7 @@ impl Customers {
         let customer = commerce
             .customers()
             .get(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to get customer: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get customer: {}", e)))?;
 
         Ok(customer.map(|c| c.into()))
     }
@@ -376,7 +384,7 @@ impl Customers {
         let customer = commerce
             .customers()
             .get_by_email(&email)
-            .map_err(|e| PhpException::default(format!("Failed to get customer: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get customer: {}", e)))?;
 
         Ok(customer.map(|c| c.into()))
     }
@@ -387,7 +395,7 @@ impl Customers {
         let customers = commerce
             .customers()
             .list(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list customers: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list customers: {}", e)))?;
 
         Ok(customers.into_iter().map(|c| c.into()).collect())
     }
@@ -398,10 +406,10 @@ impl Customers {
         let count = commerce
             .customers()
             .count(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to count customers: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to count customers: {}", e)))?;
 
         i64::try_from(count).map_err(|_| {
-            PhpException::default("Customer count exceeds supported range".to_string())
+            PhpException::from_message("Customer count exceeds supported range".to_string())
         })
     }
 }
@@ -410,7 +418,8 @@ impl Customers {
 // Order Types
 // ============================================================================
 
-#[php_class(name = "StateSet\\OrderItem")]
+#[php_class]
+#[php(name = "StateSet\\OrderItem")]
 #[derive(Clone)]
 pub struct OrderItem {
     id: String,
@@ -423,32 +432,32 @@ pub struct OrderItem {
 
 #[php_impl]
 impl OrderItem {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_sku(&self) -> String {
         self.sku.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_name(&self) -> String {
         self.name.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_quantity(&self) -> i32 {
         self.quantity
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_unit_price(&self) -> f64 {
         self.unit_price
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_total(&self) -> f64 {
         self.total
     }
@@ -458,7 +467,8 @@ impl OrderItem {
     }
 }
 
-#[php_class(name = "StateSet\\Order")]
+#[php_class]
+#[php(name = "StateSet\\Order")]
 #[derive(Clone)]
 pub struct Order {
     id: String,
@@ -478,70 +488,70 @@ pub struct Order {
 
 #[php_impl]
 impl Order {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_order_number(&self) -> String {
         self.order_number.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_customer_id(&self) -> String {
         self.customer_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_total_amount(&self) -> f64 {
         self.total_amount
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_currency(&self) -> String {
         self.currency.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_payment_status(&self) -> String {
         self.payment_status.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_fulfillment_status(&self) -> String {
         self.fulfillment_status.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_tracking_number(&self) -> Option<String> {
         self.tracking_number.clone()
     }
 
     // Exposed to PHP as `getItems(): array`. A plain method (rather than a
-    // `#[getter]` property) because `Vec<OrderItem>` only needs to be returned
-    // to PHP (`IntoZval`); `#[getter]` would additionally require the element
+    // `#[php(getter, change_case = "snake_case")]` property) because `Vec<OrderItem>` only needs to be returned
+    // to PHP (`IntoZval`); `#[php(getter, change_case = "snake_case")]` would additionally require the element
     // type to implement `FromZval` by value, which php-class types do not.
     pub fn get_items(&self) -> Vec<OrderItem> {
         self.items.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_version(&self) -> i32 {
         self.version
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_created_at(&self) -> String {
         self.created_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_updated_at(&self) -> String {
         self.updated_at.clone()
     }
@@ -593,7 +603,8 @@ impl From<stateset_core::Order> for Order {
 // Orders API
 // ============================================================================
 
-#[php_class(name = "StateSet\\Orders")]
+#[php_class]
+#[php(name = "StateSet\\Orders")]
 #[derive(Clone)]
 pub struct Orders {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -641,7 +652,7 @@ impl Orders {
                 notes,
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create order: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create order: {}", e)))?;
 
         Ok(order.into())
     }
@@ -653,7 +664,7 @@ impl Orders {
         let order = commerce
             .orders()
             .get(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to get order: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get order: {}", e)))?;
 
         Ok(order.map(|o| o.into()))
     }
@@ -664,7 +675,7 @@ impl Orders {
         let orders = commerce
             .orders()
             .list(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list orders: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list orders: {}", e)))?;
 
         Ok(orders.into_iter().map(|o| o.into()).collect())
     }
@@ -675,10 +686,11 @@ impl Orders {
         let count = commerce
             .orders()
             .count(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to count orders: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to count orders: {}", e)))?;
 
-        i64::try_from(count)
-            .map_err(|_| PhpException::default("Order count exceeds supported range".to_string()))
+        i64::try_from(count).map_err(|_| {
+            PhpException::from_message("Order count exceeds supported range".to_string())
+        })
     }
 
     pub fn ship(
@@ -693,7 +705,7 @@ impl Orders {
         let order = commerce
             .orders()
             .ship(uuid.into(), tracking_number.as_deref())
-            .map_err(|e| PhpException::default(format!("Failed to ship order: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to ship order: {}", e)))?;
 
         Ok(order.into())
     }
@@ -705,7 +717,7 @@ impl Orders {
         let order = commerce
             .orders()
             .cancel(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to cancel order: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to cancel order: {}", e)))?;
 
         Ok(order.into())
     }
@@ -717,7 +729,7 @@ impl Orders {
         let order = commerce
             .orders()
             .update_status(uuid.into(), stateset_core::OrderStatus::Confirmed)
-            .map_err(|e| PhpException::default(format!("Failed to confirm order: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to confirm order: {}", e)))?;
 
         Ok(order.into())
     }
@@ -729,7 +741,7 @@ impl Orders {
         let order = commerce
             .orders()
             .deliver(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to deliver order: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to deliver order: {}", e)))?;
 
         Ok(order.into())
     }
@@ -739,7 +751,8 @@ impl Orders {
 // Product Types
 // ============================================================================
 
-#[php_class(name = "StateSet\\ProductVariant")]
+#[php_class]
+#[php(name = "StateSet\\ProductVariant")]
 #[derive(Clone)]
 pub struct ProductVariant {
     id: String,
@@ -754,48 +767,49 @@ pub struct ProductVariant {
 
 #[php_impl]
 impl ProductVariant {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_sku(&self) -> String {
         self.sku.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_name(&self) -> String {
         self.name.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_price(&self) -> f64 {
         self.price
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_compare_at_price(&self) -> Option<f64> {
         self.compare_at_price
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_inventory_quantity(&self) -> i32 {
         self.inventory_quantity
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_weight(&self) -> Option<f64> {
         self.weight
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_barcode(&self) -> Option<String> {
         self.barcode.clone()
     }
 }
 
-#[php_class(name = "StateSet\\Product")]
+#[php_class]
+#[php(name = "StateSet\\Product")]
 #[derive(Clone)]
 pub struct Product {
     id: String,
@@ -812,53 +826,53 @@ pub struct Product {
 
 #[php_impl]
 impl Product {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_name(&self) -> String {
         self.name.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_description(&self) -> Option<String> {
         self.description.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_vendor(&self) -> Option<String> {
         self.vendor.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_product_type(&self) -> Option<String> {
         self.product_type.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_tags(&self) -> Vec<String> {
         self.tags.clone()
     }
 
     // Exposed to PHP as `getVariants(): array`. See `Order::get_items` for why
-    // this is a plain method rather than a `#[getter]` property.
+    // this is a plain method rather than a `#[php(getter, change_case = "snake_case")]` property.
     pub fn get_variants(&self) -> Vec<ProductVariant> {
         self.variants.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_created_at(&self) -> String {
         self.created_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_updated_at(&self) -> String {
         self.updated_at.clone()
     }
@@ -895,7 +909,8 @@ impl From<stateset_core::Product> for Product {
 // Products API
 // ============================================================================
 
-#[php_class(name = "StateSet\\Products")]
+#[php_class]
+#[php(name = "StateSet\\Products")]
 #[derive(Clone)]
 pub struct Products {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -920,7 +935,7 @@ impl Products {
                 product_type: product_type.and_then(|t| t.parse().ok()),
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create product: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create product: {}", e)))?;
 
         Ok(product.into())
     }
@@ -932,7 +947,7 @@ impl Products {
         let product = commerce
             .products()
             .get(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to get product: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get product: {}", e)))?;
 
         Ok(product.map(|p| p.into()))
     }
@@ -943,7 +958,7 @@ impl Products {
         let products = commerce
             .products()
             .list(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list products: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list products: {}", e)))?;
 
         Ok(products.into_iter().map(|p| p.into()).collect())
     }
@@ -954,10 +969,11 @@ impl Products {
         let count = commerce
             .products()
             .count(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to count products: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to count products: {}", e)))?;
 
-        i64::try_from(count)
-            .map_err(|_| PhpException::default("Product count exceeds supported range".to_string()))
+        i64::try_from(count).map_err(|_| {
+            PhpException::from_message("Product count exceeds supported range".to_string())
+        })
     }
 
     pub fn get_by_sku(&self, sku: String) -> PhpResult<Option<ProductVariant>> {
@@ -966,7 +982,7 @@ impl Products {
         let variant = commerce
             .products()
             .get_variant_by_sku(&sku)
-            .map_err(|e| PhpException::default(format!("Failed to get variant: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get variant: {}", e)))?;
 
         Ok(variant.map(|v| ProductVariant {
             id: v.id.to_string(),
@@ -987,7 +1003,8 @@ impl Products {
 // Inventory Types & API
 // ============================================================================
 
-#[php_class(name = "StateSet\\InventoryItem")]
+#[php_class]
+#[php(name = "StateSet\\InventoryItem")]
 #[derive(Clone)]
 pub struct InventoryItem {
     id: String,
@@ -1008,42 +1025,42 @@ fn decimal_to_i32(value: Decimal) -> i32 {
 
 #[php_impl]
 impl InventoryItem {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_sku(&self) -> String {
         self.sku.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_quantity_on_hand(&self) -> i32 {
         self.quantity_on_hand
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_quantity_reserved(&self) -> i32 {
         self.quantity_reserved
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_quantity_available(&self) -> i32 {
         self.quantity_available
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_reorder_point(&self) -> Option<i32> {
         self.reorder_point
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_reorder_quantity(&self) -> Option<i32> {
         self.reorder_quantity
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_location_id(&self) -> Option<String> {
         self.location_id.clone()
     }
@@ -1090,7 +1107,8 @@ impl From<stateset_core::StockLevel> for InventoryItem {
     }
 }
 
-#[php_class(name = "StateSet\\Inventory")]
+#[php_class]
+#[php(name = "StateSet\\Inventory")]
 #[derive(Clone)]
 pub struct Inventory {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -1117,12 +1135,14 @@ impl Inventory {
                 reorder_point: reorder_point.map(Decimal::from),
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create inventory: {}", e)))?;
+            .map_err(|e| {
+                PhpException::from_message(format!("Failed to create inventory: {}", e))
+            })?;
 
         let stock = commerce
             .inventory()
             .get_stock(&sku)
-            .map_err(|e| PhpException::default(format!("Failed to load stock: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to load stock: {}", e)))?;
 
         let mut php_item = InventoryItem::from_parts(&item, stock.as_ref());
         php_item.reorder_point = reorder_point;
@@ -1132,19 +1152,20 @@ impl Inventory {
 
     pub fn get(&self, id: String) -> PhpResult<Option<InventoryItem>> {
         let commerce = lock_commerce!(self.commerce);
-        let item_id: i64 =
-            id.parse().map_err(|_| PhpException::default("Invalid inventory id".to_string()))?;
+        let item_id: i64 = id
+            .parse()
+            .map_err(|_| PhpException::from_message("Invalid inventory id".to_string()))?;
 
         let item = commerce
             .inventory()
             .get_item(item_id)
-            .map_err(|e| PhpException::default(format!("Failed to get inventory: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get inventory: {}", e)))?;
 
         let Some(item) = item else { return Ok(None) };
         let stock = commerce
             .inventory()
             .get_stock(&item.sku)
-            .map_err(|e| PhpException::default(format!("Failed to load stock: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to load stock: {}", e)))?;
 
         Ok(Some(InventoryItem::from_parts(&item, stock.as_ref())))
     }
@@ -1155,13 +1176,13 @@ impl Inventory {
         let item = commerce
             .inventory()
             .get_item_by_sku(&sku)
-            .map_err(|e| PhpException::default(format!("Failed to get inventory: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get inventory: {}", e)))?;
 
         let Some(item) = item else { return Ok(None) };
         let stock = commerce
             .inventory()
             .get_stock(&item.sku)
-            .map_err(|e| PhpException::default(format!("Failed to load stock: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to load stock: {}", e)))?;
 
         Ok(Some(InventoryItem::from_parts(&item, stock.as_ref())))
     }
@@ -1172,14 +1193,14 @@ impl Inventory {
         let items = commerce
             .inventory()
             .list(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list inventory: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list inventory: {}", e)))?;
 
         let mut result = Vec::with_capacity(items.len());
         for item in &items {
             let stock = commerce
                 .inventory()
                 .get_stock(&item.sku)
-                .map_err(|e| PhpException::default(format!("Failed to load stock: {}", e)))?;
+                .map_err(|e| PhpException::from_message(format!("Failed to load stock: {}", e)))?;
             result.push(InventoryItem::from_parts(item, stock.as_ref()));
         }
         Ok(result)
@@ -1194,16 +1215,15 @@ impl Inventory {
         let commerce = lock_commerce!(self.commerce);
         let reason = reason.unwrap_or_else(|| "adjustment".to_string());
 
-        commerce
-            .inventory()
-            .adjust(&sku, Decimal::from(adjustment), &reason)
-            .map_err(|e| PhpException::default(format!("Failed to adjust inventory: {}", e)))?;
+        commerce.inventory().adjust(&sku, Decimal::from(adjustment), &reason).map_err(|e| {
+            PhpException::from_message(format!("Failed to adjust inventory: {}", e))
+        })?;
 
         let stock = commerce
             .inventory()
             .get_stock(&sku)
-            .map_err(|e| PhpException::default(format!("Failed to load stock: {}", e)))?
-            .ok_or_else(|| PhpException::default(format!("No stock found for {}", sku)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to load stock: {}", e)))?
+            .ok_or_else(|| PhpException::from_message(format!("No stock found for {}", sku)))?;
 
         Ok(stock.into())
     }
@@ -1220,13 +1240,13 @@ impl Inventory {
         commerce
             .inventory()
             .reserve(&sku, Decimal::from(quantity), "order", &reference_id, None)
-            .map_err(|e| PhpException::default(format!("Failed to reserve inventory: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to reserve inventory: {}", e)))?;
 
         let stock = commerce
             .inventory()
             .get_stock(&sku)
-            .map_err(|e| PhpException::default(format!("Failed to load stock: {}", e)))?
-            .ok_or_else(|| PhpException::default(format!("No stock found for {}", sku)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to load stock: {}", e)))?
+            .ok_or_else(|| PhpException::from_message(format!("No stock found for {}", sku)))?;
 
         Ok(stock.into())
     }
@@ -1239,10 +1259,9 @@ impl Inventory {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(reservation_id, "reservation");
 
-        commerce
-            .inventory()
-            .release_reservation(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to release reservation: {}", e)))?;
+        commerce.inventory().release_reservation(uuid).map_err(|e| {
+            PhpException::from_message(format!("Failed to release reservation: {}", e))
+        })?;
 
         Ok(true)
     }
@@ -1252,7 +1271,8 @@ impl Inventory {
 // Returns Types & API
 // ============================================================================
 
-#[php_class(name = "StateSet\\ReturnRequest")]
+#[php_class]
+#[php(name = "StateSet\\ReturnRequest")]
 #[derive(Clone)]
 pub struct Return {
     id: String,
@@ -1267,42 +1287,42 @@ pub struct Return {
 
 #[php_impl]
 impl Return {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_order_id(&self) -> String {
         self.order_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_customer_id(&self) -> String {
         self.customer_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_reason(&self) -> String {
         self.reason.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_refund_amount(&self) -> f64 {
         self.refund_amount
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_created_at(&self) -> String {
         self.created_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_updated_at(&self) -> String {
         self.updated_at.clone()
     }
@@ -1327,7 +1347,8 @@ impl From<stateset_core::Return> for Return {
     }
 }
 
-#[php_class(name = "StateSet\\Returns")]
+#[php_class]
+#[php(name = "StateSet\\Returns")]
 #[derive(Clone)]
 pub struct Returns {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -1347,7 +1368,7 @@ impl Returns {
                 reason,
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create return: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create return: {}", e)))?;
 
         Ok(ret.into())
     }
@@ -1359,7 +1380,7 @@ impl Returns {
         let ret = commerce
             .returns()
             .get(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to get return: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get return: {}", e)))?;
 
         Ok(ret.map(|r| r.into()))
     }
@@ -1370,7 +1391,7 @@ impl Returns {
         let returns = commerce
             .returns()
             .list(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list returns: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list returns: {}", e)))?;
 
         Ok(returns.into_iter().map(|r| r.into()).collect())
     }
@@ -1382,7 +1403,7 @@ impl Returns {
         let ret = commerce
             .returns()
             .approve(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to approve return: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to approve return: {}", e)))?;
 
         Ok(ret.into())
     }
@@ -1395,7 +1416,7 @@ impl Returns {
         let ret = commerce
             .returns()
             .reject(uuid.into(), &reason)
-            .map_err(|e| PhpException::default(format!("Failed to reject return: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to reject return: {}", e)))?;
 
         Ok(ret.into())
     }
@@ -1405,7 +1426,8 @@ impl Returns {
 // Payments API
 // ============================================================================
 
-#[php_class(name = "StateSet\\Payments")]
+#[php_class]
+#[php(name = "StateSet\\Payments")]
 #[derive(Clone)]
 pub struct Payments {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -1427,7 +1449,7 @@ impl Payments {
                 amount: decimal_amount,
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to record payment: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to record payment: {}", e)))?;
 
         Ok(true)
     }
@@ -1437,7 +1459,8 @@ impl Payments {
 // Carts Types & API
 // ============================================================================
 
-#[php_class(name = "StateSet\\CartItem")]
+#[php_class]
+#[php(name = "StateSet\\CartItem")]
 #[derive(Clone)]
 pub struct CartItem {
     id: String,
@@ -1450,38 +1473,39 @@ pub struct CartItem {
 
 #[php_impl]
 impl CartItem {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_sku(&self) -> String {
         self.sku.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_name(&self) -> String {
         self.name.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_quantity(&self) -> i32 {
         self.quantity
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_unit_price(&self) -> f64 {
         self.unit_price
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_total(&self) -> f64 {
         self.total
     }
 }
 
-#[php_class(name = "StateSet\\Cart")]
+#[php_class]
+#[php(name = "StateSet\\Cart")]
 #[derive(Clone)]
 pub struct Cart {
     id: String,
@@ -1497,48 +1521,48 @@ pub struct Cart {
 
 #[php_impl]
 impl Cart {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_customer_id(&self) -> Option<String> {
         self.customer_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
 
     // Exposed to PHP as `getItems(): array`. See `Order::get_items` for why this
-    // is a plain method rather than a `#[getter]` property.
+    // is a plain method rather than a `#[php(getter, change_case = "snake_case")]` property.
     pub fn get_items(&self) -> Vec<CartItem> {
         self.items.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_subtotal(&self) -> f64 {
         self.subtotal
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_total(&self) -> f64 {
         self.total
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_currency(&self) -> String {
         self.currency.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_created_at(&self) -> String {
         self.created_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_updated_at(&self) -> String {
         self.updated_at.clone()
     }
@@ -1581,7 +1605,8 @@ impl From<stateset_core::Cart> for Cart {
     }
 }
 
-#[php_class(name = "StateSet\\Carts")]
+#[php_class]
+#[php(name = "StateSet\\Carts")]
 #[derive(Clone)]
 pub struct Carts {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -1600,7 +1625,7 @@ impl Carts {
                 currency: currency.and_then(|c| c.parse().ok()),
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create cart: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create cart: {}", e)))?;
 
         Ok(cart.into())
     }
@@ -1612,7 +1637,7 @@ impl Carts {
         let cart = commerce
             .carts()
             .get(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to get cart: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get cart: {}", e)))?;
 
         Ok(cart.map(|c| c.into()))
     }
@@ -1623,7 +1648,7 @@ impl Carts {
         let carts = commerce
             .carts()
             .list(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list carts: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list carts: {}", e)))?;
 
         Ok(carts.into_iter().map(|c| c.into()).collect())
     }
@@ -1652,13 +1677,13 @@ impl Carts {
                     ..Default::default()
                 },
             )
-            .map_err(|e| PhpException::default(format!("Failed to add item: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to add item: {}", e)))?;
 
         let cart = commerce
             .carts()
             .get(cart_id)
-            .map_err(|e| PhpException::default(format!("Failed to load cart: {}", e)))?
-            .ok_or_else(|| PhpException::default("Cart not found".to_string()))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to load cart: {}", e)))?
+            .ok_or_else(|| PhpException::from_message("Cart not found".to_string()))?;
 
         Ok(cart.into())
     }
@@ -1670,13 +1695,13 @@ impl Carts {
         let result = commerce
             .carts()
             .complete(cart_id)
-            .map_err(|e| PhpException::default(format!("Failed to checkout: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to checkout: {}", e)))?;
 
         let order = commerce
             .orders()
             .get(result.order_id)
-            .map_err(|e| PhpException::default(format!("Failed to load order: {}", e)))?
-            .ok_or_else(|| PhpException::default("Checkout order not found".to_string()))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to load order: {}", e)))?
+            .ok_or_else(|| PhpException::from_message("Checkout order not found".to_string()))?;
 
         Ok(order.into())
     }
@@ -1686,7 +1711,8 @@ impl Carts {
 // Analytics API
 // ============================================================================
 
-#[php_class(name = "StateSet\\SalesSummary")]
+#[php_class]
+#[php(name = "StateSet\\SalesSummary")]
 #[derive(Clone)]
 pub struct SalesSummary {
     total_revenue: f64,
@@ -1697,28 +1723,29 @@ pub struct SalesSummary {
 
 #[php_impl]
 impl SalesSummary {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_total_revenue(&self) -> f64 {
         self.total_revenue
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_total_orders(&self) -> i64 {
         self.total_orders
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_average_order_value(&self) -> f64 {
         self.average_order_value
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_total_items_sold(&self) -> i64 {
         self.total_items_sold
     }
 }
 
-#[php_class(name = "StateSet\\Analytics")]
+#[php_class]
+#[php(name = "StateSet\\Analytics")]
 #[derive(Clone)]
 pub struct Analytics {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -1736,10 +1763,9 @@ impl Analytics {
         let start = end - chrono::Duration::days(days);
         let query = stateset_core::AnalyticsQuery::new().date_range(start, end);
 
-        let summary = commerce
-            .analytics()
-            .sales_summary(query)
-            .map_err(|e| PhpException::default(format!("Failed to get sales summary: {}", e)))?;
+        let summary = commerce.analytics().sales_summary(query).map_err(|e| {
+            PhpException::from_message(format!("Failed to get sales summary: {}", e))
+        })?;
 
         Ok(SalesSummary {
             total_revenue: to_f64_or_nan(summary.total_revenue),
@@ -1754,7 +1780,8 @@ impl Analytics {
 // Shipments Types & API
 // ============================================================================
 
-#[php_class(name = "StateSet\\Shipment")]
+#[php_class]
+#[php(name = "StateSet\\Shipment")]
 #[derive(Clone)]
 pub struct Shipment {
     id: String,
@@ -1770,47 +1797,47 @@ pub struct Shipment {
 
 #[php_impl]
 impl Shipment {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_order_id(&self) -> String {
         self.order_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_tracking_number(&self) -> Option<String> {
         self.tracking_number.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_carrier(&self) -> Option<String> {
         self.carrier.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_shipped_at(&self) -> Option<String> {
         self.shipped_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_delivered_at(&self) -> Option<String> {
         self.delivered_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_created_at(&self) -> String {
         self.created_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_updated_at(&self) -> String {
         self.updated_at.clone()
     }
@@ -1839,7 +1866,8 @@ impl From<stateset_core::Shipment> for Shipment {
     }
 }
 
-#[php_class(name = "StateSet\\Shipments")]
+#[php_class]
+#[php(name = "StateSet\\Shipments")]
 #[derive(Clone)]
 pub struct Shipments {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -1864,7 +1892,7 @@ impl Shipments {
                 carrier: carrier.and_then(|c| c.parse().ok()),
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create shipment: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create shipment: {}", e)))?;
 
         Ok(shipment.into())
     }
@@ -1876,7 +1904,7 @@ impl Shipments {
         let shipment = commerce
             .shipments()
             .get(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to get shipment: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get shipment: {}", e)))?;
 
         Ok(shipment.map(|s| s.into()))
     }
@@ -1887,7 +1915,7 @@ impl Shipments {
         let shipment = commerce
             .shipments()
             .get_by_tracking(&tracking_number)
-            .map_err(|e| PhpException::default(format!("Failed to get shipment: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get shipment: {}", e)))?;
 
         Ok(shipment.map(|s| s.into()))
     }
@@ -1898,7 +1926,7 @@ impl Shipments {
         let shipments = commerce
             .shipments()
             .list(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list shipments: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list shipments: {}", e)))?;
 
         Ok(shipments.into_iter().map(|s| s.into()).collect())
     }
@@ -1910,7 +1938,7 @@ impl Shipments {
         let shipments = commerce
             .shipments()
             .for_order(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to get shipments: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get shipments: {}", e)))?;
 
         Ok(shipments.into_iter().map(|s| s.into()).collect())
     }
@@ -1922,7 +1950,7 @@ impl Shipments {
         let shipment = commerce
             .shipments()
             .ship(uuid.into(), None)
-            .map_err(|e| PhpException::default(format!("Failed to ship: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to ship: {}", e)))?;
 
         Ok(shipment.into())
     }
@@ -1934,7 +1962,7 @@ impl Shipments {
         let shipment = commerce
             .shipments()
             .mark_delivered(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to mark delivered: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to mark delivered: {}", e)))?;
 
         Ok(shipment.into())
     }
@@ -1946,7 +1974,7 @@ impl Shipments {
         let shipment = commerce
             .shipments()
             .cancel(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to cancel shipment: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to cancel shipment: {}", e)))?;
 
         Ok(shipment.into())
     }
@@ -1957,10 +1985,10 @@ impl Shipments {
         let count = commerce
             .shipments()
             .count(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to count shipments: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to count shipments: {}", e)))?;
 
         i64::try_from(count).map_err(|_| {
-            PhpException::default("Shipment count exceeds supported range".to_string())
+            PhpException::from_message("Shipment count exceeds supported range".to_string())
         })
     }
 }
@@ -1969,7 +1997,8 @@ impl Shipments {
 // Warranties Types & API
 // ============================================================================
 
-#[php_class(name = "StateSet\\Warranty")]
+#[php_class]
+#[php(name = "StateSet\\Warranty")]
 #[derive(Clone)]
 pub struct Warranty {
     id: String,
@@ -1985,47 +2014,47 @@ pub struct Warranty {
 
 #[php_impl]
 impl Warranty {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_product_id(&self) -> String {
         self.product_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_order_id(&self) -> Option<String> {
         self.order_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_customer_id(&self) -> String {
         self.customer_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_warranty_type(&self) -> String {
         self.warranty_type.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_start_date(&self) -> String {
         self.start_date.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_end_date(&self) -> String {
         self.end_date.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_created_at(&self) -> String {
         self.created_at.clone()
     }
@@ -2051,7 +2080,8 @@ impl From<stateset_core::Warranty> for Warranty {
     }
 }
 
-#[php_class(name = "StateSet\\WarrantyClaim")]
+#[php_class]
+#[php(name = "StateSet\\WarrantyClaim")]
 #[derive(Clone)]
 pub struct WarrantyClaim {
     id: String,
@@ -2064,32 +2094,32 @@ pub struct WarrantyClaim {
 
 #[php_impl]
 impl WarrantyClaim {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_warranty_id(&self) -> String {
         self.warranty_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_description(&self) -> String {
         self.description.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_resolution(&self) -> Option<String> {
         self.resolution.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_created_at(&self) -> String {
         self.created_at.clone()
     }
@@ -2108,7 +2138,8 @@ impl From<stateset_core::WarrantyClaim> for WarrantyClaim {
     }
 }
 
-#[php_class(name = "StateSet\\Warranties")]
+#[php_class]
+#[php(name = "StateSet\\Warranties")]
 #[derive(Clone)]
 pub struct Warranties {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -2136,7 +2167,7 @@ impl Warranties {
                 duration_months: Some(duration_months),
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create warranty: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create warranty: {}", e)))?;
 
         Ok(warranty.into())
     }
@@ -2148,7 +2179,7 @@ impl Warranties {
         let warranty = commerce
             .warranties()
             .get(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to get warranty: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get warranty: {}", e)))?;
 
         Ok(warranty.map(|w| w.into()))
     }
@@ -2159,7 +2190,7 @@ impl Warranties {
         let warranties = commerce
             .warranties()
             .list(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list warranties: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list warranties: {}", e)))?;
 
         Ok(warranties.into_iter().map(|w| w.into()).collect())
     }
@@ -2171,7 +2202,7 @@ impl Warranties {
         let warranties = commerce
             .warranties()
             .for_customer(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to get warranties: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get warranties: {}", e)))?;
 
         Ok(warranties.into_iter().map(|w| w.into()).collect())
     }
@@ -2183,7 +2214,7 @@ impl Warranties {
         let valid = commerce
             .warranties()
             .is_valid(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to check warranty: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to check warranty: {}", e)))?;
 
         Ok(valid)
     }
@@ -2203,7 +2234,7 @@ impl Warranties {
                 issue_description: description,
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create claim: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create claim: {}", e)))?;
 
         Ok(claim.into())
     }
@@ -2219,7 +2250,7 @@ impl Warranties {
         let claim = commerce
             .warranties()
             .approve_claim(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to approve claim: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to approve claim: {}", e)))?;
 
         Ok(claim.into())
     }
@@ -2232,7 +2263,7 @@ impl Warranties {
         let claim = commerce
             .warranties()
             .deny_claim(uuid, &reason)
-            .map_err(|e| PhpException::default(format!("Failed to deny claim: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to deny claim: {}", e)))?;
 
         Ok(claim.into())
     }
@@ -2240,13 +2271,12 @@ impl Warranties {
     pub fn count(&self) -> PhpResult<i64> {
         let commerce = lock_commerce!(self.commerce);
 
-        let count = commerce
-            .warranties()
-            .count(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to count warranties: {}", e)))?;
+        let count = commerce.warranties().count(Default::default()).map_err(|e| {
+            PhpException::from_message(format!("Failed to count warranties: {}", e))
+        })?;
 
         i64::try_from(count).map_err(|_| {
-            PhpException::default("Warranty count exceeds supported range".to_string())
+            PhpException::from_message("Warranty count exceeds supported range".to_string())
         })
     }
 }
@@ -2255,7 +2285,8 @@ impl Warranties {
 // PurchaseOrders Types & API
 // ============================================================================
 
-#[php_class(name = "StateSet\\Supplier")]
+#[php_class]
+#[php(name = "StateSet\\Supplier")]
 #[derive(Clone)]
 pub struct Supplier {
     id: String,
@@ -2268,32 +2299,32 @@ pub struct Supplier {
 
 #[php_impl]
 impl Supplier {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_name(&self) -> String {
         self.name.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_email(&self) -> Option<String> {
         self.email.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_phone(&self) -> Option<String> {
         self.phone.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_created_at(&self) -> String {
         self.created_at.clone()
     }
@@ -2312,7 +2343,8 @@ impl From<stateset_core::Supplier> for Supplier {
     }
 }
 
-#[php_class(name = "StateSet\\PurchaseOrder")]
+#[php_class]
+#[php(name = "StateSet\\PurchaseOrder")]
 #[derive(Clone)]
 pub struct PurchaseOrder {
     id: String,
@@ -2328,47 +2360,47 @@ pub struct PurchaseOrder {
 
 #[php_impl]
 impl PurchaseOrder {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_po_number(&self) -> String {
         self.po_number.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_supplier_id(&self) -> String {
         self.supplier_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_total_amount(&self) -> f64 {
         self.total_amount
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_currency(&self) -> String {
         self.currency.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_expected_date(&self) -> Option<String> {
         self.expected_date.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_created_at(&self) -> String {
         self.created_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_updated_at(&self) -> String {
         self.updated_at.clone()
     }
@@ -2397,7 +2429,8 @@ impl From<stateset_core::PurchaseOrder> for PurchaseOrder {
     }
 }
 
-#[php_class(name = "StateSet\\PurchaseOrders")]
+#[php_class]
+#[php(name = "StateSet\\PurchaseOrders")]
 #[derive(Clone)]
 pub struct PurchaseOrders {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -2421,7 +2454,7 @@ impl PurchaseOrders {
                 phone,
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create supplier: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create supplier: {}", e)))?;
 
         Ok(supplier.into())
     }
@@ -2433,7 +2466,7 @@ impl PurchaseOrders {
         let supplier = commerce
             .purchase_orders()
             .get_supplier(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to get supplier: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get supplier: {}", e)))?;
 
         Ok(supplier.map(|s| s.into()))
     }
@@ -2444,7 +2477,7 @@ impl PurchaseOrders {
         let suppliers = commerce
             .purchase_orders()
             .list_suppliers(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list suppliers: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list suppliers: {}", e)))?;
 
         Ok(suppliers.into_iter().map(|s| s.into()).collect())
     }
@@ -2464,7 +2497,7 @@ impl PurchaseOrders {
                 currency: currency.and_then(|c| c.parse().ok()),
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create PO: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create PO: {}", e)))?;
 
         Ok(po.into())
     }
@@ -2476,7 +2509,7 @@ impl PurchaseOrders {
         let po = commerce
             .purchase_orders()
             .get(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to get PO: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get PO: {}", e)))?;
 
         Ok(po.map(|p| p.into()))
     }
@@ -2487,7 +2520,7 @@ impl PurchaseOrders {
         let pos = commerce
             .purchase_orders()
             .list(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list POs: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list POs: {}", e)))?;
 
         Ok(pos.into_iter().map(|p| p.into()).collect())
     }
@@ -2499,7 +2532,7 @@ impl PurchaseOrders {
         let po = commerce
             .purchase_orders()
             .submit(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to submit PO: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to submit PO: {}", e)))?;
 
         Ok(po.into())
     }
@@ -2511,7 +2544,7 @@ impl PurchaseOrders {
         let po = commerce
             .purchase_orders()
             .approve(uuid, "system")
-            .map_err(|e| PhpException::default(format!("Failed to approve PO: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to approve PO: {}", e)))?;
 
         Ok(po.into())
     }
@@ -2523,7 +2556,7 @@ impl PurchaseOrders {
         let po = commerce
             .purchase_orders()
             .cancel(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to cancel PO: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to cancel PO: {}", e)))?;
 
         Ok(po.into())
     }
@@ -2535,7 +2568,7 @@ impl PurchaseOrders {
         let po = commerce
             .purchase_orders()
             .complete(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to complete PO: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to complete PO: {}", e)))?;
 
         Ok(po.into())
     }
@@ -2546,10 +2579,10 @@ impl PurchaseOrders {
         let count = commerce
             .purchase_orders()
             .count(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to count POs: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to count POs: {}", e)))?;
 
         i64::try_from(count).map_err(|_| {
-            PhpException::default("Purchase order count exceeds supported range".to_string())
+            PhpException::from_message("Purchase order count exceeds supported range".to_string())
         })
     }
 }
@@ -2558,7 +2591,8 @@ impl PurchaseOrders {
 // Invoices Types & API
 // ============================================================================
 
-#[php_class(name = "StateSet\\Invoice")]
+#[php_class]
+#[php(name = "StateSet\\Invoice")]
 #[derive(Clone)]
 pub struct Invoice {
     id: String,
@@ -2578,67 +2612,67 @@ pub struct Invoice {
 
 #[php_impl]
 impl Invoice {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_invoice_number(&self) -> String {
         self.invoice_number.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_customer_id(&self) -> String {
         self.customer_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_order_id(&self) -> Option<String> {
         self.order_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_subtotal(&self) -> f64 {
         self.subtotal
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_tax(&self) -> f64 {
         self.tax
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_total(&self) -> f64 {
         self.total
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_currency(&self) -> String {
         self.currency.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_due_date(&self) -> Option<String> {
         self.due_date.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_paid_at(&self) -> Option<String> {
         self.paid_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_created_at(&self) -> String {
         self.created_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_updated_at(&self) -> String {
         self.updated_at.clone()
     }
@@ -2671,7 +2705,8 @@ impl From<stateset_core::Invoice> for Invoice {
     }
 }
 
-#[php_class(name = "StateSet\\Invoices")]
+#[php_class]
+#[php(name = "StateSet\\Invoices")]
 #[derive(Clone)]
 pub struct Invoices {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -2697,7 +2732,7 @@ impl Invoices {
                 days_until_due: due_days,
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create invoice: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create invoice: {}", e)))?;
 
         Ok(invoice.into())
     }
@@ -2709,7 +2744,7 @@ impl Invoices {
         let invoice = commerce
             .invoices()
             .get(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to get invoice: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get invoice: {}", e)))?;
 
         Ok(invoice.map(|i| i.into()))
     }
@@ -2720,7 +2755,7 @@ impl Invoices {
         let invoices = commerce
             .invoices()
             .list(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list invoices: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list invoices: {}", e)))?;
 
         Ok(invoices.into_iter().map(|i| i.into()).collect())
     }
@@ -2732,7 +2767,7 @@ impl Invoices {
         let invoices = commerce
             .invoices()
             .for_customer(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to get invoices: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get invoices: {}", e)))?;
 
         Ok(invoices.into_iter().map(|i| i.into()).collect())
     }
@@ -2744,7 +2779,7 @@ impl Invoices {
         let invoice = commerce
             .invoices()
             .send(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to send invoice: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to send invoice: {}", e)))?;
 
         Ok(invoice.into())
     }
@@ -2763,7 +2798,7 @@ impl Invoices {
                     ..Default::default()
                 },
             )
-            .map_err(|e| PhpException::default(format!("Failed to record payment: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to record payment: {}", e)))?;
 
         Ok(invoice.into())
     }
@@ -2775,7 +2810,7 @@ impl Invoices {
         let invoice = commerce
             .invoices()
             .void(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to void invoice: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to void invoice: {}", e)))?;
 
         Ok(invoice.into())
     }
@@ -2783,10 +2818,9 @@ impl Invoices {
     pub fn get_overdue(&self) -> PhpResult<Vec<Invoice>> {
         let commerce = lock_commerce!(self.commerce);
 
-        let invoices = commerce
-            .invoices()
-            .get_overdue()
-            .map_err(|e| PhpException::default(format!("Failed to get overdue invoices: {}", e)))?;
+        let invoices = commerce.invoices().get_overdue().map_err(|e| {
+            PhpException::from_message(format!("Failed to get overdue invoices: {}", e))
+        })?;
 
         Ok(invoices.into_iter().map(|i| i.into()).collect())
     }
@@ -2798,7 +2832,7 @@ impl Invoices {
         let balance = commerce
             .invoices()
             .customer_balance(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to get balance: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get balance: {}", e)))?;
 
         to_f64_result(balance, "customer balance")
     }
@@ -2809,10 +2843,11 @@ impl Invoices {
         let count = commerce
             .invoices()
             .count(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to count invoices: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to count invoices: {}", e)))?;
 
-        i64::try_from(count)
-            .map_err(|_| PhpException::default("Invoice count exceeds supported range".to_string()))
+        i64::try_from(count).map_err(|_| {
+            PhpException::from_message("Invoice count exceeds supported range".to_string())
+        })
     }
 }
 
@@ -2820,7 +2855,8 @@ impl Invoices {
 // BOM Types & API
 // ============================================================================
 
-#[php_class(name = "StateSet\\BomComponent")]
+#[php_class]
+#[php(name = "StateSet\\BomComponent")]
 #[derive(Clone)]
 pub struct BomComponent {
     id: String,
@@ -2832,27 +2868,27 @@ pub struct BomComponent {
 
 #[php_impl]
 impl BomComponent {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_bom_id(&self) -> String {
         self.bom_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_component_sku(&self) -> String {
         self.component_sku.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_quantity(&self) -> i32 {
         self.quantity
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_unit_cost(&self) -> f64 {
         self.unit_cost
     }
@@ -2872,7 +2908,8 @@ impl From<stateset_core::BomComponent> for BomComponent {
     }
 }
 
-#[php_class(name = "StateSet\\BillOfMaterials")]
+#[php_class]
+#[php(name = "StateSet\\BillOfMaterials")]
 #[derive(Clone)]
 pub struct BillOfMaterials {
     id: String,
@@ -2887,42 +2924,42 @@ pub struct BillOfMaterials {
 
 #[php_impl]
 impl BillOfMaterials {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_product_id(&self) -> String {
         self.product_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_name(&self) -> String {
         self.name.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_version(&self) -> String {
         self.version.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_total_cost(&self) -> f64 {
         self.total_cost
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_created_at(&self) -> String {
         self.created_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_updated_at(&self) -> String {
         self.updated_at.clone()
     }
@@ -2949,7 +2986,8 @@ impl From<stateset_core::BillOfMaterials> for BillOfMaterials {
     }
 }
 
-#[php_class(name = "StateSet\\BomApi")]
+#[php_class]
+#[php(name = "StateSet\\BomApi")]
 #[derive(Clone)]
 pub struct BomApi {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -2974,7 +3012,7 @@ impl BomApi {
                 revision: version,
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create BOM: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create BOM: {}", e)))?;
 
         Ok(bom.into())
     }
@@ -2986,7 +3024,7 @@ impl BomApi {
         let bom = commerce
             .bom()
             .get(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to get BOM: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get BOM: {}", e)))?;
 
         Ok(bom.map(|b| b.into()))
     }
@@ -2997,7 +3035,7 @@ impl BomApi {
         let boms = commerce
             .bom()
             .list(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list BOMs: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list BOMs: {}", e)))?;
 
         Ok(boms.into_iter().map(|b| b.into()).collect())
     }
@@ -3023,7 +3061,7 @@ impl BomApi {
                     ..Default::default()
                 },
             )
-            .map_err(|e| PhpException::default(format!("Failed to add component: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to add component: {}", e)))?;
 
         Ok(component.into())
     }
@@ -3035,7 +3073,7 @@ impl BomApi {
         let components = commerce
             .bom()
             .get_components(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to get components: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get components: {}", e)))?;
 
         Ok(components.into_iter().map(|c| c.into()).collect())
     }
@@ -3044,10 +3082,9 @@ impl BomApi {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(component_id, "component");
 
-        commerce
-            .bom()
-            .remove_component(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to remove component: {}", e)))?;
+        commerce.bom().remove_component(uuid).map_err(|e| {
+            PhpException::from_message(format!("Failed to remove component: {}", e))
+        })?;
 
         Ok(true)
     }
@@ -3059,7 +3096,7 @@ impl BomApi {
         let bom = commerce
             .bom()
             .activate(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to activate BOM: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to activate BOM: {}", e)))?;
 
         Ok(bom.into())
     }
@@ -3071,7 +3108,7 @@ impl BomApi {
         commerce
             .bom()
             .delete(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to delete BOM: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to delete BOM: {}", e)))?;
 
         Ok(true)
     }
@@ -3082,10 +3119,11 @@ impl BomApi {
         let count = commerce
             .bom()
             .count(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to count BOMs: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to count BOMs: {}", e)))?;
 
-        i64::try_from(count)
-            .map_err(|_| PhpException::default("BOM count exceeds supported range".to_string()))
+        i64::try_from(count).map_err(|_| {
+            PhpException::from_message("BOM count exceeds supported range".to_string())
+        })
     }
 }
 
@@ -3093,7 +3131,8 @@ impl BomApi {
 // WorkOrders Types & API
 // ============================================================================
 
-#[php_class(name = "StateSet\\WorkOrder")]
+#[php_class]
+#[php(name = "StateSet\\WorkOrder")]
 #[derive(Clone)]
 pub struct WorkOrder {
     id: String,
@@ -3110,52 +3149,52 @@ pub struct WorkOrder {
 
 #[php_impl]
 impl WorkOrder {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_work_order_number(&self) -> String {
         self.work_order_number.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_bom_id(&self) -> String {
         self.bom_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_quantity(&self) -> i32 {
         self.quantity
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_priority(&self) -> String {
         self.priority.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_started_at(&self) -> Option<String> {
         self.started_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_completed_at(&self) -> Option<String> {
         self.completed_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_created_at(&self) -> String {
         self.created_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_updated_at(&self) -> String {
         self.updated_at.clone()
     }
@@ -3185,7 +3224,8 @@ impl From<stateset_core::WorkOrder> for WorkOrder {
     }
 }
 
-#[php_class(name = "StateSet\\WorkOrders")]
+#[php_class]
+#[php(name = "StateSet\\WorkOrders")]
 #[derive(Clone)]
 pub struct WorkOrders {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -3210,7 +3250,9 @@ impl WorkOrders {
                 priority: priority.and_then(|p| p.parse().ok()),
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create work order: {}", e)))?;
+            .map_err(|e| {
+                PhpException::from_message(format!("Failed to create work order: {}", e))
+            })?;
 
         Ok(work_order.into())
     }
@@ -3222,7 +3264,7 @@ impl WorkOrders {
         let work_order = commerce
             .work_orders()
             .get(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to get work order: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get work order: {}", e)))?;
 
         Ok(work_order.map(|w| w.into()))
     }
@@ -3230,10 +3272,9 @@ impl WorkOrders {
     pub fn list(&self) -> PhpResult<Vec<WorkOrder>> {
         let commerce = lock_commerce!(self.commerce);
 
-        let work_orders = commerce
-            .work_orders()
-            .list(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list work orders: {}", e)))?;
+        let work_orders = commerce.work_orders().list(Default::default()).map_err(|e| {
+            PhpException::from_message(format!("Failed to list work orders: {}", e))
+        })?;
 
         Ok(work_orders.into_iter().map(|w| w.into()).collect())
     }
@@ -3242,10 +3283,9 @@ impl WorkOrders {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "work_order");
 
-        let work_order = commerce
-            .work_orders()
-            .start(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to start work order: {}", e)))?;
+        let work_order = commerce.work_orders().start(uuid).map_err(|e| {
+            PhpException::from_message(format!("Failed to start work order: {}", e))
+        })?;
 
         Ok(work_order.into())
     }
@@ -3255,10 +3295,9 @@ impl WorkOrders {
         let uuid = parse_uuid!(id, "work_order");
         let quantity = decimal_from_f64(quantity_completed, "quantity_completed")?;
 
-        let work_order = commerce
-            .work_orders()
-            .complete(uuid, quantity)
-            .map_err(|e| PhpException::default(format!("Failed to complete work order: {}", e)))?;
+        let work_order = commerce.work_orders().complete(uuid, quantity).map_err(|e| {
+            PhpException::from_message(format!("Failed to complete work order: {}", e))
+        })?;
 
         Ok(work_order.into())
     }
@@ -3270,7 +3309,7 @@ impl WorkOrders {
         let work_order = commerce
             .work_orders()
             .hold(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to hold work order: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to hold work order: {}", e)))?;
 
         Ok(work_order.into())
     }
@@ -3279,10 +3318,9 @@ impl WorkOrders {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "work_order");
 
-        let work_order = commerce
-            .work_orders()
-            .resume(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to resume work order: {}", e)))?;
+        let work_order = commerce.work_orders().resume(uuid).map_err(|e| {
+            PhpException::from_message(format!("Failed to resume work order: {}", e))
+        })?;
 
         Ok(work_order.into())
     }
@@ -3291,10 +3329,9 @@ impl WorkOrders {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "work_order");
 
-        let work_order = commerce
-            .work_orders()
-            .cancel(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to cancel work order: {}", e)))?;
+        let work_order = commerce.work_orders().cancel(uuid).map_err(|e| {
+            PhpException::from_message(format!("Failed to cancel work order: {}", e))
+        })?;
 
         Ok(work_order.into())
     }
@@ -3302,13 +3339,12 @@ impl WorkOrders {
     pub fn count(&self) -> PhpResult<i64> {
         let commerce = lock_commerce!(self.commerce);
 
-        let count = commerce
-            .work_orders()
-            .count(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to count work orders: {}", e)))?;
+        let count = commerce.work_orders().count(Default::default()).map_err(|e| {
+            PhpException::from_message(format!("Failed to count work orders: {}", e))
+        })?;
 
         i64::try_from(count).map_err(|_| {
-            PhpException::default("Work order count exceeds supported range".to_string())
+            PhpException::from_message("Work order count exceeds supported range".to_string())
         })
     }
 }
@@ -3317,7 +3353,8 @@ impl WorkOrders {
 // CurrencyOps Types & API
 // ============================================================================
 
-#[php_class(name = "StateSet\\ExchangeRate")]
+#[php_class]
+#[php(name = "StateSet\\ExchangeRate")]
 #[derive(Clone)]
 pub struct ExchangeRate {
     from_currency: String,
@@ -3328,22 +3365,22 @@ pub struct ExchangeRate {
 
 #[php_impl]
 impl ExchangeRate {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_from_currency(&self) -> String {
         self.from_currency.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_to_currency(&self) -> String {
         self.to_currency.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_rate(&self) -> f64 {
         self.rate
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_updated_at(&self) -> String {
         self.updated_at.clone()
     }
@@ -3362,10 +3399,11 @@ impl From<stateset_core::ExchangeRate> for ExchangeRate {
 
 /// Parse a currency code string (e.g. `"USD"`) into the core [`Currency`] enum.
 fn parse_currency(code: &str) -> PhpResult<stateset_core::Currency> {
-    code.parse().map_err(|_| PhpException::default(format!("Invalid currency code: {}", code)))
+    code.parse().map_err(|_| PhpException::from_message(format!("Invalid currency code: {}", code)))
 }
 
-#[php_class(name = "StateSet\\CurrencyOps")]
+#[php_class]
+#[php(name = "StateSet\\CurrencyOps")]
 #[derive(Clone)]
 pub struct CurrencyOps {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -3381,7 +3419,7 @@ impl CurrencyOps {
         let rate = commerce
             .currency()
             .get_rate(from, to)
-            .map_err(|e| PhpException::default(format!("Failed to get rate: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get rate: {}", e)))?;
 
         Ok(rate.map(|r| r.into()))
     }
@@ -3392,7 +3430,7 @@ impl CurrencyOps {
         let rates = commerce
             .currency()
             .list_rates(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list rates: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list rates: {}", e)))?;
 
         Ok(rates.into_iter().map(|r| r.into()).collect())
     }
@@ -3411,7 +3449,7 @@ impl CurrencyOps {
                 rate: decimal_rate,
                 source: Some("manual".to_string()),
             })
-            .map_err(|e| PhpException::default(format!("Failed to set rate: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to set rate: {}", e)))?;
 
         Ok(exchange_rate.into())
     }
@@ -3425,7 +3463,7 @@ impl CurrencyOps {
         let result = commerce
             .currency()
             .convert(stateset_core::ConvertCurrency { amount: decimal_amount, from, to })
-            .map_err(|e| PhpException::default(format!("Failed to convert: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to convert: {}", e)))?;
 
         to_f64_result(result.converted_amount, "converted amount")
     }
@@ -3433,10 +3471,9 @@ impl CurrencyOps {
     pub fn base_currency(&self) -> PhpResult<String> {
         let commerce = lock_commerce!(self.commerce);
 
-        let base = commerce
-            .currency()
-            .base_currency()
-            .map_err(|e| PhpException::default(format!("Failed to get base currency: {}", e)))?;
+        let base = commerce.currency().base_currency().map_err(|e| {
+            PhpException::from_message(format!("Failed to get base currency: {}", e))
+        })?;
 
         Ok(base.to_string())
     }
@@ -3447,7 +3484,7 @@ impl CurrencyOps {
         let currencies = commerce
             .currency()
             .enabled_currencies()
-            .map_err(|e| PhpException::default(format!("Failed to get currencies: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get currencies: {}", e)))?;
 
         Ok(currencies.into_iter().map(|c| c.to_string()).collect())
     }
@@ -3465,7 +3502,8 @@ impl CurrencyOps {
 // Subscriptions Types & API
 // ============================================================================
 
-#[php_class(name = "StateSet\\SubscriptionPlan")]
+#[php_class]
+#[php(name = "StateSet\\SubscriptionPlan")]
 #[derive(Clone)]
 pub struct SubscriptionPlan {
     id: String,
@@ -3482,52 +3520,52 @@ pub struct SubscriptionPlan {
 
 #[php_impl]
 impl SubscriptionPlan {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_name(&self) -> String {
         self.name.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_description(&self) -> Option<String> {
         self.description.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_price(&self) -> f64 {
         self.price
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_currency(&self) -> String {
         self.currency.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_interval(&self) -> String {
         self.interval.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_interval_count(&self) -> i32 {
         self.interval_count
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_trial_days(&self) -> Option<i32> {
         self.trial_days
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_created_at(&self) -> String {
         self.created_at.clone()
     }
@@ -3550,7 +3588,8 @@ impl From<stateset_core::SubscriptionPlan> for SubscriptionPlan {
     }
 }
 
-#[php_class(name = "StateSet\\Subscription")]
+#[php_class]
+#[php(name = "StateSet\\Subscription")]
 #[derive(Clone)]
 pub struct Subscription {
     id: String,
@@ -3566,47 +3605,47 @@ pub struct Subscription {
 
 #[php_impl]
 impl Subscription {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_plan_id(&self) -> String {
         self.plan_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_customer_id(&self) -> String {
         self.customer_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_current_period_start(&self) -> String {
         self.current_period_start.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_current_period_end(&self) -> String {
         self.current_period_end.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_canceled_at(&self) -> Option<String> {
         self.canceled_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_created_at(&self) -> String {
         self.created_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_updated_at(&self) -> String {
         self.updated_at.clone()
     }
@@ -3632,7 +3671,8 @@ impl From<stateset_core::Subscription> for Subscription {
     }
 }
 
-#[php_class(name = "StateSet\\Subscriptions")]
+#[php_class]
+#[php(name = "StateSet\\Subscriptions")]
 #[derive(Clone)]
 pub struct Subscriptions {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -3661,7 +3701,7 @@ impl Subscriptions {
                 trial_days,
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create plan: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create plan: {}", e)))?;
 
         Ok(plan.into())
     }
@@ -3673,7 +3713,7 @@ impl Subscriptions {
         let plan = commerce
             .subscriptions()
             .get_plan(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to get plan: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get plan: {}", e)))?;
 
         Ok(plan.map(|p| p.into()))
     }
@@ -3684,7 +3724,7 @@ impl Subscriptions {
         let plans = commerce
             .subscriptions()
             .list_plans(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list plans: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list plans: {}", e)))?;
 
         Ok(plans.into_iter().map(|p| p.into()).collect())
     }
@@ -3701,7 +3741,7 @@ impl Subscriptions {
                 customer_id: cust_uuid.into(),
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to subscribe: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to subscribe: {}", e)))?;
 
         Ok(subscription.into())
     }
@@ -3710,10 +3750,9 @@ impl Subscriptions {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "subscription");
 
-        let subscription = commerce
-            .subscriptions()
-            .get(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to get subscription: {}", e)))?;
+        let subscription = commerce.subscriptions().get(uuid.into()).map_err(|e| {
+            PhpException::from_message(format!("Failed to get subscription: {}", e))
+        })?;
 
         Ok(subscription.map(|s| s.into()))
     }
@@ -3721,10 +3760,9 @@ impl Subscriptions {
     pub fn list(&self) -> PhpResult<Vec<Subscription>> {
         let commerce = lock_commerce!(self.commerce);
 
-        let subscriptions = commerce
-            .subscriptions()
-            .list(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list subscriptions: {}", e)))?;
+        let subscriptions = commerce.subscriptions().list(Default::default()).map_err(|e| {
+            PhpException::from_message(format!("Failed to list subscriptions: {}", e))
+        })?;
 
         Ok(subscriptions.into_iter().map(|s| s.into()).collect())
     }
@@ -3736,7 +3774,9 @@ impl Subscriptions {
         let subscription = commerce
             .subscriptions()
             .pause(uuid.into(), stateset_core::PauseSubscription::default())
-            .map_err(|e| PhpException::default(format!("Failed to pause subscription: {}", e)))?;
+            .map_err(|e| {
+                PhpException::from_message(format!("Failed to pause subscription: {}", e))
+            })?;
 
         Ok(subscription.into())
     }
@@ -3745,10 +3785,9 @@ impl Subscriptions {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "subscription");
 
-        let subscription = commerce
-            .subscriptions()
-            .resume(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to resume subscription: {}", e)))?;
+        let subscription = commerce.subscriptions().resume(uuid.into()).map_err(|e| {
+            PhpException::from_message(format!("Failed to resume subscription: {}", e))
+        })?;
 
         Ok(subscription.into())
     }
@@ -3761,10 +3800,9 @@ impl Subscriptions {
             ..Default::default()
         };
 
-        let subscription = commerce
-            .subscriptions()
-            .cancel(uuid.into(), cancel)
-            .map_err(|e| PhpException::default(format!("Failed to cancel subscription: {}", e)))?;
+        let subscription = commerce.subscriptions().cancel(uuid.into(), cancel).map_err(|e| {
+            PhpException::from_message(format!("Failed to cancel subscription: {}", e))
+        })?;
 
         Ok(subscription.into())
     }
@@ -3773,10 +3811,10 @@ impl Subscriptions {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(customer_id, "customer");
 
-        let subscriptions = commerce
-            .subscriptions()
-            .get_customer_subscriptions(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to get subscriptions: {}", e)))?;
+        let subscriptions =
+            commerce.subscriptions().get_customer_subscriptions(uuid.into()).map_err(|e| {
+                PhpException::from_message(format!("Failed to get subscriptions: {}", e))
+            })?;
 
         Ok(subscriptions.into_iter().map(|s| s.into()).collect())
     }
@@ -3785,10 +3823,9 @@ impl Subscriptions {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "subscription");
 
-        let active = commerce
-            .subscriptions()
-            .is_active(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to check subscription: {}", e)))?;
+        let active = commerce.subscriptions().is_active(uuid.into()).map_err(|e| {
+            PhpException::from_message(format!("Failed to check subscription: {}", e))
+        })?;
 
         Ok(active)
     }
@@ -3798,7 +3835,8 @@ impl Subscriptions {
 // Promotions Types & API
 // ============================================================================
 
-#[php_class(name = "StateSet\\Promotion")]
+#[php_class]
+#[php(name = "StateSet\\Promotion")]
 #[derive(Clone)]
 pub struct Promotion {
     id: String,
@@ -3818,67 +3856,67 @@ pub struct Promotion {
 
 #[php_impl]
 impl Promotion {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_code(&self) -> String {
         self.code.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_name(&self) -> String {
         self.name.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_description(&self) -> Option<String> {
         self.description.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_discount_type(&self) -> String {
         self.discount_type.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_discount_value(&self) -> f64 {
         self.discount_value
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_min_purchase(&self) -> Option<f64> {
         self.min_purchase
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_max_uses(&self) -> Option<i32> {
         self.max_uses
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_uses_count(&self) -> i32 {
         self.uses_count
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_starts_at(&self) -> Option<String> {
         self.starts_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_ends_at(&self) -> Option<String> {
         self.ends_at.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_created_at(&self) -> String {
         self.created_at.clone()
     }
@@ -3916,7 +3954,8 @@ impl From<stateset_core::Promotion> for Promotion {
     }
 }
 
-#[php_class(name = "StateSet\\Promotions")]
+#[php_class]
+#[php(name = "StateSet\\Promotions")]
 #[derive(Clone)]
 pub struct Promotions {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -3959,7 +3998,9 @@ impl Promotions {
                 total_usage_limit: max_uses,
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create promotion: {}", e)))?;
+            .map_err(|e| {
+                PhpException::from_message(format!("Failed to create promotion: {}", e))
+            })?;
 
         Ok(promotion.into())
     }
@@ -3971,7 +4012,7 @@ impl Promotions {
         let promotion = commerce
             .promotions()
             .get(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to get promotion: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get promotion: {}", e)))?;
 
         Ok(promotion.map(|p| p.into()))
     }
@@ -3982,7 +4023,7 @@ impl Promotions {
         let promotion = commerce
             .promotions()
             .get_by_code(&code)
-            .map_err(|e| PhpException::default(format!("Failed to get promotion: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get promotion: {}", e)))?;
 
         Ok(promotion.map(|p| p.into()))
     }
@@ -3993,7 +4034,7 @@ impl Promotions {
         let promotions = commerce
             .promotions()
             .list(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list promotions: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list promotions: {}", e)))?;
 
         Ok(promotions.into_iter().map(|p| p.into()).collect())
     }
@@ -4002,10 +4043,9 @@ impl Promotions {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "promotion");
 
-        let promotion = commerce
-            .promotions()
-            .activate(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to activate promotion: {}", e)))?;
+        let promotion = commerce.promotions().activate(uuid.into()).map_err(|e| {
+            PhpException::from_message(format!("Failed to activate promotion: {}", e))
+        })?;
 
         Ok(promotion.into())
     }
@@ -4014,10 +4054,9 @@ impl Promotions {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "promotion");
 
-        let promotion = commerce
-            .promotions()
-            .deactivate(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to deactivate promotion: {}", e)))?;
+        let promotion = commerce.promotions().deactivate(uuid.into()).map_err(|e| {
+            PhpException::from_message(format!("Failed to deactivate promotion: {}", e))
+        })?;
 
         Ok(promotion.into())
     }
@@ -4026,7 +4065,7 @@ impl Promotions {
         let commerce = lock_commerce!(self.commerce);
 
         let promotions = commerce.promotions().get_active().map_err(|e| {
-            PhpException::default(format!("Failed to get active promotions: {}", e))
+            PhpException::from_message(format!("Failed to get active promotions: {}", e))
         })?;
 
         Ok(promotions.into_iter().map(|p| p.into()).collect())
@@ -4035,10 +4074,9 @@ impl Promotions {
     pub fn is_valid(&self, code: String, _order_total: Option<f64>) -> PhpResult<bool> {
         let commerce = lock_commerce!(self.commerce);
 
-        let coupon = commerce
-            .promotions()
-            .validate_coupon(&code)
-            .map_err(|e| PhpException::default(format!("Failed to validate promotion: {}", e)))?;
+        let coupon = commerce.promotions().validate_coupon(&code).map_err(|e| {
+            PhpException::from_message(format!("Failed to validate promotion: {}", e))
+        })?;
 
         Ok(coupon.is_some())
     }
@@ -4047,10 +4085,9 @@ impl Promotions {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "promotion");
 
-        commerce
-            .promotions()
-            .delete(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to delete promotion: {}", e)))?;
+        commerce.promotions().delete(uuid.into()).map_err(|e| {
+            PhpException::from_message(format!("Failed to delete promotion: {}", e))
+        })?;
 
         Ok(true)
     }
@@ -4060,7 +4097,8 @@ impl Promotions {
 // Tax Types & API
 // ============================================================================
 
-#[php_class(name = "StateSet\\TaxJurisdiction")]
+#[php_class]
+#[php(name = "StateSet\\TaxJurisdiction")]
 #[derive(Clone)]
 pub struct TaxJurisdiction {
     id: String,
@@ -4074,37 +4112,37 @@ pub struct TaxJurisdiction {
 
 #[php_impl]
 impl TaxJurisdiction {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_name(&self) -> String {
         self.name.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_country(&self) -> String {
         self.country.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_state(&self) -> Option<String> {
         self.state.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_city(&self) -> Option<String> {
         self.city.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_postal_code(&self) -> Option<String> {
         self.postal_code.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
@@ -4124,7 +4162,8 @@ impl From<stateset_core::TaxJurisdiction> for TaxJurisdiction {
     }
 }
 
-#[php_class(name = "StateSet\\TaxRate")]
+#[php_class]
+#[php(name = "StateSet\\TaxRate")]
 #[derive(Clone)]
 pub struct TaxRate {
     id: String,
@@ -4137,32 +4176,32 @@ pub struct TaxRate {
 
 #[php_impl]
 impl TaxRate {
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_id(&self) -> String {
         self.id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_jurisdiction_id(&self) -> String {
         self.jurisdiction_id.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_name(&self) -> String {
         self.name.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_rate(&self) -> f64 {
         self.rate
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_tax_type(&self) -> String {
         self.tax_type.clone()
     }
 
-    #[getter]
+    #[php(getter, change_case = "snake_case")]
     pub fn get_status(&self) -> String {
         self.status.clone()
     }
@@ -4181,7 +4220,8 @@ impl From<stateset_core::TaxRate> for TaxRate {
     }
 }
 
-#[php_class(name = "StateSet\\Tax")]
+#[php_class]
+#[php(name = "StateSet\\Tax")]
 #[derive(Clone)]
 pub struct Tax {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -4212,7 +4252,7 @@ impl Tax {
         let result = commerce
             .tax()
             .calculate(request)
-            .map_err(|e| PhpException::default(format!("Failed to calculate tax: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to calculate tax: {}", e)))?;
 
         to_f64_result(result.total_tax, "tax amount")
     }
@@ -4228,7 +4268,7 @@ impl Tax {
                 &stateset_core::TaxAddress::default(),
                 stateset_core::ProductTaxCategory::Standard,
             )
-            .map_err(|e| PhpException::default(format!("Failed to get rate: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get rate: {}", e)))?;
 
         to_f64_result(rate, "tax rate")
     }
@@ -4236,10 +4276,9 @@ impl Tax {
     pub fn list_jurisdictions(&self) -> PhpResult<Vec<TaxJurisdiction>> {
         let commerce = lock_commerce!(self.commerce);
 
-        let jurisdictions = commerce
-            .tax()
-            .list_jurisdictions(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list jurisdictions: {}", e)))?;
+        let jurisdictions = commerce.tax().list_jurisdictions(Default::default()).map_err(|e| {
+            PhpException::from_message(format!("Failed to list jurisdictions: {}", e))
+        })?;
 
         Ok(jurisdictions.into_iter().map(|j| j.into()).collect())
     }
@@ -4262,7 +4301,9 @@ impl Tax {
                 city,
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create jurisdiction: {}", e)))?;
+            .map_err(|e| {
+                PhpException::from_message(format!("Failed to create jurisdiction: {}", e))
+            })?;
 
         Ok(jurisdiction.into())
     }
@@ -4277,7 +4318,7 @@ impl Tax {
         let rates = commerce
             .tax()
             .list_rates(filter)
-            .map_err(|e| PhpException::default(format!("Failed to list rates: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list rates: {}", e)))?;
 
         Ok(rates.into_iter().map(|r| r.into()).collect())
     }
@@ -4302,7 +4343,7 @@ impl Tax {
                 tax_type: tax_type.parse().unwrap_or_default(),
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create rate: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create rate: {}", e)))?;
 
         Ok(tax_rate.into())
     }
@@ -4310,10 +4351,9 @@ impl Tax {
     pub fn is_enabled(&self) -> PhpResult<bool> {
         let commerce = lock_commerce!(self.commerce);
 
-        let enabled = commerce
-            .tax()
-            .is_enabled()
-            .map_err(|e| PhpException::default(format!("Failed to check tax status: {}", e)))?;
+        let enabled = commerce.tax().is_enabled().map_err(|e| {
+            PhpException::from_message(format!("Failed to check tax status: {}", e))
+        })?;
 
         Ok(enabled)
     }
@@ -4324,7 +4364,7 @@ impl Tax {
         commerce
             .tax()
             .set_enabled(enabled)
-            .map_err(|e| PhpException::default(format!("Failed to set tax status: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to set tax status: {}", e)))?;
 
         Ok(true)
     }
@@ -4334,7 +4374,8 @@ impl Tax {
 // Quality API
 // ============================================================================
 
-#[php_class(name = "StateSet\\Quality")]
+#[php_class]
+#[php(name = "StateSet\\Quality")]
 #[derive(Clone)]
 pub struct Quality {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -4359,7 +4400,9 @@ impl Quality {
                 reference_id: ref_uuid,
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create inspection: {}", e)))?;
+            .map_err(|e| {
+                PhpException::from_message(format!("Failed to create inspection: {}", e))
+            })?;
 
         Ok(inspection.id.to_string())
     }
@@ -4367,10 +4410,9 @@ impl Quality {
     pub fn list_inspections(&self) -> PhpResult<Vec<String>> {
         let commerce = lock_commerce!(self.commerce);
 
-        let inspections = commerce
-            .quality()
-            .list_inspections(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list inspections: {}", e)))?;
+        let inspections = commerce.quality().list_inspections(Default::default()).map_err(|e| {
+            PhpException::from_message(format!("Failed to list inspections: {}", e))
+        })?;
 
         Ok(inspections.into_iter().map(|i| i.id.to_string()).collect())
     }
@@ -4393,7 +4435,7 @@ impl Quality {
                 hold_type: hold_type.parse().unwrap_or_default(),
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create hold: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create hold: {}", e)))?;
 
         Ok(hold.id.to_string())
     }
@@ -4408,7 +4450,7 @@ impl Quality {
                 uuid,
                 stateset_core::ReleaseQualityHold { released_by, release_notes: None },
             )
-            .map_err(|e| PhpException::default(format!("Failed to release hold: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to release hold: {}", e)))?;
 
         Ok(true)
     }
@@ -4418,7 +4460,8 @@ impl Quality {
 // Lots API
 // ============================================================================
 
-#[php_class(name = "StateSet\\Lots")]
+#[php_class]
+#[php(name = "StateSet\\Lots")]
 #[derive(Clone)]
 pub struct Lots {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -4436,7 +4479,7 @@ impl Lots {
                 quantity: Decimal::from(quantity_produced),
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create lot: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create lot: {}", e)))?;
 
         Ok(lot.id.to_string())
     }
@@ -4448,7 +4491,7 @@ impl Lots {
         let lot = commerce
             .lots()
             .get(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to get lot: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get lot: {}", e)))?;
 
         Ok(lot.map(|l| l.lot_number))
     }
@@ -4459,7 +4502,7 @@ impl Lots {
         let lots = commerce
             .lots()
             .list(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list lots: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list lots: {}", e)))?;
 
         Ok(lots.into_iter().map(|l| l.id.to_string()).collect())
     }
@@ -4471,7 +4514,7 @@ impl Lots {
         commerce
             .lots()
             .quarantine(uuid, &reason)
-            .map_err(|e| PhpException::default(format!("Failed to quarantine: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to quarantine: {}", e)))?;
 
         Ok(true)
     }
@@ -4483,7 +4526,7 @@ impl Lots {
         commerce
             .lots()
             .release_quarantine(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to release: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to release: {}", e)))?;
 
         Ok(true)
     }
@@ -4493,7 +4536,8 @@ impl Lots {
 // Serials API
 // ============================================================================
 
-#[php_class(name = "StateSet\\Serials")]
+#[php_class]
+#[php(name = "StateSet\\Serials")]
 #[derive(Clone)]
 pub struct Serials {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -4507,7 +4551,7 @@ impl Serials {
         let serial = commerce
             .serials()
             .create(stateset_core::CreateSerialNumber { sku, lot_number, ..Default::default() })
-            .map_err(|e| PhpException::default(format!("Failed to create serial: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create serial: {}", e)))?;
 
         Ok(serial.serial)
     }
@@ -4519,7 +4563,7 @@ impl Serials {
         let serial = commerce
             .serials()
             .get(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to get serial: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get serial: {}", e)))?;
 
         Ok(serial.map(|s| s.serial))
     }
@@ -4530,7 +4574,7 @@ impl Serials {
         let serials = commerce
             .serials()
             .list(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list serials: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list serials: {}", e)))?;
 
         Ok(serials.into_iter().map(|s| s.serial).collect())
     }
@@ -4547,12 +4591,12 @@ impl Serials {
         let ord_uuid = order_id
             .map(|o| o.parse())
             .transpose()
-            .map_err(|_| PhpException::default("Invalid order UUID".to_string()))?;
+            .map_err(|_| PhpException::from_message("Invalid order UUID".to_string()))?;
 
         commerce
             .serials()
             .mark_sold(uuid, cust_uuid, ord_uuid)
-            .map_err(|e| PhpException::default(format!("Failed to mark sold: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to mark sold: {}", e)))?;
 
         Ok(true)
     }
@@ -4562,7 +4606,8 @@ impl Serials {
 // Warehouse API
 // ============================================================================
 
-#[php_class(name = "StateSet\\Warehouse")]
+#[php_class]
+#[php(name = "StateSet\\Warehouse")]
 #[derive(Clone)]
 pub struct WarehouseApi {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -4586,7 +4631,9 @@ impl WarehouseApi {
                 warehouse_type: warehouse_type.parse().unwrap_or_default(),
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create warehouse: {}", e)))?;
+            .map_err(|e| {
+                PhpException::from_message(format!("Failed to create warehouse: {}", e))
+            })?;
 
         Ok(warehouse.id)
     }
@@ -4597,7 +4644,7 @@ impl WarehouseApi {
         let warehouse = commerce
             .warehouse()
             .get_warehouse(id)
-            .map_err(|e| PhpException::default(format!("Failed to get warehouse: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get warehouse: {}", e)))?;
 
         Ok(warehouse.map(|w| w.name))
     }
@@ -4608,7 +4655,7 @@ impl WarehouseApi {
         let warehouses = commerce
             .warehouse()
             .list_warehouses(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list warehouses: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list warehouses: {}", e)))?;
 
         Ok(warehouses.into_iter().map(|w| w.id).collect())
     }
@@ -4631,7 +4678,7 @@ impl WarehouseApi {
                 aisle,
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create location: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create location: {}", e)))?;
 
         Ok(location.id)
     }
@@ -4641,7 +4688,8 @@ impl WarehouseApi {
 // Receiving API
 // ============================================================================
 
-#[php_class(name = "StateSet\\Receiving")]
+#[php_class]
+#[php(name = "StateSet\\Receiving")]
 #[derive(Clone)]
 pub struct Receiving {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -4659,7 +4707,7 @@ impl Receiving {
         let po_uuid = po_id
             .map(|p| p.parse())
             .transpose()
-            .map_err(|_| PhpException::default("Invalid PO UUID".to_string()))?;
+            .map_err(|_| PhpException::from_message("Invalid PO UUID".to_string()))?;
         let receipt_type = receipt_type.parse().unwrap_or_default();
 
         let receipt = commerce
@@ -4673,7 +4721,7 @@ impl Receiving {
                 reference_id: po_uuid,
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create receipt: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create receipt: {}", e)))?;
 
         Ok(receipt.id.to_string())
     }
@@ -4685,7 +4733,7 @@ impl Receiving {
         let receipt = commerce
             .receiving()
             .get_receipt(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to get receipt: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get receipt: {}", e)))?;
 
         Ok(receipt.map(|r| r.receipt_number))
     }
@@ -4696,7 +4744,7 @@ impl Receiving {
         let receipts = commerce
             .receiving()
             .list_receipts(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list receipts: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list receipts: {}", e)))?;
 
         Ok(receipts.into_iter().map(|r| r.id.to_string()).collect())
     }
@@ -4705,10 +4753,9 @@ impl Receiving {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "receipt");
 
-        commerce
-            .receiving()
-            .complete_receiving(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to complete receipt: {}", e)))?;
+        commerce.receiving().complete_receiving(uuid).map_err(|e| {
+            PhpException::from_message(format!("Failed to complete receipt: {}", e))
+        })?;
 
         Ok(true)
     }
@@ -4718,7 +4765,8 @@ impl Receiving {
 // Fulfillment API
 // ============================================================================
 
-#[php_class(name = "StateSet\\Fulfillment")]
+#[php_class]
+#[php(name = "StateSet\\Fulfillment")]
 #[derive(Clone)]
 pub struct Fulfillment {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -4736,7 +4784,7 @@ impl Fulfillment {
         let order_ids: Result<Vec<stateset_core::OrderId>, _> =
             order_ids.iter().map(|id| id.parse()).collect();
         let order_ids =
-            order_ids.map_err(|_| PhpException::default("Invalid order UUID".to_string()))?;
+            order_ids.map_err(|_| PhpException::from_message("Invalid order UUID".to_string()))?;
 
         let wave = commerce
             .fulfillment()
@@ -4746,7 +4794,7 @@ impl Fulfillment {
                 priority: Some(priority),
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create wave: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create wave: {}", e)))?;
 
         Ok(wave.id.to_string())
     }
@@ -4758,7 +4806,7 @@ impl Fulfillment {
         let wave = commerce
             .fulfillment()
             .get_wave(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to get wave: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get wave: {}", e)))?;
 
         Ok(wave.map(|w| w.wave_number))
     }
@@ -4770,7 +4818,7 @@ impl Fulfillment {
         commerce
             .fulfillment()
             .release_wave(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to release wave: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to release wave: {}", e)))?;
 
         Ok(true)
     }
@@ -4782,7 +4830,7 @@ impl Fulfillment {
         commerce
             .fulfillment()
             .complete_wave(uuid.into())
-            .map_err(|e| PhpException::default(format!("Failed to complete wave: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to complete wave: {}", e)))?;
 
         Ok(true)
     }
@@ -4792,7 +4840,8 @@ impl Fulfillment {
 // Accounts Payable API
 // ============================================================================
 
-#[php_class(name = "StateSet\\AccountsPayable")]
+#[php_class]
+#[php(name = "StateSet\\AccountsPayable")]
 #[derive(Clone)]
 pub struct AccountsPayable {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -4820,7 +4869,7 @@ impl AccountsPayable {
                 payment_terms,
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create bill: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create bill: {}", e)))?;
 
         Ok(bill.id.to_string())
     }
@@ -4832,7 +4881,7 @@ impl AccountsPayable {
         let bill = commerce
             .accounts_payable()
             .get_bill(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to get bill: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get bill: {}", e)))?;
 
         Ok(bill.map(|b| b.bill_number))
     }
@@ -4843,7 +4892,7 @@ impl AccountsPayable {
         let bills = commerce
             .accounts_payable()
             .list_bills(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list bills: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list bills: {}", e)))?;
 
         Ok(bills.into_iter().map(|b| b.id.to_string()).collect())
     }
@@ -4854,7 +4903,7 @@ impl AccountsPayable {
         let total = commerce
             .accounts_payable()
             .get_total_outstanding()
-            .map_err(|e| PhpException::default(format!("Failed to get total: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get total: {}", e)))?;
 
         to_f64_result(total, "accounts payable total outstanding")
     }
@@ -4864,7 +4913,8 @@ impl AccountsPayable {
 // Accounts Receivable API
 // ============================================================================
 
-#[php_class(name = "StateSet\\AccountsReceivable")]
+#[php_class]
+#[php(name = "StateSet\\AccountsReceivable")]
 #[derive(Clone)]
 pub struct AccountsReceivable {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -4878,7 +4928,7 @@ impl AccountsReceivable {
         let total = commerce
             .accounts_receivable()
             .get_total_outstanding()
-            .map_err(|e| PhpException::default(format!("Failed to get total: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get total: {}", e)))?;
 
         to_f64_result(total, "accounts receivable total outstanding")
     }
@@ -4889,7 +4939,7 @@ impl AccountsReceivable {
         let dso = commerce
             .accounts_receivable()
             .get_dso(days)
-            .map_err(|e| PhpException::default(format!("Failed to get DSO: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get DSO: {}", e)))?;
 
         to_f64_result(dso, "days sales outstanding")
     }
@@ -4913,7 +4963,9 @@ impl AccountsReceivable {
                 amount: decimal_amount,
                 notes: None,
             })
-            .map_err(|e| PhpException::default(format!("Failed to create credit memo: {}", e)))?;
+            .map_err(|e| {
+                PhpException::from_message(format!("Failed to create credit memo: {}", e))
+            })?;
 
         Ok(memo.id.to_string())
     }
@@ -4923,7 +4975,8 @@ impl AccountsReceivable {
 // Cost Accounting API
 // ============================================================================
 
-#[php_class(name = "StateSet\\CostAccounting")]
+#[php_class]
+#[php(name = "StateSet\\CostAccounting")]
 #[derive(Clone)]
 pub struct CostAccounting {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -4937,7 +4990,7 @@ impl CostAccounting {
         let cost = commerce
             .cost_accounting()
             .get_item_cost(&sku)
-            .map_err(|e| PhpException::default(format!("Failed to get cost: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get cost: {}", e)))?;
 
         // The embedded `ItemCost` has no single "current cost"; `standard_cost`
         // is the canonical posted cost surfaced to PHP.
@@ -4964,7 +5017,7 @@ impl CostAccounting {
                 standard_cost: Some(std),
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to set cost: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to set cost: {}", e)))?;
 
         Ok(true)
     }
@@ -4975,7 +5028,7 @@ impl CostAccounting {
         let total = commerce
             .cost_accounting()
             .get_total_inventory_value()
-            .map_err(|e| PhpException::default(format!("Failed to get total: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get total: {}", e)))?;
 
         to_f64_result(total, "inventory value")
     }
@@ -4985,7 +5038,8 @@ impl CostAccounting {
 // Credit API
 // ============================================================================
 
-#[php_class(name = "StateSet\\Credit")]
+#[php_class]
+#[php(name = "StateSet\\Credit")]
 #[derive(Clone)]
 pub struct CreditApi {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -5005,7 +5059,7 @@ impl CreditApi {
                 credit_limit: limit,
                 ..Default::default()
             })
-            .map_err(|e| PhpException::default(format!("Failed to create account: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create account: {}", e)))?;
 
         Ok(account.id.to_string())
     }
@@ -5018,7 +5072,7 @@ impl CreditApi {
         let result = commerce
             .credit()
             .check_credit(cust_uuid.into(), amount)
-            .map_err(|e| PhpException::default(format!("Failed to check credit: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to check credit: {}", e)))?;
 
         Ok(result.approved)
     }
@@ -5036,7 +5090,7 @@ impl CreditApi {
         commerce
             .credit()
             .adjust_credit_limit(cust_uuid.into(), limit, &reason)
-            .map_err(|e| PhpException::default(format!("Failed to adjust limit: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to adjust limit: {}", e)))?;
 
         Ok(true)
     }
@@ -5046,7 +5100,8 @@ impl CreditApi {
 // Backorders API
 // ============================================================================
 
-#[php_class(name = "StateSet\\Backorders")]
+#[php_class]
+#[php(name = "StateSet\\Backorders")]
 #[derive(Clone)]
 pub struct Backorders {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -5084,7 +5139,9 @@ impl Backorders {
                 source_location_id: None,
                 notes: None,
             })
-            .map_err(|e| PhpException::default(format!("Failed to create backorder: {}", e)))?;
+            .map_err(|e| {
+                PhpException::from_message(format!("Failed to create backorder: {}", e))
+            })?;
 
         Ok(backorder.id.to_string())
     }
@@ -5096,7 +5153,7 @@ impl Backorders {
         let backorder = commerce
             .backorder()
             .get_backorder(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to get backorder: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get backorder: {}", e)))?;
 
         Ok(backorder.map(|b| b.backorder_number))
     }
@@ -5107,7 +5164,7 @@ impl Backorders {
         let backorders = commerce
             .backorder()
             .list_backorders(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list backorders: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list backorders: {}", e)))?;
 
         Ok(backorders.into_iter().map(|b| b.id.to_string()).collect())
     }
@@ -5116,10 +5173,9 @@ impl Backorders {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "backorder");
 
-        commerce
-            .backorder()
-            .cancel_backorder(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to cancel backorder: {}", e)))?;
+        commerce.backorder().cancel_backorder(uuid).map_err(|e| {
+            PhpException::from_message(format!("Failed to cancel backorder: {}", e))
+        })?;
 
         Ok(true)
     }
@@ -5130,7 +5186,7 @@ impl Backorders {
         let count = commerce
             .backorder()
             .count_pending()
-            .map_err(|e| PhpException::default(format!("Failed to count: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to count: {}", e)))?;
 
         Ok(count as i32)
     }
@@ -5140,7 +5196,8 @@ impl Backorders {
 // General Ledger API
 // ============================================================================
 
-#[php_class(name = "StateSet\\GeneralLedger")]
+#[php_class]
+#[php(name = "StateSet\\GeneralLedger")]
 #[derive(Clone)]
 pub struct GeneralLedger {
     commerce: Arc<Mutex<RustCommerce>>,
@@ -5169,7 +5226,7 @@ impl GeneralLedger {
                 is_posting: None,
                 currency: None,
             })
-            .map_err(|e| PhpException::default(format!("Failed to create account: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to create account: {}", e)))?;
 
         Ok(account.id.to_string())
     }
@@ -5181,7 +5238,7 @@ impl GeneralLedger {
         let account = commerce
             .general_ledger()
             .get_account(uuid)
-            .map_err(|e| PhpException::default(format!("Failed to get account: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get account: {}", e)))?;
 
         Ok(account.map(|a| a.name))
     }
@@ -5192,7 +5249,7 @@ impl GeneralLedger {
         let accounts = commerce
             .general_ledger()
             .list_accounts(Default::default())
-            .map_err(|e| PhpException::default(format!("Failed to list accounts: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to list accounts: {}", e)))?;
 
         Ok(accounts.into_iter().map(|a| a.id.to_string()).collect())
     }
@@ -5209,7 +5266,7 @@ impl GeneralLedger {
         let balance = commerce
             .general_ledger()
             .get_account_balance(uuid, as_of)
-            .map_err(|e| PhpException::default(format!("Failed to get balance: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to get balance: {}", e)))?;
 
         // The embedded API returns `None` when the account has no posted balance;
         // surface that to PHP as 0.0.
@@ -5222,7 +5279,7 @@ impl GeneralLedger {
         let accounts = commerce
             .general_ledger()
             .initialize_chart_of_accounts()
-            .map_err(|e| PhpException::default(format!("Failed to initialize COA: {}", e)))?;
+            .map_err(|e| PhpException::from_message(format!("Failed to initialize COA: {}", e)))?;
 
         Ok(accounts.into_iter().map(|a| a.id.to_string()).collect())
     }
@@ -5240,7 +5297,8 @@ impl GeneralLedger {
 // PHP `string` (binary-safe) — plain `Vec<u8>` would become a PHP array, which
 // breaks the corpus tests' bin2hex()/hash() calls. Errors raise PHP exceptions.
 
-#[php_class(name = "StateSet\\Crypto")]
+#[php_class]
+#[php(name = "StateSet\\Crypto")]
 #[derive(Default)]
 pub struct Crypto;
 
@@ -5249,22 +5307,22 @@ impl Crypto {
     /// Return the RFC 8785 JCS canonical-form bytes for a JSON string.
     pub fn jcs_canonicalize(json: String) -> PhpResult<Binary<u8>> {
         let value: serde_json::Value = serde_json::from_str(&json)
-            .map_err(|e| PhpException::default(format!("invalid JSON: {e}")))?;
+            .map_err(|e| PhpException::from_message(format!("invalid JSON: {e}")))?;
         ::stateset_crypto::canonicalize::canonicalize_json_bytes(&value)
             .map(Binary::from)
-            .map_err(|e| PhpException::default(format!("canonicalize: {e}")).into())
+            .map_err(|e| PhpException::from_message(format!("canonicalize: {e}")).into())
     }
 
     /// Compute the VES v1.0 payload-plain hash. Returns 32 bytes.
     /// `salt`, when provided, must be exactly 16 bytes.
     pub fn payload_plain_hash(json: String, salt: Option<Binary<u8>>) -> PhpResult<Binary<u8>> {
         let value: serde_json::Value = serde_json::from_str(&json)
-            .map_err(|e| PhpException::default(format!("invalid JSON: {e}")))?;
+            .map_err(|e| PhpException::from_message(format!("invalid JSON: {e}")))?;
         let salt_arr = match salt {
             None => None,
             Some(s) => {
                 if s.len() != 16 {
-                    return Err(PhpException::default(format!(
+                    return Err(PhpException::from_message(format!(
                         "salt must be exactly 16 bytes, got {}",
                         s.len()
                     ))
@@ -5276,7 +5334,7 @@ impl Crypto {
             }
         };
         let digest = ::stateset_crypto::hash::compute_payload_plain_hash(&value, salt_arr.as_ref())
-            .map_err(|e| PhpException::default(format!("payload_plain_hash: {e}")))?;
+            .map_err(|e| PhpException::from_message(format!("payload_plain_hash: {e}")))?;
         Ok(Binary::from(digest.to_vec()))
     }
 
@@ -5285,7 +5343,7 @@ impl Crypto {
         let mut typed: Vec<[u8; 32]> = Vec::with_capacity(leaves.len());
         for (i, leaf) in leaves.iter().enumerate() {
             if leaf.len() != 32 {
-                return Err(PhpException::default(format!(
+                return Err(PhpException::from_message(format!(
                     "leaf {i} must be 32 bytes, got {}",
                     leaf.len()
                 ))
@@ -5306,4 +5364,61 @@ impl Crypto {
 #[php_module]
 pub fn get_module(module: ModuleBuilder) -> ModuleBuilder {
     module
+        .class::<Commerce>()
+        .class::<Customer>()
+        .class::<Customers>()
+        .class::<OrderItem>()
+        .class::<Order>()
+        .class::<Orders>()
+        .class::<ProductVariant>()
+        .class::<Product>()
+        .class::<Products>()
+        .class::<InventoryItem>()
+        .class::<Inventory>()
+        .class::<Return>()
+        .class::<Returns>()
+        .class::<Payments>()
+        .class::<CartItem>()
+        .class::<Cart>()
+        .class::<Carts>()
+        .class::<SalesSummary>()
+        .class::<Analytics>()
+        .class::<Shipment>()
+        .class::<Shipments>()
+        .class::<Warranty>()
+        .class::<WarrantyClaim>()
+        .class::<Warranties>()
+        .class::<Supplier>()
+        .class::<PurchaseOrder>()
+        .class::<PurchaseOrders>()
+        .class::<Invoice>()
+        .class::<Invoices>()
+        .class::<BomComponent>()
+        .class::<BillOfMaterials>()
+        .class::<BomApi>()
+        .class::<WorkOrder>()
+        .class::<WorkOrders>()
+        .class::<ExchangeRate>()
+        .class::<CurrencyOps>()
+        .class::<SubscriptionPlan>()
+        .class::<Subscription>()
+        .class::<Subscriptions>()
+        .class::<Promotion>()
+        .class::<Promotions>()
+        .class::<TaxJurisdiction>()
+        .class::<TaxRate>()
+        .class::<Tax>()
+        .class::<Quality>()
+        .class::<Lots>()
+        .class::<Serials>()
+        .class::<WarehouseApi>()
+        .class::<Receiving>()
+        .class::<Fulfillment>()
+        .class::<AccountsPayable>()
+        .class::<AccountsReceivable>()
+        .class::<CostAccounting>()
+        .class::<CreditApi>()
+        .class::<Backorders>()
+        .class::<GeneralLedger>()
+        .class::<Crypto>()
 }
