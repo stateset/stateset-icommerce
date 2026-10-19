@@ -130,6 +130,17 @@ try:
     assert [event['sku'] for event in report['timeline'] if event['type'] == 'purchase_order_sent'] == ['MATCHA-50G']
     assert report['summary']['purchasingSpend'] == '10.00'
     assert report['summary']['endingCash'] == '0.00'
+    send(b'\x1b')
+    screen(b'Seed 77')
+    send(b'jjjs')
+    frame = screen(b'RESULTS  Cash constraint')
+    assert b'COMPARISON CHECKS' in frame
+    assert b'Opening cash different' in frame
+    assert b'Projected paths: demand same' in frame
+    send(b'\x1b[4~')
+    frame = screen(b'Conditional projections')
+    assert b'Baseline' in frame and b'USD 10.00 opening cash' in frame
+    assert b'Cash constraint' in frame and b'USD 0.50 opening cash' in frame
     send(b'q')
     assert child.wait(timeout=15) == 0
     after = termios.tcgetattr(slave)
@@ -138,6 +149,7 @@ try:
                 'savedOrderPreserved': True, 'noImplicitRun': True,
                 'nativePurchaseHonorsPriority': True, 'exactSpend': '10.00',
                 'cashBudgetEvidenceVisible': True, 'exactMinimumCash': '0.00',
+                'comparisonChecksVisible': True, 'candidateInputsVisible': True,
                 'terminalRestored': True}
     (root / 'evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
     print(json.dumps({'evidence': str(root / 'evidence.json'), **evidence}, indent=2))
