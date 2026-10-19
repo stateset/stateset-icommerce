@@ -9,6 +9,7 @@ import {
   navigate,
   records,
   simulationPlans,
+  paletteCommands,
 } from '../../src/tui/model.js';
 import { render, detailLimit } from '../../src/tui/render.js';
 import { startTerminal } from '../../src/tui/app.js';
@@ -154,7 +155,11 @@ test('editor and palette keep their active fields visible in small panes', () =>
   state.input.field = 5;
   let screen = render(state, 55, 14, { color: false });
   assert.match(screen, /Supplier lead time/);
-  state.input = { kind: 'palette', text: '', selected: 8 };
+  state.input = {
+    kind: 'palette',
+    text: '',
+    selected: paletteCommands('', state).findIndex((command) => command.effect === 'quit'),
+  };
   screen = render(state, 55, 14, { color: false });
   assert.match(screen, /› Quit/);
   for (const line of screen.split('\n')) assert.ok(width(line) < 55);
