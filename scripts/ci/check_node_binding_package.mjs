@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -23,6 +24,7 @@ const REQUIRED_PACKED_FILES = [
   'index.js',
   'index.d.ts',
   'native-binding.js',
+  'native-loader.js',
   'errors.js',
   'canonical-json.mjs',
   'canonical-json.d.ts',
@@ -143,6 +145,8 @@ function stageHostNativeBinding(packageDir) {
 }
 
 async function verifyPackedImports(packageDir) {
+  const require = createRequire(path.join(packageDir, 'package.json'));
+  assert.equal(require('@stateset/embedded/package.json').name, '@stateset/embedded');
   const purchase = await import(pathToFileURL(path.join(packageDir, 'purchase-runtime.mjs')).href);
   assert.equal(typeof purchase.PurchaseRuntime, 'function');
   assert.equal(typeof purchase.SqlitePurchaseStore, 'function');
@@ -307,6 +311,10 @@ async function main() {
   );
 
   for (const [subpath, target] of Object.entries(packageJson.exports || {})) {
+    if (subpath === './package.json') {
+      assert.equal(target, './package.json', 'Package metadata must be publicly resolvable.');
+      continue;
+    }
     if (subpath === '.') {
       assert.equal(target.default, './index.js', 'Root export should continue to target ./index.js.');
       assert.equal(target.types, './index.d.ts', 'Root export should continue to target ./index.d.ts.');

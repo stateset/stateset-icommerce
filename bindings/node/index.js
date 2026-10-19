@@ -27,8 +27,9 @@
  */
 
 const { wrapNativeExports } = require('./errors.js')
+const { loadNativeBinding } = require('./native-loader.js')
 
-const nativeBinding = wrapNativeExports(require('./native-binding.js'))
+const nativeBinding = wrapNativeExports(loadNativeBinding(() => require('./native-binding.js')))
 
 // ---------------------------------------------------------------------------
 // JavaScript-side surface layered over the native classes. Type declarations

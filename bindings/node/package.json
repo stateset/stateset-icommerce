@@ -5,6 +5,7 @@
   "main": "index.js",
   "types": "index.d.ts",
   "exports": {
+    "./package.json": "./package.json",
     "./canonical-json": {
       "types": "./canonical-json.d.ts",
       "default": "./canonical-json.mjs"
@@ -128,6 +129,7 @@
     "index.js",
     "index.d.ts",
     "native-binding.js",
+    "native-loader.js",
     "errors.js",
     "*.mjs",
     "*.d.ts",

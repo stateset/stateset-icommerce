@@ -90,6 +90,23 @@ try {
     run(process.execPath, [path.join(cliDir, 'bin/stateset-simulate.js'), '--help'], 30_000),
     /usage/i,
   );
+  // README links and runnable examples must survive both release pack stages.
+  const readme = readFileSync(path.join(cliDir, 'README.md'), 'utf8');
+  for (const [, example] of readme.matchAll(/\]\((examples\/[^\s)#]+\.json)\)/g)) {
+    JSON.parse(readFileSync(path.join(cliDir, example), 'utf8'));
+  }
+  for (const example of ['commerce', 'inventory', 'experiment']) {
+    const report = JSON.parse(
+      run(
+        process.execPath,
+        [path.join(cliDir, 'bin/stateset-simulate.js'), '--example', example, '--json'],
+        45_000,
+      ),
+    );
+    assert.equal(report.success, true, `Installed ${example} example failed`);
+    assert.equal(report.liveStoreModified, false);
+    assert.ok(report.results?.every((result) => result.expectationsMet !== false) ?? true);
+  }
   console.log(run('npm', ['audit', '--audit-level=high']));
   console.log(
     'Packed CLI consumer install, native engines, optional integrations and security audit: passed',
