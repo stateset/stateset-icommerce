@@ -4,7 +4,7 @@ import { editorWindow } from './editor.js';
 import { clean, fit, width, wrap } from './text.js';
 import { PLANNING_FIELDS } from './planning.js';
 import { PRODUCT_FIELDS } from './basket.js';
-import { cashDelta, fillRate, soldTraces } from './report.js';
+import { cashDelta, cashBudgetRefusals, fillRate, soldTraces } from './report.js';
 
 const COLORS = { ink: 252, muted: 244, accent: 81, good: 114, warn: 222, bad: 210 };
 const money = (record, field, currency = record?.currency || 'USD') =>
@@ -67,6 +67,11 @@ export function resultLines(state, size) {
     const s = report.summary;
     add(`${report.name}: fill ${fillRate(s)} · lost ${s.lostSales} units`);
     add(`Ending cash ${money(s, 'endingCash', report.currency)}`);
+    const low = report.cashFlow;
+    const day = low?.minimumCashAt?.day;
+    add(
+      `Lowest cash ${money(low, 'minimumCash', report.currency)}${typeof low?.minimumCash === 'string' && Number.isSafeInteger(day) && day >= 0 ? ` · day ${day}` : ''}`,
+    );
     add(
       `Purchasing ${money(s, 'purchasingSpend', report.currency)} · margin ${money(s, 'grossMargin', report.currency)}`,
     );
@@ -81,18 +86,40 @@ export function resultLines(state, size) {
   for (const report of reports) {
     add();
     add(`${report.name} · SKU outcomes`);
-    for (const item of report.inventory || [])
+    for (const item of report.inventory || []) {
       add(
         `${item.sku}: sold ${item.sold}, lost ${item.lostSales}, available ${item.available}, on order ${item.onOrder}`,
       );
+      const count = (value) => (Number.isSafeInteger(value) && value >= 0 ? value : 'n/a');
+      add(
+        `Purchased ${count(item.purchasedUnits)} · received ${count(item.receivedUnits)} · stockout days ${count(item.stockoutDays)}`,
+      );
+    }
+    add();
+    add(`${report.name} · CASH-BUDGET REFUSALS`);
+    const refusals = cashBudgetRefusals(report);
+    if (refusals === null) add('Timeline unavailable; refusal counts are unknown.');
+    else if (!refusals.length) add('No cash-budget refusals recorded.');
+    else {
+      for (const refusal of refusals) {
+        const day = refusal.first.day;
+        add(`${refusal.sku}: ${refusal.attempts} blocked attempt(s)`);
+        add(
+          `First refusal${Number.isSafeInteger(day) && day >= 0 ? ` day ${day}` : ''}: whole order ${money(refusal.first, 'required', report.currency)}; cash ${money(refusal.first, 'cash', report.currency)}`,
+        );
+      }
+      add('Attempts may repeat each day, including day zero; they are not distinct orders.');
+    }
   }
   add();
   add('EXECUTED ASSUMPTIONS');
   add(
     `${sim.controls?.days ?? baseline?.days} days · ${reports[0]?.currency || 'USD'} ${sim.result?.inputs?.[0]?.startingCash ?? sim.controls?.startingCash} opening cash`,
   );
-  for (const item of sim.result?.inputs?.[0]?.products || []) {
-    add(`${item.sku}: stock ${item.initialStock}, price ${item.unitPrice}, cost ${item.unitCost}`);
+  for (const [index, item] of (sim.result?.inputs?.[0]?.products || []).entries()) {
+    add(
+      `Priority ${index + 1} · ${item.sku}: stock ${item.initialStock}, price ${item.unitPrice}, cost ${item.unitCost}`,
+    );
     add(
       `Demand ${item.demand.min}–${item.demand.max}/day · reorder ${item.reorderPoint} → ${item.targetStock} · lead ${item.leadTimeDays}d`,
     );
