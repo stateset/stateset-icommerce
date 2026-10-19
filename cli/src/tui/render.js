@@ -197,6 +197,7 @@ function staticBody(state) {
       '/ in library    Filter saved entries without reading the store',
       'Shift+D / U     Remove saved entry / undo last removal',
       'p (lab)         Edit selected SKU planning terms',
+      '[ / ] (SKUs)    Move selected SKU earlier / later in purchase priority',
       's               Run selected simulation in the lab',
       'e               Edit planning assumptions',
       'g               Set a seed directly (1–999999)',
@@ -363,7 +364,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       {
         scenarios: 'SAVED SCENARIOS · Enter load · / filter',
         history: 'RUN HISTORY · Enter inspect · / filter',
-        products: 'SELECTED SKUS · Enter edit · / filter',
+        products: 'SELECTED SKUS · PURCHASE PRIORITY',
       }[state.panel],
       'accent',
       true,
@@ -373,15 +374,16 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       history: state.library.runs,
       products: state.products,
     }[state.panel];
+    if (state.panel === 'products') put('[ earlier · ] later · Enter edit · / filter', 'muted');
     put(
       `${rows.length} / ${allRows.length} entries${state.panelQuery ? ` · / ${state.panelQuery}` : ''} · ${state.panel === 'products' ? 'd' : 'Shift+D'} remove${state.undoRemoval ? ' · Shift+U undo' : ''}`,
       'muted',
     );
-    const count = Math.max(1, Math.floor((available - 2) / 2));
+    const count = Math.max(1, Math.floor((available - (state.panel === 'products' ? 3 : 2)) / 2));
     const start = Math.max(0, state.selected - count + 1);
     rows.slice(start, start + count).forEach((item, i) => {
       put(
-        `${start + i === state.selected ? '›' : ' '} ${item.name || item.sku || item.preset}`,
+        `${start + i === state.selected ? '›' : ' '} ${state.panel === 'products' ? `${allRows.indexOf(item) + 1}. ` : ''}${item.name || item.sku || item.preset}`,
         start + i === state.selected ? 'accent' : 'ink',
       );
       put(
@@ -394,7 +396,9 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     if (!rows.length)
       put(
         state.panel === 'products'
-          ? 'Open Stock (3), select a SKU, then a to add.'
+          ? state.panelQuery
+            ? 'No SKUs match this filter. Esc clears it.'
+            : 'Open Stock (3), select a SKU, then a to add.'
           : 'No saved entries yet. w saves a scenario; successful runs save history.',
         'muted',
       );

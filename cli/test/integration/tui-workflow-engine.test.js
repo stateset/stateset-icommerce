@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { TerminalBackend } from '../../src/tui/backend.js';
 import { DEFAULT_PLANNING } from '../../src/tui/planning.js';
+import { initialState, navigate, handleKey } from '../../src/tui/model.js';
 
 test(
   'full inventory, cross-page search, related records, multi-SKU execution and owned cancellation',
@@ -98,6 +99,48 @@ test(
       );
       assert.ok(run.inputs[1].products.every((p) => p.leadTimeDays === 4));
       assert.ok(messages.some((message) => message.includes('Plan 2/2')));
+      // The UI's order is an economic input: only the first SKU can afford
+      // replenishment when the shared cash pays for exactly one whole order.
+      const priority = {
+        ...navigate(initialState(), 5),
+        panel: 'products',
+        selected: 1,
+        planning: { ...DEFAULT_PLANNING, days: 2, startingCash: '10.00' },
+        products: ['COFFEE-250G', 'MATCHA-50G'].map((sku) => ({
+          ...product,
+          sku,
+          initialStock: 0,
+          unitPrice: '2.00',
+          unitCost: '1.00',
+          demand: { min: 0, max: 0 },
+          reorderPoint: 0,
+          targetStock: 10,
+          purchasing: { minimumOrderQuantity: 1, orderMultiple: 1 },
+        })),
+      };
+      const reordered = handleKey(priority, '[', { name: '[' });
+      assert.equal(reordered.effect, undefined);
+      for (const [state, expected] of [
+        [priority, 'COFFEE-250G'],
+        [reordered.state, 'MATCHA-50G'],
+      ]) {
+        const observed = await backend.request('simulate', {
+          preset: 'baseline',
+          seed: 42,
+          controls: state.planning,
+          products: state.products,
+        });
+        assert.equal(observed.inputs[0].products[0].sku, expected);
+        const report = observed.results[0];
+        const purchases = report.timeline.filter((event) => event.type === 'purchase_order_sent');
+        assert.deepEqual(
+          purchases.map((event) => event.sku),
+          [expected],
+        );
+        assert.equal(report.summary.purchasingSpend, '10.00');
+        assert.equal(report.summary.endingCash, '0.00');
+        assert.equal(report.reconciliation.purchasingConstraintsBalanced, true);
+      }
       let started;
       const ready = new Promise((resolve) => {
         started = resolve;

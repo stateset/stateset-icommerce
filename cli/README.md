@@ -431,7 +431,10 @@ from sale price. Prices are explicit USD planning assumptions. Fractional or
 out-of-range stock must be replaced with a valid whole-unit assumption.
 Use **p** in the lab to inspect/edit selected SKUs, **Enter/e** to edit and **d**
 to remove. Up to three SKUs share the plan's cash; list order determines purchase
-priority. The 30-day maximum keeps two compared plans within the native
+priority. In the selected-SKU panel, **[ / ]** moves a SKU earlier/later in that
+order, even while filtering; the displayed number is its priority in the full
+plan. Reordering affects the next run. Saved results and replay retain their
+executed order. The 30-day maximum keeps two compared plans within the native
 180-product-day budget. With selected SKUs, **e** edits the shared horizon and
 cash; each SKU owns its other terms. Without selections, the clearly labeled
 demo recipe remains available. Comparisons apply the shock to every selected SKU.
