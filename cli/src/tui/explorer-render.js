@@ -38,8 +38,8 @@ export function explorerBody(state, size, available) {
   let headers = 3;
   if (e.mode === 'domains') {
     put(`ENGINE EXPLORER · ${DOMAINS.length - 1} domains + runtime`, 'accent', true);
-    put('Enter resources · / filter domains · : jump to a domain', 'muted');
-    put(`${rows.length} matches · stored records and tool reference`, 'muted');
+    put('Enter resources · / filter · [ ] groups · : jump', 'muted');
+    put(`${rows.length} matches · names, groups and tiers`, 'muted');
   } else if (e.mode === 'resources') {
     put(`${domain.name.toUpperCase()} · ${domain.group}`, 'accent', true);
     put(`${domain.tier} tools · T reference · d domains · b back`, 'muted');
@@ -94,7 +94,7 @@ export function explorerBody(state, size, available) {
   rows.slice(start, start + visible).forEach((row, i) => {
     let label;
     if (e.mode === 'domains')
-      label = `${fit(row.name, Math.min(25, Math.floor(size / 2)))} ${row.group} · ${row.tables.length ? 'records' : 'reference'}`;
+      label = `${fit(row.name, Math.min(25, Math.floor(size / 2)))} ${row.group} · ${row.tables.length ? 'records' : 'reference'} · ${row.tier}`;
     else if (e.mode === 'resources' || e.mode === 'links') label = row.name;
     else if (e.mode === 'tools') label = `${row.name} · ${row.permission} · ${row.tier}`;
     else label = summary(row);
@@ -104,7 +104,10 @@ export function explorerBody(state, size, available) {
       i + start === state.selected,
     );
   });
-  if (!rows.length) put('No matching records. Esc clears the filter.', 'muted');
+  if (!rows.length) {
+    const kind = { domains: 'domains', tools: 'tools', links: 'links' }[e.mode] || 'records';
+    put(`No matching ${kind}. Esc clears the filter.`, 'muted');
+  }
   if (e.mode === 'records')
     put('Stored values · no derived totals · 4096 chars/field · T tools', 'muted');
   else put(`${rows.length ? state.selected + 1 : 0}/${rows.length} · ↑ ↓ / Home End`, 'muted');

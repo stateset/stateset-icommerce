@@ -178,6 +178,7 @@ function staticBody(state) {
       '1–7 / Tab       Switch view',
       '7               Engine explorer: every domain and tool reference',
       'Explorer d / T  Domains / tool reference (documentation only)',
+      'Explorer [ / ]  Previous / next visible domain group',
       'Explorer t / b  Follow persisted links / return',
       'Explorer /      Filter domains or search the entire resource on Enter',
       '↑ ↓ / j k       Select a record or scenario',

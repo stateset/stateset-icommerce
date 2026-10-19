@@ -89,6 +89,59 @@ test('domain palette jumps are fixed and do not dispatch tools or shell commands
   assert.equal(paletteCommands('$(touch /tmp/unsafe)').length, 0);
   assert.equal(navigate(result.state, 5).view, 5);
 });
+test('domain navigation starts with commerce and group shortcuts wrap through visible results', () => {
+  let state = openExplorer(initialState());
+  const groups = ['Commerce', 'Growth', 'Operations', 'Finance', 'Agents & trust', 'Integrations'];
+  assert.deepEqual([...new Set(records(state).map((row) => row.group))], groups);
+  const selectedGroup = () => records(state)[state.selected].group;
+  assert.equal(selectedGroup(), 'Commerce');
+  for (const expected of [...groups.slice(1), groups[0]]) {
+    const result = key(state, ']');
+    assert.equal(result.effect, undefined, 'group navigation does not query or mutate a store');
+    state = result.state;
+    assert.equal(selectedGroup(), expected);
+    assert.match(render(state, 55, 20, { color: false }), new RegExp(expected));
+  }
+  state = key(state, '[').state;
+  assert.equal(selectedGroup(), 'Integrations');
+  state = key(state, '/').state;
+  state = key(state, ' Finance ').state;
+  assert.ok(records(state).length > 0);
+  assert.ok(records(state).every((row) => row.group === 'Finance'));
+  state = key(state, '', 'return').state;
+  const filtered = state;
+  assert.equal(key(state, ']').state, filtered, 'one visible group stays selected');
+  assert.equal(key(state, '[').state, filtered);
+  state = key(state, '', 'escape').state;
+  assert.equal(records(state).length, DOMAINS.length);
+});
+test('domain filtering matches labels and tiers rather than hidden tool descriptions or JSON keys', () => {
+  const filtered = (query) => {
+    const state = openExplorer(initialState());
+    return { ...state, explorer: { ...state.explorer, query } };
+  };
+  assert.deepEqual(
+    records(filtered('CUSTOMERS')).map((row) => row.id),
+    ['customers'],
+  );
+  assert.deepEqual(
+    records(filtered('general-ledger')).map((row) => row.id),
+    ['general-ledger'],
+  );
+  assert.ok(records(filtered('core')).every((row) => row.tier === 'core'));
+  assert.ok(records(filtered('reference')).every((row) => !row.tables.length));
+  for (const query of ['create_customer', 'permission']) {
+    const state = filtered(query);
+    assert.deepEqual(records(state), []);
+    assert.match(render(state, 100, 24, { color: false }), /No matching domains/);
+    assert.equal(key(state, '', 'return').state, state);
+  }
+  const resources = openExplorer(initialState(), 'customers');
+  assert.deepEqual(
+    records({ ...resources, explorer: { ...resources.explorer, query: 'name' } }),
+    [],
+  );
+});
 test('whole-resource search, pagination and related-record back navigation reject stale rows', () => {
   let state = data(resource('products', 'products'), [{ id: 'p1', name: 'House blend' }], {
     matched: 51,
