@@ -255,6 +255,9 @@ fn stress_test_concurrent_orders() {
         total_success, duration, orders_per_sec
     );
 
+    let persisted = commerce.orders().count(Default::default()).expect("Failed to count orders");
+    assert_eq!(persisted, total_success as u64, "Successful order writes must match storage");
+
     // With in-memory SQLite shared-cache mode, write lock contention is expected
     // SQLite serializes writes, so concurrent threads will experience lock conflicts
     // Just ensure some succeed - the actual success rate varies by system load
@@ -329,6 +332,12 @@ fn stress_test_concurrent_inventory_reservations() {
         .expect("Failed to get stock")
         .expect("Stock not found");
 
+    assert!(total_success > 0, "Reservation stress must perform successful writes");
+    let allocated = rust_decimal::Decimal::from(total_success);
+    assert_eq!(stock.total_on_hand, dec!(10000));
+    assert_eq!(stock.total_allocated, allocated, "Every successful reservation holds stock");
+    assert_eq!(stock.total_available, dec!(10000) - allocated);
+
     println!(
         "Final stock: on_hand={}, allocated={}, available={}",
         stock.total_on_hand, stock.total_allocated, stock.total_available
@@ -400,6 +409,17 @@ fn stress_test_mixed_workload() {
         })
         .expect("Failed to create inventory");
 
+    let customer_id = commerce
+        .customers()
+        .create(CreateCustomer {
+            email: "mixed-workload@stress.test".into(),
+            first_name: "Mixed".into(),
+            last_name: "Workload".into(),
+            ..Default::default()
+        })
+        .expect("Failed to create mixed-workload customer")
+        .id;
+
     let thread_count = 10;
 
     let start = Instant::now();
@@ -409,9 +429,11 @@ fn stress_test_mixed_workload() {
     for t in 0..thread_count / 2 {
         let commerce_clone = Arc::clone(&commerce);
         let handle = thread::spawn(move || {
+            let mut orders_created = 0_u64;
+            let mut adjustments = 0_u64;
             for i in 0..50 {
-                let _ = commerce_clone.orders().create(CreateOrder {
-                    customer_id: Uuid::new_v4().into(),
+                let order = commerce_clone.orders().create(CreateOrder {
+                    customer_id,
                     items: vec![CreateOrderItem {
                         product_id: Uuid::new_v4().into(),
                         sku: "MIXED-001".into(),
@@ -422,12 +444,19 @@ fn stress_test_mixed_workload() {
                     }],
                     ..Default::default()
                 });
-                let _ = commerce_clone.inventory().adjust(
+                if order.is_ok() {
+                    orders_created += 1;
+                }
+                let adjustment = commerce_clone.inventory().adjust(
                     "MIXED-001",
                     dec!(-1),
                     &format!("Order t{}i{}", t, i),
                 );
+                if adjustment.is_ok() {
+                    adjustments += 1;
+                }
             }
+            (orders_created, adjustments)
         });
         handles.push(handle);
     }
@@ -440,12 +469,16 @@ fn stress_test_mixed_workload() {
                 let _ = commerce_clone.orders().list(Default::default());
                 let _ = commerce_clone.inventory().get_stock("MIXED-001");
             }
+            (0_u64, 0_u64)
         });
         handles.push(handle);
     }
 
+    let (mut orders_created, mut adjustments) = (0_u64, 0_u64);
     for handle in handles {
-        handle.join().expect("Thread panicked");
+        let (orders, stock_writes) = handle.join().expect("Thread panicked");
+        orders_created += orders;
+        adjustments += stock_writes;
     }
 
     let duration = start.elapsed();
@@ -459,6 +492,12 @@ fn stress_test_mixed_workload() {
         .expect("Failed to get stock")
         .expect("Stock not found");
 
+    assert!(orders_created > 0, "Mixed workload must create real orders");
+    assert!(adjustments > 0, "Mixed workload must change inventory");
+    assert_eq!(order_count, orders_created);
+    assert_eq!(stock.total_allocated, rust_decimal::Decimal::from(orders_created));
+    assert_eq!(stock.total_on_hand, dec!(100000) - rust_decimal::Decimal::from(adjustments));
+    assert_eq!(stock.total_available + stock.total_allocated, stock.total_on_hand);
     println!("Final state: {} orders, stock on_hand={}", order_count, stock.total_on_hand);
 }
 

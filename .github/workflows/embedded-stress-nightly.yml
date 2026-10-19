@@ -1,0 +1,99 @@
+name: Embedded Engine Nightly Stress
+
+on:
+  schedule:
+    - cron: '29 4 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/embedded-stress-nightly.yml'
+      - 'scripts/ci/nightly_stress*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: embedded-stress-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  contracts:
+    name: Nightly stress runner contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+      - run: node --test scripts/ci/nightly_stress.test.mjs
+
+  stress:
+    name: Ignored embedded-engine stress tests
+    needs: contracts
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+        with:
+          key: embedded-stress
+      - name: Run every ignored stress test and preserve acceptance evidence
+        run: node scripts/ci/nightly_stress.mjs
+      - name: Upload stress evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: embedded-stress-${{ github.run_attempt }}
+          path: artifacts/nightly-stress
+          if-no-files-found: error
+          retention-days: 30
+
+  report:
+    name: Nightly stress tracking issue
+    needs: [contracts, stress]
+    if: always() && github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+      - name: Download available stress evidence
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: embedded-stress-${{ github.run_attempt }}
+          path: artifacts/nightly-stress
+      - uses: actions/github-script@v8
+        env:
+          STRESS_RESULT: ${{ needs.stress.result }}
+        with:
+          script: |
+            const { pathToFileURL } = require('node:url');
+            const path = require('node:path');
+            const { reportStress } = await import(pathToFileURL(path.resolve('scripts/ci/nightly_stress.mjs')).href);
+            await reportStress({
+              github, context, core,
+              directory: path.resolve('artifacts/nightly-stress'),
+              sha: context.sha,
+              result: process.env.STRESS_RESULT,
+              runUrl: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}/attempts/${process.env.GITHUB_RUN_ATTEMPT}`,
+            });
