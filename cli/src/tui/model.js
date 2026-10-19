@@ -5,6 +5,8 @@ import {
   planningEditor,
   constrainedCash,
 } from './planning.js';
+import { editText } from './editor.js';
+import { graphemes } from './text.js';
 import { PRODUCT_FIELDS, productEditor, productFromDraft, planningProducts } from './basket.js';
 
 export const VIEWS = ['Overview', 'Orders', 'Inventory', 'Customers', 'Payments', 'Simulation lab'];
@@ -232,32 +234,42 @@ export function handleKey(state, text, key = {}) {
     if (name === 'escape') next.input = null;
     else if (key.ctrl && name === 's') save();
     else if (name === 'return' && editor.field === fields.length - 1) save();
-    else if (name === 'return' || name === 'tab' || name === 'up' || name === 'down')
+    else if (name === 'return' || name === 'tab' || name === 'up' || name === 'down') {
+      const fieldIndex =
+        (editor.field + (name === 'up' || key.shift ? -1 : 1) + fields.length) % fields.length;
       next.input = {
         ...editor,
-        field:
-          (editor.field + (name === 'up' || key.shift ? -1 : 1) + fields.length) % fields.length,
+        field: fieldIndex,
+        cursor: graphemes(editor.draft[fields[fieldIndex].key]).length,
       };
-    else if (key.ctrl && name === 'u')
-      next.input = { ...editor, draft: { ...editor.draft, [field.key]: '' }, error: null };
-    else if (name === 'backspace')
-      next.input = {
-        ...editor,
-        draft: { ...editor.draft, [field.key]: editor.draft[field.key].slice(0, -1) },
-        error: null,
-      };
-    else if (text && !key.ctrl && !key.meta && /^[0-9.]+$/.test(text))
-      next.input = {
-        ...editor,
-        draft: { ...editor.draft, [field.key]: (editor.draft[field.key] + text).slice(0, 12) },
-        error: null,
-      };
+    } else {
+      const edited = editText(editor.draft[field.key], editor.cursor, text, key, {
+        limit: 12,
+        accept: (s) => /^[0-9.]+$/.test(s),
+      });
+      if (edited)
+        next.input = {
+          ...editor,
+          cursor: edited.cursor,
+          draft: { ...editor.draft, [field.key]: edited.text },
+          error: edited.changed ? null : editor.error,
+        };
+    }
     return { state: next };
   }
   if (state.input) {
     if (name === 'escape') next.input = null;
     else if (name === 'return') {
-      if (state.input.kind === 'search' && state.panel) {
+      if (state.input.kind === 'seed') {
+        if (!/^[1-9]\d{0,5}$/.test(state.input.text))
+          return {
+            state: {
+              ...state,
+              input: { ...state.input, error: 'Seed must be an integer from 1 to 999999' },
+            },
+          };
+        next.seed = Number(state.input.text);
+      } else if (state.input.kind === 'search' && state.panel) {
         next.panelQuery = state.input.text;
         next.selected = 0;
       } else if (state.input.kind === 'search') {
@@ -290,21 +302,24 @@ export function handleKey(state, text, key = {}) {
           ),
         ),
       };
-    else if (name === 'backspace')
-      next.input = {
-        ...state.input,
-        selected: 0,
-        text: [...state.input.text].slice(0, -1).join(''),
-      };
-    else if (text && !key.ctrl && !key.meta && !/\p{Cc}/u.test(text))
-      next.input = {
-        ...state.input,
-        selected: 0,
-        text: (state.input.text + text).slice(
-          0,
-          ['export', 'import'].includes(state.input.kind) ? 1024 : 120,
-        ),
-      };
+    else {
+      const edited = editText(state.input.text, state.input.cursor, text, key, {
+        limit: ['export', 'import'].includes(state.input.kind)
+          ? 1024
+          : state.input.kind === 'seed'
+            ? 6
+            : 120,
+        accept: state.input.kind === 'seed' ? (s) => /^\d+$/.test(s) : undefined,
+      });
+      if (edited)
+        next.input = {
+          ...state.input,
+          text: edited.text,
+          cursor: edited.cursor,
+          selected: edited.changed ? 0 : state.input.selected,
+          error: edited.changed ? null : state.input.error,
+        };
+    }
     if (state.input.kind === 'search') {
       next.selected = 0;
       if (next.view === 5 && !next.panel && !next.input)
@@ -317,11 +332,10 @@ export function handleKey(state, text, key = {}) {
       effect = 'refresh';
     return { state: next, effect };
   }
-  if (name === 'escape' && state.detail)
-    return {
-      state: { ...state, detail: false, detailOffset: 0, focusRecord: null, focusTarget: null },
-    };
-  if (state.help && !['escape'].includes(name) && !['q', '?'].includes(text)) {
+  if (state.help) {
+    if (name === 'escape' || text === '?')
+      return { state: { ...state, help: false, contentOffset: 0 } };
+    if (text === 'q') return { state, effect: 'quit' };
     if (['up', 'down', 'pageup', 'pagedown', 'home', 'end'].includes(name))
       next.contentOffset =
         name === 'home'
@@ -336,6 +350,10 @@ export function handleKey(state, text, key = {}) {
               );
     return { state: next };
   }
+  if (name === 'escape' && state.detail)
+    return {
+      state: { ...state, detail: false, detailOffset: 0, focusRecord: null, focusTarget: null },
+    };
   if (name === 'escape' && state.panelQuery && state.panel)
     return { state: { ...state, panelQuery: '', selected: 0 } };
   if (name === 'escape' && state.panel)
@@ -376,6 +394,8 @@ export function handleKey(state, text, key = {}) {
   else if (/^[1-6]$/.test(text || '')) next = navigate(state, Number(text) - 1);
   else if (text === 'r') effect = 'refresh';
   else if (text === 'c' && state.sim.running) effect = 'cancel';
+  else if (text === 'g' && state.view === 5 && !state.sim.running)
+    next.input = { kind: 'seed', text: String(state.seed) };
   else if (text === 'i' && state.view === 5 && !state.sim.running)
     next.input = { kind: 'import', text: '' };
   else if (text === 'U' && state.undoRemoval && !state.sim.running) effect = 'undo-removal';
@@ -519,6 +539,7 @@ export function paletteCommands(query = '', state) {
           ...(!state.sim.running
             ? [
                 { label: 'Edit planning assumptions', key: 'e' },
+                { label: 'Set simulation seed', key: 'g' },
                 { label: 'Selected SKU terms', key: 'p' },
                 { label: 'Save scenario', key: 'w' },
                 { label: 'Saved scenarios', key: 'l' },

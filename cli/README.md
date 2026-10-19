@@ -454,6 +454,21 @@ actions when they are available. Background refreshes preserve the lab's chosen
 scenario and existing record selection; searches entered during a refresh queue
 the latest request instead of requiring re-entry.
 
+Input fields support **Left/Right**, **Home/End** (or **Ctrl+A/E**),
+**Backspace/Delete**, **Ctrl+U** to clear and **Ctrl+K** to remove text after the
+cursor. Edits insert at the cursor; numeric values still validate atomically
+before saving. Unicode deletion keeps combining accents, flags and emoji
+families intact. Long paths scroll within the prompt so the cursor and nearby
+text stay visible in a narrow split pane. Wrapped descriptions prefer word
+boundaries and retain structured-report indentation.
+
+Press **g** in the lab, or choose **Set simulation seed** in the command palette,
+to enter a seed from 1 to 999999 directly. **Enter** accepts a valid seed;
+**Esc** cancels. Existing results keep their executed seed, and **Shift+R** still
+replays those original inputs. Home and Help scroll positions stay bounded after
+**End** and a resize, so **Up** immediately scrolls back. Closing Help restores
+the underlying report or panel.
+
 ### Interactive Chat
 
 ```bash
