@@ -3,7 +3,8 @@ import { TerminalBackend } from './backend.js';
 import { initialState, handleKey, records, PRESETS } from './model.js';
 import { runRecord, scenarioSettings } from './workspace.js';
 import { productEditor } from './basket.js';
-import { render, detailLimit, panelLimit } from './render.js';
+import { readScenarioExport } from './import.js';
+import { render, detailLimit, panelLimit, importReviewLimit } from './render.js';
 
 export async function startTerminal({
   dbPath = null,
@@ -24,7 +25,6 @@ export async function startTerminal({
       state.notice = error.message;
     }
   }
-  let ticker;
   const wasRaw = Boolean(input.isRaw);
   let finish;
   const done = new Promise((resolve) => {
@@ -32,6 +32,17 @@ export async function startTerminal({
   });
   const draw = () => {
     if (closed || suspended) return;
+    if (state.input?.kind === 'import-review')
+      state = {
+        ...state,
+        input: {
+          ...state.input,
+          offset: Math.min(
+            state.input.offset,
+            importReviewLimit(state.input.preview, output.columns || 80, output.rows || 24),
+          ),
+        },
+      };
     if (state.panel === 'results')
       state = {
         ...state,
@@ -80,6 +91,7 @@ export async function startTerminal({
     input.pause();
     try {
       await backend.close();
+      if (workspace) await workspace.tail;
     } finally {
       finish();
     }
@@ -127,16 +139,33 @@ export async function startTerminal({
         refreshAgain = true;
         return;
       }
-      if (!closed)
+      if (!closed) {
+        const previous = records(state)[state.selected];
+        const nextRows = records({ ...state, data });
+        const identity = previous?.id || previous?.sku;
+        const matched = identity
+          ? nextRows.findIndex((item) => (item.id || item.sku) === identity)
+          : -1;
+        const selected =
+          state.view === 5 || state.panel
+            ? state.selected
+            : matched >= 0
+              ? matched
+              : Math.min(state.selected, Math.max(0, nextRows.length - 1));
         state = {
           ...state,
           data,
           pages: { ...state.pages, ...data.pages },
           focusRecord: data.focusRecord || null,
           error: null,
-          selected: 0,
+          selected,
         };
+      }
     } catch (error) {
+      if (!closed && JSON.stringify(request) !== JSON.stringify(snapshotInputs())) {
+        refreshAgain = true;
+        return;
+      }
       if (!closed)
         state = { ...state, error: error.message, pages: state.data?.pages || state.pages };
     } finally {
@@ -154,7 +183,9 @@ export async function startTerminal({
     if (closed || state.view !== 5 || state.sim.running) return;
     const preset = replay
       ? { id: state.sim.presetId, name: state.sim.preset }
-      : records({ ...state, panel: null })[state.selected];
+      : state.panel === 'results'
+        ? PRESETS.find((p) => p.id === state.selectedPreset)
+        : records({ ...state, panel: null })[state.selected];
     if (!preset) return;
     const seed = replay ? state.sim.seed : state.seed;
     const controls = { ...(replay ? state.sim.controls : state.planning) };
@@ -162,6 +193,7 @@ export async function startTerminal({
     const previous = { ...state.sim };
     state = {
       ...state,
+      notice: '',
       sim: {
         ...previous,
         running: true,
@@ -220,9 +252,25 @@ export async function startTerminal({
     }
   };
   const persist = async (kind) => {
+    state = {
+      ...state,
+      notice: {
+        save: 'Saving scenario…',
+        export: 'Exporting run…',
+        import: 'Reading scenario export…',
+      }[kind],
+    };
     try {
       if (!workspace) throw new Error('No workspace configured');
-      if (kind === 'save') {
+      if (kind === 'import') {
+        const preview = await readScenarioExport(state.pendingText);
+        if (!closed)
+          state = {
+            ...state,
+            input: { kind: 'import-review', preview, offset: 0 },
+            notice: 'Import ready for review; nothing ran.',
+          };
+      } else if (kind === 'save') {
         const preset = PRESETS.find((p) => p.id === state.selectedPreset);
         if (!preset) throw new Error('Choose a scenario first');
         const library = await workspace.saveScenario(state.pendingText, {
@@ -249,7 +297,7 @@ export async function startTerminal({
     const item = records(state)[state.selected];
     if (!item) return;
     if (state.panel === 'products') {
-      state = { ...state, input: productEditor(item, state.selected) };
+      state = { ...state, input: productEditor(item, state.products.indexOf(item)) };
       return;
     }
     const settings = scenarioSettings(item);
@@ -294,6 +342,7 @@ export async function startTerminal({
           'relation',
           'query',
           'detail',
+          'selected',
           'focusRecord',
           'focusTarget',
         ].map((k) => [k, state[k]]),
@@ -351,6 +400,36 @@ export async function startTerminal({
     }
     await refresh();
   };
+  const undoRemoval = async () => {
+    const undo = state.undoRemoval;
+    if (!undo) return;
+    try {
+      let library = state.library,
+        products = state.products;
+      if (undo.kind === 'products') {
+        if (products.length >= 3 || products.some((p) => p.sku === undo.item.sku))
+          throw new Error('SKU cannot be restored; undo kept available');
+        products = [...products];
+        products.splice(Math.min(undo.index, products.length), 0, undo.item);
+      } else {
+        if (!workspace) throw new Error('No workspace configured');
+        library = await workspace.restoreEntry(undo.kind, undo.item);
+      }
+      if (!closed)
+        state = {
+          ...state,
+          library,
+          products,
+          undoRemoval: state.undoRemoval === undo ? null : state.undoRemoval,
+          selected: 0,
+          panelQuery: '',
+          notice: 'Entry restored',
+        };
+    } catch (error) {
+      if (!closed) state = { ...state, notice: error.message };
+    }
+    draw();
+  };
   function onKey(text, key) {
     if (key?.ctrl && key.name === 'z') {
       suspend();
@@ -370,7 +449,24 @@ export async function startTerminal({
       return;
     }
     if (result.effect === 'cancel') backend.cancel('simulate');
-    if (result.effect === 'save' || result.effect === 'export') void persist(result.effect);
+    if (['save', 'export', 'import'].includes(result.effect)) void persist(result.effect);
+    if (result.effect === 'apply-import') {
+      const settings = state.input.preview.settings;
+      state = {
+        ...state,
+        view: 5,
+        input: null,
+        panel: null,
+        panelQuery: '',
+        planning: settings.controls,
+        products: settings.products,
+        seed: settings.seed,
+        selectedPreset: settings.presetId,
+        selected: PRESETS.findIndex((p) => p.id === settings.presetId),
+        notice: 'Imported assumptions only. s runs privately; w saves.',
+      };
+    }
+    if (result.effect === 'undo-removal') void undoRemoval();
     if (result.effect === 'open-entry') {
       try {
         openEntry();
@@ -380,12 +476,19 @@ export async function startTerminal({
     }
     if (result.effect === 'remove-entry') {
       const item = records(state)[state.selected];
+      const kind = state.panel === 'history' ? 'runs' : 'scenarios';
       if (item && workspace)
         void workspace
-          .removeEntry(state.panel === 'history' ? 'runs' : 'scenarios', item.id)
+          .removeEntry(kind, item.id)
           .then((library) => {
             if (!closed) {
-              state = { ...state, library, selected: 0, notice: 'Entry removed' };
+              state = {
+                ...state,
+                library,
+                selected: 0,
+                undoRemoval: { kind, item },
+                notice: 'Entry removed. Shift+U restores it.',
+              };
               draw();
             }
           })
@@ -414,7 +517,7 @@ export async function startTerminal({
   signals.on('SIGTSTP', suspend);
   signals.on('SIGCONT', resume);
   signals.on('exit', onExit);
-  ticker = setInterval(() => {
+  const ticker = setInterval(() => {
     if (state.sim.running) draw();
   }, 250);
   ticker.unref();

@@ -89,6 +89,8 @@ export function initialState(source = 'Private demo') {
     back: [],
     panel: null,
     panelOffset: 0,
+    panelQuery: '',
+    undoRemoval: null,
     products: [],
     library: { scenarios: [], runs: [] },
     contentOffset: 0,
@@ -100,10 +102,13 @@ export function initialState(source = 'Private demo') {
 }
 
 export function records(state) {
-  if (state.panel === 'scenarios') return state.library.scenarios;
-  if (state.panel === 'history') return state.library.runs;
-  if (state.panel === 'products') return state.products;
+  const library = {
+    scenarios: state.library.scenarios,
+    history: state.library.runs,
+    products: state.products,
+  }[state.panel];
   const rows =
+    library ||
     [
       [],
       state.data?.orders,
@@ -111,15 +116,34 @@ export function records(state) {
       state.data?.customers,
       state.data?.payments,
       PRESETS,
-    ][state.view] || [];
+    ][state.view] ||
+    [];
   const query = (
     state.input?.kind === 'search'
       ? state.input.text
-      : state.data?.queries?.[pageKey(state.view)] === state.query
-        ? ''
-        : state.query
+      : library
+        ? state.panelQuery
+        : state.data?.queries?.[pageKey(state.view)] === state.query
+          ? ''
+          : state.query
   ).toLocaleLowerCase();
-  return rows.filter((row) => JSON.stringify(row).toLocaleLowerCase().includes(query));
+  return rows.filter((row) =>
+    JSON.stringify(
+      library
+        ? {
+            name: row.name,
+            preset: row.preset,
+            sku: row.sku,
+            seed: row.seed,
+            createdAt: row.createdAt,
+            controls: row.controls,
+            products: row.products,
+          }
+        : row,
+    )
+      .toLocaleLowerCase()
+      .includes(query),
+  );
 }
 
 export function pageKey(view) {
@@ -144,6 +168,7 @@ export function navigate(state, view) {
     input: null,
     panel: null,
     panelOffset: 0,
+    panelQuery: '',
     relation: null,
   };
 }
@@ -155,6 +180,28 @@ export function handleKey(state, text, key = {}) {
   let effect;
   const name = key.name;
   if (key.ctrl && name === 'c') return { state, effect: 'quit' };
+  if (state.input?.kind === 'import-review') {
+    if (name === 'escape') {
+      next.input = null;
+      next.notice = 'Import canceled; assumptions unchanged';
+    } else if (name === 'return') effect = 'apply-import';
+    else if (['up', 'down', 'pageup', 'pagedown', 'home', 'end'].includes(name))
+      next.input = {
+        ...state.input,
+        offset:
+          name === 'home'
+            ? 0
+            : name === 'end'
+              ? Number.MAX_SAFE_INTEGER
+              : Math.max(
+                  0,
+                  state.input.offset +
+                    (['up', 'pageup'].includes(name) ? -1 : 1) *
+                      (['pageup', 'pagedown'].includes(name) ? 8 : 1),
+                ),
+      };
+    return { state: next, effect };
+  }
   if (state.input?.kind === 'planning' || state.input?.kind === 'product') {
     const editor = state.input,
       fields =
@@ -210,29 +257,25 @@ export function handleKey(state, text, key = {}) {
   if (state.input) {
     if (name === 'escape') next.input = null;
     else if (name === 'return') {
-      if (state.input.kind === 'search') {
+      if (state.input.kind === 'search' && state.panel) {
+        next.panelQuery = state.input.text;
+        next.selected = 0;
+      } else if (state.input.kind === 'search') {
         next.query = state.input.text;
         next.selected = 0;
         const field = pageKey(state.view);
-        if (field && state.loading)
-          return {
-            state: {
-              ...state,
-              input: null,
-              notice: 'Wait for the current refresh, then search again',
-            },
-          };
         if (field) {
           next.queries = { ...state.queries, [field]: state.input.text };
           next.pages = { ...state.pages, [field]: 0 };
           effect = 'refresh';
         }
-      } else if (state.input.kind === 'save' || state.input.kind === 'export') {
+      } else if (['save', 'export', 'import'].includes(state.input.kind)) {
         next.pendingText = state.input.text;
         effect = state.input.kind;
       } else {
-        const command = paletteCommands(state.input.text)[state.input.selected || 0];
+        const command = paletteCommands(state.input.text, state)[state.input.selected || 0];
         if (command?.view !== undefined) next = navigate(next, command.view);
+        else if (command?.key) return handleKey({ ...state, input: null }, command.key, {});
         else if (command) effect = command.effect;
       }
       next.input = null;
@@ -242,7 +285,7 @@ export function handleKey(state, text, key = {}) {
         selected: Math.max(
           0,
           Math.min(
-            paletteCommands(state.input.text).length - 1,
+            paletteCommands(state.input.text, state).length - 1,
             (state.input.selected || 0) + (name === 'up' ? -1 : 1),
           ),
         ),
@@ -254,8 +297,19 @@ export function handleKey(state, text, key = {}) {
         text: [...state.input.text].slice(0, -1).join(''),
       };
     else if (text && !key.ctrl && !key.meta && !/\p{Cc}/u.test(text))
-      next.input = { ...state.input, selected: 0, text: (state.input.text + text).slice(0, 120) };
-    if (state.input.kind === 'search') next.selected = 0;
+      next.input = {
+        ...state.input,
+        selected: 0,
+        text: (state.input.text + text).slice(
+          0,
+          ['export', 'import'].includes(state.input.kind) ? 1024 : 120,
+        ),
+      };
+    if (state.input.kind === 'search') {
+      next.selected = 0;
+      if (next.view === 5 && !next.panel && !next.input)
+        next.selectedPreset = records(next)[0]?.id || next.selectedPreset;
+    }
     if (
       (state.relation || state.focusTarget) &&
       (next.relation !== state.relation || next.focusTarget !== state.focusTarget)
@@ -282,6 +336,8 @@ export function handleKey(state, text, key = {}) {
               );
     return { state: next };
   }
+  if (name === 'escape' && state.panelQuery && state.panel)
+    return { state: { ...state, panelQuery: '', selected: 0 } };
   if (name === 'escape' && state.panel)
     return {
       state: {
@@ -308,8 +364,11 @@ export function handleKey(state, text, key = {}) {
     next.help = !state.help;
     next.contentOffset = 0;
   } else if ((key.ctrl && name === 'p') || text === ':') next.input = { kind: 'palette', text: '' };
-  else if (text === '/') {
-    next.input = { kind: 'search', text: state.query };
+  else if (
+    text === '/' &&
+    (!state.panel || ['scenarios', 'history', 'products'].includes(state.panel))
+  ) {
+    next.input = { kind: 'search', text: state.panel ? state.panelQuery : state.query };
     next.detail = false;
     next.focusRecord = null;
     next.focusTarget = null;
@@ -317,6 +376,9 @@ export function handleKey(state, text, key = {}) {
   else if (/^[1-6]$/.test(text || '')) next = navigate(state, Number(text) - 1);
   else if (text === 'r') effect = 'refresh';
   else if (text === 'c' && state.sim.running) effect = 'cancel';
+  else if (text === 'i' && state.view === 5 && !state.sim.running)
+    next.input = { kind: 'import', text: '' };
+  else if (text === 'U' && state.undoRemoval && !state.sim.running) effect = 'undo-removal';
   else if (text === 'w' && state.view === 5 && !state.sim.running)
     next.input = { kind: 'save', text: '' };
   else if (text === 'x' && state.view === 5 && state.sim.result)
@@ -324,6 +386,7 @@ export function handleKey(state, text, key = {}) {
   else if (['h', 'l', 'p'].includes(text) && state.view === 5 && !state.sim.running) {
     next.panel = { h: 'history', l: 'scenarios', p: 'products' }[text];
     next.selected = 0;
+    next.panelQuery = '';
   } else if (
     text === 'a' &&
     state.view === 2 &&
@@ -333,7 +396,11 @@ export function handleKey(state, text, key = {}) {
     next.input = productEditor(records(state)[state.selected]);
   else if (text === 'D' && ['history', 'scenarios'].includes(state.panel)) effect = 'remove-entry';
   else if (text === 'd' && state.panel === 'products' && !state.sim.running) {
-    next.products = state.products.filter((_, i) => i !== state.selected);
+    const item = records(state)[state.selected];
+    if (item) {
+      next.undoRemoval = { kind: 'products', item, index: state.products.indexOf(item) };
+      next.products = state.products.filter((p) => p.sku !== item.sku);
+    }
     next.selected = Math.max(0, state.selected - 1);
   } else if (
     text === 'o' &&
@@ -359,7 +426,10 @@ export function handleKey(state, text, key = {}) {
   else if (text === 'e' && state.view === 5 && !state.sim.running)
     next.input =
       state.panel === 'products' && records(state)[state.selected]
-        ? productEditor(records(state)[state.selected], state.selected)
+        ? productEditor(
+            records(state)[state.selected],
+            state.products.indexOf(records(state)[state.selected]),
+          )
         : planningEditor(state.planning);
   else if (text === 'v' && state.view === 5 && state.sim.result) {
     next.detail = !state.detail;
@@ -428,8 +498,8 @@ export function handleKey(state, text, key = {}) {
       effect = 'refresh';
     }
   }
-  if (state.view === 5 && !state.panel && !state.input)
-    next.selectedPreset = PRESETS[next.selected]?.id || state.selectedPreset;
+  if (next.view === 5 && !next.panel && !next.input)
+    next.selectedPreset = records(next)[next.selected]?.id || state.selectedPreset;
   if (
     (state.relation || state.focusTarget) &&
     (next.relation !== state.relation || next.focusTarget !== state.focusTarget)
@@ -438,11 +508,32 @@ export function handleKey(state, text, key = {}) {
   return { state: next, effect };
 }
 
-export function paletteCommands(query = '') {
+export function paletteCommands(query = '', state) {
   return [
     ...VIEWS.map((label, view) => ({ label, view })),
     { label: 'Refresh snapshot', effect: 'refresh' },
     { label: 'Keyboard help', effect: 'help' },
     { label: 'Quit', effect: 'quit' },
+    ...(state?.view === 5
+      ? [
+          ...(!state.sim.running
+            ? [
+                { label: 'Edit planning assumptions', key: 'e' },
+                { label: 'Selected SKU terms', key: 'p' },
+                { label: 'Save scenario', key: 'w' },
+                { label: 'Saved scenarios', key: 'l' },
+                { label: 'Run history', key: 'h' },
+                { label: 'Import scenario from JSON', key: 'i' },
+              ]
+            : [{ label: 'Cancel active simulation', key: 'c' }]),
+          ...(state.sim.result
+            ? [
+                { label: 'Compare last result', key: 'f' },
+                { label: 'Export successful run', key: 'x' },
+                ...(!state.sim.running ? [{ label: 'Replay successful run', key: 'R' }] : []),
+              ]
+            : []),
+        ]
+      : []),
   ].filter((c) => c.label.toLowerCase().includes(query.toLowerCase()));
 }

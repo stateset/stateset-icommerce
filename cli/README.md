@@ -432,6 +432,28 @@ interrupted save may leave `workspace.lock`; inspect it and remove that lock
 only after confirming no other TUI writer is active. Workspace writes are local
 planning artifacts, independent of the commerce database and `--apply`.
 
+Use **i** in the lab (or **: → Import scenario from JSON**) to bring an exported
+run's assumptions back into planning. Choose a local JSON filename, review the
+preset, seed, cash, SKU demand and purchasing terms, then press **Enter** to
+load them or **Esc** to cancel. The preview scrolls with arrows/PgUp/PgDn and
+Home/End. Import validates the export format, kernel version, bounded inputs
+and input digest; it rejects oversized files, directories and symlinks. It
+loads assumptions only: file-provided results are discarded, and nothing runs
+or enters the saved library automatically. **s** executes through the local
+engine; **w** saves separately. The digest checks consistency, not authenticity.
+
+In the scenario library, run history and selected-SKU list, **/** filters locally
+by name, SKU, seed or assumptions. **Esc** cancels a typed preview; after
+committing, **Esc** clears the filter before leaving the panel. Entries show
+their horizon, opening cash, seed and SKU count (or cost, demand and lead time
+for SKU terms). **Shift+U** restores the last removal from this session, including
+a removed SKU's original terms and purchase priority. Undo preserves entries
+saved by other windows and refuses to replace existing data if capacity is full.
+The command palette now includes planning, library, import, export and replay
+actions when they are available. Background refreshes preserve the lab's chosen
+scenario and existing record selection; searches entered during a refresh queue
+the latest request instead of requiring re-entry.
+
 ### Interactive Chat
 
 ```bash
