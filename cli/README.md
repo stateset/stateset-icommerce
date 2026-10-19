@@ -365,7 +365,7 @@ catalog/variants, carts, returns/refunds, shipments, subscriptions, promotions,
 purchasing, manufacturing, WMS, quality/traceability, B2B, the finance suite,
 and persisted agent/audit/integration records.
 
-Explorer records use read-only SELECTs against an explicit table allowlist on the
+Explorer records use read-only queries against an explicit table allowlist on the
 same private engine snapshot. **/** searches the entire resource on Enter (literal
 wildcards), **n/p** pages in batches of 50, **o** toggles recent/name ordering with
 stable identifier ties, and **Enter** opens scrollable stored fields. **t** follows
