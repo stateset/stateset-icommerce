@@ -26,7 +26,7 @@ Usage:
 Keys: 1–6 / Tab views · arrows / j k select · Enter details · / search
       n / p pages · r refresh · : command palette · ? help · q quit
 Lab:  e assumptions · p selected SKUs · f results · w save · l library · h history
-      x export JSON · c cancel run · Shift+R replay · + / - seed
+      x export JSON · i import assumptions · Shift+U undo removal · c cancel run · Shift+R replay · + / - seed
 Stock: a adds selected SKU to a private plan; cost/demand/supplier terms are explicit.
 Browse: / search entire view on Enter · o sort · t related records · u customer · b back
 All simulations use private native stores. History retains 20 runs per source.

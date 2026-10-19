@@ -191,6 +191,16 @@ export class TerminalWorkspace {
       return data;
     });
   }
+  restoreEntry(kind, item) {
+    if (!['scenarios', 'runs'].includes(kind)) throw new Error('Invalid library kind');
+    return this.update((data) => {
+      if (data[kind].some((entry) => entry.id === item.id))
+        throw new Error('Entry already restored');
+      if (data[kind].length >= 20) throw new Error('Library is full; undo kept available');
+      data[kind].unshift(item);
+      return data;
+    });
+  }
   async exportRun(destination, record) {
     const target = path.resolve(destination);
     const content =

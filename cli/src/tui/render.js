@@ -1,4 +1,4 @@
-import { VIEWS, records, pageKey, paletteCommands } from './model.js';
+import { VIEWS, records, pageKey, paletteCommands, PRESETS } from './model.js';
 import { clean, fit, width, wrap } from './text.js';
 import { PLANNING_FIELDS } from './planning.js';
 import { PRODUCT_FIELDS } from './basket.js';
@@ -99,6 +99,51 @@ export function resultLines(state, size) {
   add('Conditional projections, not validated forecasts. Esc returns to the lab.');
   return lines;
 }
+export function importReviewLines(preview, size) {
+  const { settings } = preview,
+    lines = [];
+  const add = (line) => lines.push(...wrap(line, size));
+  add('IMPORT SCENARIO · REVIEW ASSUMPTIONS');
+  add(`${preview.filename} · exported by CLI ${preview.cliVersion}`);
+  add('File-provided results are discarded; digest is not a signature.');
+  add(`${PRESETS.find((p) => p.id === settings.presetId)?.name} · seed ${settings.seed}`);
+  add(`${settings.controls.days} days · USD ${settings.controls.startingCash} opening cash`);
+  const products = settings.products.length
+    ? settings.products
+    : [
+        {
+          sku: 'COFFEE-250G (demo recipe)',
+          initialStock: settings.controls.initialStock,
+          unitPrice: '12.50',
+          unitCost: '5.25',
+          demand: { min: 2, max: 5 },
+          reorderPoint: settings.controls.reorderPoint,
+          targetStock: settings.controls.targetStock,
+          leadTimeDays: settings.controls.leadTimeDays,
+        },
+      ];
+  for (const p of products) {
+    add(`${p.sku}: stock ${p.initialStock}, price ${p.unitPrice}, cost ${p.unitCost}`);
+    add(
+      `Demand ${p.demand.min}–${p.demand.max}/day · reorder ${p.reorderPoint} → ${p.targetStock} · lead ${p.leadTimeDays}d`,
+    );
+    if (p.purchasing)
+      add(
+        `Supplier minimum ${p.purchasing.minimumOrderQuantity} · case pack ${p.purchasing.orderMultiple}`,
+      );
+  }
+  add('Enter loads assumptions only.');
+  add('Run and save are separate actions.');
+  return lines;
+}
+
+export function importReviewLimit(preview, columns = 80, rows = 24) {
+  const w = Math.max(1, Math.min(220, columns - 1));
+  const size = Math.max(1, w - (w >= 110 ? 22 : 2));
+  const visible = Math.max(1, Math.min(100, rows - 1) - 9);
+  return Math.max(0, importReviewLines(preview, size).length - visible);
+}
+
 export function panelLimit(state, columns = 80, rows = 24) {
   const w = Math.max(1, Math.min(220, columns - 1));
   const size = Math.max(1, w - (w >= 110 ? 22 : 2));
@@ -153,7 +198,17 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   const sidebar = w >= 110;
   const size = w - (sidebar ? 22 : 2);
   const available = Math.max(1, h - 8);
-  if (state.input?.kind === 'planning' || state.input?.kind === 'product') {
+  if (state.input?.kind === 'import-review') {
+    const lines = importReviewLines(state.input.preview, size),
+      visible = Math.max(1, available - 1);
+    const offset = Math.min(state.input.offset, Math.max(0, lines.length - visible));
+    put(
+      `IMPORT PREVIEW · ${offset + 1}–${Math.min(lines.length, offset + visible)}/${lines.length} · ↑ ↓ scroll`,
+      'accent',
+      true,
+    );
+    lines.slice(offset, offset + visible).forEach((line) => put(line));
+  } else if (state.input?.kind === 'planning' || state.input?.kind === 'product') {
     const editor = state.input;
     const fields =
       editor.kind === 'product'
@@ -199,24 +254,36 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     const rows = records(state);
     put(
       {
-        scenarios: 'SAVED SCENARIOS · Enter load · Shift+D remove',
-        history: 'RUN HISTORY · Enter inspect · Shift+D remove',
-        products: 'SELECTED SKUS · Enter edit · d remove · Esc back',
+        scenarios: 'SAVED SCENARIOS · Enter load · / filter',
+        history: 'RUN HISTORY · Enter inspect · / filter',
+        products: 'SELECTED SKUS · Enter edit · / filter',
       }[state.panel],
       'accent',
       true,
     );
-    if (state.panel === 'products')
-      put('Up to 3 SKUs · list order sets purchase priority', 'muted');
-    const start = Math.max(0, state.selected - Math.max(1, available - 3) + 1);
-    rows
-      .slice(start, start + Math.max(1, available - 3))
-      .forEach((item, i) =>
-        put(
-          `${start + i === state.selected ? '›' : ' '} ${item.name || item.sku || item.preset} ${item.createdAt || ''}`,
-          start + i === state.selected ? 'accent' : 'ink',
-        ),
+    const allRows = {
+      scenarios: state.library.scenarios,
+      history: state.library.runs,
+      products: state.products,
+    }[state.panel];
+    put(
+      `${rows.length} / ${allRows.length} entries${state.panelQuery ? ` · / ${state.panelQuery}` : ''} · ${state.panel === 'products' ? 'd' : 'Shift+D'} remove${state.undoRemoval ? ' · Shift+U undo' : ''}`,
+      'muted',
+    );
+    const count = Math.max(1, Math.floor((available - 2) / 2));
+    const start = Math.max(0, state.selected - count + 1);
+    rows.slice(start, start + count).forEach((item, i) => {
+      put(
+        `${start + i === state.selected ? '›' : ' '} ${item.name || item.sku || item.preset}`,
+        start + i === state.selected ? 'accent' : 'ink',
       );
+      put(
+        state.panel === 'products'
+          ? `  cost ${item.unitCost} · demand ${item.demand.min}–${item.demand.max} · lead ${item.leadTimeDays}d`
+          : `  ${item.controls.days}d · USD ${item.controls.startingCash} · seed ${item.seed} · ${item.products.length || 1} SKU(s)${item.createdAt ? ' · ' + item.createdAt.slice(0, 10) : ''}`,
+        'muted',
+      );
+    });
     if (!rows.length)
       put(
         state.panel === 'products'
@@ -224,11 +291,13 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
           : 'No saved entries yet. w saves a scenario; successful runs save history.',
         'muted',
       );
-  } else if (state.input?.kind === 'save' || state.input?.kind === 'export') {
+  } else if (['save', 'export', 'import'].includes(state.input?.kind)) {
     put(
       state.input.kind === 'save'
         ? 'SAVE SCENARIO · enter a name'
-        : 'EXPORT RUN · enter a new JSON filename',
+        : state.input.kind === 'import'
+          ? 'IMPORT SCENARIO · enter a local JSON filename'
+          : 'EXPORT RUN · enter a new JSON filename',
       'accent',
       true,
     );
@@ -236,13 +305,15 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     put(
       state.input.kind === 'save'
         ? `Saves ${state.selectedPreset} with current seed, assumptions and SKUs.`
-        : 'Includes executed inputs, input digest and the complete engine report.',
+        : state.input.kind === 'import'
+          ? 'Validate and preview exported assumptions. Nothing runs automatically.'
+          : 'Includes executed inputs, input digest and the complete engine report.',
     );
     put('Existing files and saved entries are preserved.', 'muted');
   } else if (state.input?.kind === 'palette') {
     put('COMMAND PALETTE', 'accent', true);
     put('↑ ↓ select  ·  Enter open  ·  Type to filter  ·  Esc dismiss', 'muted');
-    const commands = paletteCommands(state.input.text),
+    const commands = paletteCommands(state.input.text, state),
       selected = state.input.selected || 0;
     const start = Math.max(0, selected - Math.max(1, available - 2) + 1);
     commands
@@ -270,7 +341,9 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       't / u / b       Related records / customer / back',
       'f               Scrollable comparison results',
       'w / l / h       Save scenario / library / run history',
-      'x / c           Export result / cancel active simulation',
+      'x / i / c       Export result / import assumptions / cancel run',
+      '/ in library    Filter saved entries without reading the store',
+      'Shift+D / U     Remove saved entry / undo last removal',
       'p (lab)         Edit selected SKU planning terms',
       's               Run selected simulation in the lab',
       'e               Edit planning assumptions',
@@ -457,19 +530,21 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   }
   const errors = state.data?.errors || [];
   add(
-    ` ${['planning', 'product'].includes(state.input?.kind) && state.input.error ? state.input.error : state.error ? `STALE / ERROR  ${state.error}` : errors.length ? `PARTIAL DATA  ${errors.map((e) => e.section).join(', ')}` : state.sim.error ? `Run failed: ${state.sim.error}` : state.sim.running ? `RUNNING ${Math.floor((Date.now() - state.sim.startedAt) / 1000)}s · ${state.sim.progress || 'Engine working'} · c cancel` : state.notice || (state.data ? `Snapshot ${state.data.checkedAt}  ·  r refresh` : 'Loading engine…')}`,
+    ` ${['planning', 'product'].includes(state.input?.kind) && state.input.error ? state.input.error : state.error ? `STALE / ERROR  ${state.error}` : errors.length ? `PARTIAL DATA  ${errors.map((e) => e.section).join(', ')}` : state.sim.running ? `RUNNING ${Math.floor((Date.now() - state.sim.startedAt) / 1000)}s · ${state.sim.progress || 'Engine working'} · c cancel` : state.notice || (state.sim.error ? `Run failed: ${state.sim.error}` : state.data ? `Snapshot ${state.data.checkedAt}  ·  r refresh` : 'Loading engine…')}`,
     state.error || errors.length || state.input?.error || state.sim.error ? 'warn' : 'muted',
   );
   add(
-    ['planning', 'product'].includes(state.input?.kind)
-      ? ' Ctrl+U clear  Tab next  Ctrl+S save  Esc cancel'
-      : state.input
-        ? ` ${{ search: '/', palette: ':', save: 'Name: ', export: 'Path: ' }[state.input.kind] || ''} ${clean(state.input.text)}▏  Enter accept · Esc cancel`
-        : state.view === 5
-          ? ' e edit  p SKUs  f results  w save  l/h library/history  ? help'
-          : state.view === 2
-            ? ' a plan SKU  / search  o sort  Enter inspect  ? help  q quit'
-            : ' / search  o sort  Enter inspect  : commands  ? help  q quit',
+    state.input?.kind === 'import-review'
+      ? ' Enter load assumptions  ↑ ↓ scroll  Esc cancel'
+      : ['planning', 'product'].includes(state.input?.kind)
+        ? ' Ctrl+U clear  Tab next  Ctrl+S save  Esc cancel'
+        : state.input
+          ? ` ${{ search: '/', palette: ':', save: 'Name: ', export: 'Path: ', import: 'Path: ' }[state.input.kind] || ''} ${clean(state.input.text)}▏  Enter accept · Esc cancel`
+          : state.view === 5
+            ? ' e edit  p SKUs  l/h library/history  i import  : commands  ? help'
+            : state.view === 2
+              ? ' a plan SKU  / search  o sort  Enter inspect  ? help  q quit'
+              : ' / search  o sort  Enter inspect  : commands  ? help  q quit',
     state.input ? 'accent' : 'muted',
   );
   // Pad each row; stay off the last physical column/row to avoid wrapping and
