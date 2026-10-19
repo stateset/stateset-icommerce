@@ -8,72 +8,91 @@ export class TerminalBackend {
   constructor(dbPath = null) {
     this.dbPath = dbPath ? path.resolve(dbPath) : null;
     this.directory = fs.mkdtemp(path.join(os.tmpdir(), 'stateset-tui-'));
-    this.children = new Set();
-    this.operations = new Set();
+    this.operations = new Map();
     this.closed = false;
   }
-
-  async request(operation, payload = {}) {
-    const directory = await this.directory;
+  async request(operation, payload = {}, onProgress = () => {}) {
     if (this.closed) throw new Error('Terminal backend is closed');
     if (this.operations.has(operation)) throw new Error('This engine operation is already running');
-    const child = fork(fileURLToPath(new URL('./worker.js', import.meta.url)), [], {
-      env: { PATH: process.env.PATH, NODE_ENV: 'test', STATESET_SQLITE_SYNCHRONOUS: 'NORMAL' },
-      execArgv: ['--max-old-space-size=128'],
-      stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
-    });
-    this.children.add(child);
-    this.operations.add(operation);
-    return new Promise((resolve, reject) => {
-      let response,
-        stderr = '';
-      child.stderr.on('data', (chunk) => {
-        stderr = (stderr + chunk).slice(-1500);
+    let finished;
+    const context = {
+      child: null,
+      canceled: false,
+      done: new Promise((resolve) => {
+        finished = resolve;
+      }),
+    };
+    this.operations.set(operation, context);
+    let directory, operationDirectory;
+    try {
+      directory = await this.directory;
+      operationDirectory =
+        operation === 'simulate' ? await fs.mkdtemp(path.join(directory, 'run-')) : directory;
+      if (context.canceled || this.closed) throw new Error('Simulation canceled');
+      const child = fork(fileURLToPath(new URL('./worker.js', import.meta.url)), [], {
+        env: { PATH: process.env.PATH, NODE_ENV: 'test', STATESET_SQLITE_SYNCHRONOUS: 'NORMAL' },
+        execArgv: ['--max-old-space-size=128'],
+        stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
       });
-      const timer = setTimeout(() => child.kill('SIGKILL'), 45000);
-      child.once('message', (value) => {
-        response = value;
+      context.child = child;
+      return await new Promise((resolve, reject) => {
+        let response,
+          failure,
+          stderr = '';
+        child.stderr.on('data', (chunk) => {
+          stderr = (stderr + chunk).slice(-1500);
+        });
+        const timer = setTimeout(() => {
+          failure = new Error('Engine request exceeded its time limit');
+          child.kill('SIGKILL');
+        }, 45000);
+        child.on('message', (value) => {
+          if (value?.type === 'progress') onProgress(String(value.message).slice(0, 200));
+          else response = value;
+        });
+        child.once('error', (error) => {
+          failure = error;
+        });
+        child.once('close', (code) => {
+          clearTimeout(timer);
+          if (context.canceled) reject(new Error('Simulation canceled; previous result retained'));
+          else if (failure) reject(failure);
+          else if (response?.success && code === 0) resolve(response.data);
+          else reject(new Error(response?.error || stderr || 'Engine worker did not complete'));
+        });
+        child.send(
+          { operation, payload, directory: operationDirectory, dbPath: this.dbPath },
+          (error) => {
+            if (error) {
+              failure = error;
+              child.kill('SIGKILL');
+            }
+          },
+        );
       });
-      child.once('error', (error) => {
-        clearTimeout(timer);
-        this.children.delete(child);
+    } finally {
+      try {
+        if (operationDirectory && operationDirectory !== directory)
+          await fs.rm(operationDirectory, { recursive: true, force: true });
+      } finally {
         this.operations.delete(operation);
-        reject(error);
-      });
-      child.once('close', (code) => {
-        clearTimeout(timer);
-        this.children.delete(child);
-        this.operations.delete(operation);
-        if (response?.success && code === 0) resolve(response.data);
-        else
-          reject(
-            new Error(
-              response?.error ||
-                (code === null
-                  ? 'Engine request exceeded its time limit'
-                  : stderr || 'Engine worker did not complete'),
-            ),
-          );
-      });
-      child.send({ operation, payload, directory, dbPath: this.dbPath }, (error) => {
-        if (error) child.kill('SIGKILL');
-      });
-    });
+        finished();
+      }
+    }
   }
-
+  cancel(operation) {
+    const context = this.operations.get(operation);
+    if (!context || context.canceled) return false;
+    context.canceled = true;
+    context.child?.kill('SIGKILL');
+    return true;
+  }
   async close() {
     if (this.closed) return;
     this.closed = true;
-    await Promise.all(
-      [...this.children].map(
-        (child) =>
-          new Promise((resolve) => {
-            child.once('close', resolve);
-            child.kill('SIGKILL');
-          }),
-      ),
-    );
-    // Only remove the private directory allocated by this instance.
+    const active = [...this.operations.values()];
+    for (const operation of this.operations.keys()) this.cancel(operation);
+    await Promise.all(active.map((context) => context.done));
     await fs.rm(await this.directory, { recursive: true, force: true });
   }
 }

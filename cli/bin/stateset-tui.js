@@ -16,6 +16,7 @@ Usage:
 
   --demo          Private demo store (default; cannot combine with --db)
   --db <path>     Existing SQLite store; never initialized or migrated in place
+  --workspace <path>  Local scenario/history directory (default: XDG state/stateset/tui)
   --snapshot      Plain terminal screen, suitable for logs
   --json          Snapshot data as JSON; no terminal escape sequences
   --no-color      Disable colors in the interactive workbench
@@ -24,7 +25,12 @@ Usage:
 
 Keys: 1–6 / Tab views · arrows / j k select · Enter details · / search
       n / p pages · r refresh · : command palette · ? help · q quit
-Lab:  Enter / s run · + / - seed. All simulations use private native stores.
+Lab:  e assumptions · p selected SKUs · f results · w save · l library · h history
+      x export JSON · c cancel run · Shift+R replay · + / - seed
+Stock: a adds selected SKU to a private plan; cost/demand/supplier terms are explicit.
+Browse: / search entire view on Enter · o sort · t related records · u customer · b back
+All simulations use private native stores. History retains 20 runs per source.
+Exports never overwrite files; workspace JSON contains sensitive planning data.
 
 No AI credentials required. Browsing has no business-write actions.
 Live browsing needs optional better-sqlite3 for a WAL-consistent backup;
@@ -35,6 +41,7 @@ async function main() {
   const { values } = parseArgs({
     options: {
       db: { type: 'string' },
+      workspace: { type: 'string' },
       demo: { type: 'boolean' },
       snapshot: { type: 'boolean' },
       json: { type: 'boolean' },
@@ -93,7 +100,12 @@ async function main() {
     }
   } else {
     const { startTerminal } = await import('../src/tui/app.js');
-    await startTerminal({ dbPath, color: !values['no-color'] && !process.env.NO_COLOR });
+    const { TerminalWorkspace } = await import('../src/tui/workspace.js');
+    await startTerminal({
+      dbPath,
+      workspace: new TerminalWorkspace(values.workspace, dbPath || 'demo'),
+      color: !values['no-color'] && !process.env.NO_COLOR,
+    });
   }
 }
 main().catch((error) => {
