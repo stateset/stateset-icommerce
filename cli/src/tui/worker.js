@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { adaptCommerceApis, getCommerceCtor } from '../commerce.js';
 import { PAGE_SIZE, simulationPlans } from './model.js';
+import { browseStore } from './browse.js';
 
 async function seedDemo(commerce) {
   const customers = [];
@@ -69,6 +70,7 @@ async function seedDemo(commerce) {
 export async function readStore(commerce, pages = {}) {
   const tasks = {
     orderCount: () => commerce.orders.count(),
+    recentOrders: () => commerce.orders.list({ limit: 3 }),
     customerCount: () => commerce.customers.count(),
     productCount: () => commerce.products.count(),
     paymentCount: () => commerce.payments.count(),
@@ -151,7 +153,16 @@ async function loadStore({ dbPath, directory, payload }) {
       await seedDemo(commerce);
       fs.writeFileSync(marker, 'ready\n', { mode: 0o600 });
     }
-    return await readStore(commerce, payload.pages);
+    const snapshot = await readStore(commerce, payload.pages);
+    snapshot.alerts = snapshot.inventory;
+    if (payload.focus) {
+      const { domain, id } = payload.focus;
+      if (!['orders', 'customers', 'payments'].includes(domain) || typeof id !== 'string')
+        throw new Error('Unsupported record link');
+      snapshot.focusRecord = await commerce[domain].get(id);
+      if (!snapshot.focusRecord) throw new Error('Linked record no longer exists');
+    }
+    return await browseStore(commerce, target, payload, snapshot);
   } finally {
     await commerce.close();
   }
@@ -160,6 +171,13 @@ async function loadStore({ dbPath, directory, payload }) {
 if (process.send)
   process.once('message', async (request) => {
     try {
+      process.send({
+        type: 'progress',
+        message:
+          request.operation === 'snapshot'
+            ? 'Opening private store snapshot'
+            : 'Validating simulation inputs',
+      });
       let data;
       if (request.operation === 'snapshot') data = await loadStore(request);
       else if (request.operation === 'simulate') {
@@ -173,11 +191,17 @@ if (process.send)
             request.payload.preset,
             request.payload.seed,
             request.payload.controls,
+            request.payload.products || [],
           );
-          for (const [index, plan] of inputs.entries())
+          for (const [index, plan] of inputs.entries()) {
+            process.send({
+              type: 'progress',
+              message: `Plan ${index + 1}/${inputs.length}: ${plan.name}, ${plan.products.length} SKU(s), ${plan.days} days`,
+            });
             results.push(
               await executeInventoryPlan(plan, path.join(directory, `plan-${index}.db`)),
             );
+          }
           data = {
             success: true,
             results,

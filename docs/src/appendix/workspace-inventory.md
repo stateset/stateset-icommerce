@@ -100,9 +100,9 @@ workspace membership because they require host runtimes or headers.
 | `simulation` | 20 |
 | `utils` | 16 |
 | `harness` | 14 |
+| `tui` | 11 |
 | `chains` | 10 |
 | `x402` | 10 |
-| `tui` | 8 |
 | `knowledge` | 6 |
 | `memory` | 6 |
 | `skills` | 5 |

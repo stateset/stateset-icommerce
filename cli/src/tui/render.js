@@ -1,6 +1,7 @@
 import { VIEWS, records, pageKey, paletteCommands } from './model.js';
 import { clean, fit, width, wrap } from './text.js';
 import { PLANNING_FIELDS } from './planning.js';
+import { PRODUCT_FIELDS } from './basket.js';
 import { cashDelta, fillRate, soldTraces } from './report.js';
 
 const COLORS = { ink: 252, muted: 244, accent: 81, good: 114, warn: 222, bad: 210 };
@@ -39,15 +40,77 @@ export function detailLimit(state, columns = 80, rows = 24) {
   const h = Math.max(1, Math.min(100, rows - 1));
   const size = Math.max(1, w - (w >= 110 ? 22 : 2));
   const visible = Math.max(1, h - 9);
-  const record = state.view === 5 ? state.sim.result : records(state)[state.selected];
+  const record =
+    state.view === 5 ? state.sim.result : state.focusRecord || records(state)[state.selected];
   return Math.max(0, detailLines(record, size).length - visible);
+}
+
+export function resultLines(state, size) {
+  const sim = state.sim,
+    reports = sim.result?.results || [],
+    baseline = reports[0],
+    lines = [];
+  const add = (line = '') => lines.push(...wrap(line, size));
+  if (sim.error) {
+    add(`Run failed: ${sim.error}`);
+    add('Previous result retained.');
+  }
+  add(`RESULTS  ${sim.preset} / seed ${sim.seed}`);
+  add('↑ ↓ / PgUp PgDn scroll · Home End · v raw · x export · Esc lab');
+  for (const report of reports) {
+    const s = report.summary;
+    add(`${report.name}: fill ${fillRate(s)} · lost ${s.lostSales} units`);
+    add(`Ending cash ${money(s, 'endingCash', report.currency)}`);
+    add(
+      `Purchasing ${money(s, 'purchasingSpend', report.currency)} · margin ${money(s, 'grossMargin', report.currency)}`,
+    );
+  }
+  if (reports.length === 2) {
+    add(`Change vs baseline: cash ${cashDelta(reports[1], baseline, 'endingCash')}`);
+    add(`                   margin ${cashDelta(reports[1], baseline, 'grossMargin')}`);
+  }
+  const traces = soldTraces(reports, Math.min(24, Math.max(1, size - 24)));
+  add(`SOLD UNITS · up to ${traces.bucket}d/cell · shared peak ${traces.peak}`);
+  reports.forEach((r, i) => add(`${r.name}: ${traces.lines[i]}`));
+  for (const report of reports) {
+    add();
+    add(`${report.name} · SKU outcomes`);
+    for (const item of report.inventory || [])
+      add(
+        `${item.sku}: sold ${item.sold}, lost ${item.lostSales}, available ${item.available}, on order ${item.onOrder}`,
+      );
+  }
+  add();
+  add('EXECUTED ASSUMPTIONS');
+  add(
+    `${sim.controls?.days ?? baseline?.days} days · ${reports[0]?.currency || 'USD'} ${sim.result?.inputs?.[0]?.startingCash ?? sim.controls?.startingCash} opening cash`,
+  );
+  for (const item of sim.result?.inputs?.[0]?.products || []) {
+    add(`${item.sku}: stock ${item.initialStock}, price ${item.unitPrice}, cost ${item.unitCost}`);
+    add(
+      `Demand ${item.demand.min}–${item.demand.max}/day · reorder ${item.reorderPoint} → ${item.targetStock} · lead ${item.leadTimeDays}d`,
+    );
+    if (item.purchasing)
+      add(
+        `Supplier minimum ${item.purchasing.minimumOrderQuantity} · case pack ${item.purchasing.orderMultiple}`,
+      );
+  }
+  add('Cash is shared across SKUs; product input order sets purchase priority.');
+  add('Conditional projections, not validated forecasts. Esc returns to the lab.');
+  return lines;
+}
+export function panelLimit(state, columns = 80, rows = 24) {
+  const w = Math.max(1, Math.min(220, columns - 1));
+  const size = Math.max(1, w - (w >= 110 ? 22 : 2));
+  const available = Math.max(1, Math.min(100, rows - 1) - 8);
+  return Math.max(0, resultLines(state, size).length - Math.max(1, available - 1));
 }
 
 function tableRow(view, row, size) {
   if (view === 1)
     return `${fit(shortId(row.orderNumber || row.id), 15)} ${fit(row.status, 13)} ${money(row, 'totalAmountExact')}`;
   if (view === 2)
-    return `${fit(row.sku, Math.min(20, Math.floor(size / 3)))} ${fit(row.available, 10)} ${fit(row.reorderPoint ?? '—', 10)} ${row.name}`;
+    return `${fit(row.sku, Math.min(20, Math.floor(size / 3)))} ${fit(row.available ?? '—', 10)} ${row.name}`;
   if (view === 3)
     return `${fit(`${row.firstName} ${row.lastName}`, Math.min(24, Math.floor(size / 2)))} ${row.email}`;
   if (view === 4)
@@ -90,13 +153,25 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   const sidebar = w >= 110;
   const size = w - (sidebar ? 22 : 2);
   const available = Math.max(1, h - 8);
-  if (state.input?.kind === 'planning') {
+  if (state.input?.kind === 'planning' || state.input?.kind === 'product') {
     const editor = state.input;
-    put('PLANNING ASSUMPTIONS  ·  private scenarios only', 'accent', true);
+    const fields =
+      editor.kind === 'product'
+        ? PRODUCT_FIELDS
+        : state.products.length
+          ? PLANNING_FIELDS.slice(0, 2)
+          : PLANNING_FIELDS;
+    put(
+      editor.kind === 'product'
+        ? `SKU TERMS · ${editor.sku} · assumed USD`
+        : 'PLANNING ASSUMPTIONS  ·  private scenarios only',
+      'accent',
+      true,
+    );
     put('Tab / Enter next  ·  Ctrl+U clear  ·  Ctrl+S save  ·  Esc cancel', 'muted');
     const visible = Math.max(1, available - 4),
       start = Math.max(0, editor.field - visible + 1);
-    for (const [index, field] of PLANNING_FIELDS.slice(start, start + visible).entries()) {
+    for (const [index, field] of fields.slice(start, start + visible).entries()) {
       const active = start + index === editor.field;
       put(
         `${active ? '›' : ' '} ${fit(field.label, Math.min(23, size - 16))} [${editor.draft[field.key]}]`,
@@ -107,6 +182,63 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     }
     if (editor.error) put(editor.error, 'bad');
     else put('Changes affect the next run. Existing results keep their inputs.', 'muted');
+  } else if (state.panel === 'results' && !state.detail && !state.help && !state.input) {
+    const lines = resultLines(state, size),
+      visible = Math.max(1, available - 1);
+    const offset = Math.min(state.panelOffset, Math.max(0, lines.length - visible));
+    put(
+      `COMPARISON · ${offset + 1}–${Math.min(lines.length, offset + visible)} / ${lines.length} lines · Esc lab`,
+      'muted',
+    );
+    lines.slice(offset, offset + visible).forEach((line) => put(line));
+  } else if (
+    ['scenarios', 'history', 'products'].includes(state.panel) &&
+    !state.input &&
+    !state.help
+  ) {
+    const rows = records(state);
+    put(
+      {
+        scenarios: 'SAVED SCENARIOS · Enter load · Shift+D remove',
+        history: 'RUN HISTORY · Enter inspect · Shift+D remove',
+        products: 'SELECTED SKUS · Enter edit · d remove · Esc back',
+      }[state.panel],
+      'accent',
+      true,
+    );
+    if (state.panel === 'products')
+      put('Up to 3 SKUs · list order sets purchase priority', 'muted');
+    const start = Math.max(0, state.selected - Math.max(1, available - 3) + 1);
+    rows
+      .slice(start, start + Math.max(1, available - 3))
+      .forEach((item, i) =>
+        put(
+          `${start + i === state.selected ? '›' : ' '} ${item.name || item.sku || item.preset} ${item.createdAt || ''}`,
+          start + i === state.selected ? 'accent' : 'ink',
+        ),
+      );
+    if (!rows.length)
+      put(
+        state.panel === 'products'
+          ? 'Open Stock (3), select a SKU, then a to add.'
+          : 'No saved entries yet. w saves a scenario; successful runs save history.',
+        'muted',
+      );
+  } else if (state.input?.kind === 'save' || state.input?.kind === 'export') {
+    put(
+      state.input.kind === 'save'
+        ? 'SAVE SCENARIO · enter a name'
+        : 'EXPORT RUN · enter a new JSON filename',
+      'accent',
+      true,
+    );
+    put('Enter confirm · Esc cancel', 'muted');
+    put(
+      state.input.kind === 'save'
+        ? `Saves ${state.selectedPreset} with current seed, assumptions and SKUs.`
+        : 'Includes executed inputs, input digest and the complete engine report.',
+    );
+    put('Existing files and saved entries are preserved.', 'muted');
   } else if (state.input?.kind === 'palette') {
     put('COMMAND PALETTE', 'accent', true);
     put('↑ ↓ select  ·  Enter open  ·  Type to filter  ·  Esc dismiss', 'muted');
@@ -123,16 +255,23 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       );
     if (!commands.length) put('No matching commands.', 'muted');
   } else if (state.help) {
-    put('YOUR COMMERCE WORKBENCH', 'accent', true);
+    put('KEYBOARD HELP · ↑ ↓ scroll · Esc close', 'accent', true);
     for (const line of [
       '1–6 / Tab       Switch view',
       '↑ ↓ / j k       Select a record or scenario',
       'Enter           Open details / run selected simulation',
       'Esc             Back / clear search',
-      '/               Search this loaded page',
+      '/               Type preview; Enter searches entire view',
       ': / Ctrl+P      Command palette',
       'n / p           Next / previous data page',
       'r               Refresh the store snapshot',
+      'o               Toggle recent / alphabetical sort',
+      'a               Add selected inventory SKU to a plan',
+      't / u / b       Related records / customer / back',
+      'f               Scrollable comparison results',
+      'w / l / h       Save scenario / library / run history',
+      'x / c           Export result / cancel active simulation',
+      'p (lab)         Edit selected SKU planning terms',
       's               Run selected simulation in the lab',
       'e               Edit planning assumptions',
       'Shift+R         Replay last successful simulation inputs',
@@ -175,7 +314,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     );
     put();
     put('NEEDS ATTENTION', 'muted');
-    const inventory = state.data?.inventory;
+    const inventory = state.data?.alerts ?? state.data?.inventory;
     if (inventory?.length)
       inventory
         .slice(0, 4)
@@ -197,17 +336,22 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     put('Every scenario runs in a separate embedded store.', 'muted');
     put();
     put('RECENT ORDERS', 'muted');
-    for (const order of (state.data?.orders || []).slice(0, 3))
+    for (const order of (state.data?.recentOrders || state.data?.orders || []).slice(0, 3))
       put(
         `${shortId(order.orderNumber || order.id)}  ${order.status}  ${money(order, 'totalAmountExact')}`,
       );
   } else if (state.detail) {
     const lines = detailLines(
-      state.view === 5 ? state.sim.result : records(state)[state.selected],
+      state.view === 5 ? state.sim.result : state.focusRecord || records(state)[state.selected],
       size,
     );
     const offset = Math.min(state.detailOffset, Math.max(0, lines.length - available + 1));
-    put('RECORD DETAILS  ·  ↑ ↓ scroll  ·  Esc back', 'muted');
+    put(
+      state.view === 5
+        ? 'RECORD DETAILS · ↑ ↓ scroll · Esc back'
+        : 'DETAILS · t related · u customer · b back · Esc close',
+      'muted',
+    );
     lines.slice(offset, offset + available - 1).forEach((line) => put(line));
   } else {
     const data = records(state),
@@ -219,21 +363,28 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
         'muted',
       );
       put(
-        `Stock ${state.planning.initialStock} · Reorder ${state.planning.reorderPoint} → ${state.planning.targetStock} · Lead ${state.planning.leadTimeDays}d`,
-        'muted',
+        `${state.products.length || 1} SKU(s) · p selected SKUs · w save · l library · h history`,
+        'accent',
       );
-    } else if (state.view === 2) put('LOW STOCK  ·  Available ≤ 10  ·  First 50 signals', 'muted');
-    else
       put(
-        `Page ${(state.data?.pages?.[field] || 0) + 1}  ·  ${data.length} shown / ${state.data?.counts?.[field] ?? '—'} total  ·  n / p pages`,
+        state.products.length
+          ? state.products.map((p) => p.sku).join(' · ')
+          : `Demo recipe · Stock ${state.planning.initialStock} · Reorder ${state.planning.reorderPoint} → ${state.planning.targetStock} · Lead ${state.planning.leadTimeDays}d`,
         'muted',
       );
+    } else
+      put(
+        `Page ${(state.data?.pages?.[field] || 0) + 1} · ${data.length} shown / ${state.data?.matched?.[field] ?? state.data?.counts?.[field] ?? '—'} matches · n / p · o sort`,
+        'muted',
+      );
+    if (state.relation && state.relation.field === field)
+      put(`Related ${state.relation.column}: ${state.relation.id} · b back`, 'muted');
     if (state.view !== 5)
       put(
         [
           '',
           'ORDER           STATUS        TOTAL',
-          'SKU                  AVAILABLE  REORDER    NAME',
+          'SKU                  AVAILABLE  NAME · a plan',
           'CUSTOMER                  EMAIL',
           'PAYMENT         STATUS        AMOUNT',
         ][state.view],
@@ -268,51 +419,24 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
         put(sim.result ? 'Previous result retained.' : 'No result available.', 'muted');
       }
       if (sim.result) {
-        put(`RESULTS  ${sim.preset} / seed ${sim.seed}  ·  v report  ·  R replay`, 'good', true);
-        const reports = sim.result.results || [],
-          baseline = reports[0];
-        for (const report of reports) {
-          const summary = report.summary;
-          put(
-            `${report.name}  ·  fill ${fillRate(summary)}  ·  lost ${summary.lostSales}`,
-            'accent',
-          );
-          put(
-            `Cash ${money(summary, 'endingCash', report.currency)}  ·  buying ${money(summary, 'purchasingSpend', report.currency)}`,
-          );
-          put(
-            `Margin ${money(summary, 'grossMargin', report.currency)}  ·  ${summary.purchaseOrders} purchase orders`,
-            'muted',
-          );
-        }
-        if (reports.length === 2) {
-          put(
-            `Change vs baseline: cash ${cashDelta(reports[1], baseline, 'endingCash')}`,
-            'accent',
-          );
-          put(
-            `                   margin ${cashDelta(reports[1], baseline, 'grossMargin')}`,
-            'accent',
-          );
-        }
-        const traces = soldTraces(reports, Math.min(24, Math.max(1, size - 28)));
-        put(`SOLD UNITS · ${traces.bucket}d per cell · shared peak ${traces.peak}`, 'muted');
-        reports.forEach((report, index) =>
-          put(`${fit(report.name, 22)} ${traces.lines[index]}`, 'accent'),
-        );
+        put(`RESULTS ${sim.preset} / seed ${sim.seed} · f compare · v raw · R replay`, 'good');
         if (
-          sim.controls &&
-          (JSON.stringify(sim.controls) !== JSON.stringify(state.planning) ||
-            sim.seed !== state.seed)
+          JSON.stringify(sim.controls) !== JSON.stringify(state.planning) ||
+          sim.seed !== state.seed ||
+          JSON.stringify(sim.products || []) !== JSON.stringify(state.products)
         )
           put('Assumptions changed since this result. s runs the new settings.', 'warn');
       } else if (!sim.running && !sim.error)
-        put('Enter / s runs a scenario; e edits its planning assumptions.', 'muted');
+        put('Enter / s run · e assumptions · 3 then a to select stock', 'muted');
       put('Conditional projections from supplied assumptions.', 'muted');
     }
   }
   for (let i = 0; i < available; i++) {
-    const item = body[i] || { text: '', tone: 'ink' };
+    const offset =
+      state.help || state.view === 0
+        ? Math.min(state.contentOffset, Math.max(0, body.length - available))
+        : 0;
+    const item = body[i + offset] || { text: '', tone: 'ink' };
     if (sidebar) {
       const left =
         i < VIEWS.length
@@ -333,15 +457,19 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   }
   const errors = state.data?.errors || [];
   add(
-    ` ${state.input?.kind === 'planning' && state.input.error ? state.input.error : state.error ? `STALE / ERROR  ${state.error}` : errors.length ? `PARTIAL DATA  ${errors.map((e) => e.section).join(', ')}` : state.notice || (state.data ? `Snapshot ${state.data.checkedAt}  ·  r refresh` : 'Loading engine…')}`,
-    state.error || errors.length || state.input?.error ? 'warn' : 'muted',
+    ` ${['planning', 'product'].includes(state.input?.kind) && state.input.error ? state.input.error : state.error ? `STALE / ERROR  ${state.error}` : errors.length ? `PARTIAL DATA  ${errors.map((e) => e.section).join(', ')}` : state.sim.error ? `Run failed: ${state.sim.error}` : state.sim.running ? `RUNNING ${Math.floor((Date.now() - state.sim.startedAt) / 1000)}s · ${state.sim.progress || 'Engine working'} · c cancel` : state.notice || (state.data ? `Snapshot ${state.data.checkedAt}  ·  r refresh` : 'Loading engine…')}`,
+    state.error || errors.length || state.input?.error || state.sim.error ? 'warn' : 'muted',
   );
   add(
-    state.input?.kind === 'planning'
+    ['planning', 'product'].includes(state.input?.kind)
       ? ' Ctrl+U clear  Tab next  Ctrl+S save  Esc cancel'
       : state.input
-        ? ` ${state.input.kind === 'search' ? '/' : ':'} ${clean(state.input.text)}▏  Enter accept · Esc cancel`
-        : ' / search   Enter inspect   : commands   ? help   q quit',
+        ? ` ${{ search: '/', palette: ':', save: 'Name: ', export: 'Path: ' }[state.input.kind] || ''} ${clean(state.input.text)}▏  Enter accept · Esc cancel`
+        : state.view === 5
+          ? ' e edit  p SKUs  f results  w save  l/h library/history  ? help'
+          : state.view === 2
+            ? ' a plan SKU  / search  o sort  Enter inspect  ? help  q quit'
+            : ' / search  o sort  Enter inspect  : commands  ? help  q quit',
     state.input ? 'accent' : 'muted',
   );
   // Pad each row; stay off the last physical column/row to avoid wrapping and

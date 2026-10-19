@@ -338,9 +338,9 @@ stateset-tui --db ./store.db     # Browse an existing store through a snapshot
 stateset-tui --snapshot         # One plain-text screen for non-interactive use
 ```
 
-The workbench includes an overview, orders, low-stock inventory, customers,
+The workbench includes an overview, orders, full inventory, customers,
 payments, and a simulation lab. Use **1–6** or **Tab** to switch views,
-**arrows/j/k** to select, **Enter** for details, **/** to search the loaded page,
+**arrows/j/k** to select, **Enter** for details, **/** to preview matches and **Enter** to search the entire view,
 **n/p** for pages, **:** for the command palette, and **?** for help.
 In the lab, **Enter/s** runs a scenario, **+/−** changes its seed, and **v**
 opens the full result for inspection. **q** exits and restores the terminal.
@@ -353,7 +353,7 @@ Demo records are created by the native embedded engine in a private temporary
 store, visibly labeled `DEMO`. Existing stores are opened with SQLite's
 read-only online-backup API, including committed WAL data; the native engine
 then reads and migrates only the private copy. Browsing does not expose
-business-write commands. Live browsing requires the CLI's optional
+business-write commands. Store browsing requires the CLI's optional
 `better-sqlite3` dependency and refuses cleanly if it is unavailable.
 
 The simulation lab compares steady demand, demand spikes, supplier delays,
@@ -380,6 +380,57 @@ Zero-demand fill rates are not evaluable. Changing assumptions affects only the
 next run: **Shift+R** replays the last successful run's original preset, seed,
 and assumptions. A failed run retains that successful report. Full reports
 include the executed input plans and keep exact-money fields visible.
+
+The inventory view includes every SKU, with exact available, on-hand and
+allocated stock in its details. **o** toggles recent/alphabetical sorting;
+search and pagination operate across the entire domain, including records
+outside the loaded page. Search text is literal (SQL wildcards are escaped).
+From record details, **t** follows payment → order, order → payments, or
+customer → orders; **u** opens the linked customer and **b** returns. Reads
+select identifiers only on the private snapshot and obtain records through
+the native engine.
+
+Select inventory with **3**, then **a** to add a SKU to a plan. Enter explicit
+unit cost, daily demand minimum/maximum, reorder/target stock, supplier lead
+time, minimum order quantity and case-pack multiple. Native stock and exact
+catalog sale price prefill the editor; missing cost is required, never inferred
+from sale price. Prices are explicit USD planning assumptions. Fractional or
+out-of-range stock must be replaced with a valid whole-unit assumption.
+Use **p** in the lab to inspect/edit selected SKUs, **Enter/e** to edit and **d**
+to remove. Up to three SKUs share the plan's cash; list order determines purchase
+priority. The 30-day maximum keeps two compared plans within the native
+180-product-day budget. With selected SKUs, **e** edits the shared horizon and
+cash; each SKU owns its other terms. Without selections, the clearly labeled
+demo recipe remains available. Comparisons apply the shock to every selected SKU.
+
+Successful runs open a dedicated comparison view. **arrows/PgUp/PgDn/Home/End**
+reach every outcome, chart and executed assumption even in short panes;
+**v** toggles the full structured report and **Esc** returns. **f** reopens the
+comparison. Active runs show elapsed time and the actual plan being executed;
+**c** cancels only the workbench's simulation worker, cleans its private run
+directory and retains the previous result. Quitting restores terminal state
+and closes its workers. Overview and help also scroll in short panes.
+
+**w** saves the current scenario under a new name, **l** opens the saved
+scenario library, and **h** opens run history. **Enter** loads a scenario or
+inspects a past run; **Shift+R** replays the inspected run's original inputs.
+Successful runs retain their full reports automatically (the latest 20 per
+source); up to 20 named scenarios are retained. **Shift+D** removes the selected
+library/history entry. **x** exports the inspected successful run as JSON to a
+new filename, including exact inputs, their SHA-256 digest, CLI version and
+results; existing files are never overwritten. Digests identify inputs, not
+proof of authenticity or of forecast accuracy.
+
+Scenarios and history survive restart in a source-specific directory under
+`$XDG_STATE_HOME/stateset/tui` (or `~/.local/state/stateset/tui`). Override the
+root with `--workspace ./planning-workspace`. These files contain planning
+assumptions and reports; new directories/files use modes 0700/0600. Saves use
+an exclusive writer lock and an atomic file replacement. Another window's
+latest data is reloaded under that lock. Corrupt, oversized or unsupported
+workspace files are retained and reported instead of overwritten. An
+interrupted save may leave `workspace.lock`; inspect it and remove that lock
+only after confirming no other TUI writer is active. Workspace writes are local
+planning artifacts, independent of the commerce database and `--apply`.
 
 ### Interactive Chat
 
