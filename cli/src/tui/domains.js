@@ -119,6 +119,7 @@ const GROUPS = {
 };
 
 const catalog = JSON.parse(readFileSync(new URL('./catalog.json', import.meta.url), 'utf8'));
+const groupOrder = Object.keys(GROUPS);
 const placement = new Map(
   Object.entries(GROUPS).flatMap(([group, entries]) =>
     Object.entries(entries).map(([id, tables]) => [
@@ -137,7 +138,10 @@ export const DOMAINS = Object.freeze(
       ...placement.get(domain.id),
       name: domain.id.replace(/-/g, ' '),
     }))
-    .sort((a, b) => a.group.localeCompare(b.group) || a.name.localeCompare(b.name)),
+    .sort(
+      (a, b) =>
+        groupOrder.indexOf(a.group) - groupOrder.indexOf(b.group) || a.name.localeCompare(b.name),
+    ),
 );
 export const TABLES = Object.freeze([...new Set(DOMAINS.flatMap((d) => d.tables))]);
 export function domainById(id) {
@@ -158,8 +162,26 @@ export function explorerRows(state) {
     return state.data?.explorer?.requestKey === explorerRequestKey(e)
       ? state.data.explorer.rows
       : [];
-  const query = (state.input?.kind === 'search' ? state.input.text : e.query).toLocaleLowerCase();
-  return rows.filter((row) => JSON.stringify(row).toLocaleLowerCase().includes(query));
+  const query = (state.input?.kind === 'search' ? state.input.text : e.query)
+    .trim()
+    .toLocaleLowerCase();
+  return rows.filter((row) => {
+    // Search meaningful labels, never serialized keys or every tool's hidden
+    // description when the user is choosing a domain.
+    const fields =
+      e.mode === 'domains'
+        ? [row.id, row.name, row.group, row.tier, row.tables.length ? 'records' : 'reference']
+        : e.mode === 'tools'
+          ? [row.name, row.description, row.permission, row.tier]
+          : e.mode === 'links'
+            ? [row.name, row.domain, row.table, row.column, row.value]
+            : [row.id, row.name];
+    return fields.some((value) =>
+      String(value ?? '')
+        .toLocaleLowerCase()
+        .includes(query),
+    );
+  });
 }
 export function explorerRequest(e) {
   if (e.mode !== 'records') return null;
@@ -226,7 +248,15 @@ export function explorerKey(state, text, key) {
     name = key.name;
   let next, effect;
   if (text === 'd') next = openExplorer(state);
-  else if (text === 'T' && e.domain) next = step(state, { mode: 'tools' });
+  else if (['[', ']'].includes(text) && e.mode === 'domains' && !state.detail) {
+    const rows = explorerRows(state);
+    const groups = [...new Set(rows.map((row) => row.group))];
+    if (groups.length < 2) return { state };
+    const current = groups.indexOf(rows[state.selected]?.group);
+    const group =
+      groups[(Math.max(0, current) + (text === ']' ? 1 : -1) + groups.length) % groups.length];
+    next = { ...state, selected: rows.findIndex((row) => row.group === group) };
+  } else if (text === 'T' && e.domain) next = step(state, { mode: 'tools' });
   else if (text === 'L' && !state.detail && e.domain === 'simulations')
     return { state, effect: 'open-lab' };
   else if (text === 'b' && state.detail) next = { ...state, detail: false, detailOffset: 0 };

@@ -358,7 +358,9 @@ business-write commands. Store browsing requires the CLI's optional
 
 Open **7** for the engine explorer: all **89 tool domains plus the server runtime**,
 organized into commerce, growth, operations, finance, agents/trust, and integrations.
-Search domain names with **/** or jump directly using **:** and `Explore general ledger`,
+Commerce appears first; **[ / ]** jumps between the visible domain groups.
+Filter names, groups or stability tiers with **/** (for example, `finance` or `core`),
+or jump directly using **:** and `Explore general ledger`,
 `Explore suppliers`, or another domain name. **Enter** opens a domain's resources,
 then its records. The explorer has **205 registered persisted resources**, covering
 catalog/variants, carts, returns/refunds, shipments, subscriptions, promotions,
