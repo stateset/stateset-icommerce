@@ -1,4 +1,42 @@
 import { subtractDecimals } from '../utils/exact-decimal.js';
+import { inventoryComparisonContext } from '../simulation/comparison-context.js';
+
+export function comparisonEvidence(reports) {
+  if (!Array.isArray(reports) || reports.length !== 2) return null;
+  const [baseline, candidate] = reports;
+  if (!baseline?.currency || baseline.currency !== candidate?.currency) return null;
+  if (
+    reports.some(
+      (report) =>
+        !Number.isSafeInteger(report?.days) ||
+        report.days < 1 ||
+        !Array.isArray(report.assumptions?.products) ||
+        !report.assumptions.products.length ||
+        !Array.isArray(report.demandForecast?.products) ||
+        !report.demandForecast.products.length ||
+        !Array.isArray(report.supplyProjection?.products) ||
+        !report.supplyProjection.products.length,
+    )
+  )
+    return null;
+  const conditions = (report) => ({
+    days: report.days,
+    startingCash: report.summary?.startingCash,
+    cashReserve: report.assumptions.cashReserve,
+    products: report.assumptions.products,
+  });
+  try {
+    return inventoryComparisonContext(
+      conditions(baseline),
+      conditions(candidate),
+      [baseline],
+      [candidate],
+    );
+  } catch {
+    // Old saved runs may lack evidence required by the current engine checks.
+    return null;
+  }
+}
 
 // Refusals are timeline attempts, including repeated days and day zero.
 // Preserve exact recorded money; this is presentation, not purchase sizing.

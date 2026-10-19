@@ -413,7 +413,12 @@ units and stockout days per SKU, and cash-budget refusals with the first whole-o
 requirement and available cash. Refusal counts are attempts that may recur on
 several days, including day zero; they are not counts of distinct orders.
 Missing timeline evidence is shown as unavailable. Executed assumptions show
-the purchase-priority order used by the saved result. Sold-unit traces
+the purchase-priority order used by each saved plan, including the candidate's
+actual opening cash, demand and supplier lead time. The engine's comparison
+checks distinguish changes in opening cash, horizon, stock, prices/costs,
+priority and reserve from matches in the projected demand and supply paths.
+Matching paths describe that seeded run and do not establish equal assumptions.
+Older runs without this evidence say it is unavailable. Sold-unit traces
 use a shared scale across both plans; each cell's day span and peak are labeled.
 Zero-demand fill rates are not evaluable. Changing assumptions affects only the
 next run: **Shift+R** replays the last successful run's original preset, seed,

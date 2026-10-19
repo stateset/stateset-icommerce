@@ -8,6 +8,7 @@ import { TerminalBackend } from '../../src/tui/backend.js';
 import { DEFAULT_PLANNING } from '../../src/tui/planning.js';
 import { initialState, navigate, handleKey } from '../../src/tui/model.js';
 import { resultLines } from '../../src/tui/render.js';
+import { comparisonEvidence } from '../../src/tui/report.js';
 
 test(
   'full inventory, cross-page search, related records, multi-SKU execution and owned cancellation',
@@ -100,6 +101,21 @@ test(
       );
       assert.ok(run.inputs[1].products.every((p) => p.leadTimeDays === 4));
       assert.ok(messages.some((message) => message.includes('Plan 2/2')));
+      const compared = comparisonEvidence(run.results);
+      assert.equal(compared.sameOpeningCash, true);
+      assert.equal(compared.sameProductPriority, true);
+      assert.equal(compared.sameDemandPaths, true);
+      assert.equal(compared.sameSupplyPaths, false);
+      const comparisonText = resultLines(
+        { sim: { preset: 'Supplier delay', seed: 42, result: run } },
+        160,
+      ).join('\n');
+      assert.match(comparisonText, /Projected paths: demand same · supply different/);
+      const inputsText = comparisonText.split('EXECUTED ASSUMPTIONS')[1];
+      assert.match(inputsText, /Baseline · 2 days/);
+      assert.match(inputsText, /Supplier delay · 2 days/);
+      assert.match(inputsText, /lead 1d/);
+      assert.match(inputsText, /lead 4d/);
       // The UI's order is an economic input: only the first SKU can afford
       // replenishment when the shared cash pays for exactly one whole order.
       const priority = {

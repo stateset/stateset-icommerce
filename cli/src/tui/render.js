@@ -4,7 +4,13 @@ import { editorWindow } from './editor.js';
 import { clean, fit, width, wrap } from './text.js';
 import { PLANNING_FIELDS } from './planning.js';
 import { PRODUCT_FIELDS } from './basket.js';
-import { cashDelta, cashBudgetRefusals, fillRate, soldTraces } from './report.js';
+import {
+  cashDelta,
+  cashBudgetRefusals,
+  comparisonEvidence,
+  fillRate,
+  soldTraces,
+} from './report.js';
 
 const COLORS = { ink: 252, muted: 244, accent: 81, good: 114, warn: 222, bad: 210 };
 const money = (record, field, currency = record?.currency || 'USD') =>
@@ -79,6 +85,23 @@ export function resultLines(state, size) {
   if (reports.length === 2) {
     add(`Change vs baseline: cash ${cashDelta(reports[1], baseline, 'endingCash')}`);
     add(`                   margin ${cashDelta(reports[1], baseline, 'grossMargin')}`);
+    add('COMPARISON CHECKS');
+    const context = comparisonEvidence(reports);
+    if (!context) add("Saved comparison evidence is unavailable. Inspect each plan's inputs.");
+    else {
+      const match = (value) => (value ? 'same' : 'different');
+      add(`Opening cash ${match(context.sameOpeningCash)} · horizon ${match(context.sameHorizon)}`);
+      add(
+        `Opening stock ${match(context.sameOpeningInventory)} · prices/costs ${match(context.sameUnitEconomics)}`,
+      );
+      add(
+        `Purchase priority ${match(context.sameProductPriority)} · cash reserve ${match(context.sameCashReserve)}`,
+      );
+      add(
+        `Projected paths: demand ${match(context.sameDemandPaths)} · supply ${match(context.sameSupplyPaths)}`,
+      );
+      add('Path matches describe this run; they do not establish equal assumptions.');
+    }
   }
   const traces = soldTraces(reports, Math.min(24, Math.max(1, size - 24)));
   add(`SOLD UNITS · up to ${traces.bucket}d/cell · shared peak ${traces.peak}`);
@@ -113,20 +136,24 @@ export function resultLines(state, size) {
   }
   add();
   add('EXECUTED ASSUMPTIONS');
-  add(
-    `${sim.controls?.days ?? baseline?.days} days · ${reports[0]?.currency || 'USD'} ${sim.result?.inputs?.[0]?.startingCash ?? sim.controls?.startingCash} opening cash`,
-  );
-  for (const [index, item] of (sim.result?.inputs?.[0]?.products || []).entries()) {
+  const inputs = sim.result?.inputs;
+  if (!Array.isArray(inputs) || !inputs.length) add('Saved input plans are unavailable.');
+  for (const [planIndex, plan] of (Array.isArray(inputs) ? inputs : []).entries()) {
     add(
-      `Priority ${index + 1} · ${item.sku}: stock ${item.initialStock}, price ${item.unitPrice}, cost ${item.unitCost}`,
+      `${plan.name || reports[planIndex]?.name || `Plan ${planIndex + 1}`} · ${plan.days ?? 'Unavailable'} days · ${money(plan, 'startingCash', plan.currency || reports[planIndex]?.currency)} opening cash`,
     );
-    add(
-      `Demand ${item.demand.min}–${item.demand.max}/day · reorder ${item.reorderPoint} → ${item.targetStock} · lead ${item.leadTimeDays}d`,
-    );
-    if (item.purchasing)
+    for (const [index, item] of (plan.products || []).entries()) {
       add(
-        `Supplier minimum ${item.purchasing.minimumOrderQuantity} · case pack ${item.purchasing.orderMultiple}`,
+        `Priority ${index + 1} · ${item.sku}: stock ${item.initialStock}, price ${item.unitPrice}, cost ${item.unitCost}`,
       );
+      add(
+        `Demand ${item.demand.min}–${item.demand.max}/day · reorder ${item.reorderPoint} → ${item.targetStock} · lead ${item.leadTimeDays}d`,
+      );
+      if (item.purchasing)
+        add(
+          `Supplier minimum ${item.purchasing.minimumOrderQuantity} · case pack ${item.purchasing.orderMultiple}`,
+        );
+    }
   }
   add('Cash is shared across SKUs; product input order sets purchase priority.');
   add('Conditional projections, not validated forecasts. Esc returns to the lab.');
