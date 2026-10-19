@@ -169,16 +169,19 @@ if (process.send)
         const directory = fs.mkdtempSync(path.join(request.directory, 'lab-'));
         try {
           const results = [];
-          for (const [index, plan] of simulationPlans(
+          const inputs = simulationPlans(
             request.payload.preset,
             request.payload.seed,
-          ).entries())
+            request.payload.controls,
+          );
+          for (const [index, plan] of inputs.entries())
             results.push(
               await executeInventoryPlan(plan, path.join(directory, `plan-${index}.db`)),
             );
           data = {
             success: true,
             results,
+            inputs,
             simulation: true,
             liveStoreRead: false,
             liveStoreModified: false,

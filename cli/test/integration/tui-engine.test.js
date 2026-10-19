@@ -62,10 +62,26 @@ test(
         await assert.rejects(absent.request('snapshot'), /exist|open|unable/i);
         await assert.rejects(fs.stat(missing), { code: 'ENOENT' });
         console.error('TUI acceptance: isolated supplier-delay simulation');
-        const simulation = await absent.request('simulate', { preset: 'delay', seed: 42 });
+        const simulation = await absent.request('simulate', {
+          preset: 'delay',
+          seed: 42,
+          controls: {
+            days: 3,
+            startingCash: '150.01',
+            initialStock: 5,
+            reorderPoint: 6,
+            targetStock: 15,
+            leadTimeDays: 2,
+          },
+        });
         assert.equal(simulation.success, true);
         assert.equal(simulation.liveStoreRead, false);
         assert.equal(simulation.results.length, 2);
+        assert.equal(simulation.inputs[0].days, 3);
+        assert.equal(simulation.inputs[1].products[0].leadTimeDays, 5);
+        assert.ok(
+          simulation.results.every((r) => r.days === 3 && r.summary.startingCash === '150.01'),
+        );
         assert.ok(simulation.results.every((r) => typeof r.summary.endingCash === 'string'));
         console.error('TUI acceptance: simulation left original demo unchanged');
         assert.equal((await demo.request('snapshot')).counts.orders, 12);

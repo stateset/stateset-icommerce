@@ -1,5 +1,7 @@
 import { VIEWS, records, pageKey, paletteCommands } from './model.js';
 import { clean, fit, width, wrap } from './text.js';
+import { PLANNING_FIELDS } from './planning.js';
+import { cashDelta, fillRate, soldTraces } from './report.js';
 
 const COLORS = { ink: 252, muted: 244, accent: 81, good: 114, warn: 222, bad: 210 };
 const money = (record, field, currency = record?.currency || 'USD') =>
@@ -15,17 +17,30 @@ function detailLines(record, size) {
     if (value === null || value === undefined) continue;
     const text =
       typeof value === 'object'
-        ? JSON.stringify(value, (k, v) =>
-            typeof v === 'object' && v !== null && !Array.isArray(v)
-              ? Object.fromEntries(
-                  Object.entries(v).filter(([f]) => !Object.hasOwn(v, `${f}Exact`)),
-                )
-              : v,
+        ? JSON.stringify(
+            value,
+            (k, v) =>
+              typeof v === 'object' && v !== null && !Array.isArray(v)
+                ? Object.fromEntries(
+                    Object.entries(v).filter(([f]) => !Object.hasOwn(v, `${f}Exact`)),
+                  )
+                : v,
+            2,
           )
         : String(value);
-    lines.push(...wrap(`${key}: ${text}`, size), '');
+    for (const line of `${key}: ${text}`.split('\n')) lines.push(...wrap(line, size));
+    lines.push('');
   }
   return lines;
+}
+
+export function detailLimit(state, columns = 80, rows = 24) {
+  const w = Math.max(1, Math.min(220, columns - 1));
+  const h = Math.max(1, Math.min(100, rows - 1));
+  const size = Math.max(1, w - (w >= 110 ? 22 : 2));
+  const visible = Math.max(1, h - 9);
+  const record = state.view === 5 ? state.sim.result : records(state)[state.selected];
+  return Math.max(0, detailLines(record, size).length - visible);
 }
 
 function tableRow(view, row, size) {
@@ -66,7 +81,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     'muted',
   );
   add(
-    ` ${VIEWS[state.view]}${state.query ? `  / ${state.query}` : ''}${state.loading ? '  ·  Refreshing…' : ''}`,
+    ` ${VIEWS[state.view]}${(state.input?.kind === 'search' ? state.input.text : state.query) ? `  / ${state.input?.kind === 'search' ? state.input.text : state.query}` : ''}${state.loading ? '  ·  Refreshing…' : ''}`,
     'accent',
     true,
   );
@@ -75,12 +90,38 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   const sidebar = w >= 110;
   const size = w - (sidebar ? 22 : 2);
   const available = Math.max(1, h - 8);
-  if (state.input?.kind === 'palette') {
+  if (state.input?.kind === 'planning') {
+    const editor = state.input;
+    put('PLANNING ASSUMPTIONS  ·  private scenarios only', 'accent', true);
+    put('Tab / Enter next  ·  Ctrl+U clear  ·  Ctrl+S save  ·  Esc cancel', 'muted');
+    const visible = Math.max(1, available - 4),
+      start = Math.max(0, editor.field - visible + 1);
+    for (const [index, field] of PLANNING_FIELDS.slice(start, start + visible).entries()) {
+      const active = start + index === editor.field;
+      put(
+        `${active ? '›' : ' '} ${fit(field.label, Math.min(23, size - 16))} [${editor.draft[field.key]}]`,
+        active ? 'accent' : 'ink',
+        active,
+      );
+      if (active) put(`  ${field.hint}`, 'muted');
+    }
+    if (editor.error) put(editor.error, 'bad');
+    else put('Changes affect the next run. Existing results keep their inputs.', 'muted');
+  } else if (state.input?.kind === 'palette') {
     put('COMMAND PALETTE', 'accent', true);
-    put('Enter opens the first matching command. Esc dismisses.', 'muted');
-    paletteCommands(state.input.text).forEach((c, i) =>
-      put(`${i ? '  ' : '› '}${c.label}`, i ? 'ink' : 'accent'),
-    );
+    put('↑ ↓ select  ·  Enter open  ·  Type to filter  ·  Esc dismiss', 'muted');
+    const commands = paletteCommands(state.input.text),
+      selected = state.input.selected || 0;
+    const start = Math.max(0, selected - Math.max(1, available - 2) + 1);
+    commands
+      .slice(start, start + Math.max(1, available - 2))
+      .forEach((c, i) =>
+        put(
+          `${i + start === selected ? '› ' : '  '}${c.label}`,
+          i + start === selected ? 'accent' : 'ink',
+        ),
+      );
+    if (!commands.length) put('No matching commands.', 'muted');
   } else if (state.help) {
     put('YOUR COMMERCE WORKBENCH', 'accent', true);
     for (const line of [
@@ -93,8 +134,11 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       'n / p           Next / previous data page',
       'r               Refresh the store snapshot',
       's               Run selected simulation in the lab',
+      'e               Edit planning assumptions',
+      'Shift+R         Replay last successful simulation inputs',
       '+ / -           Change the lab seed',
       'v               Inspect the full simulation report',
+      'Home / End      Jump to the start / end of records or a report',
       '?               Toggle this help',
       'q / Ctrl+C      Quit and restore the terminal',
       '',
@@ -162,7 +206,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       state.view === 5 ? state.sim.result : records(state)[state.selected],
       size,
     );
-    const offset = Math.min(state.detailOffset, Math.max(0, lines.length - available));
+    const offset = Math.min(state.detailOffset, Math.max(0, lines.length - available + 1));
     put('RECORD DETAILS  ·  ↑ ↓ scroll  ·  Esc back', 'muted');
     lines.slice(offset, offset + available - 1).forEach((line) => put(line));
   } else {
@@ -170,7 +214,14 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       field = pageKey(state.view);
     if (state.view === 5) {
       put(`ISOLATED ENGINE  ·  Seed ${state.seed}  ·  + / - to change`, 'good');
-      put('Select a scenario. Enter or s runs it; the store is untouched.', 'muted');
+      put(
+        `${state.planning.days} days · USD ${state.planning.startingCash} cash · e edit assumptions`,
+        'muted',
+      );
+      put(
+        `Stock ${state.planning.initialStock} · Reorder ${state.planning.reorderPoint} → ${state.planning.targetStock} · Lead ${state.planning.leadTimeDays}d`,
+        'muted',
+      );
     } else if (state.view === 2) put('LOW STOCK  ·  Available ≤ 10  ·  First 50 signals', 'muted');
     else
       put(
@@ -189,7 +240,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
         'muted',
       );
     const listHeight =
-      state.view === 5 ? Math.min(4, Math.max(1, available - 8)) : Math.max(1, available - 3);
+      state.view === 5 ? Math.min(4, Math.max(1, available - 10)) : Math.max(1, available - 3);
     const start = Math.max(0, state.selected - listHeight + 1);
     for (const [i, record] of data.slice(start, start + listHeight).entries()) {
       const selected = i + start === state.selected;
@@ -209,14 +260,21 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     if (state.view === 5) {
       put();
       const sim = state.sim;
-      if (sim.running) put(`RUNNING  ${sim.preset} / seed ${sim.seed}`, 'warn');
-      else if (sim.error) put(`Run failed: ${sim.error}`, 'bad');
-      else if (sim.result) {
-        put(`RESULTS  ${sim.preset} / seed ${sim.seed}  ·  v full report`, 'good', true);
-        for (const report of sim.result.results || []) {
+      if (sim.running) put(`RUNNING  ${sim.pending?.preset} / seed ${sim.pending?.seed}`, 'warn');
+      if (sim.error) {
+        wrap(`Run failed: ${sim.error}`, size)
+          .slice(0, 2)
+          .forEach((line) => put(line, 'bad'));
+        put(sim.result ? 'Previous result retained.' : 'No result available.', 'muted');
+      }
+      if (sim.result) {
+        put(`RESULTS  ${sim.preset} / seed ${sim.seed}  ·  v report  ·  R replay`, 'good', true);
+        const reports = sim.result.results || [],
+          baseline = reports[0];
+        for (const report of reports) {
           const summary = report.summary;
           put(
-            `${report.name}  ·  sold ${summary.sold}/${summary.demanded}  ·  lost ${summary.lostSales}`,
+            `${report.name}  ·  fill ${fillRate(summary)}  ·  lost ${summary.lostSales}`,
             'accent',
           );
           put(
@@ -227,7 +285,29 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
             'muted',
           );
         }
-      } else put('No run yet. Results come from actual native engine writes.', 'muted');
+        if (reports.length === 2) {
+          put(
+            `Change vs baseline: cash ${cashDelta(reports[1], baseline, 'endingCash')}`,
+            'accent',
+          );
+          put(
+            `                   margin ${cashDelta(reports[1], baseline, 'grossMargin')}`,
+            'accent',
+          );
+        }
+        const traces = soldTraces(reports, Math.min(24, Math.max(1, size - 28)));
+        put(`SOLD UNITS · ${traces.bucket}d per cell · shared peak ${traces.peak}`, 'muted');
+        reports.forEach((report, index) =>
+          put(`${fit(report.name, 22)} ${traces.lines[index]}`, 'accent'),
+        );
+        if (
+          sim.controls &&
+          (JSON.stringify(sim.controls) !== JSON.stringify(state.planning) ||
+            sim.seed !== state.seed)
+        )
+          put('Assumptions changed since this result. s runs the new settings.', 'warn');
+      } else if (!sim.running && !sim.error)
+        put('Enter / s runs a scenario; e edits its planning assumptions.', 'muted');
       put('Conditional projections from supplied assumptions.', 'muted');
     }
   }
@@ -253,13 +333,15 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   }
   const errors = state.data?.errors || [];
   add(
-    ` ${state.error ? `STALE / ERROR  ${state.error}` : errors.length ? `PARTIAL DATA  ${errors.map((e) => e.section).join(', ')}` : state.notice || (state.data ? `Snapshot ${state.data.checkedAt}  ·  r refresh` : 'Loading engine…')}`,
-    state.error || errors.length ? 'warn' : 'muted',
+    ` ${state.input?.kind === 'planning' && state.input.error ? state.input.error : state.error ? `STALE / ERROR  ${state.error}` : errors.length ? `PARTIAL DATA  ${errors.map((e) => e.section).join(', ')}` : state.notice || (state.data ? `Snapshot ${state.data.checkedAt}  ·  r refresh` : 'Loading engine…')}`,
+    state.error || errors.length || state.input?.error ? 'warn' : 'muted',
   );
   add(
-    state.input
-      ? ` ${state.input.kind === 'search' ? '/' : ':'} ${clean(state.input.text)}▏  Enter accept · Esc cancel`
-      : ' / search   Enter inspect   : commands   ? help   q quit',
+    state.input?.kind === 'planning'
+      ? ' Ctrl+U clear  Tab next  Ctrl+S save  Esc cancel'
+      : state.input
+        ? ` ${state.input.kind === 'search' ? '/' : ':'} ${clean(state.input.text)}▏  Enter accept · Esc cancel`
+        : ' / search   Enter inspect   : commands   ? help   q quit',
     state.input ? 'accent' : 'muted',
   );
   // Pad each row; stay off the last physical column/row to avoid wrapping and
