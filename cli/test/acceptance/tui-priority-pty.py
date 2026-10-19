@@ -111,7 +111,11 @@ try:
     send(b'\x1b')
     screen(b'Seed 77')
     send(b's')
-    screen(b'COMPARISON')
+    frame = screen(b'COMPARISON')
+    assert b'Lowest cash USD 0.00' in frame
+    assert b'CASH-BUDGET REFUSALS' in frame
+    assert b'COFFEE-250G: 3 blocked attempt(s)' in frame
+    assert b'First refusal day 0: whole order USD 10.00; cash USD 0.00' in frame
     deadline = time.monotonic() + 10
     while True:
         saved = json.loads(next(workspace.glob('*/workspace.json')).read_text())
@@ -133,6 +137,7 @@ try:
     evidence = {'filteredSkuReordered': True, 'narrowAndWideResize': True,
                 'savedOrderPreserved': True, 'noImplicitRun': True,
                 'nativePurchaseHonorsPriority': True, 'exactSpend': '10.00',
+                'cashBudgetEvidenceVisible': True, 'exactMinimumCash': '0.00',
                 'terminalRestored': True}
     (root / 'evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
     print(json.dumps({'evidence': str(root / 'evidence.json'), **evidence}, indent=2))

@@ -7,6 +7,7 @@ import Database from 'better-sqlite3';
 import { TerminalBackend } from '../../src/tui/backend.js';
 import { DEFAULT_PLANNING } from '../../src/tui/planning.js';
 import { initialState, navigate, handleKey } from '../../src/tui/model.js';
+import { resultLines } from '../../src/tui/render.js';
 
 test(
   'full inventory, cross-page search, related records, multi-SKU execution and owned cancellation',
@@ -140,6 +141,17 @@ test(
         assert.equal(report.summary.purchasingSpend, '10.00');
         assert.equal(report.summary.endingCash, '0.00');
         assert.equal(report.reconciliation.purchasingConstraintsBalanced, true);
+        const explained = resultLines(
+          {
+            sim: { preset: 'Steady demand', seed: 42, controls: state.planning, result: observed },
+          },
+          160,
+        ).join('\n');
+        const refused = expected === 'COFFEE-250G' ? 'MATCHA-50G' : 'COFFEE-250G';
+        assert.ok(explained.includes(`${refused}: 3 blocked attempt(s)`));
+        assert.match(explained, /Lowest cash USD 0\.00 · day 0/);
+        assert.match(explained, /First refusal day 0: whole order USD 10\.00; cash USD 0\.00/);
+        assert.ok(explained.includes(`Priority 1 · ${expected}`));
       }
       let started;
       const ready = new Promise((resolve) => {

@@ -1,5 +1,20 @@
 import { subtractDecimals } from '../utils/exact-decimal.js';
 
+// Refusals are timeline attempts, including repeated days and day zero.
+// Preserve exact recorded money; this is presentation, not purchase sizing.
+export function cashBudgetRefusals(report) {
+  if (!Array.isArray(report?.timeline)) return null;
+  const bySku = new Map();
+  for (const event of report.timeline) {
+    if (event?.type !== 'purchase_budget_blocked') continue;
+    const sku = typeof event.sku === 'string' ? event.sku : '(unknown SKU)';
+    const entry = bySku.get(sku) || { sku, attempts: 0, first: event };
+    entry.attempts += 1;
+    bySku.set(sku, entry);
+  }
+  return [...bySku.values()];
+}
+
 export function fillRate(summary) {
   if (
     !Number.isSafeInteger(summary?.demanded) ||

@@ -407,7 +407,13 @@ baseline demand range; supplier-delay comparisons add three days to the
 baseline lead time; cash-constraint comparisons use 5% of baseline opening cash.
 
 Results show fill rate, lost units, exact ending cash, purchasing spend and
-margin, with exact cash/margin changes against the baseline. Sold-unit traces
+margin, with exact cash/margin changes against the baseline. The comparison
+also shows the exact lowest cash balance and its first day, purchased/received
+units and stockout days per SKU, and cash-budget refusals with the first whole-order
+requirement and available cash. Refusal counts are attempts that may recur on
+several days, including day zero; they are not counts of distinct orders.
+Missing timeline evidence is shown as unavailable. Executed assumptions show
+the purchase-priority order used by the saved result. Sold-unit traces
 use a shared scale across both plans; each cell's day span and peak are labeled.
 Zero-demand fill rates are not evaluable. Changing assumptions affects only the
 next run: **Shift+R** replays the last successful run's original preset, seed,
