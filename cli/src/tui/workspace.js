@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { planningControls } from './planning.js';
 import { planningProducts } from './basket.js';
-import { simulationPlans } from './model.js';
+import { simulationPlans, navigate, PRESETS } from './model.js';
 import { SIMULATION_KERNEL_VERSION } from '../simulation/limits.js';
 
 const require = createRequire(import.meta.url);
@@ -46,6 +46,30 @@ export function runRecord(sim) {
     preset: sim.preset,
     inputDigest: digestInputs(sim.result.inputs),
     result: sim.result,
+  };
+}
+
+export function useRunAssumptions(state, run) {
+  if (state.sim.running)
+    throw new Error('Wait for the active simulation before loading assumptions');
+  const settings = scenarioSettings(run);
+  if (
+    !run.result?.success ||
+    JSON.stringify(
+      simulationPlans(settings.presetId, settings.seed, settings.controls, settings.products),
+    ) !== JSON.stringify(run.result.inputs)
+  )
+    throw new Error('Run assumptions differ from executed inputs');
+  if (run.inputDigest !== undefined && run.inputDigest !== digestInputs(run.result.inputs))
+    throw new Error('Run input digest mismatch');
+  return {
+    ...navigate(state, 5),
+    planning: settings.controls,
+    products: settings.products,
+    seed: settings.seed,
+    selectedPreset: settings.presetId,
+    selected: PRESETS.findIndex((preset) => preset.id === settings.presetId),
+    notice: 'Run assumptions loaded. e edits; s runs privately; w saves a new scenario.',
   };
 }
 

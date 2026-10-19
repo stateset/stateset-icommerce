@@ -50,7 +50,7 @@ def resize(columns, rows):
         child.send_signal(signal.SIGWINCH)
 
 
-def screen(needle, timeout=65):
+def screen(needle, timeout=65, absent=None):
     global buffer
     print('Waiting ' + repr(needle), flush=True)
     deadline = time.monotonic() + timeout
@@ -60,7 +60,7 @@ def screen(needle, timeout=65):
         if start >= 0 and stop >= 0:
             frame, buffer = buffer[start:stop + 3], buffer[stop + 3:]
             plain = re.sub(rb'\x1b\[[0-9;?]*[A-Za-z]', b'', frame)
-            if needle in plain:
+            if needle in plain and (absent is None or absent not in plain):
                 frames.append(plain.decode(errors='replace'))
                 return plain
             continue
@@ -138,9 +138,47 @@ try:
     assert b'Opening cash different' in frame
     assert b'Projected paths: demand same' in frame
     send(b'\x1b[4~')
-    frame = screen(b'Conditional projections')
+    frame = screen(b'Conditional projections', absent=b'RUNNING')
     assert b'Baseline' in frame and b'USD 10.00 opening cash' in frame
     assert b'Cash constraint' in frame and b'USD 0.50 opening cash' in frame
+    deadline = time.monotonic() + 10
+    while True:
+        saved = json.loads(next(workspace.glob('*/workspace.json')).read_text())
+        if len(saved['runs']) == 2:
+            break
+        assert time.monotonic() < deadline, 'comparison history was not persisted'
+        time.sleep(0.1)
+    original_runs = saved['runs']
+    send(b'a')
+    frame = screen(b'Run assumptions loaded')
+    assert b'USD 10.00 cash' in frame and b'Seed 77' in frame
+    send(b'e')
+    screen(b'PLANNING ASSUMPTIONS')
+    send(b'\t\x1520.00\x13')
+    screen(b'USD 20.00 cash')
+    send(b'w')
+    screen(b'SAVE SCENARIO')
+    send(b'Edited run\r')
+    screen(b'Scenario saved')
+    saved = json.loads(next(workspace.glob('*/workspace.json')).read_text())
+    edited = next(item for item in saved['scenarios'] if item['name'] == 'Edited run')
+    assert edited['presetId'] == 'cash' and edited['seed'] == 77
+    assert edited['controls']['startingCash'] == '20.00'
+    assert [item['sku'] for item in edited['products']] == ['MATCHA-50G', 'COFFEE-250G']
+    send(b'h/Steady demand\r')
+    screen(b'1 / 2 entries')
+    send(b'a')
+    frame = screen(b'Run assumptions loaded')
+    assert b'USD 10.00 cash' in frame
+    assert b'Assumptions changed since this result' in frame
+    send(b'w')
+    screen(b'SAVE SCENARIO')
+    send(b'History draft\r')
+    screen(b'Scenario saved')
+    saved = json.loads(next(workspace.glob('*/workspace.json')).read_text())
+    history = next(item for item in saved['scenarios'] if item['name'] == 'History draft')
+    assert history['presetId'] == 'baseline' and history['controls']['startingCash'] == '10.00'
+    assert saved['runs'] == original_runs, 'loading, editing and saving drafts never changes or adds runs'
     send(b'q')
     assert child.wait(timeout=15) == 0
     after = termios.tcgetattr(slave)
@@ -150,6 +188,8 @@ try:
                 'nativePurchaseHonorsPriority': True, 'exactSpend': '10.00',
                 'cashBudgetEvidenceVisible': True, 'exactMinimumCash': '0.00',
                 'comparisonChecksVisible': True, 'candidateInputsVisible': True,
+                'resultDraftLoadedAndEdited': True, 'filteredHistoryDraftLoaded': True,
+                'originalRunsUnchanged': True,
                 'terminalRestored': True}
     (root / 'evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
     print(json.dumps({'evidence': str(root / 'evidence.json'), **evidence}, indent=2))

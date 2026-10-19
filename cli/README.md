@@ -461,6 +461,14 @@ and closes its workers. Overview and help also scroll in short panes.
 **w** saves the current scenario under a new name, **l** opens the saved
 scenario library, and **h** opens run history. **Enter** loads a scenario or
 inspects a past run; **Shift+R** replays the inspected run's original inputs.
+Use **a** from a result or the selected history entry to load its original
+preset, seed, shared controls and ordered SKU terms into an editable draft.
+This also works after filtering history. Loading neither executes a simulation
+nor saves a scenario; **e/p** edits, **s** runs, and **w** saves a new scenario.
+The original run and existing reports retain their executed inputs. Changing only
+the preset also marks the displayed result as using older settings. For a
+comparison, the draft restores the original scenario and its comparison preset,
+including baseline controls, so the shock is not applied twice.
 Successful runs retain their full reports automatically (the latest 20 per
 source); up to 20 named scenarios are retained. **Shift+D** removes the selected
 library/history entry. **x** exports the inspected successful run as JSON to a

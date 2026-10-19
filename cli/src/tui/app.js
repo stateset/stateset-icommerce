@@ -2,7 +2,7 @@ import { explorerRequest } from './domains.js';
 import readline from 'node:readline';
 import { TerminalBackend } from './backend.js';
 import { initialState, handleKey, records, PRESETS } from './model.js';
-import { runRecord, scenarioSettings } from './workspace.js';
+import { runRecord, scenarioSettings, useRunAssumptions } from './workspace.js';
 import { productEditor } from './basket.js';
 import { readScenarioExport } from './import.js';
 import { render, detailLimit, panelLimit, importReviewLimit, contentLimit } from './render.js';
@@ -483,6 +483,17 @@ export async function startTerminal({
     if (result.effect === 'open-entry') {
       try {
         openEntry();
+      } catch (error) {
+        state = { ...state, notice: error.message };
+      }
+    }
+    if (result.effect === 'use-run-assumptions') {
+      try {
+        const run =
+          state.panel === 'history'
+            ? records(state)[state.selected]
+            : state.sim.record || state.sim;
+        state = useRunAssumptions(state, run);
       } catch (error) {
         state = { ...state, notice: error.message };
       }
