@@ -4,6 +4,8 @@
  * Tracks settlements through finality stages rather than treating all
  * settlements as immediately complete. Each blockchain has different
  * confirmation requirements before a settlement is considered final.
+ * Observations are supplied by the caller; this in-memory tracker does not
+ * verify canonical chain receipts or authorize capture/fulfillment itself.
  *
  * Finality states:
  *   broadcast → unconfirmed (0 conf) → confirming (1..N conf) → final (≥N conf) → settled
@@ -39,7 +41,7 @@ import { EventEmitter } from 'node:events';
  *
  * @type {Record<string, number>}
  */
-const CHAIN_FINALITY_REQUIREMENTS = {
+const CHAIN_FINALITY_REQUIREMENTS = Object.freeze({
   set_chain: 1, // ~2s
   base: 2, // ~4s
   ethereum: 12, // ~3min
@@ -49,7 +51,7 @@ const CHAIN_FINALITY_REQUIREMENTS = {
   bitcoin_testnet: 3, // faster operator feedback on testnet
   zcash: 10, // aligned with chain config
   zcash_testnet: 6, // aligned with testnet config
-};
+});
 
 /** Conservative default for unknown chains. */
 const DEFAULT_FINALITY_BLOCKS = 12;
@@ -62,7 +64,19 @@ const DEFAULT_FINALITY_BLOCKS = 12;
  * @returns {number}
  */
 export function getFinalityRequirement(chain) {
-  return CHAIN_FINALITY_REQUIREMENTS[chain] ?? DEFAULT_FINALITY_BLOCKS;
+  return Object.hasOwn(CHAIN_FINALITY_REQUIREMENTS, chain)
+    ? CHAIN_FINALITY_REQUIREMENTS[chain]
+    : DEFAULT_FINALITY_BLOCKS;
+}
+
+function requireCount(value, field) {
+  if (!Number.isSafeInteger(value) || value < 0)
+    throw new RangeError(`${field} must be a nonnegative safe integer`);
+}
+
+function requireIdentity(value, field) {
+  if (typeof value !== 'string' || !value.trim())
+    throw new TypeError(`${field} must be a nonempty string`);
 }
 
 // ---------------------------------------------------------------------------
@@ -70,7 +84,7 @@ export function getFinalityRequirement(chain) {
 // ---------------------------------------------------------------------------
 
 /** @enum {string} */
-const FinalityState = {
+const FinalityState = Object.freeze({
   BROADCAST: 'broadcast',
   UNCONFIRMED: 'unconfirmed',
   CONFIRMING: 'confirming',
@@ -78,7 +92,7 @@ const FinalityState = {
   SETTLED: 'settled',
   FAILED: 'failed',
   REORGED: 'reorged',
-};
+});
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -93,9 +107,26 @@ const FinalityState = {
  *   - `settlement_reorged` — block reorg detected
  *   - `settlement_failed` — settlement marked as failed
  *
+ * @param {{ confirmationRequirements?: Record<string, number> }} [options]
+ *   Operator-owned confirmation depths, never supplied by payment arguments.
  * @returns {Object} Finality tracker API
  */
-export function createFinalityTracker() {
+export function createFinalityTracker({ confirmationRequirements = {} } = {}) {
+  if (
+    !confirmationRequirements ||
+    typeof confirmationRequirements !== 'object' ||
+    Array.isArray(confirmationRequirements)
+  )
+    throw new TypeError('confirmationRequirements must be an object');
+  for (const [chain, count] of Object.entries(confirmationRequirements)) {
+    requireIdentity(chain, 'chain');
+    if (!Number.isSafeInteger(count) || count <= 0)
+      throw new RangeError(`confirmationRequirements for ${chain} must be a positive safe integer`);
+  }
+  const requirements = Object.freeze({
+    ...CHAIN_FINALITY_REQUIREMENTS,
+    ...confirmationRequirements,
+  });
   const emitter = new EventEmitter();
 
   /**
@@ -107,11 +138,7 @@ export function createFinalityTracker() {
   // Metrics accumulators
   const _metrics = {
     totalTracked: 0,
-    totalFinal: 0,
     totalReorgs: 0,
-    totalFailed: 0,
-    /** @type {number[]} - confirmation durations in ms for completed settlements */
-    confirmationDurations: [],
   };
 
   // -----------------------------------------------------------------------
@@ -135,6 +162,37 @@ export function createFinalityTracker() {
     return FinalityState.CONFIRMING;
   }
 
+  function isFinal(record) {
+    return (
+      (record.state === FinalityState.FINAL || record.state === FinalityState.SETTLED) &&
+      record.confirmations >= record.requiredConfirmations
+    );
+  }
+
+  function invalidateFinality(record, latestBlock, confirmations, reason) {
+    const previousState = record.state;
+    const previousConfirmations = record.confirmations;
+    record.state = FinalityState.REORGED;
+    record.confirmations = confirmations;
+    record.latestBlock = latestBlock;
+    record.finalAt = null;
+    record.updatedAt = Date.now();
+    if (previousState !== FinalityState.REORGED) {
+      _metrics.totalReorgs++;
+      emitter.emit('settlement_reorged', {
+        intentId: record.intentId,
+        previousBlock: record.blockNumber,
+        newBlock: latestBlock,
+        previousState,
+        previousConfirmations,
+        confirmations,
+        reason,
+        chain: record.chain,
+      });
+    }
+    return { ...record };
+  }
+
   // -----------------------------------------------------------------------
   // Core methods
   // -----------------------------------------------------------------------
@@ -149,11 +207,17 @@ export function createFinalityTracker() {
    * @returns {Object} The created settlement record
    */
   function trackSettlement(intentId, txHash, chain, blockNumber) {
+    requireIdentity(intentId, 'intentId');
+    requireIdentity(txHash, 'txHash');
+    requireIdentity(chain, 'chain');
+    requireCount(blockNumber, 'blockNumber');
     if (_settlements.has(intentId)) {
       throw new Error(`Settlement ${intentId} is already being tracked`);
     }
 
-    const required = getFinalityRequirement(chain);
+    const required = Object.hasOwn(requirements, chain)
+      ? requirements[chain]
+      : DEFAULT_FINALITY_BLOCKS;
     const now = Date.now();
 
     const record = {
@@ -178,7 +242,7 @@ export function createFinalityTracker() {
 
   /**
    * Update the confirmation count for a tracked settlement.
-   * Automatically transitions the state as confirmations accumulate.
+   * Tracks both increasing depth and adverse observations after final/settled.
    *
    * @param {string} intentId
    * @param {number} confirmations - Current number of confirmations
@@ -191,9 +255,18 @@ export function createFinalityTracker() {
       throw new Error(`Settlement ${intentId} not found`);
     }
 
-    if (record.state === FinalityState.FAILED || record.state === FinalityState.SETTLED) {
+    requireCount(confirmations, 'confirmations');
+    requireCount(latestBlock, 'latestBlock');
+    if (record.state === FinalityState.FAILED) {
       return { ...record };
     }
+
+    if (latestBlock < record.blockNumber)
+      return invalidateFinality(record, latestBlock, 0, 'block_regression');
+    if (BigInt(confirmations) > BigInt(latestBlock) - BigInt(record.blockNumber) + 1n)
+      throw new RangeError('confirmations exceed the observed inclusion-to-head window');
+    if (confirmations < record.confirmations)
+      return invalidateFinality(record, latestBlock, confirmations, 'confirmation_regression');
 
     const previousState = record.state;
     const previousConfirmations = record.confirmations;
@@ -205,14 +278,11 @@ export function createFinalityTracker() {
 
     const newState = deriveState(confirmations, record.requiredConfirmations);
 
-    // Only move forward (not backward unless reorged separately)
-    if (
-      newState !== previousState &&
-      previousState !== FinalityState.FINAL &&
-      previousState !== FinalityState.SETTLED
-    ) {
-      record.state = newState;
-    }
+    record.state =
+      previousState === FinalityState.SETTLED && newState === FinalityState.FINAL
+        ? FinalityState.SETTLED
+        : newState;
+    if (!isFinal(record)) record.finalAt = null;
 
     // Emit confirmed event when confirmations increase
     if (confirmations > previousConfirmations) {
@@ -227,8 +297,6 @@ export function createFinalityTracker() {
     // Emit final event on transition to final
     if (record.state === FinalityState.FINAL && previousState !== FinalityState.FINAL) {
       record.finalAt = now;
-      _metrics.totalFinal++;
-      _metrics.confirmationDurations.push(now - record.createdAt);
 
       emitter.emit('settlement_final', {
         intentId,
@@ -256,7 +324,7 @@ export function createFinalityTracker() {
 
     return {
       state: record.state,
-      isFinal: record.state === FinalityState.FINAL || record.state === FinalityState.SETTLED,
+      isFinal: isFinal(record),
       confirmations: record.confirmations,
       required: record.requiredConfirmations,
     };
@@ -276,21 +344,9 @@ export function createFinalityTracker() {
       throw new Error(`Settlement ${intentId} not found`);
     }
 
-    if (newBlockNumber < record.blockNumber) {
-      const previousState = record.state;
-      record.state = FinalityState.REORGED;
-      record.confirmations = 0;
-      record.updatedAt = Date.now();
-      _metrics.totalReorgs++;
-
-      emitter.emit('settlement_reorged', {
-        intentId,
-        previousBlock: record.blockNumber,
-        newBlock: newBlockNumber,
-        previousState,
-        chain: record.chain,
-      });
-    }
+    requireCount(newBlockNumber, 'newBlockNumber');
+    if (record.state !== FinalityState.FAILED && newBlockNumber < record.blockNumber)
+      return invalidateFinality(record, newBlockNumber, 0, 'block_regression');
 
     return { ...record };
   }
@@ -308,9 +364,10 @@ export function createFinalityTracker() {
       throw new Error(`Settlement ${intentId} not found`);
     }
 
+    if (record.state === FinalityState.FAILED) return { ...record };
     record.state = FinalityState.FAILED;
+    record.finalAt = null;
     record.updatedAt = Date.now();
-    _metrics.totalFailed++;
 
     emitter.emit('settlement_failed', {
       intentId,
@@ -332,7 +389,8 @@ export function createFinalityTracker() {
     if (!record) {
       throw new Error(`Settlement ${intentId} not found`);
     }
-    if (record.state !== FinalityState.FINAL) {
+    if (record.state === FinalityState.SETTLED) return { ...record };
+    if (record.state !== FinalityState.FINAL || !isFinal(record)) {
       throw new Error(
         `Cannot settle ${intentId}: current state is ${record.state}, expected final`,
       );
@@ -358,7 +416,7 @@ export function createFinalityTracker() {
 
     return {
       ...record,
-      isFinal: record.state === FinalityState.FINAL || record.state === FinalityState.SETTLED,
+      isFinal: isFinal(record),
       progress:
         record.requiredConfirmations > 0
           ? Math.min(record.confirmations / record.requiredConfirmations, 1)
@@ -391,18 +449,21 @@ export function createFinalityTracker() {
    * @returns {Object} Metrics object
    */
   function getMetrics() {
-    const durations = _metrics.confirmationDurations;
+    // Finality is a current observation, not a cumulative count of historical
+    // finalization events. Reorg/refinality must not push the rate above one.
+    const records = [..._settlements.values()];
+    const final = records.filter(isFinal);
+    const durations = final.map((record) => record.finalAt - record.createdAt);
     const avgConfirmationTimeMs =
       durations.length > 0 ? durations.reduce((sum, d) => sum + d, 0) / durations.length : 0;
 
-    const finalityRate =
-      _metrics.totalTracked > 0 ? _metrics.totalFinal / _metrics.totalTracked : 0;
+    const finalityRate = _metrics.totalTracked > 0 ? final.length / _metrics.totalTracked : 0;
 
     return {
       totalTracked: _metrics.totalTracked,
-      totalFinal: _metrics.totalFinal,
+      totalFinal: final.length,
       totalReorgs: _metrics.totalReorgs,
-      totalFailed: _metrics.totalFailed,
+      totalFailed: records.filter((record) => record.state === FinalityState.FAILED).length,
       avgConfirmationTimeMs: Math.round(avgConfirmationTimeMs),
       finalityRate,
       pendingCount: listPending().length,
@@ -425,7 +486,7 @@ export function createFinalityTracker() {
     getMetrics,
     events: emitter,
     /** Expose for testing / documentation. */
-    CHAIN_FINALITY_REQUIREMENTS,
+    CHAIN_FINALITY_REQUIREMENTS: requirements,
     FinalityState,
   };
 }
