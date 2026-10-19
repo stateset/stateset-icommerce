@@ -456,6 +456,22 @@ export function handleKey(state, text, key = {}) {
     }
     next.selected = Math.max(0, state.selected - 1);
   } else if (
+    ['[', ']'].includes(text) &&
+    state.view === 5 &&
+    state.panel === 'products' &&
+    !state.sim.running
+  ) {
+    const item = records(state)[state.selected];
+    if (!item) return { state };
+    const from = state.products.indexOf(item);
+    const to = from + (text === '[' ? -1 : 1);
+    if (from < 0 || to < 0 || to >= state.products.length) return { state };
+    next.products = [...state.products];
+    next.products.splice(from, 1);
+    next.products.splice(to, 0, item);
+    next.selected = records(next).findIndex((product) => product.sku === item.sku);
+    next.notice = `${item.sku}: purchase priority ${to + 1} of ${next.products.length}. Applies to the next run.`;
+  } else if (
     text === 'o' &&
     !state.detail &&
     !state.panel &&
@@ -574,6 +590,12 @@ export function paletteCommands(query = '', state) {
                 { label: 'Edit planning assumptions', key: 'e' },
                 { label: 'Set simulation seed', key: 'g' },
                 { label: 'Selected SKU terms', key: 'p' },
+                ...(state.panel === 'products' && state.products.length > 1
+                  ? [
+                      { label: 'Move selected SKU earlier in purchase priority', key: '[' },
+                      { label: 'Move selected SKU later in purchase priority', key: ']' },
+                    ]
+                  : []),
                 { label: 'Save scenario', key: 'w' },
                 { label: 'Saved scenarios', key: 'l' },
                 { label: 'Run history', key: 'h' },
