@@ -1,0 +1,94 @@
+name: Daily Security Audit
+
+on:
+  schedule:
+    - cron: '43 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-security-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Daily audit (${{ matrix.audit }})
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        audit: [rust, deny, cli, node, storefront]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+      - name: Install Rust
+        if: matrix.audit == 'rust' || matrix.audit == 'deny'
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0
+        with:
+          toolchain: stable
+      - name: Install audit tools
+        if: matrix.audit == 'rust' || matrix.audit == 'deny'
+        uses: taiki-e/install-action@1e67dedb5e3c590e1c9d9272ace46ef689da250d
+        with:
+          tool: cargo-audit,cargo-deny
+      - name: Run the audit and preserve evidence
+        env:
+          AUDIT_ID: ${{ matrix.audit }}
+        run: node scripts/ci/run_security_audit.mjs "$AUDIT_ID"
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: security-audit-${{ matrix.audit }}-${{ github.run_attempt }}
+          path: artifacts/security-audit
+          if-no-files-found: error
+          retention-days: 30
+
+  report:
+    name: Security audit tracking issue
+    needs: audit
+    if: always() && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+      - name: Download available evidence
+        # Still report missing artifacts as an incomplete audit, never recovery.
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: security-audit-*-${{ github.run_attempt }}
+          path: artifacts/security-audit
+          merge-multiple: true
+      - name: Update the single tracking issue
+        uses: actions/github-script@v8
+        env:
+          AUDIT_RESULT: ${{ needs.audit.result }}
+        with:
+          script: |
+            const { pathToFileURL } = require('node:url');
+            const path = require('node:path');
+            const { reportSecurityAudit } = await import(pathToFileURL(path.resolve('scripts/ci/report_security_audit.mjs')).href);
+            await reportSecurityAudit({
+              github, context, core,
+              directory: path.resolve('artifacts/security-audit'),
+              sha: context.sha,
+              runUrl: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}/attempts/${process.env.GITHUB_RUN_ATTEMPT}`,
+              auditResult: process.env.AUDIT_RESULT,
+            });

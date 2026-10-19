@@ -12,6 +12,36 @@ We release patches for security vulnerabilities in the following versions:
 
 This table tracks the currently maintained release line for this repository and should be updated in the same change that advances the supported release series.
 
+## Daily dependency monitoring
+
+The `Daily Security Audit` workflow (`security-audit-nightly.yml`) audits
+`master` every day at 06:43 UTC and supports manual dispatch on `master`.
+It reuses the PR-time Rust lockfile audit and exception-reachability helper,
+runs `cargo deny check advisories`, and installs the complete CLI and Node
+binding dependency trees with `npm ci` before auditing at `high` severity.
+No optional dependencies are omitted. A freshly packed storefront generator
+scaffolds a disposable store, installs its current registry dependencies, and
+runs the same `high` allowlist gate as the storefront golden path. This is a
+dependency audit, not a native build or merchant journey acceptance run.
+
+The Rust exceptions remain in `scripts/ci/check_rust_audits.sh`. The storefront
+uses `scripts/ci/npm-audit-allowlist.json` unchanged, including its requirement
+that an exception cannot hide an available patched registry release. These
+policies are shared with PR checks rather than copied into the daily workflow.
+
+Each audit uploads its commands, output, and audited commit as 30-day run
+artifacts. Failures open or update one bot-owned issue titled
+**Security audit: new advisory on master** with findings and a run link. Only
+a complete, successful run for the audited commit closes it; timeouts, failed
+installs, missing evidence, and registry outages require review too. The
+reporter updates the issue body rather than adding daily duplicate comments.
+Only that separate reporting job has `issues: write`; dependency installation
+and audit jobs have `contents: read` and no persisted checkout credentials.
+Artifacts are isolated by run attempt. After an interrupted or partial run,
+rerun all jobs to produce complete recovery evidence.
+This public dependency monitoring does not replace private vulnerability
+reporting below.
+
 ## Reporting a Vulnerability
 
 We take the security of StateSet iCommerce seriously. If you discover a security vulnerability, please report it responsibly.
@@ -125,12 +155,12 @@ pub enum CommerceEvent {
 
 We minimize dependencies and audit them regularly. Key dependencies:
 
-| Dependency | Purpose | Security Notes |
-|------------|---------|----------------|
-| `rusqlite` | SQLite bindings | Uses bundled SQLite |
-| `sqlx` | PostgreSQL async | Prepared statements prevent SQL injection; MySQL driver is disabled at the workspace level |
-| `serde` | Serialization | No unsafe code |
-| `uuid` | ID generation | Cryptographically random UUIDs |
+| Dependency | Purpose          | Security Notes                                                                             |
+| ---------- | ---------------- | ------------------------------------------------------------------------------------------ |
+| `rusqlite` | SQLite bindings  | Uses bundled SQLite                                                                        |
+| `sqlx`     | PostgreSQL async | Prepared statements prevent SQL injection; MySQL driver is disabled at the workspace level |
+| `serde`    | Serialization    | No unsafe code                                                                             |
+| `uuid`     | ID generation    | Cryptographically random UUIDs                                                             |
 
 ### Supply-chain auditing
 
