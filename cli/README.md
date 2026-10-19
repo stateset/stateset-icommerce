@@ -330,6 +330,38 @@ stateset --apply "create an order for that customer with 2 widgets at $29.99"
 stateset --apply --resume <session-id> "ship that order with tracking ABC123"
 ```
 
+### Terminal Workbench (Ghostty / Herdr)
+
+```bash
+stateset-tui                    # Private, engine-backed demo; no API key
+stateset-tui --db ./store.db     # Browse an existing store through a snapshot
+stateset-tui --snapshot         # One plain-text screen for non-interactive use
+```
+
+The workbench includes an overview, orders, low-stock inventory, customers,
+payments, and a simulation lab. Use **1–6** or **Tab** to switch views,
+**arrows/j/k** to select, **Enter** for details, **/** to search the loaded page,
+**n/p** for pages, **:** for the command palette, and **?** for help.
+In the lab, **Enter/s** runs a scenario, **+/−** changes its seed, and **v**
+opens the full result for inspection. **q** exits and restores the terminal.
+The layout adapts to narrow split panes; 40 columns by 14 rows is the minimum.
+
+Demo records are created by the native embedded engine in a private temporary
+store, visibly labeled `DEMO`. Existing stores are opened with SQLite's
+read-only online-backup API, including committed WAL data; the native engine
+then reads and migrates only the private copy. Browsing does not expose
+business-write commands. Live browsing requires the CLI's optional
+`better-sqlite3` dependency and refuses cleanly if it is unavailable.
+
+The simulation lab compares steady demand, demand spikes, supplier delays,
+and cash constraints using the existing embedded inventory/purchasing engine.
+Each plan uses a fresh private store, with exact decimal money and no external
+services or live-store access. Results are conditional projections from the
+displayed assumptions, not validated forecasts. Engine work runs in bounded
+child processes so input and resizing stay responsive; quitting terminates
+those children and removes only the workbench's own temporary directory.
+`--json` emits snapshot data without terminal control sequences.
+
 ### Interactive Chat
 
 ```bash

@@ -19,7 +19,7 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 | Rust crates in workspace | 23 |
 | Binding crates in workspace | 8 |
 | Excluded local binding manifests | 2 |
-| CLI binaries | 56 |
+| CLI binaries | 57 |
 | CLI optional dependencies | 12 |
 | Admin local embedded binding | `file:../bindings/node` |
 
@@ -80,7 +80,7 @@ workspace membership because they require host runtimes or headers.
 
 | Metric | Value |
 | --- | --- |
-| Top-level source groups | 109 |
+| Top-level source groups | 110 |
 | Tool modules | 99 |
 | A2A modules | 62 |
 | JS dependencies | 15 |
@@ -104,6 +104,7 @@ workspace membership because they require host runtimes or headers.
 | `x402` | 10 |
 | `knowledge` | 6 |
 | `memory` | 6 |
+| `tui` | 6 |
 | `skills` | 5 |
 | `treasury` | 5 |
 | `connectors` | 4 |

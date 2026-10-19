@@ -8,6 +8,7 @@
     "ss": "bin/stateset.js",
     "stateset": "bin/stateset.js",
     "stateset-chat": "bin/stateset-chat.js",
+    "stateset-tui": "bin/stateset-tui.js",
     "stateset-direct": "bin/stateset-direct.js",
     "stateset-checkout": "bin/stateset-checkout.js",
     "stateset-orders": "bin/stateset-orders.js",
