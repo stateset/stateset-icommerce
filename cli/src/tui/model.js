@@ -1,3 +1,4 @@
+import { DOMAINS, explorerRows, explorerKey, openExplorer } from './domains.js';
 import {
   DEFAULT_PLANNING,
   PLANNING_FIELDS,
@@ -9,7 +10,15 @@ import { editText } from './editor.js';
 import { graphemes } from './text.js';
 import { PRODUCT_FIELDS, productEditor, productFromDraft, planningProducts } from './basket.js';
 
-export const VIEWS = ['Overview', 'Orders', 'Inventory', 'Customers', 'Payments', 'Simulation lab'];
+export const VIEWS = [
+  'Overview',
+  'Orders',
+  'Inventory',
+  'Customers',
+  'Payments',
+  'Simulation lab',
+  'Engine explorer',
+];
 export const PAGE_SIZE = 50;
 export const PRESETS = [
   {
@@ -72,6 +81,16 @@ export function simulationPlans(preset, seed, controls = DEFAULT_PLANNING, produ
 
 export function initialState(source = 'Private demo') {
   return {
+    explorer: {
+      mode: 'domains',
+      domain: null,
+      table: null,
+      query: '',
+      page: 0,
+      sort: 0,
+      stack: [],
+      relation: null,
+    },
     view: 0,
     selected: 0,
     query: '',
@@ -104,6 +123,7 @@ export function initialState(source = 'Private demo') {
 }
 
 export function records(state) {
+  if (state.view === 6 && !state.panel) return explorerRows(state);
   const library = {
     scenarios: state.library.scenarios,
     history: state.library.runs,
@@ -153,6 +173,7 @@ export function pageKey(view) {
 }
 
 export function navigate(state, view) {
+  if ((view + VIEWS.length) % VIEWS.length === 6) return openExplorer(state);
   return {
     ...state,
     view: (view + VIEWS.length) % VIEWS.length,
@@ -272,6 +293,10 @@ export function handleKey(state, text, key = {}) {
       } else if (state.input.kind === 'search' && state.panel) {
         next.panelQuery = state.input.text;
         next.selected = 0;
+      } else if (state.input.kind === 'search' && state.view === 6) {
+        next.explorer = { ...state.explorer, query: state.input.text, page: 0 };
+        next.selected = 0;
+        if (next.explorer.mode === 'records') effect = 'refresh';
       } else if (state.input.kind === 'search') {
         next.query = state.input.text;
         next.selected = 0;
@@ -286,7 +311,8 @@ export function handleKey(state, text, key = {}) {
         effect = state.input.kind;
       } else {
         const command = paletteCommands(state.input.text, state)[state.input.selected || 0];
-        if (command?.view !== undefined) next = navigate(next, command.view);
+        if (command?.domain) next = openExplorer(next, command.domain);
+        else if (command?.view !== undefined) next = navigate(next, command.view);
         else if (command?.key) return handleKey({ ...state, input: null }, command.key, {});
         else if (command) effect = command.effect;
       }
@@ -350,6 +376,10 @@ export function handleKey(state, text, key = {}) {
               );
     return { state: next };
   }
+  if (state.view === 6) {
+    const result = explorerKey(state, text, key);
+    if (result) return result;
+  }
   if (name === 'escape' && state.detail)
     return {
       state: { ...state, detail: false, detailOffset: 0, focusRecord: null, focusTarget: null },
@@ -386,12 +416,15 @@ export function handleKey(state, text, key = {}) {
     text === '/' &&
     (!state.panel || ['scenarios', 'history', 'products'].includes(state.panel))
   ) {
-    next.input = { kind: 'search', text: state.panel ? state.panelQuery : state.query };
+    next.input = {
+      kind: 'search',
+      text: state.view === 6 ? state.explorer.query : state.panel ? state.panelQuery : state.query,
+    };
     next.detail = false;
     next.focusRecord = null;
     next.focusTarget = null;
   } else if (name === 'tab') next = navigate(state, state.view + (key.shift ? -1 : 1));
-  else if (/^[1-6]$/.test(text || '')) next = navigate(state, Number(text) - 1);
+  else if (/^[1-7]$/.test(text || '')) next = navigate(state, Number(text) - 1);
   else if (text === 'r') effect = 'refresh';
   else if (text === 'c' && state.sim.running) effect = 'cancel';
   else if (text === 'g' && state.view === 5 && !state.sim.running)
@@ -556,5 +589,6 @@ export function paletteCommands(query = '', state) {
             : []),
         ]
       : []),
+    ...DOMAINS.map((d) => ({ label: `Explore ${d.name} · ${d.group}`, domain: d.id })),
   ].filter((c) => c.label.toLowerCase().includes(query.toLowerCase()));
 }

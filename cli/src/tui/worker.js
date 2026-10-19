@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { adaptCommerceApis, getCommerceCtor } from '../commerce.js';
 import { PAGE_SIZE, simulationPlans } from './model.js';
+import { exploreStore } from './explore-store.js';
 import { browseStore } from './browse.js';
 
 async function seedDemo(commerce) {
@@ -162,6 +163,7 @@ async function loadStore({ dbPath, directory, payload }) {
       snapshot.focusRecord = await commerce[domain].get(id);
       if (!snapshot.focusRecord) throw new Error('Linked record no longer exists');
     }
+    if (payload.explorer) snapshot.explorer = exploreStore(target, payload.explorer);
     return await browseStore(commerce, target, payload, snapshot);
   } finally {
     await commerce.close();

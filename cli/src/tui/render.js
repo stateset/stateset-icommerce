@@ -1,3 +1,4 @@
+import { explorerBody, explorerDetail } from './explorer-render.js';
 import { VIEWS, records, pageKey, paletteCommands, PRESETS } from './model.js';
 import { editorWindow } from './editor.js';
 import { clean, fit, width, wrap } from './text.js';
@@ -42,7 +43,11 @@ export function detailLimit(state, columns = 80, rows = 24) {
   const size = Math.max(1, w - (w >= 110 ? 22 : 2));
   const visible = Math.max(1, h - 9);
   const record =
-    state.view === 5 ? state.sim.result : state.focusRecord || records(state)[state.selected];
+    state.view === 6
+      ? explorerDetail(state)
+      : state.view === 5
+        ? state.sim.result
+        : state.focusRecord || records(state)[state.selected];
   return Math.max(0, detailLines(record, size).length - visible);
 }
 
@@ -170,7 +175,11 @@ function staticBody(state) {
   if (state.help) {
     put('KEYBOARD HELP · ↑ ↓ scroll · Esc close', 'accent', true);
     for (const line of [
-      '1–6 / Tab       Switch view',
+      '1–7 / Tab       Switch view',
+      '7               Engine explorer: every domain and tool reference',
+      'Explorer d / T  Domains / tool reference (documentation only)',
+      'Explorer t / b  Follow persisted links / return',
+      'Explorer /      Filter domains or search the entire resource on Enter',
       '↑ ↓ / j k       Select a record or scenario',
       'Enter           Open details / run selected simulation',
       'Esc             Back / clear search',
@@ -240,6 +249,7 @@ function staticBody(state) {
       );
     put();
     put('EXPLORE THE POSSIBILITIES', 'muted');
+    put('7  Explore all engine domains and tool references', 'accent');
     put('6  Open the simulation lab', 'accent');
     put('Compare demand, supplier delays and cash constraints.');
     put('Every scenario runs in a separate embedded store.', 'muted');
@@ -277,13 +287,15 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   );
   add(
     ' ' +
-      VIEWS.map(
-        (v, i) => `${i + 1} ${['Home', 'Orders', 'Stock', 'People', 'Pay', 'Lab'][i]}`,
+      VIEWS.map((v, i) =>
+        w < 80 && i !== state.view
+          ? `${i + 1}`
+          : `${i + 1} ${['Home', 'Orders', 'Stock', 'People', 'Pay', 'Lab', 'Explore'][i]}`,
       ).join('  '),
     'muted',
   );
   add(
-    ` ${VIEWS[state.view]}${(state.input?.kind === 'search' ? state.input.text : state.query) ? `  / ${state.input?.kind === 'search' ? state.input.text : state.query}` : ''}${state.loading ? '  ·  Refreshing…' : ''}`,
+    ` ${VIEWS[state.view]}${(state.input?.kind === 'search' ? state.input.text : state.view === 6 ? state.explorer.query : state.query) ? `  / ${state.input?.kind === 'search' ? state.input.text : state.view === 6 ? state.explorer.query : state.query}` : ''}${state.loading ? '  ·  Refreshing…' : ''}`,
     'accent',
     true,
   );
@@ -430,7 +442,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     if (!commands.length) put('No matching commands.', 'muted');
   } else if (state.help) {
     body.push(...staticBody(state));
-  } else if (!state.data && state.error && state.view !== 5) {
+  } else if (!state.data && state.error && state.view !== 5 && state.view !== 6) {
     put('THE ENGINE COULD NOT OPEN', 'bad', true);
     put();
     wrap(state.error, size).forEach((line) => put(line, 'warn'));
@@ -444,17 +456,27 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     body.push(...staticBody(state));
   } else if (state.detail) {
     const lines = detailLines(
-      state.view === 5 ? state.sim.result : state.focusRecord || records(state)[state.selected],
+      state.view === 6
+        ? explorerDetail(state)
+        : state.view === 5
+          ? state.sim.result
+          : state.focusRecord || records(state)[state.selected],
       size,
     );
     const offset = Math.min(state.detailOffset, Math.max(0, lines.length - available + 1));
     put(
-      state.view === 5
-        ? 'RECORD DETAILS · ↑ ↓ scroll · Esc back'
-        : 'DETAILS · t related · u customer · b back · Esc close',
+      state.view === 6
+        ? state.explorer.mode === 'tools'
+          ? 'TOOL REFERENCE · ↑ ↓ scroll · Esc close'
+          : 'STORED RECORD · ↑ ↓ scroll · t links · Esc close'
+        : state.view === 5
+          ? 'RECORD DETAILS · ↑ ↓ scroll · Esc back'
+          : 'DETAILS · t related · u customer · b back · Esc close',
       'muted',
     );
     lines.slice(offset, offset + available - 1).forEach((line) => put(line));
+  } else if (state.view === 6) {
+    body.push(...explorerBody(state, size, available));
   } else {
     const data = records(state),
       field = pageKey(state.view);
@@ -569,11 +591,13 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
         ? ' Ctrl+U clear  Tab next  Ctrl+S save  Esc cancel'
         : state.input
           ? ` ${{ search: '/', palette: ':', save: 'Name: ', export: 'Path: ', import: 'Path: ', seed: 'Seed:' }[state.input.kind] || ''} ${editorWindow(state.input.text, state.input.cursor, Math.max(1, w - 36))}  Enter accept · Esc cancel`
-          : state.view === 5
-            ? ' e edit  p SKUs  l/h library/history  i import  : commands  ? help'
-            : state.view === 2
-              ? ' a plan SKU  / search  o sort  Enter inspect  ? help  q quit'
-              : ' / search  o sort  Enter inspect  : commands  ? help  q quit',
+          : state.view === 6
+            ? ' d domains  T tools  / search  Enter open  b back  ? help  q quit'
+            : state.view === 5
+              ? ' e edit  p SKUs  l/h library/history  i import  : commands  ? help'
+              : state.view === 2
+                ? ' a plan SKU  / search  o sort  Enter inspect  ? help  q quit'
+                : ' / search  o sort  Enter inspect  : commands  ? help  q quit',
     state.input ? 'accent' : 'muted',
   );
   // Pad each row; stay off the last physical column/row to avoid wrapping and

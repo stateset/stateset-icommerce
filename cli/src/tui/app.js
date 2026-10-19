@@ -1,3 +1,4 @@
+import { explorerRequest } from './domains.js';
 import readline from 'node:readline';
 import { TerminalBackend } from './backend.js';
 import { initialState, handleKey, records, PRESETS } from './model.js';
@@ -131,6 +132,7 @@ export async function startTerminal({
     sorts: { ...state.sorts },
     relation: state.relation,
     focus: state.focusTarget,
+    explorer: state.view === 6 ? explorerRequest(state.explorer) : null,
   });
   const refresh = async () => {
     if (closed) return;
@@ -164,6 +166,9 @@ export async function startTerminal({
           ...state,
           data,
           pages: { ...state.pages, ...data.pages },
+          explorer: data.explorer
+            ? { ...state.explorer, page: data.explorer.page }
+            : state.explorer,
           focusRecord: data.focusRecord || null,
           error: null,
           selected,
@@ -508,6 +513,15 @@ export async function startTerminal({
           });
     }
     if (['related', 'customer', 'back'].includes(result.effect)) void related(result.effect);
+    if (result.effect === 'open-lab')
+      state = {
+        ...state,
+        view: 5,
+        selected: PRESETS.findIndex((p) => p.id === state.selectedPreset),
+        detail: false,
+        query: '',
+        input: null,
+      };
     if (result.effect === 'refresh') void refresh();
     if (result.effect === 'simulate') void simulate();
     if (result.effect === 'replay') void simulate(true);

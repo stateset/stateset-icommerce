@@ -339,7 +339,7 @@ stateset-tui --snapshot         # One plain-text screen for non-interactive use
 ```
 
 The workbench includes an overview, orders, full inventory, customers,
-payments, and a simulation lab. Use **1–6** or **Tab** to switch views,
+payments, a simulation lab, and an engine explorer. Use **1–7** or **Tab** to switch views,
 **arrows/j/k** to select, **Enter** for details, **/** to preview matches and **Enter** to search the entire view,
 **n/p** for pages, **:** for the command palette, and **?** for help.
 In the lab, **Enter/s** runs a scenario, **+/−** changes its seed, and **v**
@@ -355,6 +355,37 @@ read-only online-backup API, including committed WAL data; the native engine
 then reads and migrates only the private copy. Browsing does not expose
 business-write commands. Store browsing requires the CLI's optional
 `better-sqlite3` dependency and refuses cleanly if it is unavailable.
+
+Open **7** for the engine explorer: all **89 tool domains plus the server runtime**,
+organized into commerce, growth, operations, finance, agents/trust, and integrations.
+Search domain names with **/** or jump directly using **:** and `Explore general ledger`,
+`Explore suppliers`, or another domain name. **Enter** opens a domain's resources,
+then its records. The explorer has **205 registered persisted resources**, covering
+catalog/variants, carts, returns/refunds, shipments, subscriptions, promotions,
+purchasing, manufacturing, WMS, quality/traceability, B2B, the finance suite,
+and persisted agent/audit/integration records.
+
+Explorer records use read-only SELECTs against an explicit table allowlist on the
+same private engine snapshot. **/** searches the entire resource on Enter (literal
+wildcards), **n/p** pages in batches of 50, **o** toggles recent/name ordering with
+stable identifier ties, and **Enter** opens scrollable stored fields. **t** follows
+parent or child relationships from engine foreign keys and documented parent IDs;
+**b** returns through a bounded navigation history, and **d** returns to domains.
+Stored decimal strings and 64-bit identifiers are never converted through JavaScript
+numbers. Fields are limited to 4096 characters and 64 visible columns per record;
+known credential and binary columns are excluded from display and search. These
+are persisted records, not computed financial reports or proof verification.
+
+**Shift+T** opens each domain's searchable **tool reference**, including all **966**
+registered domain/runtime tools, descriptions, permissions, stability tiers and
+experimental prerequisites. This is documentation only: opening a write tool
+never executes it. Metadata is generated from the authoritative registry with
+`node cli/scripts/generate-tui-catalog.mjs` and checked by the standard regeneration
+pipeline. The workbench loads only that metadata, not executable tool handlers.
+Optional tables absent from an engine build are shown as unavailable, rather than
+empty. External services, chain/wallet operations, backup/restore, and process-only
+services remain reference-only; no credentials are loaded or network calls made.
+In the simulations domain, **Shift+L** opens the working lab.
 
 The simulation lab compares steady demand, demand spikes, supplier delays,
 and cash constraints using the existing embedded inventory/purchasing engine.

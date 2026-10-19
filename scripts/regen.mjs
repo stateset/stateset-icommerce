@@ -57,6 +57,12 @@ const STEPS = [
     cargo: 'none',
   },
   {
+    name: 'TUI capability catalog',
+    command: ['node', 'cli/scripts/generate-tui-catalog.mjs'],
+    outputs: ['cli/src/tui/catalog.json'],
+    cargo: 'none',
+  },
+  {
     name: 'kernel mutation boundary',
     command: ['node', 'scripts/ci/generate_kernel_boundary.mjs'],
     outputs: ['kernel/mutation-boundary.json'],
