@@ -10,6 +10,8 @@
  *   the advisory's package must still have its latest registry version inside
  *   the advisory's vulnerable range. npm's `fixAvailable` is not used, since it
  *   reports `true` for chains (Tailwind 3 -> braces) with no patch at all.
+ * - Missing, malformed or unsuccessful audit evidence exits 2 (retryable by
+ *   the storefront gate); policy violations and unverifiable exceptions exit 1.
  *
  * Usage:
  *   node scripts/ci/enforce_npm_audit_allowlist.mjs --level high
@@ -37,7 +39,16 @@ function parseArgs(argv) {
 }
 
 function severityRank(sev) {
-  return { info: 0, low: 1, moderate: 2, high: 3, critical: 4 }[sev] ?? -1;
+  return ['info', 'low', 'moderate', 'high', 'critical'].indexOf(sev);
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function unavailable(reason) {
+  console.error(`error: npm audit did not return a valid report: ${reason}`);
+  process.exit(2);
 }
 
 const { level, allowlist } = parseArgs(process.argv);
@@ -45,10 +56,14 @@ console.log(`+ npm audit --audit-level=${level} --json`);
 const res = spawnSync('npm', ['audit', `--audit-level=${level}`, '--json'], {
   encoding: 'utf8',
   stdio: ['ignore', 'pipe', 'pipe'],
+  timeout: 60000,
 });
 if (res.error) {
   console.error('error: failed to invoke npm audit:', res.error);
-  process.exit(1);
+  process.exit(2);
+}
+if (res.signal || ![0, 1].includes(res.status)) {
+  unavailable(`unexpected process result (exit ${res.status}, signal ${res.signal})`);
 }
 const output = res.stdout || res.stderr || '';
 let report;
@@ -57,12 +72,39 @@ try {
 } catch {
   console.error('error: npm audit did not return JSON; refusing to gate on an unparsable response');
   console.error(output.slice(0, 2000));
-  process.exit(1);
+  process.exit(2);
 }
 
-const vulnEntries = Object.entries(report.vulnerabilities || {});
+// npm errors can be valid JSON. An absent vulnerability map is not evidence of
+// a clean dependency tree. Check the v2 summary against every package before
+// allowing threshold filtering to hide incomplete or unknown-severity data.
+if (
+  !isRecord(report) ||
+  Object.hasOwn(report, 'error') ||
+  report.auditReportVersion !== 2 ||
+  !isRecord(report.vulnerabilities) ||
+  !isRecord(report.metadata?.vulnerabilities)
+) {
+  unavailable('expected a complete npm audit v2 report without an error');
+}
+const vulnEntries = Object.entries(report.vulnerabilities);
+const counts = { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: vulnEntries.length };
+for (const [pkg, vulnerability] of vulnEntries) {
+  if (!isRecord(vulnerability) || severityRank(vulnerability.severity) < 0) {
+    unavailable(`invalid vulnerability or severity for ${pkg}`);
+  }
+  counts[vulnerability.severity]++;
+}
+for (const [severity, count] of Object.entries(counts)) {
+  if (report.metadata.vulnerabilities[severity] !== count) {
+    unavailable(`inconsistent ${severity} vulnerability count`);
+  }
+}
 const minRank = severityRank(level);
 const relevant = vulnEntries.filter(([_, v]) => severityRank(v.severity) >= minRank);
+if (res.status !== Number(relevant.length > 0)) {
+  unavailable('process exit status contradicts findings at the requested severity');
+}
 if (relevant.length === 0) {
   console.log(`npm audit: no ${level} (or higher) advisories found`);
   process.exit(0);
@@ -146,13 +188,20 @@ const viewCache = new Map();
 function npmView(args) {
   const key = args.join(' ');
   if (!viewCache.has(key)) {
-    const r = spawnSync('npm', ['view', ...args, '--json'], { encoding: 'utf8' });
-    if (r.status !== 0) {
+    const r = spawnSync('npm', ['view', ...args, '--json'], { encoding: 'utf8', timeout: 60000 });
+    if (r.error || r.signal || r.status !== 0) {
       console.error(`error: npm view ${key} failed; refusing to allow without registry data`);
       console.error((r.stderr || '').slice(0, 500));
       process.exit(1);
     }
-    viewCache.set(key, JSON.parse(r.stdout || 'null'));
+    try {
+      viewCache.set(key, JSON.parse(r.stdout));
+    } catch {
+      console.error(
+        `error: npm view ${key} did not return JSON; refusing an unverifiable exception`,
+      );
+      process.exit(1);
+    }
   }
   return viewCache.get(key);
 }
@@ -160,7 +209,16 @@ function npmView(args) {
 /** Latest published version when it is outside `range` (a patch exists), else null. */
 function patchedVersionPublished(name, range) {
   const latest = npmView([name, 'version']);
-  const vulnerable = [npmView([`${name}@${range}`, 'version'])].flat().filter(Boolean);
+  const vulnerable = [npmView([`${name}@${range}`, 'version'])].flat();
+  const isVersion = (value) =>
+    typeof value === 'string' &&
+    /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(value);
+  if (!isVersion(latest) || vulnerable.length === 0 || !vulnerable.every(isVersion)) {
+    console.error(
+      `error: npm view returned invalid version data for ${name}; refusing an unverifiable exception`,
+    );
+    process.exit(1);
+  }
   return vulnerable.includes(latest) ? null : latest;
 }
 
@@ -181,7 +239,11 @@ for (const [pkg, v] of relevant) {
       // registry instead: the allowlisted advisory stays allowed only while
       // the package's latest published version is still inside the
       // advisory's vulnerable range. Once a patched release ships, fail.
-      for (const advisory of advisoriesFor(v, report, id)) {
+      const advisories = advisoriesFor(v, report, id);
+      if (advisories.length === 0) {
+        violations.push({ pkg, ids: [id], reason: 'missing advisory package/range evidence' });
+      }
+      for (const advisory of advisories) {
         const patched = patchedVersionPublished(advisory.name, advisory.range);
         if (patched) {
           violations.push({

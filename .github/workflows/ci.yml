@@ -816,6 +816,23 @@ jobs:
         # Optional integrations ship with the CLI and must be audited too.
         run: npm audit --audit-level=high
 
+      - name: Check optional SDK dependency contracts
+        working-directory: cli
+        run: node scripts/check-optional-dependency-security.mjs
+
+      - name: Test CLI release packaging guards
+        run: node --test scripts/ci/pack_cli_release.test.mjs
+
+      - name: Check packed CLI consumer installation
+        # Before a release, the candidate native version may not exist yet.
+        # This exercises CLI packaging against the current published engine;
+        # publication repeats it with the exact newly published native version.
+        run: |
+          embedded_version=$(npm view @stateset/embedded version)
+          node scripts/ci/pack_cli_release.mjs --output-dir "$RUNNER_TEMP/cli-consumer" --embedded-version "$embedded_version"
+          version=$(node -p "require('./cli/package.json').version")
+          node scripts/ci/check_cli_consumer.mjs "$RUNNER_TEMP/cli-consumer/stateset-cli-${version}.tgz"
+
       - name: Install root tooling (ESLint, Prettier)
         # Disable husky git hook installation in CI.
         run: HUSKY=0 npm ci
@@ -921,6 +938,14 @@ jobs:
       - name: Install dependencies
         working-directory: admin
         run: npm ci
+
+      - name: Audit admin dependencies
+        working-directory: admin
+        run: node ../scripts/ci/enforce_npm_audit_allowlist.mjs --level moderate --allowlist ../scripts/ci/npm-audit-allowlist.json
+
+      - name: Check installed design styles
+        working-directory: admin
+        run: node scripts/check-design-css.mjs
 
       - name: Typecheck
         working-directory: admin
@@ -1387,6 +1412,9 @@ jobs:
       - name: Install CLI dependencies
         working-directory: cli
         run: npm ci
+
+      - name: Test dependency audit refusal paths
+        run: node --test scripts/ci/enforce_npm_audit_allowlist.test.mjs
 
       - name: Generate crate compatibility report
         env:
