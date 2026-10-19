@@ -952,6 +952,14 @@ jobs:
         working-directory: admin
         run: npm ci
 
+      - name: Audit admin dependencies
+        working-directory: admin
+        run: node ../scripts/ci/enforce_npm_audit_allowlist.mjs --level moderate --allowlist ../scripts/ci/npm-audit-allowlist.json
+
+      - name: Check installed design styles
+        working-directory: admin
+        run: node scripts/check-design-css.mjs
+
       - name: Typecheck
         working-directory: admin
         run: npm run typecheck
