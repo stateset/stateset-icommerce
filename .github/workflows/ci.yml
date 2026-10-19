@@ -186,30 +186,17 @@ jobs:
         uses: taiki-e/install-action@1e67dedb5e3c590e1c9d9272ace46ef689da250d
         with:
           tool: cargo-audit
-      - name: Security audit
-        # RUSTSEC-2023-0071 affects `rsa` (pulled in via optional `sqlx-mysql`).
-        # This workspace does not enable or ship MySQL support, and there is no
-        # fixed upgrade available upstream.
-        # RUSTSEC-2026-0235 affects `rkyv` 0.7, an OPTIONAL dependency of rust_decimal
-        # that is present in Cargo.lock but never enabled by this workspace (we use
-        # only the `serde` feature), so the vulnerable code is never compiled.
-        run: >-
-          cargo audit
-          --deny warnings
-          --ignore RUSTSEC-2023-0071
-          --ignore RUSTSEC-2026-0235
-
-      - name: Ensure advisory exceptions stay outside the build graph
-        # An optional dependency in Cargo.lock is not necessarily compiled.
-        # Fail closed if either exception becomes reachable through any
-        # workspace feature or target, instead of silently suppressing it.
-        run: |
-          cargo tree --locked --workspace --all-features --target all \
-            --edges normal,build --prefix none --format '{p}' > audit-build-graph.txt
-          if grep -E '^(rsa|rkyv) ' audit-build-graph.txt; then
-            echo '::error::An advisory-ignored package is compiled; remove its exception and remediate it.'
-            exit 1
-          fi
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+      - name: Test audit coverage and failure handling
+        run: node --test scripts/ci/check_rust_audits.test.mjs
+      - name: Audit every tracked Rust lockfile and its exception reachability
+        # Includes standalone PHP/Ruby bindings and fuzz tooling. The two
+        # existing optional-dependency exceptions must remain outside every
+        # manifest's normal/build graph across all features and targets.
+        run: bash scripts/ci/check_rust_audits.sh
 
   deny:
     name: Dependency Policy
@@ -1377,7 +1364,11 @@ jobs:
         # uses php-config to discover headers. Required for the cross-binding
         # parity test which calls into the actual extension.
         working-directory: bindings/php
-        run: cargo build --features runtime --release
+        run: cargo build --locked --features runtime --release
+
+      - name: Native commerce contract (PHP)
+        working-directory: bindings/php
+        run: php -d extension="$PWD/target/release/libstateset_embedded.so" tests/native-contract.php
 
       - name: Cross-binding parity (PHP)
         # Loads the freshly built extension and runs only the parity test.
@@ -1389,6 +1380,7 @@ jobs:
           test -f "$EXT_PATH" || { echo "extension not built: $EXT_PATH"; exit 1; }
           php -d extension="$EXT_PATH" \
             vendor/bin/phpunit \
+            --fail-on-skipped \
             --filter CryptoVectorTest \
             tests/CryptoVectorTest.php
 

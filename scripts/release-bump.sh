@@ -122,8 +122,19 @@ for (const path of lockfiles) {
 }
 NODE
 
-echo "==> Regenerating Cargo.lock"
-cargo metadata --format-version 1 >/dev/null
+echo "==> Regenerating tracked Rust lockfiles"
+# Standalone bindings and fuzz harnesses do not inherit the root lockfile.
+# Let Cargo update their local package versions without rewriting registry
+# versions or checksums through a blanket text substitution.
+rust_lockfiles="$(git ls-files -- Cargo.lock '**/Cargo.lock')"
+if [[ -z "$rust_lockfiles" ]]; then
+  echo "::error::No tracked Rust lockfiles were discovered" >&2
+  exit 1
+fi
+while IFS= read -r lockfile; do
+  manifest="${lockfile%Cargo.lock}Cargo.toml"
+  cargo metadata --manifest-path "$manifest" --format-version 1 --all-features >/dev/null
+done <<< "$rust_lockfiles"
 
 echo "==> Regenerating inventories"
 node ./scripts/ci/generate_workspace_inventory.mjs >/dev/null
