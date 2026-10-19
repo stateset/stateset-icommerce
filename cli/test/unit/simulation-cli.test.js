@@ -9,8 +9,44 @@ import { fileURLToPath } from 'node:url';
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL('../../bin/stateset-simulate.js', import.meta.url));
-const invoke = (args) =>
-  execute(process.execPath, [cli, ...args], { env: { NODE_ENV: 'test' }, timeout: 45000 });
+const invoke = (args, options = {}) =>
+  execute(process.execPath, [cli, ...args], {
+    env: { NODE_ENV: 'test' },
+    timeout: 45000,
+    ...options,
+  });
+
+test('bundled examples run from an unrelated directory and retain native safety restrictions', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'stateset-bundled-examples-'));
+  try {
+    for (const example of ['commerce', 'inventory', 'experiment']) {
+      const report = JSON.parse((await invoke(['--example', example, '--json'], { cwd })).stdout);
+      assert.equal(report.success, true);
+      assert.equal(report.liveStoreModified, false);
+      assert.ok(report.results?.every((result) => result.expectationsMet !== false) ?? true);
+    }
+    for (const name of ['../commerce-scenario.json', '__proto__', 'unknown']) {
+      await assert.rejects(invoke(['--example', name], { cwd }), (error) => {
+        assert.match(error.stderr, /Unknown simulation example/);
+        return true;
+      });
+    }
+    for (const flags of [
+      ['--live'],
+      ['--db', 'store.db'],
+      ['--commerce', '/missing.json'],
+      ['--scenario', 'basic-negotiation'],
+    ]) {
+      await assert.rejects(invoke(['--example', 'commerce', ...flags], { cwd }), (error) => {
+        assert.match(error.stderr, /one JSON input mode/);
+        return true;
+      });
+    }
+    assert.deepEqual(await fs.readdir(cwd), []);
+  } finally {
+    await fs.rm(cwd, { recursive: true, force: true });
+  }
+});
 
 test('native CLI rejects explicitly supplied legacy options before reading any file', async () => {
   for (const flags of [

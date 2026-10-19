@@ -110,7 +110,7 @@ async function buildNodeBindingInventory() {
   const entrypoints = Object.entries(packageJson.exports || {})
     .map(([subpath, target]) => ({
       subpath,
-      runtimeEntry: target.default || null,
+      runtimeEntry: typeof target === 'string' ? target : target.default || null,
       typesEntry: target.types || null,
     }))
     .sort((left, right) => left.subpath.localeCompare(right.subpath));

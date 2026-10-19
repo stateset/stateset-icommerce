@@ -176,6 +176,11 @@ native purchase quantities must match the supplied constraints. See
 [inventory-purchasing-experiment.json](examples/inventory-purchasing-experiment.json).
 
 ```bash
+stateset-simulate --example commerce --json
+stateset-simulate --example inventory --json
+stateset-simulate --example experiment --json
+
+# Or provide your own JSON input:
 stateset-simulate --inventory-plan plan.json --json
 stateset-simulate --commerce scenario.json --json
 stateset-simulate --inventory-experiment experiment.json --json
@@ -194,6 +199,10 @@ confidence intervals; payments and purchases contact no external providers.
 See the [agent guide](../docs/src/ai-agents.md#embedded-engine-simulations) and
 repository examples [inventory-plan.json](examples/inventory-plan.json) and
 [commerce-scenario.json](examples/commerce-scenario.json).
+The native simulation JSON examples are bundled with the npm package. `--example`
+resolves them relative to the installed CLI, so it works from any directory and
+needs no downloads, API keys or live database. It accepts the same `--json` option
+and rejects live-settlement and database-path options just like file-based runs.
 
 ## Highlights
 

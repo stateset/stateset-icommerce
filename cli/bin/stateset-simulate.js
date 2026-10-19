@@ -22,10 +22,29 @@ import {
   SIMULATION_LIMITS,
 } from '../src/simulation/index.js';
 
+const EXAMPLES = new Map([
+  [
+    'commerce',
+    { mode: 'commerce', file: new URL('../examples/commerce-scenario.json', import.meta.url) },
+  ],
+  [
+    'inventory',
+    { mode: 'inventory-plan', file: new URL('../examples/inventory-plan.json', import.meta.url) },
+  ],
+  [
+    'experiment',
+    {
+      mode: 'inventory-experiment',
+      file: new URL('../examples/inventory-experiment.json', import.meta.url),
+    },
+  ],
+]);
+
 const HELP = `
 StateSet Simulation CLI
 
 USAGE:
+  stateset-simulate --example <commerce|inventory|experiment> [--json]
   stateset-simulate --inventory-experiment <experiment.json> [--json]
   stateset-simulate --inventory-plan <plan.json> [--json]
   stateset-simulate --commerce <scenario.json> [--json]
@@ -37,6 +56,7 @@ DESCRIPTION:
   embedded stores. Legacy A2A demos remain available via --scenario.
 
 OPTIONS:
+  --example <name>         Run a bundled native example (commerce, inventory, experiment)
   --inventory-experiment <file>  Evaluate inventory policies across shared demand seeds
   --inventory-plan <file>  Native demand/inventory/purchasing simulation (array compares plans)
   --commerce <file>        Native orders/payments/refunds simulation (array compares scenarios)
@@ -59,6 +79,8 @@ SCENARIOS:
   ${SIMULATION_SCENARIOS.join('\n  ')}
 
 EXAMPLES:
+  stateset-simulate --example commerce --json
+  stateset-simulate --example inventory --json
   stateset simulate --scenario supplier-goes-offline --agents inventory,procurement --json
   stateset-simulate --scenario basic-negotiation --chain base --json
 `;
@@ -124,6 +146,7 @@ async function main() {
   const { values, tokens } = parseArgs({
     options: {
       scenario: { type: 'string' },
+      example: { type: 'string' },
       commerce: { type: 'string' },
       'inventory-plan': { type: 'string' },
       'inventory-experiment': { type: 'string' },
@@ -155,7 +178,7 @@ async function main() {
     return;
   }
 
-  const nativeOptions = ['commerce', 'inventory-plan', 'inventory-experiment'];
+  const nativeOptions = ['commerce', 'inventory-plan', 'inventory-experiment', 'example'];
   const selectedNative = nativeOptions.filter((name) => values[name] !== undefined);
   const nativeMode = selectedNative.length > 0;
   if (nativeMode) {
@@ -181,7 +204,15 @@ async function main() {
   }
 
   if (nativeMode) {
-    const inputFile = values[selectedNative[0]];
+    let mode = selectedNative[0];
+    let inputFile = values[mode];
+    if (mode === 'example') {
+      const example = EXAMPLES.get(values.example);
+      if (!example)
+        throw new Error('Unknown simulation example. Choose commerce, inventory or experiment.');
+      mode = example.mode;
+      inputFile = example.file;
+    }
     const inputHandle = await fs.open(inputFile, 'r');
     let input;
     try {
@@ -197,9 +228,9 @@ async function main() {
     }
     const compare = Array.isArray(input);
     const result =
-      values['inventory-experiment'] !== undefined
+      mode === 'inventory-experiment'
         ? await runInventoryExperiment(input)
-        : values.commerce !== undefined
+        : mode === 'commerce'
           ? await (compare ? compareCommerceSimulations : runCommerceSimulation)(input)
           : await (compare ? compareInventorySimulations : runInventorySimulation)(input);
     console.log(JSON.stringify(result, null, 2));
