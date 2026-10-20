@@ -279,9 +279,22 @@ export function handleKey(state, text, key = {}) {
     return { state: next };
   }
   if (state.input) {
+    if (state.input.saving) return { state };
     if (name === 'escape') next.input = null;
     else if (name === 'return') {
-      if (state.input.kind === 'seed') {
+      if (state.input.kind === 'rename') {
+        if (!state.input.text.trim() || state.input.text.length > 80)
+          return {
+            state: {
+              ...state,
+              input: { ...state.input, error: 'Choose a scenario name (1–80 characters)' },
+            },
+          };
+        return {
+          state: { ...state, input: { ...state.input, saving: true, error: null } },
+          effect: 'rename-scenario',
+        };
+      } else if (state.input.kind === 'seed') {
         if (!/^[1-9]\d{0,5}$/.test(state.input.text))
           return {
             state: {
@@ -334,7 +347,9 @@ export function handleKey(state, text, key = {}) {
           ? 1024
           : state.input.kind === 'seed'
             ? 6
-            : 120,
+            : state.input.kind === 'rename'
+              ? 80
+              : 120,
         accept: state.input.kind === 'seed' ? (s) => /^\d+$/.test(s) : undefined,
       });
       if (edited)
@@ -434,7 +449,16 @@ export function handleKey(state, text, key = {}) {
   else if (text === 'U' && state.undoRemoval && !state.sim.running) effect = 'undo-removal';
   else if (text === 'w' && state.view === 5 && !state.sim.running)
     next.input = { kind: 'save', text: '' };
-  else if (text === 'x' && state.view === 5 && state.sim.result)
+  else if (
+    text === 'N' &&
+    state.view === 5 &&
+    state.panel === 'scenarios' &&
+    !state.sim.running &&
+    records(state)[state.selected]
+  ) {
+    const item = records(state)[state.selected];
+    next.input = { kind: 'rename', id: item.id, text: item.name };
+  } else if (text === 'x' && state.view === 5 && state.sim.result)
     next.input = { kind: 'export', text: '' };
   else if (['h', 'l', 'p'].includes(text) && state.view === 5 && !state.sim.running) {
     next.panel = { h: 'history', l: 'scenarios', p: 'products' }[text];
@@ -606,6 +630,9 @@ export function paletteCommands(query = '', state) {
                   : []),
                 { label: 'Save scenario', key: 'w' },
                 { label: 'Saved scenarios', key: 'l' },
+                ...(state.panel === 'scenarios' && records(state)[state.selected]
+                  ? [{ label: 'Rename selected saved scenario', key: 'N' }]
+                  : []),
                 { label: 'Run history', key: 'h' },
                 ...((state.panel === 'history' && records(state)[state.selected]) ||
                 (state.panel === 'results' && state.sim.result)

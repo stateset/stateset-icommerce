@@ -249,6 +249,7 @@ function staticBody(state) {
       'w / l / h       Save scenario / library / run history',
       'x / i / c       Export result / import assumptions / cancel run',
       '/ in library    Filter saved entries without reading the store',
+      'Shift+N         Rename selected saved scenario',
       'Shift+D / U     Remove saved entry / undo last removal',
       'p (lab)         Edit selected SKU planning terms',
       '[ / ] (SKUs)    Move selected SKU earlier / later in purchase priority',
@@ -417,7 +418,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     const rows = records(state);
     put(
       {
-        scenarios: 'SAVED SCENARIOS · Enter load · / filter',
+        scenarios: 'SAVED SCENARIOS · Enter load · Shift+N rename · / filter',
         history: 'RUN HISTORY · Enter inspect · a use · / filter',
         products: 'SELECTED SKUS · PURCHASE PRIORITY',
       }[state.panel],
@@ -457,32 +458,38 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
           : 'No saved entries yet. w saves a scenario; successful runs save history.',
         'muted',
       );
-  } else if (['save', 'export', 'import', 'seed'].includes(state.input?.kind)) {
+  } else if (['save', 'rename', 'export', 'import', 'seed'].includes(state.input?.kind)) {
     put(
       state.input.kind === 'seed'
         ? 'SET SIMULATION SEED · 1–999999'
         : state.input.kind === 'save'
           ? 'SAVE SCENARIO · enter a name'
-          : state.input.kind === 'import'
-            ? 'IMPORT SCENARIO · enter a local JSON filename'
-            : 'EXPORT RUN · enter a new JSON filename',
+          : state.input.kind === 'rename'
+            ? 'RENAME SCENARIO · 1–80 characters'
+            : state.input.kind === 'import'
+              ? 'IMPORT SCENARIO · enter a local JSON filename'
+              : 'EXPORT RUN · enter a new JSON filename',
       'accent',
       true,
     );
-    put('Enter confirm · Esc cancel', 'muted');
+    put(state.input.saving ? 'Renaming… please wait' : 'Enter confirm · Esc cancel', 'muted');
     put(
       state.input.kind === 'seed'
         ? 'Enter saves a valid seed. Existing results keep their original seed.'
         : state.input.kind === 'save'
           ? `Saves ${state.selectedPreset} with current seed, assumptions and SKUs.`
-          : state.input.kind === 'import'
-            ? 'Validate and preview exported assumptions. Nothing runs automatically.'
-            : 'Includes executed inputs, input digest and the complete engine report.',
+          : state.input.kind === 'rename'
+            ? 'Changes only the saved name. Assumptions, priority and reports stay intact.'
+            : state.input.kind === 'import'
+              ? 'Validate and preview exported assumptions. Nothing runs automatically.'
+              : 'Includes executed inputs, input digest and the complete engine report.',
     );
     put(
       state.input.kind === 'seed'
         ? 'Use s to run the selected scenario.'
-        : 'Existing files and saved entries are preserved.',
+        : state.input.kind === 'rename'
+          ? 'The renamed entry remains selected; the library filter is cleared.'
+          : 'Existing files and saved entries are preserved.',
       'muted',
     );
   } else if (state.input?.kind === 'palette') {
@@ -651,7 +658,9 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       : ['planning', 'product'].includes(state.input?.kind)
         ? ' Ctrl+U clear  Tab next  Ctrl+S save  Esc cancel'
         : state.input
-          ? ` ${{ search: '/', palette: ':', save: 'Name: ', export: 'Path: ', import: 'Path: ', seed: 'Seed:' }[state.input.kind] || ''} ${editorWindow(state.input.text, state.input.cursor, Math.max(1, w - 36))}  Enter accept · Esc cancel`
+          ? state.input.saving
+            ? ' Renaming… please wait'
+            : ` ${{ search: '/', palette: ':', save: 'Name: ', rename: 'Name: ', export: 'Path: ', import: 'Path: ', seed: 'Seed:' }[state.input.kind] || ''} ${editorWindow(state.input.text, state.input.cursor, Math.max(1, w - 36))}  Enter accept · Esc cancel`
           : state.view === 6
             ? ' d domains  T tools  / search  Enter open  b back  ? help  q quit'
             : state.view === 5

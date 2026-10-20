@@ -306,6 +306,31 @@ export async function startTerminal({
     }
     draw();
   };
+  const renameScenario = async () => {
+    const prompt = state.input;
+    try {
+      if (!workspace) throw new Error('No workspace configured');
+      const library = await workspace.renameScenario(prompt.id, prompt.text);
+      if (!closed) {
+        state = {
+          ...state,
+          library,
+          ...(state.input === prompt
+            ? {
+                input: null,
+                panelQuery: '',
+                selected: library.scenarios.findIndex((item) => item.id === prompt.id),
+                notice: 'Scenario renamed. Filter cleared to keep it selected.',
+              }
+            : {}),
+        };
+      }
+    } catch (error) {
+      if (!closed && state.input === prompt)
+        state = { ...state, input: { ...prompt, saving: false, error: error.message } };
+    }
+    draw();
+  };
   const openEntry = () => {
     const item = records(state)[state.selected];
     if (!item) return;
@@ -463,6 +488,7 @@ export async function startTerminal({
     }
     if (result.effect === 'cancel') backend.cancel('simulate');
     if (['save', 'export', 'import'].includes(result.effect)) void persist(result.effect);
+    if (result.effect === 'rename-scenario') void renameScenario();
     if (result.effect === 'apply-import') {
       const settings = state.input.preview.settings;
       state = {
