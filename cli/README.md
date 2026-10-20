@@ -420,6 +420,16 @@ release later purchasing capacity. Cash-constraint comparisons keep the same
 reserve while reducing opening cash. Saving, importing, updating and replaying
 scenarios retain the reserve, and review screens show it before confirmation.
 
+For selected SKUs, open **p → e** to set a **Review interval** (1–60 days) and
+optional **Position cap** (1–1000000 units; blank means no cap). Reviews happen
+on virtual day zero and multiples of the interval, before sizing or cash checks.
+Low-stock days between reviews defer replenishment; a review beyond the horizon
+does not run. The position cap includes available stock, inbound units and the
+proposed whole order after supplier minimum/case-pack rounding. A cap below the
+rounded position blocks the order; it does not shrink it. These rules are retained
+through comparisons, save, import, reviewed updates and replay. Older scenarios
+keep daily reviews and no cap; their recorded inputs and digests remain unchanged.
+
 Results show fill rate, lost units, exact ending cash, purchasing spend and
 margin, with exact cash/margin changes against the baseline. The comparison
 also shows the exact lowest cash balance and its first day, purchased/received

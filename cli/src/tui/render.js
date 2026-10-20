@@ -338,6 +338,8 @@ export function importReviewLines(preview, size) {
       add(
         `Supplier minimum ${p.purchasing.minimumOrderQuantity} · case pack ${p.purchasing.orderMultiple}`,
       );
+    add(`Purchase review interval ${p.purchasing?.reviewIntervalDays ?? 1} day(s)`);
+    add(`Maximum inventory position ${p.purchasing?.maximumInventoryPosition ?? 'No cap'}`);
   }
   add('Enter loads assumptions only.');
   add('Run and save are separate actions.');
@@ -381,6 +383,8 @@ export function scenarioUpdateLines(review, size) {
         add(
           `Supplier minimum ${item.purchasing.minimumOrderQuantity} · case pack ${item.purchasing.orderMultiple}`,
         );
+      add(`Purchase review interval ${item.purchasing?.reviewIntervalDays ?? 1} day(s)`);
+      add(`Maximum inventory position ${item.purchasing?.maximumInventoryPosition ?? 'No cap'}`);
     }
   }
   add('Enter replaces this saved scenario. ID, name and run reports are preserved.');
