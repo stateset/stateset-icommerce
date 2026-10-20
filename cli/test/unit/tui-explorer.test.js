@@ -47,7 +47,7 @@ test('generated metadata includes every domain and runtime tool without executab
   assert.equal(DOMAINS.length, 90);
   assert.equal(
     DOMAINS.reduce((n, d) => n + d.tools.length, 0),
-    966,
+    967,
   );
   assert.equal(new Set(DOMAINS.map((d) => d.id)).size, DOMAINS.length);
   assert.ok(TABLES.length >= 200);

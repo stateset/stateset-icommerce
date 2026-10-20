@@ -4,7 +4,7 @@
     "coverageModel": "cli/src/coverage/mcp-api-coverage.js"
   },
   "totalDomainModules": 89,
-  "totalDomainTools": 951,
+  "totalDomainTools": 952,
   "totalCommerceGetters": 68,
   "mappedCommerceGetters": 68,
   "uncoveredCommerceGetters": [],
@@ -168,7 +168,7 @@
     {
       "getter": "orders",
       "module": "orders",
-      "toolCount": 6
+      "toolCount": 7
     },
     {
       "getter": "paymentObligations",

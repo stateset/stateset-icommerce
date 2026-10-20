@@ -13,11 +13,11 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Metric | Value |
 | --- | --- |
-| Total tools | 984 |
+| Total tools | 985 |
 | MCP servers | 3 |
 | Policy domains | 91 |
 | Read tools | 487 |
-| Write tools | 429 |
+| Write tools | 430 |
 | Delete tools | 21 |
 | Admin tools | 47 |
 | Unknown permission | 0 |
@@ -26,7 +26,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | MCP server | Tools | Source |
 | --- | --- | --- |
-| stateset-commerce | 966 | `cli/src/mcp-server.js` |
+| stateset-commerce | 967 | `cli/src/mcp-server.js` |
 | stateset-scaffold | 13 | `cli/src/scaffold-server.js` |
 | stateset-x402 | 5 | `cli/src/x402-mcp-server.js` |
 
@@ -81,7 +81,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | loyalty | 8 |
 | maintenance | 5 |
 | manufacturing | 11 |
-| orders | 6 |
+| orders | 7 |
 | payment-obligations | 7 |
 | payments | 19 |
 | policies | 5 |
@@ -133,7 +133,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | admin | 47 |
 | delete | 21 |
 | read | 487 |
-| write | 429 |
+| write | 430 |
 
 ## Tool Registry
 
@@ -992,6 +992,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `set_price_schedule_entry` | `stateset-commerce` | `price_schedules` | `write` |
 | `set_tax_enabled` | `stateset-commerce` | `tax` | `write` |
 | `ship_order` | `stateset-commerce` | `orders` | `write` |
+| `ship_reserved_order` | `stateset-commerce` | `orders` | `write` |
 | `ship_shipment` | `stateset-commerce` | `shipments` | `write` |
 | `ship_transfer_order` | `stateset-commerce` | `transfer_orders` | `write` |
 | `sign_wasm_connector_attestation` | `stateset-commerce` | `connectors` | `admin` |

@@ -160,6 +160,16 @@
       "allowed_store_ids": ["store:replace-me"],
       "requires_agent_delegation": true,
       "requires_signed_authority": false
+    },
+    "orders.ship_reserved": {
+      "required_capabilities": ["orders.ship_reserved"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
     }
   },
   "trusted_authority_keys": {}

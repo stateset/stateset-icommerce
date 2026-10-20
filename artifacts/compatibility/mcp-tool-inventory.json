@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 984,
+  "totalTools": 985,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 966
+      "count": 967
     },
     {
       "name": "stateset-scaffold",
@@ -211,7 +211,7 @@
     },
     {
       "name": "orders",
-      "count": 6
+      "count": 7
     },
     {
       "name": "payment-obligations",
@@ -401,14 +401,14 @@
     },
     {
       "name": "write",
-      "count": 429
+      "count": 430
     }
   ],
   "permissionCounts": {
     "admin": 47,
     "delete": 21,
     "read": 487,
-    "write": 429
+    "write": 430
   },
   "tools": [
     {
@@ -8081,10 +8081,19 @@
     },
     {
       "name": "ship_order",
-      "description": "Mark an order as shipped with optional tracking number.",
+      "description": "Mark an order as shipped with optional tracking number. For physical stock consumption use ship_reserved_order.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__ship_order",
+      "policyDomain": "orders",
+      "permission": "write"
+    },
+    {
+      "name": "ship_reserved_order",
+      "description": "Ship all remaining units or selected order lines and atomically consume their reserved physical inventory. Requires a paid processing/partially-shipped order, its reviewed version from get_order, --apply and trusted kernel policy granting orders.ship_reserved. Returns a native receipt; use the same idempotency key for an uncertain retry.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__ship_reserved_order",
       "policyDomain": "orders",
       "permission": "write"
     },

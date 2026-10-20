@@ -5,6 +5,7 @@ import { terminalLayout } from './layout.js';
 import { clean, fit, width, wrap } from './text.js';
 import { DEFAULT_PLANNING, planningFields } from './planning.js';
 import { PRODUCT_FIELDS } from './basket.js';
+import { shipmentWorkflowLines } from './shipment-workflow.js';
 import { refundWorkflowLines } from './refund-workflow.js';
 import { orderWorkflowLines, canReviewOrderAgain } from './order-workflow.js';
 import {
@@ -524,6 +525,7 @@ function staticBody(state, compact = false) {
       '',
       'W (Orders)      Preview a governed order action',
       'P (Orders)      Reconcile last native order receipt; no command repeated',
+      'S (Orders)      Ship reserved stock; G last shipment receipt; J shipment history',
       'W (Payments)    Review one pending refund request; provider execution is separate',
       'P/H (Payments)  Recover last refund receipt / browse local refund intents',
       'H (Orders)      Browse prior action intents; Enter looks up native receipt',
@@ -590,7 +592,7 @@ function staticLines(state, size, compact) {
 }
 function compactFooter(state, w) {
   const input = state.input;
-  if (['order-action', 'refund-action'].includes(input?.kind))
+  if (['order-action', 'refund-action', 'shipment-action'].includes(input?.kind))
     return input.busy
       ? ' Waiting · Ctrl+C exit'
       : input.phase === 'edit'
@@ -670,12 +672,15 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   }
   const body = [];
   const put = (text = '', tone = 'ink', bold = false) => body.push({ text, tone, bold });
-  if (['order-action', 'refund-action'].includes(state.input?.kind)) {
+  if (['order-action', 'refund-action', 'shipment-action'].includes(state.input?.kind)) {
     const input = state.input,
-      lines = (input.kind === 'refund-action' ? refundWorkflowLines : orderWorkflowLines)(
-        input,
-        size,
-      );
+      lines = (
+        input.kind === 'shipment-action'
+          ? shipmentWorkflowLines
+          : input.kind === 'refund-action'
+            ? refundWorkflowLines
+            : orderWorkflowLines
+      )(input, size);
     const visible = Math.max(1, available - 1);
     const offset =
       input.phase === 'choose' && compact
@@ -685,8 +690,8 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       compact
         ? input.phase === 'history'
           ? `HISTORY · ${input.history.pendingOnly ? 'PENDING' : 'ALL'}`
-          : `${input.kind === 'refund-action' ? 'REFUND' : 'ORDER'} · ${input.phase}`
-        : `${input.kind === 'refund-action' ? 'REFUND' : 'ORDER'} WORKFLOW · ${input.phase.toUpperCase()} · ${offset + 1}/${lines.length}`,
+          : `${input.kind === 'shipment-action' ? 'SHIPMENT' : input.kind === 'refund-action' ? 'REFUND' : 'ORDER'} · ${input.phase}`
+        : `${input.kind === 'shipment-action' ? 'SHIPMENT' : input.kind === 'refund-action' ? 'REFUND' : 'ORDER'} WORKFLOW · ${input.phase.toUpperCase()} · ${offset + 1}/${lines.length}`,
       input.reviewIssues?.length ? 'warn' : 'accent',
       true,
     );
@@ -1050,7 +1055,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   add(
     compact
       ? compactFooter(state, w)
-      : ['order-action', 'refund-action'].includes(state.input?.kind)
+      : ['order-action', 'refund-action', 'shipment-action'].includes(state.input?.kind)
         ? compactFooter(state, w)
         : state.input?.kind === 'scenario-update'
           ? state.input.saving
@@ -1071,7 +1076,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
                     : state.view === 2
                       ? ' a plan SKU  / search  o sort  Enter inspect  ? help  q quit'
                       : state.view === 1
-                        ? ' W action  P last receipt  H history  / search  Enter inspect  ? help'
+                        ? ' S ship  G/J receipts  W status  P/H history  / search  ? help'
                         : state.view === 4
                           ? ' W refund request  P last receipt  H history  / search  Enter inspect  ? help'
                           : ' / search  o sort  Enter inspect  : commands  ? help  q quit',

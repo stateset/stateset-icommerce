@@ -40,12 +40,12 @@ Every tool carries a **stability tier** (`cli/src/tools/tool-tiers.js`):
 
 | Tier           | Tools | What it means                                                                                                                                                                                                                                                                                                                                             |
 | -------------- | ----: | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `core`         |   209 | The default surface. Catalog, customers, carts/checkout, orders, payments and refunds, returns, shipments, inventory, promotions, tax, gift cards and store credit, analytics, isolated engine simulations, plus the agentic planning/replay tools. Smoke-gated: every core tool works or refuses cleanly on a fresh store, with no known-defect backlog. |
+| `core`         |   210 | The default surface. Catalog, customers, carts/checkout, orders, payments and refunds, returns, shipments, inventory, promotions, tax, gift cards and store credit, analytics, isolated engine simulations, plus the agentic planning/replay tools. Smoke-gated: every core tool works or refuses cleanly on a fresh store, with no known-defect backlog. |
 | `extended`     |   493 | Real but specialised domains: finance suite, manufacturing, WMS, B2B, subscriptions/reviews/loyalty, integrations.                                                                                                                                                                                                                                        |
 | `experimental` |   264 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete: A2A, agent receipts, sync, vector search, on-chain treasury.                                                                                                                                                                                                     |
 
 With no `--profile`, the MCP servers expose exactly the `core` tier. Use
-`--profile all` for everything (966 tools: 951 across 89 domains plus 15
+`--profile all` for everything (967 tools: 952 across 89 domains plus 15
 agentic runtime tools), or `finance`, `operations`, and `agents` for curated
 workloads (these expose every tool in their domains, whatever its tier). Add
 individual domains with `--domains a,b`. **Writes are preview-only by
