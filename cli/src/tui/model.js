@@ -371,6 +371,7 @@ export function handleKey(state, text, key = {}) {
     }
     if (state.input.kind === 'search') {
       next.selected = 0;
+      if (state.panel === 'timeline') next.panelOffset = 0;
       if (next.view === 5 && !next.panel && !next.input)
         next.selectedPreset = records(next)[0]?.id || next.selectedPreset;
     }
@@ -408,12 +409,12 @@ export function handleKey(state, text, key = {}) {
       state: { ...state, detail: false, detailOffset: 0, focusRecord: null, focusTarget: null },
     };
   if (name === 'escape' && state.panelQuery && state.panel)
-    return { state: { ...state, panelQuery: '', selected: 0 } };
+    return { state: { ...state, panelQuery: '', selected: 0, panelOffset: 0 } };
   if (name === 'escape' && state.panel)
     return {
       state: {
         ...state,
-        panel: null,
+        panel: state.panel === 'timeline' ? 'results' : null,
         panelOffset: 0,
         selected: PRESETS.findIndex((p) => p.id === state.selectedPreset),
       },
@@ -437,7 +438,7 @@ export function handleKey(state, text, key = {}) {
   } else if ((key.ctrl && name === 'p') || text === ':') next.input = { kind: 'palette', text: '' };
   else if (
     text === '/' &&
-    (!state.panel || ['scenarios', 'history', 'products'].includes(state.panel))
+    (!state.panel || ['scenarios', 'history', 'products', 'timeline'].includes(state.panel))
   ) {
     next.input = {
       kind: 'search',
@@ -542,12 +543,24 @@ export function handleKey(state, text, key = {}) {
     state.view === 5 &&
     !state.sim.running &&
     ((state.panel === 'history' && records(state)[state.selected]) ||
-      (state.panel === 'results' && state.sim.result))
+      (['results', 'timeline'].includes(state.panel) && state.sim.result))
   )
     effect = 'use-run-assumptions';
-  else if (text === 'f' && state.view === 5 && state.sim.result) {
+  else if (
+    text === 't' &&
+    state.view === 5 &&
+    state.sim.result &&
+    !state.sim.running &&
+    (!state.panel || ['results', 'timeline'].includes(state.panel))
+  ) {
+    next.panel = state.panel === 'timeline' ? 'results' : 'timeline';
+    next.panelOffset = 0;
+    next.panelQuery = '';
+    next.detail = false;
+  } else if (text === 'f' && state.view === 5 && state.sim.result) {
     next.panel = 'results';
     next.panelOffset = 0;
+    next.panelQuery = '';
   } else if (text === 'R' && state.view === 5 && state.sim.result && !state.sim.running)
     effect = 'replay';
   else if (text === 'e' && state.view === 5 && !state.sim.running)
@@ -591,7 +604,7 @@ export function handleKey(state, text, key = {}) {
           : name === 'end'
             ? Number.MAX_SAFE_INTEGER
             : Math.max(0, state.contentOffset + delta * amount);
-    } else if (state.panel === 'results') {
+    } else if (['results', 'timeline'].includes(state.panel)) {
       next.panelOffset =
         name === 'home'
           ? 0
@@ -664,7 +677,7 @@ export function paletteCommands(query = '', state) {
                   : []),
                 { label: 'Run history', key: 'h' },
                 ...((state.panel === 'history' && records(state)[state.selected]) ||
-                (state.panel === 'results' && state.sim.result)
+                (['results', 'timeline'].includes(state.panel) && state.sim.result)
                   ? [{ label: 'Use run assumptions as an editable draft', key: 'a' }]
                   : []),
                 { label: 'Import scenario from JSON', key: 'i' },
@@ -673,6 +686,10 @@ export function paletteCommands(query = '', state) {
           ...(state.sim.result
             ? [
                 { label: 'Compare last result', key: 'f' },
+                ...(!state.sim.running &&
+                (!state.panel || ['results', 'timeline'].includes(state.panel))
+                  ? [{ label: 'Inspect simulation event timeline', key: 't' }]
+                  : []),
                 { label: 'Export successful run', key: 'x' },
                 ...(!state.sim.running ? [{ label: 'Replay successful run', key: 'R' }] : []),
               ]

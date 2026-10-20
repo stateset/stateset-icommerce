@@ -61,7 +61,7 @@ export async function startTerminal({
           ),
         },
       };
-    if (state.panel === 'results')
+    if (['results', 'timeline'].includes(state.panel))
       state = {
         ...state,
         panelOffset: Math.min(

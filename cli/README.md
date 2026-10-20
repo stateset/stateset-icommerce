@@ -465,7 +465,17 @@ and horizons; missing report evidence stays unavailable and never comes from
 the current draft. These are descriptive outcomes, not a ranking of plans.
 **arrows/PgUp/PgDn/Home/End** reach every outcome, chart and executed assumption
 even in short panes;
-**v** toggles the full structured report and **Esc** returns. **f** reopens the
+**v** toggles the full structured report and **Esc** returns. **t** opens the
+recorded event timeline from the lab or results, or use
+**: → Inspect simulation event timeline**. Inspect a history entry with **Enter**
+first to view that run's events. Events keep each plan's recorded order and
+original numbers, including day-zero purchases, receipts, demand and repeated
+refusals. Exact cash and purchase amounts come from the recorded event.
+**/** filters locally by SKU or event type (spaces and underscores both work);
+**arrows/PgUp/PgDn/Home/End** scroll. **Esc** first clears a filter, then returns
+to results; **v** opens the full raw report. Filtering neither executes a run nor
+changes saved reports or exports. Missing timelines remain unavailable.
+**f** reopens the
 comparison. Active runs show elapsed time and the actual plan being executed;
 **c** cancels only the workbench's simulation worker, cleans its private run
 directory and retains the previous result. Quitting restores terminal state
