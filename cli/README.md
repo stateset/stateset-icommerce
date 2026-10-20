@@ -466,6 +466,19 @@ next run: **Shift+R** replays the last successful run's original preset, seed,
 and assumptions. A failed run retains that successful report. Full reports
 include the executed input plans and keep exact-money fields visible.
 
+Each plan's **Inventory risk** section shows the first recorded unmet-demand
+stockout (day, SKU, demand, sold and lost units). Zero ending stock without lost
+demand is not a stockout. Missing or invalid first-stockout evidence stays
+unavailable, separate from the engine's recorded absence of stockouts. Same-day
+ties retain the engine's purchase-priority order.
+
+**Outstanding receipts at horizon** lists each purchase alias and SKU, remaining,
+ordered and received units, and the next expected receipt day. It labels receipts
+beyond the horizon and preserves separate orders for the same SKU, including
+partial receipts. Inbound units are not available stock; receipt dates are scenario
+assumptions. Missing evidence is not shown as an empty list. These summaries read
+the saved report; they do not schedule or receive a live purchase.
+
 The inventory view includes every SKU, with exact available, on-hand and
 allocated stock in its details. **o** toggles recent/alphabetical sorting;
 search and pagination operate across the entire domain, including records

@@ -14,6 +14,7 @@ import {
   cashMovement,
   timelineEntries,
   purchasingRulesMatch,
+  recordedFirstStockout,
 } from '../../src/tui/report.js';
 import { executeInventoryPlan } from '../../src/simulation/planning.js';
 import { productEditor, productFromDraft } from '../../src/tui/basket.js';
@@ -345,6 +346,24 @@ test(
       assert.equal(comparisonEvidence(cadence.results).sameDemandPaths, true);
       assert.equal(comparisonEvidence(cadence.results).sameSupplyPaths, true);
       assert.equal(purchasingRulesMatch(cadence.results), false);
+      assert.deepEqual(recordedFirstStockout(cadence.results[0]), {
+        day: 2,
+        sku: 'COFFEE-250G',
+        demanded: 1,
+        sold: 0,
+        lostSales: 1,
+      });
+      assert.equal(recordedFirstStockout(cadence.results[1]), null);
+      const riskText = resultLines(
+        { sim: { preset: 'Daily reviews', seed: 42, result: cadence } },
+        180,
+      ).join('\n');
+      assert.match(riskText, /First unmet-demand stockout: day 2 · COFFEE-250G/);
+      assert.match(riskText, /Expected next receipt day 4 · 1 day\(s\) beyond horizon/);
+      assert.match(
+        riskText.split('Daily reviews · INVENTORY RISK')[1],
+        /No unmet-demand stockout recorded/,
+      );
       assert.match(
         resultLines({ sim: { preset: 'Daily reviews', seed: 42, result: cadence } }, 180).join(
           '\n',
@@ -390,6 +409,67 @@ test(
       );
     } finally {
       await backend.close();
+    }
+  },
+);
+
+test(
+  'native partial receipts expose remaining inbound units without treating zero stock as unmet demand',
+  { timeout: 45000 },
+  async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'stateset-tui-receipt-risk-'));
+    try {
+      const plan = {
+        name: 'Partial receipt',
+        currency: 'USD',
+        days: 1,
+        seed: 42,
+        startingCash: '10.00',
+        products: [
+          {
+            sku: 'PARTIAL',
+            initialStock: 0,
+            unitPrice: '2.00',
+            unitCost: '1.00',
+            demand: { min: 2, max: 2 },
+            reorderPoint: 0,
+            targetStock: 5,
+            leadTimeDays: 1,
+            delivery: { firstReceiptBps: 4000, remainderDelayDays: 3 },
+          },
+        ],
+      };
+      const report = await executeInventoryPlan(plan, path.join(directory, 'private.db'));
+      assert.equal(report.inventory[0].available, 0);
+      assert.equal(report.summary.lostSales, 0);
+      assert.equal(report.summary.endingCash, '9.00');
+      assert.equal(report.summary.inTransitInventoryValue, '3.00');
+      assert.equal(recordedFirstStockout(report), null);
+      assert.deepEqual(report.outstandingPurchases, [
+        {
+          purchase: 'purchase-1',
+          sku: 'PARTIAL',
+          quantity: 3,
+          arrivalDay: 4,
+          orderedQuantity: 5,
+          receivedQuantity: 2,
+        },
+      ]);
+      assert.equal(report.reconciliation.purchaseOrdersBalanced, true);
+      assert.equal(report.reconciliation.inventoryFlowBalanced, true);
+      assert.equal(report.reconciliation.cashFlowBalanced, true);
+      const before = structuredClone(report);
+      const text = resultLines(
+        { sim: { preset: 'Partial receipt', seed: 42, result: { results: [report], inputs: [] } } },
+        180,
+      ).join('\n');
+      assert.match(text, /No unmet-demand stockout recorded/);
+      assert.match(text, /Remaining units 3 · ordered 5 · received 2/);
+      assert.match(text, /Expected next receipt day 4 · 3 day\(s\) beyond horizon/);
+      assert.match(text, /in transit USD 3\.00/);
+      assert.deepEqual(report, before);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
     }
   },
 );

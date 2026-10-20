@@ -16,6 +16,7 @@ import {
   fillRate,
   soldTraces,
   timelineEntries,
+  recordedFirstStockout,
 } from './report.js';
 
 const COLORS = { ink: 252, muted: 244, accent: 81, good: 114, warn: 222, bad: 210 };
@@ -143,6 +144,47 @@ export function resultLines(state, size) {
         `Purchased ${count(item.purchasedUnits)} · received ${count(item.receivedUnits)} · stockout days ${count(item.stockoutDays)}`,
       );
     }
+    add();
+    add(`${report.name} · INVENTORY RISK`);
+    const first = recordedFirstStockout(report);
+    if (first === undefined) add('First unmet-demand stockout: Unavailable.');
+    else if (first === null) add('No unmet-demand stockout recorded.');
+    else {
+      add(`First unmet-demand stockout: day ${first.day} · ${first.sku}`);
+      add(`Demanded ${first.demanded} · sold ${first.sold} · lost ${first.lostSales} units`);
+    }
+    add('Zero ending stock alone is not an unmet-demand stockout.');
+    add('OUTSTANDING RECEIPTS AT HORIZON');
+    const pending = report.outstandingPurchases;
+    if (!Array.isArray(pending)) add('Outstanding purchase evidence: Unavailable.');
+    else if (!pending.length) add('No outstanding purchases recorded at horizon.');
+    else
+      for (const purchase of pending) {
+        if (!purchase || typeof purchase !== 'object' || Array.isArray(purchase)) {
+          add('Invalid outstanding purchase entry. v opens the raw report.');
+          continue;
+        }
+        add(
+          `${purchase.purchase ?? 'Purchase unavailable'} · ${purchase.sku ?? 'SKU unavailable'}`,
+        );
+        add(
+          `Remaining units ${count(purchase.quantity)} · ordered ${count(purchase.orderedQuantity)} · received ${count(purchase.receivedQuantity)}`,
+        );
+        const arrival =
+          Number.isSafeInteger(purchase.arrivalDay) && purchase.arrivalDay >= 1
+            ? purchase.arrivalDay
+            : null;
+        let timing = '';
+        if (arrival !== null && Number.isSafeInteger(report.days) && report.days >= 1)
+          timing =
+            arrival > report.days
+              ? ` · ${arrival - report.days} day(s) beyond horizon`
+              : ' · at/before horizon; inspect raw report';
+        add(`Expected next receipt day ${arrival ?? 'Unavailable'}${timing}`);
+      }
+    add(
+      'Outstanding units are inbound, not available stock. Receipt dates are scenario assumptions.',
+    );
     add();
     add(`${report.name} · CASH-BUDGET REFUSALS`);
     const refusals = cashBudgetRefusals(report);
