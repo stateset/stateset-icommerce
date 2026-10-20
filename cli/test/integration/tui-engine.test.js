@@ -1,15 +1,10 @@
+import { hashFile as hash } from '../fixtures/sqlite-file-evidence.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { TerminalBackend } from '../../src/tui/backend.js';
-
-const hash = async (file) =>
-  createHash('sha256')
-    .update(await fs.readFile(file))
-    .digest('hex');
 
 test(
   'real native demo, WAL snapshot, missing source and isolated planning',

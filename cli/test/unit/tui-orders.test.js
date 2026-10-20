@@ -7,7 +7,11 @@ import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { OrderOperations, orderAction } from '../../src/tui/order-operations.js';
+import {
+  OrderOperations,
+  orderAction,
+  orderReceiptIssues,
+} from '../../src/tui/order-operations.js';
 import { orderWorkflowLines, orderWorkflowLimit } from '../../src/tui/order-workflow.js';
 import { initialState, navigate, handleKey, paletteCommands } from '../../src/tui/model.js';
 import { render } from '../../src/tui/render.js';
@@ -38,6 +42,8 @@ const receipt = (status, key) => ({
   version_before: 2,
   version_after: status === 'succeeded' ? 3 : 2,
   audit_hash: 'native-audit',
+  result: status === 'succeeded' ? { id, status: 'confirmed', version: 3 } : null,
+  economic_context: { principal: { id: 'user:operator' }, store_id: 'store:owned' },
 });
 const review = {
   order,
@@ -329,7 +335,7 @@ test('exact review evidence and native refusal remain scrollable at 20x8 and aft
   assert.match(confirm, /APPL▏/);
 });
 
-async function terminal(t) {
+async function terminal(t, applied = { receipt: receipt('succeeded', 'native-key') }) {
   const input = new PassThrough(),
     output = new PassThrough(),
     signals = new EventEmitter(),
@@ -388,7 +394,7 @@ async function terminal(t) {
     input,
     raw,
     frame: () => frame,
-    finishApply: () => resolveApply({ receipt: receipt('succeeded', 'native-key') }),
+    finishApply: () => resolveApply(applied),
     finishClose: () => resolveClose(),
   };
 }
@@ -467,4 +473,144 @@ test('CLI refuses apply in demo, snapshot, JSON and unconfigured sessions before
     }),
     (error) => error.code === 1 && /trusted kernel configuration/.test(error.stderr),
   );
+});
+
+test('receipt consistency checks preserve native truth while distinguishing conflicts from contradictory success', () => {
+  const reviewed = {
+    params,
+    expectedVersion: 2,
+    principalId: 'user:operator',
+    storeId: 'store:owned',
+  };
+  const original = receipt('succeeded', 'native-key');
+  assert.deepEqual(orderReceiptIssues(original, reviewed), []);
+  assert.deepEqual(
+    orderReceiptIssues({ ...original, status: 'rejected', version_before: 9 }, reviewed),
+    [],
+  );
+  for (const corrupted of [
+    { ...original, version_before: 9 },
+    { ...original, version_after: 9 },
+    { ...original, result: { ...original.result, version: 9 } },
+    { ...original, aggregate_id: 'another-order' },
+    { ...original, result: { ...original.result, id: 'another-order' } },
+    { ...original, result: { ...original.result, status: 'cancelled' } },
+    { ...original, economic_context: { ...original.economic_context, store_id: 'store:other' } },
+    {
+      ...original,
+      economic_context: { ...original.economic_context, principal: { id: 'user:other' } },
+    },
+  ]) {
+    assert.ok(orderReceiptIssues(corrupted, reviewed).length);
+  }
+  assert.equal(original.version_before, 2);
+  assert.equal(original.result.status, 'confirmed');
+});
+
+test('contradictory native success remains visible and journaled, cached retries cannot execute it again', async (t) => {
+  const { operations, calls, directory } = await service(t);
+  const preview = await operations.preview(params),
+    invoke = operations.invoke;
+  operations.invoke = async (operation, payload, config) => {
+    const data = await invoke(operation, payload, config);
+    if (operation === 'order-apply') data.receipt.version_before = 8;
+    return data;
+  };
+  const applied = await operations.apply({ ticketId: preview.ticketId });
+  assert.equal(
+    applied.receipt.status,
+    'succeeded',
+    'never claim that an already returned commit was refused',
+  );
+  assert.equal(applied.receipt.version_before, 8);
+  assert.match(applied.reviewIssues.join(' '), /Reviewed version 2.*started from 8/);
+  const saved = JSON.parse(await fs.readFile(path.join(directory, 'last-order-action.json')));
+  assert.equal(saved.receipt.version_before, 8);
+  assert.deepEqual(saved.reviewIssues, applied.reviewIssues);
+  applied.reviewIssues.length = 0;
+  const cached = await operations.apply({ ticketId: preview.ticketId });
+  assert.ok(cached.reviewIssues.length);
+  assert.equal(calls.filter((call) => call.operation === 'order-apply').length, 1);
+  operations.invoke = async (operation, payload) => {
+    assert.equal(operation, 'order-reconcile');
+    return { receipt: { ...receipt('succeeded', payload.idempotencyKey), version_before: 8 } };
+  };
+  assert.ok(
+    (await operations.reconcile()).reviewIssues.length,
+    'restart lookup must retain the discrepancy',
+  );
+});
+
+test('conflict recovery discards prior authority and confirmation while retaining the captured order', () => {
+  const input = {
+    ...key(orderState(), 'W').state.input,
+    phase: 'result',
+    preview: review,
+    receipt: { ...receipt('rejected', 'native-key'), error_code: 'kernel.version_conflict' },
+    text: 'APPLY',
+    cursor: 5,
+  };
+  const state = { ...orderState(), input, selected: 99 };
+  const restarted = key(state, 'r');
+  assert.equal(restarted.effect, undefined);
+  assert.equal(restarted.state.input.phase, 'choose');
+  assert.equal(restarted.state.input.orderId, id);
+  for (const field of ['preview', 'receipt', 'text'])
+    assert.equal(restarted.state.input[field], undefined);
+  assert.equal(key(restarted.state, '', 'return').effect, 'preview-order');
+  for (const phase of ['uncertain', 'attention']) {
+    const held = key(
+      {
+        ...state,
+        input: { ...input, phase, reviewIssues: phase === 'attention' ? ['version mismatch'] : [] },
+      },
+      'r',
+    );
+    assert.equal(held.effect, undefined);
+    assert.equal(held.state.input.phase, phase);
+  }
+  assert.equal(
+    key({ ...state, input: { ...input, phase: 'uncertain' } }, '', 'return').effect,
+    'apply-order',
+  );
+});
+
+test('receipt mismatch is prominent at 20x8 and the app offers inspection without a replay shortcut', async (t) => {
+  const app = await terminal(t, {
+    receipt: receipt('succeeded', 'native-key'),
+    reviewIssues: ['Native version differs from review.'],
+  });
+  app.send('', 'return');
+  app.send('APPLY');
+  app.send('', 'return');
+  app.finishApply();
+  await tick();
+  assert.match(app.frame(), /RECEIPT MISMATCH/);
+  app.output.columns = 20;
+  app.output.rows = 8;
+  app.output.emit('resize');
+  assert.match(app.frame(), /RECEIPT MISMATCH/);
+  app.send('r');
+  app.send('', 'return');
+  assert.equal(app.calls.filter((call) => call.operation === 'preview-order').length, 1);
+  assert.equal(app.calls.filter((call) => call.operation === 'apply-order').length, 1);
+});
+
+test('non-object history refuses cleanly before any native receipt lookup', async (t) => {
+  const { operations, directory, calls } = await service(t);
+  for (const value of [null, [], 42]) {
+    await fs.writeFile(path.join(directory, 'last-order-action.json'), JSON.stringify(value));
+    await assert.rejects(operations.reconcile(), /history does not match/);
+  }
+  assert.equal(calls.length, 0);
+});
+
+test('unknown apply outcome stays prominent in compact panes and its preview is labeled as prior evidence', () => {
+  const input = { ...key(orderState(), 'W').state.input, phase: 'uncertain', preview: review };
+  const frame = render({ ...orderState(), input }, 20, 8, { color: false });
+  assert.match(frame, /OUTCOME UNKNOWN/);
+  const lines = orderWorkflowLines(input, 118).join('\n');
+  assert.match(lines, /Prior preview receipt: previewed/);
+  assert.doesNotMatch(lines, /Native receipt: previewed/);
+  assert.equal(key({ ...orderState(), input }, 'r').state.input.phase, 'uncertain');
 });

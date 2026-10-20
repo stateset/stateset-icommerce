@@ -540,7 +540,13 @@ export async function startTerminal({
             ...captured,
             busy: false,
             offset: 0,
-            phase: operation === 'preview-order' ? 'review' : 'result',
+            phase:
+              operation === 'preview-order'
+                ? 'review'
+                : result.reviewIssues?.length
+                  ? 'attention'
+                  : 'result',
+            reviewIssues: result.reviewIssues || [],
             ...(operation === 'preview-order' ? { preview: result } : { receipt: result.receipt }),
             message: result.message || result.journalWarning || null,
           },

@@ -123,6 +123,19 @@ try:
     launch(apply=True)
     send(b'W\r')
     screen(b'Native receipt: previewed')
+    with sqlite3.connect(database) as connection:
+        connection.execute('UPDATE orders SET version = version + 1 WHERE id = ?', (order['id'],))
+    send(b'\rAPPLY\r')
+    frame = screen(b'kernel.version_conflict')
+    assert b'Native receipt: rejected' in frame
+    assert query('SELECT status FROM orders WHERE id = ?', (order['id'],)) == [('pending',)]
+    conflict_record = json.loads(next(workspace.glob('*/last-order-action.json')).read_text())
+    assert conflict_record['receipt']['status'] == 'rejected'
+    send(b'r')
+    screen(b'Confirm order')
+    send(b'\r')
+    frame = screen(b'Native receipt: previewed')
+    assert b'Reviewed version: 2' in frame
     send(b'\r')
     screen(b'Type APPLY to commit')
     send(b'apply\r')
@@ -147,7 +160,8 @@ try:
     frame = screen(b'Native receipt: succeeded')
     assert b'Native order status: confirmed' in frame
     assert query('SELECT status FROM orders WHERE id = ?', (order['id'],)) == [('confirmed',)]
-    assert query('SELECT count(*) FROM kernel_receipts') == [(1,)]
+    assert query('SELECT count(*) FROM kernel_receipts') == [(2,)]
+    assert query("SELECT count(*) FROM kernel_receipts WHERE status = 'succeeded'") == [(1,)]
     deadline = time.monotonic() + 10
     while True:
         history = list(workspace.glob('*/last-order-action.json'))
@@ -157,6 +171,9 @@ try:
         time.sleep(0.1)
     saved = json.loads(history[0].read_text())
     assert saved['receipt']['status'] == 'succeeded'
+    assert saved['idempotencyKey'] != conflict_record['idempotencyKey']
+    assert saved['expectedVersion'] == 2
+    assert saved['reviewIssues'] == []
     send(b'\x1b')
     screen(b'confirmed', absent=b'ORDER WORKFLOW')
     stop()
@@ -164,13 +181,15 @@ try:
     send(b'P')
     frame = screen(b'Native receipt recovered')
     assert b'Native receipt: succeeded' in frame and b'No command was repeated' in frame
-    assert query('SELECT count(*) FROM kernel_receipts') == [(1,)]
+    assert query('SELECT count(*) FROM kernel_receipts') == [(2,)]
+    assert query("SELECT count(*) FROM kernel_receipts WHERE status = 'succeeded'") == [(1,)]
     assert json.loads(history[0].read_text()) == saved
     send(b'\x1b')
     screen(b'confirmed', absent=b'ORDER WORKFLOW')
     stop()
     evidence = {'previewOnlySourceUnchanged': True, 'exactMoneyAndScopeReviewed': True,
-                'typedConfirmationAndCancel': True, 'compact20x8ReviewScroll': True,
+                'typedConfirmationAndCancel': True,
+                'versionConflictRefuses': True, 'freshReviewUsesNewTicket': True, 'compact20x8ReviewScroll': True,
                 'confirmationSurvivesResize': True, 'doubleEnterOneNativeReceipt': True,
                 'orderStatusRefreshed': True, 'restartReadOnlyReconciliation': True,
                 'terminalRestored': True, 'orderId': order['id'],

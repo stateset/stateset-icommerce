@@ -432,8 +432,17 @@ Unlike browsing, explicit apply opens the actual store with the native engine
 and may run its migrations. The kernel enforces the reviewed version, performs
 the mutation and writes its receipt/audit atomically. Live action workers use
 SQLite `FULL` synchronization for commits; private simulations keep `NORMAL`. A stale review refuses:
-close it and review the current order again. A repeated apply uses the same
+press **r** to return to the same order’s action chooser, then preview the
+current order again. The old confirmation and ticket are discarded; the new
+action requires a fresh preview and typed **APPLY**. A repeated apply uses the same
 idempotency key, preventing a second economic effect.
+
+A success receipt whose versions, order, resulting status or operator/store scope
+contradict the review opens **RECEIPT MISMATCH**. The actual native outcome and its receipt reference are
+retained in memory and local history; restart lookup retrieves the stored receipt. This does not undo
+a commit. Inspect the order and receipt before proceeding. This result offers no
+retry or fresh-review shortcut. An unknown outcome also cannot start a fresh
+review with **r**; its retry retains the original idempotency key.
 
 The workspace keeps private per-action intent records and a last-action pointer
 before submitting a live command. It can contain sensitive order and receipt
