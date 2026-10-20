@@ -112,7 +112,7 @@ export async function readStore(commerce, pages = {}) {
   return result;
 }
 
-async function loadStore({ dbPath, directory, payload }) {
+async function loadStore({ dbPath, directory, payload, operation, kernel }) {
   let target = path.join(directory, 'demo.db');
   const marker = path.join(directory, 'demo.ready');
   const fresh = !fs.existsSync(marker);
@@ -154,6 +154,10 @@ async function loadStore({ dbPath, directory, payload }) {
       await seedDemo(commerce);
       fs.writeFileSync(marker, 'ready\n', { mode: 0o600 });
     }
+    if (operation === 'order-preview') {
+      const { previewOrder } = await import('./order-engine.js');
+      return await previewOrder(commerce, kernel, payload);
+    }
     const snapshot = await readStore(commerce, payload.pages);
     snapshot.alerts = snapshot.inventory;
     if (payload.focus) {
@@ -182,7 +186,14 @@ if (process.send)
       });
       let data;
       if (request.operation === 'snapshot') data = await loadStore(request);
-      else if (request.operation === 'simulate') {
+      else if (request.operation === 'order-preview') data = await loadStore(request);
+      else if (request.operation === 'order-apply') {
+        const { applyOrder } = await import('./order-engine.js');
+        data = await applyOrder(request.dbPath, request.kernel, request.payload);
+      } else if (request.operation === 'order-reconcile') {
+        const { reconcileOrder } = await import('./order-engine.js');
+        data = reconcileOrder(request.dbPath, request.kernel, request.payload);
+      } else if (request.operation === 'simulate') {
         // This process is already bounded and killable by the terminal host.
         // Run directly here so quitting cannot orphan a second worker process.
         const { executeInventoryPlan } = await import('../simulation/planning.js');
