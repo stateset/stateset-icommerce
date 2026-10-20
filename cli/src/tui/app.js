@@ -531,7 +531,9 @@ export async function startTerminal({
           ? { orderId: captured.orderId, status: ORDER_ACTIONS[captured.selected].status }
           : operation === 'apply-order'
             ? { ticketId: captured.preview.ticketId }
-            : {};
+            : operation === 'reconcile-order' && captured.historyId
+              ? { historyId: captured.historyId }
+              : {};
       const result = await backend.request(operation, payload);
       if (!closed && state.input === captured) {
         state = {
@@ -541,11 +543,14 @@ export async function startTerminal({
             busy: false,
             offset: 0,
             phase:
-              operation === 'preview-order'
-                ? 'review'
-                : result.reviewIssues?.length
-                  ? 'attention'
-                  : 'result',
+              operation === 'order-history'
+                ? 'history'
+                : operation === 'preview-order'
+                  ? 'review'
+                  : result.reviewIssues?.length
+                    ? 'attention'
+                    : 'result',
+            ...(operation === 'order-history' ? { history: result, selected: 0 } : {}),
             reviewIssues: result.reviewIssues || [],
             ...(operation === 'preview-order' ? { preview: result } : { receipt: result.receipt }),
             message: result.message || result.journalWarning || null,
@@ -586,7 +591,9 @@ export async function startTerminal({
       return;
     }
     if (result.effect === 'cancel') backend.cancel('simulate');
-    if (['preview-order', 'apply-order', 'reconcile-order'].includes(result.effect))
+    if (
+      ['preview-order', 'apply-order', 'reconcile-order', 'order-history'].includes(result.effect)
+    )
       void orderOperation(result.effect);
     if (['save', 'export', 'import'].includes(result.effect)) void persist(result.effect);
     if (result.effect === 'rename-scenario') void renameScenario();

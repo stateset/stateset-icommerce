@@ -523,6 +523,7 @@ function staticBody(state, compact = false) {
       '',
       'W (Orders)      Preview a governed order action',
       'P (Orders)      Reconcile last native order receipt; no command repeated',
+      'H (Orders)      Browse prior action intents; Enter looks up native receipt',
       'Browsing is read-only. Live order actions require --apply and trusted kernel files.',
       'Lab runs use fresh private engine databases.',
       'Projections reflect assumptions; they are not validated forecasts.',
@@ -589,13 +590,19 @@ function compactFooter(state, w) {
   if (input?.kind === 'order-action')
     return input.busy
       ? ' Waiting · Ctrl+C exit'
-      : input.phase === 'confirm'
-        ? ' Enter apply Esc back'
-        : input.reviewIssues?.length
-          ? ' Inspect · Esc closes'
-          : canReviewOrderAgain(input)
-            ? ' r review ↑↓ Esc'
-            : ' Enter / ↑↓ Esc';
+      : input.phase === 'history'
+        ? input.history?.truncated
+          ? ' PARTIAL ↑↓ Enter Esc'
+          : ' ↑↓ Enter lookup Esc'
+        : input.historyId
+          ? ' ↑↓ scroll Esc back'
+          : input.phase === 'confirm'
+            ? ' Enter apply Esc back'
+            : input.reviewIssues?.length
+              ? ' Inspect · Esc closes'
+              : canReviewOrderAgain(input)
+                ? ' r review ↑↓ Esc'
+                : ' Enter / ↑↓ Esc';
   if (input?.saving) return ' Saving… please wait';
   if (input?.kind === 'scenario-update') return ' Enter replace Esc';
   if (input?.kind === 'import-review') return ' Enter load Esc';
@@ -1052,7 +1059,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
                     : state.view === 2
                       ? ' a plan SKU  / search  o sort  Enter inspect  ? help  q quit'
                       : state.view === 1
-                        ? ' W order action  P last receipt  / search  Enter inspect  ? help'
+                        ? ' W action  P last receipt  H history  / search  Enter inspect  ? help'
                         : ' / search  o sort  Enter inspect  : commands  ? help  q quit',
     state.input ? 'accent' : 'muted',
   );

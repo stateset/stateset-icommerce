@@ -187,11 +187,46 @@ try:
     send(b'\x1b')
     screen(b'confirmed', absent=b'ORDER WORKFLOW')
     stop()
+    # An older uncertain local intent remains reachable after the last pointer
+    # moves. Its editable summary is never accepted as a native receipt.
+    old_intent = next(workspace.glob('*/order-action-' + conflict_record['id'] + '.json'))
+    old_record = {**conflict_record, 'state': 'pending',
+                  'receipt': {**conflict_record['receipt'], 'status': 'succeeded'}}
+    old_intent.write_text(json.dumps(old_record))
+    os.utime(old_intent, (1700000000, 1700000000))
+    history_before = old_intent.read_bytes()
+    source_before = hashlib.sha256(database.read_bytes()).hexdigest()
+    launch()
+    send(b'H')
+    screen(b'1/2', absent=b'Loading local')
+    resize(20, 8)
+    screen(b'ORDER ')
+    send(b'\x1b[B')
+    screen(b'LOCAL PENDING')
+    send(b'\x1b[6~')
+    screen(b'ORDER ')
+    send(b'\r\r')
+    screen(b'Native receipt:')
+    resize(140, 44)
+    frame = screen(b'Native receipt: rejected')
+    assert conflict_record['idempotencyKey'].encode() in frame
+    assert b'kernel.version_conflict' in frame
+    assert b'No command was repeated' in frame
+    send(b'\x1b')
+    screen(b'LOCAL PENDING')
+    send(b'\x1b')
+    screen(b'confirmed', absent=b'ORDER WORKFLOW')
+    stop()
+    assert old_intent.read_bytes() == history_before
+    assert hashlib.sha256(database.read_bytes()).hexdigest() == source_before
+    assert query('SELECT count(*) FROM kernel_receipts') == [(2,)]
     evidence = {'previewOnlySourceUnchanged': True, 'exactMoneyAndScopeReviewed': True,
                 'typedConfirmationAndCancel': True,
                 'versionConflictRefuses': True, 'freshReviewUsesNewTicket': True, 'compact20x8ReviewScroll': True,
                 'confirmationSurvivesResize': True, 'doubleEnterOneNativeReceipt': True,
                 'orderStatusRefreshed': True, 'restartReadOnlyReconciliation': True,
+                'olderPendingHistoryRecovery': True, 'localReceiptNotTrusted': True,
+                'historyReadOnlyAndSelectionSurvivesResize': True,
                 'terminalRestored': True, 'orderId': order['id'],
                 'commandId': saved['receipt']['command_id']}
     (root / 'evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')

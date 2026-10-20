@@ -126,6 +126,7 @@ export class OrderOperations {
       storeId: kernel.storeId,
       source: this.dbPath,
       previewReceipt: data.receipt,
+      createdAt: new Date().toISOString(),
     };
     if (data.receipt?.status === 'previewed' && Number.isSafeInteger(ticket.expectedVersion)) {
       this.tickets.set(id, ticket);
@@ -199,6 +200,8 @@ export class OrderOperations {
         };
       const record = {
         version: 1,
+        createdAt: ticket.createdAt,
+        updatedAt: new Date().toISOString(),
         source: this.dbPath,
         id: ticket.id,
         idempotencyKey: ticket.idempotencyKey,
@@ -245,6 +248,7 @@ export class OrderOperations {
         await this.journal({
           ...record,
           state: 'finished',
+          updatedAt: new Date().toISOString(),
           receipt: receiptEvidence(data.receipt),
           reviewIssues: ticket.reviewIssues,
         });
@@ -260,29 +264,38 @@ export class OrderOperations {
       this.applying = false;
     }
   }
-  async reconcile(payload = {}) {
-    if (Object.keys(payload).length)
-      throw new Error('Receipt reconciliation accepts no caller-supplied commands.');
+  async historyContext() {
     if (this.applying) throw new Error('Wait for the active order action before reconciling.');
     if (!this.dbPath || !this.directory)
       throw new Error('Choose --db and the original workspace to reconcile an order action.');
     const kernel = await this.configuration();
-    let file;
     try {
-      file = await fs.open(
-        path.join(this.directory, 'last-order-action.json'),
-        constants.O_RDONLY | (constants.O_NOFOLLOW || 0),
-      );
+      const directory = await fs.lstat(this.directory);
+      if (!directory.isDirectory() || directory.isSymbolicLink())
+        throw new Error('Operation workspace must be a directory, not a symlink.');
     } catch (error) {
-      if (error.code === 'ENOENT')
-        throw new Error('No previous order action is recorded in this workspace.');
-      throw error;
+      if (error.code !== 'ENOENT') throw error;
     }
+    return kernel;
+  }
+  async readHistory(name, kernel, expectedId = null) {
+    const file = await fs.open(
+      path.join(this.directory, name),
+      constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0),
+    );
     let record;
     try {
       const stat = await file.stat();
       if (!stat.isFile() || stat.size > 65536) throw new Error('Invalid order action history.');
-      record = JSON.parse(await file.readFile('utf8'));
+      const buffer = Buffer.alloc(65537);
+      let size = 0;
+      while (size < buffer.length) {
+        const { bytesRead } = await file.read(buffer, size, buffer.length - size, size);
+        if (!bytesRead) break;
+        size += bytesRead;
+      }
+      if (size > 65536) throw new Error('Invalid order action history.');
+      record = JSON.parse(buffer.subarray(0, size).toString('utf8'));
     } finally {
       await file.close();
     }
@@ -295,11 +308,107 @@ export class OrderOperations {
       record.source !== this.dbPath ||
       record.principalId !== kernel.principal.id ||
       record.storeId !== kernel.storeId ||
+      typeof record.id !== 'string' ||
       !uuid.test(record.id) ||
+      (expectedId !== null && record.id !== expectedId) ||
       record.idempotencyKey !== `tui-order:${record.id}`
     )
       throw new Error('Order action history does not match this store and operator configuration.');
     orderAction(record.params);
+    return record;
+  }
+  async history(payload = {}) {
+    if (
+      !payload ||
+      typeof payload !== 'object' ||
+      Array.isArray(payload) ||
+      Object.keys(payload).length
+    )
+      throw new Error('Order history accepts no caller-supplied commands or paths.');
+    const kernel = await this.historyContext();
+    const candidates = [];
+    let scanned = 0,
+      skipped = 0,
+      truncated = false;
+    let directory;
+    try {
+      directory = await fs.opendir(this.directory);
+    } catch (error) {
+      if (error.code === 'ENOENT') return { entries: [], skipped: 0, truncated: false };
+      throw error;
+    }
+    // Bound local filesystem work independently of the number of native receipts.
+    // Never trust local receipt summaries as evidence of a committed outcome.
+    for await (const item of directory) {
+      if (++scanned > 2000) {
+        truncated = true;
+        break;
+      }
+      const match = /^order-action-([0-9a-f-]{36})\.json$/i.exec(item.name);
+      if (!match || !uuid.test(match[1])) continue;
+      if (!item.isFile()) {
+        skipped++;
+        continue;
+      }
+      try {
+        const stat = await fs.lstat(path.join(this.directory, item.name));
+        if (!stat.isFile() || stat.size > 65536) {
+          skipped++;
+          continue;
+        }
+        candidates.push({ name: item.name, id: match[1], modified: stat.mtimeMs });
+      } catch {
+        skipped++;
+      }
+    }
+    candidates.sort((a, b) => b.modified - a.modified || a.id.localeCompare(b.id));
+    const entries = [];
+    for (const candidate of candidates) {
+      if (entries.length === 100) {
+        truncated = true;
+        break;
+      }
+      try {
+        const record = await this.readHistory(candidate.name, kernel, candidate.id);
+        entries.push({
+          id: record.id,
+          orderId: record.params.orderId,
+          status: record.params.status,
+          localState: record.state === 'pending' ? 'pending' : 'recorded',
+          recordedAt: new Date(candidate.modified).toISOString(),
+          idempotencyKey: record.idempotencyKey,
+        });
+      } catch {
+        skipped++;
+      }
+    }
+    return { entries, skipped, truncated };
+  }
+  async reconcile(payload = {}) {
+    if (
+      !payload ||
+      typeof payload !== 'object' ||
+      Array.isArray(payload) ||
+      Object.keys(payload).some((key) => key !== 'historyId') ||
+      ('historyId' in payload &&
+        (typeof payload.historyId !== 'string' || !uuid.test(payload.historyId)))
+    )
+      throw new Error(
+        'Receipt reconciliation accepts no caller-supplied commands or paths; choose a valid history ID.',
+      );
+    const kernel = await this.historyContext();
+    let record;
+    try {
+      record = await this.readHistory(
+        payload.historyId ? `order-action-${payload.historyId}.json` : 'last-order-action.json',
+        kernel,
+        payload.historyId || null,
+      );
+    } catch (error) {
+      if (error.code === 'ENOENT')
+        throw new Error('No previous order action is recorded in this workspace.');
+      throw error;
+    }
     const data = await this.invoke(
       'order-reconcile',
       { idempotencyKey: record.idempotencyKey },

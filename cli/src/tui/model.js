@@ -451,6 +451,9 @@ export function handleKey(state, text, key = {}) {
   if (text === 'W' && state.view === 1 && !state.loading && !state.sim.running) {
     const order = state.focusRecord || records(state)[state.selected];
     if (order?.id) next.input = orderWorkflow(order);
+  } else if (text === 'H' && state.view === 1 && !state.loading && !state.sim.running) {
+    next.input = { kind: 'order-action', phase: 'history-loading', busy: true, offset: 0 };
+    effect = 'order-history';
   } else if (text === 'P' && state.view === 1 && !state.loading && !state.sim.running) {
     next.input = { kind: 'order-action', phase: 'reconciling', busy: true, offset: 0 };
     effect = 'reconcile-order';
@@ -683,6 +686,7 @@ export function paletteCommands(query = '', state) {
             ? [{ label: 'Review selected order status action', key: 'W' }]
             : []),
           { label: 'Reconcile last order action receipt', key: 'P' },
+          { label: 'Browse order action history and recover older receipts', key: 'H' },
         ]
       : []),
     ...(state?.view === 5

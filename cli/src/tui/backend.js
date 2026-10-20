@@ -25,6 +25,7 @@ export class TerminalBackend {
       ['preview-order', 'preview'],
       ['apply-order', 'apply'],
       ['reconcile-order', 'reconcile'],
+      ['order-history', 'history'],
     ]).get(operation);
     if (action) return this.orderOperations.run(action, payload);
     if (!['snapshot', 'simulate'].includes(operation))
