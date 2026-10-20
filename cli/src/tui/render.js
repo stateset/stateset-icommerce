@@ -5,6 +5,7 @@ import { terminalLayout } from './layout.js';
 import { clean, fit, width, wrap } from './text.js';
 import { DEFAULT_PLANNING, planningFields } from './planning.js';
 import { PRODUCT_FIELDS } from './basket.js';
+import { refundWorkflowLines } from './refund-workflow.js';
 import { orderWorkflowLines, canReviewOrderAgain } from './order-workflow.js';
 import {
   cashDelta,
@@ -523,6 +524,8 @@ function staticBody(state, compact = false) {
       '',
       'W (Orders)      Preview a governed order action',
       'P (Orders)      Reconcile last native order receipt; no command repeated',
+      'W (Payments)    Review one pending refund request; provider execution is separate',
+      'P/H (Payments)  Recover last refund receipt / browse local refund intents',
       'H (Orders)      Browse prior action intents; Enter looks up native receipt',
       'Browsing is read-only. Live order actions require --apply and trusted kernel files.',
       'Lab runs use fresh private engine databases.',
@@ -587,24 +590,26 @@ function staticLines(state, size, compact) {
 }
 function compactFooter(state, w) {
   const input = state.input;
-  if (input?.kind === 'order-action')
+  if (['order-action', 'refund-action'].includes(input?.kind))
     return input.busy
       ? ' Waiting · Ctrl+C exit'
-      : input.phase === 'history'
-        ? input.history?.truncated
-          ? ' PARTIAL n/p f Esc'
-          : w < 60
-            ? ' n/p f ↑↓ Enter Esc'
-            : ' n/p pages f filter r reload ↑↓ Enter Esc'
-        : input.historyId
-          ? ' ↑↓ scroll Esc back'
-          : input.phase === 'confirm'
-            ? ' Enter apply Esc back'
-            : input.reviewIssues?.length
-              ? ' Inspect · Esc closes'
-              : canReviewOrderAgain(input)
-                ? ' r review ↑↓ Esc'
-                : ' Enter / ↑↓ Esc';
+      : input.phase === 'edit'
+        ? ' Tab next ^S preview'
+        : input.phase === 'history'
+          ? input.history?.truncated
+            ? ' PARTIAL n/p f Esc'
+            : w < 60
+              ? ' n/p f ↑↓ Enter Esc'
+              : ' n/p pages f filter r reload ↑↓ Enter Esc'
+          : input.historyId
+            ? ' ↑↓ scroll Esc back'
+            : input.phase === 'confirm'
+              ? ' Enter apply Esc back'
+              : input.reviewIssues?.length
+                ? ' Inspect · Esc closes'
+                : canReviewOrderAgain(input)
+                  ? ' r review ↑↓ Esc'
+                  : ' Enter / ↑↓ Esc';
   if (input?.saving) return ' Saving… please wait';
   if (input?.kind === 'scenario-update') return ' Enter replace Esc';
   if (input?.kind === 'import-review') return ' Enter load Esc';
@@ -665,9 +670,12 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   }
   const body = [];
   const put = (text = '', tone = 'ink', bold = false) => body.push({ text, tone, bold });
-  if (state.input?.kind === 'order-action') {
+  if (['order-action', 'refund-action'].includes(state.input?.kind)) {
     const input = state.input,
-      lines = orderWorkflowLines(input, size);
+      lines = (input.kind === 'refund-action' ? refundWorkflowLines : orderWorkflowLines)(
+        input,
+        size,
+      );
     const visible = Math.max(1, available - 1);
     const offset =
       input.phase === 'choose' && compact
@@ -677,8 +685,8 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       compact
         ? input.phase === 'history'
           ? `HISTORY · ${input.history.pendingOnly ? 'PENDING' : 'ALL'}`
-          : `ORDER · ${input.phase}`
-        : `ORDER WORKFLOW · ${input.phase.toUpperCase()} · ${offset + 1}/${lines.length}`,
+          : `${input.kind === 'refund-action' ? 'REFUND' : 'ORDER'} · ${input.phase}`
+        : `${input.kind === 'refund-action' ? 'REFUND' : 'ORDER'} WORKFLOW · ${input.phase.toUpperCase()} · ${offset + 1}/${lines.length}`,
       input.reviewIssues?.length ? 'warn' : 'accent',
       true,
     );
@@ -1042,7 +1050,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   add(
     compact
       ? compactFooter(state, w)
-      : state.input?.kind === 'order-action'
+      : ['order-action', 'refund-action'].includes(state.input?.kind)
         ? compactFooter(state, w)
         : state.input?.kind === 'scenario-update'
           ? state.input.saving
@@ -1064,7 +1072,9 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
                       ? ' a plan SKU  / search  o sort  Enter inspect  ? help  q quit'
                       : state.view === 1
                         ? ' W action  P last receipt  H history  / search  Enter inspect  ? help'
-                        : ' / search  o sort  Enter inspect  : commands  ? help  q quit',
+                        : state.view === 4
+                          ? ' W refund request  P last receipt  H history  / search  Enter inspect  ? help'
+                          : ' / search  o sort  Enter inspect  : commands  ? help  q quit',
     state.input ? 'accent' : 'muted',
   );
   // Pad each row; stay off the last physical column/row to avoid wrapping and

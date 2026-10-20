@@ -1,10 +1,9 @@
-import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import { getCommerceCtor, adaptCommerceApis } from '../commerce.js';
 import { createKernelToolExecutor } from '../kernel-tool-execution.js';
 import { orderAction } from './order-operations.js';
 
-const require = createRequire(import.meta.url);
+import { readNativeReceipt } from './receipt-engine.js';
 export async function previewOrder(commerce, kernel, payload) {
   const params = orderAction(payload.params);
   const order = await commerce.orders.get(params.orderId);
@@ -51,21 +50,5 @@ export async function applyOrder(database, kernel, payload) {
 }
 
 export function reconcileOrder(database, kernel, payload) {
-  const Database = require('better-sqlite3');
-  const db = new Database(database, { readonly: true, fileMustExist: true });
-  try {
-    const row = db
-      .prepare('SELECT receipt FROM kernel_receipts WHERE idempotency_key = ? AND command_type = ?')
-      .get(payload.idempotencyKey, 'orders.transition');
-    const receipt = row ? JSON.parse(row.receipt) : null;
-    if (
-      receipt &&
-      (receipt.economic_context?.principal?.id !== kernel.principal.id ||
-        receipt.economic_context?.store_id !== kernel.storeId)
-    )
-      throw new Error('Stored receipt does not match the current operator and store.');
-    return { receipt };
-  } finally {
-    db.close();
-  }
+  return readNativeReceipt(database, kernel, payload.idempotencyKey, 'orders.transition');
 }

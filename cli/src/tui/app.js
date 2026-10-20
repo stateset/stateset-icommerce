@@ -5,6 +5,7 @@ import { initialState, handleKey, records, PRESETS } from './model.js';
 import { runRecord, scenarioSettings, useRunAssumptions } from './workspace.js';
 import { productEditor } from './basket.js';
 import { ORDER_ACTIONS } from './order-operations.js';
+import { refundWorkflowLimit } from './refund-workflow.js';
 import { orderWorkflowLimit } from './order-workflow.js';
 import { readScenarioExport } from './import.js';
 import {
@@ -45,13 +46,17 @@ export async function startTerminal({
   const draw = () => {
     if (closed || suspended) return;
     if (
-      state.input?.kind === 'order-action' &&
+      ['order-action', 'refund-action'].includes(state.input?.kind) &&
       !state.input.busy &&
       state.input.phase !== 'choose'
     ) {
       const offset = Math.min(
         state.input.offset || 0,
-        orderWorkflowLimit(state.input, output.columns || 80, output.rows || 24),
+        (state.input.kind === 'refund-action' ? refundWorkflowLimit : orderWorkflowLimit)(
+          state.input,
+          output.columns || 80,
+          output.rows || 24,
+        ),
       );
       if (offset !== state.input.offset) state = { ...state, input: { ...state.input, offset } };
     }
@@ -525,17 +530,22 @@ export async function startTerminal({
   };
   const orderOperation = async (operation) => {
     const captured = state.input;
+    const isPreview = operation.startsWith('preview-'),
+      isApply = operation.startsWith('apply-'),
+      isHistory = operation.endsWith('-history');
     try {
       const payload =
-        operation === 'preview-order'
-          ? { orderId: captured.orderId, status: ORDER_ACTIONS[captured.selected].status }
-          : operation === 'apply-order'
-            ? { ticketId: captured.preview.ticketId }
-            : operation === 'order-history'
-              ? captured.historyRequest || {}
-              : operation === 'reconcile-order' && captured.historyId
-                ? { historyId: captured.historyId }
-                : {};
+        operation === 'preview-refund'
+          ? captured.params
+          : operation === 'preview-order'
+            ? { orderId: captured.orderId, status: ORDER_ACTIONS[captured.selected].status }
+            : isApply
+              ? { ticketId: captured.preview.ticketId }
+              : isHistory
+                ? captured.historyRequest || {}
+                : operation.startsWith('reconcile-') && captured.historyId
+                  ? { historyId: captured.historyId }
+                  : {};
       const result = await backend.request(operation, payload);
       if (!closed && state.input === captured) {
         state = {
@@ -544,15 +554,14 @@ export async function startTerminal({
             ...captured,
             busy: false,
             offset: 0,
-            phase:
-              operation === 'order-history'
-                ? 'history'
-                : operation === 'preview-order'
-                  ? 'review'
-                  : result.reviewIssues?.length
-                    ? 'attention'
-                    : 'result',
-            ...(operation === 'order-history'
+            phase: isHistory
+              ? 'history'
+              : isPreview
+                ? 'review'
+                : result.reviewIssues?.length
+                  ? 'attention'
+                  : 'result',
+            ...(isHistory
               ? {
                   history: result,
                   selected: 0,
@@ -564,11 +573,11 @@ export async function startTerminal({
                 }
               : {}),
             reviewIssues: result.reviewIssues || [],
-            ...(operation === 'preview-order' ? { preview: result } : { receipt: result.receipt }),
+            ...(isPreview ? { preview: result } : { receipt: result.receipt }),
             message: result.message || result.journalWarning || null,
           },
         };
-        if (operation === 'apply-order') void refresh();
+        if (isApply) void refresh();
       }
     } catch (error) {
       if (!closed && state.input === captured)
@@ -604,7 +613,16 @@ export async function startTerminal({
     }
     if (result.effect === 'cancel') backend.cancel('simulate');
     if (
-      ['preview-order', 'apply-order', 'reconcile-order', 'order-history'].includes(result.effect)
+      [
+        'preview-order',
+        'apply-order',
+        'reconcile-order',
+        'order-history',
+        'preview-refund',
+        'apply-refund',
+        'reconcile-refund',
+        'refund-history',
+      ].includes(result.effect)
     )
       void orderOperation(result.effect);
     if (['save', 'export', 'import'].includes(result.effect)) void persist(result.effect);

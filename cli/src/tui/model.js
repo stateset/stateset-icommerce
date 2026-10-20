@@ -9,6 +9,7 @@ import {
 import { editText } from './editor.js';
 import { graphemes } from './text.js';
 import { PRODUCT_FIELDS, productEditor, productFromDraft, planningProducts } from './basket.js';
+import { refundWorkflow, refundWorkflowKey } from './refund-workflow.js';
 import { orderWorkflow, orderWorkflowKey } from './order-workflow.js';
 
 export const VIEWS = [
@@ -224,6 +225,7 @@ export function handleKey(state, text, key = {}) {
   let effect;
   const name = key.name;
   if (key.ctrl && name === 'c') return { state, effect: 'quit' };
+  if (state.input?.kind === 'refund-action') return refundWorkflowKey(state, text, key);
   if (state.input?.kind === 'order-action') return orderWorkflowKey(state, text, key);
   if (['import-review', 'scenario-update'].includes(state.input?.kind)) {
     if (state.input.saving) return { state };
@@ -448,7 +450,16 @@ export function handleKey(state, text, key = {}) {
     };
   if (name === 'escape')
     return { state: { ...state, detail: false, help: false, query: '', detailOffset: 0 } };
-  if (text === 'W' && state.view === 1 && !state.loading && !state.sim.running) {
+  if (text === 'W' && state.view === 4 && !state.loading && !state.sim.running) {
+    const payment = state.focusRecord || records(state)[state.selected];
+    if (payment?.id) next.input = refundWorkflow(payment);
+  } else if (text === 'H' && state.view === 4 && !state.loading && !state.sim.running) {
+    next.input = { kind: 'refund-action', phase: 'history-loading', busy: true, offset: 0 };
+    effect = 'refund-history';
+  } else if (text === 'P' && state.view === 4 && !state.loading && !state.sim.running) {
+    next.input = { kind: 'refund-action', phase: 'reconciling', busy: true, offset: 0 };
+    effect = 'reconcile-refund';
+  } else if (text === 'W' && state.view === 1 && !state.loading && !state.sim.running) {
     const order = state.focusRecord || records(state)[state.selected];
     if (order?.id) next.input = orderWorkflow(order);
   } else if (text === 'H' && state.view === 1 && !state.loading && !state.sim.running) {
@@ -687,6 +698,15 @@ export function paletteCommands(query = '', state) {
             : []),
           { label: 'Reconcile last order action receipt', key: 'P' },
           { label: 'Browse order action history and recover older receipts', key: 'H' },
+        ]
+      : []),
+    ...(state?.view === 4 && !state.loading && !state.sim.running
+      ? [
+          ...(records(state)[state.selected]?.id
+            ? [{ label: 'Review pending refund request for selected payment', key: 'W' }]
+            : []),
+          { label: 'Reconcile last native refund receipt', key: 'P' },
+          { label: 'Browse refund action history', key: 'H' },
         ]
       : []),
     ...(state?.view === 5

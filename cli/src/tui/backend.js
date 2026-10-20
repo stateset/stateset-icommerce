@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { RefundOperations } from './refund-operations.js';
 import { OrderOperations } from './order-operations.js';
 
 export class TerminalBackend {
@@ -11,13 +12,17 @@ export class TerminalBackend {
     this.directory = fs.mkdtemp(path.join(os.tmpdir(), 'stateset-tui-'));
     this.operations = new Map();
     this.closed = false;
-    this.orderOperations = new OrderOperations({
+    const gate = { active: false };
+    const options = {
+      gate,
       dbPath: this.dbPath,
       allowApply: operator.allowApply,
       loadKernel: operator.loadKernel,
       directory: operator.operationsDirectory,
       invoke: (operation, payload, kernel) => this.#request(operation, payload, () => {}, kernel),
-    });
+    };
+    this.orderOperations = new OrderOperations(options);
+    this.refundOperations = new RefundOperations(options);
   }
   async request(operation, payload = {}, onProgress = () => {}) {
     if (this.closed) throw new Error('Terminal backend is closed');
@@ -28,6 +33,13 @@ export class TerminalBackend {
       ['order-history', 'history'],
     ]).get(operation);
     if (action) return this.orderOperations.run(action, payload);
+    const refund = new Map([
+      ['preview-refund', 'preview'],
+      ['apply-refund', 'apply'],
+      ['reconcile-refund', 'reconcile'],
+      ['refund-history', 'history'],
+    ]).get(operation);
+    if (refund) return this.refundOperations.run(refund, payload);
     if (!['snapshot', 'simulate'].includes(operation))
       throw new Error('Unknown terminal operation');
     return this.#request(operation, payload, onProgress);
@@ -47,7 +59,7 @@ export class TerminalBackend {
     let directory, operationDirectory;
     try {
       directory = await this.directory;
-      operationDirectory = ['simulate', 'order-preview'].includes(operation)
+      operationDirectory = ['simulate', 'order-preview', 'refund-preview'].includes(operation)
         ? await fs.mkdtemp(path.join(directory, 'run-'))
         : directory;
       if (context.canceled || this.closed) throw new Error('Simulation canceled');
@@ -56,7 +68,7 @@ export class TerminalBackend {
         // FULL so each live commit synchronizes its WAL.
         env: {
           PATH: process.env.PATH,
-          ...(operation === 'order-apply'
+          ...(['order-apply', 'refund-apply'].includes(operation)
             ? { NODE_ENV: 'production', STATESET_SQLITE_SYNCHRONOUS: 'FULL' }
             : { NODE_ENV: 'test', STATESET_SQLITE_SYNCHRONOUS: 'NORMAL' }),
         },
@@ -110,7 +122,7 @@ export class TerminalBackend {
     }
   }
   cancel(operation) {
-    if (operation === 'order-apply') return false;
+    if (['order-apply', 'refund-apply'].includes(operation)) return false;
     const context = this.operations.get(operation);
     if (!context || context.canceled) return false;
     context.canceled = true;
@@ -123,7 +135,7 @@ export class TerminalBackend {
     const active = [...this.operations.values()];
     for (const operation of this.operations.keys()) this.cancel(operation);
     await Promise.all(active.map((context) => context.done));
-    await this.orderOperations.settle();
+    await Promise.all([this.orderOperations.settle(), this.refundOperations.settle()]);
     await fs.rm(await this.directory, { recursive: true, force: true });
   }
 }
