@@ -1,5 +1,68 @@
 import { subtractDecimals } from '../utils/exact-decimal.js';
 import { inventoryComparisonContext } from '../simulation/comparison-context.js';
+import { SIMULATION_LIMITS } from '../simulation/limits.js';
+
+// Compare recorded SKU policy facts independently of priority, cash and paths.
+// Unknown future rules stay unavailable instead of being silently ignored.
+export function purchasingRulesMatch(reports) {
+  if (!Array.isArray(reports) || reports.length !== 2) return null;
+  try {
+    const policies = reports.map((report) => {
+      const products = report?.assumptions?.products;
+      if (!Array.isArray(products) || !products.length) throw new Error('Missing SKU policies');
+      const skus = new Set();
+      const integer = (value, minimum, maximum = SIMULATION_LIMITS.maxPurchaseQuantity) => {
+        if (!Number.isSafeInteger(value) || value < minimum || value > maximum)
+          throw new Error('Invalid policy quantity');
+        return value;
+      };
+      return products
+        .map((product) => {
+          if (typeof product?.sku !== 'string' || !product.sku || skus.has(product.sku))
+            throw new Error('Invalid SKU policies');
+          skus.add(product.sku);
+          const terms = product.purchasing === undefined ? {} : product.purchasing;
+          if (
+            !terms ||
+            typeof terms !== 'object' ||
+            Array.isArray(terms) ||
+            Object.keys(terms).some(
+              (key) =>
+                ![
+                  'minimumOrderQuantity',
+                  'orderMultiple',
+                  'reviewIntervalDays',
+                  'maximumInventoryPosition',
+                ].includes(key),
+            )
+          )
+            throw new Error('Unknown purchasing rules');
+          const reorder = integer(product.reorderPoint, 0);
+          const target = integer(product.targetStock, 1);
+          if (target <= reorder) throw new Error('Invalid stock targets');
+          return [
+            product.sku,
+            reorder,
+            target,
+            integer(terms.minimumOrderQuantity === undefined ? 1 : terms.minimumOrderQuantity, 1),
+            integer(terms.orderMultiple === undefined ? 1 : terms.orderMultiple, 1),
+            integer(
+              terms.reviewIntervalDays === undefined ? 1 : terms.reviewIntervalDays,
+              1,
+              SIMULATION_LIMITS.maxPlanningDays,
+            ),
+            terms.maximumInventoryPosition === undefined
+              ? null
+              : integer(terms.maximumInventoryPosition, 1),
+          ];
+        })
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    });
+    return JSON.stringify(policies[0]) === JSON.stringify(policies[1]);
+  } catch {
+    return null;
+  }
+}
 
 export function comparisonEvidence(reports) {
   if (!Array.isArray(reports) || reports.length !== 2) return null;

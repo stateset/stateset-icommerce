@@ -18,7 +18,7 @@ export const digestInputs = (inputs) =>
 export function scenarioSettings(value) {
   if (
     !value ||
-    !['baseline', 'spike', 'delay', 'cash'].includes(value.presetId) ||
+    !PRESETS.some((preset) => preset.id === value.presetId) ||
     !Number.isSafeInteger(value.seed) ||
     value.seed < 1 ||
     value.seed > 999999
