@@ -7,6 +7,8 @@ import { PLANNING_FIELDS } from './planning.js';
 import { PRODUCT_FIELDS } from './basket.js';
 import {
   cashDelta,
+  cashMovement,
+  cashMovementDelta,
   cashBudgetRefusals,
   comparisonEvidence,
   fillRate,
@@ -14,8 +16,10 @@ import {
 } from './report.js';
 
 const COLORS = { ink: 252, muted: 244, accent: 81, good: 114, warn: 222, bad: 210 };
-const money = (record, field, currency = record?.currency || 'USD') =>
-  typeof record?.[field] === 'string' ? `${currency} ${record[field]}` : 'Unavailable';
+const money = (record, field, currency = record?.currency) =>
+  typeof currency === 'string' && currency.trim() && typeof record?.[field] === 'string'
+    ? `${currency} ${record[field]}`
+    : 'Unavailable';
 const shortId = (value) =>
   width(value) > 15 ? `${clean(value).slice(0, 6)}…${clean(value).slice(-7)}` : value;
 
@@ -71,19 +75,31 @@ export function resultLines(state, size) {
   for (const report of reports) {
     const s = report.summary;
     add(`${report.name}: fill ${fillRate(s)} · lost ${s.lostSales} units`);
+    add(`Opening cash ${money(s, 'startingCash', report.currency)}`);
     add(`Ending cash ${money(s, 'endingCash', report.currency)}`);
+    const movement = cashMovement(report);
+    add(`Cash movement ${movement === null ? 'Unavailable' : `${report.currency} ${movement}`}`);
     const low = report.cashFlow;
     const day = low?.minimumCashAt?.day;
     add(
       `Lowest cash ${money(low, 'minimumCash', report.currency)}${typeof low?.minimumCash === 'string' && Number.isSafeInteger(day) && day >= 0 ? ` · day ${day}` : ''}`,
     );
     add(
-      `Purchasing ${money(s, 'purchasingSpend', report.currency)} · margin ${money(s, 'grossMargin', report.currency)}`,
+      `Purchasing ${money(s, 'purchasingSpend', report.currency)} · gross margin ${money(s, 'grossMargin', report.currency)}`,
+    );
+    add(
+      `Inventory at cost: on hand ${money(s, 'endingInventoryValue', report.currency)} · in transit ${money(s, 'inTransitInventoryValue', report.currency)}`,
     );
   }
+  add(
+    'Cash movement is ending minus opening cash, not profit. Purchases can turn cash into stock.',
+  );
   if (reports.length === 2) {
-    add(`Change vs baseline: cash ${cashDelta(reports[1], baseline, 'endingCash')}`);
-    add(`                   margin ${cashDelta(reports[1], baseline, 'grossMargin')}`);
+    add(`Change vs baseline: ending cash ${cashDelta(reports[1], baseline, 'endingCash')}`);
+    add(
+      `                   cash movement ${cashMovementDelta(reports[1], baseline) ?? 'Unavailable (matching currency, horizon and cash evidence required)'}`,
+    );
+    add(`                   gross margin ${cashDelta(reports[1], baseline, 'grossMargin')}`);
     add('COMPARISON CHECKS');
     const context = comparisonEvidence(reports);
     if (!context) add("Saved comparison evidence is unavailable. Inspect each plan's inputs.");

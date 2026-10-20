@@ -68,6 +68,8 @@ export function fillRate(summary) {
 
 export function cashDelta(candidate, baseline, field) {
   if (
+    typeof baseline?.currency !== 'string' ||
+    !baseline.currency.trim() ||
     candidate?.currency !== baseline?.currency ||
     typeof candidate?.summary?.[field] !== 'string' ||
     typeof baseline?.summary?.[field] !== 'string'
@@ -79,6 +81,38 @@ export function cashDelta(candidate, baseline, field) {
   } catch {
     return 'n/a';
   }
+}
+
+// This is a change in cash, not income: purchases can turn cash into stock.
+// Use executed report evidence only; an edited draft cannot fill missing data.
+export function cashMovement(report) {
+  if (
+    typeof report?.currency !== 'string' ||
+    !report.currency.trim() ||
+    typeof report.summary?.startingCash !== 'string' ||
+    typeof report.summary?.endingCash !== 'string'
+  )
+    return null;
+  try {
+    return subtractDecimals(report.summary.endingCash, report.summary.startingCash);
+  } catch {
+    return null;
+  }
+}
+
+export function cashMovementDelta(candidate, baseline) {
+  if (
+    candidate?.currency !== baseline?.currency ||
+    !Number.isSafeInteger(baseline?.days) ||
+    baseline.days < 1 ||
+    candidate?.days !== baseline.days
+  )
+    return null;
+  const a = cashMovement(candidate),
+    b = cashMovement(baseline);
+  if (a === null || b === null) return null;
+  const result = subtractDecimals(a, b);
+  return result.startsWith('-') ? result : `+${result}`;
 }
 
 export function soldTraces(reports, maxColumns = 24) {

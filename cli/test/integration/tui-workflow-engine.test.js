@@ -8,7 +8,7 @@ import { TerminalBackend } from '../../src/tui/backend.js';
 import { DEFAULT_PLANNING } from '../../src/tui/planning.js';
 import { initialState, navigate, handleKey } from '../../src/tui/model.js';
 import { resultLines } from '../../src/tui/render.js';
-import { comparisonEvidence } from '../../src/tui/report.js';
+import { comparisonEvidence, cashMovement } from '../../src/tui/report.js';
 
 test(
   'full inventory, cross-page search, related records, multi-SKU execution and owned cancellation',
@@ -156,6 +156,10 @@ test(
         );
         assert.equal(report.summary.purchasingSpend, '10.00');
         assert.equal(report.summary.endingCash, '0.00');
+        assert.equal(cashMovement(report), '-10.00');
+        assert.equal(report.summary.grossMargin, '0.00');
+        assert.equal(report.summary.endingInventoryValue, '10.00');
+        assert.equal(report.summary.inTransitInventoryValue, '0.00');
         assert.equal(report.reconciliation.purchasingConstraintsBalanced, true);
         const explained = resultLines(
           {
@@ -166,6 +170,9 @@ test(
         const refused = expected === 'COFFEE-250G' ? 'MATCHA-50G' : 'COFFEE-250G';
         assert.ok(explained.includes(`${refused}: 3 blocked attempt(s)`));
         assert.match(explained, /Lowest cash USD 0\.00 · day 0/);
+        assert.match(explained, /Opening cash USD 10\.00/);
+        assert.match(explained, /Cash movement USD -10\.00/);
+        assert.match(explained, /Inventory at cost: on hand USD 10\.00 · in transit USD 0\.00/);
         assert.match(explained, /First refusal day 0: whole order USD 10\.00; cash USD 0\.00/);
         assert.ok(explained.includes(`Priority 1 · ${expected}`));
       }
