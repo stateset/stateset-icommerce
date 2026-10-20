@@ -656,6 +656,70 @@ fn receipt_insert_failure_rolls_back_payment_and_event() {
 }
 
 #[test]
+fn silently_suppressed_required_rows_roll_back_apply_and_preserve_preview() {
+    for (trigger, promotion) in [
+        (
+            "CREATE TRIGGER suppress_required BEFORE INSERT ON kernel_outbox BEGIN SELECT RAISE(IGNORE); END;",
+            false,
+        ),
+        (
+            "CREATE TRIGGER suppress_required BEFORE INSERT ON kernel_receipt_audit_log BEGIN SELECT RAISE(IGNORE); END;",
+            false,
+        ),
+        (
+            "CREATE TRIGGER suppress_required BEFORE INSERT ON kernel_receipts BEGIN SELECT RAISE(IGNORE); END;",
+            false,
+        ),
+        (
+            "CREATE TRIGGER suppress_required BEFORE UPDATE ON kernel_receipts BEGIN SELECT RAISE(IGNORE); END;",
+            true,
+        ),
+    ] {
+        let db = SqliteDatabase::in_memory().unwrap();
+        let executor = db.kernel_executor(payment_policy());
+        let mut command = payment_command("suppressed-required-row", dec!(0.10));
+        if promotion {
+            assert_eq!(
+                executor.execute_create_payment(&command).unwrap().status,
+                ExecutionStatus::Previewed
+            );
+        }
+        db.conn().unwrap().execute_batch(trigger).unwrap();
+        command.mode = ExecutionMode::Apply;
+        assert!(executor.execute_create_payment(&command).is_err());
+        let counts = || {
+            let conn = db.conn().unwrap();
+            conn.query_row(
+                "SELECT (SELECT COUNT(*) FROM payments), (SELECT COUNT(*) FROM kernel_outbox),
+                    (SELECT COUNT(*) FROM kernel_receipts), (SELECT COUNT(*) FROM kernel_receipt_audit_log)",
+                [], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?)),
+            ).unwrap()
+        };
+        let retained = i64::from(promotion);
+        assert_eq!(counts(), (0, 0, retained, retained));
+        assert!(db.kernel_outbox().verify_audit_chain().unwrap().valid);
+        if promotion {
+            let preview = db
+                .kernel_outbox()
+                .receipt_by_idempotency_key(&command.idempotency_key)
+                .unwrap()
+                .unwrap();
+            assert_eq!(preview.receipt["status"], "previewed");
+        }
+        db.conn().unwrap().execute_batch("DROP TRIGGER suppress_required").unwrap();
+        let first = executor.execute_create_payment(&command).unwrap();
+        assert_eq!(first.status, ExecutionStatus::Succeeded);
+        let committed = counts();
+        assert_eq!(committed.0, 1);
+        assert_eq!(committed.2, 1);
+        assert_eq!(committed.3, retained + 1);
+        assert_eq!(executor.execute_create_payment(&command).unwrap().receipt_id, first.receipt_id);
+        assert_eq!(counts(), committed);
+        assert!(db.kernel_outbox().verify_audit_chain().unwrap().valid);
+    }
+}
+
+#[test]
 fn reservation_lifecycle_emits_exact_transactional_events() {
     let db = SqliteDatabase::in_memory().expect("create database");
     db.inventory()
@@ -743,14 +807,15 @@ fn outbox_leases_prevent_double_delivery_and_dead_letter_exhausted_events() {
         .expect("create event");
     let claimed = db.kernel_outbox().claim_pending("worker-a", 10, 30).expect("claim event");
     assert_eq!(claimed.len(), 1);
-    assert_eq!(claimed[0].lease_owner.as_deref(), Some("worker-a"));
+    let token_a = claimed[0].lease_owner.as_deref().unwrap();
+    assert!(token_a.starts_with("worker-a:"));
     assert!(
         db.kernel_outbox().claim_pending("worker-b", 10, 30).expect("competing claim").is_empty()
     );
     assert!(!db.kernel_outbox().mark_published_by(claimed[0].id, "worker-b").expect("wrong ack"));
     assert!(
         db.kernel_outbox()
-            .record_failure_by(claimed[0].id, "worker-a", "temporary", 60, 2)
+            .record_failure_by(claimed[0].id, token_a, "temporary", 60, 2)
             .expect("schedule retry")
     );
     assert!(db.kernel_outbox().pending(10).expect("delayed pending").is_empty());
@@ -771,7 +836,13 @@ fn outbox_leases_prevent_double_delivery_and_dead_letter_exhausted_events() {
     assert_eq!(retried[0].attempts, 1);
     assert!(
         db.kernel_outbox()
-            .record_failure_by(retried[0].id, "worker-b", "permanent", 60, 2)
+            .record_failure_by(
+                retried[0].id,
+                retried[0].lease_owner.as_deref().unwrap(),
+                "permanent",
+                60,
+                2
+            )
             .expect("dead letter")
     );
     assert!(db.kernel_outbox().pending(10).expect("pending after dead letter").is_empty());
@@ -796,7 +867,11 @@ fn outbox_leases_prevent_double_delivery_and_dead_letter_exhausted_events() {
     assert_eq!(health.ready, 1);
     let redriven = db.kernel_outbox().claim_pending("worker-c", 1, 30).expect("claim redrive");
     assert_eq!(redriven[0].attempts, 0);
-    assert!(db.kernel_outbox().mark_published_by(redriven[0].id, "worker-c").expect("ack"));
+    assert!(
+        db.kernel_outbox()
+            .mark_published_by(redriven[0].id, redriven[0].lease_owner.as_deref().unwrap())
+            .expect("ack")
+    );
     assert_eq!(db.kernel_outbox().delivery_health().expect("final health").published, 1);
 }
 
@@ -1341,6 +1416,14 @@ fn lifecycle_receipt_failure_rolls_back_release_balance_and_event() {
 }
 
 fn create_kernel_order(db: &SqliteDatabase, sku: &str) -> stateset_core::Order {
+    create_kernel_order_quantities(db, sku, &[2])
+}
+
+fn create_kernel_order_quantities(
+    db: &SqliteDatabase,
+    sku: &str,
+    quantities: &[i32],
+) -> stateset_core::Order {
     let customer = db
         .customers()
         .create(CreateCustomer {
@@ -1353,14 +1436,17 @@ fn create_kernel_order(db: &SqliteDatabase, sku: &str) -> stateset_core::Order {
     db.orders()
         .create(CreateOrder {
             customer_id: customer.id,
-            items: vec![CreateOrderItem {
-                product_id: ProductId::new(),
-                sku: sku.into(),
-                name: "Kernel item".into(),
-                quantity: 2,
-                unit_price: dec!(10.00),
-                ..Default::default()
-            }],
+            items: quantities
+                .iter()
+                .map(|quantity| CreateOrderItem {
+                    product_id: ProductId::new(),
+                    sku: sku.into(),
+                    name: "Kernel item".into(),
+                    quantity: *quantity,
+                    unit_price: dec!(10.00),
+                    ..Default::default()
+                })
+                .collect(),
             ..Default::default()
         })
         .expect("create order")
@@ -3655,4 +3741,508 @@ fn kernel_storefront_commands_run_a_complete_checkout_on_the_governed_surface() 
 
     let chain = db.kernel_outbox().verify_audit_chain().expect("verify chain");
     assert!(chain.valid, "{chain:?}");
+}
+
+fn reserved_shipping_fixture(db: &SqliteDatabase, sku: &str) -> stateset_core::Order {
+    reserved_shipping_quantities(db, sku, &[2])
+}
+
+fn reserved_shipping_quantities(
+    db: &SqliteDatabase,
+    sku: &str,
+    quantities: &[i32],
+) -> stateset_core::Order {
+    create_stock(db, sku, dec!(10));
+    let order = create_kernel_order_quantities(db, sku, quantities);
+    db.orders()
+        .update(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Confirmed), ..Default::default() },
+        )
+        .unwrap();
+    db.orders()
+        .update(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Processing), ..Default::default() },
+        )
+        .unwrap();
+    let payment = db
+        .payments()
+        .create(CreatePayment {
+            order_id: Some(order.id),
+            amount: order.total_amount,
+            currency: Some(order.currency),
+            ..Default::default()
+        })
+        .unwrap();
+    db.payments().mark_completed(payment.id).unwrap();
+    db.orders().get(order.id).unwrap().unwrap()
+}
+
+fn reserved_shipping_command(order: &stateset_core::Order) -> CommandEnvelope<ShipOrderCommand> {
+    let mut command = ship_order_command("reserved-shipping", order.id, None);
+    command.command_type = "orders.ship_reserved".into();
+    command.principal.capabilities = vec!["orders.ship_reserved".into()];
+    command.expected_version = Some(order.version);
+    command
+}
+
+fn reserved_shipping_policy() -> KernelPolicy {
+    payment_policy()
+        .allow("orders.ship_reserved", KernelCommandPolicy::requiring(["orders.ship_reserved"]))
+}
+
+#[test]
+fn kernel_reserved_shipping_previews_consumes_once_and_preserves_other_holds() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let order = reserved_shipping_fixture(&db, "CONSUME-1");
+    let other = db
+        .orders()
+        .create(CreateOrder {
+            customer_id: order.customer_id,
+            items: vec![CreateOrderItem {
+                product_id: ProductId::new(),
+                sku: "CONSUME-1".into(),
+                name: "Other hold".into(),
+                quantity: 2,
+                unit_price: dec!(10),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+    let command = reserved_shipping_command(&order);
+    let kernel = db.kernel_executor(reserved_shipping_policy());
+    assert_eq!(
+        kernel.execute_ship_reserved_order(&command).unwrap().status,
+        ExecutionStatus::Previewed
+    );
+    let before = db.inventory().get_stock("CONSUME-1").unwrap().unwrap();
+    assert_eq!(before.total_on_hand, dec!(10));
+    assert_eq!(before.total_allocated, dec!(4));
+    let command = applied(&command);
+    let receipt = kernel.execute_ship_reserved_order(&command).unwrap();
+    assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{:?}", receipt.error_message);
+    assert_eq!(receipt.result.as_ref().unwrap().items[0].shipped_quantity, 2);
+    assert_eq!(
+        kernel.execute_ship_reserved_order(&command).unwrap().receipt_id,
+        receipt.receipt_id
+    );
+    let stock = db.inventory().get_stock("CONSUME-1").unwrap().unwrap();
+    assert_eq!(stock.total_on_hand, dec!(8));
+    assert_eq!(stock.total_allocated, dec!(2));
+    assert_eq!(stock.total_available, before.total_available);
+    let conn = db.pool().get().unwrap();
+    let (reservation, status): (String, String) = conn
+        .query_row(
+            "SELECT id,status FROM inventory_reservations WHERE reference_id=?",
+            [order.id.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(status, "fulfilled");
+    db.inventory().release_reservation(reservation.parse().unwrap()).unwrap();
+    assert_eq!(db.inventory().get_stock("CONSUME-1").unwrap().unwrap().total_allocated, dec!(2));
+    assert_eq!(db.orders().get(other.id).unwrap().unwrap().items[0].shipped_quantity, 0);
+    let linked: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM kernel_outbox WHERE event_type='inventory.reservation_fulfilled.v1' AND command_id=?",
+        [command.command_id.to_string()], |r| r.get(0)).unwrap();
+    assert_eq!(linked, 1);
+    let ledger: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM inventory_transactions WHERE transaction_type='shipment'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(ledger, 1);
+    let mut legacy_permission = command;
+    legacy_permission.command_id = Uuid::new_v4();
+    legacy_permission.idempotency_key = "legacy-authority".into();
+    legacy_permission.principal.capabilities = vec!["orders.ship".into()];
+    assert_eq!(
+        kernel.execute_ship_reserved_order(&legacy_permission).unwrap().status,
+        ExecutionStatus::Rejected
+    );
+}
+
+#[test]
+fn kernel_reserved_shipping_refuses_unbacked_or_unsafe_shipments() {
+    for fault in
+        ["unpaid", "version", "overship", "short_hold", "extra_hold", "unbacked", "expired"]
+    {
+        let db = SqliteDatabase::in_memory().unwrap();
+        let order = reserved_shipping_fixture(&db, "CONSUME-REFUSE");
+        let mut command = applied(&reserved_shipping_command(&order));
+        let conn = db.pool().get().unwrap();
+        match fault {
+            "unpaid" => {
+                conn.execute(
+                    "UPDATE orders SET payment_status='pending' WHERE id=?",
+                    [order.id.to_string()],
+                )
+                .unwrap();
+            }
+            "version" => command.expected_version = None,
+            "overship" => {
+                command.payload.lines =
+                    Some(vec![ShipmentLineInput { order_item_id: order.items[0].id, quantity: 3 }])
+            }
+            "short_hold" => {
+                conn.execute("UPDATE inventory_reservations SET quantity='1'", []).unwrap();
+            }
+            "extra_hold" => {
+                conn.execute("UPDATE inventory_reservations SET quantity='3'", []).unwrap();
+            }
+            "unbacked" => {
+                conn.execute(
+                    "UPDATE inventory_balances SET quantity_allocated='1', quantity_available='9'",
+                    [],
+                )
+                .unwrap();
+            }
+            "expired" => {
+                conn.execute(
+                    "UPDATE inventory_reservations SET expires_at='2000-01-01T00:00:00Z'",
+                    [],
+                )
+                .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let kernel = db.kernel_executor(reserved_shipping_policy());
+        let receipt = kernel.execute_ship_reserved_order(&command).unwrap();
+        assert_eq!(
+            receipt.status,
+            ExecutionStatus::Rejected,
+            "{fault}: {:?}",
+            receipt.error_message
+        );
+        assert_eq!(
+            kernel.execute_ship_reserved_order(&command).unwrap().receipt_id,
+            receipt.receipt_id
+        );
+        assert_eq!(
+            db.inventory().get_stock("CONSUME-REFUSE").unwrap().unwrap().total_on_hand,
+            dec!(10)
+        );
+        assert_eq!(db.orders().get(order.id).unwrap().unwrap().items[0].shipped_quantity, 0);
+    }
+}
+
+#[test]
+fn kernel_reserved_shipping_rolls_stock_and_order_back_when_receipt_cannot_commit() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let order = reserved_shipping_fixture(&db, "CONSUME-ROLLBACK");
+    let command = applied(&reserved_shipping_command(&order));
+    let conn = db.pool().get().unwrap();
+    conn.execute_batch("CREATE TRIGGER reject_reserved_receipt BEFORE INSERT ON kernel_receipts
+        WHEN NEW.command_type='orders.ship_reserved' BEGIN SELECT RAISE(ABORT, 'injected receipt failure'); END;").unwrap();
+    let kernel = db.kernel_executor(reserved_shipping_policy());
+    assert!(kernel.execute_ship_reserved_order(&command).is_err());
+    let stock = db.inventory().get_stock("CONSUME-ROLLBACK").unwrap().unwrap();
+    assert_eq!(stock.total_on_hand, dec!(10));
+    assert_eq!(stock.total_allocated, dec!(2));
+    assert_eq!(db.orders().get(order.id).unwrap().unwrap().items[0].shipped_quantity, 0);
+    let facts: i64 = conn.query_row("SELECT COUNT(*) FROM kernel_outbox WHERE event_type='inventory.reservation_fulfilled.v1'", [], |r| r.get(0)).unwrap();
+    assert_eq!(facts, 0);
+    conn.execute_batch("DROP TRIGGER reject_reserved_receipt").unwrap();
+    assert_eq!(
+        kernel.execute_ship_reserved_order(&command).unwrap().status,
+        ExecutionStatus::Succeeded
+    );
+    assert_eq!(
+        db.inventory().get_stock("CONSUME-ROLLBACK").unwrap().unwrap().total_on_hand,
+        dec!(8)
+    );
+}
+
+#[test]
+fn kernel_reserved_partial_shipments_preserve_sibling_lines_and_replay_history() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let mut order = reserved_shipping_quantities(&db, "PARTIAL-SAME-SKU", &[2, 2]);
+    let kernel = db.kernel_executor(reserved_shipping_policy());
+    let mut first: Option<(CommandEnvelope<ShipOrderCommand>, Uuid)> = None;
+    // Three partial dispatches followed by shipping the remainder. Each hold
+    // belongs to its line even though both lines share a SKU and balance.
+    for (step, line) in [0, 0, 1, 1].into_iter().enumerate() {
+        let mut command = applied(&reserved_shipping_command(&order));
+        command.idempotency_key = format!("partial-{step}");
+        command.payload.lines = if step == 3 {
+            None
+        } else {
+            Some(vec![ShipmentLineInput { order_item_id: order.items[line].id, quantity: 1 }])
+        };
+        if step == 0 {
+            let mut preview = command.clone();
+            preview.mode = ExecutionMode::Preview;
+            assert_eq!(
+                kernel.execute_ship_reserved_order(&preview).unwrap().status,
+                ExecutionStatus::Previewed
+            );
+            assert_eq!(
+                db.inventory().get_stock("PARTIAL-SAME-SKU").unwrap().unwrap().total_on_hand,
+                dec!(10)
+            );
+            command.command_id = Uuid::new_v4();
+        }
+        let receipt = kernel.execute_ship_reserved_order(&command).unwrap();
+        assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{:?}", receipt.error_message);
+        assert_eq!(
+            kernel.execute_ship_reserved_order(&command).unwrap().receipt_id,
+            receipt.receipt_id
+        );
+        order = receipt.result.clone().unwrap();
+        assert_eq!(
+            order.status,
+            if step == 3 { OrderStatus::Shipped } else { OrderStatus::PartiallyShipped }
+        );
+        assert_eq!(
+            order.items.iter().map(|item| item.shipped_quantity).sum::<i32>(),
+            step as i32 + 1
+        );
+        let stock = db.inventory().get_stock("PARTIAL-SAME-SKU").unwrap().unwrap();
+        assert_eq!(stock.total_on_hand, rust_decimal::Decimal::from(9 - step));
+        assert_eq!(stock.total_allocated, rust_decimal::Decimal::from(3 - step));
+        assert_eq!(stock.total_available, dec!(6));
+        if step > 0 {
+            let (first_command, _) = first.as_ref().unwrap();
+            let linked: i64 = db.pool().get().unwrap().query_row(
+                "SELECT COUNT(*) FROM kernel_outbox WHERE command_id=? AND event_type='inventory.reservation_fulfilled.v1'",
+                [first_command.command_id.to_string()], |r| r.get(0)).unwrap();
+            assert_eq!(linked, 1);
+        }
+        if step == 0 {
+            let conn = db.pool().get().unwrap();
+            let sibling: (String, String) = conn
+                .query_row(
+                    "SELECT quantity,status FROM inventory_reservations WHERE order_item_id=?",
+                    [order.items[1].id.to_string()],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(sibling, ("2".into(), "pending".into()));
+            // A timestamp-based event lookup would steal this earlier fact.
+            conn.execute("UPDATE kernel_outbox SET created_at='9999-01-01T00:00:00Z' WHERE command_id=? AND event_type='inventory.reservation_fulfilled.v1'",
+                [command.command_id.to_string()]).unwrap();
+            first = Some((command.clone(), receipt.receipt_id));
+            let mut excessive = command.clone();
+            excessive.command_id = Uuid::new_v4();
+            excessive.idempotency_key = "too-many-remaining".into();
+            excessive.expected_version = Some(order.version);
+            excessive.payload.lines =
+                Some(vec![ShipmentLineInput { order_item_id: order.items[0].id, quantity: 2 }]);
+            assert_eq!(
+                kernel.execute_ship_reserved_order(&excessive).unwrap().status,
+                ExecutionStatus::Rejected
+            );
+            // A different dispatch approved against the old version cannot ship again.
+            let mut stale = command;
+            stale.command_id = Uuid::new_v4();
+            stale.idempotency_key = "competing-dispatch".into();
+            assert_eq!(
+                kernel.execute_ship_reserved_order(&stale).unwrap().status,
+                ExecutionStatus::Rejected
+            );
+        }
+    }
+    let (command, receipt_id) = first.unwrap();
+    assert_eq!(kernel.execute_ship_reserved_order(&command).unwrap().receipt_id, receipt_id);
+    assert_eq!(
+        db.inventory().get_stock("PARTIAL-SAME-SKU").unwrap().unwrap().total_on_hand,
+        dec!(6)
+    );
+    let count: i64 = db
+        .pool()
+        .get()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM inventory_transactions WHERE transaction_type='shipment'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 4);
+}
+
+#[test]
+fn kernel_reserved_partial_shipments_refuse_sibling_hold_borrowing() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let order = reserved_shipping_quantities(&db, "PARTIAL-BORROW", &[2, 2]);
+    let conn = db.pool().get().unwrap();
+    // Total SKU coverage remains four, but one line is short and its sibling
+    // has excess. The old SKU-only planner would have accepted this evidence.
+    conn.execute("UPDATE inventory_reservations SET quantity=CASE WHEN order_item_id=? THEN '1' ELSE '3' END",
+        [order.items[0].id.to_string()]).unwrap();
+    let mut command = applied(&reserved_shipping_command(&order));
+    command.payload.lines =
+        Some(vec![ShipmentLineInput { order_item_id: order.items[0].id, quantity: 2 }]);
+    let receipt = db
+        .kernel_executor(reserved_shipping_policy())
+        .execute_ship_reserved_order(&command)
+        .unwrap();
+    assert_eq!(receipt.status, ExecutionStatus::Rejected);
+    assert_eq!(
+        db.inventory().get_stock("PARTIAL-BORROW").unwrap().unwrap().total_on_hand,
+        dec!(10)
+    );
+}
+
+#[test]
+fn kernel_reserved_shipping_requires_consumption_provenance_for_legacy_partials() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let order = reserved_shipping_fixture(&db, "PARTIAL-LEGACY");
+    let kernel = db.kernel_executor(reserved_shipping_policy());
+    let legacy = applied(&ship_order_command(
+        "legacy-partial",
+        order.id,
+        Some(vec![ShipmentLineInput { order_item_id: order.items[0].id, quantity: 1 }]),
+    ));
+    let receipt = kernel.execute_ship_order(&legacy).unwrap();
+    assert_eq!(receipt.status, ExecutionStatus::Succeeded);
+    let order = receipt.result.unwrap();
+    let command = applied(&reserved_shipping_command(&order));
+    let rejected = kernel.execute_ship_reserved_order(&command).unwrap();
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
+    assert_eq!(rejected.error_code.as_deref(), Some("commerce.shipment_stock_provenance_missing"));
+    assert_eq!(
+        db.inventory().get_stock("PARTIAL-LEGACY").unwrap().unwrap().total_on_hand,
+        dec!(10)
+    );
+}
+
+#[test]
+fn kernel_reserved_shipping_unkeyed_legacy_holds_require_a_full_initial_dispatch() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let order = reserved_shipping_fixture(&db, "PARTIAL-UNKEYED");
+    db.pool()
+        .get()
+        .unwrap()
+        .execute("UPDATE inventory_reservations SET order_item_id=NULL", [])
+        .unwrap();
+    let kernel = db.kernel_executor(reserved_shipping_policy());
+    let mut partial = applied(&reserved_shipping_command(&order));
+    partial.idempotency_key = "unkeyed-partial".into();
+    partial.payload.lines =
+        Some(vec![ShipmentLineInput { order_item_id: order.items[0].id, quantity: 1 }]);
+    assert_eq!(
+        kernel.execute_ship_reserved_order(&partial).unwrap().status,
+        ExecutionStatus::Rejected
+    );
+    let full = applied(&reserved_shipping_command(&order));
+    assert_eq!(
+        kernel.execute_ship_reserved_order(&full).unwrap().status,
+        ExecutionStatus::Succeeded
+    );
+    assert_eq!(
+        db.inventory().get_stock("PARTIAL-UNKEYED").unwrap().unwrap().total_on_hand,
+        dec!(8)
+    );
+}
+
+#[test]
+fn kernel_reserved_partial_shipping_rolls_back_a_later_dispatch_on_receipt_failure() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let order = reserved_shipping_fixture(&db, "PARTIAL-ROLLBACK");
+    let kernel = db.kernel_executor(reserved_shipping_policy());
+    let mut first = applied(&reserved_shipping_command(&order));
+    first.payload.lines =
+        Some(vec![ShipmentLineInput { order_item_id: order.items[0].id, quantity: 1 }]);
+    let receipt = kernel.execute_ship_reserved_order(&first).unwrap();
+    assert_eq!(receipt.status, ExecutionStatus::Succeeded);
+    let order = receipt.result.unwrap();
+    let mut next = applied(&reserved_shipping_command(&order));
+    next.idempotency_key = "partial-second".into();
+    let conn = db.pool().get().unwrap();
+    conn.execute_batch("CREATE TRIGGER reject_partial_receipt BEFORE INSERT ON kernel_receipts
+        WHEN NEW.command_type='orders.ship_reserved' BEGIN SELECT RAISE(ABORT, 'receipt failure'); END;").unwrap();
+    assert!(kernel.execute_ship_reserved_order(&next).is_err());
+    assert_eq!(db.orders().get(order.id).unwrap().unwrap().items[0].shipped_quantity, 1);
+    assert_eq!(
+        db.inventory().get_stock("PARTIAL-ROLLBACK").unwrap().unwrap().total_on_hand,
+        dec!(9)
+    );
+    assert_eq!(
+        db.inventory().get_stock("PARTIAL-ROLLBACK").unwrap().unwrap().total_allocated,
+        dec!(1)
+    );
+    conn.execute_batch("DROP TRIGGER reject_partial_receipt").unwrap();
+    assert_eq!(
+        kernel.execute_ship_reserved_order(&next).unwrap().status,
+        ExecutionStatus::Succeeded
+    );
+    assert_eq!(
+        db.inventory().get_stock("PARTIAL-ROLLBACK").unwrap().unwrap().total_on_hand,
+        dec!(8)
+    );
+}
+
+#[test]
+fn kernel_reserved_shipping_refuses_legacy_units_after_a_native_partial() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let order = reserved_shipping_quantities(&db, "PARTIAL-MIXED", &[4]);
+    let kernel = db.kernel_executor(reserved_shipping_policy());
+    let mut first = applied(&reserved_shipping_command(&order));
+    first.payload.lines =
+        Some(vec![ShipmentLineInput { order_item_id: order.items[0].id, quantity: 1 }]);
+    assert_eq!(
+        kernel.execute_ship_reserved_order(&first).unwrap().status,
+        ExecutionStatus::Succeeded
+    );
+    let legacy = applied(&ship_order_command(
+        "legacy-between",
+        order.id,
+        Some(vec![ShipmentLineInput { order_item_id: order.items[0].id, quantity: 1 }]),
+    ));
+    let legacy = kernel.execute_ship_order(&legacy).unwrap();
+    assert_eq!(legacy.status, ExecutionStatus::Succeeded);
+    let mut next = applied(&reserved_shipping_command(&legacy.result.unwrap()));
+    next.idempotency_key = "native-after-legacy".into();
+    let rejected = kernel.execute_ship_reserved_order(&next).unwrap();
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
+    assert_eq!(rejected.error_code.as_deref(), Some("commerce.shipment_stock_provenance_missing"));
+    assert_eq!(db.inventory().get_stock("PARTIAL-MIXED").unwrap().unwrap().total_on_hand, dec!(9));
+}
+
+#[test]
+fn kernel_reserved_shipping_consumes_only_needed_parts_of_split_line_holds() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let order = reserved_shipping_quantities(&db, "PARTIAL-SPLIT-HOLDS", &[4]);
+    let conn = db.pool().get().unwrap();
+    // Two separately allocated holds back the same line; balances still back
+    // four units. Shipping three must leave precisely one unit reserved.
+    conn.execute("UPDATE inventory_reservations SET quantity='2'", []).unwrap();
+    conn.execute("INSERT INTO inventory_reservations
+        (id,item_id,location_id,quantity,status,reference_type,reference_id,expires_at,created_at,order_item_id)
+        SELECT ?,item_id,location_id,quantity,status,reference_type,reference_id,expires_at,created_at,order_item_id
+        FROM inventory_reservations", [Uuid::new_v4().to_string()]).unwrap();
+    let mut command = applied(&reserved_shipping_command(&order));
+    command.payload.lines =
+        Some(vec![ShipmentLineInput { order_item_id: order.items[0].id, quantity: 3 }]);
+    let kernel = db.kernel_executor(reserved_shipping_policy());
+    let receipt = kernel.execute_ship_reserved_order(&command).unwrap();
+    assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{:?}", receipt.error_message);
+    let held: String = conn
+        .query_row("SELECT quantity FROM inventory_reservations WHERE status='pending'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(held, "1");
+    let linked: i64 = conn.query_row("SELECT COUNT(*) FROM kernel_outbox WHERE command_id=? AND event_type='inventory.reservation_fulfilled.v1'",
+        [command.command_id.to_string()], |r| r.get(0)).unwrap();
+    assert_eq!(linked, 2);
+    let stock = db.inventory().get_stock("PARTIAL-SPLIT-HOLDS").unwrap().unwrap();
+    assert_eq!(stock.total_on_hand, dec!(7));
+    assert_eq!(stock.total_allocated, dec!(1));
+    assert_eq!(stock.total_available, dec!(6));
+    let mut finish = applied(&reserved_shipping_command(&receipt.result.unwrap()));
+    finish.idempotency_key = "split-holds-finish".into();
+    assert_eq!(
+        kernel.execute_ship_reserved_order(&finish).unwrap().status,
+        ExecutionStatus::Succeeded
+    );
+    assert_eq!(
+        db.inventory().get_stock("PARTIAL-SPLIT-HOLDS").unwrap().unwrap().total_on_hand,
+        dec!(6)
+    );
 }

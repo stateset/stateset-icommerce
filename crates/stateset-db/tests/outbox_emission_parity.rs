@@ -46,10 +46,7 @@
 //!   its single, trailing test module (see that function's doc comment for
 //!   the two counterexamples found and fixed in fix round 1).
 //! - The `(file, method)` backlog key is not unique — the same method name
-//!   recurs across `impl` blocks or trait impls in one file — and
-//!   `SAFE_EXCEPTIONS` still lists `migrations.rs`, which is dead: the
-//!   `sqlite_sources()` scan only reads `src/sqlite/*.rs`, and migrations
-//!   live elsewhere. Both are deferred, tracked findings, not fixed here.
+//!   recurs across `impl` blocks or trait impls in one file.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -59,7 +56,36 @@ use std::path::Path;
 /// a visible diff and needs a justification a reviewer can check.
 const SAFE_EXCEPTIONS: &[(&str, &str, &str)] = &[
     ("kernel_outbox.rs", "*", "the outbox itself: emitting would recurse"),
-    ("migrations.rs", "*", "schema changes are not domain events"),
+    (
+        "customers.rs",
+        "sync_default_flags",
+        "derived address flags: add/update/delete/default-address operations emit their own fact in the same transaction; anonymize emits its bulk removal fact",
+    ),
+    (
+        "customers.rs",
+        "set_default_pointer_tx",
+        "derived customer pointers: add/update/default-address callers emit their own fact in the same transaction",
+    ),
+    (
+        "customers.rs",
+        "clear_pointers_to_tx",
+        "derived customer pointers: update/delete-address callers emit their own fact in the same transaction",
+    ),
+    (
+        "http_idempotency.rs",
+        "complete",
+        "the HTTP response cache is infrastructure state replayed locally; it is not a commerce fact",
+    ),
+    (
+        "shipments.rs",
+        "add_item_with_version",
+        "the method emits the item fact through `record_item_change_tx` in the same transaction; the helper owns the shared emission for both versioned and unversioned entry points",
+    ),
+    (
+        "shipments.rs",
+        "remove_item_with_version",
+        "the method emits the item fact through `record_item_change_tx` in the same transaction; the helper owns the shared emission for both versioned and unversioned entry points",
+    ),
     (
         "subscriptions.rs",
         "create_plan_item_with_conn",
@@ -322,15 +348,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("custom_objects.rs", "create_object"),
     ("custom_objects.rs", "update_object"),
     ("custom_objects.rs", "delete_object"),
-    ("customers.rs", "update_customer_tx"),
-    ("customers.rs", "delete_customer_tx"),
-    ("customers.rs", "sync_default_flags"),
-    ("customers.rs", "set_default_pointer_tx"),
-    ("customers.rs", "clear_pointers_to_tx"),
-    ("customers.rs", "anonymize"),
-    ("customers.rs", "add_address"),
-    ("customers.rs", "update_address"),
-    ("customers.rs", "delete_address"),
     ("edi_documents.rs", "create"),
     ("edi_documents.rs", "set_status"),
     ("fixed_assets.rs", "transition"),
@@ -398,7 +415,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("integration_mappings.rs", "delete"),
     ("integration_mappings.rs", "bulk_upsert"),
     ("inventory.rs", "apply_allocation_delta_in_tx"),
-    ("inventory.rs", "expire_reservation_in_tx"),
     ("inventory.rs", "consume_available_in_tx"),
     ("inventory.rs", "create_item"),
     ("inventory.rs", "adjust"),
@@ -457,8 +473,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("payments.rs", "update"),
     ("payments.rs", "mark_completed_tx"),
     ("payments.rs", "mark_failed"),
-    ("payments.rs", "complete_refund"),
-    ("payments.rs", "fail_refund"),
     ("payments.rs", "create_payment_method"),
     ("payments.rs", "delete_payment_method"),
     ("payments.rs", "set_default_payment_method"),
@@ -593,7 +607,6 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("shipments.rs", "mark_delivered"),
     ("shipments.rs", "add_item"),
     ("shipments.rs", "remove_item"),
-    ("shipments.rs", "add_event"),
     ("shipments.rs", "update_batch_atomic"),
     ("shipments.rs", "delete_batch_atomic"),
     ("shipping_zones.rs", "create"),
@@ -706,7 +719,8 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("zone_shipping_methods.rs", "delete"),
 ];
 
-/// Drop everything from the trailing `#[cfg(test)]` module onward.
+/// Drop a whole-file test fixture or the trailing `#[cfg(test)]` module.
+/// A leading inner attribute gates the entire file out of production builds.
 ///
 /// Every `src/sqlite/*.rs` file in this crate puts its `#[cfg(test)] mod
 /// tests { ... }` block as a single trailing module at column 0. Without
@@ -730,7 +744,24 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
 /// scan — there is no structural guard against that here, only the
 /// convention that trailing test modules are the only column-0 occurrence.
 fn strip_test_module(source: &str) -> &str {
+    if source.lines().next() == Some("#![cfg(test)]") {
+        return "";
+    }
     source.split_once("\n#[cfg(test)]").map_or(source, |(head, _)| head)
+}
+
+#[test]
+fn test_only_file_attribute_does_not_hide_production_code() {
+    assert_eq!(strip_test_module("#![cfg(test)]\nfn seed() { UPDATE fixtures }"), "");
+    let production = "fn write() { UPDATE orders }";
+    assert_eq!(strip_test_module(production), production);
+    assert_eq!(
+        strip_test_module("fn write() { UPDATE orders }\n#[cfg(test)]\nmod tests {}"),
+        production
+    );
+    // An attribute-looking string in a production function is not a file guard.
+    let literal = "fn write() { let text = \"#![cfg(test)]\"; UPDATE orders }";
+    assert_eq!(strip_test_module(literal), literal);
 }
 
 fn sqlite_sources() -> Vec<(String, String)> {

@@ -240,10 +240,7 @@ test('getOverdueBackorders is empty when no backorder carries an expected date',
   assert.equal((await commerce.backorder.getSummary()).overdueCount, 0);
 });
 
-test(
-  'a later stock receipt fulfils the pending backorder',
-  { todo: 'engine: receiving stock (inventory.adjust / completeReceiving) never allocates or fulfils pending backorders. The capability is now reachable -- call backorder.autoAllocateInventory(sku) after a receipt -- but nothing triggers it automatically, and whether a receipt should is a design decision' },
-  async () => {
+test('a later stock receipt allocates the pending backorder', async () => {
     const commerce = new Commerce(':memory:');
     const { customer, sku } = await setup(commerce, { onHand: 3 });
     const order = await orderFor(commerce, customer, sku, 5);
@@ -254,14 +251,16 @@ test(
     assert.equal((await commerce.inventory.getStock(sku)).totalOnHand, '13');
 
     const [after] = await commerce.backorder.getBackordersForOrder(order.id);
-    assert.equal(after.quantityFulfilled, 2);
-    assert.equal(after.quantityRemaining, 0);
-    assert.equal(after.status, 'Fulfilled');
+    assert.equal(after.quantityFulfilled, 0);
+    assert.equal(after.quantityRemaining, 2);
+    assert.equal(after.status, 'Allocated');
     assert.equal(await commerce.backorder.countPending(), 0);
-    // The freed units are now held for the order, not available to others.
+    const [allocation] = await commerce.backorder.getAllocations(after.id);
+    assert.equal(allocation.quantity, 2);
+    assert.equal(allocation.status, 'Reserved');
+    // The newly received units are now held for the order, not available to others.
     assert.equal((await commerce.inventory.getStock(sku)).totalAllocated, '5');
-  },
-);
+});
 
 test(
   'createBackorder refuses a non-positive quantity',
@@ -307,7 +306,7 @@ test('malformed UUIDs and a NaN quantity are refused with VALIDATION', async () 
   assert.deepEqual(await commerce.backorder.listBackorders(), []);
 });
 
-test('autoAllocateInventory fills an open backorder once stock arrives', async () => {
+test('autoAllocateInventory is idempotent after the stock receipt hook', async () => {
   const commerce = new Commerce(':memory:');
   const { customer, sku } = await setup(commerce, { onHand: 3 });
 
@@ -321,8 +320,8 @@ test('autoAllocateInventory fills an open backorder once stock arrives', async (
   await commerce.inventory.adjust(sku, 5, 'receipt');
 
   const allocations = await commerce.backorder.autoAllocateInventory(sku);
-  assert.equal(allocations.length, 1, 'the one open backorder is allocated');
-  const [allocation] = allocations;
+  assert.deepEqual(allocations, [], 'the receipt hook already allocated the open backorder');
+  const [allocation] = await commerce.backorder.getAllocations(backorder.id);
   assert.equal(allocation.backorderId, backorder.id);
   assert.equal(allocation.sku, sku);
   assert.equal(allocation.quantity, 2, 'allocated up to what the backorder still needs');

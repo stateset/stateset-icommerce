@@ -33,8 +33,8 @@ pub fn load_policy_set_from_json(content: &str) -> crate::Result<PolicySet> {
 /// Returns [`PolicyError::YamlError`](crate::PolicyError::YamlError) if parsing fails.
 #[cfg(feature = "yaml")]
 pub fn load_policy_set_from_yaml(content: &str) -> crate::Result<PolicySet> {
-    let ps: PolicySet =
-        serde_yaml::from_str(content).map_err(|e| crate::PolicyError::YamlError(e.to_string()))?;
+    let ps: PolicySet = serde_norway::from_str(content)
+        .map_err(|e| crate::PolicyError::YamlError(e.to_string()))?;
     Ok(ps)
 }
 

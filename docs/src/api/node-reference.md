@@ -295,6 +295,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`CreateSegmentInput`](#createsegmentinput)
   - [`CreateSerialInput`](#createserialinput)
   - [`CreateShipmentInput`](#createshipmentinput)
+  - [`CreateShipmentItemInput`](#createshipmentiteminput)
   - [`CreateShippingZoneInput`](#createshippingzoneinput)
   - [`CreateStoreCreditInput`](#createstorecreditinput)
   - [`CreateSubscriptionInput`](#createsubscriptioninput)
@@ -603,6 +604,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`PromotionUsageFilterInput`](#promotionusagefilterinput)
   - [`PromotionUsageOutput`](#promotionusageoutput)
   - [`PurchaseOrderFilterInput`](#purchaseorderfilterinput)
+  - [`PurchaseOrderItemOutput`](#purchaseorderitemoutput)
   - [`PurchaseOrderOutput`](#purchaseorderoutput)
   - [`PurchaseOrderStatus`](#purchaseorderstatus)
   - [`PurgatoryFilterInput`](#purgatoryfilterinput)
@@ -622,6 +624,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`ReceiptType`](#receipttype)
   - [`ReceiptTypeFilter`](#receipttypefilter)
   - [`ReceiptTypeInput`](#receipttypeinput)
+  - [`ReceivePurchaseOrderItemInput`](#receivepurchaseorderiteminput)
   - [`RecognitionMethod`](#recognitionmethod)
   - [`RecognitionMethodOutput`](#recognitionmethodoutput)
   - [`RecordActivityInput`](#recordactivityinput)
@@ -1272,6 +1275,11 @@ Class `Inventory`.
 
 - **`confirmReservation(reservationId: string): Promise<void>`**
 
+- **`fulfillOrderStock(orderId: string): Promise<void>`**
+
+  Atomically consume confirmed holds after full shipment. Safe to retry;
+  shipping status alone does not post the physical stock transaction.
+
 - **`releaseReservation(reservationId: string): Promise<void>`**
 
 ### commerce.returns
@@ -1732,6 +1740,18 @@ Class `Shipments`.
 
   Types: [`CreateShipmentInput`](#createshipmentinput), [`ShipmentOutput`](#shipmentoutput)
 
+- **`addItem(shipmentId: string, input: CreateShipmentItemInput, expectedVersion?: number | undefined | null): Promise<ShipmentItemOutput>`**
+
+  Add an order-linked manifest item while packing. Does not fulfill the order or reserve stock.
+  Optional expectedVersion is a positive integer at most 2147483647, checked atomically.
+
+  Types: [`CreateShipmentItemInput`](#createshipmentiteminput), [`ShipmentItemOutput`](#shipmentitemoutput)
+
+- **`removeItem(itemId: string, expectedVersion?: number | undefined | null): Promise<void>`**
+
+  Remove a manifest item while packing, advancing the shipment version atomically.
+  Optional expectedVersion is a positive integer at most 2147483647, checked atomically.
+
 - **`update(id: string, input: UpdateShipmentInput): Promise<ShipmentOutput>`**
 
   Update shipment metadata and status through the native repository.
@@ -1750,15 +1770,21 @@ Class `Shipments`.
 
   Types: [`ShipmentFilterInput`](#shipmentfilterinput), [`ShipmentOutput`](#shipmentoutput)
 
-- **`ship(id: string, trackingNumber?: string | undefined | null): Promise<ShipmentOutput>`**
+- **`ship(id: string, trackingNumber?: string | undefined | null, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>`**
+
+  Ship a shipment; optional expectedVersion must be an integer from 1 to 2147483647.
 
   Types: [`ShipmentOutput`](#shipmentoutput)
 
-- **`deliver(id: string): Promise<ShipmentOutput>`**
+- **`deliver(id: string, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>`**
+
+  Deliver a shipment; optional expectedVersion must be an integer from 1 to 2147483647.
 
   Types: [`ShipmentOutput`](#shipmentoutput)
 
-- **`cancel(id: string): Promise<ShipmentOutput>`**
+- **`cancel(id: string, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>`**
+
+  Cancel a shipment; optional expectedVersion must be an integer from 1 to 2147483647.
 
   Types: [`ShipmentOutput`](#shipmentoutput)
 
@@ -1855,6 +1881,19 @@ Class `PurchaseOrders`.
 - **`cancel(id: string): Promise<PurchaseOrderOutput>`**
 
   Types: [`PurchaseOrderOutput`](#purchaseorderoutput)
+
+- **`getItems(id: string): Promise<Array<PurchaseOrderItemOutput>>`**
+
+  Read the persisted purchase-order lines with exact decimal fields.
+
+  Types: [`PurchaseOrderItemOutput`](#purchaseorderitemoutput)
+
+- **`receive(id: string, items: Array<ReceivePurchaseOrderItemInput>): Promise<PurchaseOrderOutput>`**
+
+  Record received quantities on a sent purchase order. This updates the PO;
+  warehouse stock must be posted separately through inventory/receiving.
+
+  Types: [`ReceivePurchaseOrderItemInput`](#receivepurchaseorderiteminput), [`PurchaseOrderOutput`](#purchaseorderoutput)
 
 - **`count(): Promise<number>`**
 
@@ -3458,7 +3497,9 @@ Class `Backorders`. Also available as `commerce.backorders`.
   available at its source location.
 
   Returns the allocations created, which is empty when nothing is
-  available or no backorder is open. Call it after stock arrives.
+  available or no unallocated backorder is open. Inventory receipts
+  trigger this sweep automatically; call it to retry a failed sweep or
+  after changing a backorder's source location.
 
   Types: [`BackorderAllocationOutput`](#backorderallocationoutput)
 
@@ -6549,6 +6590,7 @@ never recalculate it at acceptance.
 | `skipRevenueRecognition?` | `boolean` | Skip recognizing deferred revenue through period end |
 | `skipFxRevaluation?` | `boolean` | Skip FX revaluation of foreign-currency accounts |
 | `skipPeriodClose?` | `boolean` | Skip the final period close (closing entries + close period) |
+| `failOnWarnings?` | `boolean` | Refuse with an error when any step reports warnings (strict mode) |
 | `closedBy?` | `string` | Actor recorded as the closer; defaults to `system` |
 
 ### CloseMonthReportOutput
@@ -6573,6 +6615,7 @@ never recalculate it at acceptance.
 | `entryCount` | `number` | Entries posted (or that would be posted in a dry run) |
 | `totalAmount` | `string` | Exact decimal string |
 | `warnings` | `Array<string>` | Per-item failures that did not abort the close |
+| `failedItemCount` | `number` | Warnings that record a per-item failure (vs informational skip notes) |
 
 ### CloseMonthStepStatus
 
@@ -7519,6 +7562,7 @@ Input for creating a promotion
 | `supplierId` | `string` |  |
 | `items` | `Array<CreatePurchaseOrderItemInput>` | Types: [`CreatePurchaseOrderItemInput`](#createpurchaseorderiteminput) |
 | `notes?` | `string` |  |
+| `currency?` | `string` | ISO 4217 currency code; defaults to the supplier currency. |
 
 ### CreatePurchaseOrderItemInput
 
@@ -7527,7 +7571,8 @@ Input for creating a promotion
 | `sku` | `string` |  |
 | `name` | `string` |  |
 | `quantity` | `number` |  |
-| `unitCost` | `number` |  |
+| `unitCost?` | `number` | Legacy float input. Prefer `unitCostExact` for money. |
+| `unitCostExact?` | `string` | Exact base-10 unit cost; takes precedence over `unitCost`. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 
 ### CreateQualityHoldInput
 
@@ -7684,6 +7729,17 @@ Exact-money refund input for agent and financial integrations.
 | `trackingNumber?` | `string` |  |
 | `recipientEmail?` | `string` |  |
 | `recipientPhone?` | `string` |  |
+| `items?` | `Array<CreateShipmentItemInput>` | Order-linked manifest items, validated atomically with shipment creation. Types: [`CreateShipmentItemInput`](#createshipmentiteminput) |
+
+### CreateShipmentItemInput
+
+| Field | Type | Description |
+|---|---|---|
+| `orderItemId?` | `string` |  |
+| `productId?` | `string` |  |
+| `sku` | `string` |  |
+| `name` | `string` |  |
+| `quantity` | `number` | Positive integer, at most 2147483647; fractional values are refused. |
 
 ### CreateShippingZoneInput
 
@@ -11317,12 +11373,26 @@ Filter for `purchaseOrders.list()`
 | `offset?` | `number` |  |
 | `afterCursor?` | `Array<string>` | Keyset cursor: `[orderDate, id]` |
 
+### PurchaseOrderItemOutput
+
+Exact purchase-order line quantities and money, suitable for planning.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `sku` | `string` |  |
+| `quantityOrderedExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `quantityReceivedExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `unitCostExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `lineTotalExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+
 ### PurchaseOrderOutput
 
 | Field | Type | Description |
 |---|---|---|
 | `id` | `string` |  |
 | `poNumber` | `string` |  |
+| `currency` | `string` |  |
 | `supplierId` | `string` |  |
 | `status` | `PurchaseOrderStatus` | Types: [`PurchaseOrderStatus`](#purchaseorderstatus) |
 | `subtotal` | `number` | **Deprecated.** Use the `subtotalExact` twin; float money will be removed in 2.0. |
@@ -11549,6 +11619,13 @@ type ReceiptTypeInput = 'purchase_order' | 'purchaseorder' | 'po' | 'return' | '
 ```
 
 One of: `'purchase_order'`, `'purchaseorder'`, `'po'`, `'return'`, `'customer_return'`, `'transfer'`, `'adjustment'`.
+
+### ReceivePurchaseOrderItemInput
+
+| Field | Type | Description |
+|---|---|---|
+| `itemId` | `string` |  |
+| `quantityReceivedExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 
 ### RecognitionMethod
 
@@ -12267,7 +12344,7 @@ Types: [`ShippingCarrier`](#shippingcarrier)
 
 ### ShippingCarrierInput
 
-Carriers `CreateShipmentInput.carrier` recognises; anything else is stored as `other`.
+Carriers `CreateShipmentInput.carrier` recognises; anything else is refused with `VALIDATION`.
 
 ```ts
 type ShippingCarrierInput = 'ups' | 'fedex' | 'usps' | 'dhl' | 'other'
@@ -13484,7 +13561,7 @@ Patch supported shipment fields through the native repository.
 
 | Field | Type | Description |
 |---|---|---|
-| `expectedVersion?` | `number` |  |
+| `expectedVersion?` | `number` | Positive integer, at most 2147483647; stale versions are refused atomically. |
 | `status?` | `ShipmentStatus` | Types: [`ShipmentStatus`](#shipmentstatus) |
 | `carrier?` | `ShippingCarrier` | Types: [`ShippingCarrier`](#shippingcarrier) |
 | `trackingNumber?` | `string` |  |

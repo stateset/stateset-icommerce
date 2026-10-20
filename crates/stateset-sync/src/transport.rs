@@ -259,6 +259,9 @@ pub trait Transport: Send + Sync + std::fmt::Debug {
     /// Transports should return per-event acknowledgements when the remote
     /// provides canonical sequence numbers or receipt material, and explicit
     /// per-event rejections when the remote rejects individual local events.
+    /// Delivery can be retried after a lost response or failed local journal
+    /// write. The remote must deduplicate by event id and return the original
+    /// canonical mapping so retries do not repeat external effects.
     ///
     /// # Errors
     ///

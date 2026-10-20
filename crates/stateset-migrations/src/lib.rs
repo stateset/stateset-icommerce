@@ -22,7 +22,7 @@
 //! - **[`MigrationRegistry`]** for managing ordered, versioned migrations with
 //!   checksum validation
 //! - **[`SqliteMigrator`]** for applying/rolling back migrations against SQLite
-//! - **Built-in migrations** for the full StateSet iCommerce schema (V1–V4)
+//! - **Built-in migrations** shared with the embedded engine
 //! - **[`SchemaVersion`]** and **[`MigrationStatus`]** for reporting
 //!
 //! ## Quick Start
@@ -43,7 +43,7 @@
 //!
 //! ## Custom Migrations
 //!
-//! You can extend the built-in registry with your own migrations:
+//! Define application extensions in a separate registry and metadata ledger:
 //!
 //! ```
 //! use stateset_migrations::{Migration, MigrationRegistry};
@@ -61,6 +61,7 @@
 //! ```
 
 pub mod builtins;
+pub mod engine;
 pub mod error;
 pub mod migration;
 pub mod registry;

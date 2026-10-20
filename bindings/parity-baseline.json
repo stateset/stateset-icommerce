@@ -404,6 +404,7 @@
         "adjust",
         "confirm_reservation",
         "create_item",
+        "fulfill_order_stock",
         "get_stock",
         "release_reservation",
         "reserve"
@@ -593,9 +594,11 @@
         "create",
         "create_supplier",
         "get",
+        "get_items",
         "get_supplier",
         "list",
         "list_suppliers",
+        "receive",
         "send",
         "submit"
       ],
@@ -710,12 +713,14 @@
         "quarantine"
       ],
       "shipments": [
+        "add_item_with_version",
         "cancel",
         "count",
         "create",
         "get",
         "list",
         "mark_delivered",
+        "remove_item_with_version",
         "ship",
         "update"
       ],
@@ -1856,6 +1861,9 @@
         "list_periods",
         "void_journal_entry"
       ],
+      "inventory": [
+        "fulfill_order_stock"
+      ],
       "lots": [
         "count",
         "get_active_lots",
@@ -1896,6 +1904,10 @@
         "is_valid",
         "update"
       ],
+      "purchase_orders": [
+        "get_items",
+        "receive"
+      ],
       "quality": [
         "count_active_holds",
         "get_active_holds",
@@ -1930,6 +1942,8 @@
         "quarantine"
       ],
       "shipments": [
+        "add_item_with_version",
+        "remove_item_with_version",
         "update"
       ],
       "subscriptions": [
@@ -2305,6 +2319,7 @@
       ],
       "inventory": [
         "confirm_reservation",
+        "fulfill_order_stock",
         "release_reservation",
         "reserve"
       ],
@@ -2465,7 +2480,9 @@
         "validate_coupon"
       ],
       "purchase_orders": [
-        "count"
+        "count",
+        "get_items",
+        "receive"
       ],
       "purgatory": [
         "delete",
@@ -2572,7 +2589,9 @@
         "quarantine"
       ],
       "shipments": [
+        "add_item_with_version",
         "count",
+        "remove_item_with_version",
         "update"
       ],
       "shipping_zones": [

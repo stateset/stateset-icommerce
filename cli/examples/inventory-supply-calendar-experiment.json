@@ -1,0 +1,45 @@
+{
+  "name": "scheduled-supplier-disruption",
+  "seeds": [7, 42],
+  "goals": { "minFillRateBps": 10000 },
+  "plans": [
+    {
+      "name": "normal-supply",
+      "days": 4,
+      "startingCash": "10.00",
+      "products": [
+        {
+          "sku": "CALENDAR",
+          "initialStock": 1,
+          "unitPrice": "3.00",
+          "unitCost": "1.00",
+          "demand": { "dailyUnits": [1, 2, 1, 1] },
+          "reorderPoint": 1,
+          "targetStock": 3,
+          "leadTimeDays": 1
+        }
+      ]
+    },
+    {
+      "name": "scheduled-shock",
+      "days": 4,
+      "startingCash": "10.00",
+      "products": [
+        {
+          "sku": "CALENDAR",
+          "initialStock": 1,
+          "unitPrice": "3.00",
+          "unitCost": "1.00",
+          "demand": { "dailyUnits": [1, 2, 1, 1] },
+          "reorderPoint": 1,
+          "targetStock": 3,
+          "leadTimeDays": { "dailyValues": [3, 9, 9, 1, 9] },
+          "delivery": {
+            "firstReceiptBps": { "dailyValues": [5000, 0, 0, 10000, 0] },
+            "remainderDelayDays": 1
+          }
+        }
+      ]
+    }
+  ]
+}

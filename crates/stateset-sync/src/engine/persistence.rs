@@ -19,6 +19,10 @@ pub(super) struct SyncEngineSnapshot {
     /// (normalized lowercase hex, no `0x` prefix).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(super) tofu_signer_pins: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) pending_outbox_removals: Vec<Uuid>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) buffered_events: Vec<SyncEvent>,
 }
 
 impl SyncEngine {
@@ -48,16 +52,15 @@ impl SyncEngine {
     pub(super) fn load_state_snapshot(
         path: &Path,
     ) -> Result<Option<SyncEngineSnapshot>, SyncError> {
-        if !path.exists() {
-            return Ok(None);
-        }
-
-        let contents = fs::read_to_string(path).map_err(|error| {
-            SyncError::Storage(format!("read sync-state snapshot failed: {error}"))
-        })?;
-        if contents.trim().is_empty() {
-            return Ok(None);
-        }
+        let contents = match fs::read_to_string(path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(SyncError::Storage(format!(
+                    "read sync-state snapshot failed: {error}"
+                )));
+            }
+        };
         let snapshot = serde_json::from_str(&contents)?;
         Ok(Some(snapshot))
     }
@@ -75,21 +78,37 @@ impl SyncEngine {
             attestations: self.attestations.clone(),
             manifests: self.manifests.clone(),
             tofu_signer_pins: self.tofu_signer_pins.clone(),
+            pending_outbox_removals: self.pending_outbox_removals.clone(),
+            buffered_events: self.buffer.snapshot(),
         };
-        let serialized = serde_json::to_string_pretty(&snapshot)?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                SyncError::Storage(format!("create sync-state snapshot directory failed: {error}"))
-            })?;
-        }
+        crate::snapshot::write(path, &snapshot)
+    }
 
-        let tmp_path = path.with_extension("tmp");
-        fs::write(&tmp_path, serialized).map_err(|error| {
-            SyncError::Storage(format!("write sync-state snapshot failed: {error}"))
-        })?;
-        fs::rename(&tmp_path, path).map_err(|error| {
-            SyncError::Storage(format!("replace sync-state snapshot failed: {error}"))
-        })?;
-        Ok(())
+    pub(super) fn finish_outbox_cleanup(&mut self) -> Result<(), SyncError> {
+        if self.pending_outbox_removals.is_empty() {
+            return Ok(());
+        }
+        // Persist again when retrying: a failed cleanup may have left the
+        // visible state snapshot without a journal while memory retains it.
+        self.persist_runtime_state()?;
+        if let Some(path) = &self.state_path {
+            crate::snapshot::sync_parent(path)?;
+        }
+        let removals: HashSet<_> = self.pending_outbox_removals.iter().copied().collect();
+        let result = self.outbox.try_retain(|event| !removals.contains(&event.id));
+        self.state.pending_count = self.outbox.count();
+        result?;
+        self.outbox.sync_persistence()?;
+
+        let journal = std::mem::take(&mut self.pending_outbox_removals);
+        let result = self
+            .persist_runtime_state()
+            .and_then(|()| self.state_path.as_deref().map_or(Ok(()), crate::snapshot::sync_parent));
+        if result.is_err() {
+            // Reapplying exact-id removals is safe. Keep them until cleanup is
+            // durably acknowledged, including failures after file replacement.
+            self.pending_outbox_removals = journal;
+        }
+        result
     }
 }

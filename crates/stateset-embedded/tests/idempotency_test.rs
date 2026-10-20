@@ -103,30 +103,42 @@ fn test_refund_idempotency_key() {
     // A payment must be completed before it can be refunded.
     commerce.payments().mark_completed(payment.id).expect("Failed to complete payment");
 
-    let refund = commerce
-        .payments()
-        .create_refund(CreateRefund {
-            payment_id: payment.id,
-            amount: Some(dec!(10.00)),
-            reason: Some("Test refund".into()),
-            idempotency_key: Some("refund-idem-1".into()),
-            ..Default::default()
-        })
-        .expect("Failed to create refund");
+    let request = CreateRefund {
+        payment_id: payment.id,
+        amount: Some(dec!(10.00)),
+        reason: Some("Test refund".into()),
+        idempotency_key: Some("refund-idem-1".into()),
+        ..Default::default()
+    };
+    let refund =
+        commerce.payments().create_refund(request.clone()).expect("Failed to create refund");
 
-    let retry = commerce
-        .payments()
-        .create_refund(CreateRefund {
-            payment_id: payment.id,
-            amount: Some(dec!(15.00)),
-            reason: Some("Retry refund".into()),
-            idempotency_key: Some("refund-idem-1".into()),
-            ..Default::default()
-        })
-        .expect("Failed to retry refund");
+    let retry = commerce.payments().create_refund(request.clone()).expect("Failed to retry refund");
 
     assert_eq!(refund.id, retry.id);
-    assert_eq!(commerce.payments().get_refunds(payment.id).unwrap().len(), 1);
+    assert_eq!(retry.amount, dec!(10.00));
+    assert_eq!(retry.reason, request.reason);
+
+    // A key identifies one request; changing either money or immutable details
+    // must refuse the request without creating or rewriting a refund.
+    for changed in [
+        CreateRefund { amount: Some(dec!(15.00)), ..request.clone() },
+        CreateRefund { reason: Some("Retry refund".into()), ..request.clone() },
+    ] {
+        let err = commerce
+            .payments()
+            .create_refund(changed)
+            .expect_err("different refund fields under the same key must be refused");
+        assert!(matches!(err, stateset_core::CommerceError::Conflict(_)), "{err:?}");
+    }
+
+    let replay = commerce.payments().create_refund(request).expect("retry after refused changes");
+    assert_eq!(replay.id, refund.id);
+    let refunds = commerce.payments().get_refunds(payment.id).unwrap();
+    assert_eq!(refunds.len(), 1);
+    assert_eq!(refunds[0].id, refund.id);
+    assert_eq!(refunds[0].amount, dec!(10.00));
+    assert_eq!(refunds[0].reason.as_deref(), Some("Test refund"));
 }
 
 #[test]

@@ -23,6 +23,241 @@ fn item_input() -> CreateShipmentItem {
     }
 }
 
+fn tracking_input() -> AddShipmentEvent {
+    AddShipmentEvent {
+        event_type: "arrived_at_hub".into(),
+        location: Some("Vancouver".into()),
+        description: Some("Carrier observation".into()),
+        event_time: Some("2024-02-03T04:05:06.123456789Z".parse().unwrap()),
+    }
+}
+
+#[tokio::test]
+async fn postgres_tracking_append_versions_parent_and_binds_persisted_event_to_outbox() {
+    let Some(db) = database().await else {
+        return;
+    };
+    let repo = db.shipments();
+    let s = shipment(&db).await;
+    let id = s.id.into_uuid();
+    let event = repo.add_event_async(id, tracking_input()).await.unwrap();
+    let stored = repo.get_async(id).await.unwrap().unwrap();
+    assert_eq!(stored.version, s.version + 1);
+    assert_eq!(stored.status, s.status);
+    assert_eq!(stored.updated_at, event.created_at);
+    assert_eq!(event.event_time.timestamp_subsec_nanos(), 123_456_000);
+    assert_eq!(event.created_at.timestamp_subsec_nanos() % 1_000, 0);
+    let value = serde_json::to_value(&event).unwrap();
+    assert_eq!(serde_json::to_value(&stored.events[0]).unwrap(), value);
+    assert_eq!(serde_json::to_value(&repo.get_events_async(id).await.unwrap()[0]).unwrap(), value);
+    let fact: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM kernel_outbox WHERE aggregate_id = $1 AND event_type = 'shipments.event_added.v1'"
+    ).bind(id.to_string()).fetch_one(db.pool()).await.unwrap();
+    assert_eq!(fact["event"], value);
+    assert_eq!(fact["previous_version"], s.version);
+    assert_eq!(fact["version"], stored.version);
+    assert_eq!(fact["changed_fields"], serde_json::json!(["events"]));
+    assert!(matches!(
+        repo.update_async(
+            id,
+            UpdateShipment {
+                expected_version: Some(s.version),
+                notes: Some("stale".into()),
+                ..Default::default()
+            }
+        )
+        .await,
+        Err(CommerceError::VersionConflict { .. })
+    ));
+    assert_eq!(event_count(&db, id).await, 2);
+}
+
+#[tokio::test]
+async fn postgres_tracking_rejects_empty_types_and_missing_parent_without_effects() {
+    let Some(db) = database().await else {
+        return;
+    };
+    let repo = db.shipments();
+    let s = shipment(&db).await;
+    let id = s.id.into_uuid();
+    let before = serde_json::to_value(repo.get_async(id).await.unwrap().unwrap()).unwrap();
+    for event_type in ["", " \t\n"] {
+        assert!(matches!(
+            repo.add_event_async(
+                id,
+                AddShipmentEvent { event_type: event_type.into(), ..tracking_input() }
+            )
+            .await,
+            Err(CommerceError::ValidationError(_))
+        ));
+    }
+    assert!(matches!(
+        repo.add_event_async(Uuid::new_v4(), tracking_input()).await,
+        Err(CommerceError::NotFound)
+    ));
+    assert_eq!(serde_json::to_value(repo.get_async(id).await.unwrap().unwrap()).unwrap(), before);
+    assert_eq!(event_count(&db, id).await, 1);
+}
+
+#[tokio::test]
+async fn postgres_tracking_text_limits_count_unicode_characters() {
+    let Some(db) = database().await else {
+        return;
+    };
+    let repo = db.shipments();
+    let s = shipment(&db).await;
+    let id = s.id.into_uuid();
+    let before = serde_json::to_value(repo.get_async(id).await.unwrap().unwrap()).unwrap();
+    for input in [
+        AddShipmentEvent { event_type: "é".repeat(101), ..tracking_input() },
+        AddShipmentEvent { location: Some("港".repeat(256)), ..tracking_input() },
+        AddShipmentEvent { event_type: "scan\0".into(), ..tracking_input() },
+        AddShipmentEvent { location: Some("hub\0".into()), ..tracking_input() },
+        AddShipmentEvent { description: Some("note\0".into()), ..tracking_input() },
+    ] {
+        assert!(matches!(
+            repo.add_event_async(id, input).await,
+            Err(CommerceError::ValidationError(_))
+        ));
+    }
+    assert_eq!(serde_json::to_value(repo.get_async(id).await.unwrap().unwrap()).unwrap(), before);
+    assert_eq!(event_count(&db, id).await, 1);
+    let event = repo
+        .add_event_async(
+            id,
+            AddShipmentEvent {
+                event_type: "é".repeat(100),
+                location: Some("港".repeat(255)),
+                ..tracking_input()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&repo.get_events_async(id).await.unwrap()[0]).unwrap(),
+        serde_json::to_value(event).unwrap()
+    );
+    assert_eq!(repo.get_async(id).await.unwrap().unwrap().version, 2);
+}
+
+#[tokio::test]
+async fn postgres_late_tracking_observations_preserve_terminal_status_and_fulfillment() {
+    let Some(db) = database().await else {
+        return;
+    };
+    let repo = db.shipments();
+    for status in [ShipmentStatus::Cancelled, ShipmentStatus::Delivered] {
+        let s = shipment(&db).await;
+        let id = s.id.into_uuid();
+        if status == ShipmentStatus::Cancelled {
+            repo.cancel_async(id).await.unwrap();
+        } else {
+            ready(&db, id).await;
+            repo.ship_async(id, None).await.unwrap();
+            repo.mark_in_transit_async(id).await.unwrap();
+            repo.mark_out_for_delivery_async(id).await.unwrap();
+            repo.mark_delivered_async(id).await.unwrap();
+        }
+        let before = repo.get_async(id).await.unwrap().unwrap();
+        let order_before =
+            serde_json::to_value(db.orders().get_async(s.order_id.into_uuid()).await.unwrap())
+                .unwrap();
+        let first = repo.add_event_async(id, tracking_input()).await.unwrap();
+        let second = repo.add_event_async(id, tracking_input()).await.unwrap();
+        assert_ne!(first.id, second.id);
+        let after = repo.get_async(id).await.unwrap().unwrap();
+        assert_eq!(after.status, status);
+        assert_eq!(after.version, before.version + 2);
+        assert_eq!(after.shipped_at, before.shipped_at);
+        assert_eq!(after.delivered_at, before.delivered_at);
+        assert_eq!(after.events.len(), 2);
+        assert_eq!(
+            serde_json::to_value(db.orders().get_async(s.order_id.into_uuid()).await.unwrap())
+                .unwrap(),
+            order_before
+        );
+    }
+}
+
+#[tokio::test]
+async fn postgres_tracking_audit_failure_and_version_overflow_roll_back_event_and_parent() {
+    let Some(db) = database().await else {
+        return;
+    };
+    let repo = db.shipments();
+    let s = shipment(&db).await;
+    let id = s.id.into_uuid();
+    let before = repo.get_async(id).await.unwrap().unwrap();
+    let trigger = format!("shipment_tracking_{}", id.simple());
+    sqlx::query(&format!("CREATE FUNCTION {trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$")).execute(db.pool()).await.unwrap();
+    sqlx::query(&format!("CREATE TRIGGER {trigger} BEFORE INSERT ON kernel_outbox FOR EACH ROW WHEN (NEW.aggregate_id = '{id}' AND NEW.event_type = 'shipments.event_added.v1') EXECUTE FUNCTION {trigger}()")).execute(db.pool()).await.unwrap();
+    let result = repo.add_event_async(id, tracking_input()).await;
+    sqlx::query(&format!("DROP TRIGGER {trigger} ON kernel_outbox"))
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query(&format!("DROP FUNCTION {trigger}()")).execute(db.pool()).await.unwrap();
+    assert!(result.is_err());
+    assert_eq!(
+        serde_json::to_value(repo.get_async(id).await.unwrap().unwrap()).unwrap(),
+        serde_json::to_value(&before).unwrap()
+    );
+    assert_eq!(event_count(&db, id).await, 1);
+    sqlx::query("UPDATE shipments SET version = $1 WHERE id = $2")
+        .bind(i32::MAX)
+        .bind(id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    assert!(
+        repo.add_event_async(id, tracking_input())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("exhausted")
+    );
+    let stored = repo.get_async(id).await.unwrap().unwrap();
+    assert_eq!(stored.version, i32::MAX);
+    assert_eq!(stored.updated_at, before.updated_at);
+    assert!(stored.events.is_empty());
+    assert_eq!(event_count(&db, id).await, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn postgres_concurrent_tracking_appends_and_cancellation_serialize_versions() {
+    let Some(db) = database().await else {
+        return;
+    };
+    let db = Arc::new(db);
+    let s = shipment(&db).await;
+    let id = s.id.into_uuid();
+    let barrier = Arc::new(Barrier::new(5));
+    let mut tasks = Vec::new();
+    for index in 0..5 {
+        let db = Arc::clone(&db);
+        let barrier = Arc::clone(&barrier);
+        tasks.push(tokio::spawn(async move {
+            barrier.wait().await;
+            if index == 4 {
+                db.shipments().cancel_async(id).await.unwrap();
+            } else {
+                db.shipments().add_event_async(id, tracking_input()).await.unwrap();
+            }
+        }));
+    }
+    for task in tasks {
+        task.await.unwrap();
+    }
+    let stored = db.shipments().get_async(id).await.unwrap().unwrap();
+    assert_eq!(stored.status, ShipmentStatus::Cancelled);
+    assert_eq!(stored.version, 6);
+    assert_eq!(stored.events.len(), 4);
+    let versions: Vec<i32> = sqlx::query_scalar(
+        "SELECT (payload->>'version')::integer FROM kernel_outbox WHERE aggregate_id = $1 ORDER BY (payload->>'version')::integer"
+    ).bind(id.to_string()).fetch_all(db.pool()).await.unwrap();
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
+}
+
 fn allocation(order_id: stateset_core::OrderId, quantity: i32) -> CreateShipment {
     CreateShipment {
         order_id,
@@ -413,9 +648,8 @@ async fn postgres_item_audit_failure_and_version_overflow_roll_back_items_and_pa
     let before = repo.get_async(id).await.unwrap().unwrap();
     let trigger = format!("shipment_items_{}", id.simple());
     sqlx::query(&format!("CREATE FUNCTION {trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$")).execute(db.pool()).await.unwrap();
-    // This database is dedicated to the test, so the failure trigger can apply
-    // to every outbox row without embedding the shipment id in SQL text.
-    sqlx::query(&format!("CREATE TRIGGER {trigger} BEFORE INSERT ON kernel_outbox FOR EACH ROW EXECUTE FUNCTION {trigger}()")).execute(db.pool()).await.unwrap();
+    // Other lifecycle tests share this database and may run concurrently.
+    sqlx::query(&format!("CREATE TRIGGER {trigger} BEFORE INSERT ON kernel_outbox FOR EACH ROW WHEN (NEW.aggregate_id = '{id}') EXECUTE FUNCTION {trigger}()")).execute(db.pool()).await.unwrap();
     let add = repo.add_item_async(id, item_input()).await;
     let remove = repo.remove_item_async(item.id).await;
     sqlx::query(&format!("DROP TRIGGER {trigger} ON kernel_outbox"))
@@ -768,9 +1002,8 @@ async fn postgres_shipment_outbox_failure_rolls_back_update() {
     let id = s.id.into_uuid();
     let trigger = format!("shipment_audit_{}", id.simple());
     sqlx::query(&format!("CREATE FUNCTION {trigger}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$" )).execute(db.pool()).await.unwrap();
-    // This database is dedicated to the test, so the failure trigger can apply
-    // to every outbox row without embedding the shipment id in SQL text.
-    sqlx::query(&format!("CREATE TRIGGER {trigger} BEFORE INSERT ON kernel_outbox FOR EACH ROW EXECUTE FUNCTION {trigger}()" )).execute(db.pool()).await.unwrap();
+    // Restrict failure injection to this shipment even with parallel test workers.
+    sqlx::query(&format!("CREATE TRIGGER {trigger} BEFORE INSERT ON kernel_outbox FOR EACH ROW WHEN (NEW.aggregate_id = '{id}') EXECUTE FUNCTION {trigger}()" )).execute(db.pool()).await.unwrap();
     let result = db.shipments().mark_processing_async(id).await;
     sqlx::query(&format!("DROP TRIGGER {trigger} ON kernel_outbox"))
         .execute(db.pool())
@@ -820,4 +1053,99 @@ async fn postgres_shipment_creation_rolls_back_when_audit_is_unavailable() {
         .await
         .unwrap();
     assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn postgres_versioned_packing_edits_refuse_stale_reads_without_mutation() {
+    let Some(db) = database().await else {
+        return;
+    };
+    let s = shipment(&db).await;
+    let id = s.id.into_uuid();
+    let repo = db.shipments();
+    let item = repo.add_item_with_version_async(id, item_input(), Some(s.version)).await.unwrap();
+    let current = repo.get_async(id).await.unwrap().unwrap();
+    for version in [s.version, -1, i32::MAX] {
+        assert!(
+            matches!(repo.add_item_with_version_async(id, CreateShipmentItem { quantity: 5, ..item_input() }, Some(version)).await,
+            Err(CommerceError::VersionConflict { expected_version, .. }) if expected_version == version)
+        );
+        assert!(matches!(repo.remove_item_with_version_async(item.id, Some(version)).await,
+            Err(CommerceError::VersionConflict { expected_version, .. }) if expected_version == version));
+        assert_eq!(
+            serde_json::to_value(repo.get_async(id).await.unwrap().unwrap()).unwrap(),
+            serde_json::to_value(&current).unwrap()
+        );
+        assert_eq!(event_count(&db, id).await, 2);
+    }
+    repo.remove_item_with_version_async(item.id, Some(current.version)).await.unwrap();
+    let stored = repo.get_async(id).await.unwrap().unwrap();
+    assert_eq!(stored.version, current.version + 1);
+    assert!(stored.items.is_empty());
+    assert_eq!(event_count(&db, id).await, 3);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn postgres_concurrent_versioned_packing_edits_have_one_winner() {
+    let Some(db) = database().await else {
+        return;
+    };
+    let db = Arc::new(db);
+    let s = shipment(&db).await;
+    let id = s.id.into_uuid();
+    let barrier = Arc::new(Barrier::new(2));
+    let tasks: Vec<_> = (0..2)
+        .map(|_| {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            tokio::spawn(async move {
+                barrier.wait().await;
+                db.shipments().add_item_with_version_async(id, item_input(), Some(s.version)).await
+            })
+        })
+        .collect();
+    let mut results = Vec::new();
+    for task in tasks {
+        results.push(task.await.unwrap());
+    }
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+    assert_eq!(
+        results.iter().filter(|r| matches!(r, Err(CommerceError::VersionConflict { .. }))).count(),
+        1
+    );
+    let stored = db.shipments().get_async(id).await.unwrap().unwrap();
+    assert_eq!(stored.version, 2);
+    assert_eq!(stored.items.len(), 1);
+    assert_eq!(event_count(&db, id).await, 2);
+    let item_id = stored.items[0].id;
+    let tasks: Vec<_> = (0..2)
+        .map(|index| {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            tokio::spawn(async move {
+                barrier.wait().await;
+                if index == 0 {
+                    db.shipments()
+                        .add_item_with_version_async(id, item_input(), Some(2))
+                        .await
+                        .map(|_| ())
+                } else {
+                    db.shipments().remove_item_with_version_async(item_id, Some(2)).await
+                }
+            })
+        })
+        .collect();
+    let mut results = Vec::new();
+    for task in tasks {
+        results.push(task.await.unwrap());
+    }
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+    assert_eq!(
+        results.iter().filter(|r| matches!(r, Err(CommerceError::VersionConflict { .. }))).count(),
+        1
+    );
+    let stored = db.shipments().get_async(id).await.unwrap().unwrap();
+    assert_eq!(stored.version, 3);
+    assert!(matches!(stored.items.len(), 0 | 2));
+    assert_eq!(event_count(&db, id).await, 3);
 }

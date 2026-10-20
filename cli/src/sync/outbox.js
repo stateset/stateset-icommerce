@@ -14,6 +14,7 @@
 
 import crypto from 'crypto';
 import {
+  canonicalizeJson,
   computePayloadPlainHash,
   computeEventSigningHash,
   signEventHash,
@@ -86,8 +87,12 @@ export function isQuarantineReasonDowngrade(existingReason, nextReason) {
  * `sync doctor` renders it, the docs table explains it, and nothing else may
  * appear in `_ves_quarantined_events.reason`.
  *
- * - `signature_invalid` — the author signature did not verify under the key the
- *   directory names. A forgery or a corrupted envelope.
+ * - `signature_invalid` — payload integrity or the author signature did not
+ *   verify. A forgery, malformed content, or a corrupted envelope.
+ * - `security_profile_mismatch` — signature or encryption material violates the
+ *   operator's configured profile, independent of cryptographic validity.
+ * - `scope_mismatch` — event tenant/store differs from operator configuration.
+ * - `event_identity_conflict` — promotion would replace a verified event ID or sequence.
  * - `key_unresolved` — the key could not be obtained: the sequencer was
  *   unreachable past `peerKeyMaxStaleSeconds`, or the agent's directory has no
  *   such `key_id` (commonly: the peer pushed before registering its key).
@@ -107,6 +112,9 @@ export function isQuarantineReasonDowngrade(existingReason, nextReason) {
  */
 export const QUARANTINE_REASONS = Object.freeze([
   'signature_invalid',
+  'security_profile_mismatch',
+  'scope_mismatch',
+  'event_identity_conflict',
   'key_unresolved',
   'key_outside_validity_window',
   'key_revoked',
@@ -138,6 +146,7 @@ export const QUARANTINE_REASONS = Object.freeze([
  * @property {number|null} baseVersion - Optimistic concurrency version
  * @property {string} sourceAgent - Agent UUID that created the event
  * @property {Date} createdAt - When event was created
+ * @property {string} createdAtRaw - Exact signed timestamp; use for wire encoding and AAD
  * @property {'pending'|'synced'|'failed'|'rejected'} syncStatus - Sync state
  * @property {number|null} remoteSequence - Sequence from sequencer
  * @property {Date|null} syncedAt - When synced
@@ -163,9 +172,10 @@ export const QUARANTINE_REASONS = Object.freeze([
  * @property {string|null} tenantId - Tenant UUID
  * @property {string|null} storeId - Store UUID
  * @property {number} lastPushedSequence - Last sequence pushed
- * @property {number} lastPulledSequence - Last sequence pulled
+ * @property {number} lastPulledSequence - Next inclusive REST pull cursor
  * @property {number} headSequence - Known remote head
- * @property {Date} lastSyncAt - Last sync timestamp
+ * @property {Date|null} lastSyncAt - Last recorded sync timestamp, or null when unknown
+ * @property {Date|null} lastPullAt - Last committed nonempty receive batch, or null when unknown
  */
 
 const OUTBOX_SCHEMA = `
@@ -316,6 +326,18 @@ CREATE TABLE IF NOT EXISTS _ves_quarantined_events (
 
 CREATE INDEX IF NOT EXISTS idx_ves_quarantined_source
     ON _ves_quarantined_events (source_agent, reason);
+
+-- Records that cannot fit either normal receive table must remain recoverable.
+-- Do not impose envelope NOT NULL constraints on this diagnostic journal.
+CREATE TABLE IF NOT EXISTS _ves_receive_failures (
+    sequence_number INTEGER PRIMARY KEY,
+    event_id TEXT,
+    record_json TEXT NOT NULL CHECK(json_valid(record_json)),
+    stage TEXT NOT NULL CHECK(stage IN ('verified', 'quarantine')),
+    reason TEXT,
+    error TEXT NOT NULL,
+    retained_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 -- VES v1.0 Peer Key cache (signing keys fetched from other agents' key directories)
 CREATE TABLE IF NOT EXISTS _ves_peer_keys (
@@ -1127,6 +1149,8 @@ export class Outbox {
       UPDATE _ves_outbox
       SET sync_status = 'synced',
           remote_sequence = ?,
+          rejection_reason = NULL,
+          last_error = NULL,
           synced_at = datetime('now')
       WHERE local_seq = ?
     `);
@@ -1239,10 +1263,10 @@ export class Outbox {
 
     return {
       total: counts.total,
-      pending: counts.pending,
-      synced: counts.synced,
-      failed: counts.failed,
-      rejected: counts.rejected,
+      pending: counts.pending ?? 0,
+      synced: counts.synced ?? 0,
+      failed: counts.failed ?? 0,
+      rejected: counts.rejected ?? 0,
       oldestPending: oldestPending ? new Date(oldestPending.created_at) : null,
       lastSynced: lastSynced ? new Date(lastSynced.synced_at) : null,
     };
@@ -1303,7 +1327,8 @@ export class Outbox {
       lastPushedSequence: parseInt(getState('last_pushed_sequence') || '0', 10),
       lastPulledSequence: parseInt(getState('last_pulled_sequence') || '0', 10),
       headSequence: parseInt(getState('head_sequence') || '0', 10),
-      lastSyncAt: getState('last_sync_at') ? new Date(getState('last_sync_at')) : new Date(),
+      lastSyncAt: getState('last_sync_at') ? new Date(getState('last_sync_at')) : null,
+      lastPullAt: getState('last_pull_at') ? new Date(getState('last_pull_at')) : null,
     };
   }
 
@@ -1342,6 +1367,9 @@ export class Outbox {
       if (state.lastSyncAt !== undefined) {
         stmt.run('last_sync_at', state.lastSyncAt.toISOString());
       }
+      if (state.lastPullAt !== undefined) {
+        stmt.run('last_pull_at', state.lastPullAt.toISOString());
+      }
     });
 
     transaction();
@@ -1354,7 +1382,7 @@ export class Outbox {
    * `SyncEngine._persistVerified` in `sync/engine.js`, which resolves the
    * author's key through `PeerKeyDirectory` and calls
    * `client.verifyEventSignature` before it gets here. This method performs no
-   * verification of any kind. The property the receive path exists to hold is
+   * cryptographic verification. The property the receive path exists to hold is
    * that nothing unverified reaches `_ves_pulled_events`, and it is enforced at
    * the call sites, not here; an unverified write through this method breaks it
    * silently, for every reader, with no trace. Unverified events belong in
@@ -1366,44 +1394,7 @@ export class Outbox {
    * @param {Object} event - Sequenced event from remote, already verified
    */
   storePulledEvent(event) {
-    this.initialize();
-
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO _ves_pulled_events (
-        sequence_number, event_id, command_id,
-        tenant_id, store_id,
-        entity_type, entity_id, event_type,
-        ves_version, payload, payload_kind, payload_encrypted,
-        payload_plain_hash, payload_cipher_hash,
-        agent_key_id, agent_signature, agent_signature_scheme, agent_signature_bundle,
-        base_version, created_at, sequenced_at, source_agent
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    stmt.run(
-      event.sequenceNumber,
-      event.eventId,
-      event.commandId || null,
-      event.tenantId,
-      event.storeId,
-      event.entityType,
-      event.entityId,
-      event.eventType,
-      event.vesVersion || 1,
-      JSON.stringify(event.payload),
-      event.payloadKind || 0,
-      event.payloadEncrypted ? JSON.stringify(event.payloadEncrypted) : null,
-      event.payloadPlainHash,
-      event.payloadCipherHash,
-      event.agentKeyId,
-      event.agentSignature,
-      event.agentSignatureScheme || 0,
-      event.agentSignatureBundle ? JSON.stringify(event.agentSignatureBundle) : null,
-      event.baseVersion || null,
-      event.createdAt,
-      event.sequencedAt,
-      event.sourceAgent,
-    );
+    this.storePulledEvents([event]);
   }
 
   /**
@@ -1413,66 +1404,94 @@ export class Outbox {
    * `SyncEngine._persistVerified` in `sync/engine.js`, which resolves the
    * author's key through `PeerKeyDirectory` and calls
    * `client.verifyEventSignature` before it gets here. This method performs no
-   * verification of any kind. The property the receive path exists to hold is
+   * cryptographic verification. The property the receive path exists to hold is
    * that nothing unverified reaches `_ves_pulled_events`, and it is enforced at
    * the call sites, not here; an unverified write through this method breaks it
    * silently, for every reader, with no trace. Unverified events belong in
    * `storeQuarantinedEvents`.
    *
+   * Exact replays preserve the first row; conflicting identities throw
+   * VES_EVENT_CONFLICT and roll back the batch. JSON fields compare canonically.
    * @param {Array<Object>} events - Sequenced events from remote, already verified
    */
   storePulledEvents(events) {
     this.initialize();
 
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO _ves_pulled_events (
-        sequence_number, event_id, command_id,
-        tenant_id, store_id,
-        entity_type, entity_id, event_type,
-        ves_version, payload, payload_kind, payload_encrypted,
-        payload_plain_hash, payload_cipher_hash,
-        agent_key_id, agent_signature, agent_signature_scheme, agent_signature_bundle,
-        base_version, created_at, sequenced_at, source_agent
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
+    const jsonColumns = new Set(['payload', 'payload_encrypted', 'agent_signature_bundle']);
+    const lookup = this.db.prepare(
+      'SELECT * FROM _ves_pulled_events WHERE sequence_number = ? OR event_id = ?',
+    );
+    let insert;
     const transaction = this.db.transaction(() => {
       for (const event of events) {
-        stmt.run(
-          event.sequenceNumber,
-          event.eventId,
-          event.commandId || null,
-          event.tenantId,
-          event.storeId,
-          event.entityType,
-          event.entityId,
-          event.eventType,
-          event.vesVersion || 1,
-          JSON.stringify(event.payload),
-          event.payloadKind || 0,
-          event.payloadEncrypted ? JSON.stringify(event.payloadEncrypted) : null,
-          event.payloadPlainHash,
-          event.payloadCipherHash,
-          event.agentKeyId,
-          event.agentSignature,
-          event.agentSignatureScheme || 0,
-          event.agentSignatureBundle ? JSON.stringify(event.agentSignatureBundle) : null,
-          event.baseVersion || null,
-          event.createdAt,
-          event.sequencedAt,
-          event.sourceAgent,
+        if (!Number.isSafeInteger(event.sequenceNumber) || event.sequenceNumber < 0) {
+          throw new Error('Received sequence number must be a nonnegative safe integer');
+        }
+        const row = {
+          sequence_number: event.sequenceNumber,
+          event_id: event.eventId,
+          command_id: event.commandId || null,
+          tenant_id: event.tenantId,
+          store_id: event.storeId,
+          entity_type: event.entityType,
+          entity_id: event.entityId,
+          event_type: event.eventType,
+          ves_version: event.vesVersion || 1,
+          payload: canonicalizeJson(event.payload),
+          payload_kind: event.payloadKind || 0,
+          payload_encrypted: event.payloadEncrypted
+            ? canonicalizeJson(event.payloadEncrypted)
+            : null,
+          payload_plain_hash: event.payloadPlainHash,
+          payload_cipher_hash: event.payloadCipherHash,
+          agent_key_id: event.agentKeyId,
+          agent_signature: event.agentSignature,
+          agent_signature_scheme: event.agentSignatureScheme || 0,
+          agent_signature_bundle: event.agentSignatureBundle
+            ? canonicalizeJson(event.agentSignatureBundle)
+            : null,
+          base_version: event.baseVersion || null,
+          created_at: event.createdAt,
+          sequenced_at: event.sequencedAt,
+          source_agent: event.sourceAgent,
+        };
+        const existing = lookup.all(event.sequenceNumber, event.eventId);
+        if (existing.length) {
+          const identical =
+            existing.length === 1 &&
+            Object.entries(row).every(([column, value]) => {
+              const stored = existing[0][column];
+              return (
+                (jsonColumns.has(column) && stored !== null
+                  ? canonicalizeJson(JSON.parse(stored))
+                  : stored) === value
+              );
+            });
+          if (!identical) {
+            const error = new Error(
+              'Received event conflicts with an immutable event ID or sequence',
+            );
+            error.code = 'VES_EVENT_CONFLICT';
+            throw error;
+          }
+          continue; // Exact replay: keep the first receipt and pulled_at unchanged.
+        }
+        const columns = Object.keys(row);
+        insert ??= this.db.prepare(
+          `INSERT INTO _ves_pulled_events (${columns.join(', ')})
+          VALUES (${columns.map(() => '?').join(', ')})`,
         );
+        insert.run(...Object.values(row));
       }
     });
-
-    transaction();
+    transaction.immediate();
   }
 
   /**
    * Store events that failed verification. These are never returned by
    * getPulledEvents, so application reads cannot see unverified state.
    * @param {Array<Object>} events
-   * @param {'signature_invalid'|'key_unresolved'|'key_outside_validity_window'|'key_revoked'|'peer_key_conflict'|'sequencer_key_not_configured'|'directory_untrusted'} reason - one of {@link QUARANTINE_REASONS}
+   * @param {string} reason - one of {@link QUARANTINE_REASONS}
    */
   storeQuarantinedEvents(events, reason) {
     this.initialize();
@@ -1603,6 +1622,83 @@ export class Outbox {
         reason: row.reason,
         quarantinedAt: row.quarantined_at,
       }));
+  }
+
+  /** Retain a normalized receive record that the normal tables refused. */
+  storeReceiveFailure(record, stage, reason, error) {
+    this.initialize();
+    if (!Number.isSafeInteger(record.sequenceNumber) || record.sequenceNumber < 0) {
+      throw new Error('Cannot retain receive failure with an invalid sequence number');
+    }
+    this.db
+      .prepare(
+        `
+      INSERT INTO _ves_receive_failures
+        (sequence_number, event_id, record_json, stage, reason, error)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(sequence_number) DO UPDATE SET
+        event_id = excluded.event_id, record_json = excluded.record_json,
+        stage = excluded.stage, reason = excluded.reason, error = excluded.error,
+        retained_at = datetime('now')
+      WHERE _ves_receive_failures.reason IS NOT 'event_identity_conflict'
+    `,
+      )
+      .run(
+        record.sequenceNumber,
+        record.eventId ?? null,
+        JSON.stringify(record),
+        stage,
+        reason,
+        error,
+      );
+  }
+
+  getReceiveFailures(limit = 100) {
+    this.initialize();
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10000) {
+      throw new Error('Receive failure limit must be between 1 and 10000');
+    }
+    return this.db
+      .prepare('SELECT * FROM _ves_receive_failures ORDER BY sequence_number LIMIT ?')
+      .all(limit)
+      .map((row) => ({ ...row, record: JSON.parse(row.record_json) }));
+  }
+
+  getReceiveFailureSummary() {
+    this.initialize();
+    return this.db
+      .prepare(
+        `
+      SELECT COUNT(*) AS count, MIN(sequence_number) AS oldestSequence
+      FROM _ves_receive_failures
+    `,
+      )
+      .get();
+  }
+
+  /** Aggregate receive diagnostics without reading sensitive event payloads. */
+  getReceiveSummary() {
+    this.initialize();
+    const verified = this.db
+      .prepare('SELECT COUNT(*) AS count, MAX(sequence_number) AS head FROM _ves_pulled_events')
+      .get();
+    const quarantineReasons = this.getQuarantinedCountsByReason();
+    return {
+      verified: verified.count,
+      verifiedHead: verified.head,
+      quarantined: quarantineReasons.reduce((sum, entry) => sum + entry.count, 0),
+      quarantineReasons,
+      failures: this.getReceiveFailureSummary(),
+    };
+  }
+
+  deleteReceiveFailure(sequenceNumber) {
+    this.initialize();
+    this.db
+      .prepare(
+        "DELETE FROM _ves_receive_failures WHERE sequence_number = ? AND reason IS NOT 'event_identity_conflict'",
+      )
+      .run(sequenceNumber);
   }
 
   /**
@@ -1811,6 +1907,8 @@ export class Outbox {
       // Metadata
       baseVersion: row.base_version,
       sourceAgent: row.source_agent,
+      // Signed timestamps are byte-sensitive; Date is retained for display compatibility.
+      createdAtRaw: row.created_at,
       createdAt: row.created_at ? new Date(row.created_at) : null,
       sequencedAt: row.sequenced_at ? new Date(row.sequenced_at) : null,
       // Sync tracking

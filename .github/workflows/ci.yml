@@ -114,6 +114,7 @@ jobs:
           cargo test --locked -p stateset-core kernel::tests
           cargo test --locked -p stateset-db --test sqlite_kernel_outbox
           cargo test --locked -p stateset-db --features postgres --test postgres_kernel_executor
+          cargo test --locked -p stateset-db --features postgres --test customer_audit_contract
           cargo test --locked -p stateset-db --test snapshot_migrations
 
   fmt:
@@ -170,6 +171,7 @@ jobs:
           cargo clippy -p stateset-core --features metrics --all-targets -- -D warnings
           cargo clippy -p stateset-db --no-default-features --features postgres --lib -- -D warnings
           cargo clippy -p stateset-db --no-default-features --features "postgres,saga" --lib -- -D warnings
+          cargo clippy -p stateset-saga --all-targets -- -D warnings
           cargo clippy -p stateset-embedded --features postgres --all-targets -- -D warnings
 
   audit:
@@ -184,26 +186,17 @@ jobs:
         uses: taiki-e/install-action@1e67dedb5e3c590e1c9d9272ace46ef689da250d
         with:
           tool: cargo-audit
-      - name: Security audit
-        # RUSTSEC-2023-0071 affects `rsa` (pulled in via optional `sqlx-mysql`).
-        # This workspace does not enable or ship MySQL support, and there is no
-        # fixed upgrade available upstream.
-        # RUSTSEC-2026-0097 affects `rand` when custom logging calls `rand::rng()`;
-        # this workspace does not install such a logger. Keep this ignored until
-        # upstream `rand` consumers converge on patched releases.
-        # RUSTSEC-2026-0258 affects `h2` 0.3 (via tonic 0.11 / hyper 0.14), which only
-        # enters the graph through stateset-observability's optional `otel` feature
-        # (opentelemetry-otlp 0.16). Not compiled by default; clears when the OTLP
-        # stack moves to opentelemetry-otlp >= 0.27 / tonic 0.12 (tracked upgrade).
-        # RUSTSEC-2026-0235 affects `rkyv` 0.7, an OPTIONAL dependency of rust_decimal
-        # that is present in Cargo.lock but never enabled by this workspace (we use
-        # only the `serde` feature), so the vulnerable code is never compiled.
-        run: >-
-          cargo audit
-          --ignore RUSTSEC-2023-0071
-          --ignore RUSTSEC-2026-0097
-          --ignore RUSTSEC-2026-0258
-          --ignore RUSTSEC-2026-0235
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+      - name: Test audit coverage and failure handling
+        run: node --test scripts/ci/check_rust_audits.test.mjs
+      - name: Audit every tracked Rust lockfile and its exception reachability
+        # Includes standalone PHP/Ruby bindings and fuzz tooling. The two
+        # existing optional-dependency exceptions must remain outside every
+        # manifest's normal/build graph across all features and targets.
+        run: bash scripts/ci/check_rust_audits.sh
 
   deny:
     name: Dependency Policy
@@ -559,6 +552,26 @@ jobs:
         run: |
           cargo test -p stateset-crypto -p stateset-sync
 
+      - name: Test pricing, migrations, jobs, schemas, and host boundaries
+        run: |
+          cargo test --locked -p stateset-primitives -p stateset-pricing \
+            -p stateset-migrations -p stateset-jobs -p stateset-macros \
+            -p stateset-http -p stateset-ffi
+          cargo check --locked --release -p stateset-ffi
+
+      - name: Install Node for protocol interoperability tests
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Test policy, authorization, agent commerce, and SDK contracts
+        # The Rust protocol client drives the zero-dependency JS reference
+        # handler and must fail if that integration cannot actually execute.
+        run: |
+          cargo test --locked -p stateset-policy -p stateset-authz -p stateset-a2a \
+            -p stateset-sdk -p stateset-icp-iut -p stateset-icp-client
+          cargo test --locked -p stateset-sdk --no-default-features --features sync
+
       - name: Run documented Rust quickstart
         run: bash scripts/ci/check_rust_quickstart.sh
 
@@ -765,7 +778,7 @@ jobs:
   cli:
     name: CLI Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
 
     steps:
       - uses: actions/checkout@v7
@@ -803,6 +816,23 @@ jobs:
         # Optional integrations ship with the CLI and must be audited too.
         run: npm audit --audit-level=high
 
+      - name: Check optional SDK dependency contracts
+        working-directory: cli
+        run: node scripts/check-optional-dependency-security.mjs
+
+      - name: Test CLI release packaging guards
+        run: node --test scripts/ci/pack_cli_release.test.mjs
+
+      - name: Check packed CLI consumer installation
+        # Before a release, the candidate native version may not exist yet.
+        # This exercises CLI packaging against the current published engine;
+        # publication repeats it with the exact newly published native version.
+        run: |
+          embedded_version=$(npm view @stateset/embedded version)
+          node scripts/ci/pack_cli_release.mjs --output-dir "$RUNNER_TEMP/cli-consumer" --embedded-version "$embedded_version"
+          version=$(node -p "require('./cli/package.json').version")
+          node scripts/ci/check_cli_consumer.mjs "$RUNNER_TEMP/cli-consumer/stateset-cli-${version}.tgz"
+
       - name: Install root tooling (ESLint, Prettier)
         # Disable husky git hook installation in CI.
         run: HUSKY=0 npm ci
@@ -820,6 +850,8 @@ jobs:
 
       # Runs the suite once, with coverage, and enforces the floor that used to
       # live in coverage.yml's duplicate `cli-coverage` job.
+      # Includes native-outbox-pump.test.js, which builds the Rust fixture from
+      # this checkout and verifies signed envelopes through REST serialization.
       - name: Test (with coverage)
         working-directory: cli
         # Explicit `shell: bash` enables pipefail so test failures are not
@@ -906,6 +938,14 @@ jobs:
       - name: Install dependencies
         working-directory: admin
         run: npm ci
+
+      - name: Audit admin dependencies
+        working-directory: admin
+        run: node ../scripts/ci/enforce_npm_audit_allowlist.mjs --level moderate --allowlist ../scripts/ci/npm-audit-allowlist.json
+
+      - name: Check installed design styles
+        working-directory: admin
+        run: node scripts/check-design-css.mjs
 
       - name: Typecheck
         working-directory: admin
@@ -1105,6 +1145,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
+      - name: Check portable pricing in release mode
+        run: cargo check --locked --release -p stateset-pricing --target wasm32-unknown-unknown
+
       - name: Build WASM crate
         run: cargo build -p stateset-embedded-wasm --target wasm32-unknown-unknown
 
@@ -1140,8 +1183,25 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The prior aggregate run already used 58 minutes; independent boundary
+    # and live-PostgreSQL saga gates need room to finish as well.
+    timeout-minutes: 90
     needs: [fmt, clippy]
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: stateset_saga_coverage
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d stateset_saga_coverage"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
 
     steps:
       - uses: actions/checkout@v7
@@ -1162,18 +1222,63 @@ jobs:
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
+      - name: Check schema and macro coverage floor
+        # This crate defines downstream wire contracts. Keep its coverage
+        # independent of the aggregate workspace floor (measured above 93%).
+        run: |
+          cargo llvm-cov \
+            -p stateset-macros \
+            --fail-under-lines 90 \
+            --fail-under-functions 95 \
+            --ignore-filename-regex '(/tests/|/benches/)' \
+            --summary-only
+
+      - name: Check C boundary unit coverage floor
+        # ABI fixtures run in the Rust test job. Measure the Rust unit binary
+        # separately: mixing its cfg(test) profiles with the shared library
+        # loaded by C/Python fixtures produces mismatched LLVM function data.
+        run: |
+          cargo llvm-cov \
+            -p stateset-ffi --lib \
+            --fail-under-lines 90 \
+            --fail-under-functions 85 \
+            --ignore-filename-regex '(/tests/|/tests\.rs$|/benches/|stateset-(core|crypto|db|embedded|migrations|observability|primitives|pricing|sdk|sync)/)' \
+            --summary-only
+
       - name: Check stateset-db coverage floor
         # stateset-db is excluded from the workspace 80% gate below, but it must
-        # not be floorless: this gate measures the db crate against its own test
-        # suite. Baseline measured 2026-07-14: 52.05% lines. Ratchet this floor
-        # up as db-crate coverage improves; do not lower it.
+        # have its own gate. The checker uses database files only and enforces
+        # independent recovery-file floors so aggregate gains cannot hide a
+        # regression at the backup/restore boundary.
         env:
           STATESET_ALLOW_POSTGRES_SKIP: "1"
         run: |
+          python3 scripts/ci/check_db_coverage.test.py
+          mkdir -p coverage
           cargo llvm-cov \
             -p stateset-db \
-            --fail-under-lines 50 \
-            --ignore-filename-regex '(/tests/|/benches/)' \
+            --ignore-filename-regex '(/tests/|/benches/|stateset-(core|crypto|migrations|primitives)/)' \
+            --json --output-path coverage/stateset-db.json
+          python3 scripts/ci/check_db_coverage.py coverage/stateset-db.json
+
+      - name: Retain database coverage evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: database-coverage-${{ github.sha }}-${{ github.run_attempt }}
+          path: coverage/stateset-db.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Check saga recovery coverage against PostgreSQL
+        env:
+          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_saga_coverage
+        run: |
+          cargo llvm-cov \
+            -p stateset-saga \
+            --fail-under-lines 90 \
+            --fail-under-functions 80 \
+            --ignore-filename-regex '(/tests/|/benches/|stateset-(core|crypto|db|migrations|primitives)/)' \
             --summary-only
 
       - name: Generate code coverage
@@ -1259,7 +1364,11 @@ jobs:
         # uses php-config to discover headers. Required for the cross-binding
         # parity test which calls into the actual extension.
         working-directory: bindings/php
-        run: cargo build --features runtime --release
+        run: cargo build --locked --features runtime --release
+
+      - name: Native commerce contract (PHP)
+        working-directory: bindings/php
+        run: php -d extension="$PWD/target/release/libstateset_embedded.so" tests/native-contract.php
 
       - name: Cross-binding parity (PHP)
         # Loads the freshly built extension and runs only the parity test.
@@ -1271,6 +1380,7 @@ jobs:
           test -f "$EXT_PATH" || { echo "extension not built: $EXT_PATH"; exit 1; }
           php -d extension="$EXT_PATH" \
             vendor/bin/phpunit \
+            --fail-on-skipped \
             --filter CryptoVectorTest \
             tests/CryptoVectorTest.php
 
@@ -1302,6 +1412,9 @@ jobs:
       - name: Install CLI dependencies
         working-directory: cli
         run: npm ci
+
+      - name: Test dependency audit refusal paths
+        run: node --test scripts/ci/enforce_npm_audit_allowlist.test.mjs
 
       - name: Generate crate compatibility report
         env:

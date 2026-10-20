@@ -1,6 +1,7 @@
 //! Shipment, fulfillment (pick/pack/ship/wave), shipping-zone, and print-station repositories.
 
 use super::*;
+use crate::CommerceError;
 
 /// Shipment repository trait
 #[auto_impl::auto_impl(&, Box, Arc)]
@@ -66,11 +67,44 @@ pub trait ShipmentRepository: Send + Sync {
     /// Advances the shipment version and records an outbox fact atomically.
     fn remove_item(&self, item_id: Uuid) -> Result<()>;
 
+    /// Add an item only if the locked parent has the supplied version. A stale
+    /// version returns `VersionConflict` without changing items or outbox facts.
+    /// Backends must check inside the mutation transaction, never with a prior read.
+    fn add_item_with_version(
+        &self,
+        shipment_id: ShipmentId,
+        item: CreateShipmentItem,
+        expected_version: Option<i32>,
+    ) -> Result<ShipmentItem> {
+        if expected_version.is_some() {
+            return Err(CommerceError::ValidationError(
+                "This shipment backend does not support versioned item edits".into(),
+            ));
+        }
+        self.add_item(shipment_id, item)
+    }
+
+    /// Remove an item with an optional locked-parent version precondition.
+    /// A stale version leaves the item, parent and outbox unchanged.
+    fn remove_item_with_version(&self, item_id: Uuid, expected_version: Option<i32>) -> Result<()> {
+        if expected_version.is_some() {
+            return Err(CommerceError::ValidationError(
+                "This shipment backend does not support versioned item edits".into(),
+            ));
+        }
+        self.remove_item(item_id)
+    }
+
     /// Get items in shipment
     fn get_items(&self, shipment_id: ShipmentId) -> Result<Vec<ShipmentItem>>;
 
     // Event/tracking operations
-    /// Add tracking event
+    /// Append tracking history, advancing the parent version and writing an outbox
+    /// fact atomically. The event type must be non-blank and at most 100 characters;
+    /// locations are at most 255 characters. Event text must not contain NUL.
+    /// A missing parent returns `NotFound`. Late observations in any status do not change
+    /// that status or fulfillment quantities. Timestamps use microsecond precision.
+    /// Each call appends a new event; callers must deduplicate provider deliveries.
     fn add_event(&self, shipment_id: ShipmentId, event: AddShipmentEvent) -> Result<ShipmentEvent>;
 
     /// Get tracking events for shipment

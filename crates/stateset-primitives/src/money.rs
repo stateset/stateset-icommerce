@@ -8,6 +8,21 @@ use core::fmt;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+/// Shared commerce precision for uppercase currency and asset codes.
+///
+/// Unknown codes default to two decimals. ETH retains the engine's historical
+/// eight-decimal storage precision; chain settlement precision is separate.
+#[must_use]
+pub const fn currency_decimal_places(code: &str) -> u8 {
+    match code.as_bytes() {
+        b"BIF" | b"CLP" | b"DJF" | b"GNF" | b"ISK" | b"JPY" | b"KMF" | b"KRW" | b"PYG" | b"RWF"
+        | b"UGX" | b"UYI" | b"VND" | b"VUV" | b"XAF" | b"XOF" | b"XPF" => 0,
+        b"BHD" | b"IQD" | b"JOD" | b"KWD" | b"LYD" | b"OMR" | b"TND" => 3,
+        b"BTC" | b"ETH" => 8,
+        _ => 2,
+    }
+}
+
 /// Stable JSON/wire representation for an exact monetary value.
 ///
 /// `amount` is deliberately a decimal string. JSON numbers and language-level
@@ -329,8 +344,8 @@ impl CurrencyCode {
     /// Minor-unit scale for this currency — the number of decimal places a
     /// stored amount may carry.
     ///
-    /// Zero-decimal currencies (JPY, KRW, VND) return `0`; the crypto codes
-    /// BTC/ETH return `8`; every other code returns `2`. This is the single
+    /// Fiat currencies use their minor-unit scale; BTC/ETH retain eight decimals.
+    /// See [`currency_decimal_places`] for the shared currency table. This is the single
     /// source of truth for invariant `commerce.money.scale_exceeds_currency`
     /// and mirrors `stateset_core::models::Currency::decimal_places`.
     ///
@@ -345,11 +360,7 @@ impl CurrencyCode {
     #[inline]
     #[must_use]
     pub const fn decimal_places(&self) -> u8 {
-        match &self.0 {
-            b"JPY" | b"KRW" | b"VND" => 0,
-            b"BTC" | b"ETH" => 8,
-            _ => 2,
-        }
+        currency_decimal_places(self.as_str())
     }
 
     /// Get the currency code as a string slice.

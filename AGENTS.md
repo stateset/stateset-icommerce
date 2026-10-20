@@ -4,9 +4,15 @@ An **embedded commerce engine** ("the SQLite of commerce"): orders, inventory,
 customers, products, carts/checkout, payments, returns, subscriptions,
 promotions, analytics, a full finance suite (general ledger, month-end close,
 AP/AR, fixed assets, revenue recognition), warehouse management, and
-traceability — running **inside your process** against a single database file.
-No external services, no API keys, no rate limits. Money is exact decimal
-end-to-end; every mutation is auditable.
+traceability — running **inside your process** against a single database file
+with the default SQLite backend (`stateset-db` with the `sqlite` feature).
+No external services, no API keys, no rate limits in that configuration
+(the optional `postgres` backend connects to an external PostgreSQL).
+Money is exact decimal end-to-end. Governed writes persist receipts and their
+audit chain transactionally. The general `audit_log` helper is opt-in and
+best effort; it is not automatically called by every repository mutation
+(see `crates/stateset-db/src/audit.rs`). Operator HTTP receipt reconciliation
+requires its audit entry in the same transaction as completion.
 
 ## If you are an MCP-native agent (Claude Desktop, Cursor, Windsurf, ...)
 
@@ -15,7 +21,16 @@ end-to-end; every mutation is auditable.
   "mcpServers": {
     "stateset-commerce": {
       "command": "npx",
-      "args": ["-y", "-p", "@stateset/cli", "stateset-mcp", "--db", "./store.db", "--profile", "core"]
+      "args": [
+        "-y",
+        "-p",
+        "@stateset/cli",
+        "stateset-mcp",
+        "--db",
+        "./store.db",
+        "--profile",
+        "core"
+      ]
     }
   }
 }
@@ -23,14 +38,14 @@ end-to-end; every mutation is auditable.
 
 Every tool carries a **stability tier** (`cli/src/tools/tool-tiers.js`):
 
-| Tier | Tools | What it means |
-|---|---:|---|
-| `core` | 196 | The default surface. Catalog, customers, carts/checkout, orders, payments and refunds, returns, shipments, inventory, promotions, tax, gift cards and store credit, analytics, plus the agentic planning/replay tools. Smoke-gated: every core tool works or refuses cleanly on a fresh store, with no known-defect backlog. |
-| `extended` | 479 | Real but specialised domains: finance suite, manufacturing, WMS, B2B, subscriptions/reviews/loyalty, integrations. |
-| `experimental` | 276 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete: A2A, agent receipts, sync, vector search, on-chain treasury. |
+| Tier           | Tools | What it means                                                                                                                                                                                                                                                                                                                                             |
+| -------------- | ----: | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `core`         |   209 | The default surface. Catalog, customers, carts/checkout, orders, payments and refunds, returns, shipments, inventory, promotions, tax, gift cards and store credit, analytics, isolated engine simulations, plus the agentic planning/replay tools. Smoke-gated: every core tool works or refuses cleanly on a fresh store, with no known-defect backlog. |
+| `extended`     |   493 | Real but specialised domains: finance suite, manufacturing, WMS, B2B, subscriptions/reviews/loyalty, integrations.                                                                                                                                                                                                                                        |
+| `experimental` |   264 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete: A2A, agent receipts, sync, vector search, on-chain treasury.                                                                                                                                                                                                     |
 
 With no `--profile`, the MCP servers expose exactly the `core` tier. Use
-`--profile all` for everything (951 tools: 936 across 87 domains plus 15
+`--profile all` for everything (966 tools: 951 across 89 domains plus 15
 agentic runtime tools), or `finance`, `operations`, and `agents` for curated
 workloads (these expose every tool in their domains, whatever its tier). Add
 individual domains with `--domains a,b`. **Writes are preview-only by
@@ -58,10 +73,19 @@ own policy-checked kernel command), and `complete_checkout`
 ```json
 {
   "args": [
-    "-y", "-p", "@stateset/cli", "stateset-mcp", "--db", "./store.db", "--apply",
-    "--kernel-policy", "./kernel-policy.json",
-    "--kernel-principal", "./kernel-principal.json",
-    "--kernel-store-id", "store:production"
+    "-y",
+    "-p",
+    "@stateset/cli",
+    "stateset-mcp",
+    "--db",
+    "./store.db",
+    "--apply",
+    "--kernel-policy",
+    "./kernel-policy.json",
+    "--kernel-principal",
+    "./kernel-principal.json",
+    "--kernel-store-id",
+    "store:production"
   ]
 }
 ```
@@ -95,9 +119,11 @@ Minimal working program (same shape in all three languages):
 
 ```javascript
 import { Commerce } from '@stateset/embedded';
-const commerce = new Commerce('./store.db');   // or ':memory:'
+const commerce = new Commerce('./store.db'); // or ':memory:'
 const customer = await commerce.customers.create({
-  email: 'a@example.com', firstName: 'Ada', lastName: 'L',
+  email: 'a@example.com',
+  firstName: 'Ada',
+  lastName: 'L',
 });
 ```
 
@@ -108,13 +134,13 @@ Scaffold a full storefront: `npm create stateset-app`.
 `@stateset/embedded` ships typed adapter entrypoints — see
 [docs/src/ai-agents.md](docs/src/ai-agents.md) for working examples:
 
-| Entrypoint | For |
-|---|---|
-| `@stateset/embedded/openai` | OpenAI tool-calling / Agents SDK |
-| `@stateset/embedded/vercel-ai` | Vercel AI SDK |
-| `@stateset/embedded/langchain` | LangChain JS |
-| `@stateset/embedded/generic` | any framework (plain descriptors) |
-| `stateset_embedded.openai` / `[langchain]` / `[crewai]` / `[autogen]` | Python equivalents |
+| Entrypoint                                                            | For                               |
+| --------------------------------------------------------------------- | --------------------------------- |
+| `@stateset/embedded/openai`                                           | OpenAI tool-calling / Agents SDK  |
+| `@stateset/embedded/vercel-ai`                                        | Vercel AI SDK                     |
+| `@stateset/embedded/langchain`                                        | LangChain JS                      |
+| `@stateset/embedded/generic`                                          | any framework (plain descriptors) |
+| `stateset_embedded.openai` / `[langchain]` / `[crewai]` / `[autogen]` | Python equivalents                |
 
 ## Conventions that matter
 

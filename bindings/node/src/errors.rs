@@ -302,11 +302,9 @@ fn panic_error(payload: &(dyn std::any::Any + Send)) -> Error {
 
 /// Run a synchronous entry point with panic containment.
 ///
-/// The workspace release profile is `panic = "abort"`, which makes a panic
-/// anywhere under a `#[napi]` call kill the host Node process. `release-node`
-/// (see the root `Cargo.toml`) inherits `release` but keeps `panic = "unwind"`
-/// so this guard can convert the unwind into a JavaScript exception. Under
-/// `panic = "abort"` the guard is inert but harmless.
+/// The workspace `release` and `release-node` profiles use `panic = "unwind"`
+/// so this guard can convert a panic into a JavaScript exception. Custom builds
+/// must retain unwinding: with `panic = "abort"`, a panic terminates the host.
 pub(crate) fn guard<T, F>(operation: F) -> napi::Result<T>
 where
     F: FnOnce() -> napi::Result<T>,

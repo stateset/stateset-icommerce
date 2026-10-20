@@ -168,6 +168,8 @@ mod loyalty;
 pub mod maintenance;
 mod orders;
 mod payment_obligations;
+#[cfg(feature = "events")]
+mod payment_providers;
 mod payments;
 mod prepayments;
 mod price_levels;
@@ -186,6 +188,8 @@ mod reviews;
 mod search_config;
 mod segments;
 mod serials;
+#[cfg(feature = "events")]
+mod shipment_providers;
 mod shipments;
 mod shipping_zones;
 mod stock_snapshots;
@@ -264,6 +268,11 @@ pub use loyalty::Loyalty;
 pub use maintenance::Maintenance;
 pub use orders::Orders;
 pub use payment_obligations::PaymentObligations;
+#[cfg(feature = "events")]
+pub use payment_providers::{
+    MockPaymentProvider, PaymentProvider, ProviderCharge, ProviderDecision, StripeProvider,
+    minor_units,
+};
 pub use payments::Payments;
 pub use prepayments::Prepayments;
 pub use price_levels::PriceLevels;
@@ -282,6 +291,11 @@ pub use reviews::Reviews;
 pub use search_config::SearchConfigs;
 pub use segments::Segments;
 pub use serials::Serials;
+#[cfg(feature = "events")]
+pub use shipment_providers::{
+    EasyPostProvider, MockShipmentProvider, Parcel, PostalAddress, PurchasedLabel, RateQuote,
+    ShipmentProvider, TrackingEvent, TrackingStatus,
+};
 pub use shipments::Shipments;
 pub use shipping_zones::ShippingZones;
 pub use stock_snapshots::StockSnapshots;

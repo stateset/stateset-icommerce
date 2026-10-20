@@ -35,6 +35,29 @@ fn new_postgres_runtime() -> Result<tokio::runtime::Runtime, CommerceError> {
         .map_err(|e| CommerceError::Internal(format!("Failed to create runtime: {e}")))
 }
 
+/// Process-shared runtime that outlives every pool it creates.
+///
+/// A `sqlx` pool is bound to the runtime that was current when it was
+/// created: once that runtime shuts down, every later acquire hangs until
+/// the acquire timeout, even from other live runtimes. Connecting on a
+/// throwaway runtime therefore bricks the pool on return (every sync
+/// `Commerce::with_postgres` query would hang for 30s and fail). Creating
+/// the pool here keeps it drivable for the life of the process; queries may
+/// still run on any other live runtime.
+#[cfg(feature = "postgres")]
+static SHARED_PG_RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+
+#[cfg(feature = "postgres")]
+fn shared_pg_runtime() -> Result<&'static tokio::runtime::Runtime, CommerceError> {
+    if let Some(rt) = SHARED_PG_RUNTIME.get() {
+        return Ok(rt);
+    }
+    // A loser of the init race builds a spare runtime that is immediately
+    // dropped without ever creating a pool — harmless.
+    let rt = new_postgres_runtime()?;
+    Ok(SHARED_PG_RUNTIME.get_or_init(|| rt))
+}
+
 #[cfg(feature = "postgres")]
 fn block_on_postgres_connect(url: String) -> Result<PostgresDatabase, CommerceError> {
     match tokio::runtime::Handle::try_current() {
@@ -44,7 +67,7 @@ fn block_on_postgres_connect(url: String) -> Result<PostgresDatabase, CommerceEr
             tokio::task::block_in_place(|| handle.block_on(PostgresDatabase::connect(url)))
         }
         Ok(_) => std::thread::spawn(move || {
-            let rt = new_postgres_runtime()?;
+            let rt = shared_pg_runtime()?;
             rt.block_on(PostgresDatabase::connect(url))
         })
         .join()
@@ -52,7 +75,7 @@ fn block_on_postgres_connect(url: String) -> Result<PostgresDatabase, CommerceEr
             CommerceError::Internal("PostgreSQL initialization thread panicked".to_string())
         })?,
         Err(_) => {
-            let rt = new_postgres_runtime()?;
+            let rt = shared_pg_runtime()?;
             rt.block_on(PostgresDatabase::connect(url))
         }
     }
@@ -77,7 +100,7 @@ fn block_on_postgres_connect_with_options(
             })
         }
         Ok(_) => std::thread::spawn(move || {
-            let rt = new_postgres_runtime()?;
+            let rt = shared_pg_runtime()?;
             rt.block_on(PostgresDatabase::connect_with_options(
                 url,
                 max_connections,
@@ -89,7 +112,7 @@ fn block_on_postgres_connect_with_options(
             CommerceError::Internal("PostgreSQL initialization thread panicked".to_string())
         })?,
         Err(_) => {
-            let rt = new_postgres_runtime()?;
+            let rt = shared_pg_runtime()?;
             rt.block_on(PostgresDatabase::connect_with_options(
                 url,
                 max_connections,

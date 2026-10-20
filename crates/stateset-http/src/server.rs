@@ -931,11 +931,9 @@ impl ServerBuilder {
         // Durable, database-backed idempotency store (with the in-memory map as
         // a read-through cache) plus the required-key gate for money-moving
         // create endpoints.
-        let mut idempotency_layer = crate::idempotency::IdempotencyLayer::new()
-            .with_required_keys(self.require_idempotency_keys);
-        if let Ok(commerce) = self.state.commerce_for_tenant(None) {
-            idempotency_layer = idempotency_layer.with_durable_store(commerce);
-        }
+        let idempotency_layer = crate::idempotency::IdempotencyLayer::new()
+            .with_required_keys(self.require_idempotency_keys)
+            .with_app_state(self.state.clone());
         let router =
             routes::api_router_with_idempotency(self.max_request_body_bytes, idempotency_layer)
                 .with_state(self.state);

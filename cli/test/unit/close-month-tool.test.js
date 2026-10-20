@@ -111,10 +111,30 @@ describe('close_month handler', () => {
         skipRevenueRecognition: undefined,
         skipFxRevaluation: true,
         skipPeriodClose: undefined,
+        failOnWarnings: undefined,
         closedBy: 'controller',
       },
     });
     assert.equal(result.report.periodStatus, 'closed');
     assert.equal(result.report.depreciation.entryCount, 2);
+  });
+
+  it('passes failOnWarnings through in strict mode', async () => {
+    let received;
+    const commerce = {
+      generalLedger: {
+        closeMonth: async (periodId, options) => {
+          received = { periodId, options };
+          return sampleReport;
+        },
+      },
+    };
+    const result = await tool.handler({
+      commerce,
+      params: { periodId: 'per_001', failOnWarnings: true },
+      allowApply: true,
+    });
+    assert.equal(result.success, true);
+    assert.equal(received.options.failOnWarnings, true);
   });
 });

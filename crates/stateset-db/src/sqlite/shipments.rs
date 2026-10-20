@@ -894,10 +894,20 @@ impl ShipmentRepository for SqliteShipmentRepository {
     }
 
     fn add_item(&self, shipment_id: ShipmentId, item: CreateShipmentItem) -> Result<ShipmentItem> {
+        self.add_item_with_version(shipment_id, item, None)
+    }
+
+    fn add_item_with_version(
+        &self,
+        shipment_id: ShipmentId,
+        item: CreateShipmentItem,
+        expected_version: Option<i32>,
+    ) -> Result<ShipmentItem> {
         crate::shipment_updates::validate_item(&item)?;
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let mut shipment = Self::get_with_conn(&tx, shipment_id)?.ok_or(CommerceError::NotFound)?;
+        crate::shipment_updates::check_version(&shipment, expected_version)?;
         let item = Self::normalize_items_tx(&tx, shipment.order_id, &[item])?
             .pop()
             .ok_or_else(|| CommerceError::Internal("Missing normalized shipment item".into()))?;
@@ -939,6 +949,10 @@ impl ShipmentRepository for SqliteShipmentRepository {
     }
 
     fn remove_item(&self, item_id: Uuid) -> Result<()> {
+        self.remove_item_with_version(item_id, None)
+    }
+
+    fn remove_item_with_version(&self, item_id: Uuid, expected_version: Option<i32>) -> Result<()> {
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let parent: String = match tx.query_row(
@@ -952,6 +966,7 @@ impl ShipmentRepository for SqliteShipmentRepository {
         };
         let shipment_id = ShipmentId::from(parse_uuid(&parent, "shipment_item", "shipment_id")?);
         let mut shipment = Self::get_with_conn(&tx, shipment_id)?.ok_or(CommerceError::NotFound)?;
+        crate::shipment_updates::check_version(&shipment, expected_version)?;
         let item = shipment
             .items
             .iter()
@@ -977,36 +992,54 @@ impl ShipmentRepository for SqliteShipmentRepository {
     }
 
     fn add_event(&self, shipment_id: ShipmentId, event: AddShipmentEvent) -> Result<ShipmentEvent> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_db_error)?;
+        let mut shipment = Self::get_with_conn(&tx, shipment_id)?.ok_or(CommerceError::NotFound)?;
+        let previous_version = shipment.version;
+        let event = crate::shipment_updates::prepare_event(&mut shipment, event, Utc::now())?;
 
-        let id = Uuid::new_v4();
-        let now = Utc::now();
-        let event_time = event.event_time.unwrap_or(now);
-
-        conn.execute(
+        tx.execute(
             "INSERT INTO shipment_events (id, shipment_id, event_type, location, description, event_time, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)",
             rusqlite::params![
-                id.to_string(),
+                event.id.to_string(),
                 shipment_id.to_string(),
                 event.event_type,
                 event.location,
                 event.description,
-                event_time.to_rfc3339(),
-                now.to_rfc3339(),
+                event.event_time.to_rfc3339(),
+                event.created_at.to_rfc3339(),
             ],
         )
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-        Ok(ShipmentEvent {
-            id,
-            shipment_id,
-            event_type: event.event_type,
-            location: event.location,
-            description: event.description,
-            event_time,
-            created_at: now,
-        })
+        .map_err(map_db_error)?;
+        let rows = tx
+            .execute(
+                "UPDATE shipments SET version = ?, updated_at = ? WHERE id = ? AND version = ?",
+                rusqlite::params![
+                    shipment.version,
+                    shipment.updated_at.to_rfc3339(),
+                    shipment_id.to_string(),
+                    previous_version
+                ],
+            )
+            .map_err(map_db_error)?;
+        if rows != 1 {
+            return Err(CommerceError::OptimisticLockFailure);
+        }
+        super::kernel_outbox::record_outbox_fact(
+            &tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "shipments.event_added.v1",
+                aggregate_type: "shipment",
+                aggregate_id: &shipment_id.to_string(),
+                payload: crate::shipment_updates::event_fact(&shipment, &event),
+            },
+        )
+        .map_err(map_db_error)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(event)
     }
 
     fn get_events(&self, shipment_id: ShipmentId) -> Result<Vec<ShipmentEvent>> {

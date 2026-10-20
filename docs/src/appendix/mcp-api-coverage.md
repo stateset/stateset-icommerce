@@ -14,13 +14,13 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 
 | Metric | Value |
 | --- | --- |
-| Domain tool modules | 88 |
-| Domain tools | 943 |
+| Domain tool modules | 89 |
+| Domain tools | 954 |
 | Commerce getters | 68 |
 | Mapped getters | 68 |
 | Audited classes | 32 |
-| Audited methods | 416 |
-| Mapped audited methods | 416 |
+| Audited methods | 421 |
+| Mapped audited methods | 421 |
 | Fully covered | yes |
 
 ## Commerce Getter Coverage
@@ -53,7 +53,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `inboundShipments` | `inbound-shipments` | 8 |
 | `integrationFieldMappings` | `integration-field-mappings` | 8 |
 | `integrationMappings` | `integration-mappings` | 7 |
-| `inventory` | `inventory` | 6 |
+| `inventory` | `inventory` | 7 |
 | `invoices` | `invoices` | 7 |
 | `lots` | `lots` | 11 |
 | `loyalty` | `loyalty` | 8 |
@@ -68,7 +68,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `productionBatches` | `production-batches` | 8 |
 | `products` | `products` | 14 |
 | `promotions` | `promotions` | 17 |
-| `purchaseOrders` | `suppliers` | 10 |
+| `purchaseOrders` | `suppliers` | 12 |
 | `purgatory` | `purgatory` | 6 |
 | `quality` | `quality` | 15 |
 | `receiving` | `receiving` | 8 |
@@ -78,7 +78,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `searchConfig` | `search-config` | 7 |
 | `segments` | `segments` | 5 |
 | `serials` | `serials` | 8 |
-| `shipments` | `shipments` | 16 |
+| `shipments` | `shipments` | 18 |
 | `shippingZones` | `shipping-zones` | 7 |
 | `stockSnapshots` | `stock-snapshots` | 5 |
 | `storeCredits` | `store-credits` | 5 |
@@ -113,19 +113,19 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `CustomObjects` | 12 | 12 | 0 | 0 | 0 |
 | `Fulfillment` | 14 | 14 | 0 | 0 | 0 |
 | `GeneralLedger` | 18 | 18 | 0 | 0 | 0 |
-| `Inventory` | 6 | 6 | 0 | 0 | 0 |
+| `Inventory` | 7 | 7 | 0 | 0 | 0 |
 | `Invoices` | 8 | 8 | 0 | 0 | 0 |
 | `Lots` | 12 | 12 | 0 | 0 | 0 |
 | `Orders` | 10 | 10 | 0 | 0 | 0 |
 | `Payments` | 14 | 14 | 0 | 0 | 0 |
 | `Products` | 16 | 16 | 0 | 0 | 0 |
 | `Promotions` | 20 | 20 | 0 | 0 | 0 |
-| `PurchaseOrders` | 11 | 11 | 0 | 0 | 0 |
+| `PurchaseOrders` | 13 | 13 | 0 | 0 | 0 |
 | `Quality` | 17 | 17 | 0 | 0 | 0 |
 | `Receiving` | 10 | 10 | 0 | 0 | 0 |
 | `Returns` | 13 | 13 | 0 | 0 | 0 |
 | `Serials` | 9 | 9 | 0 | 0 | 0 |
-| `Shipments` | 8 | 8 | 0 | 0 | 0 |
+| `Shipments` | 10 | 10 | 0 | 0 | 0 |
 | `Subscriptions` | 19 | 19 | 0 | 0 | 0 |
 | `Tax` | 18 | 18 | 0 | 0 | 0 |
 | `Warehouse` | 10 | 10 | 0 | 0 | 0 |

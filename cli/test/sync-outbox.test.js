@@ -23,7 +23,7 @@
  *  - getPendingCount: correct number
  *  - pruneOldEvents: only prunes synced; leaves others
  *  - getSyncState / updateSyncState: round-trip all fields
- *  - storePulledEvent / storePulledEvents: persists and upserts
+ *  - storePulledEvent / storePulledEvents: immutable persistence and replay deduplication
  *  - getEntityVersion / updateEntityVersion: OCC round-trip
  *  - computePayloadHash (deprecated helper): hex output
  *  - computePayloadPlainHashBuffer: 32-byte Buffer
@@ -40,6 +40,8 @@ import crypto from 'node:crypto';
 import Database from 'better-sqlite3';
 
 import { Outbox, createOutbox } from '../src/sync/outbox.js';
+import { SyncEngine } from '../src/sync/engine.js';
+import { SyncConfig } from '../src/sync/config.js';
 import {
   verifyEventSignature,
   computeEventSigningHash,
@@ -176,6 +178,45 @@ function makeOutbox(keyManagerOverrides = {}) {
   return { db, outbox, keyManager };
 }
 
+describe('Signed timestamp preservation', () => {
+  for (const timestamp of [
+    '2026-01-02T03:04:05.123456789+00:00',
+    '2026-01-02T05:04:05.123456+02:00',
+  ]) {
+    it(`preserves ${timestamp} for stored decryption`, async () => {
+      const { db, outbox, keyManager } = makeOutbox();
+      try {
+        const input = makeEvent({ createdAt: timestamp, payload: { amount: '19.99' } });
+        await outbox.append(input, {
+          encrypt: true,
+          recipientPublicKey: keyManager._encryptionKey.pubKey32,
+          recipientKeyId: 1,
+        });
+        const [event] = outbox.getPending();
+        assert.ok(event.createdAt instanceof Date);
+        assert.equal(event.createdAtRaw, timestamp);
+        assert.notEqual(event.createdAt.toISOString(), timestamp);
+        const engine = new SyncEngine({
+          db,
+          keyManager,
+          preferGrpc: false,
+          config: new SyncConfig({
+            sequencer: { url: 'https://sequencer.invalid' },
+            identity: { tenantId: TENANT_ID, storeId: STORE_ID, agentId: AGENT_ID },
+          }),
+        });
+        const decrypted = await engine.decryptStoredEvent({
+          eventId: event.eventId,
+          source: 'outbox',
+        });
+        assert.deepEqual(decrypted.payload, input.payload);
+      } finally {
+        db.close();
+      }
+    });
+  }
+});
+
 // =============================================================================
 // 1. Construction & initialization
 // =============================================================================
@@ -295,7 +336,10 @@ describe('append (plaintext)', () => {
 
   it('returns a positive integer sequence number', async () => {
     const seq = await outbox.append(makeEvent());
-    assert.ok(typeof seq === 'number' || typeof seq === 'bigint', `expected number or bigint, got ${typeof seq}`);
+    assert.ok(
+      typeof seq === 'number' || typeof seq === 'bigint',
+      `expected number or bigint, got ${typeof seq}`,
+    );
     assert.ok(Number(seq) >= 1);
   });
 
@@ -382,7 +426,10 @@ describe('append (plaintext)', () => {
   });
 
   it('handles large payload (>10 KB)', async () => {
-    const large = { data: 'x'.repeat(15_000), nested: { arr: Array.from({ length: 500 }, (_, i) => i) } };
+    const large = {
+      data: 'x'.repeat(15_000),
+      nested: { arr: Array.from({ length: 500 }, (_, i) => i) },
+    };
     await outbox.append(makeEvent({ payload: large }));
     const [evt] = outbox.getPending();
     assert.equal(evt.payload.data.length, 15_000);
@@ -563,7 +610,12 @@ describe('append (encrypted)', () => {
     const km = {
       getCurrentSigningKey: async () => {
         const sk = generateEd25519Raw();
-        return { keyId: 1, publicKey: sk.pubKey32, privateKey: sk.privKey32, createdAt: new Date().toISOString() };
+        return {
+          keyId: 1,
+          publicKey: sk.pubKey32,
+          privateKey: sk.privKey32,
+          createdAt: new Date().toISOString(),
+        };
       },
       getCurrentEncryptionKey: async () => null,
     };
@@ -727,9 +779,7 @@ describe('append (hybrid profile)', () => {
   it(
     'decrypts hybrid-encrypted events back to the original payload',
     {
-      skip:
-        !hasNativeHybridPqcSupport() ||
-        !hasNativeHybridPqcDecryptionSupport(),
+      skip: !hasNativeHybridPqcSupport() || !hasNativeHybridPqcDecryptionSupport(),
     },
     async () => {
       const db = new Database(':memory:');
@@ -783,9 +833,7 @@ describe('append (hybrid profile)', () => {
   it(
     'rejects tampered hybrid-encrypted payloads',
     {
-      skip:
-        !hasNativeHybridPqcSupport() ||
-        !hasNativeHybridPqcDecryptionSupport(),
+      skip: !hasNativeHybridPqcSupport() || !hasNativeHybridPqcDecryptionSupport(),
     },
     async () => {
       const db = new Database(':memory:');
@@ -857,7 +905,10 @@ describe('appendBatch', () => {
     const seqs = await outbox.appendBatch(events);
     assert.equal(seqs.length, 3);
     for (const s of seqs) {
-      assert.ok(typeof s === 'number' || typeof s === 'bigint', `expected number or bigint, got ${typeof s}`);
+      assert.ok(
+        typeof s === 'number' || typeof s === 'bigint',
+        `expected number or bigint, got ${typeof s}`,
+      );
       assert.ok(Number(s) >= 1);
     }
   });
@@ -899,10 +950,13 @@ describe('appendBatch', () => {
     const sk2 = generateEd25519Raw();
     const km = {
       getCurrentSigningKey: async (agentId) => {
-        const key = agentId === AGENT_ID
-          ? generateEd25519Raw()
-          : sk2;
-        return { keyId: 1, publicKey: key.pubKey32, privateKey: key.privKey32, createdAt: new Date().toISOString() };
+        const key = agentId === AGENT_ID ? generateEd25519Raw() : sk2;
+        return {
+          keyId: 1,
+          publicKey: key.pubKey32,
+          privateKey: key.privKey32,
+          createdAt: new Date().toISOString(),
+        };
       },
       getCurrentEncryptionKey: async () => null,
     };
@@ -956,10 +1010,7 @@ describe('appendBatch', () => {
 
   it('encrypted batch path sets payloadKind=1 and stores payloadEncrypted for all events', async () => {
     const { pubKey32: recipientPub } = generateX25519Raw();
-    const events = [
-      makeEvent({ entityId: 'eb1' }),
-      makeEvent({ entityId: 'eb2' }),
-    ];
+    const events = [makeEvent({ entityId: 'eb1' }), makeEvent({ entityId: 'eb2' })];
     await outbox.appendBatch(events, { encrypt: true, recipientPublicKey: recipientPub });
     const pending = outbox.getPending();
     assert.equal(pending.length, 2);
@@ -1070,8 +1121,12 @@ describe('getByEventId', () => {
 describe('getByEntityId', () => {
   it('returns events matching entityType + entityId', async () => {
     const { outbox } = makeOutbox();
-    await outbox.append(makeEvent({ entityType: 'order', entityId: 'ord-100', eventType: 'order.created' }));
-    await outbox.append(makeEvent({ entityType: 'order', entityId: 'ord-100', eventType: 'order.shipped' }));
+    await outbox.append(
+      makeEvent({ entityType: 'order', entityId: 'ord-100', eventType: 'order.created' }),
+    );
+    await outbox.append(
+      makeEvent({ entityType: 'order', entityId: 'ord-100', eventType: 'order.shipped' }),
+    );
     await outbox.append(makeEvent({ entityType: 'customer', entityId: 'cust-1' }));
 
     const results = outbox.getByEntityId('order', 'ord-100');
@@ -1111,7 +1166,9 @@ describe('markSynced', () => {
     const seq = await outbox.append(makeEvent());
     const localSeq = Number(seq);
     outbox.markSynced([{ localSeq, remoteSeq: 999 }]);
-    const row = outbox.db.prepare('SELECT remote_sequence FROM _ves_outbox WHERE local_seq = ?').get(localSeq);
+    const row = outbox.db
+      .prepare('SELECT remote_sequence FROM _ves_outbox WHERE local_seq = ?')
+      .get(localSeq);
     assert.equal(row.remote_sequence, 999);
   });
 
@@ -1120,7 +1177,9 @@ describe('markSynced', () => {
     const seq = await outbox.append(makeEvent());
     const localSeq = Number(seq);
     outbox.markSynced([{ localSeq, remoteSeq: 1 }]);
-    const row = outbox.db.prepare('SELECT synced_at FROM _ves_outbox WHERE local_seq = ?').get(localSeq);
+    const row = outbox.db
+      .prepare('SELECT synced_at FROM _ves_outbox WHERE local_seq = ?')
+      .get(localSeq);
     assert.ok(row.synced_at != null);
   });
 
@@ -1133,7 +1192,10 @@ describe('markSynced', () => {
     const { outbox } = makeOutbox();
     const s1 = Number(await outbox.append(makeEvent({ entityId: 'e1' })));
     const s2 = Number(await outbox.append(makeEvent({ entityId: 'e2' })));
-    outbox.markSynced([{ localSeq: s1, remoteSeq: 10 }, { localSeq: s2, remoteSeq: 11 }]);
+    outbox.markSynced([
+      { localSeq: s1, remoteSeq: 10 },
+      { localSeq: s2, remoteSeq: 11 },
+    ]);
     assert.equal(outbox.getStats().synced, 2);
     assert.equal(outbox.getPendingCount(), 0);
   });
@@ -1156,7 +1218,9 @@ describe('markFailed', () => {
     const seq = Number(await outbox.append(makeEvent()));
     outbox.markFailed(seq, 'err1');
     outbox.markFailed(seq, 'err2');
-    const row = outbox.db.prepare('SELECT retry_count FROM _ves_outbox WHERE local_seq = ?').get(seq);
+    const row = outbox.db
+      .prepare('SELECT retry_count FROM _ves_outbox WHERE local_seq = ?')
+      .get(seq);
     assert.equal(row.retry_count, 2);
   });
 
@@ -1164,7 +1228,9 @@ describe('markFailed', () => {
     const { outbox } = makeOutbox();
     const seq = Number(await outbox.append(makeEvent()));
     outbox.markFailed(seq, 'upstream unavailable');
-    const row = outbox.db.prepare('SELECT last_error FROM _ves_outbox WHERE local_seq = ?').get(seq);
+    const row = outbox.db
+      .prepare('SELECT last_error FROM _ves_outbox WHERE local_seq = ?')
+      .get(seq);
     assert.equal(row.last_error, 'upstream unavailable');
   });
 });
@@ -1453,15 +1519,44 @@ describe('storePulledEvent', () => {
     assert.doesNotThrow(() => outbox.storePulledEvent(makePulledEvent()));
   });
 
-  it('can upsert (INSERT OR REPLACE) the same sequence_number', () => {
+  it('rejects a changed record at the same sequence_number', () => {
     const { outbox } = makeOutbox();
     const evt = makePulledEvent({ sequenceNumber: 5 });
     outbox.storePulledEvent(evt);
-    outbox.storePulledEvent({ ...evt, entityId: 'updated-id' });
+    assert.throws(() => outbox.storePulledEvent({ ...evt, entityId: 'updated-id' }), {
+      code: 'VES_EVENT_CONFLICT',
+    });
     const row = outbox.db
       .prepare('SELECT entity_id FROM _ves_pulled_events WHERE sequence_number = 5')
       .get();
-    assert.equal(row.entity_id, 'updated-id');
+    assert.equal(row.entity_id, evt.entityId);
+  });
+
+  it('deduplicates identical replays including reordered JSON without changing first receipt', () => {
+    const { outbox, db } = makeOutbox();
+    const event = makePulledEvent({ payload: { amount: '19.99', quantity: 2 } });
+    outbox.storePulledEvent(event);
+    db.prepare("UPDATE _ves_pulled_events SET pulled_at = '2000-01-01', payload = ?").run(
+      '{"quantity":2,"amount":"19.99"}',
+    );
+    const before = db.prepare('SELECT * FROM _ves_pulled_events').get();
+    outbox.storePulledEvents([event, { ...event, payload: { quantity: 2, amount: '19.99' } }]);
+    assert.deepEqual(db.prepare('SELECT * FROM _ves_pulled_events').get(), before);
+  });
+
+  it('rejects an event that would replace two different existing identities', () => {
+    const { outbox, db } = makeOutbox();
+    const first = makePulledEvent({ sequenceNumber: 1 });
+    const second = makePulledEvent({ sequenceNumber: 2 });
+    outbox.storePulledEvents([first, second]);
+    const before = db.prepare('SELECT * FROM _ves_pulled_events ORDER BY sequence_number').all();
+    assert.throws(() => outbox.storePulledEvent({ ...first, eventId: second.eventId }), {
+      code: 'VES_EVENT_CONFLICT',
+    });
+    assert.deepEqual(
+      db.prepare('SELECT * FROM _ves_pulled_events ORDER BY sequence_number').all(),
+      before,
+    );
   });
 
   it('stores multiple pulled events via storePulledEvents', () => {
@@ -1472,9 +1567,7 @@ describe('storePulledEvent', () => {
       makePulledEvent({ sequenceNumber: 12, eventId: crypto.randomUUID() }),
     ];
     outbox.storePulledEvents(events);
-    const count = outbox.db
-      .prepare('SELECT COUNT(*) as n FROM _ves_pulled_events')
-      .get();
+    const count = outbox.db.prepare('SELECT COUNT(*) as n FROM _ves_pulled_events').get();
     assert.equal(count.n, 3);
   });
 
@@ -1550,22 +1643,18 @@ describe('storePulledEvent', () => {
     assert.ok(events.every((event) => event.entityId === 'ord-entity-1'));
   });
 
-  it('storePulledEvents with INSERT OR REPLACE replaces duplicate event_id rows', () => {
-    // INSERT OR REPLACE silently replaces on UNIQUE conflicts rather than throwing.
-    // This test documents the actual behavior: the last row with a given event_id wins.
+  it('rolls back a batch that assigns one event_id to different sequences', () => {
     const { outbox } = makeOutbox();
     const dupId = crypto.randomUUID();
     const events = [
       makePulledEvent({ sequenceNumber: 21, eventId: dupId, entityId: 'first' }),
-      makePulledEvent({ sequenceNumber: 22, eventId: dupId, entityId: 'second' }), // replaces first
+      makePulledEvent({ sequenceNumber: 22, eventId: dupId, entityId: 'second' }),
     ];
-    // Should not throw — INSERT OR REPLACE handles the conflict
-    assert.doesNotThrow(() => outbox.storePulledEvents(events));
+    assert.throws(() => outbox.storePulledEvents(events), { code: 'VES_EVENT_CONFLICT' });
     const row = outbox.db
       .prepare('SELECT entity_id FROM _ves_pulled_events WHERE event_id = ?')
       .get(dupId);
-    // The second insert replaces the first (sequence_number 22 wins)
-    assert.equal(row.entity_id, 'second');
+    assert.equal(row, undefined, 'the complete conflicting batch rolls back');
   });
 });
 

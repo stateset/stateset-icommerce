@@ -1,0 +1,42 @@
+{
+  "name": "daily-versus-three-day-purchasing",
+  "seeds": [7, 42],
+  "goals": { "minFillRateBps": 10000 },
+  "plans": [
+    {
+      "name": "daily-review",
+      "days": 4,
+      "startingCash": "10.00",
+      "products": [
+        {
+          "sku": "REVIEW",
+          "initialStock": 1,
+          "unitPrice": "3.00",
+          "unitCost": "1.00",
+          "demand": { "dailyUnits": [1, 1, 1, 1] },
+          "reorderPoint": 1,
+          "targetStock": 2,
+          "leadTimeDays": 1
+        }
+      ]
+    },
+    {
+      "name": "three-day-review",
+      "days": 4,
+      "startingCash": "10.00",
+      "products": [
+        {
+          "sku": "REVIEW",
+          "initialStock": 1,
+          "unitPrice": "3.00",
+          "unitCost": "1.00",
+          "demand": { "dailyUnits": [1, 1, 1, 1] },
+          "reorderPoint": 1,
+          "targetStock": 2,
+          "leadTimeDays": 1,
+          "purchasing": { "reviewIntervalDays": 3 }
+        }
+      ]
+    }
+  ]
+}

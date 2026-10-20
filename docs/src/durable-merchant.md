@@ -65,11 +65,310 @@ event commits, HTTP restarts after quote/acceptance/settlement, original-buyer
 verification after restart, stable funding instructions, and two separate
 merchant processes competing for inventory in the same database.
 
-## Native checkout bridge (separate integration)
+## Native checkout over HTTP
+
+The source-tree launcher `cli/examples/native-merchant.mjs` connects the same
+signed Intent and Quote acceptance endpoints to native Commerce checkout:
+
+```bash
+ICP_MERCHANT_KEY_FILE=/protected/merchant.pem \
+ICP_MERCHANT_AID=aid:v1:zYourMerchant \
+PORT=8787 node cli/examples/native-merchant.mjs --config ./merchant-config.mjs
+# Add --apply to enable native order creation.
+```
+
+The operator-owned config module exports a function returning
+`{ store, native, close? }`. `store` is a durable `SqliteProtocolStore` on a
+**separate protocol database**, configured with WAL, full synchronous durability
+and a busy timeout. `native` supplies:
+
+- `commerce`: a native Commerce instance with cart fingerprint and stock-policy
+  feature support;
+- `principal`, `policy`, `storeId`: operator-owned kernel authority;
+- `resolveCart(intent)`: a read-only authorization lookup returning
+  `{ cartId, budgetId? }`, or `null`. Check the authenticated buyer's ownership
+  and delegation before returning an existing cart; never accept an unchecked
+  caller-provided cart ID. Cart creation and customer setup happen beforehand;
+- `readReceipt(idempotencyKey)`: authoritative lookup in that Commerce store's
+  kernel receipt ledger. Return parsed receipts, `null` only for definite
+  absence, and throw on lookup failure. Use a native connection owner or a
+  separate process; do not open the same commerce file through another bundled
+  SQLite library in the engine process.
+
+For example, the module's return value has this shape (the named resources are
+created by your operator integration):
+
+```javascript
+return {
+  store: protocolStore,
+  native: {
+    commerce,
+    principal,
+    policy,
+    storeId,
+    resolveCart: authorizeAndResolveExistingCart,
+    readReceipt: lookupAuthoritativeKernelReceipt,
+  },
+  close: closeOperatorResources,
+};
+```
+
+The launcher controls `allowApply` exclusively from `--apply`. Without it,
+acceptance returns `checkout.status: "preview"`, a kernel verdict, and no order
+or funding instructions. Signed quotes, nonces and preview receipts may still
+be persisted. Configure principal and agent trust keys as for durable reference
+mode; native mode also enforces trust by default.
+
+Quotes take exact prices, currency and totals from `checkoutSnapshot`, check
+the requested SKU quantities, maximum total and delegated amount/currency cap,
+and sign the cart fingerprint. Quote expiry is bounded by intent, cart and
+delegation expiry.
+Acceptance requires that saved fingerprint and strict availability for tracked
+SKUs. HTTP callers cannot supply kernel policy, principal, budget ID or an
+alternate acceptance key. The immutable quote ID defines the retry identity.
+Require budgets in the kernel policy and provision them separately.
+
+Without a payment integration, acceptance returns the native order ID, `payment_status: "pending"`,
+`checkout.status: "accepted"`, a pending protocol escrow projection, and
+`funding: null`. `inventory_reservation` is null because native checkout owns
+the allocation; the handler never creates a second reference reservation.
+The protocol escrow is not a funded external escrow. Native mode advertises
+only `purchase.create`; other verbs, escrow fulfillment, disputes and settlement
+co-signing return 503 until governed integrations exist. Health reports
+`checkout: "native"` and `settlement: "unconfigured"`.
+
+The order, allocation, budget, outbox and receipt commit in the native
+transaction. The protocol escrow and its signed initial event are a subsequent
+atomic checkpoint. If that checkpoint fails or the process dies after native
+commit, retry signed acceptance for the **same quote**. Receipt lookup recovers
+the original order before retrying the checkpoint. An uncertain native outcome
+returns HTTP 202 with `checkout.status: "reconciling"`; it is not success and
+must be retried with the same quote. Native and protocol commits are not one
+distributed transaction. Preserve and back up both stores; automatic cross-store
+restore reconciliation remains an operator integration.
+
+The protocol database pins its backend mode as well as the merchant identity.
+Restarting a native store through the reference launcher fails closed. Start
+with a fresh protocol database when changing backends; there is no automatic
+migration of reference orders into native orders.
+
+```bash
+node --test cli/test/unit/native-merchant-http.test.js
+```
+
+These native-backed tests cover preview, authoritative pricing, changed quoted
+terms, original-buyer authentication, two HTTP workers, stock and budget
+contention, SIGKILL after native commit, protocol checkpoint rollback and
+restart replay. They do not exercise a real payment provider or PostgreSQL.
+
+### Optional Stripe payment recording
+
+`icp-handler/src/stripe-payment.mjs` exports `createStripePaymentLookup` for
+read-only reconciliation of an existing Stripe PaymentIntent. Configure it in
+the operator module's `native.payments` field:
+
+```javascript
+import { createStripePaymentLookup } from './icp-handler/src/stripe-payment.mjs';
+
+const payments = {
+  provider: createStripePaymentLookup({
+    apiKey: process.env.STRIPE_SECRET_KEY,
+    accountId: operatorStripeAccountId,
+    apiVersion: operatorPinnedStripeApiVersion,
+    connectedAccount: false, // true adds the pinned Stripe-Account header
+    livemode: false, // explicit operator choice; test mode by default
+  }),
+  resolvePayment: async (terms) => {
+    // Read-only operator lookup. Return a pre-existing pi_... ID or null.
+    return lookupAuthorizedPaymentIntent(terms.cartId, terms.buyer);
+  },
+};
+// Include payments alongside commerce, principal, policy, storeId and readReceipt.
+```
+
+This first profile supports **USD, direct card charges and full capture only**.
+The payment flow that creates the PaymentIntent must attach these metadata
+values before payment: `stateset_cart_id`, `stateset_cart_fingerprint`, and
+`stateset_buyer`. They must match the exact accepted native cart snapshot and
+authenticated buyer. The resolver must authorize that association; no payment
+reference, secret key or provider URL is taken from HTTP acceptance arguments.
+API versions and account credentials remain operator configuration.
+
+The adapter checks the authenticated account, test/live mode, currency, exact
+minor-unit amount, metadata binding, full amount received and the expanded
+latest charge. It rejects partial captures, refunds, disputes, destination
+transfers, on-behalf-of charges and unsupported payment methods. This uses
+Stripe's [PaymentIntent retrieval](https://docs.stripe.com/api/payment_intents/retrieve),
+[Charge fields](https://docs.stripe.com/api/charges/object) and
+[connected-account authentication](https://docs.stripe.com/connect/authentication).
+Only GET requests are made, with redirects disabled; provider response bodies,
+client secrets and card details are not persisted or returned.
+
+With `--apply`, the handler pins the provider identity and payment reference in
+its journal, then uses `payments.create` and `payments.complete` kernel commands
+to record verified capture. Grant those capabilities and policy rules to the
+operator principal. Checkout consumes its configured budget once. Payment
+recording does not reuse that checkout budget: it records previously captured
+money and issues no new external debit. A policy requiring another budget for
+`payments.create` will refuse this initial integration; it is never bypassed.
+
+The optional response field `payment.status` is separate from `checkout.status`:
+
+| Payment status    | Meaning                                                                                                                                               |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pending`         | No mapped PaymentIntent or provider payment still incomplete                                                                                          |
+| `reconciling`     | Lookup, binding, evidence or kernel outcome could not be established; retry the same signed quote acceptance                                          |
+| `needs_attention` | Provider outcome requires investigation or a governed command was rejected                                                                            |
+| `recorded`        | Native payment completion receipt recovered or committed; response includes native `payment_id` and order acceptance reports `payment_status: "paid"` |
+
+A 200 checkout response may still have pending or reconciling payment. Never
+fulfill solely because checkout was accepted. The provider reference remains
+claimed across retries; it cannot pay two native orders through the same
+protocol journal. Use one shared durable journal for the merchant's workers.
+Other journals and write entrypoints require separate deduplication controls.
+
+Native payment creation, completion and protocol projection are separate
+recoverable commits. The journal keeps immutable commands, and authoritative
+native receipt lookup runs before redispatch. Concurrent workers converge on
+one payment. If the response or projection is lost after completion, retries
+recover the receipt even during a provider outage. Preview performs no provider
+lookup, creates no native payment and claims no provider reference.
+
+`recorded` is historical capture evidence. It does not certify Stripe payout,
+irrevocability, future refunds/disputes, or funded ICP escrow. Subsequent reversal
+and accounting reconciliation, external charge creation, automatic recovery
+scheduling and live-provider testing remain open. The initial escrow stays
+pending and simulated fulfillment/settlement endpoints remain disabled.
+
+```bash
+node --test icp-handler/test/stripe-payment.test.mjs
+node --test cli/test/unit/native-merchant-http.test.js
+```
+
+Tests use actual native orders/payments and controlled Stripe response fixtures.
+They cover concurrency, stock/budget conservation, preview, mismatched provider
+evidence, kernel denial, payment-reference reuse, process death after each native
+payment step, and protocol checkpoint failure. No Stripe account or funds are
+used; these are not live-provider certification results.
+
+## Optional native dispatch recording
+
+The native host can add `fulfillment.resolveDispatch(terms)`, a read-only lookup
+of an **operator-approved full or partial dispatch record**. Signed acceptance retries for
+the original quote then reconcile that record through `orders.ship_reserved`. HTTP buyers
+cannot supply dispatch items, tracking, policy, principal or a new retry key.
+The resolver must authorize the association with `terms.orderId` and
+`terms.buyer`; return `null` while no dispatch is approved. Terms also include
+`quoteId`, exact `amount` and `currency`.
+
+```javascript
+native: {
+  // Existing commerce, principal, policy, storeId, readReceipt and resolveCart.
+  // commerce must expose orders.get(id), including totalAmountExact and version.
+  fulfillment: {
+    resolveDispatch: async (terms) => dispatchLedger.approvedForOrder(terms.orderId),
+  },
+}
+```
+
+An approved record has this shape; its version and items come from the native
+order reviewed by the operator, never from buyer input:
+
+```javascript
+{
+  reference: 'warehouse:dispatch-123',
+  orderId: 'native-order-uuid',
+  orderVersion: 3,
+  trackingNumber: 'carrier-tracking-reference',
+  items: [{ orderItemId: 'native-order-line-uuid', quantity: 2 }],
+}
+```
+
+Prepare the order through a governed `orders.transition` to `processing` and
+record payment before approving dispatch. The bridge requires native payment
+status `paid`, matching exact total/currency, and a `processing` or
+`partially_shipped` order. Each approved item quantity is **additional units for
+this dispatch**, at most the unshipped remainder. A record may name a subset of
+order lines. Empty, duplicate, foreign, excessive or stale lines are refused. Grant the configured principal `orders.ship_reserved` in the kernel policy.
+The native binary must advertise `orders.ship_reserved.v1` through
+`kernelFeatures()` for initial full shipping. Partial or subsequent dispatches
+also require `orders.ship_reserved.partial.v1`; a full-only binary refuses those
+approvals before creating a claim.
+The command pins `expected_version` and exact unit quantity, so a competing
+order or payment-status change is checked inside the shipping transaction.
+Policies requiring additional authority or a budget still apply and may refuse
+the command; the bridge does not borrow the checkout spending budget.
+
+With `--apply`, the protocol journal pins the dispatch reference and immutable
+command before execution. One reference can be claimed only once per store in
+that shared journal. A new dispatch needs a new reference and the current native
+order version. For example, ship one of two units with `quantity: 1`, then approve
+the remaining unit under a different reference after reading the resulting order.
+The resolver should return the next approved record, or `null`. Returning an
+already-used reference for this order only recovers progress; it cannot ship again.
+
+A durable per-order pointer in the configured operator scope selects the current
+immutable command. Workers pin
+it atomically, so competing approvals cannot replace each other. The current
+command must have a verified success receipt before another approval is considered.
+At most one new command executes per acceptance request. Receipt lookup must distinguish authoritative absence
+(`null`) from unavailable evidence (throw), as with payment reconciliation.
+Retries and restarts reuse the same command, including after the kernel commits
+but the response or protocol checkpoint is lost. An existing command no longer
+requires the dispatch resolver to be online. Preview creates no dispatch claim
+or command and invokes no dispatch lookup.
+
+The optional `fulfillment.status` is `pending` without approval, `reconciling`
+when lookup or execution is uncertain, `needs_attention` for invalid approval
+or kernel rejection, and `recorded` after a verified native shipment receipt.
+New recorded results contain `order_id`, `tracking_number`,
+`inventory: "reserved_stock_consumed"`, `order_status`, `order_version`, and
+cumulative `items: [{ order_item_id, quantity, shipped_quantity }]`. The acceptance
+response reports `partially_shipped` until every unit has shipped, then `shipped`.
+While a partial shipment is recorded, `next_dispatch_status` can be `pending`,
+`reconciling`, or `needs_attention`; known progress remains visible during resolver
+or receipt outages and a later command's rejection. A late worker cannot reduce
+the recorded order version or shipped progress. Attention at the same version
+is retained until a later verified shipment advances the projection.
+Results are historical receipt evidence. The escrow remains
+pending, funding remains null, and simulated fulfillment/settlement routes stay
+disabled. Health adds `fulfillment_reconciliation: "configured"`.
+
+**Inventory boundary:** `orders.ship_reserved` deducts reserved units from both
+on-hand and allocated stock, preserving available stock. Partly consumed holds
+keep their remaining quantities; fully consumed holds become fulfilled. Remaining
+tracked order-line demand must exactly match line-bound open reservations, backed by
+sufficient inventory balances. Expired, missing, excess or underallocated holds
+are refused. Stock, order quantities, inventory ledger, outbox events and the
+idempotent receipt commit together. Untracked SKUs have no stock to deduct.
+This integration does not purchase a carrier label, dispatch goods, prove delivery, or release
+escrow funds. Native outbox and receipt records provide shipment audit evidence;
+the protocol escrow event stream continues to describe only escrow state.
+Carrier reconciliation, refunds and disputes remain separate work. See
+[kernel execution](kernel-execution.md) for the stock coverage and prior-receipt
+requirements. A pinned rejected command is retained for operator reconciliation;
+changing the resolver does not silently replace it.
+
+The existing `orders.ship` command retains its reservation-confirmation behavior.
+Commands already pinned by an earlier merchant build retain that command and
+report `inventory: "depletion_unverified"` when recovered. Upgrading never
+silently consumes inventory for a historical shipment. Reconcile those historical
+holds separately; use the new capability for newly approved dispatches.
+
+The native HTTP suite covers concurrent workers, process death after shipping,
+protocol checkpoint failure, resolver and receipt outages, unpaid orders,
+stale/foreign/excess dispatch records, policy denial and a payment-state race.
+Partial-shipment tests cover multiple workers, successive approvals, recovery of
+a pinned later dispatch without its resolver, and loss of the native response
+or protocol checkpoint. Unit tests also interleave competing distinct approvals
+and verify that stale projections cannot overwrite newer shipment progress.
+Tests use local dispatch fixtures; no carrier service or physical dispatch occurs.
+
+## Native checkout bridge
 
 `icp-handler/src/native-checkout.mjs` exports `NativeMerchantCheckout` for hosts
-using the embedded engine. This is **not yet connected to the reference HTTP
-launcher**. Its operator-owned constructor accepts `commerce`, a
+using the embedded engine. The native HTTP launcher above wraps this bridge;
+the reference launcher retains its simulated backend. Its operator-owned constructor accepts `commerce`, a
 `SqliteProtocolStore`, `principal`, `storeId`, `policy`, `resolveQuote`,
 `readReceipt`, optional `stockPolicy` and `requireCartFingerprint`, and an explicit
 `allowApply: true` to enable writes.

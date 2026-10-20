@@ -278,7 +278,7 @@ SPECIALIZED COMMANDS:
   stateset-channels        Messaging channel orchestration
   stateset-events          Legacy event streaming (DB webhooks + feed)
   stateset-mcp-events      MCP execution event stream gateway
-  stateset-simulate        A2A simulation playground with snapshots
+  stateset-simulate        Embedded inventory/purchasing scenarios and A2A demos
   stateset-skills          Skills marketplace
   stateset-x402            x402 config + key setup
   stateset-x402-mcp        x402 MCP server for paid API calls

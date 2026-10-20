@@ -2057,8 +2057,10 @@ async fn push_returns_storage_error_when_ack_persist_fails() {
     let err = engine.push(&AcceptAllTransport).await.unwrap_err();
     assert!(matches!(err, SyncError::Storage(_)));
     assert_eq!(engine.pending_count(), 1);
-    assert_eq!(engine.state().remote_head, 0);
-    assert!(engine.state().last_push.is_none());
+    // The remote outcome is now journaled before cleanup is attempted.
+    assert_eq!(engine.state().remote_head, 1);
+    assert!(engine.state().last_push.is_some());
+    assert_eq!(engine.pending_outbox_removals.len(), 1);
 }
 
 #[tokio::test]
@@ -2097,7 +2099,7 @@ async fn pull_conflict_resolution() {
 }
 
 #[tokio::test]
-async fn pull_does_not_advance_cursor_when_conflict_resolution_cannot_persist() {
+async fn pull_journals_remote_event_before_failed_conflict_cleanup() {
     #[derive(Debug)]
     struct ConflictTransport;
 
@@ -2126,8 +2128,9 @@ async fn pull_does_not_advance_cursor_when_conflict_resolution_cannot_persist() 
     std::fs::create_dir(&path).unwrap();
     assert!(matches!(engine.pull(&ConflictTransport).await, Err(SyncError::Storage(_))));
     assert_eq!(engine.pending_count(), 1);
-    assert_eq!(engine.buffered_count(), 0);
-    assert_eq!(engine.state().remote_cursor, 0);
+    assert_eq!(engine.buffered_count(), 1);
+    assert_eq!(engine.state().remote_cursor, 5);
+    assert_eq!(engine.pending_outbox_removals.len(), 1);
 }
 
 #[tokio::test]
@@ -2423,4 +2426,248 @@ fn engine_debug() {
     let engine = SyncEngine::new(make_config()).unwrap();
     let debug = format!("{engine:?}");
     assert!(debug.contains("SyncEngine"));
+}
+
+#[derive(Debug, Default)]
+struct JournalTransport {
+    batches: Mutex<Vec<Vec<Uuid>>>,
+    count_only: bool,
+}
+
+#[async_trait::async_trait]
+impl Transport for JournalTransport {
+    async fn push_events(&self, events: &[SyncEvent]) -> Result<PushResult, SyncError> {
+        self.batches.lock().unwrap().push(events.iter().map(|event| event.id).collect());
+        if self.count_only {
+            return Ok(PushResult::accepted_only(events.len(), 100));
+        }
+        let mut acknowledgements = Vec::new();
+        let mut rejections = Vec::new();
+        for (index, event) in events.iter().enumerate() {
+            match event.event_type.as_str() {
+                "reject" => rejections.push(PushRejection::new(event.id).with_retryable(false)),
+                "retry" => rejections.push(PushRejection::new(event.id).with_retryable(true)),
+                _ => acknowledgements.push(PushAcknowledgement::new(event.id, index as u64 + 1)),
+            }
+        }
+        Ok(PushResult::accepted_only(acknowledgements.len(), 100)
+            .with_acknowledgements(acknowledgements)
+            .with_rejections(rejections))
+    }
+
+    async fn pull_events(&self, _: u64, _: usize) -> Result<PullResult, SyncError> {
+        Ok(PullResult { events: vec![], remote_head: 100, has_more: false })
+    }
+}
+
+#[tokio::test]
+async fn failed_push_journal_write_preserves_events_and_prior_metadata() {
+    let dir = tempdir().unwrap();
+    let outbox = dir.path().join("outbox.json");
+    let state = dir.path().join("state.json");
+    let config = make_config()
+        .with_outbox_path(outbox.to_string_lossy())
+        .with_state_path(state.to_string_lossy());
+    let mut engine = SyncEngine::new(config.clone()).unwrap();
+    for kind in ["accepted", "reject", "retry"] {
+        engine.record(make_event(kind)).unwrap();
+    }
+    let original = fs::read(&outbox).unwrap();
+    fs::create_dir(&state).unwrap();
+    let transport = JournalTransport::default();
+    assert!(matches!(engine.push(&transport).await, Err(SyncError::Storage(_))));
+    assert_eq!(engine.pending_count(), 3);
+    assert_eq!(engine.dead_letter_count(), 0);
+    assert!(engine.confirmations().is_empty());
+    assert_eq!(engine.state.remote_head, 0);
+    assert!(engine.pending_outbox_removals.is_empty());
+    assert_eq!(fs::read(&outbox).unwrap(), original);
+    drop(engine);
+    fs::remove_dir(&state).unwrap();
+    let mut reopened = SyncEngine::new(config).unwrap();
+    assert_eq!(reopened.pending_count(), 3);
+    reopened.push(&transport).await.unwrap();
+    assert_eq!(reopened.pending_count(), 1);
+    assert_eq!(reopened.dead_letter_count(), 1);
+    assert_eq!(reopened.confirmations().len(), 1);
+}
+
+#[tokio::test]
+async fn restart_finishes_journaled_push_without_resending_or_losing_rejections() {
+    let dir = tempdir().unwrap();
+    let outbox = dir.path().join("outbox.json");
+    let saved = dir.path().join("saved.json");
+    let config =
+        make_config().with_outbox_path(outbox.to_string_lossy()).with_confirmation_capacity(1);
+    let mut engine = SyncEngine::new(config.clone()).unwrap();
+    let mut ids = Vec::new();
+    for kind in ["accepted-a", "accepted-b", "reject", "retry"] {
+        let event = make_event(kind);
+        ids.push(event.id);
+        engine.record(event).unwrap();
+    }
+    // The remote reply can be journaled, but local outbox replacement fails.
+    fs::rename(&outbox, &saved).unwrap();
+    fs::create_dir(&outbox).unwrap();
+    let transport = JournalTransport::default();
+    assert!(matches!(engine.push(&transport).await, Err(SyncError::Storage(_))));
+    assert_eq!(engine.pending_count(), 4);
+    assert_eq!(engine.pending_outbox_removals.len(), 3);
+    assert_eq!(engine.confirmations().len(), 1);
+    assert_eq!(engine.dead_letter_count(), 1);
+    let receipts = engine.kernel_receipts();
+    assert_eq!(
+        receipts.iter().filter(|r| r.status == KernelReceiptStatus::LocalPending).count(),
+        1
+    );
+    assert_eq!(receipts.iter().filter(|r| r.event_id == ids[2]).count(), 1);
+    drop(engine);
+    fs::remove_dir(&outbox).unwrap();
+    fs::rename(&saved, &outbox).unwrap();
+
+    let mut reopened = SyncEngine::new(config.clone()).unwrap();
+    assert_eq!(reopened.pending_count(), 1);
+    assert!(reopened.pending_outbox_removals.is_empty());
+    assert_eq!(reopened.dead_letters()[0].event.id, ids[2]);
+    assert_eq!(reopened.confirmations()[0].event_id, ids[1]);
+    reopened.push(&transport).await.unwrap();
+    assert_eq!(transport.batches.lock().unwrap().as_slice(), &[ids.clone(), vec![ids[3]]]);
+    // The journal has completed, so operator requeue must not be removed by it.
+    reopened.requeue_dead_letter(ids[2]).unwrap();
+    drop(reopened);
+    let reopened = SyncEngine::new(config).unwrap();
+    assert_eq!(reopened.pending_count(), 2);
+    assert_eq!(reopened.dead_letter_count(), 0);
+}
+
+#[tokio::test]
+async fn live_retry_finishes_count_only_push_without_contacting_transport_again() {
+    let dir = tempdir().unwrap();
+    let outbox = dir.path().join("outbox.json");
+    let saved = dir.path().join("saved.json");
+    let config = make_config().with_outbox_path(outbox.to_string_lossy());
+    let mut engine = SyncEngine::new(config.clone()).unwrap();
+    engine.record(make_event("first")).unwrap();
+    engine.record(make_event("second")).unwrap();
+    fs::rename(&outbox, &saved).unwrap();
+    fs::create_dir(&outbox).unwrap();
+    let transport = JournalTransport { count_only: true, ..JournalTransport::default() };
+    assert!(engine.push(&transport).await.is_err());
+    fs::remove_dir(&outbox).unwrap();
+    fs::rename(&saved, &outbox).unwrap();
+    assert_eq!(engine.push(&transport).await.unwrap().accepted, 0);
+    assert_eq!(transport.batches.lock().unwrap().len(), 1);
+    assert_eq!(engine.pending_count(), 0);
+    drop(engine);
+    assert_eq!(SyncEngine::new(config).unwrap().pending_count(), 0);
+}
+
+#[tokio::test]
+async fn restart_replays_cleanup_when_outbox_removal_preceded_journal_clear() {
+    let dir = tempdir().unwrap();
+    let outbox = dir.path().join("outbox.json");
+    let saved = dir.path().join("saved.json");
+    let config = make_config().with_outbox_path(outbox.to_string_lossy());
+    let mut engine = SyncEngine::new(config.clone()).unwrap();
+    let event = make_event("accepted");
+    let id = event.id;
+    engine.record(event).unwrap();
+    fs::rename(&outbox, &saved).unwrap();
+    fs::create_dir(&outbox).unwrap();
+    assert!(engine.push(&JournalTransport::default()).await.is_err());
+    let state_path = engine.state_path.clone().unwrap();
+    let journal = fs::read(&state_path).unwrap();
+    fs::remove_dir(&outbox).unwrap();
+    fs::rename(&saved, &outbox).unwrap();
+    // Represent a crash after the next durable step, before journal clearing.
+    engine.outbox.try_retain(|event| event.id != id).unwrap();
+    engine.outbox.sync_persistence().unwrap();
+    drop(engine);
+    assert_eq!(fs::read(&state_path).unwrap(), journal);
+    let reopened = SyncEngine::new(config).unwrap();
+    assert_eq!(reopened.pending_count(), 0);
+    assert_eq!(reopened.confirmations()[0].event_id, id);
+    assert!(reopened.pending_outbox_removals.is_empty());
+}
+
+#[test]
+fn push_refuses_colliding_remote_sequences() {
+    let events = [make_event("first"), make_event("second")];
+    let result = PushResult::accepted_only(2, 10).with_acknowledgements(vec![
+        PushAcknowledgement::new(events[0].id, 10),
+        PushAcknowledgement::new(events[1].id, 10),
+    ]);
+    assert!(matches!(
+        SyncEngine::validate_push_result(&events, &result),
+        Err(SyncError::Transport(_))
+    ));
+}
+
+#[test]
+fn empty_sync_snapshots_fail_without_erasing_pending_events() {
+    let dir = tempdir().unwrap();
+    let outbox = dir.path().join("outbox.json");
+    let state = dir.path().join("state.json");
+    let config = make_config()
+        .with_outbox_path(outbox.to_string_lossy())
+        .with_state_path(state.to_string_lossy());
+    let mut engine = SyncEngine::new(config.clone()).unwrap();
+    engine.record(make_event("pending")).unwrap();
+    drop(engine);
+    let original = fs::read(&outbox).unwrap();
+    fs::write(&state, "").unwrap();
+    assert!(SyncEngine::new(config.clone()).is_err());
+    assert_eq!(fs::read(&outbox).unwrap(), original);
+    fs::remove_file(&state).unwrap();
+    fs::write(&outbox, "").unwrap();
+    assert!(SyncEngine::new(config).is_err());
+    assert!(fs::read(&outbox).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn lost_push_response_retries_stable_ids_after_restart() {
+    #[derive(Debug, Default)]
+    struct LostResponseTransport {
+        committed: Mutex<HashMap<Uuid, u64>>,
+        attempts: AtomicU64,
+    }
+    #[async_trait::async_trait]
+    impl Transport for LostResponseTransport {
+        async fn push_events(&self, events: &[SyncEvent]) -> Result<PushResult, SyncError> {
+            let mut committed = self.committed.lock().unwrap();
+            let mut acknowledgements = Vec::new();
+            for event in events {
+                let next = committed.len() as u64 + 1;
+                let sequence = *committed.entry(event.id).or_insert(next);
+                acknowledgements.push(PushAcknowledgement::new(event.id, sequence));
+            }
+            if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(SyncError::Transport("reply lost after remote commit".into()));
+            }
+            Ok(PushResult::accepted_only(events.len(), committed.len() as u64)
+                .with_acknowledgements(acknowledgements))
+        }
+        async fn pull_events(&self, _: u64, _: usize) -> Result<PullResult, SyncError> {
+            Ok(PullResult { events: vec![], remote_head: 0, has_more: false })
+        }
+    }
+    let dir = tempdir().unwrap();
+    let config = make_config().with_outbox_path(dir.path().join("outbox.json").to_string_lossy());
+    let mut engine = SyncEngine::new(config.clone()).unwrap();
+    let first = make_event("first");
+    let second = make_event("second");
+    let ids = [first.id, second.id];
+    engine.record(first).unwrap();
+    engine.record(second).unwrap();
+    let remote = LostResponseTransport::default();
+    assert!(engine.push(&remote).await.is_err());
+    assert_eq!(engine.pending_count(), 2);
+    drop(engine);
+    let mut reopened = SyncEngine::new(config).unwrap();
+    reopened.push(&remote).await.unwrap();
+    assert_eq!(reopened.pending_count(), 0);
+    assert_eq!(remote.committed.lock().unwrap().len(), 2);
+    for id in ids {
+        assert!(reopened.confirmation_for_event(id).is_some());
+    }
 }

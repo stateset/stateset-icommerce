@@ -110,6 +110,7 @@ const TOOL_MODULES = {
   'supplier-skus': namedLoader('./supplier-skus.js', 'supplierSkuTools'),
   'inbound-shipments': namedLoader('./inbound-shipments.js', 'inboundShipmentTools'),
   explain: namedLoader('./explain.js', 'explainTools'),
+  simulations: namedLoader('./simulations.js', 'simulationTools'),
   'agentic-runtime': () => import('../mcp-server.js').then((m) => m.getStaticAgenticRuntimeTools()),
 };
 

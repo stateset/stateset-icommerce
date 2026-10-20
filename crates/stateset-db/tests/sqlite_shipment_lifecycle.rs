@@ -57,6 +57,218 @@ fn item_input() -> CreateShipmentItem {
     }
 }
 
+fn tracking_input() -> AddShipmentEvent {
+    AddShipmentEvent {
+        event_type: "arrived_at_hub".into(),
+        location: Some("Vancouver".into()),
+        description: Some("Carrier observation".into()),
+        event_time: Some("2024-02-03T04:05:06.123456789Z".parse().unwrap()),
+    }
+}
+
+#[test]
+fn tracking_append_versions_parent_and_binds_persisted_event_to_outbox() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let repo = db.shipments();
+    let s = shipment(&db);
+    let event = repo.add_event(s.id, tracking_input()).unwrap();
+    let stored = repo.get(s.id).unwrap().unwrap();
+    assert_eq!(stored.version, s.version + 1);
+    assert_eq!(stored.status, s.status);
+    assert_eq!(stored.updated_at, event.created_at);
+    assert_eq!(event.event_time.timestamp_subsec_nanos(), 123_456_000);
+    assert_eq!(event.created_at.timestamp_subsec_nanos() % 1_000, 0);
+    let value = serde_json::to_value(&event).unwrap();
+    assert_eq!(serde_json::to_value(&stored.events[0]).unwrap(), value);
+    assert_eq!(serde_json::to_value(&repo.get_events(s.id).unwrap()[0]).unwrap(), value);
+    let fact = db
+        .kernel_outbox()
+        .pending(100)
+        .unwrap()
+        .into_iter()
+        .find(|fact| {
+            fact.aggregate_id == s.id.to_string() && fact.event_type == "shipments.event_added.v1"
+        })
+        .unwrap();
+    assert_eq!(fact.payload["event"], value);
+    assert_eq!(fact.payload["previous_version"], s.version);
+    assert_eq!(fact.payload["version"], stored.version);
+    assert_eq!(fact.payload["changed_fields"], serde_json::json!(["events"]));
+    assert!(matches!(
+        repo.update(
+            s.id,
+            UpdateShipment {
+                expected_version: Some(s.version),
+                notes: Some("stale".into()),
+                ..Default::default()
+            }
+        ),
+        Err(CommerceError::VersionConflict { .. })
+    ));
+    assert_eq!(events(&db, s.id), 2);
+}
+
+#[test]
+fn tracking_rejects_empty_types_and_missing_parent_without_effects() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let repo = db.shipments();
+    let s = shipment(&db);
+    for event_type in ["", " \t\n"] {
+        assert!(matches!(
+            repo.add_event(
+                s.id,
+                AddShipmentEvent { event_type: event_type.into(), ..tracking_input() }
+            ),
+            Err(CommerceError::ValidationError(_))
+        ));
+    }
+    assert!(matches!(
+        repo.add_event(stateset_core::ShipmentId::new(), tracking_input()),
+        Err(CommerceError::NotFound)
+    ));
+    assert_eq!(
+        serde_json::to_value(repo.get(s.id).unwrap().unwrap()).unwrap(),
+        serde_json::to_value(s.clone()).unwrap()
+    );
+    assert_eq!(events(&db, s.id), 1);
+}
+
+#[test]
+fn tracking_text_limits_match_postgres_and_count_unicode_characters() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let repo = db.shipments();
+    let s = shipment(&db);
+    for input in [
+        AddShipmentEvent { event_type: "é".repeat(101), ..tracking_input() },
+        AddShipmentEvent { location: Some("港".repeat(256)), ..tracking_input() },
+        AddShipmentEvent { event_type: "scan\0".into(), ..tracking_input() },
+        AddShipmentEvent { location: Some("hub\0".into()), ..tracking_input() },
+        AddShipmentEvent { description: Some("note\0".into()), ..tracking_input() },
+    ] {
+        assert!(matches!(repo.add_event(s.id, input), Err(CommerceError::ValidationError(_))));
+    }
+    assert_eq!(
+        serde_json::to_value(repo.get(s.id).unwrap().unwrap()).unwrap(),
+        serde_json::to_value(&s).unwrap()
+    );
+    assert_eq!(events(&db, s.id), 1);
+    let event = repo
+        .add_event(
+            s.id,
+            AddShipmentEvent {
+                event_type: "é".repeat(100),
+                location: Some("港".repeat(255)),
+                ..tracking_input()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&repo.get_events(s.id).unwrap()[0]).unwrap(),
+        serde_json::to_value(event).unwrap()
+    );
+    assert_eq!(repo.get(s.id).unwrap().unwrap().version, 2);
+}
+
+#[test]
+fn late_tracking_observations_preserve_terminal_status_and_fulfillment() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let repo = db.shipments();
+    for status in [ShipmentStatus::Cancelled, ShipmentStatus::Delivered] {
+        let s = shipment(&db);
+        if status == ShipmentStatus::Cancelled {
+            repo.cancel(s.id).unwrap();
+        } else {
+            ready(&db, s.id);
+            repo.ship(s.id, None).unwrap();
+            repo.mark_in_transit(s.id).unwrap();
+            repo.mark_out_for_delivery(s.id).unwrap();
+            repo.mark_delivered(s.id).unwrap();
+        }
+        let before = repo.get(s.id).unwrap().unwrap();
+        let order_before = serde_json::to_value(db.orders().get(s.order_id).unwrap()).unwrap();
+        let first = repo.add_event(s.id, tracking_input()).unwrap();
+        // Repeated observations remain distinct appends; no heuristic deduplication.
+        let second = repo.add_event(s.id, tracking_input()).unwrap();
+        assert_ne!(first.id, second.id);
+        let after = repo.get(s.id).unwrap().unwrap();
+        assert_eq!(after.status, status);
+        assert_eq!(after.version, before.version + 2);
+        assert_eq!(after.shipped_at, before.shipped_at);
+        assert_eq!(after.delivered_at, before.delivered_at);
+        assert_eq!(after.events.len(), 2);
+        assert_eq!(
+            serde_json::to_value(db.orders().get(s.order_id).unwrap()).unwrap(),
+            order_before
+        );
+    }
+}
+
+#[test]
+fn tracking_audit_failure_and_version_overflow_roll_back_event_and_parent() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let repo = db.shipments();
+    let s = shipment(&db);
+    db.conn().unwrap().execute_batch("CREATE TRIGGER reject_tracking_audit BEFORE INSERT ON kernel_outbox WHEN NEW.event_type = 'shipments.event_added.v1' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END;").unwrap();
+    assert!(repo.add_event(s.id, tracking_input()).is_err());
+    assert_eq!(
+        serde_json::to_value(repo.get(s.id).unwrap().unwrap()).unwrap(),
+        serde_json::to_value(&s).unwrap()
+    );
+    assert_eq!(events(&db, s.id), 1);
+    db.conn().unwrap().execute_batch("DROP TRIGGER reject_tracking_audit").unwrap();
+    db.conn()
+        .unwrap()
+        .execute(
+            "UPDATE shipments SET version = ? WHERE id = ?",
+            rusqlite::params![i32::MAX, s.id.to_string()],
+        )
+        .unwrap();
+    assert!(repo.add_event(s.id, tracking_input()).unwrap_err().to_string().contains("exhausted"));
+    let stored = repo.get(s.id).unwrap().unwrap();
+    assert_eq!(stored.version, i32::MAX);
+    assert_eq!(stored.updated_at, s.updated_at);
+    assert!(stored.events.is_empty());
+    assert_eq!(events(&db, s.id), 1);
+}
+
+#[test]
+fn concurrent_tracking_appends_and_cancellation_serialize_versions() {
+    let db = Arc::new(SqliteDatabase::in_memory().unwrap());
+    let s = shipment(&db);
+    let barrier = Arc::new(Barrier::new(5));
+    let tasks: Vec<_> = (0..5)
+        .map(|index| {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                if index == 4 {
+                    db.shipments().cancel(s.id).unwrap();
+                } else {
+                    db.shipments().add_event(s.id, tracking_input()).unwrap();
+                }
+            })
+        })
+        .collect();
+    for task in tasks {
+        task.join().unwrap();
+    }
+    let stored = db.shipments().get(s.id).unwrap().unwrap();
+    assert_eq!(stored.status, ShipmentStatus::Cancelled);
+    assert_eq!(stored.version, 6);
+    assert_eq!(stored.events.len(), 4);
+    let mut versions: Vec<_> = db
+        .kernel_outbox()
+        .pending(100)
+        .unwrap()
+        .into_iter()
+        .filter(|fact| fact.aggregate_id == s.id.to_string())
+        .map(|fact| fact.payload["version"].as_i64().unwrap())
+        .collect();
+    versions.sort_unstable();
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
+}
+
 fn allocation(order_id: stateset_core::OrderId, quantity: i32) -> CreateShipment {
     CreateShipment {
         order_id,
@@ -720,4 +932,97 @@ fn shipment_version_migration_preserves_existing_records_and_can_be_rerun() {
     assert_eq!(stored.recipient_name, s.recipient_name);
     assert_eq!(stored.created_at, s.created_at);
     assert_eq!(db.shipments().mark_processing(s.id).unwrap().version, 2);
+}
+
+#[test]
+fn versioned_packing_edits_refuse_stale_reads_without_mutating_items_or_facts() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let s = shipment(&db);
+    let repo = db.shipments();
+    let item = repo.add_item_with_version(s.id, item_input(), Some(s.version)).unwrap();
+    let current = repo.get(s.id).unwrap().unwrap();
+    for version in [s.version, -1, i32::MAX] {
+        assert!(matches!(
+            repo.add_item_with_version(s.id, CreateShipmentItem { quantity: 5, ..item_input() }, Some(version)),
+            Err(CommerceError::VersionConflict { expected_version, .. }) if expected_version == version
+        ));
+        assert!(matches!(
+            repo.remove_item_with_version(item.id, Some(version)),
+            Err(CommerceError::VersionConflict { expected_version, .. }) if expected_version == version
+        ));
+        assert_eq!(
+            serde_json::to_value(repo.get(s.id).unwrap().unwrap()).unwrap(),
+            serde_json::to_value(&current).unwrap()
+        );
+        assert_eq!(events(&db, s.id), 2);
+    }
+    repo.remove_item_with_version(item.id, Some(current.version)).unwrap();
+    let stored = repo.get(s.id).unwrap().unwrap();
+    assert_eq!(stored.version, current.version + 1);
+    assert!(stored.items.is_empty());
+    assert_eq!(events(&db, s.id), 3);
+}
+
+#[test]
+fn concurrent_versioned_packing_edits_have_one_winner_even_with_spare_capacity() {
+    // Separate connections to the same durable store, not a process-local mutex.
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let db =
+        SqliteDatabase::new(&stateset_db::DatabaseConfig::sqlite(file.path().to_str().unwrap()))
+            .unwrap();
+    let s = shipment(&db);
+    let barrier = Arc::new(Barrier::new(2));
+    let handles: Vec<_> = (0..2)
+        .map(|_| {
+            let peer = SqliteDatabase::new(&stateset_db::DatabaseConfig::sqlite(
+                file.path().to_str().unwrap(),
+            ))
+            .unwrap();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                peer.shipments().add_item_with_version(s.id, item_input(), Some(s.version))
+            })
+        })
+        .collect();
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+    assert_eq!(
+        results.iter().filter(|r| matches!(r, Err(CommerceError::VersionConflict { .. }))).count(),
+        1
+    );
+    let stored = db.shipments().get(s.id).unwrap().unwrap();
+    assert_eq!(stored.version, 2);
+    assert_eq!(stored.items.len(), 1);
+    assert_eq!(events(&db, s.id), 2);
+
+    // An add and a remove also compete on the same parent, despite distinct item IDs.
+    let item_id = stored.items[0].id;
+    let handles: Vec<_> = (0..2)
+        .map(|index| {
+            let peer = SqliteDatabase::new(&stateset_db::DatabaseConfig::sqlite(
+                file.path().to_str().unwrap(),
+            ))
+            .unwrap();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                if index == 0 {
+                    peer.shipments().add_item_with_version(s.id, item_input(), Some(2)).map(|_| ())
+                } else {
+                    peer.shipments().remove_item_with_version(item_id, Some(2))
+                }
+            })
+        })
+        .collect();
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+    assert_eq!(
+        results.iter().filter(|r| matches!(r, Err(CommerceError::VersionConflict { .. }))).count(),
+        1
+    );
+    let stored = db.shipments().get(s.id).unwrap().unwrap();
+    assert_eq!(stored.version, 3);
+    assert!(matches!(stored.items.len(), 0 | 2));
+    assert_eq!(events(&db, s.id), 3);
 }

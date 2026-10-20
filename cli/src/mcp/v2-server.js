@@ -12,57 +12,95 @@
  *     Schema it can render as JSON Schema, and refuses Zod 3 outright
  *     ("Upgrade to zod >=4.2.0, or wrap your JSON Schema with fromJsonSchema()").
  *     The CLI is on Zod 3 across ~98 modules, so rather than force that upgrade
- *     we convert each shape to JSON Schema and hand it back via `fromJsonSchema`.
+ *     we expose JSON Schema for discovery while keeping the original Zod
+ *     parser for execution. Literal JSON Schemas use `fromJsonSchema`.
  *   - Callbacks. v1 tool callbacks receive `(args, extra)`; v2 passes a request
  *     context in the second slot. It is forwarded unchanged — our wrappers only
  *     read optional fields off it (`sessionId`, auth metadata).
  */
-import { McpServer, fromJsonSchema } from '@modelcontextprotocol/server';
+import {
+  McpServer,
+  ProtocolError,
+  ProtocolErrorCode,
+  fromJsonSchema,
+  isInputRequiredResult,
+} from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { CLI_VERSION } from '../config.js';
+import { attachContractToResponse, normalizeToolError } from './tool-result-contract.js';
 
 /**
  * Tool schemas are static, but the server is rebuilt per request — converting
- * ~940 schemas on every exchange would dominate request latency. Conversion is
- * therefore memoized by tool name for the life of the process.
+ * ~940 schemas on every exchange would dominate request latency. Cache the
+ * whole adapter by schema identity: a tool name can refer to different schemas
+ * in different server configurations. Weak keys also let dynamic schemas be
+ * collected when their servers are no longer used.
  *
- * @type {Map<string, object>}
+ * @type {WeakMap<object, object>}
  */
-const schemaCache = new Map();
+const schemaCache = new WeakMap();
+const EMPTY_SCHEMA = Object.freeze({});
 
 /** A Zod schema instance (as opposed to a raw shape) carries `_def`. */
 const isZodType = (value) => Boolean(value && typeof value === 'object' && value._def);
 
 /** An already-converted JSON Schema object, as a handful of tools declare. */
 const isJsonSchema = (value) =>
-  Boolean(value && typeof value === 'object' && value.type === 'object' && value.properties);
+  Boolean(value && typeof value === 'object' && value.type === 'object');
 
 /**
  * Normalize the three `inputSchema` conventions our tool modules use — a Zod
  * raw shape (most), a Zod object instance, or a literal JSON Schema — into the
  * one thing v2 accepts.
  *
- * @param {string} name
  * @param {object} inputSchema
  * @returns {object} A Standard Schema v2 can advertise in `tools/list`.
  */
-function standardSchemaFor(name, inputSchema) {
-  let converted = schemaCache.get(name);
-  if (!converted) {
-    if (isJsonSchema(inputSchema)) {
-      converted = inputSchema;
-    } else {
-      const zodSchema = isZodType(inputSchema) ? inputSchema : z.object(inputSchema);
-      // `$refStrategy: 'none'` inlines definitions: MCP clients expect a
-      // self-contained schema per tool, not one with cross-references.
-      converted = zodToJsonSchema(zodSchema, { $refStrategy: 'none', target: 'jsonSchema7' });
-    }
-    converted = { ...converted };
-    delete converted.$schema;
-    schemaCache.set(name, converted);
+function standardSchemaFor(inputSchema) {
+  const cached = schemaCache.get(inputSchema);
+  if (cached) return cached;
+
+  const zodSchema = isJsonSchema(inputSchema)
+    ? null
+    : isZodType(inputSchema)
+      ? inputSchema
+      : z.object(inputSchema);
+  // `$refStrategy: 'none'` inlines definitions: MCP clients expect a
+  // self-contained schema per tool, not one with cross-references.
+  const converted = {
+    ...(zodSchema
+      ? zodToJsonSchema(zodSchema, { $refStrategy: 'none', target: 'jsonSchema7' })
+      : inputSchema),
+  };
+  delete converted.$schema;
+
+  let standardSchema;
+  if (zodSchema) {
+    // JSON Schema cannot express Zod refinements, transforms, or parsing
+    // defaults. Run the source parser before any tool gates or handler so the
+    // transport preserves those checks and passes the parsed value onward.
+    standardSchema = {
+      '~standard': {
+        version: 1,
+        vendor: 'stateset-zod3',
+        jsonSchema: {
+          input: () => converted,
+          output: () => converted,
+        },
+        validate: async (data) => {
+          const result = await zodSchema.safeParseAsync(data);
+          return result.success
+            ? { value: result.data }
+            : { issues: result.error.issues.map(({ message, path }) => ({ message, path })) };
+        },
+      },
+    };
+  } else {
+    standardSchema = fromJsonSchema(converted);
   }
-  return fromJsonSchema(converted);
+  schemaCache.set(inputSchema, standardSchema);
+  return standardSchema;
 }
 
 /**
@@ -70,18 +108,80 @@ function standardSchemaFor(name, inputSchema) {
  *
  * @param {import('@modelcontextprotocol/server').McpServer} server
  * @param {{name: string, description: string, inputSchema: object, handler: Function}} toolDef
+ * @param {Promise<void>|undefined} servicesReady
  */
-function registerAdaptedTool(server, toolDef) {
+function registerAdaptedTool(server, toolDef, servicesReady) {
   const { name, description, inputSchema, handler } = toolDef;
 
   // An empty object is a legitimate no-argument tool and becomes `z.object({})`.
-  const schema = inputSchema && typeof inputSchema === 'object' ? inputSchema : {};
+  const schema = inputSchema && typeof inputSchema === 'object' ? inputSchema : EMPTY_SCHEMA;
 
   server.registerTool(
     name,
-    { description, inputSchema: standardSchemaFor(name, schema) },
-    (args, ctx) => handler(args, ctx),
+    { description, inputSchema: standardSchemaFor(schema) },
+    async (args, ctx) => {
+      // Each HTTP request creates a fresh runtime whose optional services are
+      // loaded asynchronously. Discovery can run immediately; execution must
+      // wait so a first call does not observe a partially initialized runtime.
+      await servicesReady;
+      return handler(args, ctx);
+    },
   );
+}
+
+/**
+ * Use the SDK's public low-level handler API to retain our result contract
+ * for schema refusals as well as handler outcomes. The high-level SDK turns
+ * validation failures into text-only errors before our tool wrapper runs.
+ * Discovery and parsing still use the same cached Standard Schema; invalid
+ * input never reaches a handler, policy gate or commerce mutation.
+ */
+function installToolCallContract(server, tools, servicesReady) {
+  if (tools.length === 0) return;
+  const byName = new Map(tools.map((tool) => [tool.name, tool]));
+  server.server.setRequestHandler('tools/call', async (request, ctx) => {
+    const tool = byName.get(request.params.name);
+    if (!tool) {
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidParams,
+        `Tool ${request.params.name} not found`,
+      );
+    }
+    try {
+      const inputSchema = tool.inputSchema;
+      const schema = standardSchemaFor(
+        inputSchema && typeof inputSchema === 'object' ? inputSchema : EMPTY_SCHEMA,
+      );
+      const parsed = await schema['~standard'].validate(request.params.arguments ?? {});
+      if (parsed.issues) {
+        const message = `Invalid parameters for tool ${tool.name}: ${JSON.stringify(parsed.issues)}`;
+        return attachContractToResponse(
+          { content: [{ type: 'text', text: JSON.stringify({ success: false, error: message }) }] },
+          normalizeToolError({ code: 'INVALID_INPUT', message }),
+        );
+      }
+      await servicesReady;
+      const result = await tool.handler(parsed.value, ctx);
+      return isInputRequiredResult(result)
+        ? result
+        : server.server.projectCallToolResult(result, undefined);
+    } catch (error) {
+      if (error instanceof ProtocolError && error.code === ProtocolErrorCode.UrlElicitationRequired)
+        throw error;
+      const outcome = normalizeToolError(error);
+      return attachContractToResponse(
+        {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ success: false, error: outcome.error.message }),
+            },
+          ],
+        },
+        outcome,
+      );
+    }
+  });
 }
 
 /**
@@ -101,27 +201,47 @@ function registerAdaptedTool(server, toolDef) {
  */
 export function createStatesetV2McpServer({ createServer, ...serverOptions }) {
   const stateset = createServer(serverOptions);
-  const tools = stateset.getAdaptedTools();
+  let cleanupPromise;
+  const cleanup = () => {
+    // Defer invocation so even a synchronous cleanup error is a rejection,
+    // and repeated close/onclose calls share the same cleanup operation.
+    cleanupPromise ??= Promise.resolve().then(() =>
+      typeof stateset.close === 'function' ? stateset.close() : stateset.dispose?.(),
+    );
+    return cleanupPromise;
+  };
+  const reportCleanupError = (error) => {
+    console.error('[mcp-server] Resource cleanup failed:', error.message);
+  };
 
-  const server = new McpServer({ name: 'stateset-commerce', version: CLI_VERSION });
-  for (const toolDef of tools) {
-    registerAdaptedTool(server, toolDef);
-  }
-  // Stop the stateset server's A2A loops and timers when this instance closes
-  // (per request under stateless HTTP, on disconnect under stdio). Both hooks
-  // are needed: `onclose` fires only for a connected instance, and `close()`
-  // may be called on one that never connected. Dispose is idempotent.
-  if (typeof stateset.dispose === 'function') {
+  try {
+    const tools = stateset.getAdaptedTools();
+    const server = new McpServer({ name: 'stateset-commerce', version: CLI_VERSION });
+    // Both hooks are needed: onclose handles transport disconnects, while
+    // close() can run on an instance that never connected (such as warm-up).
     const originalClose = server.close.bind(server);
-    server.close = (...args) => {
-      stateset.dispose();
-      return originalClose(...args);
+    server.close = async (...args) => {
+      try {
+        return await originalClose(...args);
+      } finally {
+        await cleanup();
+      }
     };
     const previousOnClose = server.server.onclose;
     server.server.onclose = () => {
-      stateset.dispose();
+      void cleanup().catch(reportCleanupError);
       previousOnClose?.();
     };
+
+    for (const toolDef of tools) {
+      registerAdaptedTool(server, toolDef, stateset.servicesReady);
+    }
+    installToolCallContract(server, tools, stateset.servicesReady);
+    return server;
+  } catch (error) {
+    // Schema conversion and registration can fail after the underlying
+    // server has started initialization. Release it and preserve the cause.
+    void cleanup().catch(reportCleanupError);
+    throw error;
   }
-  return server;
 }

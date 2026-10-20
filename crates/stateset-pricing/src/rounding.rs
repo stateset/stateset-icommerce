@@ -115,15 +115,7 @@ impl Default for RoundingPolicy {
 /// ```
 #[must_use]
 pub fn minor_units_for_currency(code: &str) -> u32 {
-    match code.to_ascii_uppercase().as_str() {
-        // Zero-decimal currencies
-        "BIF" | "CLP" | "DJF" | "GNF" | "ISK" | "JPY" | "KMF" | "KRW" | "PYG" | "RWF" | "UGX"
-        | "UYI" | "VND" | "VUV" | "XAF" | "XOF" | "XPF" => 0,
-        // Three-decimal currencies
-        "BHD" | "IQD" | "JOD" | "KWD" | "LYD" | "OMR" | "TND" => 3,
-        // Everything else is 2
-        _ => 2,
-    }
+    u32::from(stateset_primitives::currency_decimal_places(&code.to_ascii_uppercase()))
 }
 
 /// Round a [`Decimal`] according to the given [`RoundingPolicy`].

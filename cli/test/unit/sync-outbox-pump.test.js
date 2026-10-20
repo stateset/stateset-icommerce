@@ -406,6 +406,13 @@ describe('OutboxPump', () => {
       'credit_reservation.released',
       'credit_account.transaction_recorded',
       'credit_account.created',
+      'promotion.condition_added',
+      'shipment.status_changed',
+      'shipments.created.v1',
+      'shipments.updated.v1',
+      'shipments.item_added.v1',
+      'shipments.item_removed.v1',
+      'shipments.event_added.v1',
     ];
 
     db.prepare('DELETE FROM kernel_outbox').run();
@@ -684,5 +691,87 @@ describe('OutboxPump', () => {
   it('returns zeros when there is nothing to drain', async () => {
     db.prepare('DELETE FROM kernel_outbox').run();
     assert.deepEqual(await pump.drain(), { leased: 0, appended: 0, failed: 0, duplicates: 0 });
+  });
+
+  it('refuses settlement after expiry even without a replacement worker', async () => {
+    const realAppend = outbox.append.bind(outbox);
+    outbox.append = async (event) => {
+      const result = await realAppend(event);
+      db.prepare("UPDATE kernel_outbox SET lease_expires_at = '2000-01-01T00:00:00Z'").run();
+      return result;
+    };
+    assert.equal((await pump.drain()).appended, 1);
+    const row = db.prepare('SELECT published_at, lease_owner, attempts FROM kernel_outbox').get();
+    assert.equal(row.published_at, null);
+    assert.ok(row.lease_owner);
+    assert.equal(row.attempts, 0);
+    outbox.append = realAppend;
+    assert.equal((await pump.drain()).duplicates, 1);
+    assert.ok(db.prepare('SELECT published_at FROM kernel_outbox').get().published_at);
+  });
+
+  it('compares lease instants across timezone encodings', async () => {
+    // The local clock component is twelve hours behind UTC, but this lease
+    // expires one minute in the future. A lexical comparison would steal it.
+    const local = new Date(Date.now() + 60_000 - 12 * 60 * 60 * 1000);
+    const expires = local.toISOString().replace('Z', '-12:00');
+    db.prepare('UPDATE kernel_outbox SET lease_owner = ?, lease_expires_at = ?').run(
+      'external-worker-token',
+      expires,
+    );
+    assert.equal((await pump.drain()).leased, 0);
+    assert.equal(
+      db.prepare('SELECT lease_owner FROM kernel_outbox').get().lease_owner,
+      'external-worker-token',
+    );
+  });
+
+  for (const fail of [false, true]) {
+    it(`fences a stale ${fail ? 'failure' : 'success'} when the same pump reclaims`, async () => {
+      const realAppend = outbox.append.bind(outbox);
+      let replacement;
+      outbox.append = async (event) => {
+        const old = db.prepare('SELECT lease_owner FROM kernel_outbox').get().lease_owner;
+        db.prepare("UPDATE kernel_outbox SET lease_expires_at = '2000-01-01T00:00:00Z'").run();
+        replacement = pump._lease(1)[0].lease_token;
+        assert.notEqual(replacement, old);
+        if (fail) throw new Error('stale delivery failed');
+        return realAppend(event);
+      };
+      await pump.drain();
+      const row = db
+        .prepare('SELECT published_at, lease_owner, attempts, last_error FROM kernel_outbox')
+        .get();
+      assert.equal(row.lease_owner, replacement);
+      assert.equal(row.published_at, null);
+      assert.equal(row.attempts, 0);
+      assert.equal(row.last_error, null);
+    });
+  }
+
+  it('fences stale parking and zero-sized claims return no rows', () => {
+    const first = pump._lease(1)[0];
+    assert.deepEqual(pump._lease(0), []);
+    db.prepare("UPDATE kernel_outbox SET lease_expires_at = '2000-01-01T00:00:00Z'").run();
+    const next = pump._lease(1)[0];
+    assert.notEqual(first.lease_token, next.lease_token);
+    assert.equal(pump._park(first.id, first.lease_token, 'stale mapping failure'), false);
+    const row = db.prepare('SELECT lease_owner, last_error FROM kernel_outbox').get();
+    assert.equal(row.lease_owner, next.lease_token);
+    assert.equal(row.last_error, null);
+  });
+
+  it('rejects invalid lease settings and batch limits before claiming', async () => {
+    for (const key of ['leaseSeconds', 'maxAttempts', 'retryDelaySeconds']) {
+      for (const value of [-1, 0.5, NaN, Infinity, 2147483648]) {
+        assert.throws(() => createOutboxPump(db, outbox, { identity: IDENTITY, [key]: value }));
+      }
+    }
+    assert.throws(() => createOutboxPump(db, outbox, { identity: IDENTITY, leaseSeconds: 0 }));
+    assert.throws(() => createOutboxPump(db, outbox, { identity: IDENTITY, leaseOwner: ' ' }));
+    for (const limit of [-1, 0.5, NaN, Infinity, 4294967296]) {
+      await assert.rejects(pump.drain(limit));
+    }
+    assert.equal(db.prepare('SELECT lease_owner FROM kernel_outbox').get().lease_owner, null);
   });
 });

@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ cart });
     }
 
-    const newCart = await commerce.carts.create({ customerId: body.customerId });
+    const newCart = await commerce.carts.create({ customerId: body.customerId, currency: 'USD' });
 
     if (body.sku) {
       const productInfo = await getProductInfoBySku(commerce, body.sku);

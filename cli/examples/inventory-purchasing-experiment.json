@@ -1,0 +1,111 @@
+{
+  "name": "case-packs-and-stock-capacity",
+  "seeds": [7, 42, 99],
+  "plans": [
+    {
+      "name": "lean-target",
+      "days": 7,
+      "startingCash": "20.00",
+      "products": [
+        {
+          "sku": "COFFEE",
+          "initialStock": 1,
+          "unitPrice": "2.50",
+          "unitCost": "1.25",
+          "demand": {
+            "min": 1,
+            "max": 3
+          },
+          "reorderPoint": 1,
+          "targetStock": 3,
+          "leadTimeDays": {
+            "min": 1,
+            "max": 2
+          },
+          "delivery": {
+            "firstReceiptBps": {
+              "min": 5000,
+              "max": 10000
+            },
+            "remainderDelayDays": 1
+          },
+          "purchasing": {
+            "minimumOrderQuantity": 5,
+            "orderMultiple": 4,
+            "maximumInventoryPosition": 12
+          }
+        }
+      ]
+    },
+    {
+      "name": "buffer-target",
+      "days": 7,
+      "startingCash": "20.00",
+      "products": [
+        {
+          "sku": "COFFEE",
+          "initialStock": 1,
+          "unitPrice": "2.50",
+          "unitCost": "1.25",
+          "demand": {
+            "min": 1,
+            "max": 3
+          },
+          "reorderPoint": 4,
+          "targetStock": 9,
+          "leadTimeDays": {
+            "min": 1,
+            "max": 2
+          },
+          "delivery": {
+            "firstReceiptBps": {
+              "min": 5000,
+              "max": 10000
+            },
+            "remainderDelayDays": 1
+          },
+          "purchasing": {
+            "minimumOrderQuantity": 5,
+            "orderMultiple": 4,
+            "maximumInventoryPosition": 12
+          }
+        }
+      ]
+    },
+    {
+      "name": "tight-capacity",
+      "days": 7,
+      "startingCash": "20.00",
+      "products": [
+        {
+          "sku": "COFFEE",
+          "initialStock": 1,
+          "unitPrice": "2.50",
+          "unitCost": "1.25",
+          "demand": {
+            "min": 1,
+            "max": 3
+          },
+          "reorderPoint": 1,
+          "targetStock": 3,
+          "leadTimeDays": {
+            "min": 1,
+            "max": 2
+          },
+          "delivery": {
+            "firstReceiptBps": {
+              "min": 5000,
+              "max": 10000
+            },
+            "remainderDelayDays": 1
+          },
+          "purchasing": {
+            "minimumOrderQuantity": 5,
+            "orderMultiple": 4,
+            "maximumInventoryPosition": 6
+          }
+        }
+      ]
+    }
+  ]
+}

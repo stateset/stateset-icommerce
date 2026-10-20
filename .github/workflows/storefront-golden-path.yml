@@ -3,29 +3,37 @@ name: Storefront Golden Path
 on:
   pull_request:
     paths:
-      - ".github/workflows/storefront-golden-path.yml"
-      - "packages/create-stateset-app/**"
-      - "bindings/node/**"
+      - '.github/workflows/storefront-golden-path.yml'
+      - 'packages/create-stateset-app/**'
+      - 'bindings/node/**'
       # The gate compiles the native binding from this commit, so any workspace
       # crate or dependency change can break it.
-      - "crates/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "scripts/ci/run_storefront_golden_path.sh"
-      - "docs/RELEASE_EVIDENCE.md"
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/ci/run_storefront_golden_path.sh'
+      - 'scripts/ci/storefront_evidence*'
+      - 'scripts/ci/run_operations_recovery_drill.py'
+      - 'scripts/ci/npm-audit-allowlist.json'
+      - 'scripts/ci/enforce_npm_audit_allowlist*'
+      - 'docs/RELEASE_EVIDENCE.md'
   push:
     branches: [master]
     paths:
-      - ".github/workflows/storefront-golden-path.yml"
-      - "packages/create-stateset-app/**"
-      - "bindings/node/**"
+      - '.github/workflows/storefront-golden-path.yml'
+      - 'packages/create-stateset-app/**'
+      - 'bindings/node/**'
       # The gate compiles the native binding from this commit, so any workspace
       # crate or dependency change can break it.
-      - "crates/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "scripts/ci/run_storefront_golden_path.sh"
-      - "docs/RELEASE_EVIDENCE.md"
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/ci/run_storefront_golden_path.sh'
+      - 'scripts/ci/storefront_evidence*'
+      - 'scripts/ci/run_operations_recovery_drill.py'
+      - 'scripts/ci/npm-audit-allowlist.json'
+      - 'scripts/ci/enforce_npm_audit_allowlist*'
+      - 'docs/RELEASE_EVIDENCE.md'
   workflow_dispatch:
 
 permissions:
@@ -49,7 +57,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version-file: ".nvmrc"
+          node-version-file: '.nvmrc'
 
       # The storefront is installed against a binding built from THIS commit,
       # so the gate needs a Rust toolchain (same setup as ci.yml's `cli` job).
@@ -62,6 +70,12 @@ jobs:
 
       - name: Test generator
         run: npm --prefix packages/create-stateset-app test
+
+      - name: Test source-bound evidence refusal paths
+        run: python3 scripts/ci/storefront_evidence.test.py
+
+      - name: Test dependency audit refusal paths
+        run: node --test scripts/ci/enforce_npm_audit_allowlist.test.mjs
 
       - name: Run public storefront golden path
         env:
@@ -95,7 +109,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version-file: ".nvmrc"
+          node-version-file: '.nvmrc'
 
       - name: Run the published storefront golden path
         env:

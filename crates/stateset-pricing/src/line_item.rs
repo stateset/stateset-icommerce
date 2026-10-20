@@ -4,6 +4,7 @@
 //! unit price, quantity, optional discount, and optional tax rate. All methods
 //! are pure functions — no side effects, fully deterministic.
 
+use crate::arithmetic::{add, mul, sub};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
@@ -94,7 +95,7 @@ impl LineItem {
         validate_non_negative("unit price", self.unit_price)?;
 
         if let Some(discount) = &self.discount {
-            let subtotal = self.unit_price * Decimal::from(self.quantity);
+            let subtotal = mul(self.unit_price, Decimal::from(self.quantity))?;
             validate_line_discount(discount, subtotal, self.unit_price)?;
         }
 
@@ -109,7 +110,7 @@ impl LineItem {
     pub fn try_subtotal(&self) -> PricingResult<Decimal> {
         validate_quantity(self.quantity)?;
         validate_non_negative("unit price", self.unit_price)?;
-        Ok(self.unit_price * Decimal::from(self.quantity))
+        mul(self.unit_price, Decimal::from(self.quantity))
     }
 
     /// Compute the subtotal and panic if the line item is invalid.
@@ -123,14 +124,14 @@ impl LineItem {
     /// Returns zero if no discount is set.
     pub fn try_discount_amount(&self) -> PricingResult<Decimal> {
         self.validate()?;
-        let sub = self.unit_price * Decimal::from(self.quantity);
+        let sub = mul(self.unit_price, Decimal::from(self.quantity))?;
         let discount = match &self.discount {
             None => Decimal::ZERO,
-            Some(LineDiscount::Percentage(pct)) => sub * *pct,
+            Some(LineDiscount::Percentage(pct)) => mul(sub, *pct)?,
             Some(LineDiscount::FixedAmount(amt)) => *amt,
             Some(LineDiscount::FixedPrice(price)) => {
-                let new_total = *price * Decimal::from(self.quantity);
-                sub - new_total
+                let new_total = mul(*price, Decimal::from(self.quantity))?;
+                crate::arithmetic::sub(sub, new_total)?
             }
         };
         Ok(discount)
@@ -144,7 +145,7 @@ impl LineItem {
 
     /// Compute the taxable amount (subtotal minus discount).
     pub fn try_taxable_amount(&self) -> PricingResult<Decimal> {
-        Ok((self.try_subtotal()? - self.try_discount_amount()?).max(Decimal::ZERO))
+        Ok((sub(self.try_subtotal()?, self.try_discount_amount()?)?).max(Decimal::ZERO))
     }
 
     /// Compute the taxable amount and panic if the line item is invalid.
@@ -157,7 +158,7 @@ impl LineItem {
     pub fn try_tax_amount(&self) -> PricingResult<Decimal> {
         let taxable = self.try_taxable_amount()?;
         Ok(match self.tax_rate {
-            Some(rate) => taxable * rate,
+            Some(rate) => mul(taxable, rate)?,
             None => Decimal::ZERO,
         })
     }
@@ -170,7 +171,7 @@ impl LineItem {
 
     /// Compute the line total (taxable amount + tax).
     pub fn try_total(&self) -> PricingResult<Decimal> {
-        Ok(self.try_taxable_amount()? + self.try_tax_amount()?)
+        add(self.try_taxable_amount()?, self.try_tax_amount()?)
     }
 
     /// Compute the total and panic if the line item is invalid.
@@ -182,8 +183,8 @@ impl LineItem {
     /// Compute the line total with rounding applied to intermediate values.
     pub fn try_total_rounded(&self, policy: &RoundingPolicy) -> PricingResult<Decimal> {
         let taxable = round(self.try_taxable_amount()?, policy);
-        let tax = round(taxable * self.tax_rate.unwrap_or(Decimal::ZERO), policy);
-        Ok(taxable + tax)
+        let tax = round(mul(taxable, self.tax_rate.unwrap_or(Decimal::ZERO))?, policy);
+        add(taxable, tax)
     }
 
     /// Compute the rounded total and panic if the line item is invalid.

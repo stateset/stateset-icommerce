@@ -26,6 +26,54 @@ pub struct CreateShipmentInput {
     pub tracking_number: Option<String>,
     pub recipient_email: Option<String>,
     pub recipient_phone: Option<String>,
+    /// Order-linked manifest items, validated atomically with shipment creation.
+    pub items: Option<Vec<CreateShipmentItemInput>>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateShipmentItemInput {
+    pub order_item_id: Option<String>,
+    pub product_id: Option<String>,
+    pub sku: String,
+    pub name: String,
+    /// Positive integer, at most 2147483647; fractional values are refused.
+    pub quantity: f64,
+}
+
+impl TryFrom<CreateShipmentItemInput> for stateset_core::CreateShipmentItem {
+    type Error = napi::Error;
+
+    fn try_from(input: CreateShipmentItemInput) -> Result<Self> {
+        if !input.quantity.is_finite()
+            || input.quantity.fract() != 0.0
+            || input.quantity < 1.0
+            || input.quantity > f64::from(i32::MAX)
+        {
+            return Err(coded(
+                ErrCode::Validation,
+                "Shipment quantity must be a positive integer at most 2147483647",
+            ));
+        }
+        Ok(Self {
+            order_item_id: input
+                .order_item_id
+                .map(|id| {
+                    id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid order item UUID"))
+                })
+                .transpose()?,
+            product_id: input
+                .product_id
+                .map(|id| {
+                    id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid product UUID"))
+                })
+                .transpose()?,
+            sku: input.sku,
+            name: input.name,
+            // Bounds and integrality were checked before conversion.
+            quantity: input.quantity as i32,
+        })
+    }
 }
 
 #[napi(object)]
@@ -38,6 +86,20 @@ pub struct ShipmentItemOutput {
     pub sku: String,
     pub name: String,
     pub quantity: i32,
+}
+
+impl From<stateset_core::ShipmentItem> for ShipmentItemOutput {
+    fn from(item: stateset_core::ShipmentItem) -> Self {
+        Self {
+            id: item.id.to_string(),
+            shipment_id: item.shipment_id.to_string(),
+            order_item_id: item.order_item_id.map(|id| id.to_string()),
+            product_id: item.product_id.map(|id| id.to_string()),
+            sku: item.sku,
+            name: item.name,
+            quantity: item.quantity,
+        }
+    }
 }
 
 #[napi(object)]
@@ -82,19 +144,7 @@ impl From<stateset_core::Shipment> for ShipmentOutput {
             recipient_phone: s.recipient_phone,
             shipping_address: s.shipping_address,
             notes: s.notes,
-            items: s
-                .items
-                .into_iter()
-                .map(|item| ShipmentItemOutput {
-                    id: item.id.to_string(),
-                    shipment_id: item.shipment_id.to_string(),
-                    order_item_id: item.order_item_id.map(|id| id.to_string()),
-                    product_id: item.product_id.map(|id| id.to_string()),
-                    sku: item.sku,
-                    name: item.name,
-                    quantity: item.quantity,
-                })
-                .collect(),
+            items: s.items.into_iter().map(Into::into).collect(),
             version: s.version,
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
@@ -106,7 +156,8 @@ impl From<stateset_core::Shipment> for ShipmentOutput {
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct UpdateShipmentInput {
-    pub expected_version: Option<i32>,
+    /// Positive integer, at most 2147483647; stale versions are refused atomically.
+    pub expected_version: Option<f64>,
     #[napi(ts_type = "ShipmentStatus")]
     pub status: Option<String>,
     #[napi(ts_type = "ShippingCarrier")]
@@ -117,6 +168,27 @@ pub struct UpdateShipmentInput {
     pub recipient_phone: Option<String>,
     pub shipping_address: Option<String>,
     pub notes: Option<String>,
+}
+
+// N-API converts i32 directly with JavaScript ToInt32 semantics, which can
+// truncate fractions or wrap large values into a valid current version. Keep
+// the original number until it has passed these checks.
+fn shipment_version(input: Option<f64>) -> Result<Option<i32>> {
+    input
+        .map(|version| {
+            if !version.is_finite()
+                || version.fract() != 0.0
+                || version < 1.0
+                || version > f64::from(i32::MAX)
+            {
+                return Err(coded(
+                    ErrCode::Validation,
+                    "Shipment expectedVersion must be a positive integer at most 2147483647",
+                ));
+            }
+            Ok(version as i32)
+        })
+        .transpose()
 }
 
 #[napi]
@@ -188,11 +260,50 @@ impl Shipments {
                 recipient_email: input.recipient_email,
                 recipient_phone: input.recipient_phone,
                 shipping_address: input.shipping_address,
+                items: input
+                    .items
+                    .map(|items| {
+                        items.into_iter().map(TryInto::try_into).collect::<Result<Vec<_>>>()
+                    })
+                    .transpose()?,
                 ..Default::default()
             })
             .map_err(|e| wrap(ErrCode::Internal, "Failed to create shipment", e))?;
 
         Ok(shipment.into())
+    }
+
+    /// Add an order-linked manifest item while packing. Does not fulfill the order or reserve stock.
+    /// Optional expectedVersion is a positive integer at most 2147483647, checked atomically.
+    #[napi]
+    pub async fn add_item(
+        &self,
+        shipment_id: String,
+        input: CreateShipmentItemInput,
+        expected_version: Option<f64>,
+    ) -> Result<ShipmentItemOutput> {
+        let commerce = self.commerce.get()?;
+        let id =
+            shipment_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid shipment UUID"))?;
+        let item = commerce
+            .shipments()
+            .add_item_with_version(id, input.try_into()?, shipment_version(expected_version)?)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to add shipment item", e))?;
+        Ok(item.into())
+    }
+
+    /// Remove a manifest item while packing, advancing the shipment version atomically.
+    /// Optional expectedVersion is a positive integer at most 2147483647, checked atomically.
+    #[napi]
+    pub async fn remove_item(&self, item_id: String, expected_version: Option<f64>) -> Result<()> {
+        let commerce = self.commerce.get()?;
+        let id = item_id
+            .parse()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid shipment item UUID"))?;
+        commerce
+            .shipments()
+            .remove_item_with_version(id, shipment_version(expected_version)?)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to remove shipment item", e))
     }
 
     /// Update shipment metadata and status through the native repository.
@@ -202,7 +313,7 @@ impl Shipments {
         let uuid: uuid::Uuid =
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let update = stateset_core::UpdateShipment {
-            expected_version: input.expected_version,
+            expected_version: shipment_version(input.expected_version)?,
             status: input
                 .status
                 .map(|value| {
@@ -263,48 +374,103 @@ impl Shipments {
         Ok(shipments.into_iter().map(|s| s.into()).collect())
     }
 
+    /// Ship a shipment; optional expectedVersion must be an integer from 1 to 2147483647.
     #[napi]
     pub async fn ship(
         &self,
         id: String,
         tracking_number: Option<String>,
+        expected_version: Option<f64>,
     ) -> Result<ShipmentOutput> {
         let commerce = self.commerce.get()?;
         let uuid: uuid::Uuid =
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
-        let shipment = commerce
-            .shipments()
-            .ship(uuid.into(), tracking_number)
-            .map_err(|e| wrap(ErrCode::Internal, "Failed to ship", e))?;
+        let shipment = if let Some(expected_version) = expected_version {
+            commerce
+                .shipments()
+                .update(
+                    uuid.into(),
+                    stateset_core::UpdateShipment {
+                        status: Some(stateset_core::ShipmentStatus::Shipped),
+                        tracking_number,
+                        expected_version: shipment_version(Some(expected_version))?,
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to ship", e))?
+        } else {
+            commerce
+                .shipments()
+                .ship(uuid.into(), tracking_number)
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to ship", e))?
+        };
 
         Ok(shipment.into())
     }
 
+    /// Deliver a shipment; optional expectedVersion must be an integer from 1 to 2147483647.
     #[napi]
-    pub async fn deliver(&self, id: String) -> Result<ShipmentOutput> {
+    pub async fn deliver(
+        &self,
+        id: String,
+        expected_version: Option<f64>,
+    ) -> Result<ShipmentOutput> {
         let commerce = self.commerce.get()?;
         let uuid: uuid::Uuid =
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
-        let shipment = commerce
-            .shipments()
-            .mark_delivered(uuid.into())
-            .map_err(|e| wrap(ErrCode::Internal, "Failed to deliver", e))?;
+        let shipment = if let Some(expected_version) = expected_version {
+            commerce
+                .shipments()
+                .update(
+                    uuid.into(),
+                    stateset_core::UpdateShipment {
+                        status: Some(stateset_core::ShipmentStatus::Delivered),
+                        expected_version: shipment_version(Some(expected_version))?,
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to deliver", e))?
+        } else {
+            commerce
+                .shipments()
+                .mark_delivered(uuid.into())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to deliver", e))?
+        };
 
         Ok(shipment.into())
     }
 
+    /// Cancel a shipment; optional expectedVersion must be an integer from 1 to 2147483647.
     #[napi]
-    pub async fn cancel(&self, id: String) -> Result<ShipmentOutput> {
+    pub async fn cancel(
+        &self,
+        id: String,
+        expected_version: Option<f64>,
+    ) -> Result<ShipmentOutput> {
         let commerce = self.commerce.get()?;
         let uuid: uuid::Uuid =
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
 
-        let shipment = commerce
-            .shipments()
-            .cancel(uuid.into())
-            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel shipment", e))?;
+        let shipment = if let Some(expected_version) = expected_version {
+            commerce
+                .shipments()
+                .update(
+                    uuid.into(),
+                    stateset_core::UpdateShipment {
+                        status: Some(stateset_core::ShipmentStatus::Cancelled),
+                        expected_version: shipment_version(Some(expected_version))?,
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel shipment", e))?
+        } else {
+            commerce
+                .shipments()
+                .cancel(uuid.into())
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel shipment", e))?
+        };
 
         Ok(shipment.into())
     }

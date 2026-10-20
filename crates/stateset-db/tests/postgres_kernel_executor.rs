@@ -288,6 +288,74 @@ fn payment_command(key: String) -> CommandEnvelope<CreatePayment> {
     command
 }
 
+#[tokio::test]
+async fn postgres_silently_suppressed_required_rows_roll_back_apply_and_preserve_preview() {
+    use sqlx::Executor;
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping required-row proof");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.unwrap();
+    for (table, promotion) in [
+        ("kernel_outbox", false),
+        ("kernel_receipt_audit_log", false),
+        ("kernel_receipts", false),
+        ("kernel_receipts", true),
+    ] {
+        let suffix = Uuid::new_v4().simple().to_string();
+        let name = format!("suppress_required_{suffix}");
+        let key = format!("required-row-{suffix}");
+        let mut command = payment_command(key.clone());
+        let executor = db.kernel_executor(policy());
+        if promotion {
+            command.mode = ExecutionMode::Preview;
+            assert_eq!(
+                executor.execute_create_payment_async(&command).await.unwrap().status,
+                ExecutionStatus::Previewed
+            );
+        }
+        let operation = if promotion { "UPDATE" } else { "INSERT" };
+        let sql = format!("CREATE FUNCTION {name}() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN
+            IF NEW.idempotency_key = '{key}' THEN RETURN NULL; END IF; RETURN NEW; END; $$;
+            CREATE TRIGGER {name} BEFORE {operation} ON {table} FOR EACH ROW EXECUTE PROCEDURE {name}();");
+        db.pool().execute(sql.as_str()).await.unwrap();
+        command.mode = ExecutionMode::Apply;
+        let result = executor.execute_create_payment_async(&command).await;
+        // Remove only this test's scoped trigger, even when an assertion fails.
+        let sql = format!("DROP TRIGGER {name} ON {table}; DROP FUNCTION {name}();");
+        db.pool().execute(sql.as_str()).await.unwrap();
+        assert!(result.is_err(), "{table}, promotion={promotion}");
+        let counts = sqlx::query_as::<_, (i64, i64, i64, i64)>(
+            "SELECT (SELECT COUNT(*) FROM payments WHERE idempotency_key=$1),
+                (SELECT COUNT(*) FROM kernel_outbox WHERE idempotency_key=$1),
+                (SELECT COUNT(*) FROM kernel_receipts WHERE idempotency_key=$1),
+                (SELECT COUNT(*) FROM kernel_receipt_audit_log WHERE idempotency_key=$1)",
+        )
+        .bind(&key)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        let retained = i64::from(promotion);
+        assert_eq!(counts, (0, 0, retained, retained));
+        let first = executor.execute_create_payment_async(&command).await.unwrap();
+        assert_eq!(first.status, ExecutionStatus::Succeeded);
+        assert_eq!(
+            executor.execute_create_payment_async(&command).await.unwrap().receipt_id,
+            first.receipt_id
+        );
+        let counts = sqlx::query_as::<_, (i64, i64, i64)>(
+            "SELECT (SELECT COUNT(*) FROM payments WHERE idempotency_key=$1),
+                (SELECT COUNT(*) FROM kernel_receipts WHERE idempotency_key=$1),
+                (SELECT COUNT(*) FROM kernel_receipt_audit_log WHERE idempotency_key=$1)",
+        )
+        .bind(&key)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        assert_eq!(counts, (1, 1, retained + 1));
+    }
+}
+
 fn refund_command(
     key: String,
     payment_id: stateset_core::PaymentId,
@@ -420,7 +488,8 @@ async fn postgres_outbox_leases_retry_dead_letter_redrive_and_ack_are_durable() 
         .expect("first worker claims probe");
     assert_eq!(claimed.len(), 1);
     assert_eq!(claimed[0].id, event_id);
-    assert_eq!(claimed[0].lease_owner.as_deref(), Some(worker_a.as_str()));
+    let token_a = claimed[0].lease_owner.as_deref().unwrap();
+    assert!(token_a.starts_with(&format!("{worker_a}:")));
     assert!(
         !db.kernel_outbox()
             .mark_published_by_async(event_id, &worker_b)
@@ -440,7 +509,7 @@ async fn postgres_outbox_leases_retry_dead_letter_redrive_and_ack_are_durable() 
              WHERE id = $1 AND lease_owner = $2",
         )
         .bind(event.id)
-        .bind(&worker_b)
+        .bind(event.lease_owner.as_deref().unwrap())
         .execute(db.pool())
         .await
         .expect("release unrelated test lease");
@@ -448,7 +517,7 @@ async fn postgres_outbox_leases_retry_dead_letter_redrive_and_ack_are_durable() 
 
     assert!(
         db.kernel_outbox()
-            .record_failure_by_async(event_id, &worker_a, "transient", 3_600, 2)
+            .record_failure_by_async(event_id, token_a, "transient", 3_600, 2)
             .await
             .expect("schedule retry")
     );
@@ -476,7 +545,13 @@ async fn postgres_outbox_leases_retry_dead_letter_redrive_and_ack_are_durable() 
     assert_eq!(retried[0].id, event_id);
     assert!(
         db.kernel_outbox()
-            .record_failure_by_async(event_id, &worker_b, "permanent", 0, 2)
+            .record_failure_by_async(
+                event_id,
+                retried[0].lease_owner.as_deref().unwrap(),
+                "permanent",
+                0,
+                2
+            )
             .await
             .expect("dead letter exhausted event")
     );
@@ -505,7 +580,7 @@ async fn postgres_outbox_leases_retry_dead_letter_redrive_and_ack_are_durable() 
     assert_eq!(redriven[0].attempts, 0);
     assert!(
         db.kernel_outbox()
-            .mark_published_by_async(event_id, &worker_c)
+            .mark_published_by_async(event_id, redriven[0].lease_owner.as_deref().unwrap())
             .await
             .expect("owner acknowledges redriven event")
     );
@@ -2123,4 +2198,211 @@ async fn postgres_kernel_storefront_commands_run_a_complete_checkout_on_the_gove
     assert_eq!(tracked.tracking_number.as_deref(), Some("RET-1Z"));
 
     assert!(db.kernel_outbox().verify_audit_chain_async().await.expect("verify chain").valid);
+}
+
+async fn postgres_reserved_shipping_fixture(
+    quantities: &[i32],
+) -> Option<(Arc<PostgresDatabase>, stateset_core::Order, String, Uuid)> {
+    let url = postgres_url()?;
+    let db = Arc::new(PostgresDatabase::connect(&url).await.unwrap());
+    let suffix = Uuid::new_v4();
+    let sku = format!("RESERVED-SHIP-{suffix}");
+    db.inventory()
+        .create_item_async(CreateInventoryItem {
+            sku: sku.clone(),
+            name: "Reserved shipping".into(),
+            initial_quantity: Some(dec!(10)),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let customer = db
+        .customers()
+        .create_async(CreateCustomer {
+            email: format!("reserved-{suffix}@example.com"),
+            first_name: "Stock".into(),
+            last_name: "Test".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let order = db
+        .orders()
+        .create_async(CreateOrder {
+            customer_id: customer.id,
+            items: quantities
+                .iter()
+                .map(|quantity| CreateOrderItem {
+                    product_id: ProductId::new(),
+                    sku: sku.clone(),
+                    name: "Stock".into(),
+                    quantity: *quantity,
+                    unit_price: dec!(10),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    for status in [OrderStatus::Confirmed, OrderStatus::Processing] {
+        db.orders()
+            .update_async(
+                order.id.into_uuid(),
+                UpdateOrder { status: Some(status), ..Default::default() },
+            )
+            .await
+            .unwrap();
+    }
+    let payment = db
+        .payments()
+        .create_async(CreatePayment {
+            order_id: Some(order.id),
+            amount: order.total_amount,
+            currency: Some(order.currency),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    db.payments().mark_completed_async(payment.id.into_uuid()).await.unwrap();
+    let order = db.orders().get_async(order.id.into_uuid()).await.unwrap().unwrap();
+    Some((db, order, sku, suffix))
+}
+
+#[tokio::test]
+async fn postgres_reserved_shipping_consumes_once_under_concurrent_retries() {
+    let Some((db, order, sku, suffix)) = postgres_reserved_shipping_fixture(&[2]).await else {
+        return;
+    };
+    let mut command = kernel_command(
+        "orders.ship_reserved",
+        format!("reserved-{suffix}"),
+        "orders.ship_reserved",
+        ShipOrderCommand {
+            order_id: order.id,
+            tracking_number: Some("TRACK-RESERVED".into()),
+            lines: None,
+        },
+    );
+    command.expected_version = Some(order.version);
+    let policy = policy()
+        .allow("orders.ship_reserved", KernelCommandPolicy::requiring(["orders.ship_reserved"]));
+    let kernel = db.kernel_executor(policy);
+    assert_eq!(
+        kernel.execute_ship_reserved_order_async(&command).await.unwrap().status,
+        ExecutionStatus::Previewed
+    );
+    command.command_id = Uuid::new_v4();
+    command.mode = ExecutionMode::Apply;
+    let (a, b) = tokio::join!(
+        kernel.execute_ship_reserved_order_async(&command),
+        kernel.execute_ship_reserved_order_async(&command)
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!(a.status, ExecutionStatus::Succeeded, "{:?}", a.error_message);
+    assert_eq!(a.receipt_id, b.receipt_id);
+    let stock = db.inventory().get_stock_async(&sku).await.unwrap().unwrap();
+    assert_eq!(stock.total_on_hand, dec!(8));
+    assert_eq!(stock.total_allocated, dec!(0));
+    assert_eq!(stock.total_available, dec!(8));
+    let linked: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM kernel_outbox WHERE event_type='inventory.reservation_fulfilled.v1' AND command_id=$1")
+        .bind(command.command_id).fetch_one(db.pool()).await.unwrap();
+    assert_eq!(linked, 1);
+    let status: String = sqlx::query_scalar("SELECT status FROM inventory_reservations WHERE reference_type='order' AND reference_id=$1")
+        .bind(order.id.to_string()).fetch_one(db.pool()).await.unwrap();
+    assert_eq!(status, "fulfilled");
+}
+
+#[tokio::test]
+async fn postgres_reserved_partial_shipping_serializes_competing_dispatches() {
+    let Some((db, order, sku, suffix)) = postgres_reserved_shipping_fixture(&[2, 2]).await else {
+        return;
+    };
+    let mut first = kernel_command(
+        "orders.ship_reserved",
+        format!("partial-first-{suffix}"),
+        "orders.ship_reserved",
+        ShipOrderCommand {
+            order_id: order.id,
+            tracking_number: Some("PARTIAL-1".into()),
+            lines: Some(vec![ShipmentLineInput { order_item_id: order.items[0].id, quantity: 1 }]),
+        },
+    );
+    first.expected_version = Some(order.version);
+    let kernel =
+        db.kernel_executor(policy().allow(
+            "orders.ship_reserved",
+            KernelCommandPolicy::requiring(["orders.ship_reserved"]),
+        ));
+    assert_eq!(
+        kernel.execute_ship_reserved_order_async(&first).await.unwrap().status,
+        ExecutionStatus::Previewed
+    );
+    first.command_id = Uuid::new_v4();
+    first.mode = ExecutionMode::Apply;
+    let (a, b) = tokio::join!(
+        kernel.execute_ship_reserved_order_async(&first),
+        kernel.execute_ship_reserved_order_async(&first)
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!(a.status, ExecutionStatus::Succeeded, "{:?}", a.error_message);
+    assert_eq!(a.receipt_id, b.receipt_id);
+    let partial = a.result.as_ref().unwrap();
+    assert_eq!(partial.status, OrderStatus::PartiallyShipped);
+    let stock = db.inventory().get_stock_async(&sku).await.unwrap().unwrap();
+    assert_eq!(stock.total_on_hand, dec!(9));
+    assert_eq!(stock.total_allocated, dec!(3));
+    assert_eq!(stock.total_available, dec!(6));
+    let sibling: rust_decimal::Decimal =
+        sqlx::query_scalar("SELECT quantity FROM inventory_reservations WHERE order_item_id=$1")
+            .bind(order.items[1].id.into_uuid())
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(sibling, dec!(2));
+    // Force the prior fact into the next command's timestamp window. Exact
+    // event IDs must preserve its original command link regardless of clocks.
+    sqlx::query("UPDATE kernel_outbox SET created_at=NOW()+INTERVAL '1 day' WHERE command_id=$1 AND event_type='inventory.reservation_fulfilled.v1'")
+        .bind(first.command_id).execute(db.pool()).await.unwrap();
+    let mut next = first.clone();
+    next.command_id = Uuid::new_v4();
+    next.idempotency_key = format!("partial-next-{suffix}");
+    next.expected_version = Some(partial.version);
+    let mut competing = next.clone();
+    competing.command_id = Uuid::new_v4();
+    competing.idempotency_key = format!("partial-competing-{suffix}");
+    let (n, c) = tokio::join!(
+        kernel.execute_ship_reserved_order_async(&next),
+        kernel.execute_ship_reserved_order_async(&competing)
+    );
+    let outcomes = [n.unwrap(), c.unwrap()];
+    assert_eq!(outcomes.iter().filter(|r| r.status == ExecutionStatus::Succeeded).count(), 1);
+    assert_eq!(outcomes.iter().filter(|r| r.status == ExecutionStatus::Rejected).count(), 1);
+    let current = outcomes
+        .iter()
+        .find_map(|r| if r.status == ExecutionStatus::Succeeded { r.result.as_ref() } else { None })
+        .unwrap();
+    assert_eq!(current.status, OrderStatus::PartiallyShipped);
+    let linked: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM kernel_outbox WHERE command_id=$1 AND event_type='inventory.reservation_fulfilled.v1'")
+        .bind(first.command_id).fetch_one(db.pool()).await.unwrap();
+    assert_eq!(linked, 1);
+    let mut finish = next;
+    finish.command_id = Uuid::new_v4();
+    finish.idempotency_key = format!("partial-finish-{suffix}");
+    finish.expected_version = Some(current.version);
+    finish.payload.lines = None;
+    let done = kernel.execute_ship_reserved_order_async(&finish).await.unwrap();
+    assert_eq!(done.status, ExecutionStatus::Succeeded, "{:?}", done.error_message);
+    assert_eq!(done.result.unwrap().status, OrderStatus::Shipped);
+    assert_eq!(
+        kernel.execute_ship_reserved_order_async(&first).await.unwrap().receipt_id,
+        a.receipt_id
+    );
+    let stock = db.inventory().get_stock_async(&sku).await.unwrap().unwrap();
+    assert_eq!(stock.total_on_hand, dec!(6));
+    assert_eq!(stock.total_allocated, dec!(0));
+    assert_eq!(stock.total_available, dec!(6));
+    let movements: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM inventory_transactions WHERE reference_type='order' AND reference_id=$1 AND transaction_type='shipment'")
+        .bind(order.id.to_string()).fetch_one(db.pool()).await.unwrap();
+    assert_eq!(movements, 3);
 }

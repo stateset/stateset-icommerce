@@ -1981,6 +1981,8 @@ export interface CloseMonthOptionsInput {
   skipFxRevaluation?: boolean
   /** Skip the final period close (closing entries + close period) */
   skipPeriodClose?: boolean
+  /** Refuse with an error when any step reports warnings (strict mode) */
+  failOnWarnings?: boolean
   /** Actor recorded as the closer; defaults to `system` */
   closedBy?: string
 }
@@ -1993,6 +1995,8 @@ export interface CloseMonthStepOutput {
   totalAmount: string
   /** Per-item failures that did not abort the close */
   warnings: Array<string>
+  /** Warnings that record a per-item failure (vs informational skip notes) */
+  failedItemCount: number
 }
 export interface CloseMonthReportOutput {
   periodId: string
@@ -3607,16 +3611,22 @@ export interface CreatePurchaseOrderItemInput {
   sku: string
   name: string
   quantity: number
-  unitCost: number
+  /** Legacy float input. Prefer `unitCostExact` for money. */
+  unitCost?: number
+  /** Exact base-10 unit cost; takes precedence over `unitCost`. */
+  unitCostExact?: string
 }
 export interface CreatePurchaseOrderInput {
   supplierId: string
   items: Array<CreatePurchaseOrderItemInput>
   notes?: string
+  /** ISO 4217 currency code; defaults to the supplier currency. */
+  currency?: string
 }
 export interface PurchaseOrderOutput {
   id: string
   poNumber: string
+  currency: string
   supplierId: string
   status: PurchaseOrderStatus
   /** @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0. */
@@ -3629,6 +3639,19 @@ export interface PurchaseOrderOutput {
   totalExact: string
   createdAt: string
   updatedAt: string
+}
+/** Exact purchase-order line quantities and money, suitable for planning. */
+export interface PurchaseOrderItemOutput {
+  id: string
+  sku: string
+  quantityOrderedExact: string
+  quantityReceivedExact: string
+  unitCostExact: string
+  lineTotalExact: string
+}
+export interface ReceivePurchaseOrderItemInput {
+  itemId: string
+  quantityReceivedExact: string
 }
 export interface IngestLineItemInput {
   externalSku: string
@@ -4257,6 +4280,16 @@ export interface CreateShipmentInput {
   trackingNumber?: string
   recipientEmail?: string
   recipientPhone?: string
+  /** Order-linked manifest items, validated atomically with shipment creation. */
+  items?: Array<CreateShipmentItemInput>
+}
+export interface CreateShipmentItemInput {
+  orderItemId?: string
+  productId?: string
+  sku: string
+  name: string
+  /** Positive integer, at most 2147483647; fractional values are refused. */
+  quantity: number
 }
 export interface ShipmentItemOutput {
   id: string
@@ -4289,6 +4322,7 @@ export interface ShipmentOutput {
 }
 /** Patch supported shipment fields through the native repository. */
 export interface UpdateShipmentInput {
+  /** Positive integer, at most 2147483647; stale versions are refused atomically. */
   expectedVersion?: number
   status?: ShipmentStatus
   carrier?: ShippingCarrier
@@ -6087,7 +6121,9 @@ export declare class Backorders {
    * available at its source location.
    *
    * Returns the allocations created, which is empty when nothing is
-   * available or no backorder is open. Call it after stock arrives.
+   * available or no unallocated backorder is open. Inventory receipts
+   * trigger this sweep automatically; call it to retry a failed sweep or
+   * after changing a backorder's source location.
    */
   autoAllocateInventory(sku: string): Promise<Array<BackorderAllocationOutput>>
   /** Reserve a specific quantity of stock against one backorder. */
@@ -6672,6 +6708,11 @@ export declare class Inventory {
   adjust(sku: string, quantity: number, reason: string): Promise<void>
   reserve(sku: string, quantity: number, referenceType: string, referenceId: string, expiresInSeconds?: number | undefined | null): Promise<ReservationOutput>
   confirmReservation(reservationId: string): Promise<void>
+  /**
+   * Atomically consume confirmed holds after full shipment. Safe to retry;
+   * shipping status alone does not post the physical stock transaction.
+   */
+  fulfillOrderStock(orderId: string): Promise<void>
   releaseReservation(reservationId: string): Promise<void>
 }
 export declare class Invoices {
@@ -6986,6 +7027,13 @@ export declare class PurchaseOrders {
   approve(id: string, approvedBy: string): Promise<PurchaseOrderOutput>
   send(id: string): Promise<PurchaseOrderOutput>
   cancel(id: string): Promise<PurchaseOrderOutput>
+  /** Read the persisted purchase-order lines with exact decimal fields. */
+  getItems(id: string): Promise<Array<PurchaseOrderItemOutput>>
+  /**
+   * Record received quantities on a sent purchase order. This updates the PO;
+   * warehouse stock must be posted separately through inventory/receiving.
+   */
+  receive(id: string, items: Array<ReceivePurchaseOrderItemInput>): Promise<PurchaseOrderOutput>
   count(): Promise<number>
 }
 export declare class Purgatory {
@@ -7176,6 +7224,16 @@ export declare class Serials {
 }
 export declare class Shipments {
   create(input: CreateShipmentInput): Promise<ShipmentOutput>
+  /**
+   * Add an order-linked manifest item while packing. Does not fulfill the order or reserve stock.
+   * Optional expectedVersion is a positive integer at most 2147483647, checked atomically.
+   */
+  addItem(shipmentId: string, input: CreateShipmentItemInput, expectedVersion?: number | undefined | null): Promise<ShipmentItemOutput>
+  /**
+   * Remove a manifest item while packing, advancing the shipment version atomically.
+   * Optional expectedVersion is a positive integer at most 2147483647, checked atomically.
+   */
+  removeItem(itemId: string, expectedVersion?: number | undefined | null): Promise<void>
   /** Update shipment metadata and status through the native repository. */
   update(id: string, input: UpdateShipmentInput): Promise<ShipmentOutput>
   get(id: string): Promise<ShipmentOutput | null>
@@ -7185,9 +7243,12 @@ export declare class Shipments {
    * Calling with no argument keeps the previous behaviour (every shipment).
    */
   list(filter?: ShipmentFilterInput | undefined | null): Promise<Array<ShipmentOutput>>
-  ship(id: string, trackingNumber?: string | undefined | null): Promise<ShipmentOutput>
-  deliver(id: string): Promise<ShipmentOutput>
-  cancel(id: string): Promise<ShipmentOutput>
+  /** Ship a shipment; optional expectedVersion must be an integer from 1 to 2147483647. */
+  ship(id: string, trackingNumber?: string | undefined | null, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>
+  /** Deliver a shipment; optional expectedVersion must be an integer from 1 to 2147483647. */
+  deliver(id: string, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>
+  /** Cancel a shipment; optional expectedVersion must be an integer from 1 to 2147483647. */
+  cancel(id: string, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>
   count(): Promise<number>
 }
 export declare class ShippingZones {
@@ -7725,7 +7786,7 @@ export type ShipmentStatus =
 /** Carrier as rendered on `ShipmentOutput.carrier` (the engine renders the underscored spelling of multi-word carriers). */
 export type ShippingCarrier = 'other' | 'ups' | 'fed_ex' | 'usps' | 'dhl' | 'on_trac' | 'laser_ship'
 
-/** Carriers `CreateShipmentInput.carrier` recognises; anything else is stored as `other`. */
+/** Carriers `CreateShipmentInput.carrier` recognises; anything else is refused with `VALIDATION`. */
 export type ShippingCarrierInput = 'ups' | 'fedex' | 'usps' | 'dhl' | 'other'
 
 /** Carrier spellings `ShipmentFilterInput.carrier` accepts. */

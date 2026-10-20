@@ -35,7 +35,9 @@ let status = migrator.status(&conn).unwrap();
 println!("Schema: {}", status.schema_version);
 ```
 
-Extend the built-ins with your own:
+Application migrations use a separate `_stateset_custom_migrations` ledger and
+can run on the same connection as the engine. Engine migrations are immutable;
+define application extensions in a separate registry:
 
 ```rust
 use stateset_migrations::{Migration, MigrationRegistry};
@@ -55,6 +57,15 @@ assert_eq!(registry.len(), 2);
 ```
 
 ## Rollback
+
+The canonical engine migrations are forward-only and share the exact SQL,
+checksums, ledger, and legacy data upgrades used by `stateset-db`. Historical
+`v1_*` through `v9_*` constructors remain available for compatibility through
+`builtins::legacy_registry`; they are not the current engine schema.
+Existing stores created with the old standalone built-ins must continue using
+`legacy_registry()` until their data is migrated into a fresh engine store.
+The engine refuses the old standalone ledger instead of applying incompatible
+SQL to it. Older *engine* ledgers without checksums are upgraded automatically.
 
 Only migrations declared with `Migration::with_down` can be rolled back; a
 forward-only `Migration::new` has no inverse and the migrator will say so rather than

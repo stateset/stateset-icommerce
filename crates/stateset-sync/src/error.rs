@@ -13,7 +13,7 @@ pub enum SyncError {
         current: usize,
     },
 
-    /// The event buffer has reached its maximum capacity (informational; old events are evicted).
+    /// The pull inbox is full; consume and acknowledge events before pulling again.
     #[error("buffer full: capacity {0}")]
     BufferFull(usize),
 

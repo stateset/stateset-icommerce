@@ -193,6 +193,17 @@ paths:
         Settler to open an escrow holding the quoted amount. On
         success, returns an `Escrow` descriptor whose `escrow_id` can
         be used to fulfill, dispute, or observe.
+        The opt-in native checkout backend instead returns a native order
+        with payment_status pending (or paid after configured provider verification), a pending protocol escrow projection,
+        and null funding and inventory_reservation. No external escrow is
+        funded. Without --apply, it returns checkout.status preview and no
+        order. Optional read-only payment reconciliation reports its own status;
+        checkout accepted alone does not mean paid. Optional operator-approved
+        full dispatch recording reports fulfillment.status and can return an
+        order status of shipped. Its inventory field is reserved_stock_consumed
+        after atomic native stock consumption, or depletion_unverified for
+        legacy pinned shipments that only confirmed reservations.
+        These are historical native receipts, not delivery or escrow settlement.
       operationId: acceptQuote
       parameters:
         - $ref: '#/components/parameters/QuoteId'
@@ -205,10 +216,22 @@ paths:
               $ref: '#/components/schemas/AcceptQuoteRequest'
       responses:
         '200':
-          description: Escrow opened
+          description: Reference escrow opened, native order accepted, or native preview
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Escrow' }
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/Escrow' }
+                  - { $ref: '#/components/schemas/NativeCheckoutResponse' }
+        '202':
+          description: Native outcome requires reconciliation; retry signed acceptance of the same quote
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NativeCheckoutResponse' }
+        '410':
+          description: Quote expired before native checkout was started
+        '422':
+          description: Invalid native quote terms
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/EscrowConflict' }
         '401':
@@ -240,6 +263,8 @@ paths:
               schema: { $ref: '#/components/schemas/SettlementReceipt' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/EscrowConflict' }
+        '503':
+          description: Native fulfillment and settlement are not configured
 
   /icp/v1/escrows/{escrow_id}/dispute:
     post:
@@ -264,6 +289,8 @@ paths:
               schema: { $ref: '#/components/schemas/Dispute' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/EscrowConflict' }
+        '503':
+          description: Native dispute recovery is not configured
 
   /icp/v1/escrows/{escrow_id}/events:
     get:
@@ -971,6 +998,67 @@ components:
         released_to: { type: string }
         merchant_signature: { $ref: '#/components/schemas/Signature' }
         settler_signature: { $ref: '#/components/schemas/Signature' }
+
+    NativeCheckoutResponse:
+      type: object
+      required: [checkout, funding, order]
+      properties:
+        checkout:
+          type: object
+          required: [status]
+          properties:
+            id: { type: string }
+            status: { type: string, enum: [preview, reconciling, accepted] }
+            verdict: { type: string, description: Native kernel preview verdict }
+        funding: { type: 'null' }
+        inventory_reservation: { type: 'null' }
+        order:
+          type: [object, 'null']
+          properties:
+            order_id: { type: string }
+            quote_id: { type: string }
+            status: { type: string, enum: [confirmed, partially_shipped, shipped] }
+            payment_status: { type: string, enum: [pending, paid] }
+        payment:
+          type: object
+          description: Optional historical payment recording result, separate from checkout and escrow settlement
+          required: [status]
+          properties:
+            status:
+              { type: string, enum: [preview, pending, reconciling, needs_attention, recorded] }
+            payment_id: { type: string }
+        fulfillment:
+          type: object
+          description: Historical native dispatch progress and reserved-stock consumption; no carrier call or delivery/settlement proof
+          required: [status]
+          properties:
+            status:
+              { type: string, enum: [preview, pending, reconciling, needs_attention, recorded] }
+            order_id: { type: string }
+            tracking_number: { type: string }
+            inventory: { type: string, enum: [reserved_stock_consumed, depletion_unverified] }
+            order_status: { type: string, enum: [partially_shipped, shipped] }
+            order_version: { type: integer, minimum: 0 }
+            next_dispatch_status:
+              type: string
+              enum: [pending, reconciling, needs_attention]
+              description: Next dispatch state while the last verified partial shipment remains recorded
+            items:
+              type: array
+              description: Cumulative quantities from the last verified shipment receipt; omitted for legacy journals
+              items:
+                type: object
+                required: [order_item_id, quantity, shipped_quantity]
+                properties:
+                  order_item_id: { type: string }
+                  quantity: { type: integer, minimum: 1 }
+                  shipped_quantity: { type: integer, minimum: 0 }
+        escrow:
+          type: object
+          properties:
+            escrow_id: { type: string }
+            state: { type: string, enum: [pending] }
+            settlement: { type: string, enum: [unconfigured] }
 
     Escrow:
       type: object

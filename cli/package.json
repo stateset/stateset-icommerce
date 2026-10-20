@@ -1,6 +1,6 @@
 {
   "name": "@stateset/cli",
-  "version": "1.36.0",
+  "version": "1.39.0",
   "description": "AI-powered local-first commerce engine — orders, inventory, payments, policies, and integrations",
   "type": "module",
   "bin": {
@@ -70,7 +70,8 @@
     "./agent-toolkit": "./src/agent-toolkit.js",
     "./marketplace": "./src/marketplace/index.js",
     "./package.json": "./package.json",
-    "./standalone": "./src/standalone.js"
+    "./standalone": "./src/standalone.js",
+    "./simulation": "./src/simulation/index.js"
   },
   "repository": {
     "type": "git",
@@ -90,6 +91,7 @@
     "pretypecheck:full": "npm run check:env",
     "pretest": "npm run check:env",
     "pretest:unit": "npm run check:env",
+    "pretest:mcp-safety": "npm run check:env",
     "pretest:integration": "npm run check:env",
     "pretest:e2e": "npm run check:env",
     "pretest:plugins": "npm run check:env",
@@ -103,13 +105,15 @@
     "pretest:coverage": "npm run check:env",
     "test": "node --test test/*.test.js test/unit/*.test.js test/integration/*.test.js test/e2e/*.test.js test/a2a/*.test.js test/adapters/*.test.js test/mcp/*.test.js test/x402/*.test.js tests/*.test.js",
     "test:unit": "node --test test/unit/*.test.js",
+    "test:mcp-safety": "node --test --test-concurrency=1 test/unit/mcp-http-origins.test.js test/unit/mcp-http-api-keys.test.js test/unit/mcp-http-listen.test.js test/unit/mcp-v2-server.test.js test/integration/mcp-http-sandbox.test.js test/integration/mcp-http-listen.test.js test/integration/mcp-stdio-protocol.test.js",
     "test:purchase": "node --test test/unit/purchase-runtime.test.js",
     "test:merchant": "node --test test/unit/icp-durable-store.test.js",
+    "test:simulation": "node --test --test-concurrency=1 test/unit/embedded-simulation.test.js test/unit/simulation-planning-contract.test.js test/unit/simulation-cli.test.js test/unit/simulation-experiment.test.js test/unit/simulation-supply.test.js test/unit/simulation-purchasing.test.js test/unit/simulation-admission.test.js test/unit/simulation-cashflow.test.js test/unit/simulation-inventory-flow.test.js",
     "test:native-merchant": "node --test test/unit/native-merchant-checkout.test.js",
     "demo:merchant": "node examples/durable-merchant.mjs",
     "demo:purchase": "node examples/durable-purchase.mjs",
     "test:integration": "node --test test/integration/*.test.js",
-    "test:api-coverage": "node --test test/integration/mcp-tool-coverage.test.js test/integration/mcp-api-coverage.test.js test/integration/mcp-server-registry.test.js test/integration/tool-domain-registry.test.js test/integration/commands.test.js test/integration/api-command-coverage.test.js test/integration/tool-backed-command-coverage.test.js test/integration/tool-backed-command-dispatch.test.js test/unit/http-gateway-route-registry.test.js",
+    "test:api-coverage": "node --test test/integration/mcp-tool-coverage.test.js test/integration/mcp-api-coverage.test.js test/integration/mcp-server-registry.test.js test/integration/tool-domain-registry.test.js test/integration/commands.test.js test/integration/api-command-coverage.test.js test/integration/tool-backed-command-coverage.test.js test/integration/tool-backed-command-dispatch.test.js test/unit/http-gateway-route-registry.test.js test/unit/tool-registry.test.js",
     "test:e2e": "node --test test/e2e/*.test.js",
     "test:plugins": "node --test tests/plugin-system.test.js",
     "test:skills": "node --test tests/skills-system.test.js",
@@ -191,6 +195,8 @@
     "npm": ">=10.0.0"
   },
   "files": [
+    "examples/commerce-scenario.json",
+    "examples/inventory-*.json",
     "bin/",
     "src/",
     "skills/",
@@ -202,7 +208,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.1.70",
     "@clack/prompts": "^0.11.0",
     "@modelcontextprotocol/node": "^2.0.0",
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@modelcontextprotocol/server": "^2.0.0",
     "@stateset/embedded": "file:../bindings/node",
     "bignumber.js": "^9.3.1",
@@ -216,8 +222,8 @@
     "zod-to-json-schema": "^3.25.2"
   },
   "optionalDependencies": {
-    "@google-cloud/pubsub": "^6.0.1",
-    "@grpc/grpc-js": "^1.14.4",
+    "@google-cloud/pubsub": "^5.3.1",
+    "@grpc/grpc-js": "^1.14.5",
     "@grpc/proto-loader": "^0.8.1",
     "@slack/bolt": "^3.17.0",
     "@solana/web3.js": "^1.98.4",
@@ -229,22 +235,24 @@
     "qrcode-terminal": "^0.12.0",
     "ws": "^8.18.0"
   },
+  "devDependencies": {
+    "@grpc/grpc-js": "^1.14.5",
+    "@grpc/proto-loader": "^0.8.1"
+  },
   "overrides": {
     "@slack/socket-mode": {
       "ws": "7.5.11"
     },
     "brace-expansion": "2.1.7",
-    "axios": "1.18.0",
+    "axios": "1.20.0",
     "botframework-streaming": {
       "ws": "7.5.11"
     },
     "form-data@2.5.5": "2.5.6",
     "form-data@4.0.5": "4.0.6",
-    "jayson": {
-      "uuid": "11.1.1"
-    },
+    "jayson": "5.0.0",
     "protobufjs": "7.6.6",
-    "sharp": "0.35.4",
+    "sharp": "0.35.5",
     "undici": "6.28.1"
   },
   "publishConfig": {

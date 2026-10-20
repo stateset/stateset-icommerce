@@ -449,6 +449,7 @@ export { createExpressCheckout } from './checkout/express.js';
 
 // Compliance & Regulatory Exports
 export { createComplianceService } from './compliance/exports.js';
+export { createIsolatedComplianceService } from './compliance/isolated.js';
 
 // Machine-Readable Agent Catalog
 export { createAgentCatalog } from './catalog/agent-catalog.js';

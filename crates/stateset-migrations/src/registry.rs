@@ -26,13 +26,14 @@ use crate::migration::{Migration, MigrationRecord};
 #[derive(Debug, Clone)]
 pub struct MigrationRegistry {
     migrations: BTreeMap<u32, Migration>,
+    pub(crate) engine_schema: bool,
 }
 
 impl MigrationRegistry {
     /// Create a new empty registry.
     #[must_use]
     pub const fn new() -> Self {
-        Self { migrations: BTreeMap::new() }
+        Self { migrations: BTreeMap::new(), engine_schema: false }
     }
 
     /// Create a builder for fluent registry construction.
@@ -44,6 +45,9 @@ impl MigrationRegistry {
     /// Register a migration. Returns an error if a migration with the same
     /// version is already registered.
     pub fn register(&mut self, migration: Migration) -> Result<()> {
+        if self.engine_schema {
+            return Err(MigrationError::InvalidMigration { reason: "engine migrations are immutable; use a separate custom registry for application migrations".into() });
+        }
         if let Some(existing) = self.migrations.get(&migration.version) {
             return Err(MigrationError::VersionConflict {
                 version: migration.version,

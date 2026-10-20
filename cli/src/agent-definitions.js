@@ -797,6 +797,8 @@ If --apply is not set, payment operations show a preview instead of executing.`,
       'mcp__stateset-commerce__plan_partial_shipment',
       'mcp__stateset-commerce__create_shipment',
       'mcp__stateset-commerce__update_shipment',
+      'mcp__stateset-commerce__add_shipment_item',
+      'mcp__stateset-commerce__remove_shipment_item',
       'mcp__stateset-commerce__ship_shipment',
       'mcp__stateset-commerce__deliver_shipment',
       'mcp__stateset-commerce__cancel_shipment',
@@ -832,6 +834,8 @@ Use observed carrier/warehouse events; do not invent intermediate physical stage
 - plan_partial_shipment - Inspect remaining order quantities without writes
 - create_shipment - Create shipment with tracking (requires --apply)
 - update_shipment - Record lifecycle stages or metadata with expectedVersion (requires --apply)
+- add_shipment_item - Add an order line within its remaining allocation (requires --apply)
+- remove_shipment_item - Remove an item and release its allocation (requires --apply)
 - ship_shipment - Mark shipment as shipped (requires --apply)
 - deliver_shipment - Mark as delivered (requires --apply)
 - cancel_shipment - Cancel shipment before carrier handoff (requires --apply and cancellation permission)

@@ -86,6 +86,33 @@ and actors. API requests include `x-tenant-id`; in tenant-bound deployments it
 must match the operator-owned token binding. The single-store example explicitly
 disables tenant-header routing while retaining the required request header.
 
+## Durable request retries
+
+With tenant database routing, reservations and completed responses are stored
+in the authenticated tenant's database alongside its business records. They
+survive server restarts and tenant backup/restore even when the default store
+is in memory. Authentication and authorization run before response replay.
+
+The server reserves each `(tenant, Idempotency-Key)` in the database before
+executing a guarded POST or shipment-item DELETE. Replicas sharing that database
+cannot execute the same reserved request twice. Completed responses replay for
+24 hours; reusing a key
+with a different request returns 422. An unavailable idempotency store returns
+503 before execution. Clients must keep the same key when retrying. The request
+fingerprint includes the method, path, exact query string and body bytes.
+
+A request interrupted after reservation can have an uncertain outcome, including
+when the mutation committed but its response could not be saved. Its reservation
+does not expire: retries return 409 with `idempotency_in_progress`. This is
+at-most-once execution within the retention window, not automatic crash recovery.
+For reconciliation, stop the original worker, inspect the domain records and
+audit trail, and locate the matching `http_idempotency_keys` row with
+`response_status = 0`. An operator may complete it through
+`HttpIdempotencyRepository::complete` using the original fingerprint and the
+verified response. Delete an unresolved reservation only after proving that no
+mutation occurred and no original worker can still commit. Do not bypass an
+uncertain outcome by issuing a new key.
+
 ## Shipment lifecycle
 
 Create shipments with `POST /api/v1/shipments`, including the recipient name,
@@ -109,6 +136,42 @@ Cancellation uses `POST /api/v1/shipments/{id}/cancel` with `{}` or an
 is enabled. The general update route rejects cancellation, including spelling
 aliases. Cancellation retains the shipment and its history and is permitted
 only before carrier handoff.
+
+Shipment creation accepts an optional `items` array. Each item has `sku`, `name`,
+and a positive integer `quantity` (at most 2,147,483,647), plus optional
+`order_item_id` and `product_id` UUIDs. A missing order-line ID is resolved only
+when the SKU identifies one line. The native transaction validates order
+membership, product/SKU consistency, and the total assigned to non-cancelled
+shipments. Shipment creation, detail and list responses include the normalized
+`items` with their shipment-item IDs.
+
+Packing edits use these endpoints:
+
+| Method | Path | Result |
+| --- | --- | --- |
+| POST | `/api/v1/shipments/{id}/items` | Add one item using the item fields above; returns 201 and the persisted item |
+| DELETE | `/api/v1/shipments/{id}/items/{item_id}` | Remove that shipment's item; requires delete permission and returns 204 |
+
+Edits are permitted only in `pending`, `processing` and `on_hold`; contents
+freeze at `ready_to_ship`. Each edit advances the parent version and commits
+its outbox fact atomically. Both endpoints accept an optional query parameter,
+for example `POST /api/v1/shipments/{id}/items?expected_version=2` or
+`DELETE /api/v1/shipments/{id}/items/{item_id}?expected_version=2`. The native
+transaction checks the locked parent's version and returns 409 for stale edits,
+without changing items or audit facts. Read the latest shipment to reconcile
+before retrying with a new version. Omitting the parameter preserves the
+unconditional edit behavior; malformed or unknown query fields return 400.
+
+Use an `Idempotency-Key` to safely replay an identical request, including its
+original version precondition, even after the successful edit advanced the
+version. Changed bodies or query strings with the same key are refused.
+Fingerprints include the exact query string: reordered or differently encoded
+parameters also count as a different request. Existing persisted receipts for
+requests with query strings use the previous fingerprint and cannot be replayed;
+reconcile their outcome before using a new key. Requests without query strings
+retain their existing fingerprint. A foreign item ID cannot bypass the shipment
+path or tenant scope. Manifest assignments do not
+reserve inventory or update order fulfilled quantities.
 
 Agents using the CLI/MCP catalog can perform the same transitions with
 `update_shipment`, using camelCase input names such as `expectedVersion`.

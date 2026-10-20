@@ -84,7 +84,7 @@ The five templates are `auto_approve_returns_template`,
 
 | Feature | Description | Default |
 |---------|-------------|---------|
-| `yaml` | Load policy sets from YAML files via `serde_yaml` | Yes |
+| `yaml` | Load policy sets from YAML files via `serde_norway` | Yes |
 
 ## Part of StateSet iCommerce
 

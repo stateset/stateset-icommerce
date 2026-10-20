@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -165,6 +166,12 @@ impl JobStore for InMemoryJobStore {
 /// A file-backed [`JobStore`] implementation using JSON snapshots.
 ///
 /// Designed for single-process durability and restart recovery.
+/// Share one open store through clones; independent writers to the same path
+/// are not coordinated. Mutations use unique temporary files and atomic
+/// replacement, syncing the file and (on Unix) its containing directory.
+/// Pre-replacement failures leave memory and the previous snapshot unchanged.
+/// A directory-sync failure after replacement reports an error but retains the
+/// new memory state, matching the visible snapshot; crash durability is uncertain.
 #[derive(Debug, Clone)]
 pub struct FileJobStore {
     path: PathBuf,
@@ -179,54 +186,95 @@ impl FileJobStore {
     /// Returns [`JobError::StoreError`] if loading fails.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, JobError> {
         let path = path.as_ref().to_path_buf();
-        let map = if path.exists() { Self::read_snapshot(&path)? } else { HashMap::new() };
-
+        // Only NotFound means a new store. Permission and other lookup failures
+        // must not be mistaken for permission to replace an existing snapshot.
+        let (map, create) = match fs::read_to_string(&path) {
+            Ok(content) => (Self::parse_snapshot(&content)?, false),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (HashMap::new(), true),
+            Err(error) => {
+                return Err(JobError::StoreError(format!("read snapshot failed: {error}")));
+            }
+        };
         let store = Self { path, inner: Arc::new(Mutex::new(map)) };
-        if !store.path.exists() {
-            store.persist_map(&store.lock_map_unpoisoned())?;
+        if create {
+            store.mutate(|_| Ok(()))?;
         }
         Ok(store)
     }
 
-    fn lock_map_unpoisoned(&self) -> std::sync::MutexGuard<'_, HashMap<Uuid, JobInstance>> {
-        match self.inner.lock() {
-            Ok(map) => map,
-            Err(poisoned) => poisoned.into_inner(),
+    fn parse_snapshot(content: &str) -> Result<HashMap<Uuid, JobInstance>, JobError> {
+        let map: HashMap<Uuid, JobInstance> = serde_json::from_str(content)
+            .map_err(|e| JobError::StoreError(format!("parse snapshot failed: {e}")))?;
+        for (id, job) in &map {
+            if *id != job.id {
+                return Err(JobError::StoreError(format!(
+                    "snapshot key {id} does not match job id {}",
+                    job.id
+                )));
+            }
         }
+        Ok(map)
     }
 
-    fn read_snapshot(path: &Path) -> Result<HashMap<Uuid, JobInstance>, JobError> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| JobError::StoreError(format!("read snapshot failed: {e}")))?;
-        if content.trim().is_empty() {
-            return Ok(HashMap::new());
-        }
-        serde_json::from_str(&content)
-            .map_err(|e| JobError::StoreError(format!("parse snapshot failed: {e}")))
+    fn mutate<T>(
+        &self,
+        edit: impl FnOnce(&mut HashMap<Uuid, JobInstance>) -> Result<T, JobError>,
+    ) -> Result<T, JobError> {
+        self.mutate_with_directory_sync(edit, |parent| {
+            #[cfg(unix)]
+            fs::File::open(parent)?.sync_all()?;
+            #[cfg(not(unix))]
+            let _ = parent;
+            Ok(())
+        })
     }
 
-    fn persist_map(&self, map: &HashMap<Uuid, JobInstance>) -> Result<(), JobError> {
-        let serialized = serde_json::to_string_pretty(map)
+    fn mutate_with_directory_sync<T>(
+        &self,
+        edit: impl FnOnce(&mut HashMap<Uuid, JobInstance>) -> Result<T, JobError>,
+        sync_directory: impl FnOnce(&Path) -> std::io::Result<()>,
+    ) -> Result<T, JobError> {
+        let mut map =
+            self.inner.lock().map_err(|e| JobError::StoreError(format!("lock poisoned: {e}")))?;
+        let mut candidate = map.clone();
+        let result = edit(&mut candidate)?;
+        let serialized = serde_json::to_vec_pretty(&candidate)
             .map_err(|e| JobError::StoreError(format!("serialize snapshot failed: {e}")))?;
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| JobError::StoreError(format!("create store directory failed: {e}")))?;
-        }
-        let tmp = self.path.with_extension("tmp");
-        fs::write(&tmp, serialized)
+        let parent = self
+            .path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)
+            .map_err(|e| JobError::StoreError(format!("create store directory failed: {e}")))?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)
+            .map_err(|e| JobError::StoreError(format!("create snapshot failed: {e}")))?;
+        temporary
+            .write_all(&serialized)
             .map_err(|e| JobError::StoreError(format!("write snapshot failed: {e}")))?;
-        fs::rename(&tmp, &self.path)
+        temporary
+            .as_file()
+            .sync_all()
+            .map_err(|e| JobError::StoreError(format!("sync snapshot failed: {e}")))?;
+        temporary
+            .persist(&self.path)
             .map_err(|e| JobError::StoreError(format!("replace snapshot failed: {e}")))?;
-        Ok(())
+        // Rename is the visibility commit point. Never roll memory back after
+        // it, even if syncing the directory reports uncertain crash durability.
+        *map = candidate;
+        sync_directory(parent).map_err(|e| {
+            JobError::StoreError(format!("sync snapshot directory failed after replacement: {e}"))
+        })?;
+        Ok(result)
     }
 }
 
 impl JobStore for FileJobStore {
     fn save(&self, job: &JobInstance) -> Result<(), JobError> {
-        let mut map =
-            self.inner.lock().map_err(|e| JobError::StoreError(format!("lock poisoned: {e}")))?;
-        map.insert(job.id, job.clone());
-        self.persist_map(&map)
+        self.mutate(|map| {
+            map.insert(job.id, job.clone());
+            Ok(())
+        })
     }
 
     fn get(&self, id: &Uuid) -> Result<Option<JobInstance>, JobError> {
@@ -242,27 +290,21 @@ impl JobStore for FileJobStore {
     }
 
     fn update_status(&self, id: &Uuid, status: JobStatus) -> Result<(), JobError> {
-        let mut map =
-            self.inner.lock().map_err(|e| JobError::StoreError(format!("lock poisoned: {e}")))?;
-        match map.get_mut(id) {
-            Some(job) => {
-                job.transition_to(status)?;
-                self.persist_map(&map)
-            }
+        self.mutate(|map| match map.get_mut(id) {
+            Some(job) => job.transition_to(status),
             None => Err(JobError::NotFound(*id)),
-        }
+        })
     }
 
     fn delete_completed_before(&self, before: DateTime<Utc>) -> Result<u64, JobError> {
-        let mut map =
-            self.inner.lock().map_err(|e| JobError::StoreError(format!("lock poisoned: {e}")))?;
-        let initial_len = map.len();
-        map.retain(|_, job| {
-            !(job.status == JobStatus::Completed && job.completed_at.is_some_and(|t| t < before))
-        });
-        let deleted = (initial_len - map.len()) as u64;
-        self.persist_map(&map)?;
-        Ok(deleted)
+        self.mutate(|map| {
+            let initial_len = map.len();
+            map.retain(|_, job| {
+                !(job.status == JobStatus::Completed
+                    && job.completed_at.is_some_and(|t| t < before))
+            });
+            Ok((initial_len - map.len()) as u64)
+        })
     }
 }
 
@@ -429,6 +471,165 @@ mod tests {
         let clone = store;
         assert!(clone.get(&id).unwrap().is_some());
         assert_eq!(clone.len(), 1);
+    }
+
+    #[test]
+    fn file_store_failed_mutations_preserve_memory_and_last_snapshot() {
+        let dir = tempdir().unwrap();
+        let live = dir.path().join("live");
+        let offline = dir.path().join("offline");
+        let path = live.join("jobs.json");
+        let store = FileJobStore::open(&path).unwrap();
+        let peer = store.clone();
+        let pending = make_instance("pending");
+        let completed = make_completed_instance("completed", Utc::now() - Duration::hours(2));
+        store.save(&pending).unwrap();
+        store.save(&completed).unwrap();
+        let before = fs::read(&path).unwrap();
+
+        // Make the parent unusable without relying on chmod (which root can
+        // bypass). The previous snapshot remains available at its moved path.
+        fs::rename(&live, &offline).unwrap();
+        fs::write(&live, "parent is unavailable").unwrap();
+        let refused = make_instance("refused");
+        assert!(store.save(&refused).is_err());
+        let mut updated = pending.clone();
+        updated.definition_name = "uncommitted update".into();
+        assert!(store.save(&updated).is_err());
+        assert!(store.update_status(&pending.id, JobStatus::Running).is_err());
+        assert!(store.delete_completed_before(Utc::now()).is_err());
+        for reader in [&store, &peer] {
+            assert!(reader.get(&refused.id).unwrap().is_none());
+            let retained = reader.get(&pending.id).unwrap().unwrap();
+            assert_eq!(retained.definition_name, "pending");
+            assert_eq!(retained.status, pending.status);
+            assert!(reader.get(&completed.id).unwrap().is_some());
+        }
+        assert_eq!(fs::read(offline.join("jobs.json")).unwrap(), before);
+        fs::remove_file(&live).unwrap();
+        fs::rename(&offline, &live).unwrap();
+        let reopened = FileJobStore::open(&path).unwrap();
+        assert_eq!(reopened.get(&pending.id).unwrap().unwrap().status, pending.status);
+        assert!(reopened.get(&refused.id).unwrap().is_none());
+        assert!(reopened.get(&completed.id).unwrap().is_some());
+        // A later successful commit must not accidentally flush failed edits.
+        store.save(&refused).unwrap();
+        let reopened = FileJobStore::open(&path).unwrap();
+        assert_eq!(reopened.get(&pending.id).unwrap().unwrap().definition_name, "pending");
+        assert!(reopened.get(&completed.id).unwrap().is_some());
+        assert!(reopened.get(&refused.id).unwrap().is_some());
+    }
+
+    #[test]
+    fn file_store_failed_replacement_cleans_temporary_snapshot() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("jobs.json");
+        let original = dir.path().join("original.json");
+        let store = FileJobStore::open(&path).unwrap();
+        let job = make_instance("pending");
+        store.save(&job).unwrap();
+        fs::rename(&path, &original).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert!(store.update_status(&job.id, JobStatus::Running).is_err());
+        assert_eq!(store.get(&job.id).unwrap().unwrap().status, job.status);
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+        fs::remove_dir(&path).unwrap();
+        fs::rename(&original, &path).unwrap();
+        assert_eq!(
+            FileJobStore::open(&path).unwrap().get(&job.id).unwrap().unwrap().status,
+            job.status
+        );
+        store.update_status(&job.id, JobStatus::Running).unwrap();
+        assert_eq!(
+            FileJobStore::open(&path).unwrap().get(&job.id).unwrap().unwrap().status,
+            JobStatus::Running
+        );
+    }
+
+    #[test]
+    fn file_store_directory_sync_error_keeps_visible_commit_in_memory() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("jobs.json");
+        let store = FileJobStore::open(&path).unwrap();
+        let peer = store.clone();
+        let job = make_instance("committed but durability uncertain");
+        let error = store
+            .mutate_with_directory_sync(
+                |map| {
+                    map.insert(job.id, job.clone());
+                    Ok(())
+                },
+                |_| Err(std::io::Error::other("injected directory sync failure")),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("after replacement"));
+        assert!(store.get(&job.id).unwrap().is_some());
+        assert!(peer.get(&job.id).unwrap().is_some());
+        assert!(FileJobStore::open(&path).unwrap().get(&job.id).unwrap().is_some());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn file_store_does_not_overwrite_a_neighboring_tmp_file() {
+        let dir = tempdir().unwrap();
+        let neighbor = dir.path().join("jobs.tmp");
+        fs::write(&neighbor, "owned by another application").unwrap();
+        let store = FileJobStore::open(dir.path().join("jobs.json")).unwrap();
+        store.save(&make_instance("pending")).unwrap();
+        assert_eq!(fs::read_to_string(neighbor).unwrap(), "owned by another application");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn file_store_rejects_damaged_snapshots_without_replacing_them() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("jobs.json");
+        for content in ["", "  \n", "{", "[]", "null"] {
+            fs::write(&path, content).unwrap();
+            assert!(matches!(FileJobStore::open(&path), Err(JobError::StoreError(_))));
+            assert_eq!(fs::read_to_string(&path).unwrap(), content);
+        }
+        let wrong_key = Uuid::new_v4();
+        let content =
+            serde_json::to_string(&HashMap::from([(wrong_key, make_instance("mismatched"))]))
+                .unwrap();
+        fs::write(&path, &content).unwrap();
+        assert!(matches!(FileJobStore::open(&path), Err(JobError::StoreError(_))));
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
+        fs::write(&path, "{}").unwrap();
+        assert!(FileJobStore::open(&path).unwrap().list_active().unwrap().is_empty());
+    }
+
+    #[test]
+    fn file_store_cloned_writers_preserve_every_committed_job() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("jobs.json");
+        let store = FileJobStore::open(&path).unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+        let writers: Vec<_> = (0..4)
+            .map(|_| {
+                let store = store.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    (0..8)
+                        .map(|_| {
+                            let job = make_instance("concurrent");
+                            store.save(&job).unwrap();
+                            job.id
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        let ids: Vec<_> = writers.into_iter().flat_map(|writer| writer.join().unwrap()).collect();
+        let reopened = FileJobStore::open(path).unwrap();
+        assert_eq!(reopened.list_active().unwrap().len(), ids.len());
+        for id in ids {
+            assert!(store.get(&id).unwrap().is_some());
+            assert!(reopened.get(&id).unwrap().is_some());
+        }
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
     #[test]

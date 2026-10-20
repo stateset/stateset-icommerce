@@ -68,20 +68,28 @@ async fn request(
     token: &str,
     body: Value,
 ) -> (StatusCode, Value) {
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(method)
-                .uri(format!("/api/v1{path}"))
-                .header("Authorization", format!("Bearer {token}"))
-                .header("Content-Type", "application/json")
-                .header("x-tenant-id", if token == "other-token" { "tenant-b" } else { "tenant-a" })
-                .body(Body::from(body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    request_with_key(app, method, path, token, body, None).await
+}
+
+async fn request_with_key(
+    app: &Router,
+    method: &str,
+    path: &str,
+    token: &str,
+    body: Value,
+    key: Option<&str>,
+) -> (StatusCode, Value) {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(format!("/api/v1{path}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .header("x-tenant-id", if token == "other-token" { "tenant-b" } else { "tenant-a" });
+    if let Some(key) = key {
+        builder = builder.header("Idempotency-Key", key);
+    }
+    let response =
+        app.clone().oneshot(builder.body(Body::from(body.to_string())).unwrap()).await.unwrap();
     let status = response.status();
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
     (
@@ -258,6 +266,8 @@ async fn shipment_routes_respect_tenant_bound_tokens() {
         ("GET", "", json!({})),
         ("PATCH", "", json!({"status":"processing"})),
         ("POST", "/cancel", json!({})),
+        ("POST", "/items", json!({"sku":"W-1", "name":"Widget", "quantity":1})),
+        ("DELETE", "/items/00000000-0000-4000-8000-000000000001", json!({})),
     ] {
         let (status, result) =
             request(&app, method, &format!("{path}{suffix}"), "other-token", body).await;
@@ -288,4 +298,404 @@ async fn shipment_routes_respect_tenant_bound_tokens() {
     .await;
     assert_eq!(status, StatusCode::OK, "{changed}");
     assert_eq!(changed["version"], 2);
+}
+
+#[tokio::test]
+async fn shipment_creation_returns_normalized_items_and_replays_without_reallocation() {
+    let (app, order) = fixture();
+    let body = json!({"order_id":order, "recipient_name":"Ada", "shipping_address":"1 Main",
+        "items":[{"sku":"W-1", "name":"Widget", "quantity":1}]});
+    let (status, created) = request_with_key(
+        &app,
+        "POST",
+        "/shipments",
+        "writer-token",
+        body.clone(),
+        Some("manifest-create"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert_eq!(created["items"][0]["quantity"], 1);
+    assert!(created["items"][0]["order_item_id"].is_string());
+    assert!(created["items"][0]["product_id"].is_string());
+    assert_eq!(created["items"][0]["shipment_id"], created["id"]);
+    let replay = request_with_key(
+        &app,
+        "POST",
+        "/shipments",
+        "writer-token",
+        body.clone(),
+        Some("manifest-create"),
+    )
+    .await;
+    assert_eq!(replay, (StatusCode::CREATED, created.clone()));
+    let mut changed = body.clone();
+    changed["items"][0]["quantity"] = json!(2);
+    assert_eq!(
+        request_with_key(
+            &app,
+            "POST",
+            "/shipments",
+            "writer-token",
+            changed,
+            Some("manifest-create")
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let (status, rejected) = request(&app, "POST", "/shipments", "writer-token", body).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{rejected}");
+    let (_, listed) = request(&app, "GET", "/shipments", "viewer-token", json!({})).await;
+    assert_eq!(listed["total"], 1);
+    assert_eq!(listed["shipments"][0]["items"], created["items"]);
+}
+
+#[tokio::test]
+async fn manifest_item_endpoints_enforce_permissions_parent_scope_and_packing_lifecycle() {
+    let (app, order) = fixture();
+    let first = create(&app, &order).await;
+    let second = create(&app, &order).await;
+    let path = format!("/shipments/{}", first["id"].as_str().unwrap());
+    let item_path = format!("{path}/items");
+    let item = json!({"sku":"W-1", "name":"Widget", "quantity":1});
+    assert_eq!(
+        request(&app, "POST", &item_path, "viewer-token", item.clone()).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(&app, "POST", &item_path, "unknown-token", item.clone()).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, added) = request_with_key(
+        &app,
+        "POST",
+        &item_path,
+        "writer-token",
+        item.clone(),
+        Some("manifest-add"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{added}");
+    assert_eq!(
+        request_with_key(
+            &app,
+            "POST",
+            &item_path,
+            "writer-token",
+            item.clone(),
+            Some("manifest-add")
+        )
+        .await,
+        (StatusCode::CREATED, added.clone())
+    );
+    assert_eq!(
+        request_with_key(
+            &app,
+            "POST",
+            &item_path,
+            "viewer-token",
+            item.clone(),
+            Some("manifest-add")
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    let (_, packed) = request(&app, "GET", &path, "viewer-token", json!({})).await;
+    assert_eq!(packed["version"], 2);
+    assert_eq!(packed["items"], json!([added.clone()]));
+    let delete_path = format!("{item_path}/{}", added["id"].as_str().unwrap());
+    assert_eq!(
+        request(&app, "DELETE", &delete_path, "writer-token", json!({})).await.0,
+        StatusCode::FORBIDDEN
+    );
+    let wrong_parent = format!(
+        "/shipments/{}/items/{}",
+        second["id"].as_str().unwrap(),
+        added["id"].as_str().unwrap()
+    );
+    assert_eq!(
+        request(&app, "DELETE", &wrong_parent, "admin-token", json!({})).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(request(&app, "GET", &path, "viewer-token", json!({})).await.1, packed);
+    assert_eq!(
+        request_with_key(
+            &app,
+            "DELETE",
+            &delete_path,
+            "admin-token",
+            json!({}),
+            Some("manifest-remove")
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        request_with_key(
+            &app,
+            "DELETE",
+            &delete_path,
+            "admin-token",
+            json!({}),
+            Some("manifest-remove")
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let (_, empty) = request(&app, "GET", &path, "viewer-token", json!({})).await;
+    assert_eq!(
+        request_with_key(
+            &app,
+            "DELETE",
+            &delete_path,
+            "writer-token",
+            json!({}),
+            Some("manifest-remove")
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(empty["version"], 3);
+    assert_eq!(empty["items"], json!([]));
+    let (status, added) = request(&app, "POST", &item_path, "writer-token", item.clone()).await;
+    assert_eq!(status, StatusCode::CREATED, "{added}");
+    for status in ["processing", "ready_to_ship"] {
+        assert_eq!(
+            request(&app, "PATCH", &path, "writer-token", json!({"status":status})).await.0,
+            StatusCode::OK
+        );
+    }
+    // Removal must refuse even though this caller has delete permission.
+    let delete_path = format!("{item_path}/{}", added["id"].as_str().unwrap());
+    assert_eq!(
+        request(&app, "DELETE", &delete_path, "admin-token", json!({})).await.0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        request(&app, "POST", &item_path, "writer-token", item).await.0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let (_, ready) = request(&app, "GET", &path, "viewer-token", json!({})).await;
+    assert_eq!(ready["version"], 6);
+    assert_eq!(ready["items"], json!([added]));
+}
+
+#[tokio::test]
+async fn invalid_manifest_inputs_do_not_create_partial_shipments() {
+    let (app, order) = fixture();
+    for invalid in [
+        json!({"sku":"W-1", "name":"Widget", "quantity":0}),
+        json!({"sku":"W-1", "name":"Widget", "quantity":1.5}),
+        json!({"sku":"W-1", "name":"Widget", "quantity":2147483648_u64}),
+        json!({"sku":"W-1", "name":"Widget", "quantity":2}),
+        json!({"sku":"wrong", "name":"Widget", "quantity":1}),
+        json!({"sku":"W-1", "name":"Widget", "quantity":1, "order_item_id":uuid::Uuid::new_v4()}),
+        json!({"sku":"W-1", "name":"Widget", "quantity":1, "product_id":uuid::Uuid::new_v4()}),
+        json!({"sku":"W-1", "name":"Widget", "quantity":1, "unexpected":true}),
+    ] {
+        let body = json!({"order_id":order, "items":[invalid]});
+        let (status, response) = request(&app, "POST", "/shipments", "writer-token", body).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{response}");
+    }
+    let (_, list) = request(&app, "GET", "/shipments", "viewer-token", json!({})).await;
+    assert_eq!(list["total"], 0);
+    let body = json!({"order_id":order, "items":[{"sku":"W-1", "name":"Widget", "quantity":1}]});
+    assert_eq!(
+        request(&app, "POST", "/shipments", "writer-token", body).await.0,
+        StatusCode::CREATED
+    );
+}
+
+#[tokio::test]
+async fn manifest_http_writes_roll_back_when_outbox_persistence_fails() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("store.db");
+    let commerce = Commerce::new(path.to_str().unwrap()).unwrap();
+    let order = seed_order(&commerce);
+    let app = ServerBuilder::new(commerce).without_auth().with_ignore_tenant_header().build();
+    let db = rusqlite::Connection::open(path).unwrap();
+    let initial = create(&app, &order).await;
+    let shipment_path = format!("/shipments/{}", initial["id"].as_str().unwrap());
+    let items_path = format!("{shipment_path}/items");
+    let trigger = "CREATE TRIGGER refuse_manifest_fact BEFORE INSERT ON kernel_outbox WHEN NEW.aggregate_type = 'shipment' BEGIN INSERT INTO unavailable_manifest_sink (id) VALUES (NEW.id); END";
+    let item = json!({"sku":"W-1", "name":"Widget", "quantity":1});
+    let fact_count = || -> i64 {
+        db.query_row(
+            "SELECT COUNT(*) FROM kernel_outbox WHERE aggregate_type = 'shipment'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+    let before_facts = fact_count();
+    db.execute_batch(trigger).unwrap();
+    let create_body = json!({"order_id":order, "items":[item.clone()]});
+    assert_eq!(
+        request(&app, "POST", "/shipments", "writer-token", create_body).await.0,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert_eq!(
+        request(&app, "POST", &items_path, "writer-token", item.clone()).await.0,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert_eq!(request(&app, "GET", &shipment_path, "writer-token", json!({})).await.1, initial);
+    assert_eq!(request(&app, "GET", "/shipments", "writer-token", json!({})).await.1["total"], 1);
+    assert_eq!(fact_count(), before_facts);
+    db.execute_batch("DROP TRIGGER refuse_manifest_fact").unwrap();
+    let (status, added) = request(&app, "POST", &items_path, "writer-token", item).await;
+    assert_eq!(status, StatusCode::CREATED, "{added}");
+    let packed = request(&app, "GET", &shipment_path, "writer-token", json!({})).await.1;
+    db.execute_batch(trigger).unwrap();
+    let delete_path = format!("{items_path}/{}", added["id"].as_str().unwrap());
+    assert_eq!(
+        request(&app, "DELETE", &delete_path, "admin-token", json!({})).await.0,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert_eq!(request(&app, "GET", &shipment_path, "writer-token", json!({})).await.1, packed);
+    assert_eq!(fact_count(), before_facts + 1);
+}
+
+#[tokio::test]
+async fn packing_preconditions_reject_stale_edits_and_bind_idempotent_replays() {
+    let (app, order) = fixture();
+    let shipment = create(&app, &order).await;
+    let path = format!("/shipments/{}", shipment["id"].as_str().unwrap());
+    let add_path = format!("{path}/items?expected_version=1");
+    let body = json!({"sku":"W-1", "name":"Widget", "quantity":1});
+    let added = request_with_key(
+        &app,
+        "POST",
+        &add_path,
+        "writer-token",
+        body.clone(),
+        Some("versioned-add"),
+    )
+    .await;
+    assert_eq!(added.0, StatusCode::CREATED, "{:?}", added.1);
+    assert_eq!(
+        request_with_key(
+            &app,
+            "POST",
+            &add_path,
+            "writer-token",
+            body.clone(),
+            Some("versioned-add")
+        )
+        .await,
+        added
+    );
+    // Same contents and key but a different precondition must not replay success.
+    for suffix in ["?expected_version=2", ""] {
+        assert_eq!(
+            request_with_key(
+                &app,
+                "POST",
+                &format!("{path}/items{suffix}"),
+                "writer-token",
+                body.clone(),
+                Some("versioned-add")
+            )
+            .await
+            .0,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+    assert_eq!(
+        request(&app, "POST", &add_path, "writer-token", body.clone()).await.0,
+        StatusCode::CONFLICT
+    );
+    let delete_path = format!("{path}/items/{}", added.1["id"].as_str().unwrap());
+    assert_eq!(
+        request(
+            &app,
+            "DELETE",
+            &format!("{delete_path}?expected_version=1"),
+            "admin-token",
+            json!(null)
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let current = request(&app, "GET", &path, "viewer-token", json!(null)).await.1;
+    assert_eq!(current["version"], 2);
+    assert_eq!(current["items"].as_array().unwrap().len(), 1);
+    let versioned_delete = format!("{delete_path}?expected_version=2");
+    for _ in 0..2 {
+        assert_eq!(
+            request_with_key(
+                &app,
+                "DELETE",
+                &versioned_delete,
+                "admin-token",
+                json!(null),
+                Some("versioned-delete")
+            )
+            .await
+            .0,
+            StatusCode::NO_CONTENT
+        );
+    }
+    assert_eq!(
+        request_with_key(
+            &app,
+            "DELETE",
+            &format!("{delete_path}?expected_version=3"),
+            "admin-token",
+            json!(null),
+            Some("versioned-delete")
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let current = request(&app, "GET", &path, "viewer-token", json!(null)).await.1;
+    assert_eq!(current["version"], 3);
+    assert!(current["items"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn packing_preconditions_reject_malformed_or_misspelled_query_fields() {
+    let (app, order) = fixture();
+    let shipment = create(&app, &order).await;
+    let path = format!("/shipments/{}", shipment["id"].as_str().unwrap());
+    let body = json!({"sku":"W-1", "name":"Widget", "quantity":1});
+    let added =
+        request(&app, "POST", &format!("{path}/items"), "writer-token", body.clone()).await.1;
+    for query in [
+        "expected_version=1.5",
+        "expected_version=2147483648",
+        "expected_version=",
+        "expectedVersion=2",
+        "expected_version=2&expected_version=3",
+    ] {
+        assert_eq!(
+            request(&app, "POST", &format!("{path}/items?{query}"), "writer-token", body.clone())
+                .await
+                .0,
+            StatusCode::BAD_REQUEST,
+            "{query}"
+        );
+        assert_eq!(
+            request(
+                &app,
+                "DELETE",
+                &format!("{path}/items/{}?{query}", added["id"].as_str().unwrap()),
+                "admin-token",
+                json!(null)
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST,
+            "{query}"
+        );
+    }
+    let current = request(&app, "GET", &path, "viewer-token", json!(null)).await.1;
+    assert_eq!(current["version"], 2);
+    assert_eq!(current["items"].as_array().unwrap().len(), 1);
 }

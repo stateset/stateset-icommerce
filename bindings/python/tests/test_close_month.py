@@ -109,3 +109,36 @@ def test_rejects_invalid_period_id():
     commerce = Commerce(":memory:")
     with pytest.raises(ValueError, match="Invalid UUID"):
         commerce.general_ledger.close_month("not-a-uuid")
+
+
+def test_fail_on_warnings_refuses_before_writing():
+    commerce = Commerce(":memory:")
+    period, asset = setup_close(commerce)
+
+    # Second asset, in service but with no generated schedule: the
+    # depreciation step warns instead of failing.
+    unscheduled = commerce.fixed_assets.create(
+        name="Unscheduled lathe",
+        category="machinery",
+        acquisition_date="2026-01-01",
+        acquisition_cost="600.00",
+        salvage_value="0",
+        useful_life_months=6,
+        depreciation_method="straight_line",
+    )
+    commerce.fixed_assets.place_in_service(unscheduled.id, "2026-01-01")
+
+    with pytest.raises(RuntimeError, match="refused"):
+        commerce.general_ledger.close_month(period.id, fail_on_warnings=True)
+
+    # Nothing was written: no depreciation posted for the scheduled asset.
+    after = commerce.fixed_assets.get(asset.id)
+    assert after.accumulated_depreciation == "0"
+
+    # Lenient mode collects the warning with its failure count and closes.
+    report = commerce.general_ledger.close_month(
+        period.id, skip_revenue_recognition=True, skip_period_close=True
+    )
+    assert report.depreciation.failed_item_count == 1
+    assert len(report.depreciation.warnings) == 1
+    assert report.depreciation.entry_count == 12

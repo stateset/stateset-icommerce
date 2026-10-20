@@ -230,6 +230,7 @@ impl Commerce {
             }
             "orders.transition" => execute!(TransitionOrder, execute_transition_order),
             "orders.ship" => execute!(ShipOrderCommand, execute_ship_order),
+            "orders.ship_reserved" => execute!(ShipOrderCommand, execute_ship_reserved_order),
             "returns.transition" => execute!(TransitionReturn, execute_transition_return),
             "ledger.post" => execute!(PostJournalEntry, execute_post_journal_entry),
             "x402.settle" => execute!(SettleX402Intent, execute_settle_x402_intent),

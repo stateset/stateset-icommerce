@@ -20,6 +20,8 @@ mod remote_head;
 mod types;
 
 #[cfg(test)]
+mod inbox_tests;
+#[cfg(test)]
 mod tests;
 
 pub use types::{DeadLetter, KernelReceipt, KernelReceiptStatus, PushConfirmation};
@@ -92,5 +94,8 @@ pub struct SyncEngine {
     attestations: Vec<CommandAttestation>,
     manifests: Vec<VerifiedCommitmentManifest>,
     tofu_signer_pins: BTreeMap<String, String>,
+    // Write-ahead cleanup journal: outcomes or resolved inbox events are durable
+    // before these ids leave the outbox, independent of confirmation capacity.
+    pending_outbox_removals: Vec<Uuid>,
     initialized: bool,
 }

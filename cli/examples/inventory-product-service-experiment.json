@@ -1,0 +1,64 @@
+{
+  "name": "protect-critical-sku-service",
+  "seeds": [7, 42],
+  "goals": {
+    "minFillRateBps": 9900,
+    "productFillRates": [{ "sku": "CRITICAL", "minFillRateBps": 10000 }]
+  },
+  "plans": [
+    {
+      "name": "on-time",
+      "days": 1,
+      "startingCash": "1.00",
+      "products": [
+        {
+          "sku": "BULK",
+          "initialStock": 99,
+          "unitPrice": "1.00",
+          "unitCost": "1.00",
+          "demand": { "dailyUnits": [99] },
+          "reorderPoint": 0,
+          "targetStock": 1,
+          "leadTimeDays": 1
+        },
+        {
+          "sku": "CRITICAL",
+          "initialStock": 0,
+          "unitPrice": "1.00",
+          "unitCost": "1.00",
+          "demand": { "dailyUnits": [1] },
+          "reorderPoint": 0,
+          "targetStock": 1,
+          "leadTimeDays": 1
+        }
+      ]
+    },
+    {
+      "name": "delayed",
+      "days": 1,
+      "startingCash": "1.00",
+      "products": [
+        {
+          "sku": "BULK",
+          "initialStock": 99,
+          "unitPrice": "1.00",
+          "unitCost": "1.00",
+          "demand": { "dailyUnits": [99] },
+          "reorderPoint": 0,
+          "targetStock": 1,
+          "leadTimeDays": 1
+        },
+        {
+          "sku": "CRITICAL",
+          "initialStock": 0,
+          "unitPrice": "1.00",
+          "unitCost": "1.00",
+          "demand": { "dailyUnits": [1] },
+          "reorderPoint": 0,
+          "targetStock": 1,
+          "leadTimeDays": 2
+        }
+      ]
+    }
+  ]
+}

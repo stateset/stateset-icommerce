@@ -1,6 +1,7 @@
 //! Inventory, lot, serial-number, and stock-snapshot repositories.
 
 use super::*;
+use crate::CommerceError;
 
 /// Inventory repository trait.
 #[auto_impl::auto_impl(&, Box, Arc)]
@@ -34,6 +35,14 @@ pub trait InventoryRepository: Send + Sync {
 
     /// Confirm reservation (convert to allocation)
     fn confirm_reservation(&self, reservation_id: Uuid) -> Result<()>;
+
+    /// Consume confirmed order holds after the order is fully shipped or delivered.
+    /// All stock postings commit atomically; already fulfilled holds are ignored.
+    fn fulfill_order_stock(&self, _order_id: Uuid) -> Result<()> {
+        Err(CommerceError::ValidationError(
+            "Order stock fulfillment is not supported by this backend".into(),
+        ))
+    }
 
     /// List reservations by reference (e.g., order id)
     fn list_reservations_by_reference(

@@ -398,13 +398,87 @@ ID. Failures increment `attempts` and record `last_error`.
 Production consumers should use `claim_pending` / `claim_pending_async` rather
 than the compatibility `pending` reader. Claims atomically lease due events to a
 named worker; PostgreSQL uses row locks with `SKIP LOCKED` so replicas can
-compete safely. Lease-owned acknowledgement prevents one worker from completing
-another's delivery. Failed deliveries clear the lease and set `next_attempt_at`;
+compete safely. Each claim generates a fresh opaque token in `lease_owner`,
+including the worker label and a random nonce. Pass that returned token to
+`mark_published_by` / `record_failure_by` (or their async equivalents), rather
+than passing the worker label. Acknowledgement and failure require the current
+token and an unexpired lease. An old attempt cannot settle a reclaimed event,
+even when both attempts use the same worker label. The CLI outbox pump carries
+this token with each claimed row, including across awaited appends.
+
+**Consumer upgrade:** code that previously settled with the configured worker
+name must instead retain `event.lease_owner` from the claim response. Passing
+only the worker name now returns `false`. No database migration is needed.
+Upgrade and restart all consumers together; older binaries do not enforce the
+new expiry rules. The legacy unleased `mark_published` and `record_failure`
+methods reject leased, retry-scheduled, dead-lettered, already-published, or
+missing rows with `OptimisticLockFailure`.
+
+Failed deliveries clear the lease and set `next_attempt_at`;
 once the configured attempt limit is reached, `dead_lettered_at` removes the
 event from normal delivery without deleting its audit history.
 Operators can inspect dead letters, explicitly redrive them with optional
 attempt reset, and export `delivery_health` counters for ready, leased, delayed,
 dead-lettered, and published events.
+
+Leases fence database settlement, not external effects. Delivery remains at
+least once: a worker can complete an external request and lose its lease before
+acknowledging it. Consumers must still deduplicate downstream by event ID.
+
+The CLI VES pump publishes only `tier = recorded`. Its explicit mappings include
+`shipment.status_changed`, `shipments.created.v1`, `shipments.updated.v1`,
+`shipments.item_added.v1`, `shipments.item_removed.v1`, `shipments.event_added.v1`,
+and `promotion.condition_added`, preserving these names and payload schemas on
+the wire. A version suffix alone does not imply governance; the stored tier is
+authoritative. Unknown names remain parked for operator inspection.
+
+Signed timestamps are byte-sensitive. Stored outbox events expose `createdAtRaw`
+for signing, REST transmission, and encrypted-payload AAD; `createdAt` remains a
+JavaScript `Date` for display compatibility. Do not normalize or round the raw
+timestamp when relaying a signed event. The native contract test builds a fresh
+Rust store, signs its real facts under the default hybrid profile, reopens the
+store to exercise replay, and verifies signatures after REST JSON serialization:
+
+```bash
+node --test cli/test/integration/native-outbox-pump.test.js
+```
+
+This test requires Cargo, installed CLI dependencies, and a native binding with
+hybrid signing support. It fails when prerequisites are missing and is included
+in CLI CI coverage. Its HTTP boundary is intercepted locally; it does not prove
+external sequencer acceptance, gRPC interoperability, or application of replicated
+facts to another store's business records.
+
+gRPC unary and streaming pushes enforce the same configured signature/encryption
+profile before sending a batch. Streaming preserves the envelope's signature
+bundle, payload hashes, encrypted payload, and recipient material. Outgoing
+protobuf timestamps accept RFC3339 strings, `Date` values, and integer epoch
+milliseconds, preserve up to nine fractional digits, and reject invalid calendar
+values and out-of-range instants. A malformed event prevents the entire batch
+from being written.
+
+These checks do not make gRPC a lossless transport for signed timestamp text:
+the current protobuf `Timestamp` stores only seconds and nanoseconds, not the
+original offset or fractional spelling, and the receive path still converts it
+to a `Date`. Arbitrary signed RFC3339 envelopes therefore still require a
+coordinated client/server protocol change and live acceptance tests. Use the
+REST path for the exact-text contract verified above. Local protobuf boundary
+coverage lives in `cli/test/unit/grpc-envelope.test.js`; it verifies transport
+fields and profile refusal, not cryptographic authenticity or server acceptance.
+
+Hybrid and strict profiles require at least one recipient wrap for encrypted
+events, with the required material on every wrap. Empty lists or scheme labels
+alone are insufficient. gRPC's supported `payload_kind` and `payload_encrypted`
+aliases undergo the same checks as their camelCase equivalents. Required
+signature/key material must be nonempty text or bytes, not arbitrary objects or
+booleans; cryptographic validity is checked separately by the verifier.
+
+gRPC rejects events whose supplied tenant or store differs from its configured
+destination, before sending any part of the batch. It retains the event's
+original source agent and protocol version while the batch sender remains the
+configured agent. Strict-profile envelopes do not acquire a synthetic Ed25519
+signature during serialization, and the legacy `signature` alias cannot bypass
+the strict profile's prohibition on Ed25519 material.
 
 The `kernel_receipts` table reserves durable idempotency and receipt storage for
 envelope-aware executors. Receipts are stored under both `command_id` and
@@ -481,6 +555,49 @@ records (`pending`, `processing`, `ready_to_ship`) move to `shipped` in the same
 transaction, adopting the command's tracking number when they have none, each
 with a `shipment.status_changed` fact. Every caused fact is listed in the receipt
 and inherits the command's principal, correlation, and causation context.
+
+`orders.ship_reserved` is the opt-in stock-consuming counterpart, with its own
+policy capability. It uses `ShipOrderCommand` and requires `expected_version`
+and a paid order in `processing` or `partially_shipped`. `lines` names the
+**additional units** to ship now; omitting lines (or passing an empty list) ships
+the remaining quantities. The command refuses quantities above the unshipped
+remainder. The order remains `partially_shipped` until all its units have shipped.
+
+For example, after shipping one unit of a three-unit line, a second command with
+`lines: [{ order_item_id: "<line-id>", quantity: 1 }]` ships one more unit. Give
+that dispatch its own idempotency key and the current order version. Retrying
+an earlier dispatch with its original key recovers its historical receipt and
+does not ship another unit.
+
+Open, line-bound reservations must exactly cover **remaining** tracked order-line
+quantities and be backed by nonnegative inventory balances. Lines sharing a SKU
+cannot borrow each other's holds. Partial consumption reduces a hold's quantity;
+consuming its remainder marks it fulfilled. Entirely unkeyed legacy holds remain
+supported only for a wholly unshipped order shipped in full. Mixed keyed and
+unkeyed holds require operator reconciliation.
+
+When units have already shipped, their line IDs, SKUs, ordered quantities and
+shipped quantities must match the latest succeeded `orders.ship_reserved`
+receipt for that order. A missing or mismatched receipt refuses the command with
+`commerce.shipment_stock_provenance_missing`; legacy confirmation-only shipments
+cannot be silently treated as consumed stock. Retain those receipts while an
+order still needs dispatches.
+
+Preview validates coverage and provenance without changing stock. Apply deducts
+only the approved units from on-hand and allocated stock together, writes
+shipment inventory transactions and `inventory.reservation_fulfilled.v1` facts,
+and updates the order and receipt in the same transaction. Inventory facts link
+to their dispatch by exact event ID, so later dispatches cannot relink older
+facts. Available stock is preserved; remaining holds and other orders' holds
+stay allocated. Untracked SKUs have no inventory to consume.
+
+Existing `orders.ship` retains its confirmation-only behavior. Node hosts can
+require `orders.ship_reserved.v1` in `kernelFeatures()` for initial full shipping
+and **`orders.ship_reserved.partial.v1`** for partial or subsequent dispatches.
+Older binaries must not silently substitute legacy shipping. The native merchant
+HTTP adapter can reconcile successive operator-approved partial dispatches;
+see [native dispatch recording](durable-merchant.md#optional-native-dispatch-recording)
+for journal recovery and cumulative progress responses.
 
 `returns.transition` applies the return state machine under the same governed
 boundary. Preview reports the current return and predicted version; apply locks

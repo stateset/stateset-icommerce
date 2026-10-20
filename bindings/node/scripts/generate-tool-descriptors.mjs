@@ -94,6 +94,29 @@ const READ_ONLY_OVERRIDES = {
 /** Tools excluded by name even though the parser could describe them. */
 const SKIPPED_TOOLS = new Set([]);
 
+// TypeScript `number` cannot express the integer bounds validated before N-API
+// conversion in domains/shipments.rs. Preserve that contract in tool schemas.
+const SHIPMENT_POSITIVE_I32_FIELDS = new Set([
+  'CreateShipmentItemInput.quantity',
+  'UpdateShipmentInput.expectedVersion',
+  'shipments.addItem(expectedVersion)',
+  'shipments.removeItem(expectedVersion)',
+  'shipments.ship(expectedVersion)',
+  'shipments.deliver(expectedVersion)',
+  'shipments.cancel(expectedVersion)',
+]);
+
+function refineNumericSchema(schema, owner) {
+  if (!SHIPMENT_POSITIVE_I32_FIELDS.has(owner)) return schema;
+  if (!isNumberSchema(schema)) {
+    throw new Error(`${owner}: expected a numeric declaration for the shipment integer contract`);
+  }
+  const type = Array.isArray(schema.type)
+    ? schema.type.map((value) => (value === 'number' ? 'integer' : value))
+    : 'integer';
+  return { ...schema, type, minimum: 1, maximum: 2147483647 };
+}
+
 // ---------------------------------------------------------------------------
 // Source scanning
 // ---------------------------------------------------------------------------
@@ -753,7 +776,8 @@ class SchemaBuilder {
       }
       if (member.kind !== 'property') continue;
 
-      let schema = this.fromText(member.type, `${declaration.name}.${member.name}`);
+      const owner = `${declaration.name}.${member.name}`;
+      let schema = refineNumericSchema(this.fromText(member.type, owner), owner);
       const notes = [];
       if (member.doc) notes.push(member.doc);
       const exactTwin = `${member.name}Exact`;
@@ -904,7 +928,8 @@ function generate(source) {
       const required = [];
       const positional = [];
       for (const param of method.params) {
-        let schema = builder.fromText(param.type, `${toolName}(${param.name})`);
+        const owner = `${toolName}(${param.name})`;
+        let schema = refineNumericSchema(builder.fromText(param.type, owner), owner);
         if (param.rest) schema = { type: 'array', items: schema };
         properties[param.name] = schema;
         positional.push(param.name);

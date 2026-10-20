@@ -35,6 +35,18 @@ function omitAbsent(input) {
   );
 }
 
+/**
+ * A code passed to an ID lookup produces a validation error in the native
+ * binding before the code fallback runs. That is an expected lookup path, so
+ * keep it quiet while retaining diagnostics for unexpected failures.
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+function isExpectedIdentifierValidation(error) {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return error?.code === 'VALIDATION' || /invalid\s+uuid/i.test(message);
+}
+
 const CONDITION_TYPES = [
   'minimum_subtotal',
   'minimum_quantity',
@@ -162,10 +174,12 @@ export const promotionTools = [
       try {
         promotion = await commerce.promotions().get(identifier);
       } catch (err) {
-        console.debug(
-          '[promotions] Promotion get by ID failed, trying code lookup:',
-          err.message || err,
-        );
+        if (!isExpectedIdentifierValidation(err)) {
+          console.debug(
+            '[promotions] Promotion get by ID failed, trying code lookup:',
+            err.message || err,
+          );
+        }
         promotion = await commerce.promotions().getByCode(identifier);
       }
       if (!promotion) return { success: false, error: 'Promotion not found' };
@@ -462,10 +476,12 @@ export const promotionTools = [
       try {
         coupon = await commerce.promotions().getCoupon(params.identifier);
       } catch (err) {
-        console.debug(
-          '[promotions] Coupon get by ID failed, trying code lookup:',
-          err.message || err,
-        );
+        if (!isExpectedIdentifierValidation(err)) {
+          console.debug(
+            '[promotions] Coupon get by ID failed, trying code lookup:',
+            err.message || err,
+          );
+        }
         coupon = await commerce.promotions().getCouponByCode(params.identifier);
       }
       if (!coupon) {

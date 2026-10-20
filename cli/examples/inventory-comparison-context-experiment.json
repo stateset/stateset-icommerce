@@ -1,0 +1,57 @@
+{
+  "name": "compare-policies-and-conditions",
+  "seeds": [7, 42],
+  "plans": [
+    {
+      "name": "baseline",
+      "days": 1,
+      "startingCash": "20.00",
+      "products": [
+        {
+          "sku": "CONTROL",
+          "initialStock": 2,
+          "unitPrice": "2.50",
+          "unitCost": "1.25",
+          "demand": { "dailyUnits": [1] },
+          "reorderPoint": 0,
+          "targetStock": 2,
+          "leadTimeDays": 1
+        }
+      ]
+    },
+    {
+      "name": "alternative-target",
+      "days": 1,
+      "startingCash": "20.00",
+      "products": [
+        {
+          "sku": "CONTROL",
+          "initialStock": 2,
+          "unitPrice": "2.50",
+          "unitCost": "1.25",
+          "demand": { "dailyUnits": [1] },
+          "reorderPoint": 0,
+          "targetStock": 3,
+          "leadTimeDays": 1
+        }
+      ]
+    },
+    {
+      "name": "different-capital-and-price",
+      "days": 1,
+      "startingCash": "30.00",
+      "products": [
+        {
+          "sku": "CONTROL",
+          "initialStock": 3,
+          "unitPrice": "3.00",
+          "unitCost": "1.25",
+          "demand": { "dailyUnits": [1] },
+          "reorderPoint": 0,
+          "targetStock": 3,
+          "leadTimeDays": 1
+        }
+      ]
+    }
+  ]
+}

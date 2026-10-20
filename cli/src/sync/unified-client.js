@@ -91,6 +91,8 @@ export class UnifiedSequencerClient extends EventEmitter {
     this._transport = null;
     this._grpcAvailable = null;
     this._streamActive = false;
+    this._connectionGeneration = 0;
+    this._connectPromise = null;
   }
 
   /**
@@ -114,7 +116,7 @@ export class UnifiedSequencerClient extends EventEmitter {
    * @returns {boolean}
    */
   isConnected() {
-    if (!this._client) return false;
+    if (!this._client || !this._transport) return false;
     if (this._transport === 'grpc') {
       return this._client.connected;
     }
@@ -127,6 +129,30 @@ export class UnifiedSequencerClient extends EventEmitter {
    * @returns {Promise<void>}
    */
   async connect() {
+    if (this._connectPromise) return this._connectPromise;
+    if (this.isConnected()) return;
+    const generation = ++this._connectionGeneration;
+    const pending = this._connect(generation);
+    this._connectPromise = pending;
+    try {
+      await pending;
+    } catch (error) {
+      if (generation === this._connectionGeneration) await this.disconnect();
+      throw error;
+    } finally {
+      if (this._connectPromise === pending) this._connectPromise = null;
+    }
+  }
+
+  _assertConnectionGeneration(generation) {
+    if (generation !== this._connectionGeneration) {
+      const error = new Error('Sequencer connection cancelled by disconnect');
+      error.code = 'SEQUENCER_DISCONNECTED';
+      throw error;
+    }
+  }
+
+  async _connect(generation) {
     let requestedTransport;
     try {
       requestedTransport = getTransportType(this.config.sequencerUrl);
@@ -138,17 +164,18 @@ export class UnifiedSequencerClient extends EventEmitter {
     if (this._grpcAvailable === null) {
       this._grpcAvailable = await isGrpcAvailable();
     }
+    this._assertConnectionGeneration(generation);
 
     // Determine which transport to use
     if (requestedTransport === 'grpc' && this._grpcAvailable && this.preferGrpc) {
-      await this._connectGrpc();
+      await this._connectGrpc(generation);
     } else if (requestedTransport === 'grpc' && !this._grpcAvailable) {
       console.warn(
         'gRPC requested but not available. Install @grpc/grpc-js and @grpc/proto-loader for gRPC support. Falling back to REST.',
       );
-      await this._connectRest();
+      await this._connectRest(generation);
     } else {
-      await this._connectRest();
+      await this._connectRest(generation);
     }
   }
 
@@ -156,8 +183,9 @@ export class UnifiedSequencerClient extends EventEmitter {
    * Connect using gRPC
    * @private
    */
-  async _connectGrpc() {
+  async _connectGrpc(generation) {
     const GrpcClient = await loadGrpcClient();
+    this._assertConnectionGeneration(generation);
 
     // Parse URL for gRPC
     const url = parseSequencerUrl(this.config.sequencerUrl);
@@ -165,7 +193,7 @@ export class UnifiedSequencerClient extends EventEmitter {
 
     const creds = this.config.getCredentials();
 
-    this._client = new GrpcClient({
+    const client = new GrpcClient({
       url: host,
       tenantId: this.config.tenantId,
       storeId: this.config.storeId,
@@ -177,16 +205,24 @@ export class UnifiedSequencerClient extends EventEmitter {
       jwtToken: creds.jwt,
       retryPolicy: this.config.retryPolicy,
     });
+    this._client = client;
 
-    // Forward events from gRPC client
-    this._client.on('connected', () => this.emit('connected'));
-    this._client.on('disconnected', () => this.emit('disconnected'));
-    this._client.on('error', (err) => this.emit('error', err));
-    this._client.on('event', (event) => this.emit('event', event));
-    this._client.on('push-ack', (ack) => this.emit('push-ack', ack));
-    this._client.on('sync-state', (state) => this.emit('sync-state', state));
+    // A retired client must not publish events into its replacement connection.
+    for (const event of ['connected', 'disconnected', 'error', 'event', 'push-ack', 'sync-state']) {
+      client.on(event, (...args) => {
+        if (generation === this._connectionGeneration && this._client === client) {
+          this.emit(event, ...args);
+        }
+      });
+    }
 
-    await this._client.connect();
+    try {
+      await client.connect();
+      this._assertConnectionGeneration(generation);
+    } catch (error) {
+      client.disconnect();
+      throw error;
+    }
     this._transport = 'grpc';
   }
 
@@ -194,9 +230,12 @@ export class UnifiedSequencerClient extends EventEmitter {
    * Connect using REST
    * @private
    */
-  async _connectRest() {
-    this._client = new SequencerClient(this.config);
-    await this._client.connect();
+  async _connectRest(generation) {
+    this._assertConnectionGeneration(generation);
+    const client = new SequencerClient(this.config);
+    this._client = client;
+    await client.connect();
+    this._assertConnectionGeneration(generation);
     this._transport = 'rest';
     this.emit('connected');
   }
@@ -206,18 +245,13 @@ export class UnifiedSequencerClient extends EventEmitter {
    * @returns {Promise<void>}
    */
   async disconnect() {
+    this._connectionGeneration++;
+    this._connectPromise = null;
     this.stopStreaming();
-
-    if (this._client) {
-      if (this._transport === 'grpc') {
-        this._client.disconnect();
-      } else {
-        await this._client.disconnect();
-      }
-      this._client = null;
-    }
-
+    const client = this._client;
+    this._client = null;
     this._transport = null;
+    if (client) await client.disconnect();
     this.emit('disconnected');
   }
 

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { canonicalJson } from './codec.mjs';
+import { clone } from './clone.mjs';
 
 // Reference escrow state with optional host-configured transactional storage.
 // Native Commerce aggregate adoption and live settlement remain integrations.
@@ -16,10 +17,10 @@ export function collection(namespace) {
   memories.set(namespace, memory);
   const target = () => (storage ? storage.collection(namespace) : memory);
   return {
-    get: (key) => structuredClone(target().get(key)),
-    set: (key, value) => target().set(key, structuredClone(value)),
+    get: (key) => clone(target().get(key)),
+    set: (key, value) => target().set(key, clone(value)),
     has: (key) => target().has(key),
-    values: () => Array.from(target().values(), (value) => structuredClone(value)),
+    values: () => Array.from(target().values(), (value) => clone(value)),
     get size() {
       return target().size;
     },
@@ -38,6 +39,16 @@ export function isDurable() {
 export function bindIdentity(identity) {
   storage?.bindIdentity(identity);
 }
+export function bindBackend(mode) {
+  if (!storage) return;
+  atomic(() => {
+    const metadata = storage.collection('metadata');
+    const prior = metadata.get('backend');
+    if ((prior && prior !== mode) || (!prior && mode !== 'reference' && quotes.size))
+      throw new Error('merchant backend does not match this protocol database');
+    metadata.set('backend', mode);
+  });
+}
 export function durableReplayGuard(options) {
   return storage.replayGuard(options);
 }
@@ -52,7 +63,7 @@ export function atomic(fn) {
   const pending = [];
   notifications = pending;
   const snapshots = !storage
-    ? new Map([...memories].map(([key, value]) => [key, structuredClone(value)]))
+    ? new Map([...memories].map(([key, value]) => [key, clone(value)]))
     : null;
   let result;
   try {
@@ -164,8 +175,13 @@ export function getIntent(intentId) {
     : undefined;
 }
 
-export function recordQuote(quote, intentId, signatureHex) {
-  immutableRecord(quotes, quote.quote_id, { quote, intentId, signatureHex });
+export function recordQuote(quote, intentId, signatureHex, nativeCheckout) {
+  immutableRecord(quotes, quote.quote_id, {
+    quote,
+    intentId,
+    signatureHex,
+    ...(nativeCheckout ? { nativeCheckout } : {}),
+  });
 }
 export function getQuote(quoteId) {
   return quotes.get(quoteId);

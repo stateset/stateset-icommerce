@@ -8,9 +8,9 @@ use chrono::NaiveDate;
 use rust_decimal_macros::dec;
 use stateset_core::{
     AccountSubType, AccountType, CloseMonthOptions, CloseMonthStepStatus, CreateAutoPostingConfig,
-    CreateFixedAsset, CreateGlAccount, CreateGlPeriod, CreatePerformanceObligation,
-    CreateRevenueContract, DepreciationEntryStatus, DepreciationMethod, FixedAssetCategory,
-    PeriodStatus, RecognitionMethod, RevenueEntryStatus,
+    CreateFixedAsset, CreateGlAccount, CreateGlPeriod, CreateJournalEntry, CreateJournalEntryLine,
+    CreatePerformanceObligation, CreateRevenueContract, DepreciationEntryStatus,
+    DepreciationMethod, FixedAssetCategory, PeriodStatus, RecognitionMethod, RevenueEntryStatus,
 };
 use stateset_embedded::Commerce;
 use uuid::Uuid;
@@ -342,4 +342,151 @@ fn close_month_unknown_period_is_not_found() {
         .close_month(Uuid::new_v4(), CloseMonthOptions::default())
         .expect_err("unknown period");
     assert!(matches!(err, stateset_core::CommerceError::NotFound));
+}
+
+/// An in-service asset with no generated schedule: the depreciation step
+/// reports one warning with a failed-item count of one.
+fn setup_with_unscheduled_asset(commerce: &Commerce) -> Uuid {
+    let (period_id, _asset_id, _obligation_id) = setup(commerce);
+    let asset = commerce
+        .fixed_assets()
+        .create(CreateFixedAsset {
+            asset_number: None,
+            name: "Unscheduled lathe".into(),
+            description: None,
+            category: FixedAssetCategory::Machinery,
+            acquisition_date: date(2026, 1, 1),
+            acquisition_cost: dec!(600),
+            salvage_value: dec!(0),
+            useful_life_months: 6,
+            depreciation_method: DepreciationMethod::StraightLine,
+            in_service_date: None,
+            location_id: None,
+            asset_account_id: None,
+            accumulated_depreciation_account_id: None,
+            depreciation_expense_account_id: None,
+            currency: None,
+        })
+        .expect("create asset");
+    commerce.fixed_assets().place_in_service(asset.id, date(2026, 1, 1)).expect("place in service");
+    // Deliberately no `generate_schedule`: the close must warn, not fail.
+    period_id
+}
+
+#[test]
+fn close_month_lenient_mode_collects_warning_and_still_closes() {
+    let commerce = Commerce::new(":memory:").expect("commerce");
+    let period_id = setup_with_unscheduled_asset(&commerce);
+
+    let report = commerce
+        .general_ledger()
+        .close_month(period_id, CloseMonthOptions::default())
+        .expect("lenient close proceeds despite warnings");
+
+    assert_eq!(report.depreciation.warning_count(), 1);
+    assert!(report.depreciation.has_failures());
+    assert_eq!(report.depreciation.failed_item_count, 1);
+    assert_eq!(report.total_warnings(), 1);
+    assert_eq!(report.total_failures(), 1);
+    assert!(report.has_warnings());
+    // The scheduled asset still posted; the period still closed.
+    assert_eq!(report.depreciation.entry_count, 12);
+    assert_eq!(report.period_status, PeriodStatus::Closed);
+}
+
+#[test]
+fn close_month_fail_on_warnings_refuses_before_writing_anything() {
+    let commerce = Commerce::new(":memory:").expect("commerce");
+    let period_id = setup_with_unscheduled_asset(&commerce);
+    let entries_before =
+        commerce.general_ledger().list_journal_entries(Default::default()).expect("list").len();
+
+    let err = commerce
+        .general_ledger()
+        .close_month(period_id, CloseMonthOptions { fail_on_warnings: true, ..Default::default() })
+        .expect_err("strict close refuses a close with warnings");
+    assert!(
+        matches!(err, stateset_core::CommerceError::ValidationError(_)),
+        "unexpected error: {err:?}"
+    );
+
+    // Nothing was written: no journal entries, no depreciation, open period.
+    let entries_after =
+        commerce.general_ledger().list_journal_entries(Default::default()).expect("list").len();
+    assert_eq!(entries_after, entries_before);
+    let period =
+        commerce.general_ledger().get_period(period_id).expect("get period").expect("period");
+    assert_eq!(period.status, PeriodStatus::Open);
+}
+
+#[test]
+fn close_month_fail_on_warnings_passes_a_clean_close() {
+    let commerce = Commerce::new(":memory:").expect("commerce");
+    let (period_id, _asset_id, _obligation_id) = setup(&commerce);
+
+    let report = commerce
+        .general_ledger()
+        .close_month(period_id, CloseMonthOptions { fail_on_warnings: true, ..Default::default() })
+        .expect("strict close passes when nothing warns");
+
+    assert!(!report.has_warnings());
+    assert_eq!(report.total_failures(), 0);
+    assert_eq!(report.period_status, PeriodStatus::Closed);
+}
+
+/// Regression: the FX step's skip used to surface only in the wet run, after
+/// depreciation and revenue recognition had already posted, so a strict close
+/// left committed GL writes behind an error. The dry-run evaluation now sees
+/// the missing rate and refuses before anything is written.
+#[test]
+fn close_month_fail_on_warnings_refuses_unrevaluable_fx_before_posting() {
+    let commerce = Commerce::new(":memory:").expect("commerce");
+    let (period_id, _asset_id, _obligation_id) = setup(&commerce);
+    let gl = commerce.general_ledger();
+    let zar_cash = gl
+        .create_account(CreateGlAccount {
+            account_number: "1033".into(),
+            name: "ZAR Cash".into(),
+            description: None,
+            account_type: AccountType::Asset,
+            account_sub_type: None,
+            parent_account_id: None,
+            is_header: None,
+            is_posting: Some(true),
+            currency: Some("ZAR".parse().expect("ZAR")),
+        })
+        .expect("create ZAR account")
+        .id;
+    let cash = gl.get_account_by_number("1010").expect("get").expect("cash").id;
+    // Give the ZAR account a balance so revaluation has work to do. ZAR has
+    // no seeded exchange rate, so the wet revaluation would refuse.
+    gl.create_journal_entry(CreateJournalEntry {
+        entry_date: chrono::Utc::now().date_naive(),
+        entry_type: None,
+        description: "Fund ZAR cash".into(),
+        lines: vec![
+            CreateJournalEntryLine::debit(zar_cash, dec!(100), None),
+            CreateJournalEntryLine::credit(cash, dec!(100), None),
+        ],
+        source_document_type: None,
+        source_document_id: None,
+        auto_post: Some(true),
+    })
+    .expect("fund ZAR account");
+    let entries_before = gl.list_journal_entries(Default::default()).expect("list").len();
+
+    let err = gl
+        .close_month(period_id, CloseMonthOptions { fail_on_warnings: true, ..Default::default() })
+        .expect_err("strict close refuses an FX step it cannot run");
+    match err {
+        stateset_core::CommerceError::ValidationError(message) => {
+            assert!(message.contains("dry-run"), "refused at evaluation: {message}");
+            assert!(message.contains("exchange rate"), "names the blocker: {message}");
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+    let entries_after = gl.list_journal_entries(Default::default()).expect("list").len();
+    assert_eq!(entries_after, entries_before, "no depreciation / rev-rec posted");
+    let period = gl.get_period(period_id).expect("get period").expect("period");
+    assert_eq!(period.status, PeriodStatus::Open);
 }

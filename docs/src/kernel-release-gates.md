@@ -16,17 +16,17 @@ The machine-readable implementation backlog is
 requires its acceptance evidence before it can be marked complete; local test
 success does not substitute for provider or independent implementation evidence.
 
-| Gate                      | Current evidence                                                                                                                                 | Required before claiming production completeness                                                                           |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| Exact money               | Rust decimal primitives; integer reference arithmetic; CLI provider decimal capture/refund, tax, shipping and reconciliation regressions | Audit remaining binding/import/provider conversions and share asset conformance vectors across runtimes |
-| Inventory consistency     | Duplicate-SKU reservations are checked together; reference snapshots use current balances; kernel reservation receipt tests                      | Concurrent buyers against durable merchant storage; recovery across acceptance, expiration, fulfillment and release        |
-| Durable purchases         | Persisted dispatch, shared asset holds, authoritative lookup, fenced workers, scoped recovery and cancellation tests                             | Kill processes at each external commit boundary; prove no duplicate effects with actual providers                          |
-| End-to-end authority      | Operator-owned identity/policy, signed acceptance, governed command adapters                                                                     | Cover purchase, fulfillment, return, refund and dispute workflows; enforce budgets across all enabled entrypoints          |
-| Settlement and accounting | Simulated settlement plus local receipt evidence                                                                                                 | Real provider reconciliation, finality/reorg handling where applicable, double-entry reconciliation and governed reversals |
-| Verifiable receipts       | Core signature and role/key checks; reference co-signing                                                                                         | Operated key registry, rotation/revocation distribution, independent verification against real provider evidence           |
-| Portable runtime          | Native engine bindings and standalone Node purchase entrypoint                                                                                   | Equivalent purchase/recovery contracts in supported languages and PostgreSQL, including migration and concurrency tests    |
-| Operational reliability   | Local recovery and test harnesses                                                                                                                | Measured SLOs, load/soak results, backup restoration, outage runbooks and alerts for unresolved money                      |
-| Independent assurance     | Repository trust inventory                                                                                                                       | External security review, remediation verification and adversarial agent-task evaluation                                   |
+| Gate                      | Current evidence                                                                                                                         | Required before claiming production completeness                                                                           |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Exact money               | Rust decimal primitives; integer reference arithmetic; CLI provider decimal capture/refund, tax, shipping and reconciliation regressions | Audit remaining binding/import/provider conversions and share asset conformance vectors across runtimes                    |
+| Inventory consistency     | Duplicate-SKU reservations are checked together; reference snapshots use current balances; kernel reservation receipt tests              | Concurrent buyers against durable merchant storage; recovery across acceptance, expiration, fulfillment and release        |
+| Durable purchases         | Persisted dispatch, shared asset holds, authoritative lookup, fenced workers, scoped recovery and cancellation tests                     | Kill processes at each external commit boundary; prove no duplicate effects with actual providers                          |
+| End-to-end authority      | Operator-owned identity/policy, signed acceptance, governed command adapters                                                             | Cover purchase, fulfillment, return, refund and dispute workflows; enforce budgets across all enabled entrypoints          |
+| Settlement and accounting | Simulated settlement plus local receipt evidence                                                                                         | Real provider reconciliation, finality/reorg handling where applicable, double-entry reconciliation and governed reversals |
+| Verifiable receipts       | Core signature and role/key checks; reference co-signing                                                                                 | Operated key registry, rotation/revocation distribution, independent verification against real provider evidence           |
+| Portable runtime          | Native engine bindings and standalone Node purchase entrypoint                                                                           | Equivalent purchase/recovery contracts in supported languages and PostgreSQL, including migration and concurrency tests    |
+| Operational reliability   | Local recovery and test harnesses                                                                                                        | Measured SLOs, load/soak results, backup restoration, outage runbooks and alerts for unresolved money                      |
+| Independent assurance     | Repository trust inventory                                                                                                               | External security review, remediation verification and adversarial agent-task evaluation                                   |
 
 ## Immediate implementation order
 
@@ -34,21 +34,44 @@ success does not substitute for provider or independent implementation evidence.
    SQLite persistence now covers protocol projections, atomic acceptance, restart
    replay and two-worker inventory contention (see [durable merchant](durable-merchant.md)).
    A separate `NativeMerchantCheckout` bridge now commits native orders, stock,
-   budgets, outbox and receipts with lost-response recovery tests. It is not yet
-   wired into the HTTP merchant. The source tree now supports a versioned cart
+   budgets, outbox and receipts with lost-response recovery tests. It is now
+   connected to an opt-in native HTTP integration via
+   `cli/examples/native-merchant.mjs`: signed quotes bind native snapshots,
+   strict-stock acceptance creates native orders, and receipt recovery repairs
+   protocol checkpoints after process death. Payment remains pending unless the
+   optional provider reconciliation records verified capture; demo
+   settlement endpoints are disabled in native mode. The source tree supports a versioned cart
    fingerprint checked inside native checkout; hosts must save it when issuing
    the quote and enable `requireCartFingerprint` on the bridge. This binds full
    cart terms, not just total and currency. A source-tree transactional checkout
    stock policy is implemented
    for SQLite and PostgreSQL. The Node bridge supports strict-stock acceptance
-   for tracked SKUs and checks native feature support before dispatch; HTTP
-   merchant integration and live PostgreSQL verification remain pending.
-   Quote acceptance must commit the order, reservation, escrow intent and event
-   record atomically. Restart must preserve signer bindings and replay protection.
+   for tracked SKUs and checks native feature support before dispatch. The HTTP
+   integration has separate native and protocol commit boundaries, with signed
+   retries recovering from the native ledger. A single transaction spanning
+   order, reservation, escrow intent and protocol event, live PostgreSQL
+   verification, and cross-store restore reconciliation remain open.
 2. Connect one real payment provider using an operator-owned adapter. Define
    authoritative lookup, idempotency lifetime, recipient/asset checks and finality
    before enabling spend. Never treat a timeout or cache miss as proof of failure.
+   The native HTTP path now has an opt-in Stripe GET-only adapter for existing
+   direct USD card PaymentIntents. It validates account, quote binding and full
+   capture before governed `payments.create`/`payments.complete` recording.
+   Native-backed tests exercise concurrent retries, process death after both
+   payment steps, and protocol checkpoint recovery using controlled provider
+   responses. External charging, live-provider drills, refunds/disputes and
+   accounting reconciliation remain open; this does not satisfy the live gate.
 3. Complete governed fulfillment, refund and dispute recovery around that path.
+   Optional operator-approved full and partial dispatch recording now uses `orders.ship_reserved`
+   with an immutable order version, native receipt recovery and a separate
+   protocol checkpoint. The command consumes existing reserved stock atomically
+   with order quantities, inventory ledger, events and receipt. Legacy `orders.ship`
+   receipts retain their confirmation-only semantics. The kernel also supports
+   partial stock consumption with line-bound holds and prior shipment receipt
+   checks on SQLite and PostgreSQL. The HTTP adapter journals successive dispatches,
+   recovers pinned commands before considering new approvals, and preserves
+   cumulative progress across stale responses and checkpoint failures. Carrier
+   dispatch and delivery verification remain open.
    Preserve committed spend until a verified reversal is reconciled. Ensure an
    order adopts an existing reservation instead of allocating inventory twice.
 4. Unify spending controls across the enabled paths and run multi-worker crash

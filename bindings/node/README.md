@@ -50,8 +50,35 @@ Order items expose `shippedQuantity`, the quantity recorded by the order engine.
 Shipment reads expose persisted `items` with order-item and product references,
 recipient contact details, and notes. Shipment tracking does not itself reserve
 inventory or update order fulfillment quantities. Reconcile both records before
-creating replacement or follow-up shipments; the Node shipment creation input
-does not yet support item assignment or parent-shipment linkage.
+creating replacement or follow-up shipments. Creation accepts an `items` array;
+`shipments.addItem(shipmentId, input, expectedVersion?)` and
+`shipments.removeItem(itemId, expectedVersion?)` edit it while packing. The optional
+version comes from the shipment read and is checked under the parent lock;
+a stale value returns `CONFLICT` without changing items or facts. The native transaction validates order-line membership and the
+quantity budget across non-cancelled shipments, and commits version/outbox facts
+with each edit. Fractional or overflowing quantities and versions are refused.
+Versions must be integers from 1 through 2,147,483,647. The same optional version
+argument is available on `shipments.ship(id, trackingNumber?, expectedVersion?)`,
+`shipments.deliver(id, expectedVersion?)` and `shipments.cancel(id, expectedVersion?)`;
+`shipments.update(id, { expectedVersion, ...patch })` validates versions identically.
+Omitting a version keeps the unconditional behavior. Positional version
+arguments also accept null; the `update` object's field must be a number when
+present. Native toolkit descriptors expose these arguments with integer bounds
+and still preview writes by default.
+Parent-shipment linkage and automatic replacement fulfillment remain unsupported.
+
+## SQLite connection ownership
+
+Use the native SDK for access to a live commerce database. Do not open that same
+file with another bundled SQLite library (such as `better-sqlite3`) in the same
+Node process. The libraries keep independent lock and WAL bookkeeping; we
+reproduced stale reads with descriptors pointing to deleted WAL files when the
+native engine reopened while a second library remained connected. SQLite
+[documents this multiple-library locking hazard](https://www.sqlite.org/howtocorrupt.html#multiple_copies_of_sqlite_linked_into_the_same_application).
+For SQL inspection, use a separate process that opens its own connection.
+The shipment integration tests use that arrangement for atomic snapshots and
+fault injection, including across engine reopen. Multiple `Commerce` handles
+use the same native SQLite library.
 
 ## Quick Start
 

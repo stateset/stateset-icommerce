@@ -4491,6 +4491,112 @@ async fn gl_close_month_bad_period_ids() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+/// POST /gl/close-month with `fail_on_warnings` is strict: a close that would
+/// warn (in-service asset with no depreciation schedule) is refused with 422
+/// and writes nothing; without the flag the same close succeeds with warnings
+/// and a per-item failure count in the response.
+#[tokio::test]
+async fn gl_close_month_fail_on_warnings_is_strict() {
+    let (router, state) = app_with_state();
+    let commerce = state.commerce();
+    let gl = commerce.general_ledger();
+    gl.initialize_chart_of_accounts().unwrap();
+
+    let period = gl
+        .create_period(stateset_core::CreateGlPeriod {
+            period_name: "FY-wide".into(),
+            fiscal_year: 2026,
+            period_number: 1,
+            start_date: chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+            end_date: chrono::NaiveDate::from_ymd_opt(2030, 12, 31).unwrap(),
+        })
+        .unwrap();
+    gl.open_period(period.id).unwrap();
+
+    // Seed P&L activity so the final period close has something to sweep.
+    let cash = gl.get_account_by_number("1010").unwrap().unwrap();
+    let revenue = gl.get_account_by_number("4010").unwrap().unwrap();
+    gl.create_journal_entry(stateset_core::CreateJournalEntry {
+        entry_date: chrono::Utc::now().date_naive(),
+        entry_type: None,
+        description: "Cash sale".into(),
+        lines: vec![
+            stateset_core::CreateJournalEntryLine::debit(cash.id, dec!(500), None),
+            stateset_core::CreateJournalEntryLine::credit(revenue.id, dec!(500), None),
+        ],
+        source_document_type: None,
+        source_document_id: None,
+        auto_post: Some(true),
+    })
+    .unwrap();
+
+    // In-service asset with deliberately no generated schedule.
+    let asset = commerce
+        .fixed_assets()
+        .create(stateset_core::CreateFixedAsset {
+            asset_number: None,
+            name: "Unscheduled lathe".into(),
+            description: None,
+            category: stateset_core::FixedAssetCategory::Machinery,
+            acquisition_date: chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+            acquisition_cost: dec!(600),
+            salvage_value: dec!(0),
+            useful_life_months: 6,
+            depreciation_method: stateset_core::DepreciationMethod::StraightLine,
+            in_service_date: None,
+            location_id: None,
+            asset_account_id: None,
+            accumulated_depreciation_account_id: None,
+            depreciation_expense_account_id: None,
+            currency: None,
+        })
+        .unwrap();
+    commerce
+        .fixed_assets()
+        .place_in_service(asset.id, chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap())
+        .unwrap();
+
+    // Strict: 422, period left open.
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/gl/close-month")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "period_id": period.id.to_string(),
+                        "fail_on_warnings": true,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let period_now = gl.get_period(period.id).unwrap().unwrap();
+    assert_eq!(period_now.status, stateset_core::PeriodStatus::Open);
+
+    // Lenient: 200 with the warning and its failure count surfaced.
+    let resp = router
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/gl/close-month")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "period_id": period.id.to_string() }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = body_json(resp).await;
+    assert_eq!(json["depreciation"]["failed_item_count"], 1);
+    assert_eq!(json["depreciation"]["warnings"].as_array().unwrap().len(), 1);
+    assert_eq!(json["period_status"], "closed");
+}
+
 #[tokio::test]
 async fn create_order_stock_policy_reject_if_insufficient_returns_400_and_persists_nothing() {
     let (router, state) = app_with_state();

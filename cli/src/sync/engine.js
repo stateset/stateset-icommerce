@@ -11,6 +11,10 @@ import { createUnifiedClient } from './unified-client.js';
 import { SyncConfig, loadSyncConfig } from './config.js';
 import { createConflictResolver } from './conflict.js';
 import { createPeerKeyDirectory } from './key-directory.js';
+import { resolveReceiveScope, matchesReceiveScope, assertOutgoingScope } from './receive-scope.js';
+import { validatePushReceipt } from './push-receipt.js';
+import { validatePullRequest, validatePullPage } from './pull-page.js';
+import { readSyncStatus } from './status.js';
 import {
   computePayloadAad,
   decryptPayload,
@@ -23,6 +27,7 @@ import {
   KEY_WRAP_SCHEME_X25519_HKDF_SHA256,
   KEY_WRAP_SCHEME_X25519_ML_KEM_768,
   getPayloadWrapScheme,
+  assertEventMatchesSecurityProfile,
 } from './pqc.js';
 
 function collectRecipientKeyIds(payloadEncrypted) {
@@ -85,10 +90,11 @@ function collectRecipientKeyIds(payloadEncrypted) {
  * @property {boolean} connected - Connection status
  * @property {'grpc'|'rest'|null} transport - Transport type
  * @property {boolean} streaming - Whether streaming is active
- * @property {number} localHead - Local head sequence
+ * @property {number} localHead - Highest received sequence (including quarantine), or zero
+ * @property {number} nextPullCursor - Next inclusive REST pull cursor
  * @property {number} remoteHead - Remote head sequence
  * @property {number} pending - Pending events to push
- * @property {number} lag - Events behind remote
+ * @property {number} lag - Nonnegative sequence distance behind remote (not an event count)
  * @property {Date} [lastPush] - Last push timestamp
  * @property {Date} [lastPull] - Last pull timestamp
  * @property {number} conflicts - Unresolved conflicts
@@ -292,6 +298,8 @@ export class SyncEngine extends EventEmitter {
         };
       }
 
+      assertOutgoingScope(pending, this.config);
+
       if (options.dryRun) {
         return {
           success: true,
@@ -323,7 +331,7 @@ export class SyncEngine extends EventEmitter {
         agentSignatureBundle: e.agentSignatureBundle || null,
         // Metadata
         baseVersion: e.baseVersion,
-        createdAt: e.createdAt.toISOString(),
+        createdAt: e.createdAtRaw ?? e.createdAt.toISOString(),
         sourceAgent: e.sourceAgent,
       }));
 
@@ -333,34 +341,41 @@ export class SyncEngine extends EventEmitter {
         events,
       });
 
-      // Mark events as synced
-      if (receipt.eventsAccepted > 0) {
-        const acks = [];
-        let seq = receipt.sequenceStart;
-
-        for (const event of pending) {
-          // Check if this event was rejected
-          const rejected = receipt.rejections?.find((r) => r.eventId === event.eventId);
-
-          if (rejected) {
-            this.outbox.markRejected(event.localSeq, rejected.reason);
-          } else {
-            acks.push({ localSeq: event.localSeq, remoteSeq: seq });
-            seq++;
+      const settlements = validatePushReceipt(receipt, pending);
+      this.outbox.db
+        .transaction(() => {
+          const acks = [];
+          for (const settlement of settlements) {
+            const { event } = settlement;
+            const current = this.outbox.getByEventId(event.eventId);
+            if (!current || current.localSeq !== event.localSeq) {
+              throw new Error('Push settlement no longer matches the submitted outbox event');
+            }
+            if (current.syncStatus === 'synced') {
+              // A delayed duplicate rejection cannot undo durable acceptance.
+              if (!settlement.rejected && current.remoteSequence !== settlement.remoteSeq) {
+                throw new Error('Push receipt conflicts with an existing remote sequence');
+              }
+              continue;
+            }
+            if (settlement.rejected) {
+              this.outbox.markRejected(event.localSeq, settlement.reason);
+            } else {
+              acks.push({ localSeq: event.localSeq, remoteSeq: settlement.remoteSeq });
+            }
           }
-        }
-
-        if (acks.length > 0) {
-          this.outbox.markSynced(acks);
-        }
-      }
-
-      // Update sync state
-      this.outbox.updateSyncState({
-        lastPushedSequence: receipt.headSequence,
-        headSequence: receipt.headSequence,
-        lastSyncAt: new Date(),
-      });
+          if (acks.length) this.outbox.markSynced(acks);
+          const state = this.outbox.getSyncState();
+          this.outbox.updateSyncState({
+            lastPushedSequence: Math.max(
+              state.lastPushedSequence,
+              ...acks.map((ack) => ack.remoteSeq),
+            ),
+            headSequence: Math.max(state.headSequence, receipt.headSequence),
+            lastSyncAt: new Date(),
+          });
+        })
+        .immediate();
 
       this.emit('push', {
         pushed: receipt.eventsAccepted,
@@ -439,10 +454,13 @@ export class SyncEngine extends EventEmitter {
     try {
       const state = this.outbox.getSyncState();
       const fromSequence = options.fromSequence ?? state.lastPulledSequence;
-      const limit = options.limit || 1000;
+      const receiveScope = resolveReceiveScope(this.config);
+      const limit = options.limit ?? 1000;
+      validatePullRequest(fromSequence, limit);
 
       // Pull events
       const result = await this.client.pull(fromSequence, limit);
+      validatePullPage(result, fromSequence, limit);
 
       if (result.events.length === 0) {
         return {
@@ -532,6 +550,27 @@ export class SyncEngine extends EventEmitter {
           sourceAgent: envelope.sourceAgent,
         };
 
+        if (!matchesReceiveScope(envelope, receiveScope)) {
+          quarantinedRecords.push({ record, reason: 'scope_mismatch' });
+          continue;
+        }
+
+        // Apply operator policy before resolving keys or accepting a signature.
+        // Legacy interoperability requires the explicit legacy profile.
+        try {
+          assertEventMatchesSecurityProfile(
+            envelope,
+            this.config?.securityProfile ?? this.config?.sync?.securityProfile,
+          );
+        } catch (error) {
+          quarantinedRecords.push({
+            record,
+            reason: 'security_profile_mismatch',
+            detail: error.message,
+          });
+          continue;
+        }
+
         // A throw out of key resolution would escape to pull()'s catch before
         // the cursor is updated, so it is caught here and fails closed.
         let resolution;
@@ -554,17 +593,6 @@ export class SyncEngine extends EventEmitter {
           continue;
         }
 
-        // NOTE (deliberate, tracked): the receive path does NOT call
-        // `assertEventMatchesSecurityProfile`, which the push path does call
-        // (client.js `push`, grpc-client.js `pushEvents`). An event declaring
-        // `agentSignatureScheme: 0` is therefore accepted by an agent
-        // configured `hybrid` or `pqc-strict`, and `verifyEventSignature`
-        // below falls back to the classical Ed25519 component. Enforcing the
-        // profile here would quarantine every legacy peer on upgrade, so the
-        // asymmetry stands until peers have migrated. No forgery becomes
-        // possible in the meantime: the attacker still needs the peer's
-        // Ed25519 private key. See docs/src/guides/sync.md.
-
         // Anything thrown here (malformed hex, a bad key bundle) is a failure
         // to verify, not a reason to accept the event.
         let valid = false;
@@ -584,63 +612,67 @@ export class SyncEngine extends EventEmitter {
         }
       }
 
-      const storedRecords = this._persistVerified(verifiedRecords);
+      const { storedRecords, quarantinedCount } = this.outbox.db.transaction(() => {
+        const storedRecords = this._persistVerified(verifiedRecords);
 
-      // A verified event the local schema refuses is dropped permanently: it
-      // is not quarantined (it verified) and the cursor moves past it. The
-      // per-record `receive-store-failed` events name the offenders, but they
-      // need a listener; this does not.
+        // storeQuarantinedEvents takes one reason per call, so group first.
+        // Re-quarantining an event_id updates the previous reason on purpose:
+        // the stored reason is the current diagnosis, and the newest one is
+        // usually the one an operator must act on (a key_unresolved that later
+        // becomes signature_invalid is a forgery, not a directory outage). Only
+        // usually: `_persistQuarantined` refuses the reverse, because a
+        // directory outage resolves EVERY event as key_unresolved and would
+        // otherwise erase every finding on the background sync timer.
+        let quarantinedCount = 0;
+        const reasons = new Set(quarantinedRecords.map((entry) => entry.reason));
+        for (const reason of reasons) {
+          const forReason = quarantinedRecords.filter((entry) => entry.reason === reason);
+          const detail = forReason.find((entry) => entry.detail)?.detail;
+          quarantinedCount += this._persistQuarantined(
+            forReason.map((entry) => entry.record),
+            reason,
+          );
+          this.emit('receive-verification-failed', { reason, count: forReason.length, detail });
+
+          // A local misconfiguration and an untrustworthy directory are not
+          // routine quarantine traffic: the first halts the entire receive path
+          // on a stock deployment, the second is a live attack signal. Neither
+          // may depend on someone having attached an event listener.
+          if (reason === 'sequencer_key_not_configured' || reason === 'directory_untrusted') {
+            console.warn(
+              `[sync-engine] ${forReason.length} pulled event(s) quarantined as ${reason}: ${detail}`,
+            );
+          }
+        }
+
+        // Every event is now stored, quarantined, or durably retained for recovery.
+        // The cursor commits atomically with those records.
+        const currentState = this.outbox.getSyncState();
+        this.outbox.updateSyncState({
+          lastPulledSequence: Math.max(currentState.lastPulledSequence, result.nextSequence),
+          headSequence: Math.max(currentState.headSequence, result.headSequence),
+          lastSyncAt: new Date(),
+          lastPullAt: new Date(),
+        });
+
+        return { storedRecords, quarantinedCount };
+      })();
+
+      // Schema-refused events are retained in the receive-failure journal.
+      // Warn independently of whether an operator attached a listener.
       if (storedRecords.length !== verifiedRecords.length) {
-        const dropped = verifiedRecords.length - storedRecords.length;
-        this.emit('receive-store-dropped', {
-          dropped,
+        const retained = verifiedRecords.length - storedRecords.length;
+        this.emit('receive-store-retained', {
+          retained,
           verified: verifiedRecords.length,
           stored: storedRecords.length,
         });
         console.warn(
-          `[sync-engine] ${dropped} verified event(s) could not be stored and were DROPPED, ` +
-            'not quarantined; the pull cursor has moved past them. ' +
+          `[sync-engine] ${retained} verified event(s) were retained in _ves_receive_failures; ` +
+            'the normal receive schema refused them. ' +
             'Listen for "receive-store-failed" for the individual event ids.',
         );
       }
-
-      // storeQuarantinedEvents takes one reason per call, so group first.
-      // Re-quarantining an event_id updates the previous reason on purpose:
-      // the stored reason is the current diagnosis, and the newest one is
-      // usually the one an operator must act on (a key_unresolved that later
-      // becomes signature_invalid is a forgery, not a directory outage). Only
-      // usually: `_persistQuarantined` refuses the reverse, because a
-      // directory outage resolves EVERY event as key_unresolved and would
-      // otherwise erase every finding on the background sync timer.
-      let quarantinedCount = 0;
-      const reasons = new Set(quarantinedRecords.map((entry) => entry.reason));
-      for (const reason of reasons) {
-        const forReason = quarantinedRecords.filter((entry) => entry.reason === reason);
-        const detail = forReason.find((entry) => entry.detail)?.detail;
-        quarantinedCount += this._persistQuarantined(
-          forReason.map((entry) => entry.record),
-          reason,
-        );
-        this.emit('receive-verification-failed', { reason, count: forReason.length, detail });
-
-        // A local misconfiguration and an untrustworthy directory are not
-        // routine quarantine traffic: the first halts the entire receive path
-        // on a stock deployment, the second is a live attack signal. Neither
-        // may depend on someone having attached an event listener.
-        if (reason === 'sequencer_key_not_configured' || reason === 'directory_untrusted') {
-          console.warn(
-            `[sync-engine] ${forReason.length} pulled event(s) quarantined as ${reason}: ${detail}`,
-          );
-        }
-      }
-
-      // The cursor advances regardless of what quarantined: one bad event from
-      // one peer must not wedge this agent's sync forever.
-      this.outbox.updateSyncState({
-        lastPulledSequence: result.nextSequence,
-        headSequence: result.headSequence,
-        lastSyncAt: new Date(),
-      });
 
       const conflicts = (await this.detectConflicts()).length;
       const summary = {
@@ -683,7 +715,7 @@ export class SyncEngine extends EventEmitter {
    * would otherwise roll back the whole batch AND throw past `updateSyncState`,
    * wedging the cursor on that sequence forever — the precise failure the
    * "one bad event must not wedge sync" property forbids. So: try the batch,
-   * and on failure fall back to per-record writes so only the offender is lost.
+   * and on failure fall back to per-record writes and retain failures durably.
    *
    * @private
    * @param {Array<Object>} records
@@ -703,6 +735,12 @@ export class SyncEngine extends EventEmitter {
           this.outbox.storePulledEvents([record]);
           stored.push(record);
         } catch (error) {
+          this.outbox.storeReceiveFailure(
+            record,
+            'verified',
+            error.code === 'VES_EVENT_CONFLICT' ? 'event_identity_conflict' : null,
+            error.message,
+          );
           this.emit('receive-store-failed', {
             eventId: record.eventId,
             sequenceNumber: record.sequenceNumber,
@@ -716,15 +754,8 @@ export class SyncEngine extends EventEmitter {
     // same event_id — otherwise a re-pull leaves it readable AND quarantined,
     // and `sync doctor` reports a failure that has already been resolved.
     for (const record of stored) {
-      try {
-        this.outbox.deleteQuarantinedEvent(record.eventId);
-      } catch (error) {
-        this.emit('receive-store-failed', {
-          eventId: record.eventId,
-          sequenceNumber: record.sequenceNumber,
-          error: error.message,
-        });
-      }
+      this.outbox.deleteQuarantinedEvent(record.eventId);
+      this.outbox.deleteReceiveFailure(record.sequenceNumber);
     }
 
     return stored;
@@ -786,21 +817,24 @@ export class SyncEngine extends EventEmitter {
 
   /**
    * Write one group of records under one reason, batch first and per record on
-   * failure so a single malformed envelope loses only itself.
+   * failure, retaining each refused record in the receive-failure journal.
    * @private
    * @returns {number} how many records were actually written
    */
   _writeQuarantined(records, reason) {
     try {
       this.outbox.storeQuarantinedEvents(records, reason);
+      for (const record of records) this.outbox.deleteReceiveFailure(record.sequenceNumber);
       return records.length;
     } catch {
       let written = 0;
       for (const record of records) {
         try {
           this.outbox.storeQuarantinedEvents([record], reason);
+          this.outbox.deleteReceiveFailure(record.sequenceNumber);
           written += 1;
         } catch (error) {
+          this.outbox.storeReceiveFailure(record, 'quarantine', reason, error.message);
           this.emit('receive-quarantine-failed', {
             eventId: record.eventId,
             sequenceNumber: record.sequenceNumber,
@@ -832,10 +866,7 @@ export class SyncEngine extends EventEmitter {
    * @returns {Promise<SyncStatus>}
    */
   async getStatus() {
-    const state = this.outbox.getSyncState();
-    const stats = this.outbox.getStats();
-
-    let remoteHead = state.headSequence;
+    let remoteHead;
     let connected = false;
 
     try {
@@ -848,16 +879,13 @@ export class SyncEngine extends EventEmitter {
       console.debug('[sync-engine] Remote head fetch failed:', err.message || err);
     }
 
+    const status = readSyncStatus(this.outbox, { connected, remoteHead });
     return {
-      connected,
+      ...status,
       transport: this.getTransport(),
       streaming: this._streamingEnabled,
-      localHead: state.lastPulledSequence,
-      remoteHead,
-      pending: stats.pending,
-      lag: remoteHead - state.lastPulledSequence,
-      lastPush: stats.lastSynced,
-      lastPull: state.lastSyncAt,
+      lastPush: status.outbox.lastSynced,
+      lastPull: status.localState.lastPullAt,
       conflicts: this.resolver.getConflictCount(),
       bufferedEvents: this._eventBuffer.length,
     };
@@ -870,7 +898,7 @@ export class SyncEngine extends EventEmitter {
   async getHealth() {
     const status = await this.getStatus();
 
-    const healthy = status.connected && status.lag < 100 && status.pending < 1000;
+    const healthy = status.health === 'healthy';
 
     return {
       healthy,
@@ -878,6 +906,8 @@ export class SyncEngine extends EventEmitter {
         connected: status.connected,
         lag: status.lag,
         pending: status.pending,
+        receive: status.receive,
+        reasons: status.healthReasons,
       },
     };
   }
@@ -1013,7 +1043,9 @@ export class SyncEngine extends EventEmitter {
       entityType: event.entityType,
       entityId: event.entityId,
       eventType: event.eventType,
-      createdAt: event.createdAt instanceof Date ? event.createdAt.toISOString() : event.createdAt,
+      createdAt:
+        event.createdAtRaw ??
+        (event.createdAt instanceof Date ? event.createdAt.toISOString() : event.createdAt),
       payloadPlainHash,
     });
 
@@ -1320,16 +1352,11 @@ export class SyncEngine extends EventEmitter {
       return false;
     }
 
-    // Convert to stream format
+    // Preserve the signed/encrypted envelope just as unary push does.
     const streamEvents = events.map((e) => ({
-      eventId: e.eventId,
-      commandId: e.commandId,
-      entityType: e.entityType,
-      entityId: e.entityId,
-      eventType: e.eventType,
-      payload: e.payload,
-      baseVersion: e.baseVersion,
-      createdAt: e.createdAt,
+      ...e,
+      createdAt:
+        e.createdAtRaw ?? (e.createdAt instanceof Date ? e.createdAt.toISOString() : e.createdAt),
     }));
 
     return this.client.pushViaStream(streamEvents);

@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:f8ed568413518716eaebf1b2c49cc6f9f64cf8875c7004076b121149fd90afe9",
+  "digest": "sha256:463162fd64b8c73685a9ee5b6dea38f2a1542e5c0bb34843aa7001c68a489076",
   "counts": {
-    "total": 958,
-    "readOnly": 472,
-    "mutations": 486,
+    "total": 969,
+    "readOnly": 479,
+    "mutations": 490,
     "governed": 36,
     "governedComposite": 2,
-    "blocked": 448
+    "blocked": 452
   },
   "entries": [
     {
@@ -1059,6 +1059,13 @@
       "mutation": true,
       "disposition": "governed",
       "commandType": "returns.tracking.add"
+    },
+    {
+      "name": "add_shipment_item",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
     },
     {
       "name": "add_to_wishlist",
@@ -2129,6 +2136,20 @@
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "compare_commerce_scenarios",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "compare_inventory_plans",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
       "commandType": null
     },
     {
@@ -3301,6 +3322,13 @@
       "commandType": null
     },
     {
+      "name": "fulfill_order_stock",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "generate_1099k",
       "permission": "admin",
       "mutation": true,
@@ -3966,6 +3994,13 @@
       "commandType": null
     },
     {
+      "name": "get_purchase_order_items",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
       "name": "get_purgatory_order",
       "permission": "read",
       "mutation": false,
@@ -4086,6 +4121,13 @@
     },
     {
       "name": "get_shipping_zone",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_simulation_kernel_contract",
       "permission": "read",
       "mutation": false,
       "disposition": "read_only",
@@ -5513,6 +5555,13 @@
       "commandType": null
     },
     {
+      "name": "receive_purchase_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "receive_transfer_order_line",
       "permission": "write",
       "mutation": true,
@@ -5689,6 +5738,13 @@
     },
     {
       "name": "remove_production_batch_work_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "remove_shipment_item",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
@@ -5958,6 +6014,27 @@
       "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "simulate_commerce_scenario",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "simulate_inventory_experiment",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "simulate_inventory_plan",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
       "commandType": null
     },
     {

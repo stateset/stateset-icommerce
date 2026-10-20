@@ -1,0 +1,32 @@
+[package]
+name = "stateset-saga"
+description = "Persisted saga coordinator for StateSet iCommerce multi-step orchestrations (PostgreSQL)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["commerce", "ecommerce", "saga", "orchestration", "postgresql"]
+categories = ["database"]
+
+[dependencies]
+# The coordinator persists saga state through `PostgresDatabase`; the
+# `stateset-db/saga` feature also registers the `035_sagas` schema migration,
+# so enabling this crate alone is sufficient to get both code and schema.
+stateset-db = { workspace = true, features = ["saga"] }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Keep SQLx lean and identical to stateset-db: no default features (notably
+# `any`), so unused drivers stay out of the dependency audit.
+sqlx = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

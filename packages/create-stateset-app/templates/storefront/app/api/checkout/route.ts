@@ -10,21 +10,9 @@ import {
 } from '@/lib/usdc-verification.js';
 import { USDC_ADDRESS } from '@/lib/wagmi';
 import { CheckoutError, executeCheckout } from '@/lib/checkout-service.js';
+import { getCheckoutConfiguration } from '@/lib/checkout-config.js';
 
 export const runtime = 'nodejs';
-
-function requiredServerConfig() {
-  const rpcUrl = process.env.STATESET_BASE_RPC_URL;
-  const merchantAddress = process.env.NEXT_PUBLIC_STORE_WALLET_ADDRESS;
-  if (!rpcUrl) throw new Error('STATESET_BASE_RPC_URL is required');
-  if (!merchantAddress || /^0x0{40}$/i.test(merchantAddress))
-    throw new Error('NEXT_PUBLIC_STORE_WALLET_ADDRESS must be configured');
-  return {
-    rpcUrl,
-    merchantAddress: normalizeAddress(merchantAddress),
-    minimumConfirmations: Number(process.env.STATESET_USDC_CONFIRMATIONS || '2'),
-  };
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -44,9 +32,7 @@ export async function POST(request: NextRequest) {
     }
     const txHash = assertTransactionHash(rawTxHash);
     const payerAddress = normalizeAddress(walletAddress);
-    const config = requiredServerConfig();
-    if (!Number.isInteger(config.minimumConfirmations) || config.minimumConfirmations < 1)
-      throw new Error('STATESET_USDC_CONFIRMATIONS must be a positive integer');
+    const config = getCheckoutConfiguration(process.env);
 
     const client = createPublicClient({ chain: base, transport: http(config.rpcUrl) });
     const result = await executeCheckout({

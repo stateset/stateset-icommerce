@@ -24,11 +24,11 @@
  *     file, not a retry. Burning attempts on a classification gap would
  *     dead-letter the row and delete the event from the log forever — the
  *     exact outcome this phase exists to prevent.
- *  4. Every settle statement is scoped to the lease this worker holds, so two
- *     drainers cannot trample each other's rows.
+ *  4. Every settle statement requires the current, unexpired claim token, so
+ *     an old attempt cannot overwrite a reclaimed row even with the same worker label.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { bufferToHex, computePayloadPlainHash } from './crypto.js';
 
@@ -41,8 +41,8 @@ export const VES_OUTBOX_NAMESPACE = '6f9619ff-8b86-d011-b42d-00c04fc964ff';
  * `record_outbox_fact` stamps `tier = 'recorded'`: these are the engine's
  * transactional facts, and turning them into signed VES envelopes is this
  * component's whole job. Governed rows (`tier = 'governed'`) are a different
- * animal — a versioned `*.v1` vocabulary, already covered by the kernel's
- * sealed receipt chain, and with their own claim/ack protocol in
+ * animal — already covered by the kernel's sealed receipt chain, and with
+ * their own claim/ack protocol in
  * `crates/stateset-db/src/sqlite/kernel_outbox.rs`
  * (`claim_pending` / `mark_published_by` / `record_failure_by`). Draining them
  * here would mean inventing VES names for a vocabulary this component does not
@@ -177,6 +177,16 @@ const EVENT_TYPE_MAP = {
   'credit_account.transaction_recorded': 'credit_account.transaction_recorded',
   'credit_reservation.released': 'credit_reservation.released',
   'invoice.status_changed': 'invoice.status_changed',
+  'promotion.condition_added': 'promotion.condition_added',
+
+  // Preserve the native shipment vocabulary and schema version verbatim.
+  // Tier, rather than a .v1 suffix, distinguishes recorded and governed facts.
+  'shipment.status_changed': 'shipment.status_changed',
+  'shipments.created.v1': 'shipments.created.v1',
+  'shipments.updated.v1': 'shipments.updated.v1',
+  'shipments.item_added.v1': 'shipments.item_added.v1',
+  'shipments.item_removed.v1': 'shipments.item_removed.v1',
+  'shipments.event_added.v1': 'shipments.event_added.v1',
 
   // The dynamic subscription family, expanded below.
   ...Object.fromEntries(
@@ -239,12 +249,27 @@ export class OutboxPump {
     this.db = db;
     this.outbox = outbox;
     this.identity = config.identity;
-    this.leaseOwner = config.leaseOwner || `pump-${process.pid}`;
+    this.leaseOwner = config.leaseOwner ?? `pump-${process.pid}`;
     this.leaseSeconds = config.leaseSeconds ?? 300;
     this.maxAttempts = config.maxAttempts ?? 5;
     this.retryDelaySeconds = config.retryDelaySeconds ?? 60;
-    if (this.maxAttempts < 1) {
-      throw new Error('OutboxPump requires config.maxAttempts >= 1');
+    for (const [name, value, minimum] of [
+      ['leaseSeconds', this.leaseSeconds, 1],
+      ['maxAttempts', this.maxAttempts, 1],
+      ['retryDelaySeconds', this.retryDelaySeconds, 0],
+    ]) {
+      if (!Number.isSafeInteger(value) || value < minimum || value > 2147483647) {
+        throw new Error(
+          `OutboxPump requires config.${name} to be an integer from ${minimum} to 2147483647`,
+        );
+      }
+    }
+    if (
+      typeof this.leaseOwner !== 'string' ||
+      !this.leaseOwner.trim() ||
+      this.leaseOwner.includes('\0')
+    ) {
+      throw new Error('OutboxPump requires a non-empty leaseOwner label');
     }
   }
 
@@ -255,6 +280,9 @@ export class OutboxPump {
    * @returns {Promise<DrainResult>}
    */
   async drain(limit = 100) {
+    if (!Number.isSafeInteger(limit) || limit < 0 || limit > 4294967295) {
+      throw new Error('OutboxPump requires an integer batch limit from 0 to 4294967295');
+    }
     const rows = this._lease(limit);
 
     let appended = 0;
@@ -268,7 +296,11 @@ export class OutboxPump {
         // burning attempts on it would dead-letter the row and delete the
         // event from the log. It waits — visible in last_error — until the
         // mapping exists, then drains normally.
-        this._park(row.id, `unmapped kernel_outbox event_type '${row.event_type}'`);
+        this._park(
+          row.id,
+          row.lease_token,
+          `unmapped kernel_outbox event_type '${row.event_type}'`,
+        );
         failed += 1;
         continue;
       }
@@ -278,7 +310,7 @@ export class OutboxPump {
       try {
         payload = JSON.parse(row.payload);
       } catch (error) {
-        this._fail(row.id, `unreadable kernel_outbox payload: ${error.message}`);
+        this._fail(row.id, row.lease_token, `unreadable kernel_outbox payload: ${error.message}`);
         failed += 1;
         continue;
       }
@@ -298,7 +330,7 @@ export class OutboxPump {
 
       try {
         await this.outbox.append(event);
-        this._publish(row.id);
+        this._publish(row.id, row.lease_token);
         appended += 1;
       } catch (error) {
         const verdict = this._classifyAppendFailure(error, event);
@@ -306,11 +338,11 @@ export class OutboxPump {
           // The envelope this row derives already exists: a crash between
           // append() and the published_at update. Settling the row is the
           // completion of that interrupted cycle, not a new publication.
-          this._publish(row.id);
+          this._publish(row.id, row.lease_token);
           duplicates += 1;
           continue;
         }
-        this._fail(row.id, verdict.message);
+        this._fail(row.id, row.lease_token, verdict.message);
         failed += 1;
       }
     }
@@ -321,18 +353,14 @@ export class OutboxPump {
   /**
    * Claim deliverable rows for this worker.
    *
-   * Leasing is what lets a second pump run without doing the same work twice;
-   * an expired lease is reclaimable so a crashed worker does not strand rows.
+   * Live claims are exclusive. Expiry permits recovery, while a late external
+   * append can still race and is deduplicated using the deterministic event ID.
    *
    * @private
    * @param {number} limit
    * @returns {Array<Object>}
    */
   _lease(limit) {
-    const now = new Date();
-    const nowIso = now.toISOString();
-    const expiresIso = new Date(now.getTime() + this.leaseSeconds * 1000).toISOString();
-
     const select = this.db.prepare(
       `SELECT id, event_type, aggregate_type, aggregate_id, payload,
               command_id, created_at
@@ -340,8 +368,8 @@ export class OutboxPump {
        WHERE tier = ?
          AND published_at IS NULL
          AND dead_lettered_at IS NULL
-         AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
-         AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+         AND (next_attempt_at IS NULL OR julianday(next_attempt_at) <= julianday(?))
+         AND (lease_expires_at IS NULL OR julianday(lease_expires_at) <= julianday(?))
        ORDER BY created_at ASC, id ASC
        LIMIT ?`,
     );
@@ -350,14 +378,19 @@ export class OutboxPump {
     );
 
     const leaseBatch = this.db.transaction((max) => {
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const expiresIso = new Date(now.getTime() + this.leaseSeconds * 1000).toISOString();
+      const token = `${this.leaseOwner}:${randomUUID()}`;
       const candidates = select.all(RECORDED_TIER, nowIso, nowIso, max);
       for (const candidate of candidates) {
-        claim.run(this.leaseOwner, expiresIso, candidate.id);
+        claim.run(token, expiresIso, candidate.id);
+        candidate.lease_token = token;
       }
       return candidates;
     });
 
-    return leaseBatch(limit);
+    return leaseBatch.immediate(limit);
   }
 
   /**
@@ -469,16 +502,18 @@ export class OutboxPump {
    *
    * @private
    * @param {string} id
+   * @param {string} leaseToken - Opaque token returned by this claim
    * @returns {boolean} whether this worker still owned the row
    */
-  _publish(id) {
+  _publish(id, leaseToken) {
     const result = this.db
       .prepare(
         `UPDATE kernel_outbox
          SET published_at = ?, last_error = NULL, lease_owner = NULL, lease_expires_at = NULL
-         WHERE id = ? AND lease_owner = ? AND published_at IS NULL`,
+         WHERE id = ? AND lease_owner = ? AND published_at IS NULL
+           AND dead_lettered_at IS NULL AND julianday(lease_expires_at) > julianday('now')`,
       )
-      .run(new Date().toISOString(), id, this.leaseOwner);
+      .run(new Date().toISOString(), id, leaseToken);
     return result.changes === 1;
   }
 
@@ -501,10 +536,11 @@ export class OutboxPump {
    *
    * @private
    * @param {string} id
+   * @param {string} leaseToken - Opaque token returned by this claim
    * @param {string} message
    * @returns {boolean} whether this worker still owned the row
    */
-  _fail(id, message) {
+  _fail(id, leaseToken, message) {
     const now = new Date();
     const nextAttemptAt = new Date(now.getTime() + this.retryDelaySeconds * 1000).toISOString();
     const result = this.db
@@ -516,7 +552,8 @@ export class OutboxPump {
              lease_expires_at = NULL,
              next_attempt_at = CASE WHEN attempts + 1 >= ? THEN NULL ELSE ? END,
              dead_lettered_at = CASE WHEN attempts + 1 >= ? THEN ? ELSE NULL END
-         WHERE id = ? AND lease_owner = ? AND published_at IS NULL`,
+         WHERE id = ? AND lease_owner = ? AND published_at IS NULL
+           AND dead_lettered_at IS NULL AND julianday(lease_expires_at) > julianday('now')`,
       )
       .run(
         message,
@@ -525,7 +562,7 @@ export class OutboxPump {
         this.maxAttempts,
         now.toISOString(),
         id,
-        this.leaseOwner,
+        leaseToken,
       );
     return result.changes === 1;
   }
@@ -543,18 +580,20 @@ export class OutboxPump {
    *
    * @private
    * @param {string} id
+   * @param {string} leaseToken - Opaque token returned by this claim
    * @param {string} message
    * @returns {boolean} whether this worker still owned the row
    */
-  _park(id, message) {
+  _park(id, leaseToken, message) {
     const nextAttemptAt = new Date(Date.now() + this.retryDelaySeconds * 1000).toISOString();
     const result = this.db
       .prepare(
         `UPDATE kernel_outbox
          SET last_error = ?, lease_owner = NULL, lease_expires_at = NULL, next_attempt_at = ?
-         WHERE id = ? AND lease_owner = ? AND published_at IS NULL`,
+         WHERE id = ? AND lease_owner = ? AND published_at IS NULL
+           AND dead_lettered_at IS NULL AND julianday(lease_expires_at) > julianday('now')`,
       )
-      .run(message, nextAttemptAt, id, this.leaseOwner);
+      .run(message, nextAttemptAt, id, leaseToken);
     return result.changes === 1;
   }
 }

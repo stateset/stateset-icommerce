@@ -7,7 +7,11 @@ on:
       - "crates/stateset-db/**"
       - "crates/stateset-embedded/**"
       - "crates/stateset-migrations/**"
-      - "scripts/ci/run_operations_recovery_drill.sh"
+      - "crates/stateset-http/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/ci/run_operations_recovery_drill.*"
+      - "scripts/ci/test_http_receipts_example.py"
       - "docs/src/guides/operations-recovery.md"
       - "docs/RELEASE_EVIDENCE.md"
   push:
@@ -17,7 +21,11 @@ on:
       - "crates/stateset-db/**"
       - "crates/stateset-embedded/**"
       - "crates/stateset-migrations/**"
-      - "scripts/ci/run_operations_recovery_drill.sh"
+      - "crates/stateset-http/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/ci/run_operations_recovery_drill.*"
+      - "scripts/ci/test_http_receipts_example.py"
       - "docs/src/guides/operations-recovery.md"
       - "docs/RELEASE_EVIDENCE.md"
   workflow_dispatch:
@@ -33,7 +41,7 @@ jobs:
   recovery-drill:
     name: Backup, Restore & Migration Rollback
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -47,8 +55,17 @@ jobs:
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
+      - name: Test recovery evidence runner
+        run: python3 scripts/ci/run_operations_recovery_drill.test.py
+
       - name: Run recovery drill
         run: ./scripts/ci/run_operations_recovery_drill.sh
+
+      - name: Verify operator receipt preview and audited completion
+        shell: bash
+        run: |
+          cargo build --locked -p stateset-db --example http_receipts
+          python3 scripts/ci/test_http_receipts_example.py target/debug/examples/http_receipts 2>&1 | tee artifacts/operations-recovery/http-receipts-operator.log
 
       - name: Upload immutable drill evidence
         if: always()

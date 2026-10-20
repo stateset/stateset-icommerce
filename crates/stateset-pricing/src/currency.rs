@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use crate::arithmetic::{div, mul};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -162,7 +163,7 @@ impl CurrencyConverter {
             if !is_valid_rate_value(rate.rate) {
                 return Err(PricingError::no_exchange_rate(normalized_from, normalized_to));
             }
-            let converted = amount * rate.rate;
+            let converted = mul(amount, rate.rate)?;
             return Ok(ConversionResult {
                 amount: converted,
                 rate: rate.rate,
@@ -176,8 +177,8 @@ impl CurrencyConverter {
             if !is_valid_rate_value(rate.rate) {
                 return Err(PricingError::no_exchange_rate(normalized_from, normalized_to));
             }
-            let inverse = Decimal::ONE / rate.rate;
-            let converted = amount * inverse;
+            let inverse = div(Decimal::ONE, rate.rate)?;
+            let converted = mul(amount, inverse)?;
             return Ok(ConversionResult {
                 amount: converted,
                 rate: inverse,
@@ -193,8 +194,8 @@ impl CurrencyConverter {
             let from_base = self.find_effective_rate(base, &normalized_to);
 
             if let (Some(rate_to_base), Some(rate_from_base)) = (to_base, from_base) {
-                let composite_rate = rate_to_base * rate_from_base;
-                let converted = amount * composite_rate;
+                let composite_rate = mul(rate_to_base, rate_from_base)?;
+                let converted = mul(amount, composite_rate)?;
                 return Ok(ConversionResult {
                     amount: converted,
                     rate: composite_rate,
@@ -233,7 +234,7 @@ impl CurrencyConverter {
         }
         if let Some(rate) = self.find_rate(to, from) {
             if is_valid_rate_value(rate.rate) {
-                return Some(Decimal::ONE / rate.rate);
+                return Decimal::ONE.checked_div(rate.rate);
             }
         }
         None

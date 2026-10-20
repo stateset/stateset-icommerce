@@ -262,7 +262,9 @@ async fn engine_full_push_pull_cycle() {
     // Pull remote events
     engine.pull(&transport).await.unwrap();
     let status = engine.status();
-    assert_eq!(status.remote_head, 5);
+    // This pull came from a stale remote view. Keep the newer head observed
+    // during push so health reporting cannot falsely declare convergence.
+    assert_eq!(status.remote_head, 100);
     assert_eq!(status.buffered_events, 1);
     assert!(status.last_push.is_some());
     assert!(status.last_pull.is_some());

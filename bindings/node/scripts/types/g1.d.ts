@@ -172,7 +172,7 @@ export type ShipmentStatus =
 /** Carrier as rendered on `ShipmentOutput.carrier` (the engine renders the underscored spelling of multi-word carriers). */
 export type ShippingCarrier = 'other' | 'ups' | 'fed_ex' | 'usps' | 'dhl' | 'on_trac' | 'laser_ship'
 
-/** Carriers `CreateShipmentInput.carrier` recognises; anything else is stored as `other`. */
+/** Carriers `CreateShipmentInput.carrier` recognises; anything else is refused with `VALIDATION`. */
 export type ShippingCarrierInput = 'ups' | 'fedex' | 'usps' | 'dhl' | 'other'
 
 /** Carrier spellings `ShipmentFilterInput.carrier` accepts. */

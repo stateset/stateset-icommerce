@@ -303,25 +303,15 @@ for (const strict of [false, true]) {
       assert.doesNotMatch(JSON.stringify(receipt), /tok_test/);
     });
 
-    it(
-      'taxes a Los Angeles sale at the seeded California rate',
-      {
-        todo: 'fresh SQLite stores charge zero tax: seeded jurisdiction ids never match (fix/tax-seed-ids)',
-      },
-      () => {
-        const tax = journey.tax.result?.calculation ?? journey.tax;
-        assert.equal(money(tax.total_tax ?? tax.totalTax ?? tax.tax?.totalTax), 7.25);
-      },
-    );
+    it('taxes a Los Angeles sale at the seeded California rate', () => {
+      const tax = journey.tax.result?.calculation ?? journey.tax;
+      assert.equal(money(tax.total_tax ?? tax.totalTax ?? tax.tax?.totalTax), 7.25);
+    });
 
-    it(
-      'keeps the order payment and fulfillment status in step with payments and shipments',
-      { todo: 'nothing maintains orders.payment_status / fulfillment_status after checkout' },
-      () => {
-        assert.notEqual(journey.finalOrder.paymentStatus, 'pending');
-        assert.notEqual(journey.finalOrder.fulfillmentStatus, 'unfulfilled');
-      },
-    );
+    it('keeps the order payment and fulfillment status in step with payments and shipments', () => {
+      assert.equal(journey.finalOrder.paymentStatus, 'paid');
+      assert.equal(journey.finalOrder.fulfillmentStatus, 'shipped');
+    });
   });
 }
 

@@ -34,9 +34,13 @@
 //! ```
 
 use crate::Database;
+#[cfg(feature = "events")]
+use crate::shipment_providers::{Parcel, PostalAddress, ShipmentProvider};
+#[cfg(feature = "events")]
+use stateset_core::ShippingCarrier;
 use stateset_core::{
-    AddShipmentEvent, CreateShipment, CreateShipmentItem, OrderId, Result, Shipment, ShipmentEvent,
-    ShipmentFilter, ShipmentId, ShipmentItem,
+    AddShipmentEvent, CommerceError, CreateShipment, CreateShipmentItem, OrderId, Result, Shipment,
+    ShipmentEvent, ShipmentFilter, ShipmentId, ShipmentItem, ShipmentStatus, UpdateShipment,
 };
 use stateset_observability::Metrics;
 use std::sync::Arc;
@@ -159,6 +163,109 @@ impl Shipments {
         self.db.shipments().ship(id, tracking_number)
     }
 
+    /// Buy a real carrier label through an upstream provider and hand off.
+    ///
+    /// This is what turns a label-less shipment row into freight: the
+    /// provider purchases postage on the carrier account, and the engine
+    /// records the tracking number, the postage cost, and a
+    /// `label_purchased` event (provider, service, rate, label URL) before
+    /// marking the shipment shipped. `rate_id` selects a quoted rate;
+    /// `None` takes the cheapest quote and records that it did.
+    ///
+    /// Postage is real money, so the shipment is checked *before* anything is
+    /// bought: it must exist, still be packable (`Pending`, `OnHold`,
+    /// `Processing`, or `ReadyToShip`), and have no tracking number yet. A
+    /// retry after a successful buy is therefore refused instead of buying a
+    /// second label.
+    #[cfg(feature = "events")]
+    pub fn buy_label_with_provider(
+        &self,
+        id: ShipmentId,
+        provider: &dyn ShipmentProvider,
+        from: &PostalAddress,
+        to: &PostalAddress,
+        parcel: &Parcel,
+        rate_id: Option<&str>,
+    ) -> Result<Shipment> {
+        let existing = self.get(id)?.ok_or(CommerceError::NotFound)?;
+        if !matches!(
+            existing.status,
+            ShipmentStatus::Pending
+                | ShipmentStatus::OnHold
+                | ShipmentStatus::Processing
+                | ShipmentStatus::ReadyToShip
+        ) {
+            return Err(CommerceError::ValidationError(format!(
+                "cannot buy a label for a shipment in status {}",
+                existing.status
+            )));
+        }
+        if existing.tracking_number.as_deref().is_some_and(|t| !t.trim().is_empty()) {
+            return Err(CommerceError::ValidationError(
+                "shipment already has a tracking number; refusing to buy a second label".into(),
+            ));
+        }
+        let chosen = match rate_id {
+            Some(rate_id) => rate_id.to_string(),
+            None => provider
+                .rates(from, to, parcel)?
+                .into_iter()
+                .min_by(|a, b| a.amount.cmp(&b.amount))
+                .map(|quote| quote.id)
+                .ok_or_else(|| {
+                    CommerceError::ValidationError("carrier returned no rates".into())
+                })?,
+        };
+        let label = provider.buy_label(from, to, parcel, &chosen)?;
+        self.db.shipments().update(
+            id,
+            UpdateShipment {
+                tracking_number: Some(label.tracking_number.clone()),
+                shipping_cost: Some(label.amount),
+                // Record the carrier that actually took the parcel when the
+                // engine knows it; an unrecognised name leaves it unchanged.
+                carrier: label.carrier.parse::<ShippingCarrier>().ok(),
+                ..Default::default()
+            },
+        )?;
+        self.db.shipments().add_event(
+            id,
+            AddShipmentEvent {
+                event_type: "label_purchased".into(),
+                location: None,
+                description: Some(format!(
+                    "{} {} {} rate {} ${} {} {}",
+                    provider.name(),
+                    label.carrier,
+                    label.service,
+                    label.rate_id,
+                    label.amount,
+                    label.currency,
+                    label.label_url.as_deref().unwrap_or("no-label-url")
+                )),
+                event_time: None,
+            },
+        )?;
+        // A fresh shipment sits at `Pending`, but `ship()` only accepts
+        // `ReadyToShip` (or a `Shipped` retry). Walk the packing lifecycle
+        // first so buying a label is the handoff, not a status skip.
+        // Shipments already packed (`ReadyToShip`) or handed off (`Shipped`
+        // retry) fall through to `ship()`, which reports the canonical
+        // error for any other unexpected status.
+        let current = self.get(id)?.ok_or(CommerceError::NotFound)?;
+        match current.status {
+            ShipmentStatus::Pending | ShipmentStatus::OnHold => {
+                self.mark_processing(id)?;
+                self.mark_ready(id)?;
+            }
+            ShipmentStatus::Processing => {
+                self.mark_ready(id)?;
+            }
+            _ => {}
+        }
+        self.ship(id, Some(label.tracking_number))
+    }
+
     /// Mark shipment as in transit
     pub fn mark_in_transit(&self, id: ShipmentId) -> Result<Shipment> {
         self.db.shipments().mark_in_transit(id)
@@ -206,6 +313,25 @@ impl Shipments {
     /// Remove an item from a shipment
     pub fn remove_item(&self, item_id: Uuid) -> Result<()> {
         self.db.shipments().remove_item(item_id)
+    }
+
+    /// Add an item with a transactionally checked parent version precondition.
+    pub fn add_item_with_version(
+        &self,
+        shipment_id: ShipmentId,
+        item: CreateShipmentItem,
+        expected_version: Option<i32>,
+    ) -> Result<ShipmentItem> {
+        self.db.shipments().add_item_with_version(shipment_id, item, expected_version)
+    }
+
+    /// Remove an item with a transactionally checked parent version precondition.
+    pub fn remove_item_with_version(
+        &self,
+        item_id: Uuid,
+        expected_version: Option<i32>,
+    ) -> Result<()> {
+        self.db.shipments().remove_item_with_version(item_id, expected_version)
     }
 
     /// Get items in a shipment

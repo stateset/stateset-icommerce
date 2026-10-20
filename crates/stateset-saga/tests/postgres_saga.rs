@@ -1,18 +1,13 @@
-#[cfg(all(feature = "postgres", feature = "saga"))]
 use serde_json::json;
-#[cfg(all(feature = "postgres", feature = "saga"))]
-use stateset_db::{PostgresDatabase, saga::SagaCoordinator};
-#[cfg(all(feature = "postgres", feature = "saga"))]
+use stateset_db::PostgresDatabase;
+use stateset_saga::SagaCoordinator;
 use std::{env, sync::Arc};
-#[cfg(all(feature = "postgres", feature = "saga"))]
 use uuid::Uuid;
 
-#[cfg(all(feature = "postgres", feature = "saga"))]
 fn postgres_url() -> Option<String> {
     env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
 }
 
-#[cfg(all(feature = "postgres", feature = "saga"))]
 #[tokio::test]
 async fn postgres_saga_smoke() {
     let url = match postgres_url() {
@@ -94,7 +89,7 @@ async fn postgres_saga_smoke() {
     assert_eq!(calls, vec![comp2, comp1]);
 
     let saga_row = coordinator.get_saga(saga.id).await.expect("get saga");
-    assert_eq!(saga_row.status, stateset_db::saga::SagaStatus::RolledBack);
+    assert_eq!(saga_row.status, stateset_saga::SagaStatus::RolledBack);
 
     let steps = coordinator.get_saga_steps(saga.id).await.expect("get saga steps");
     assert_eq!(steps.len(), 2);

@@ -642,6 +642,61 @@ pub struct CreateShipmentRequest {
     pub recipient_phone: Option<String>,
     pub shipping_address: Option<String>,
     pub notes: Option<String>,
+    /// Order-linked manifest contents; does not fulfill order lines or reserve inventory.
+    pub items: Option<Vec<CreateShipmentItemRequest>>,
+}
+
+/// One manifest assignment. Omit the order-line ID only for an unambiguous SKU.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateShipmentItemRequest {
+    pub order_item_id: Option<uuid::Uuid>,
+    #[schema(value_type = Option<String>, format = "uuid")]
+    pub product_id: Option<stateset_core::ProductId>,
+    pub sku: String,
+    pub name: String,
+    #[schema(minimum = 1, maximum = 2147483647)]
+    pub quantity: i32,
+}
+
+impl From<CreateShipmentItemRequest> for stateset_core::CreateShipmentItem {
+    fn from(item: CreateShipmentItemRequest) -> Self {
+        Self {
+            order_item_id: item.order_item_id,
+            product_id: item.product_id,
+            sku: item.sku,
+            name: item.name,
+            quantity: item.quantity,
+        }
+    }
+}
+
+/// Persisted shipment manifest contents, separate from order fulfillment.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub struct ShipmentItemResponse {
+    pub id: uuid::Uuid,
+    #[schema(value_type = String, format = "uuid")]
+    pub shipment_id: stateset_core::ShipmentId,
+    pub order_item_id: Option<uuid::Uuid>,
+    #[schema(value_type = Option<String>, format = "uuid")]
+    pub product_id: Option<stateset_core::ProductId>,
+    pub sku: String,
+    pub name: String,
+    pub quantity: i32,
+}
+
+impl From<stateset_core::ShipmentItem> for ShipmentItemResponse {
+    fn from(item: stateset_core::ShipmentItem) -> Self {
+        Self {
+            id: item.id,
+            shipment_id: item.shipment_id,
+            order_item_id: item.order_item_id,
+            product_id: item.product_id,
+            sku: item.sku,
+            name: item.name,
+            quantity: item.quantity,
+        }
+    }
 }
 
 /// A partial shipment update. Omitted or null fields retain their stored values.
@@ -692,6 +747,9 @@ pub struct ShipmentResponse {
     pub recipient_phone: Option<String>,
     pub shipping_address: String,
     pub notes: Option<String>,
+    /// Manifest assignments; not proof of order fulfillment or inventory reservation.
+    #[serde(default)]
+    pub items: Vec<ShipmentItemResponse>,
     pub version: i32,
     #[schema(value_type = Option<String>)]
     pub weight_kg: Option<Decimal>,
@@ -1181,6 +1239,7 @@ impl From<stateset_core::Shipment> for ShipmentResponse {
             recipient_phone: s.recipient_phone,
             shipping_address: s.shipping_address,
             notes: s.notes,
+            items: s.items.into_iter().map(Into::into).collect(),
             version: s.version,
             weight_kg: s.weight_kg,
             dimensions: s.dimensions,

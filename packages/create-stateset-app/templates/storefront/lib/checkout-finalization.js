@@ -27,20 +27,32 @@ export async function claimPaymentForOrder({ commerce, order, paymentInput }) {
   return { conflict: false, payment };
 }
 
+export function orderMatchesCheckoutCart(order, cartId) {
+  return (
+    typeof order.notes === 'string' &&
+    order.notes.split(';').some((part) => part.trim() === `Cart: ${cartId}`)
+  );
+}
+
 export async function finishRecordedCheckout(commerce, payment, cartId) {
   if (!payment.orderId) throw new Error('Settlement claim has no order');
   const order = await commerce.orders.get(payment.orderId);
   if (!order) throw new Error('Settlement order was not found');
-  if (!order.notes?.includes(`Cart: ${cartId}`)) {
+  if (!orderMatchesCheckoutCart(order, cartId)) {
     throw new Error('Settlement was already used for another checkout');
   }
-  if (String(payment.status).toLowerCase() !== 'completed') {
+  const paymentStatus = String(payment.status).toLowerCase();
+  const settled = ['completed', 'partially_refunded', 'refunded', 'disputed'];
+  if (!settled.includes(paymentStatus)) {
     await commerce.payments.markCompleted(payment.id);
   }
+  // A late delivery of the original checkout must not undo fulfillment,
+  // refunds, cancellation or a dispute. Only finish the initial pending order.
   const confirmed =
-    String(order.status).toLowerCase() === 'confirmed'
-      ? order
-      : await commerce.orders.updateStatus(order.id, 'confirmed');
+    String(order.status).toLowerCase() === 'pending' &&
+    !['partially_refunded', 'refunded', 'disputed'].includes(paymentStatus)
+      ? await commerce.orders.updateStatus(order.id, 'confirmed')
+      : order;
   const cart = await commerce.carts.get(cartId);
   if (cart?.status === 'active') await commerce.carts.cancel(cartId);
   return confirmed;

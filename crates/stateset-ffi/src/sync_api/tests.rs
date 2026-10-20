@@ -1054,3 +1054,186 @@ fn sync_runtime_snapshot_after_destroy_is_rejected() {
     let err = crate::error::last_error_as_str();
     assert!(err.as_deref().is_some_and(|msg| msg.contains("invalid or stale sync runtime handle")));
 }
+
+#[test]
+fn sync_runtime_json_queries_reject_null_and_stale_handles() {
+    let config = CString::new(runtime_config_json()).unwrap();
+    let init = unsafe { stateset_sync_runtime_init_from_json(config.as_ptr()) };
+    assert_eq!(init.code, FfiErrorCode::Ok);
+    unsafe { stateset_sync_runtime_destroy(init.value) };
+
+    let queries = [
+        stateset_sync_runtime_snapshot_json,
+        stateset_sync_runtime_snapshot_json_pretty,
+        stateset_sync_runtime_buffered_events_json,
+        stateset_sync_runtime_drain_buffer_json,
+        stateset_sync_runtime_confirmations_json,
+        stateset_sync_runtime_drain_confirmations_json,
+        stateset_sync_runtime_dead_letters_json,
+        stateset_sync_runtime_drain_dead_letters_json,
+        stateset_sync_runtime_refresh_remote_head_json,
+        stateset_sync_runtime_push_json,
+        stateset_sync_runtime_pull_json,
+        stateset_sync_runtime_full_sync_json,
+    ];
+    for handle in [std::ptr::null_mut(), init.value] {
+        for query in queries {
+            assert!(unsafe { query(handle) }.is_null());
+            assert!(crate::error::last_error_as_str().is_some());
+        }
+        let result = unsafe { stateset_sync_runtime_healthcheck(handle) };
+        assert_ne!(result.code, FfiErrorCode::Ok);
+        assert_eq!(result.value, 0);
+    }
+}
+
+#[test]
+fn sync_runtime_invalid_configuration_does_not_allocate_a_handle() {
+    for config in ["{", "{}"] {
+        let config = CString::new(config).unwrap();
+        let result = unsafe { stateset_sync_runtime_init_from_json(config.as_ptr()) };
+        assert_ne!(result.code, FfiErrorCode::Ok);
+        assert!(result.value.is_null());
+        assert!(crate::error::last_error_as_str().is_some());
+    }
+    let file = NamedTempFile::new().unwrap();
+    fs::write(file.path(), "{").unwrap();
+    let path = CString::new(file.path().to_str().unwrap()).unwrap();
+    let result = unsafe { stateset_sync_runtime_init_from_file(path.as_ptr()) };
+    assert_ne!(result.code, FfiErrorCode::Ok);
+    assert!(result.value.is_null());
+    for result in [unsafe { stateset_sync_runtime_init_from_json(std::ptr::null()) }, unsafe {
+        stateset_sync_runtime_init_from_file(std::ptr::null())
+    }] {
+        assert_eq!(result.code, FfiErrorCode::NullPointer);
+        assert!(result.value.is_null());
+    }
+}
+
+#[test]
+fn sync_runtime_scoped_queries_reject_invalid_handles_and_null_strings() {
+    let config = CString::new(runtime_config_json()).unwrap();
+    let init = unsafe { stateset_sync_runtime_init_from_json(config.as_ptr()) };
+    assert_eq!(init.code, FfiErrorCode::Ok);
+    let command_queries = [
+        stateset_sync_runtime_confirmations_for_receipt_json,
+        stateset_sync_runtime_confirmations_for_command_json,
+        stateset_sync_runtime_latest_confirmation_for_command_json,
+        stateset_sync_runtime_dead_letters_for_command_json,
+        stateset_sync_runtime_latest_dead_letter_for_command_json,
+    ];
+    let entity_queries = [
+        stateset_sync_runtime_confirmations_for_entity_json,
+        stateset_sync_runtime_latest_confirmation_for_entity_json,
+        stateset_sync_runtime_dead_letters_for_entity_json,
+        stateset_sync_runtime_latest_dead_letter_for_entity_json,
+    ];
+    let entity = CString::new("order").unwrap();
+    for query in command_queries {
+        assert!(unsafe { query(init.value, std::ptr::null()) }.is_null());
+        assert!(crate::error::last_error_as_str().is_some());
+    }
+    for query in entity_queries {
+        for (kind, id) in [(std::ptr::null(), entity.as_ptr()), (entity.as_ptr(), std::ptr::null())]
+        {
+            assert!(unsafe { query(init.value, kind, id) }.is_null());
+            assert!(crate::error::last_error_as_str().is_some());
+        }
+    }
+    unsafe { stateset_sync_runtime_destroy(init.value) };
+    for handle in [std::ptr::null_mut(), init.value] {
+        for query in command_queries {
+            assert!(unsafe { query(handle, entity.as_ptr()) }.is_null());
+            assert!(crate::error::last_error_as_str().is_some());
+        }
+        for query in entity_queries {
+            assert!(unsafe { query(handle, entity.as_ptr(), entity.as_ptr()) }.is_null());
+            assert!(crate::error::last_error_as_str().is_some());
+        }
+    }
+}
+
+#[test]
+fn sync_runtime_rejected_event_inputs_leave_outbox_unchanged() {
+    let config = CString::new(runtime_config_json()).unwrap();
+    let init = unsafe { stateset_sync_runtime_init_from_json(config.as_ptr()) };
+    assert_eq!(init.code, FfiErrorCode::Ok);
+    let event_type = CString::new("order.created").unwrap();
+    let entity_type = CString::new("order").unwrap();
+    let entity_id = CString::new("ORD-INVALID").unwrap();
+    let payload = CString::new("{}").unwrap();
+    let valid = [event_type.as_ptr(), entity_type.as_ptr(), entity_id.as_ptr(), payload.as_ptr()];
+    for index in 0..valid.len() {
+        let mut arguments = valid;
+        arguments[index] = std::ptr::null();
+        let result = unsafe {
+            stateset_sync_runtime_record_json(
+                init.value,
+                arguments[0],
+                arguments[1],
+                arguments[2],
+                arguments[3],
+            )
+        };
+        assert_eq!(result.code, FfiErrorCode::NullPointer);
+        assert_eq!(result.value, 0);
+    }
+    let malformed = CString::new("{").unwrap();
+    let result = unsafe {
+        stateset_sync_runtime_record_json(
+            init.value,
+            valid[0],
+            valid[1],
+            valid[2],
+            malformed.as_ptr(),
+        )
+    };
+    assert_eq!(result.code, FfiErrorCode::SerializationError);
+    let result = unsafe { stateset_sync_runtime_record_event_json(init.value, malformed.as_ptr()) };
+    assert_eq!(result.code, FfiErrorCode::SerializationError);
+    let result = unsafe { stateset_sync_runtime_record_event_json(init.value, std::ptr::null()) };
+    assert_eq!(result.code, FfiErrorCode::NullPointer);
+    let lease = begin_sync_runtime_use(init.value).unwrap();
+    assert_eq!(lock_sync_runtime(lease.runtime()).status().pending, 0);
+    drop(lease);
+    unsafe { stateset_sync_runtime_destroy(init.value) };
+}
+
+#[test]
+fn sync_runtime_worker_panics_return_errors_and_release_the_handle() {
+    let config = CString::new(runtime_config_json()).unwrap();
+    let init = unsafe { stateset_sync_runtime_init_from_json(config.as_ptr()) };
+    assert_eq!(init.code, FfiErrorCode::Ok);
+    let lease = begin_sync_runtime_use(init.value).unwrap();
+    let result = run_sync_runtime_async::<(), _>(lease, |_, _| panic!("worker failed"));
+    assert_eq!(result.unwrap_err(), FfiErrorCode::InternalError);
+    assert_eq!(crate::error::last_error_as_str().as_deref(), Some("worker failed"));
+    // A poisoned runtime lock remains inspectable and its lease was released.
+    let snapshot = unsafe { stateset_sync_runtime_snapshot_json(init.value) };
+    assert!(!snapshot.is_null());
+    unsafe { crate::strings::stateset_string_free(snapshot) };
+    unsafe { stateset_sync_runtime_destroy(init.value) };
+}
+
+#[test]
+fn sync_runtime_failed_transport_preserves_the_runtime_for_retry() {
+    let (base_url, requests) = spawn_response_server(vec![
+        StubResponse { status: "503 Service Unavailable".into(), body: json!({"error": "busy"}) },
+        StubResponse { status: "200 OK".into(), body: json!({"status": "ok"}) },
+    ]);
+    let config = CString::new(runtime_config_json_for(&base_url)).unwrap();
+    let init = unsafe { stateset_sync_runtime_init_from_json(config.as_ptr()) };
+    assert_eq!(init.code, FfiErrorCode::Ok);
+    let failed = unsafe { stateset_sync_runtime_healthcheck(init.value) };
+    assert_ne!(failed.code, FfiErrorCode::Ok);
+    assert_eq!(failed.value, 0);
+    assert!(crate::error::last_error_as_str().is_some());
+    let retry = unsafe { stateset_sync_runtime_healthcheck(init.value) };
+    assert_eq!(retry.code, FfiErrorCode::Ok);
+    assert_eq!(retry.value, 1);
+    assert!(crate::error::last_error_as_str().is_none());
+    for _ in 0..2 {
+        assert!(requests.recv().unwrap().request_line.starts_with("GET /health"));
+    }
+    unsafe { stateset_sync_runtime_destroy(init.value) };
+}

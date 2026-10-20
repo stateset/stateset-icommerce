@@ -13296,6 +13296,7 @@ impl GeneralLedgerApi {
         skip_revenue_recognition=None,
         skip_fx_revaluation=None,
         skip_period_close=None,
+        fail_on_warnings=None,
         closed_by=None,
     ))]
     fn close_month(
@@ -13306,6 +13307,7 @@ impl GeneralLedgerApi {
         skip_revenue_recognition: Option<bool>,
         skip_fx_revaluation: Option<bool>,
         skip_period_close: Option<bool>,
+        fail_on_warnings: Option<bool>,
         closed_by: Option<String>,
     ) -> PyResult<CloseMonthReport> {
         let commerce = self
@@ -13324,6 +13326,7 @@ impl GeneralLedgerApi {
                     skip_revenue_recognition: skip_revenue_recognition.unwrap_or(false),
                     skip_fx_revaluation: skip_fx_revaluation.unwrap_or(false),
                     skip_period_close: skip_period_close.unwrap_or(false),
+                    fail_on_warnings: fail_on_warnings.unwrap_or(false),
                     closed_by,
                 },
             )
@@ -18741,6 +18744,9 @@ pub struct CloseMonthStep {
     /// Per-item failures that did not abort the close
     #[pyo3(get)]
     warnings: Vec<String>,
+    /// Warnings that record a per-item failure (vs informational skip notes)
+    #[pyo3(get)]
+    failed_item_count: i64,
 }
 
 impl From<stateset_core::CloseMonthStepReport> for CloseMonthStep {
@@ -18750,6 +18756,7 @@ impl From<stateset_core::CloseMonthStepReport> for CloseMonthStep {
             entry_count: i64::try_from(step.entry_count).unwrap_or(i64::MAX),
             total_amount: step.total_amount.to_string(),
             warnings: step.warnings,
+            failed_item_count: i64::try_from(step.failed_item_count).unwrap_or(i64::MAX),
         }
     }
 }

@@ -55,6 +55,7 @@ export const TOOL_PERMISSIONS = {
 
   // Inventory tools
   get_stock: 'read',
+  fulfill_order_stock: 'write',
   create_inventory_item: 'write',
   adjust_inventory: 'write',
   reserve_inventory: 'write',
@@ -272,6 +273,8 @@ export const TOOL_PERMISSIONS = {
   plan_partial_shipment: 'read',
   create_shipment: 'write',
   update_shipment: 'write',
+  add_shipment_item: 'write',
+  remove_shipment_item: 'write',
   ship_shipment: 'write',
   deliver_shipment: 'write',
   cancel_shipment: 'delete',
@@ -291,6 +294,8 @@ export const TOOL_PERMISSIONS = {
   list_purchase_orders: 'read',
   get_purchase_order: 'read',
   create_purchase_order: 'write',
+  get_purchase_order_items: 'read',
+  receive_purchase_order: 'write',
   submit_purchase_order: 'write',
   approve_purchase_order: 'write',
   send_purchase_order: 'write',
@@ -913,6 +918,12 @@ export const TOOL_PERMISSIONS = {
 
   // Explainability (read-only narratives assembled from other domains)
   explain_order: 'read',
+  simulate_commerce_scenario: 'read',
+  get_simulation_kernel_contract: 'read',
+  simulate_inventory_experiment: 'read',
+  compare_commerce_scenarios: 'read',
+  simulate_inventory_plan: 'read',
+  compare_inventory_plans: 'read',
   explain_cart_pricing: 'read',
 
   // Agentic Runtime

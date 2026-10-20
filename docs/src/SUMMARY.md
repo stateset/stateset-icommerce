@@ -165,4 +165,5 @@
 - [Rust OpenAPI Inventory](appendix/rust-openapi-inventory.md)
 - [Workspace Inventory](appendix/workspace-inventory.md)
 - [Troubleshooting](appendix/troubleshooting.md)
+- [Operation and Maintenance Manual (ASD-STE100)](appendix/ste-manual.md)
 - [Versioning](versioning.md)

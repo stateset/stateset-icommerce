@@ -70,11 +70,53 @@ let engine = SyncEngine::new(config)?;
 - `outbox_path` persists pending local events.
 - `state_path` persists remote cursor state, latest remote head metadata
   (`state_root`, `last_commitment_id`), the highest acknowledged remote sequence,
-  retained push confirmations and dead-letter entries, and any in-progress pull
+  retained push confirmations and dead-letter entries, pending inbox events, and any in-progress pull
   cursor. If omitted while `outbox_path` is set, a sibling snapshot is written next to
   the outbox file.
 - `confirmation_capacity` bounds how many sequencer confirmations are retained for
   inspection after the outbox drains.
+
+Push outcomes are journaled in the state snapshot before acknowledged or
+permanently rejected events leave the outbox. An interrupted cleanup is completed
+on restart or before the next push, record, or dead-letter requeue. The journal
+tracks exact event ids independently of confirmation-history capacity, including
+transports that only return an accepted-prefix count. Stop the writer and back up
+or restore both snapshot files together; an older binary must not
+open snapshots with unfinished cleanup from a newer one.
+
+Snapshot writes use unique temporary files, sync their contents, and replace the
+target atomically. On Unix, push cleanup also syncs the containing directories
+between journal creation, outbox removal, and journal clearing. These barriers
+depend on filesystem durability guarantees; they are not a substitute for backups.
+Empty or malformed snapshots fail to open rather than silently resetting progress.
+Each snapshot path must have a single writer.
+
+A response lost before its outcomes can be journaled is still ambiguous. The
+engine retains pending events with their original ids and retries them; transports
+and remote sequencers must deduplicate by event id. This is at-least-once delivery,
+not a claim of exactly-once external effects.
+
+Pulled events and their continuation cursor commit together in the state snapshot.
+The engine stops pulling with `SyncError::BufferFull` when the pending inbox is
+full; it does not evict unprocessed events. After a partial `full_sync`, consume
+the retained inbox, acknowledge processed ids, and resume from the saved cursor.
+Reopening with a smaller capacity preserves the backlog and blocks new pulls until
+there is room. The standalone `EventBuffer` primitive retains its rolling-cache
+eviction behavior; the engine checks capacity before using it.
+
+For restart-safe consumers, read `buffered_events()`, apply each event idempotently
+to the application database, commit, then call `acknowledge_buffered_events(&ids)`.
+A crash between application commit and acknowledgement can replay an event, so
+application deduplication by event id is required. `try_drain_buffer()` instead
+transfers responsibility immediately; a crash after draining but before application
+commit can lose work. The compatibility `drain_buffer()` returns an empty list on
+storage failure while retaining events. Prefer the fallible API or explicit
+acknowledgements, also exposed by `SyncRuntime`.
+
+`caught_up` and `remote_cursor` describe remote observation, not application
+completion; inspect `buffered_events` before reporting all work applied. Older
+snapshots without an inbox remain readable, but events already lost from a prior
+in-memory buffer cannot be reconstructed from that snapshot alone.
 
 `SyncEngine` exposes lookup and operator surfaces over both logs — confirmations and
 dead letters can be queried by event id, remote sequence, receipt handle, command, or

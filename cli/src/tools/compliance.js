@@ -6,22 +6,22 @@
  */
 
 import { z } from 'zod';
+import { applyRequired } from '../utils/apply-guard.js';
 
 import { scopedService } from './scoped-store.js';
+import { createIsolatedComplianceService } from '../compliance/isolated.js';
 
-/**
- * The compliance service over the server's store (`--db`), one per database.
- *
- * The server opens its A2A store on the commerce database itself, so the A2A
- * tables and the commerce tables (customers, orders, ...) share one
- * connection: GDPR exports and erasure cover both without guessing a sibling
- * `store.db` path.
- * @param {object} ctx - tool handler context
- */
+/** Use a worker for file stores; never initialize a second SQLite driver here. */
 async function getComplianceSvc(ctx) {
+  const dbPath = ctx.a2aStore?.dbPath ?? ctx.commerce?._store?.dbPath ?? ctx.dbPath;
+  if (dbPath && dbPath !== ':memory:' && !dbPath.startsWith('file::memory:')) {
+    return createIsolatedComplianceService(dbPath);
+  }
+  // In-memory A2A stores cannot be reopened in another process. Their local
+  // connection remains the only source; this does not expose native :memory:.
   return scopedService(ctx, 'compliance', async (store) => {
     const { createComplianceService } = await import('../compliance/exports.js');
-    return createComplianceService(store, { _commerceDbOverride: store.db });
+    return createComplianceService(store, { commerceDb: store.db });
   });
 }
 
@@ -54,7 +54,7 @@ export const complianceTools = [
     handler: async ({ params, ...ctx }) => {
       try {
         const svc = await getComplianceSvc(ctx);
-        const result = svc.exportAuditTrail(params);
+        const result = await svc.exportAuditTrail(params);
         return { success: true, ...result };
       } catch (err) {
         return { success: false, error: err.message };
@@ -77,7 +77,7 @@ export const complianceTools = [
     handler: async ({ params, ...ctx }) => {
       try {
         const svc = await getComplianceSvc(ctx);
-        const result = svc.generate1099K(params);
+        const result = await svc.generate1099K(params);
         return { success: true, ...result };
       } catch (err) {
         return { success: false, error: err.message };
@@ -102,7 +102,7 @@ export const complianceTools = [
     handler: async ({ params, ...ctx }) => {
       try {
         const svc = await getComplianceSvc(ctx);
-        const result = svc.generateGDPRExport(params.customerId);
+        const result = await svc.generateGDPRExport(params.customerId);
         return { success: true, ...result };
       } catch (err) {
         return { success: false, error: err.message };
@@ -126,9 +126,10 @@ export const complianceTools = [
     },
     permission: 'admin',
     handler: async ({ params, ...ctx }) => {
+      if (!ctx.allowApply) return applyRequired('Delete GDPR data', params);
       try {
         const svc = await getComplianceSvc(ctx);
-        const result = svc.deleteGDPRData(params.customerId, {
+        const result = await svc.deleteGDPRData(params.customerId, {
           keepTransactions: params.keepTransactions,
         });
         return { success: true, ...result };
@@ -156,7 +157,7 @@ export const complianceTools = [
     handler: async ({ params, ...ctx }) => {
       try {
         const svc = await getComplianceSvc(ctx);
-        const result = svc.generateComplianceSummary(params);
+        const result = await svc.generateComplianceSummary(params);
         return { success: true, ...result };
       } catch (err) {
         return { success: false, error: err.message };
@@ -189,7 +190,7 @@ export const complianceTools = [
     handler: async ({ params, ...ctx }) => {
       try {
         const svc = await getComplianceSvc(ctx);
-        const result = svc.generateSOC2Evidence(params);
+        const result = await svc.generateSOC2Evidence(params);
         return { success: true, ...result };
       } catch (err) {
         return { success: false, error: err.message };

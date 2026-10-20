@@ -20,8 +20,8 @@ Validates repo-wide version sync plus release metadata hygiene.
 
 Arguments:
   VERSION_OR_TAG   Optional semantic version or tag name such as:
-                   1.36.0, v1.36.0, cli-v1.36.0, py-v1.36.0, java-v1.36.0,
-                   php-v1.36.0, ruby-v1.36.0
+                   1.39.0, v1.39.0, cli-v1.39.0, py-v1.39.0, java-v1.39.0,
+                   php-v1.39.0, ruby-v1.39.0
 
 Options:
   --github-output PATH   Write version=<normalized-version> to the given file.
@@ -105,10 +105,16 @@ if [[ -z "$raw_release_version" && "${GITHUB_REF:-}" == refs/tags/* ]]; then
   raw_release_version="${GITHUB_REF#refs/tags/}"
 fi
 
+# A release bump updates the workspace and lockfile root metadata before the
+# platform packages are published. Keep the registry pins at the last released
+# package until that publication lands; check_node_binding_lock validates that
+# this is exactly the immediately previous release. The standalone
+# check_version_sync.sh command remains strict for callers that need to detect
+# the intermediate state directly.
 if (( print_version != 0 )); then
-  bash ./scripts/ci/check_version_sync.sh >&2
+  RELEASE_LOCK_SYNC_DEFERRED=true bash ./scripts/ci/check_version_sync.sh >&2
 else
-  bash ./scripts/ci/check_version_sync.sh
+  RELEASE_LOCK_SYNC_DEFERRED=true bash ./scripts/ci/check_version_sync.sh
 fi
 
 workspace_version="$(extract_with_regex '^[[:space:]]*version = "[0-9]+\.[0-9]+\.[0-9]+"' Cargo.toml 's/^[^"]*"([^"]+)".*$/\1/')"
@@ -185,9 +191,11 @@ required_release_surface_snippets=(
   ".github/workflows/publish-cli.yml|description: 'Version to release (e.g., ${workspace_version})'"
   ".github/workflows/publish-cli.yml|CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-unknown-linux-gnu-gcc"
   ".github/workflows/publish-cli.yml|- name: Wait for platform package availability"
-  # The published CLI manifest must resolve @stateset/embedded from the
-  # registry even though the repository manifest links ../bindings/node.
-  ".github/workflows/publish-cli.yml|      - name: Point @stateset/embedded at the published range"
+  # Stage the registry native dependency, verify the actual consumer tarball,
+  # and publish that exact artifact instead of repacking the working directory.
+  '.github/workflows/publish-cli.yml|        run: node scripts/ci/pack_cli_release.mjs --output-dir cli'
+  ".github/workflows/publish-cli.yml|          node scripts/ci/check_cli_consumer.mjs \"cli/stateset-cli-\${version}.tgz\""
+  ".github/workflows/publish-cli.yml|            npm publish \"stateset-cli-\${version}.tgz\" --access public --provenance"
   "cli/package.json|\"@stateset/embedded\": \"file:../bindings/node\""
   ".github/workflows/publish-python.yml|description: \"Version to release (e.g., ${workspace_version})\""
   ".github/workflows/publish-rust-crates.yml|description: 'Version to release (e.g., ${workspace_version})'"

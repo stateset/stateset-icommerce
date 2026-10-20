@@ -25,12 +25,12 @@ This workspace is the application-layer repo in a larger documented stack:
 
 ## Current posture
 
-- Current workspace release: `1.36.0`
+- Current workspace release: `1.39.0`
 - Current release status: stable `v1.x`; the `v1.0.0` compatibility contract remains active
 
-The current workspace release line is `1.36.0`.
+The current workspace release line is `1.39.0`.
 
-### Source release 1.36.0 purchase hardening
+### Source release 1.39.0 purchase hardening
 
 The [durable Node purchase runtime](durable-purchases.md) adds local
 SQLite coordination, exact shared asset-budget holds, idempotent adapter steps,
@@ -89,7 +89,7 @@ Do not collapse those into a single "post-quantum" claim.
 
 ## Compatibility Contract
 
-The current workspace release line is `1.36.0`, so the published artifacts are
+The current workspace release line is `1.39.0`, so the published artifacts are
 on the first stable `v1.x` compatibility line.
 
 The `v1.0.0` compatibility contract is frozen and remains active:
@@ -104,8 +104,8 @@ The `v1.0.0` compatibility contract is frozen and remains active:
   supported for at least two minor releases and 90 days before removal in the
   next major;
 - `v1.0.x` is the initial stabilization/LTS line: critical regressions and
-  security fixes are eligible for backport there until `v1.36.0` ships;
-- after `v1.36.0`, the latest `v1.y` and previous `v1.(y-1)` lines receive
+  security fixes are eligible for backport there until `v1.39.0` ships;
+- after `v1.39.0`, the latest `v1.y` and previous `v1.(y-1)` lines receive
   security and release-blocking bug backports.
 
 ## Evidence Matrix
@@ -116,6 +116,7 @@ The `v1.0.0` compatibility contract is frozen and remains active:
 | Finality model | documented | `docs/PQC_INITIAL_SPEC.md` and trilogy docs distinguish soft vs hard finality | `pq hard finality` definition and deployment plan |
 | Security disclosure process | implemented in this repo | `SECURITY.md` defines reporting channel and response targets | public advisory index, CVE process, bug bounty |
 | Independent security audits | open gap | no public third-party audit reports are linked from this repo | published audit reports and remediation tracking |
+| General mutation auditing | partial | governed receipt chains and domain facts; transaction-bound customer lifecycle/address facts on both backends; opt-in SQLite `audit_log` helper and required atomic auditing for operator receipt resolution; coverage: `docs/MUTATION_AUDIT_COVERAGE.md` | drain the remaining mutation-fact backlog with backend-specific rollback and payload tests; a zero audit-failure counter does not prove complete coverage |
 | Formal verification | scoped, machine-checked results | `formal/tla/` checks bounded refund, inventory, x402, escrow, returns, close, billing, warehouse, receipt, outbox, saga, checkout and promotion protocols against broken variants; `formal/lean/` proves tax allocation, idealized Merkle path binding, revenue and depreciation conservation, FX and journal balance, promotion budgets and credit allocation, with focused Rust tests | proof of the Rust implementations themselves, SHA-256 collision resistance, authenticated remote roots, AIR proofs, ordering proofs, PQ composition proofs |
 | Versioning and deprecation policy | implemented policy | `docs/src/versioning.md` and `RELEASING.md` define the `v1.0` contract, deprecation window, and backport rules | GitHub branch protection and release permissions live outside this repo |
 | Observability primitives | implemented in this repo | `crates/stateset-observability`, `deploy/grafana`, `deploy/prometheus` | published SLOs, runbooks, correlated production dashboards, chaos results |

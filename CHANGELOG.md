@@ -35,6 +35,310 @@ This project follows Keep a Changelog and Semantic Versioning.
 - WebMCP checkout demo: `examples/agents/webmcp` now walks catalog browsing,
   cart building, and order completion end to end, with the buyer-confirmation
   gate wired to an order-summary dialog.
+## [1.39.0] - 2026-10-16
+
+### Fixed
+
+- Include all six simulation tools in the lazy tool registry, preserving parity
+  with the static MCP catalog.
+- Round starter storefront line taxes to USD cents before quoting settlement
+  or creating native orders, and reject fractional-cent shipping charges before
+  settlement verification. Match complete cart identities on checkout retries.
+- Require isolated, wheel-only Python package smoke installs so source builds
+  cannot hide incompatible wheels or workspace imports. Use host-native wheel
+  tags for local package validation.
+- Bound simulation inputs before schema validation across SDK and MCP execution
+  schemas, rejecting oversized/deep/cyclic or executable inputs before worker
+  allocation while retaining canonical request hashes for valid scenarios.
+- Verify shipment reservation transitions, exact stock balances and the shipment
+  inventory ledger row before committing on SQLite/PostgreSQL. Silently skipped
+  or rewritten writes roll back together with their outbox fact, preserving safe
+  retries for full and partial stock postings.
+- Denominate the starter storefront ledger in USD for USDC settlement; activate
+  new sample products, honor Next environment files during seeding, preserve
+  stock on repeated seeds, and fail on unresolved sample catalog conflicts.
+- Preserve later order, payment and refund states on delayed checkout retries.
+
+- Require persisted outbox, governed receipt and receipt-audit rows even when a
+  database trigger silently suppresses an insert or preview promotion; roll the
+  business mutation back instead of reporting success without durable evidence.
+- Record customer creation on PostgreSQL and customer edits, deletion,
+  anonymization and address/default changes on both backends in the same
+  transaction, including atomic batches. New edit/address facts contain field
+  names and identifiers rather than personal data values.
+- Reject address additions, edits and default changes on deleted customers;
+  lock PostgreSQL parents before addresses so concurrent anonymization cannot
+  retain newly written contact data or deadlock with address mutations.
+- Verify the persisted customer scrub and absence of addresses before committing
+  anonymization, rolling back silently suppressed updates/deletions and resetting
+  legacy deleted-account email tombstones.
+- Refuse silently suppressed customer deletions before recording a deletion fact,
+  preserving the customer and its evidence until a successful retry.
+- Commit refund completion/failure facts with their transitions on both backends;
+  reject silently skipped refund writes before changing payment balances, and
+  serialize competing terminal outcomes without duplicate facts on retry.
+- Replay completed PostgreSQL refunds on the held transaction connection so
+  retries also work with a one-connection pool.
+- Match full MCP browser-origin allowlist URLs by scheme, hostname and port;
+  reject malformed, opaque and duplicate origins. Explicit bare hostnames retain
+  their documented HTTP(S), any-port compatibility behavior.
+- Return the structured MCP result contract for schema validation failures as
+  well as handler outcomes on both transports and protocol generations.
+- Reject refund retry keys reused with a different payment, explicit amount or
+  immutable details on SQLite/PostgreSQL; recheck keys inside the transaction
+  so concurrent identical refunds replay before remaining-capacity validation.
+- Report blocked SQLite WAL checkpoints as shutdown errors so operators can
+  close active readers/writers and retry.
+- Add the missing general audit table to canonical SQLite engine migrations,
+  preserving compatible existing history; clarify that helper coverage is opt-in.
+
+### Added
+
+- Support per-SKU periodic replenishment reviews through optional
+  `purchasing.reviewIntervalDays`. Preserve daily behavior when omitted, defer
+  low-stock attempts without native writes or cash movements, and recompute
+  orders at the next eligible review before sizing and financial constraints.
+  Expose deferral events, counts and experiment deltas; independently check
+  schedule compliance through inventory and cash replay. Add a native-engine
+  daily-versus-periodic example with CLI and MCP coverage.
+- Independently reconcile daily native simulation inventory flows, including
+  day-zero orders, projected demand, placement-day supplier terms, split and
+  missed receipts, physical availability and final native quantities. Expose
+  per-SKU daily stock/inbound movements and the first stockout through plans,
+  experiment runs, CLI and MCP. Require inventory-flow evidence before
+  aggregating experiments and reject offsetting intermediate stock errors.
+- Evaluate optional per-SKU inventory fill-rate goals alongside overall service
+  and cash targets. Validate unique SKUs across every policy, preserve exact
+  fractions and no-demand semantics, and expose per-seed checks, joint goal
+  counts and per-product pooled service so bulk demand cannot hide critical
+  stockouts. Include a native-engine comparison and CLI/MCP coverage.
+- Replay explicit supplier lead-time and first-fill schedules through native
+  inventory plans and experiments. Validate exact order-placement-day horizons
+  including day zero, expose fixed/sampled/explicit methods, preserve v1 sampled
+  paths and reconcile real delayed and partial receipts under supplied shocks.
+- Align inventory comparison condition checks across single-run comparisons and
+  experiments. Expose per-alternative `comparisonToBaseline` and
+  `changedConditions`, including exact opening capital, SKU stock/prices,
+  purchase priority, reserve, horizon and paired realized paths.
+- Add optional shared `cashReserve` spending policy to native inventory plans
+  and experiments. Block whole rounded purchases before creating a native PO,
+  resume when sales provide headroom, independently reconcile reserve compliance
+  and expose reserve-blocked attempts, runs and comparability flags.
+- Expose exact daily simulation cash flows and the first minimum cash balance,
+  including opening cash and day-zero prepaid purchases. Reconcile cash events
+  independently against prices, quantities and report totals, and add the
+  inclusive `minCashBalance` experiment goal and exact comparison metrics.
+- Replay explicit per-day demand schedules through native inventory planning,
+  with strict horizon matching and unchanged sampled-demand streams. Expose
+  per-policy demand/supply/joint path diversity so repeated seeded scenarios
+  remain visible in experiment reports and goal evidence.
+- Add inventory-experiment business goals for exact unit fill rate, ending
+  cash, gross margin and purchasing spend, with per-seed evidence and jointly
+  satisfied goal counts. Report pooled service levels, explicitly undefined
+  no-demand fill rates, and opening-capital, unit-economics and purchase-priority
+  comparison flags through the simulation SDK, CLI and core MCP tool.
+- Simulation purchasing constraints for supplier minimums, case-pack multiples
+  and maximum post-order inventory position, checked before spending cash.
+  Expose rounded order sizes, extra purchased units, constraint-blocked attempts
+  and native order-sizing reconciliation in plan and experiment reports.
+- Seeded supplier lead-time ranges and split deliveries in inventory simulations,
+  including missed first deliveries, prepaid in-transit balances, native PO-line
+  reconciliation and demand/supply comparability flags. Strengthen reconciliation
+  to verify each financial component against quantities and exact prices.
+- Shared-seed inventory experiments with independent native episodes, empirical
+  percentile outcomes, exact rational money means, stockout/budget frequencies
+  and paired policy deltas through MCP, the JavaScript runner and CLI.
+- Discoverable model-facing simulation kernel contract with executable input
+  schemas, typed procurement/receipt/shipment actions, intermediate native-state
+  inspection and explicit episode failure/time semantics.
+- SKU-specific seeded demand paths and conditional demand baselines, daily
+  sales-before-purchasing timing, and exact stock/cash/inventory-value
+  reconciliation for inventory planning simulations.
+- Isolated native-engine commerce and inventory-planning simulations exposed to
+  agents through six MCP tools, the simulation CLI and a JavaScript runner.
+  Seeded demand ranges/history, purchase approvals and receipts, shipped sales,
+  stockouts and exact cash projections support bounded policy comparisons.
+- Atomic physical stock posting for fully shipped orders on SQLite/PostgreSQL,
+  with a retry-safe Rust/Node API and apply-gated MCP tool; shipping status
+  continues to confirm holds until this physical posting step.
+- Exact purchase-order cost inputs, currency selection and persisted line/receipt
+  access in the Node binding, retaining legacy float inputs for compatibility.
+- Storefront configuration doctor, pre-transfer availability check and native
+  merchant journey acceptance; source-bound CI evidence refuses stale success,
+  source drift, missing journey proof and reused CI native builds.
+
+- Operator-selectable SQLite `NORMAL`/`FULL` synchronization across pooled
+  connections, with strict environment validation and effective storage diagnostics.
+- Read-only, bounded pending HTTP receipt inspection on SQLite/PostgreSQL and
+  an operator-only SQLite resolution helper with atomic required audit logging,
+  exact reservation identity checks, preview-first commands and audit failure counts.
+- Shared MCP safety contracts across stdio/HTTP and both protocol generations;
+  catalog-wide required-input refusals with disconnected external/demo handlers;
+  storage exhaustion and ledger/subscription failure-injection regressions;
+  structured operation-latency and expanded source-bound recovery evidence.
+- Independent security review scope and explicit release evidence gates for
+  external review, deployment durability and sustained operating measurements.
+
+### Verification scope
+
+- Local simulation acceptance: 101 simulation tests and 16 catalog/profile
+  checks passed through Buildr, including native inventory/purchasing,
+  exact cash, service goals, CLI and real MCP execution. Release-candidate
+  workspace and binding CI remain required before tagging.
+- Simulations are conditional projections from supplied assumptions. They do
+  not validate demand forecasts, contact suppliers or transfer funds.
+- Independent security review, live provider settlement, sustained production
+  soak and host power-loss validation remain outside the verified scope;
+  [`docs/RELEASE_EVIDENCE.md`](docs/RELEASE_EVIDENCE.md) records those gaps.
+
+## [1.38.2] - 2026-10-15
+
+Includes the fixes prepared for the unpublished 1.38.1 release.
+
+### Fixed
+
+- Preserve original Zod refinements, defaults, and transforms in MCP v2 tool
+  execution; wait for service initialization and close per-request resources.
+- Restore SQLite backups from the exact staged, checksum-verified image after
+  integrity and schema checks. Refuse existing targets by default, including
+  empty files; explicit overwrite requires an offline regular file without
+  SQLite journals. Symlinks and journal entries are never replaced.
+- Route legacy backups through the verified recovery path, retain legacy
+  checksums, isolate retention by database name, and avoid concurrent snapshot
+  filename collisions. Report snapshots as uncompressed.
+- Keep pooled ephemeral SQLite databases and their journals inside unique
+  private directories, retained until their final connection closes.
+- Return actual product variant SKU, price, and store currency through the C
+  boundary, rejecting unrepresentable values rather than truncating them.
+- Align generated JSON schemas with Serde field naming, defaults, optional
+  fields, and unknown-field rules; reject unsupported layouts explicitly.
+- Persist saga execution attempts and rollback intent, bind idempotency keys
+  to requests, serialize transitions, and resume compensation after restart.
+- Update cached dependency resolutions for `event-listener`, `chacha20`,
+  `der`, and `spin`; remove obsolete advisory exceptions and reject compiled
+  dependencies covered by the remaining exceptions.
+- Update `rustls` to 0.23.46 for RUSTSEC-2026-0346 through RUSTSEC-2026-0349,
+  retaining the configured Bytecode Alliance source-audit chain for the patch.
+- Release hygiene accepts completed npm lockfile synchronization while still
+  rejecting stale resolved platform packages and inconsistent release pins.
+- Update locked `quinn-proto` to 0.11.18, addressing five memory-exhaustion and
+  panic advisories in the optional HTTP/3 dependency branch.
+- Give npm registry propagation up to twenty minutes before publishing the
+  storefront scaffolder, matching the platform package availability window.
+
+### Added
+
+- Process-termination recovery and multiprocess retry-contention checks with
+  exact inventory, durable receipts, and audit-chain invariants.
+- Independent CI coverage gates for macros, the C boundary, PostgreSQL sagas,
+  and SQLite database recovery, with retained database coverage artifacts.
+
+## [1.38.0] - 2026-10-12
+
+### Added
+
+- Lean proofs and TLA+ models for reservation lifecycle safety, line-owned
+  stock selection, receipt promotion, shipment atomicity, expiry races, and
+  reservation/balance lock ordering. Generated fixtures connect selected
+  models to Rust and both SQL backends; the Lean runner audits compiled
+  declarations for unexpected axioms and proof holes.
+- Governed partial reserved shipments with order-line ownership checks,
+  exact split quantities, durable receipt replay, and backend parity tests.
+- Native merchant HTTP example, payment and fulfillment reconciliation
+  adapters, Stripe payment integration tests, and expanded merchant docs.
+
+### Fixed
+
+- YAML policy loading uses the maintained Serde Norway fork, removing the
+  unmaintained `unsafe-libyaml` dependency flagged by the release policy gate.
+- Updated the CLI's MCP SDK and Sharp dependencies and the storefront's CSS
+  selector parser to patched versions identified by release dependency checks.
+- Reservation confirmation and release no longer reuse fulfilled stock;
+  expiry emits its domain event within the inventory transaction. Preview
+  version predictions now match terminal and already-confirmed no-op cases.
+- PostgreSQL lazy expiry locks and rereads candidates before releasing stock.
+  Shipment locks all reservations before balances, and lazy expiry uses the
+  same reservation identity order, preventing the reproduced lock inversions.
+- PostgreSQL startup migrations run on their advisory-lock connection so a
+  one-connection pool can initialize and reopen without pool starvation.
+- Shipment and receipt failure-injection regressions verify rollback of
+  inventory, ledger, outbox, order, and receipt effects before same-key retry.
+- CLI on Node 20: `@google-cloud/pubsub` is pinned to `^5` (v6 requires
+  Node >= 22). On Node 20 npm dropped the optional v6 package together with
+  its optional subtree, including `@grpc/grpc-js` and `@grpc/proto-loader`,
+  so installs on the supported Node 20 floor silently fell back to REST-only
+  sync. Dependabot now ignores pubsub majors until the engines floor moves.
+
+## [1.37.0] - 2026-10-01
+
+### Added
+
+- Version-checked shipment packing and lifecycle updates across the Rust,
+  HTTP, Node, and governed tool surfaces, with bounded integer validation and
+  durable conflict handling.
+- Durable synchronization recovery, payload integrity checks, scoped receive
+  validation, and isolated database maintenance tests.
+- Native-engine database manager backups with checksum manifests and safe,
+  non-overwriting recovery to a new path.
+- Positive inventory receipts now automatically reserve available units for
+  matching open backorders in priority order; allocation remains retryable and
+  separate from physical fulfillment.
+- Strict month-end close: `CloseMonthOptions.fail_on_warnings` refuses to seal
+  a period with unresolved warnings before writing anything, surfaced as
+  HTTP 422 with a `failed_item_count`, and plumbed through the Node, Python,
+  and CLI surfaces.
+- New `stateset-saga` crate owning the persisted PostgreSQL saga coordinator
+  (moved out of `stateset-db`; `stateset-db/saga` now only registers the
+  `035_sagas` schema migration).
+- Live-Postgres behavior parity tests for month-end close (identical postings
+  to SQLite) and for the sync/async runtime pool fix.
+- Real payment and carrier rails in `stateset-embedded` (`events` feature):
+  `PaymentProvider` (Stripe PaymentIntents, manual capture) behind
+  `Payments::{authorize,capture,refund}_with_provider`, and
+  `ShipmentProvider` (EasyPost rates, labels, tracking) behind
+  `Shipments::buy_label_with_provider`, each with a deterministic mock.
+  Declines (including Stripe HTTP 402 card errors) are persisted as data,
+  refunds settle only when the processor reports `succeeded` (a `pending`
+  refund stays pending), every engine refund has its own idempotency key,
+  and amounts finer than the currency's minor unit (including three-decimal
+  currencies such as KWD) are rejected rather than rounded. Postage is only
+  bought for an existing, still-packable shipment with no tracking number,
+  so a retry never buys a second label. Partial capture is refused until the
+  payment row can record a captured amount.
+
+### Changed
+
+- Compliance operations for file-backed stores run in a process-isolated
+  SQLite worker, avoiding multiple independently bundled SQLite libraries in
+  the commerce engine process.
+- GDPR erasure clears the customer email lookup key and related profile fields
+  so an erased address can be reused safely.
+- Release and generated-artifact checks now cover the expanded recovery,
+  synchronization, and shipment evidence surfaces.
+
+### Security
+
+- The generated storefront pins Next.js 16.3.8 (was 16.3.3), which includes
+  the `next/og` ImageResponse remote-code-execution fix (GHSA-vcvr-r3jv-pc5j).
+- CLI: `@grpc/grpc-js` ^1.14.5 and `axios` 1.20.0 clear their high-severity
+  advisories.
+- npm audit gates accept an allowlisted advisory only while no patched
+  version is published; `braces` (GHSA-vfj7-8cjw-p6xm, reached only through
+  Tailwind CSS 3 build tooling) is the single entry and has no patch yet.
+
+### Changed (breaking)
+
+- `stateset_db::saga` is removed. Depend on the `stateset-saga` crate for the
+  PostgreSQL saga coordinator; the `stateset-db/saga` feature now only
+  registers the `035_sagas` schema migration.
+
+### Fixed
+
+- Strict month-end close (`fail_on_warnings`) no longer leaves depreciation and
+  revenue-recognition postings behind when FX revaluation cannot run: the
+  dry-run evaluation now checks the same preconditions (an exchange rate for
+  every foreign account with a balance, and an FX gain/loss account) and
+  refuses before anything is written.
 
 ## [1.36.0] - 2026-09-29
 
@@ -351,7 +655,7 @@ This project follows Keep a Changelog and Semantic Versioning.
 ### Fixed
 
 - Creating a subscription no longer fails with `Conflict("Subscription <id> is
-  leased for billing by another worker until <ts>")`. The create path seeded
+leased for billing by another worker until <ts>")`. The create path seeded
   billing cycle 1 in its own transaction, after the subscription row had already
   committed, and went through the lease-guarded public billing mutation. A
   subscription with a back-dated start date is due the instant it commits, so a

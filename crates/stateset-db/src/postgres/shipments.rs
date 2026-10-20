@@ -964,6 +964,16 @@ impl PgShipmentRepository {
         shipment_id: Uuid,
         item: CreateShipmentItem,
     ) -> Result<ShipmentItem> {
+        self.add_item_with_version_async(shipment_id, item, None).await
+    }
+
+    /// Add an item with a version precondition checked under the parent lock.
+    pub async fn add_item_with_version_async(
+        &self,
+        shipment_id: Uuid,
+        item: CreateShipmentItem,
+        expected_version: Option<i32>,
+    ) -> Result<ShipmentItem> {
         crate::shipment_updates::validate_item(&item)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         // Lock the order before the shipment, consistently with future combined fulfillment commands.
@@ -973,11 +983,20 @@ impl PgShipmentRepository {
             .await
             .map_err(map_db_error)?
             .ok_or(CommerceError::NotFound)?;
+        // Keep the order-before-shipment lock order, but check the caller's
+        // version before evaluating allocation against a potentially changed manifest.
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM orders WHERE id = $1 FOR UPDATE")
+            .bind(order_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::OrderNotFound(order_id))?;
+        let mut shipment = Self::lock_shipment_tx(&mut tx, shipment_id).await?;
+        crate::shipment_updates::check_version(&shipment, expected_version)?;
         let item = Self::normalize_items_tx(&mut tx, order_id, &[item])
             .await?
             .pop()
             .ok_or_else(|| CommerceError::Internal("Missing normalized shipment item".into()))?;
-        let mut shipment = Self::lock_shipment_tx(&mut tx, shipment_id).await?;
         let id = Uuid::new_v4();
         let now = Utc::now().trunc_subsecs(6);
 
@@ -1023,6 +1042,15 @@ impl PgShipmentRepository {
 
     /// Remove item from shipment (async)
     pub async fn remove_item_async(&self, item_id: Uuid) -> Result<()> {
+        self.remove_item_with_version_async(item_id, None).await
+    }
+
+    /// Remove an item with a version precondition checked under the parent lock.
+    pub async fn remove_item_with_version_async(
+        &self,
+        item_id: Uuid,
+        expected_version: Option<i32>,
+    ) -> Result<()> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         // Discover the parent without locking the item: every writer locks the parent first.
         let parent: Uuid =
@@ -1033,6 +1061,7 @@ impl PgShipmentRepository {
                 .map_err(map_db_error)?
                 .ok_or(CommerceError::NotFound)?;
         let mut shipment = Self::lock_shipment_tx(&mut tx, parent).await?;
+        crate::shipment_updates::check_version(&shipment, expected_version)?;
         let row = sqlx::query_as::<_, ShipmentItemRow>(
             "DELETE FROM shipment_items WHERE id = $1 AND shipment_id = $2 RETURNING *",
         )
@@ -1060,40 +1089,57 @@ impl PgShipmentRepository {
         self.load_items_async(shipment_id).await
     }
 
-    /// Add tracking event (async)
+    /// Append tracking history and advance the parent version with an atomic outbox fact.
     pub async fn add_event_async(
         &self,
         shipment_id: Uuid,
         event: AddShipmentEvent,
     ) -> Result<ShipmentEvent> {
-        let id = Uuid::new_v4();
-        let now = Utc::now();
-        let event_time = event.event_time.unwrap_or(now);
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let mut shipment = Self::lock_shipment_tx(&mut tx, shipment_id).await?;
+        let previous_version = shipment.version;
+        let event = crate::shipment_updates::prepare_event(&mut shipment, event, Utc::now())?;
 
         sqlx::query(
             "INSERT INTO shipment_events (id, shipment_id, event_type, location, description, event_time, created_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7)"
         )
-        .bind(id)
+        .bind(event.id)
         .bind(shipment_id)
         .bind(&event.event_type)
         .bind(&event.location)
         .bind(&event.description)
-        .bind(event_time)
-        .bind(now)
-        .execute(&self.pool)
+        .bind(event.event_time)
+        .bind(event.created_at)
+        .execute(&mut *tx)
         .await
         .map_err(map_db_error)?;
 
-        Ok(ShipmentEvent {
-            id,
-            shipment_id: ShipmentId::from(shipment_id),
-            event_type: event.event_type,
-            location: event.location,
-            description: event.description,
-            event_time,
-            created_at: now,
-        })
+        let result = sqlx::query(
+            "UPDATE shipments SET version = $1, updated_at = $2 WHERE id = $3 AND version = $4",
+        )
+        .bind(shipment.version)
+        .bind(shipment.updated_at)
+        .bind(shipment_id)
+        .bind(previous_version)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_db_error)?;
+        if result.rows_affected() != 1 {
+            return Err(CommerceError::OptimisticLockFailure);
+        }
+        super::kernel_outbox::record_outbox_fact(
+            &mut tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "shipments.event_added.v1",
+                aggregate_type: "shipment",
+                aggregate_id: &shipment_id.to_string(),
+                payload: crate::shipment_updates::event_fact(&shipment, &event),
+            },
+        )
+        .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(event)
     }
 
     /// Get events for shipment (async)
@@ -1528,6 +1574,23 @@ impl ShipmentRepository for PgShipmentRepository {
 
     fn remove_item(&self, item_id: Uuid) -> Result<()> {
         super::block_on(self.remove_item_async(item_id))
+    }
+
+    fn add_item_with_version(
+        &self,
+        shipment_id: ShipmentId,
+        item: CreateShipmentItem,
+        expected_version: Option<i32>,
+    ) -> Result<ShipmentItem> {
+        super::block_on(self.add_item_with_version_async(
+            shipment_id.into_uuid(),
+            item,
+            expected_version,
+        ))
+    }
+
+    fn remove_item_with_version(&self, item_id: Uuid, expected_version: Option<i32>) -> Result<()> {
+        super::block_on(self.remove_item_with_version_async(item_id, expected_version))
     }
 
     fn get_items(&self, shipment_id: ShipmentId) -> Result<Vec<ShipmentItem>> {

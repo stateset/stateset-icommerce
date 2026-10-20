@@ -443,6 +443,22 @@ impl SqliteCustomerRepository {
             });
         }
 
+        super::kernel_outbox::record_outbox_fact(
+            tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "customer.updated",
+                aggregate_type: "customer",
+                aggregate_id: &id.to_string(),
+                payload: serde_json::json!({
+                    "id": id,
+                    "changed_fields": crate::customer_facts::changed_fields(input),
+                    "previous_status": current_status,
+                    "status": input.status.unwrap_or(current_status),
+                }),
+            },
+        )
+        .map_err(map_db_error)?;
+
         tx.query_row(
             "SELECT * FROM customers WHERE id = ?",
             [id.to_string()],
@@ -479,12 +495,46 @@ impl SqliteCustomerRepository {
                 "cannot delete customer {id}: {open} open order(s) still reference it"
             )));
         }
-        tx.execute(
+        let deleted = tx.execute(
             "UPDATE customers SET status = 'deleted', email = ?, email_key = NULL, updated_at = ?, version = version + 1 WHERE id = ?",
             rusqlite::params![Customer::tombstone_email(id), Utc::now().to_rfc3339(), id.to_string()],
         )
         .map_err(map_db_error)?;
+        if deleted != 1 {
+            return Err(CommerceError::DatabaseError(
+                "customer deletion did not persist its status transition".into(),
+            ));
+        }
+        super::kernel_outbox::record_outbox_fact(
+            tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "customer.deleted",
+                aggregate_type: "customer",
+                aggregate_id: &id.to_string(),
+                payload: serde_json::json!({ "id": id, "previous_status": status, "status": "deleted" }),
+            },
+        )
+        .map_err(map_db_error)?;
         Ok(true)
+    }
+
+    /// Reject new contact data and default changes on a deleted account.
+    /// The caller's IMMEDIATE transaction also serializes anonymization.
+    fn ensure_address_customer_live(tx: &rusqlite::Transaction<'_>, id: CustomerId) -> Result<()> {
+        let status: String = tx
+            .query_row("SELECT status FROM customers WHERE id = ?", [id.to_string()], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::CustomerNotFound(id.into_uuid()))?;
+        let status: CustomerStatus = parse_enum(&status, "customer", "status")?;
+        if status.is_terminal() {
+            return Err(CommerceError::Conflict(format!(
+                "customer {id} is deleted and its addresses can no longer be edited"
+            )));
+        }
+        Ok(())
     }
 
     /// Re-derive every `customer_addresses.is_default` flag for a customer
@@ -704,16 +754,33 @@ impl CustomerRepository for SqliteCustomerRepository {
 
         // Scrub every PII column; keep the row so order history still joins.
         tx.execute(
-            "UPDATE customers SET first_name = 'Deleted', last_name = 'Customer', phone = NULL,
+            "UPDATE customers SET status = 'deleted', email = ?, email_key = NULL,
+                    first_name = 'Deleted', last_name = 'Customer', phone = NULL,
                     accepts_marketing = 0, email_verified = 0, tags = '[]', metadata = NULL,
                     default_shipping_address_id = NULL, default_billing_address_id = NULL,
                     updated_at = ?, version = version + 1
              WHERE id = ?",
-            rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
+            rusqlite::params![
+                Customer::tombstone_email(id),
+                Utc::now().to_rfc3339(),
+                id.to_string()
+            ],
         )
         .map_err(map_db_error)?;
-        tx.execute("DELETE FROM customer_addresses WHERE customer_id = ?", [id.to_string()])
+        let removed_addresses = tx
+            .execute("DELETE FROM customer_addresses WHERE customer_id = ?", [id.to_string()])
             .map_err(map_db_error)?;
+
+        super::kernel_outbox::record_outbox_fact(
+            &tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "customer.anonymized",
+                aggregate_type: "customer",
+                aggregate_id: &id.to_string(),
+                payload: serde_json::json!({ "id": id, "removed_addresses": removed_addresses }),
+            },
+        )
+        .map_err(map_db_error)?;
 
         let customer = tx
             .query_row(
@@ -722,6 +789,14 @@ impl CustomerRepository for SqliteCustomerRepository {
                 Self::row_to_customer,
             )
             .map_err(map_db_error)?;
+        let has_addresses = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM customer_addresses WHERE customer_id = ?)",
+                [id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(map_db_error)?;
+        crate::customer_facts::ensure_anonymized(&customer, has_addresses)?;
         tx.commit().map_err(map_db_error)?;
         Ok(customer)
     }
@@ -737,16 +812,7 @@ impl CustomerRepository for SqliteCustomerRepository {
 
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
-        let customer_exists: bool = tx
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM customers WHERE id = ?)",
-                [input.customer_id.to_string()],
-                |row| row.get(0),
-            )
-            .map_err(map_db_error)?;
-        if !customer_exists {
-            return Err(CommerceError::CustomerNotFound(input.customer_id.into_uuid()));
-        }
+        Self::ensure_address_customer_live(&tx, input.customer_id)?;
 
         tx.execute(
             "INSERT INTO customer_addresses (id, customer_id, address_type, first_name, last_name,
@@ -785,6 +851,17 @@ impl CustomerRepository for SqliteCustomerRepository {
             )
             .map_err(map_db_error)?;
 
+        super::kernel_outbox::record_outbox_fact(
+            &tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "customer_address.created",
+                aggregate_type: "customer_address",
+                aggregate_id: &id.to_string(),
+                payload: serde_json::json!({ "id": id, "customer_id": input.customer_id,
+                    "address_type": addr.address_type, "is_default": addr.is_default }),
+            },
+        )
+        .map_err(map_db_error)?;
         tx.commit().map_err(map_db_error)?;
         Ok(addr)
     }
@@ -831,6 +908,7 @@ impl CustomerRepository for SqliteCustomerRepository {
                 "Address does not belong to customer".into(),
             ));
         }
+        Self::ensure_address_customer_live(&tx, input.customer_id)?;
         let current_type: AddressType =
             parse_enum(&current_type, "customer_address", "address_type")?;
         let new_type = input.address_type.unwrap_or(current_type);
@@ -889,6 +967,17 @@ impl CustomerRepository for SqliteCustomerRepository {
                 Self::row_to_address,
             )
             .map_err(map_db_error)?;
+        super::kernel_outbox::record_outbox_fact(
+            &tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "customer_address.updated",
+                aggregate_type: "customer_address",
+                aggregate_id: &address_id.to_string(),
+                payload: serde_json::json!({ "id": address_id, "customer_id": input.customer_id,
+                    "address_type": addr.address_type, "is_default": addr.is_default }),
+            },
+        )
+        .map_err(map_db_error)?;
         tx.commit().map_err(map_db_error)?;
         Ok(addr)
     }
@@ -915,6 +1004,16 @@ impl CustomerRepository for SqliteCustomerRepository {
         tx.execute("DELETE FROM customer_addresses WHERE id = ?", [address_id.to_string()])
             .map_err(map_db_error)?;
         Self::sync_default_flags(&tx, customer_id)?;
+        super::kernel_outbox::record_outbox_fact(
+            &tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "customer_address.deleted",
+                aggregate_type: "customer_address",
+                aggregate_id: &address_id.to_string(),
+                payload: serde_json::json!({ "id": address_id, "customer_id": customer_id }),
+            },
+        )
+        .map_err(map_db_error)?;
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }
@@ -944,10 +1043,22 @@ impl CustomerRepository for SqliteCustomerRepository {
                 "Address does not belong to customer".into(),
             ));
         }
+        Self::ensure_address_customer_live(&tx, customer_id)?;
         let row_type: AddressType = parse_enum(&row_type, "customer_address", "address_type")?;
 
         Self::set_default_pointer_tx(&tx, customer_id, address_id, row_type, address_type)?;
 
+        super::kernel_outbox::record_outbox_fact(
+            &tx,
+            crate::kernel_outbox::RecordedFact {
+                event_type: "customer.default_address_changed",
+                aggregate_type: "customer",
+                aggregate_id: &customer_id.to_string(),
+                payload: serde_json::json!({ "id": customer_id, "address_id": address_id,
+                    "address_type": address_type }),
+            },
+        )
+        .map_err(map_db_error)?;
         tx.commit().map_err(map_db_error)?;
         Ok(())
     }

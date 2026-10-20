@@ -1,0 +1,83 @@
+{
+  "name": "procurement-fulfillment-and-refund",
+  "currency": "USD",
+  "inventory": [
+    {
+      "sku": "COFFEE",
+      "unitPrice": "12.50",
+      "quantity": 3
+    }
+  ],
+  "steps": [
+    {
+      "type": "place_order",
+      "id": "sale",
+      "items": [
+        {
+          "sku": "COFFEE",
+          "quantity": 2
+        }
+      ]
+    },
+    {
+      "type": "capture_payment",
+      "id": "paid",
+      "order": "sale"
+    },
+    {
+      "type": "retry_payment",
+      "payment": "paid"
+    },
+    {
+      "type": "refund_payment",
+      "id": "refund",
+      "payment": "paid",
+      "amount": "12.50"
+    },
+    {
+      "type": "retry_refund",
+      "refund": "refund"
+    },
+    {
+      "type": "place_order",
+      "id": "oversell",
+      "items": [
+        {
+          "sku": "COFFEE",
+          "quantity": 2
+        }
+      ],
+      "expect": "rejected"
+    },
+    {
+      "type": "purchase_inventory",
+      "id": "supply",
+      "items": [
+        {
+          "sku": "COFFEE",
+          "quantity": 3,
+          "unitCost": "5.250001"
+        }
+      ]
+    },
+    {
+      "type": "inspect_state"
+    },
+    {
+      "type": "receive_purchase_order",
+      "purchase": "supply"
+    },
+    {
+      "type": "ship_order",
+      "order": "sale"
+    },
+    {
+      "type": "receive_purchase_order",
+      "purchase": "supply",
+      "expect": "rejected"
+    },
+    {
+      "type": "inspect_state"
+    }
+  ]
+}

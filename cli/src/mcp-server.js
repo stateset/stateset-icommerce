@@ -302,6 +302,20 @@ export function createStatesetMcpServer({
     disposeA2AServices(commerceWithA2A);
     a2aServicesReady.then(() => disposeA2AServices(commerceWithA2A));
   };
+  // The A2A connection belongs to this server, while the native commerce
+  // engine can be shared by all HTTP requests. Only close our own connection,
+  // after initialization has settled and its service timers have stopped.
+  let resourcesClosing = null;
+  const closeResources = () => {
+    if (!resourcesClosing) {
+      disposeA2AServices(commerceWithA2A);
+      resourcesClosing = a2aServicesReady.then(() => {
+        disposeA2AServices(commerceWithA2A);
+        a2aStore.close();
+      });
+    }
+    return resourcesClosing;
+  };
 
   // ---------------------------------------------------------------------------
   // Permission helpers — body in ./mcp/permission-gating.js
@@ -657,9 +671,19 @@ export function createStatesetMcpServer({
   server.executeTool = executeTool;
   server.executeToolWithPayment = executeToolWithPayment;
   server.connect = (...args) => server.instance.connect(...args);
-  server.close = (...args) => {
-    disposeA2A();
-    return server.instance.server.close(...args);
+  server.close = async (...args) => {
+    try {
+      return await server.instance.server.close(...args);
+    } finally {
+      await closeResources();
+    }
+  };
+  const previousOnClose = server.instance.server.onclose;
+  server.instance.server.onclose = () => {
+    void closeResources().catch((error) => {
+      console.error('[mcp-server] Resource cleanup failed:', error.message);
+    });
+    previousOnClose?.();
   };
   /** Resolves once the A2A intelligence/automation services are attached. */
   server.servicesReady = a2aServicesReady;

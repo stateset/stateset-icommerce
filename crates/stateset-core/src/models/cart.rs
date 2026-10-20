@@ -261,6 +261,53 @@ impl Default for CartStatus {
     }
 }
 
+impl CartStatus {
+    /// Check if a cart status transition is allowed.
+    ///
+    /// Mirrors the guards enforced by the repositories
+    /// (`crates/stateset-db/src/sqlite/carts.rs`, postgres twin):
+    /// `Active`/`ReadyForPayment`/`PaymentPending` move freely among the
+    /// open states and into any terminal state (`Completed` via checkout,
+    /// `Cancelled`/`Abandoned`/`Expired` via their own transitions).
+    /// Terminal states are closed except for idempotent self-transitions.
+    /// No transition ever returns to `Active`.
+    #[must_use]
+    pub fn can_transition_to(self, next: Self) -> bool {
+        if self == next {
+            return true;
+        }
+
+        match self {
+            Self::Active => matches!(
+                next,
+                Self::ReadyForPayment
+                    | Self::PaymentPending
+                    | Self::Completed
+                    | Self::Cancelled
+                    | Self::Abandoned
+                    | Self::Expired
+            ),
+            Self::ReadyForPayment => matches!(
+                next,
+                Self::PaymentPending
+                    | Self::Completed
+                    | Self::Cancelled
+                    | Self::Abandoned
+                    | Self::Expired
+            ),
+            Self::PaymentPending => matches!(
+                next,
+                Self::ReadyForPayment
+                    | Self::Completed
+                    | Self::Cancelled
+                    | Self::Abandoned
+                    | Self::Expired
+            ),
+            Self::Completed | Self::Cancelled | Self::Abandoned | Self::Expired => false,
+        }
+    }
+}
+
 /// Cart payment status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
 #[serde(rename_all = "snake_case")]
@@ -1122,6 +1169,65 @@ mod tests {
         assert_eq!(CartStatus::from_str("ready_for_payment").unwrap(), CartStatus::ReadyForPayment);
         assert_eq!(CartStatus::from_str("paymentpending").unwrap(), CartStatus::PaymentPending);
         assert_eq!(CartStatus::from_str("canceled").unwrap(), CartStatus::Cancelled);
+    }
+
+    #[test]
+    fn test_cart_status_can_transition_to() {
+        // Open states move among themselves and into every terminal state.
+        assert!(CartStatus::Active.can_transition_to(CartStatus::ReadyForPayment));
+        assert!(CartStatus::Active.can_transition_to(CartStatus::PaymentPending));
+        assert!(CartStatus::Active.can_transition_to(CartStatus::Completed));
+        assert!(CartStatus::Active.can_transition_to(CartStatus::Cancelled));
+        assert!(CartStatus::Active.can_transition_to(CartStatus::Abandoned));
+        assert!(CartStatus::Active.can_transition_to(CartStatus::Expired));
+        assert!(CartStatus::ReadyForPayment.can_transition_to(CartStatus::PaymentPending));
+        assert!(CartStatus::ReadyForPayment.can_transition_to(CartStatus::Completed));
+        assert!(CartStatus::PaymentPending.can_transition_to(CartStatus::ReadyForPayment));
+        assert!(CartStatus::PaymentPending.can_transition_to(CartStatus::Completed));
+
+        // Self-transitions are idempotent (matches OrderStatus).
+        for status in [
+            CartStatus::Active,
+            CartStatus::ReadyForPayment,
+            CartStatus::PaymentPending,
+            CartStatus::Completed,
+            CartStatus::Cancelled,
+            CartStatus::Abandoned,
+            CartStatus::Expired,
+        ] {
+            assert!(status.can_transition_to(status), "self-transition {status:?}");
+        }
+
+        // Terminal states are closed, and nothing returns to Active.
+        for terminal in [
+            CartStatus::Completed,
+            CartStatus::Cancelled,
+            CartStatus::Abandoned,
+            CartStatus::Expired,
+        ] {
+            for next in [
+                CartStatus::ReadyForPayment,
+                CartStatus::PaymentPending,
+                CartStatus::Completed,
+                CartStatus::Cancelled,
+                CartStatus::Abandoned,
+                CartStatus::Expired,
+            ] {
+                if core::mem::discriminant(&terminal) == core::mem::discriminant(&next) {
+                    continue;
+                }
+                assert!(
+                    !terminal.can_transition_to(next),
+                    "{terminal:?} must not transition to {next:?}"
+                );
+            }
+            assert!(
+                !terminal.can_transition_to(CartStatus::Active),
+                "{terminal:?} must never return to Active"
+            );
+        }
+        assert!(!CartStatus::ReadyForPayment.can_transition_to(CartStatus::Active));
+        assert!(!CartStatus::PaymentPending.can_transition_to(CartStatus::Active));
     }
 
     #[test]

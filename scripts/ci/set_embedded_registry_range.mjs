@@ -7,15 +7,16 @@
 //
 // In the repository, cli/package.json depends on `file:../bindings/node` (as
 // admin/package.json already did). That is the only form that survives a
-// release: a `^1.36.0` range plus a lockfile that links the workspace copy
+// release: a `^1.39.0` range plus a lockfile that links the workspace copy
 // makes `npm ci` fail on every branch from the moment the version is bumped
 // until a lockfile-sync PR lands, which is what broke master after 1.31, 1.32
 // and 1.33.
 //
 // The published tarball must still declare the registry range, because a
-// consumer has no ../bindings/node. publish-cli.yml runs this script after
-// `npm ci` and before `npm publish` to rewrite the manifest in the checkout
-// only; nothing is committed, and package-lock.json is never published.
+// consumer has no ../bindings/node. The CLI release packer performs this
+// rewrite in its disposable staging directory; this helper remains available
+// for other packages and explicit manifest conversions. package-lock.json is
+// never published.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';

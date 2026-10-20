@@ -5,9 +5,9 @@
     "commandRegistry": "cli/src/commands/index.js"
   },
   "summary": {
-    "totalToolModules": 91,
-    "totalCommandModulesOnDisk": 88,
-    "totalCommandRegistryModules": 88,
+    "totalToolModules": 92,
+    "totalCommandModulesOnDisk": 89,
+    "totalCommandRegistryModules": 89,
     "totalToolBackedCommandModules": 8,
     "uncoveredToolModules": 3,
     "uncoveredToolBackedActions": 0,
@@ -917,6 +917,19 @@
       "actionCount": 7,
       "aliasCount": 2,
       "coverageStyle": "custom",
+      "toolBacked": false,
+      "toolCount": 0,
+      "mappedToolCount": 0,
+      "uncoveredToolNames": [],
+      "unknownMappedToolNames": []
+    },
+    {
+      "module": "simulations",
+      "toolModulePresent": true,
+      "commandFilePresent": true,
+      "actionCount": 6,
+      "aliasCount": 0,
+      "coverageStyle": "tool-backed",
       "toolBacked": false,
       "toolCount": 0,
       "mappedToolCount": 0,

@@ -35,7 +35,7 @@ use proc_macro::TokenStream;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```rust
 /// use stateset_macros::StateSetId;
 ///
 /// #[derive(StateSetId)]
@@ -66,8 +66,9 @@ pub fn derive_stateset_id(input: TokenStream) -> TokenStream {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```rust
 /// use stateset_macros::GenerateDto;
+/// use uuid::Uuid as ProductId;
 ///
 /// #[derive(GenerateDto)]
 /// #[dto(create, update, filter)]
@@ -77,12 +78,12 @@ pub fn derive_stateset_id(input: TokenStream) -> TokenStream {
 ///     pub name: String,
 ///     pub sku: String,
 ///     #[dto(skip_update)]
-///     pub created_at: DateTime<Utc>,
+///     pub created_at: String,
 /// }
 /// // Generates: CreateProduct { name, sku, created_at }
 /// //            UpdateProduct { name: Option<String>, sku: Option<String> }
 /// //            ProductFilter { id: Option<ProductId>, name: Option<String>,
-/// //                            sku: Option<String>, created_at: Option<DateTime<Utc>>,
+/// //                            sku: Option<String>, created_at: Option<String>,
 /// //                            limit: Option<i64>, offset: Option<i64> }
 /// ```
 #[proc_macro_derive(GenerateDto, attributes(dto))]
@@ -101,27 +102,34 @@ pub fn derive_generate_dto(input: TokenStream) -> TokenStream {
 /// |-----------|-------------|
 /// | `String` | `"string"` |
 /// | `i32`, `i64`, `u32`, `u64` | `"integer"` |
-/// | `f32`, `f64`, `Decimal` | `"number"` |
+/// | `f32`, `f64` | `"number"` |
+/// | `Decimal` | Decimal `"string"` |
 /// | `bool` | `"boolean"` |
 /// | `Vec<T>` | `{ "type": "array", "items": ... }` |
-/// | `Option<T>` | inner type (removed from `"required"`) |
+/// | `Option<T>` | inner type or null (removed from `"required"`) |
 /// | `Uuid` | `{ "type": "string", "format": "uuid" }` |
-/// | Other | `{ "type": "string" }` (fallback) |
+/// | Other | Requires `#[schema(with = "path::schema_function")]` |
+///
+/// Honors `serde(rename)`, `rename_all`, `skip`, `skip_serializing`,
+/// `skip_serializing_if`, `default`, and `deny_unknown_fields`. Unsupported
+/// serialization attributes produce a compile error instead of an inaccurate
+/// schema. Custom schema functions take no arguments and return
+/// `serde_json::Value`; use them for nested structs and custom serializers.
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```rust
 /// use stateset_macros::JsonSchema;
 ///
 /// #[derive(JsonSchema)]
 /// pub struct CreateOrder {
 ///     pub customer_id: String,
-///     pub items: Vec<OrderItem>,
+///     pub items: Vec<String>,
 ///     pub currency: String,
 /// }
 /// // Generates: pub fn create_order_json_schema() -> serde_json::Value { ... }
 /// ```
-#[proc_macro_derive(JsonSchema)]
+#[proc_macro_derive(JsonSchema, attributes(serde, schema))]
 pub fn derive_json_schema(input: TokenStream) -> TokenStream {
     json_schema::derive(input.into()).into()
 }

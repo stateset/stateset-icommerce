@@ -21,7 +21,14 @@ async fn postgres_migrations_apply_and_currency_schema_is_present() {
         }
     };
 
-    PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations");
+    // The migration advisory lock must not consume the sole connection while
+    // the runner waits for a second one. Check both initial startup and reopen.
+    for _ in 0..2 {
+        let db = PostgresDatabase::connect_with_options(&url, 1, 10)
+            .await
+            .expect("single-connection startup must run migrations without starving the pool");
+        db.pool().close().await;
+    }
 
     let pool = PgPoolOptions::new()
         .max_connections(1)

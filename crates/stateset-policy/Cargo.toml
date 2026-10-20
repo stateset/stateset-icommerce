@@ -23,7 +23,7 @@ tracing = "0.1"
 rust_decimal = { workspace = true }
 
 # Optional YAML support
-serde_yaml = { version = "0.9", optional = true }
+serde_norway = { workspace = true, optional = true }
 
 [dev-dependencies]
 insta = { workspace = true }
@@ -32,7 +32,7 @@ proptest = "1.4"
 
 [features]
 default = ["yaml"]
-yaml = ["dep:serde_yaml"]
+yaml = ["dep:serde_norway"]
 
 [lints]
 workspace = true

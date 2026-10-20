@@ -30,7 +30,7 @@
 use chrono::{Months, NaiveDate};
 use rust_decimal::Decimal;
 use stateset_core::{
-    AccountStatus, AutoPostingConfig, BalanceSheet, BatchResult, CloseMonthOptions,
+    AccountStatus, AccountSubType, AutoPostingConfig, BalanceSheet, BatchResult, CloseMonthOptions,
     CloseMonthReport, CloseMonthStepReport, CloseMonthStepStatus, CommerceError,
     CreateAutoPostingConfig, CreateGlAccount, CreateGlPeriod, CreateJournalEntry, Currency,
     CurrencyCode, DepreciationEntryStatus, FixedAssetFilter, FixedAssetStatus, GlAccount,
@@ -544,7 +544,9 @@ impl GeneralLedger {
     /// 2. Recognize deferred revenue through period end for active contracts.
     /// 3. FX revaluation as of period end — skipped silently when there are
     ///    no foreign-currency accounts or no FX gain/loss account is
-    ///    configured (the close never fails on this step).
+    ///    configured (a lenient close never fails on this step; a strict
+    ///    close treats the skip as a warning and, because the dry-run
+    ///    evaluation checks the same preconditions, refuses before posting).
     /// 4. [`run_period_close`](Self::run_period_close) (closing entries +
     ///    close period).
     ///
@@ -552,11 +554,47 @@ impl GeneralLedger {
     /// read APIs and reported without writing anything. Per-asset and
     /// per-obligation failures are collected as warnings on the step report
     /// and do not abort the close.
+    ///
+    /// With `options.fail_on_warnings` (strict mode) the close instead
+    /// refuses with [`CommerceError::ValidationError`] when any step reports
+    /// warnings: a wet run first evaluates itself as a dry run so the common
+    /// case fails before writing anything, and warnings that only surface
+    /// while posting abort the run before the final period close.
     pub fn close_month(
         &self,
         period_id: Uuid,
         options: CloseMonthOptions,
     ) -> Result<CloseMonthReport> {
+        if options.fail_on_warnings && !options.dry_run {
+            let preview = CloseMonthOptions {
+                dry_run: true,
+                fail_on_warnings: false,
+                skip_depreciation: options.skip_depreciation,
+                skip_revenue_recognition: options.skip_revenue_recognition,
+                skip_fx_revaluation: options.skip_fx_revaluation,
+                skip_period_close: options.skip_period_close,
+                closed_by: options.closed_by.clone(),
+            };
+            let evaluation = self.close_month(period_id, preview)?;
+            if evaluation.has_warnings() {
+                return Err(CommerceError::ValidationError(format!(
+                    "month-end close refused: dry-run evaluation reported {} warning(s) \
+                     ({} item failure(s)); re-run without `fail_on_warnings` for the full \
+                     report. First warning: {}",
+                    evaluation.total_warnings(),
+                    evaluation.total_failures(),
+                    evaluation
+                        .depreciation
+                        .warnings
+                        .iter()
+                        .chain(&evaluation.revenue_recognition.warnings)
+                        .chain(&evaluation.fx_revaluation.warnings)
+                        .chain(&evaluation.period_close.warnings)
+                        .next()
+                        .map_or("(none)", String::as_str),
+                )));
+            }
+        }
         let period = self.get_period(period_id)?.ok_or(CommerceError::NotFound)?;
         let closed_by = options.closed_by.clone().unwrap_or_else(|| "system".to_string());
 
@@ -578,6 +616,24 @@ impl GeneralLedger {
             self.close_month_fx_revaluation(&period, options.dry_run)?
         };
 
+        // Strict mode, second layer: warnings that only surface while posting
+        // (after the dry-run pre-check passed) abort before the final period
+        // close, so a strict close never seals a period with known failures.
+        if options.fail_on_warnings
+            && (depreciation.warning_count()
+                + revenue_recognition.warning_count()
+                + fx_revaluation.warning_count())
+                > 0
+        {
+            return Err(CommerceError::ValidationError(format!(
+                "month-end close refused: {} warning(s) surfaced while posting; \
+                 period left open",
+                depreciation.warning_count()
+                    + revenue_recognition.warning_count()
+                    + fx_revaluation.warning_count(),
+            )));
+        }
+
         let mut closing_entry = None;
         let period_close = if options.skip_period_close {
             CloseMonthStepReport::skipped(None)
@@ -590,6 +646,7 @@ impl GeneralLedger {
                 entry_count: u64::from(has_activity),
                 total_amount: statement.total_revenue + statement.total_expenses,
                 warnings: Vec::new(),
+                failed_item_count: 0,
             }
         } else {
             let entry = self.run_period_close(period_id, &closed_by)?;
@@ -600,6 +657,7 @@ impl GeneralLedger {
                 entry_count: 1,
                 total_amount: total,
                 warnings: Vec::new(),
+                failed_item_count: 0,
             }
         };
 
@@ -657,6 +715,7 @@ impl GeneralLedger {
         let mut entry_count = 0u64;
         let mut total_amount = Decimal::ZERO;
         let mut warnings = Vec::new();
+        let mut failed_item_count = 0u64;
         for asset in assets {
             let Some(in_service) = asset.in_service_date else { continue };
             let Some(schedule) = self.db.fixed_assets().get_schedule(asset.id)? else {
@@ -664,6 +723,7 @@ impl GeneralLedger {
                     "asset {}: no depreciation schedule generated",
                     asset.asset_number
                 ));
+                failed_item_count += 1;
                 continue;
             };
             let due: Vec<_> = schedule
@@ -691,7 +751,10 @@ impl GeneralLedger {
                     entry_count += due.len() as u64;
                     total_amount += amount;
                 }
-                Err(e) => warnings.push(format!("asset {}: {e}", asset.asset_number)),
+                Err(e) => {
+                    warnings.push(format!("asset {}: {e}", asset.asset_number));
+                    failed_item_count += 1;
+                }
             }
         }
         Ok(CloseMonthStepReport {
@@ -703,6 +766,7 @@ impl GeneralLedger {
             entry_count,
             total_amount,
             warnings,
+            failed_item_count,
         })
     }
 
@@ -725,10 +789,16 @@ impl GeneralLedger {
         let mut entry_count = 0u64;
         let mut total_amount = Decimal::ZERO;
         let mut warnings = Vec::new();
+        let mut failed_item_count = 0u64;
         for contract in contracts {
             for obligation in &contract.obligations {
                 let Some(schedule) = self.db.revenue_recognition().get_schedule(obligation.id)?
                 else {
+                    warnings.push(format!(
+                        "contract {} obligation {}: no revenue schedule generated",
+                        contract.contract_number, obligation.id
+                    ));
+                    failed_item_count += 1;
                     continue;
                 };
                 let due: Vec<_> = schedule
@@ -754,10 +824,13 @@ impl GeneralLedger {
                         entry_count += due.len() as u64;
                         total_amount += amount;
                     }
-                    Err(e) => warnings.push(format!(
-                        "contract {} obligation {}: {e}",
-                        contract.contract_number, obligation.id
-                    )),
+                    Err(e) => {
+                        warnings.push(format!(
+                            "contract {} obligation {}: {e}",
+                            contract.contract_number, obligation.id
+                        ));
+                        failed_item_count += 1;
+                    }
                 }
             }
         }
@@ -770,6 +843,7 @@ impl GeneralLedger {
             entry_count,
             total_amount,
             warnings,
+            failed_item_count,
         })
     }
 
@@ -809,11 +883,23 @@ impl GeneralLedger {
             return Ok(CloseMonthStepReport::skipped(None));
         }
         if dry_run {
+            // Mirror the wet run's skip conditions so a strict close can
+            // refuse before depreciation and revenue recognition post: the
+            // revaluation needs a rate for every foreign account carrying a
+            // balance, and an FX gain/loss account to post the adjustment to.
+            let warnings = self.fx_revaluation_blockers(&foreign_accounts)?;
+            if !warnings.is_empty() {
+                return Ok(CloseMonthStepReport::skipped(Some(format!(
+                    "fx revaluation skipped: {}",
+                    warnings.join("; ")
+                ))));
+            }
             return Ok(CloseMonthStepReport {
                 status: CloseMonthStepStatus::DryRun,
                 entry_count: foreign_accounts.len() as u64,
                 total_amount: Decimal::ZERO,
                 warnings: Vec::new(),
+                failed_item_count: 0,
             });
         }
         match self.revalue(period.end_date, None) {
@@ -822,12 +908,63 @@ impl GeneralLedger {
                 entry_count: u64::from(result.journal_entry.is_some()),
                 total_amount: result.total_unrealized_gain_loss,
                 warnings: Vec::new(),
+                failed_item_count: 0,
             }),
             Err(CommerceError::ValidationError(message)) => Ok(CloseMonthStepReport::skipped(
                 Some(format!("fx revaluation skipped: {message}")),
             )),
             Err(e) => Err(e),
         }
+    }
+
+    /// Read-only precondition check for [`revalue`](Self::revalue): the
+    /// reasons it would refuse, without posting anything.
+    fn fx_revaluation_blockers(&self, foreign_accounts: &[GlAccount]) -> Result<Vec<String>> {
+        let settings = self.db.currency().get_settings()?;
+        let base = settings.base_currency;
+        let mut blockers = Vec::new();
+        let mut needs_fx_account = false;
+        for account in foreign_accounts.iter().filter(|a| !a.current_balance.is_zero()) {
+            needs_fx_account = true;
+            let Ok(foreign) = account.currency.as_str().parse::<Currency>() else {
+                blockers.push(format!("account currency {} is not supported", account.currency));
+                continue;
+            };
+            let has_rate = self.db.currency().get_rate(foreign, base)?.is_some()
+                || self.db.currency().get_rate(base, foreign)?.is_some_and(|r| !r.rate.is_zero());
+            if !has_rate {
+                blockers.push(format!(
+                    "No exchange rate available for {} -> {}",
+                    account.currency,
+                    base.code()
+                ));
+            }
+        }
+        if needs_fx_account && !self.has_fx_gain_loss_account()? {
+            blockers.push("No FX gain/loss account configured for revaluation".to_string());
+        }
+        Ok(blockers)
+    }
+
+    /// Same resolution order as the backends: the auto-posting config's
+    /// account, else the first active posting other-expense / other-revenue.
+    fn has_fx_gain_loss_account(&self) -> Result<bool> {
+        if self.get_auto_posting_config()?.and_then(|c| c.fx_gain_loss_account_id).is_some() {
+            return Ok(true);
+        }
+        for sub_type in [AccountSubType::OtherExpense, AccountSubType::OtherRevenue] {
+            let found = self.list_accounts(GlAccountFilter {
+                account_sub_type: Some(sub_type),
+                status: Some(AccountStatus::Active),
+                is_posting: Some(true),
+                limit: Some(1),
+                ..Default::default()
+            })?;
+            if !found.is_empty() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     // ========================================================================

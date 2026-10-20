@@ -432,7 +432,9 @@ impl Backorders {
     /// available at its source location.
     ///
     /// Returns the allocations created, which is empty when nothing is
-    /// available or no backorder is open. Call it after stock arrives.
+    /// available or no unallocated backorder is open. Inventory receipts
+    /// trigger this sweep automatically; call it to retry a failed sweep or
+    /// after changing a backorder's source location.
     #[napi]
     pub async fn auto_allocate_inventory(
         &self,

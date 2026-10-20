@@ -22,6 +22,7 @@ mod credit;
 mod currency;
 mod custom_objects;
 mod customers;
+mod durability;
 mod edi_documents;
 mod fixed_assets;
 mod fraud;
@@ -106,6 +107,7 @@ pub use credit::*;
 pub use currency::*;
 pub use custom_objects::*;
 pub use customers::*;
+pub use durability::{SQLITE_SYNCHRONOUS_ENV, SqliteDurability, SqliteStorageStatus};
 pub use edi_documents::*;
 pub use fixed_assets::*;
 pub use fraud::*;
@@ -180,23 +182,6 @@ use std::time::Duration;
 #[derive(Debug)]
 pub struct SqliteDatabase {
     pool: Pool<SqliteConnectionManager>,
-}
-
-/// Best-effort cleanup for `:memory:` databases, which are backed by private
-/// temp files (see the pool construction below for why).
-#[derive(Debug)]
-struct EphemeralDbGuard {
-    path: std::path::PathBuf,
-}
-
-impl Drop for EphemeralDbGuard {
-    fn drop(&mut self) {
-        for suffix in ["", "-wal", "-shm"] {
-            let mut p = self.path.as_os_str().to_owned();
-            p.push(suffix);
-            let _ = std::fs::remove_file(std::path::PathBuf::from(p));
-        }
-    }
 }
 
 /// Database health status returned by [`SqliteDatabase::health_check`].
@@ -279,11 +264,17 @@ impl Drop for PragmaScope {
 impl SqliteDatabase {
     /// Create a new SQLite database connection
     pub fn new(config: &DatabaseConfig) -> Result<Self, CommerceError> {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        use std::time::Duration;
+        Self::new_with_durability(config, SqliteDurability::from_env()?)
+    }
 
-        // Counter to generate unique database names for each in-memory instance
-        static MEMORY_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
+    /// Open a store with an explicit policy applied to every current and future
+    /// pooled connection. This overrides `STATESET_SQLITE_SYNCHRONOUS` without
+    /// changing process-global environment state.
+    pub fn new_with_durability(
+        config: &DatabaseConfig,
+        durability: SqliteDurability,
+    ) -> Result<Self, CommerceError> {
+        use std::time::Duration;
 
         // `:memory:` databases are backed by a PRIVATE TEMP FILE, not SQLite
         // shared-cache. Shared-cache (the only way a connection pool can see
@@ -297,10 +288,22 @@ impl SqliteDatabase {
         let is_memory = config.url == ":memory:";
         let mut ephemeral = None;
         let (manager, max_connections) = if is_memory {
-            let db_id = MEMORY_DB_COUNTER.fetch_add(1, Ordering::SeqCst);
-            let path = std::env::temp_dir()
-                .join(format!("stateset_memdb_{}_{db_id}.db", std::process::id()));
-            ephemeral = Some(std::sync::Arc::new(EphemeralDbGuard { path: path.clone() }));
+            // A PID/counter filename in a shared temp directory is predictable
+            // and can be pre-created or symlinked by another local user. Keep
+            // the whole SQLite file family in an exclusively created private
+            // directory (0700 on Unix), including future WAL/journal files.
+            let mut directory_builder = tempfile::Builder::new();
+            directory_builder.prefix("stateset_memdb_");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                directory_builder.permissions(std::fs::Permissions::from_mode(0o700));
+            }
+            let directory = directory_builder.tempdir().map_err(|error| {
+                CommerceError::DatabaseError(format!("create private SQLite directory: {error}"))
+            })?;
+            let path = directory.path().join("store.db");
+            ephemeral = Some(std::sync::Arc::new(directory));
             let manager = SqliteConnectionManager::file(&path).with_flags(
                 OpenFlags::SQLITE_OPEN_READ_WRITE
                     | OpenFlags::SQLITE_OPEN_CREATE
@@ -316,22 +319,33 @@ impl SqliteDatabase {
             (manager, config.max_connections)
         };
         let manager = manager.with_init(move |conn| {
-            // Keep the ephemeral-file guard alive as long as the POOL does
-            // (the init closure lives inside the connection manager). Tying
-            // it to `SqliteDatabase` instead deleted the temp file while
-            // accessor repos still held pool clones — lazily opened
-            // connections then recreated an EMPTY database ("no such table").
-            let _keep_ephemeral_alive = &ephemeral;
+            // The manager keeps the directory alive for future connections.
+            // Each connection also owns a guard through SQLite's safe function
+            // userdata API: r2d2 drops its manager before its idle connections,
+            // and Windows cannot remove a directory containing open DB files.
+            // SQLite releases function userdata after closing its B-trees.
+            if let Some(directory) = ephemeral.clone() {
+                conn.create_scalar_function(
+                    "__stateset_ephemeral_owner",
+                    0,
+                    rusqlite::functions::FunctionFlags::SQLITE_UTF8
+                        | rusqlite::functions::FunctionFlags::SQLITE_DIRECTONLY,
+                    move |_| {
+                        let _keep_directory_alive = &directory;
+                        Ok(0_i32)
+                    },
+                )?;
+            }
             // Use longer busy_timeout for high concurrency scenarios
             conn.execute_batch(&format!(
                 "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = {};",
                 crate::DEFAULT_TRANSACTION_TIMEOUT_MS
             ))?;
             conn.execute_batch("PRAGMA journal_mode = WAL;")?;
-            // Performance tuning: reduce fsync overhead and increase cache
+            conn.execute_batch(durability.synchronous_pragma())?;
+            // Performance tuning independent of the operator's durability choice.
             conn.execute_batch(
-                "PRAGMA synchronous = NORMAL;\
-                 PRAGMA cache_size = -16000;\
+                "PRAGMA cache_size = -16000;\
                  PRAGMA temp_store = MEMORY;\
                  PRAGMA mmap_size = 268435456;\
                  PRAGMA wal_autocheckpoint = 10000;",
@@ -403,18 +417,43 @@ impl SqliteDatabase {
         })
     }
 
+    /// Inspect effective connection settings, rather than reporting a requested policy.
+    pub fn storage_status(&self) -> Result<SqliteStorageStatus, CommerceError> {
+        let conn = self.conn()?;
+        let read = || -> rusqlite::Result<SqliteStorageStatus> {
+            Ok(SqliteStorageStatus {
+                journal_mode: conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?,
+                synchronous: conn.query_row("PRAGMA synchronous", [], |row| row.get(0))?,
+                busy_timeout_ms: conn.query_row("PRAGMA busy_timeout", [], |row| row.get(0))?,
+                wal_autocheckpoint_pages: conn.query_row(
+                    "PRAGMA wal_autocheckpoint",
+                    [],
+                    |row| row.get(0),
+                )?,
+            })
+        };
+        read().map_err(|error| CommerceError::DatabaseError(error.to_string()))
+    }
+
     /// Graceful shutdown: checkpoint WAL and optimize before closing.
     ///
     /// Call this before dropping the database to ensure all WAL data is
     /// flushed to the main database file. Safe to call multiple times.
     pub fn shutdown(&self) -> Result<(), CommerceError> {
         let conn = self.conn()?;
-        // Checkpoint WAL to main database file
-        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
-            .map_err(|e| CommerceError::DatabaseError(format!("WAL checkpoint failed: {e}")))?;
-        // Run optimize to update query planner statistics
+        // Optimizing can write planner statistics into the WAL, so it must run
+        // before the final checkpoint rather than repopulating it afterwards.
         conn.execute_batch("PRAGMA optimize")
             .map_err(|e| CommerceError::DatabaseError(format!("PRAGMA optimize failed: {e}")))?;
+        // Checkpoint WAL to main database file, including any new statistics.
+        let busy: i64 = conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
+            .map_err(|e| CommerceError::DatabaseError(format!("WAL checkpoint failed: {e}")))?;
+        if busy != 0 {
+            return Err(CommerceError::DatabaseError(
+                "WAL checkpoint blocked by an active reader or writer; close other connections and retry shutdown".into(),
+            ));
+        }
         tracing::info!("Database shutdown: WAL checkpointed and optimized");
         Ok(())
     }

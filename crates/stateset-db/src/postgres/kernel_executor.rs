@@ -37,13 +37,13 @@ use crate::kernel::plans::finance::{
     post_journal_entry_guard, settle_x402_guard,
 };
 use crate::kernel::plans::inventory::{
-    declares_quantity, economic_quantity_guard, reservation_lifecycle_guard,
-    reserve_inventory_guard,
+    declares_quantity, economic_quantity_guard, reservation_changes_balance,
+    reservation_lifecycle_guard, reserve_inventory_guard,
 };
 use crate::kernel::plans::orders::{
-    CART_UNITS_SQL_POSTGRES, OrderTransitionSnapshot, ShipOrderSnapshot, plan_order_transition,
-    plan_ship_order, reservation_expired_during_shipment, ship_order_guard, shipped_units,
-    transition_order_guard,
+    CART_UNITS_SQL_POSTGRES, OrderTransitionSnapshot, ReservedShipmentStock, ShipOrderSnapshot,
+    plan_order_transition, plan_reserved_stock, plan_ship_order,
+    reservation_expired_during_shipment, ship_order_guard, shipped_units, transition_order_guard,
 };
 use crate::kernel::plans::payments::{
     RefundSnapshot, create_payment_guard, economic_counterparty_guard, economic_money_guard,
@@ -1405,26 +1405,16 @@ impl PgKernelExecutor {
             return Ok(receipt);
         }
 
-        let expires_during_apply = reservation.expires_at.is_some_and(|expiry| expiry < started_at)
-            && !matches!(
-                reservation.status,
-                ReservationStatus::Released
-                    | ReservationStatus::Cancelled
-                    | ReservationStatus::Expired
-            );
-        let releases_balance = matches!(action, InventoryLifecycleAction::Release)
-            && !matches!(
-                reservation.status,
-                ReservationStatus::Released
-                    | ReservationStatus::Cancelled
-                    | ReservationStatus::Expired
-            );
+        let changes_balance = reservation_changes_balance(
+            reservation.status,
+            matches!(action, InventoryLifecycleAction::Release),
+            reservation.expires_at.is_some_and(|expiry| expiry < started_at),
+        );
         if command.mode == ExecutionMode::Preview {
             let mut receipt = preview_receipt(command, policy, "inventory_reservation");
             receipt.result = Some(reservation);
             receipt.version_before = Some(version_before);
-            receipt.version_after =
-                Some(version_before + i32::from(expires_during_apply || releases_balance));
+            receipt.version_after = Some(version_before + i32::from(changes_balance));
             append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
             return Ok(receipt);
@@ -1751,11 +1741,31 @@ impl PgKernelExecutor {
         &self,
         command: &CommandEnvelope<ShipOrderCommand>,
     ) -> Result<ExecutionReceipt<Order>> {
+        self.execute_ship_order_inventory_async(command, false).await
+    }
+
+    /// Atomically ship all or selected units of a paid order and consume its reserved stock.
+    pub async fn execute_ship_reserved_order_async(
+        &self,
+        command: &CommandEnvelope<ShipOrderCommand>,
+    ) -> Result<ExecutionReceipt<Order>> {
+        self.execute_ship_order_inventory_async(command, true).await
+    }
+
+    async fn execute_ship_order_inventory_async(
+        &self,
+        command: &CommandEnvelope<ShipOrderCommand>,
+        consume_stock: bool,
+    ) -> Result<ExecutionReceipt<Order>> {
         let run = CommandRun::prepare(
             command,
             &command.payload,
             &self.policy,
-            EnvelopeGuard::aggregate(SHIP_ORDER_COMMAND),
+            EnvelopeGuard::aggregate(if consume_stock {
+                "orders.ship_reserved"
+            } else {
+                SHIP_ORDER_COMMAND
+            }),
             "order",
         )?
         .then_guard(|_| ship_order_guard(&command.payload));
@@ -1829,6 +1839,140 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
+        let stock = if consume_stock {
+            let mut tracked = Vec::new();
+            for item in &order.items {
+                let exists: bool =
+                    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM inventory_items WHERE sku=$1)")
+                        .bind(&item.sku)
+                        .fetch_one(tx.as_mut())
+                        .await
+                        .map_err(pg_err)?;
+                if exists {
+                    tracked.push(item.sku.clone());
+                }
+            }
+            type ReservationStockRow = (
+                Uuid,
+                String,
+                rust_decimal::Decimal,
+                i64,
+                i32,
+                rust_decimal::Decimal,
+                rust_decimal::Decimal,
+                Option<chrono::DateTime<chrono::Utc>>,
+                rust_decimal::Decimal,
+                Option<String>,
+            );
+            let rows: Vec<ReservationStockRow> = sqlx::query_as(
+                "SELECT r.id, i.sku, r.quantity, r.item_id, r.location_id,
+                        b.quantity_on_hand, b.quantity_allocated, r.expires_at, b.quantity_available, r.order_item_id::text
+                 FROM inventory_reservations r JOIN inventory_items i ON i.id=r.item_id
+                 JOIN inventory_balances b ON b.item_id=r.item_id AND b.location_id=r.location_id
+                 WHERE r.reference_type='order' AND r.reference_id=$1
+                   AND r.status IN ('pending','confirmed','allocated')
+                 ORDER BY r.item_id, r.location_id, r.id FOR UPDATE OF r",
+            )
+            .bind(&order_id)
+            .fetch_all(tx.as_mut())
+            .await
+            .map_err(pg_err)?;
+            let mut rows: Vec<ReservedShipmentStock> = rows
+                .into_iter()
+                .map(
+                    |(
+                        id,
+                        sku,
+                        quantity,
+                        item_id,
+                        location_id,
+                        on_hand,
+                        allocated,
+                        expires_at,
+                        available,
+                        order_item_id,
+                    )| {
+                        ReservedShipmentStock {
+                            id,
+                            order_item_id,
+                            sku,
+                            quantity,
+                            item_id,
+                            location_id,
+                            on_hand,
+                            allocated,
+                            expires_at,
+                            available,
+                        }
+                    },
+                )
+                .collect();
+            // Acquire every reservation before any balance. Locking both
+            // sides of the join interleaves r1, balance, r2: a release/expiry
+            // holding r2 and waiting for that balance would then deadlock.
+            // The join's balance values were read without locks, so reload
+            // them after locking, once per (item, location) in the row order.
+            let mut locked_balances = std::collections::BTreeMap::new();
+            for row in &mut rows {
+                let key = (row.item_id, row.location_id);
+                let balance = if let Some(balance) = locked_balances.get(&key) {
+                    *balance
+                } else {
+                    let balance: (
+                        rust_decimal::Decimal,
+                        rust_decimal::Decimal,
+                        rust_decimal::Decimal,
+                    ) = sqlx::query_as(
+                        "SELECT quantity_on_hand, quantity_allocated, quantity_available
+                         FROM inventory_balances WHERE item_id = $1 AND location_id = $2
+                         FOR UPDATE",
+                    )
+                    .bind(row.item_id)
+                    .bind(row.location_id)
+                    .fetch_one(tx.as_mut())
+                    .await
+                    .map_err(pg_err)?;
+                    locked_balances.insert(key, balance);
+                    balance
+                };
+                (row.on_hand, row.allocated, row.available) = balance;
+            }
+            let previous = if order.items.iter().any(|item| item.shipped_quantity > 0) {
+                let raw: Option<serde_json::Value> = sqlx::query_scalar(
+                    "SELECT receipt->'result' FROM kernel_receipts
+                     WHERE command_type='orders.ship_reserved' AND status='succeeded'
+                       AND receipt->'result'->>'id'=$1
+                     ORDER BY (receipt->>'version_after')::integer DESC LIMIT 1",
+                )
+                .bind(&order_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(pg_err)?;
+                raw.map(serde_json::from_value::<Order>)
+                    .transpose()
+                    .map_err(|error| CommerceError::DatabaseError(error.to_string()))?
+            } else {
+                None
+            };
+            let deltas: Vec<_> = effects
+                .deltas
+                .iter()
+                .map(|delta| (delta.item_id.to_string(), delta.delta))
+                .collect();
+            match plan_reserved_stock(&order, &tracked, &rows, &deltas, previous.as_ref()) {
+                Ok(stock) => stock,
+                Err(rejection) => {
+                    let mut receipt = run.rejected_by(&rejection);
+                    receipt.aggregate_id = Some(order_id.clone());
+                    receipt.version_before = Some(version_before);
+                    append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+                    tx.commit().await.map_err(pg_err)?;
+                    return Ok(receipt);
+                }
+            }
+        } else {
+            Vec::new()
+        };
         if run.is_preview() {
             let mut receipt = run.previewed();
             receipt.aggregate_id = Some(order_id.clone());
@@ -1845,7 +1989,20 @@ impl PgKernelExecutor {
             inventory.list_reservation_ids_by_reference_in_tx(&mut tx, "order", &order_id).await?;
         sqlx::query("SAVEPOINT kernel_ship").execute(tx.as_mut()).await.map_err(pg_err)?;
         let mut expired_during_shipment = false;
-        if lines.is_empty() {
+        let mut stock_event_ids = Vec::new();
+        if consume_stock {
+            for row in &stock {
+                let event_id = PgInventoryRepository::fulfil_reservation_in_tx(
+                    &mut tx,
+                    row.id,
+                    row.quantity,
+                    "governed reserved order shipment",
+                    started_at,
+                )
+                .await?;
+                stock_event_ids.push(event_id);
+            }
+        } else if lines.is_empty() {
             for reservation_id in &reservation_ids {
                 if inventory
                     .confirm_reservation_in_tx_with_now(&mut tx, *reservation_id, started_at)
@@ -1925,22 +2082,29 @@ impl PgKernelExecutor {
                 expected_version: version_before,
             });
         }
-        let mut event_ids = Vec::new();
-        for reservation_id in reservation_ids {
-            let ids: Vec<Uuid> = sqlx::query_scalar(
-                "SELECT id FROM kernel_outbox WHERE created_at >= $1 AND event_type = 'inventory.reservation_confirmed.v1'
-                   AND (aggregate_id = $2 OR payload->>'source_reservation_id' = $2) ORDER BY created_at, id")
-                .bind(started_at).bind(reservation_id.to_string()).fetch_all(tx.as_mut()).await
-                .map_err(pg_err)?;
-            for event_id in ids {
-                sqlx::query("UPDATE kernel_outbox SET command_id = $1, idempotency_key = $2, principal_type = $3, principal_id = $4, correlation_id = $5, causation_id = $6 WHERE id = $7")
-                    .bind(command.command_id).bind(&command.idempotency_key).bind(principal_kind_name(command)).bind(&command.principal.id)
-                    .bind(command.correlation_id).bind(command.causation_id).bind(event_id).execute(tx.as_mut()).await
+        let mut event_ids = stock_event_ids;
+        // Only legacy confirmation discovers events by time. Consumption links
+        // the exact newly inserted IDs, even after waiting behind another ship.
+        if !consume_stock {
+            for reservation_id in reservation_ids {
+                let ids: Vec<Uuid> = sqlx::query_scalar(
+                    "SELECT id FROM kernel_outbox WHERE created_at >= $1
+                       AND event_type = 'inventory.reservation_confirmed.v1'
+                       AND (aggregate_id = $2 OR payload->>'source_reservation_id' = $2) ORDER BY created_at, id")
+                    .bind(started_at).bind(reservation_id.to_string()).fetch_all(tx.as_mut()).await
                     .map_err(pg_err)?;
-                if !event_ids.contains(&event_id) {
-                    event_ids.push(event_id);
+                for event_id in ids {
+                    if !event_ids.contains(&event_id) {
+                        event_ids.push(event_id);
+                    }
                 }
             }
+        }
+        for event_id in &event_ids {
+            sqlx::query("UPDATE kernel_outbox SET command_id = $1, idempotency_key = $2, principal_type = $3, principal_id = $4, correlation_id = $5, causation_id = $6 WHERE id = $7")
+                .bind(command.command_id).bind(&command.idempotency_key).bind(principal_kind_name(command)).bind(&command.principal.id)
+                .bind(command.correlation_id).bind(command.causation_id).bind(event_id).execute(tx.as_mut()).await
+                .map_err(pg_err)?;
         }
         // Same rule as `OrderRepository::ship`: a full shipment carries the
         // order's open shipment records to `shipped`, and their facts carry

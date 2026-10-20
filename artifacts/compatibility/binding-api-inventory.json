@@ -48,7 +48,7 @@
       "readmePath": "bindings/dotnet/README.md",
       "coverageLevel": "detailed",
       "packageName": "StateSet.Embedded",
-      "version": "1.36.0",
+      "version": "1.39.0",
       "sourceFiles": [
         "bindings/dotnet/dotnet/StateSet/StateSetCommerce.cs",
         "bindings/dotnet/dotnet/StateSet/APIs.cs",
@@ -1786,7 +1786,7 @@
       "readmePath": "bindings/java/README.md",
       "coverageLevel": "package-manifest",
       "packageName": "com.stateset:embedded",
-      "version": "1.36.0",
+      "version": "1.39.0",
       "targetJava": "11"
     },
     {
@@ -1797,7 +1797,7 @@
       "readmePath": null,
       "coverageLevel": "package-manifest",
       "packageName": "com.stateset:embedded-kotlin",
-      "version": "1.36.0",
+      "version": "1.39.0",
       "targetJava": "11"
     },
     {
@@ -1808,10 +1808,10 @@
       "readmePath": "bindings/node/README.md",
       "coverageLevel": "detailed",
       "packageName": "@stateset/embedded",
-      "version": "1.36.0",
+      "version": "1.39.0",
       "runtime": "napi-rs",
-      "entrypointCount": 10,
-      "packedFilePatternCount": 9,
+      "entrypointCount": 11,
+      "packedFilePatternCount": 10,
       "peerDependencies": [
         "@stateset/cli"
       ],
@@ -1852,6 +1852,11 @@
           "typesEntry": "./openai.d.ts"
         },
         {
+          "subpath": "./package.json",
+          "runtimeEntry": "./package.json",
+          "typesEntry": null
+        },
+        {
           "subpath": "./purchase-runtime",
           "runtimeEntry": "./purchase-runtime.mjs",
           "typesEntry": "./purchase-runtime.d.ts"
@@ -1876,7 +1881,7 @@
       "readmePath": "bindings/php/README.md",
       "coverageLevel": "package-manifest",
       "packageName": "stateset/embedded",
-      "version": "1.36.0",
+      "version": "1.39.0",
       "requiresPhp": ">=8.1",
       "autoloadFiles": [
         "stubs/StateSet.php"
@@ -1893,7 +1898,7 @@
       "readmePath": "bindings/python/README.md",
       "coverageLevel": "detailed",
       "packageName": "stateset-embedded",
-      "version": "1.36.0",
+      "version": "1.39.0",
       "requiresPython": ">=3.9",
       "optionalDependencyGroups": [
         "agents",
@@ -2181,7 +2186,7 @@
       "readmePath": "bindings/ruby/README.md",
       "coverageLevel": "package-manifest",
       "packageName": "stateset_embedded",
-      "version": "1.36.0",
+      "version": "1.39.0",
       "requiredVersion": ">= 3.0",
       "nativeExtensions": [
         "ext/stateset_embedded/extconf.rb"
@@ -2742,7 +2747,7 @@
       "readmePath": "bindings/wasm/README.md",
       "coverageLevel": "package-manifest",
       "packageName": "@stateset/embedded-wasm",
-      "version": "1.36.0",
+      "version": "1.39.0",
       "entrypoints": {
         "main": "pkg/stateset_embedded.js",
         "module": "pkg/stateset_embedded.js",

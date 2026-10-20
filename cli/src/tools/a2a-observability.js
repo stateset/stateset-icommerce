@@ -472,13 +472,10 @@ function syncPaymentIntoFinalityTracker(tracker, payment) {
     }
   }
 
-  const confirmations =
-    metadata?.confirmations !== undefined && metadata?.confirmations !== null
-      ? Number(metadata.confirmations)
-      : 0;
+  const confirmations = getStoredPaymentConfirmations(payment);
   const latestBlock =
     payment.block_number && confirmations > 0
-      ? payment.block_number + confirmations - 1
+      ? payment.block_number + (confirmations - 1)
       : payment.block_number || 0;
 
   try {
@@ -506,12 +503,23 @@ function isTrackedPayment(payment) {
 function getStoredPaymentConfirmations(payment) {
   const metadata = parseJsonObject(payment?.metadata);
   const confirmations = Number(metadata?.confirmations ?? 0);
-  return Number.isFinite(confirmations) && confirmations > 0 ? confirmations : 0;
+  const blockNumber = payment?.block_number;
+  // A completed application row is not confirmation evidence. Require an
+  // observed inclusion height and an integer window that cannot overflow.
+  return Number.isSafeInteger(confirmations) &&
+    confirmations > 0 &&
+    Number.isSafeInteger(blockNumber) &&
+    blockNumber >= 0 &&
+    BigInt(blockNumber) + BigInt(confirmations) - 1n <= BigInt(Number.MAX_SAFE_INTEGER)
+    ? confirmations
+    : 0;
 }
 
-async function deriveStoredPaymentFinality(payment) {
+async function deriveStoredPaymentFinality(payment, requirements = {}) {
   const { getFinalityRequirement } = await import('../a2a/settlement-finality.js');
-  const requiredConfirmations = getFinalityRequirement(payment.network);
+  const requiredConfirmations = Object.hasOwn(requirements, payment.network)
+    ? requirements[payment.network]
+    : getFinalityRequirement(payment.network);
   const confirmations = getStoredPaymentConfirmations(payment);
 
   if (payment.status === 'failed') {
@@ -521,16 +529,6 @@ async function deriveStoredPaymentFinality(payment) {
       confirmations,
       requiredConfirmations,
       progress: requiredConfirmations > 0 ? Math.min(confirmations / requiredConfirmations, 1) : 1,
-    };
-  }
-
-  if (payment.status === 'completed') {
-    return {
-      state: 'final',
-      isFinal: true,
-      confirmations: Math.max(confirmations, requiredConfirmations),
-      requiredConfirmations,
-      progress: 1,
     };
   }
 
@@ -570,9 +568,8 @@ async function computeFinalityMetricsFromPayments(commerce, payments, options = 
   let totalFailed = 0;
   let pendingCount = 0;
   const includeTrackerReorgs = options.includeTrackerReorgs === true;
-  const trackerMetrics = includeTrackerReorgs
-    ? (await ensureFinalityTracker(commerce)).getMetrics()
-    : null;
+  const tracker = await ensureFinalityTracker(commerce);
+  const trackerMetrics = includeTrackerReorgs ? tracker.getMetrics() : null;
 
   if (trackedPayments.length === 0 && trackerMetrics) {
     return {
@@ -583,7 +580,10 @@ async function computeFinalityMetricsFromPayments(commerce, payments, options = 
   }
 
   for (const payment of trackedPayments) {
-    const finality = await deriveStoredPaymentFinality(payment);
+    const finality = await deriveStoredPaymentFinality(
+      payment,
+      tracker.CHAIN_FINALITY_REQUIREMENTS,
+    );
     if (finality.state === 'failed') {
       totalFailed++;
       continue;

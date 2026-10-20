@@ -285,8 +285,8 @@
         "className": "X402"
       }
     ],
-    "toolCount": 764,
-    "readOnlyCount": 385,
+    "toolCount": 769,
+    "readOnlyCount": 386,
     "readOnlyPrefixes": [
       "calculate",
       "check",
@@ -1294,6 +1294,10 @@
         "skipPeriodClose": {
           "type": "boolean",
           "description": "Skip the final period close (closing entries + close period)"
+        },
+        "failOnWarnings": {
+          "type": "boolean",
+          "description": "Refuse with an error when any step reports warnings (strict mode)"
         },
         "closedBy": {
           "type": "string",
@@ -3792,6 +3796,10 @@
         },
         "notes": {
           "type": "string"
+        },
+        "currency": {
+          "type": "string",
+          "description": "ISO 4217 currency code; defaults to the supplier currency."
         }
       },
       "required": [
@@ -3813,14 +3821,20 @@
           "type": "number"
         },
         "unitCost": {
-          "type": "number"
+          "type": "number",
+          "x-money": "float",
+          "description": "Legacy float input. Prefer `unitCostExact` for money. Float money field; prefer the `unitCostExact` string for exact amounts."
+        },
+        "unitCostExact": {
+          "type": "string",
+          "x-money": "exact",
+          "description": "Exact base-10 unit cost; takes precedence over `unitCost`."
         }
       },
       "required": [
         "sku",
         "name",
-        "quantity",
-        "unitCost"
+        "quantity"
       ],
       "additionalProperties": false
     },
@@ -4319,12 +4333,48 @@
         },
         "recipientPhone": {
           "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CreateShipmentItemInput"
+          },
+          "description": "Order-linked manifest items, validated atomically with shipment creation."
         }
       },
       "required": [
         "orderId",
         "recipientName",
         "shippingAddress"
+      ],
+      "additionalProperties": false
+    },
+    "CreateShipmentItemInput": {
+      "type": "object",
+      "properties": {
+        "orderItemId": {
+          "type": "string"
+        },
+        "productId": {
+          "type": "string"
+        },
+        "sku": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "description": "Positive integer, at most 2147483647; fractional values are refused."
+        }
+      },
+      "required": [
+        "sku",
+        "name",
+        "quantity"
       ],
       "additionalProperties": false
     },
@@ -7196,6 +7246,23 @@
       "additionalProperties": false,
       "description": "Optional filters for `Receiving.listReceipts`. No argument lists all."
     },
+    "ReceivePurchaseOrderItemInput": {
+      "type": "object",
+      "properties": {
+        "itemId": {
+          "type": "string"
+        },
+        "quantityReceivedExact": {
+          "type": "string",
+          "x-money": "exact"
+        }
+      },
+      "required": [
+        "itemId",
+        "quantityReceivedExact"
+      ],
+      "additionalProperties": false
+    },
     "RecordActivityInput": {
       "type": "object",
       "properties": {
@@ -9265,7 +9332,10 @@
       "type": "object",
       "properties": {
         "expectedVersion": {
-          "type": "number"
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "description": "Positive integer, at most 2147483647; stale versions are refused atomically."
         },
         "status": {
           "type": "string",
@@ -11656,7 +11726,7 @@
       "module": "backorder",
       "className": "Backorders",
       "method": "autoAllocateInventory",
-      "description": "Allocate available inventory to this SKU's open backorders, in priority order (critical first, then oldest first), each up to what is still available at its source location.\n\nReturns the allocations created, which is empty when nothing is available or no backorder is open. Call it after stock arrives.",
+      "description": "Allocate available inventory to this SKU's open backorders, in priority order (critical first, then oldest first), each up to what is still available at its source location.\n\nReturns the allocations created, which is empty when nothing is available or no unallocated backorder is open. Inventory receipts trigger this sweep automatically; call it to retry a failed sweep or after changing a backorder's source location.",
       "signature": "autoAllocateInventory(sku: string): Promise<Array<BackorderAllocationOutput>>",
       "returnType": "Promise<Array<BackorderAllocationOutput>>",
       "readOnly": false,
@@ -12175,7 +12245,7 @@
       "module": "backorders",
       "className": "Backorders",
       "method": "autoAllocateInventory",
-      "description": "Allocate available inventory to this SKU's open backorders, in priority order (critical first, then oldest first), each up to what is still available at its source location.\n\nReturns the allocations created, which is empty when nothing is available or no backorder is open. Call it after stock arrives.",
+      "description": "Allocate available inventory to this SKU's open backorders, in priority order (critical first, then oldest first), each up to what is still available at its source location.\n\nReturns the allocations created, which is empty when nothing is available or no unallocated backorder is open. Inventory receipts trigger this sweep automatically; call it to retry a failed sweep or after changing a backorder's source location.",
       "signature": "autoAllocateInventory(sku: string): Promise<Array<BackorderAllocationOutput>>",
       "returnType": "Promise<Array<BackorderAllocationOutput>>",
       "readOnly": false,
@@ -19627,6 +19697,32 @@
       }
     },
     {
+      "name": "inventory.fulfillOrderStock",
+      "module": "inventory",
+      "className": "Inventory",
+      "method": "fulfillOrderStock",
+      "description": "Atomically consume confirmed holds after full shipment. Safe to retry; shipping status alone does not post the physical stock transaction.",
+      "signature": "fulfillOrderStock(orderId: string): Promise<void>",
+      "returnType": "Promise<void>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "orderId"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "orderId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "orderId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "inventory.getStock",
       "module": "inventory",
       "className": "Inventory",
@@ -24203,6 +24299,32 @@
       }
     },
     {
+      "name": "purchaseOrders.getItems",
+      "module": "purchaseOrders",
+      "className": "PurchaseOrders",
+      "method": "getItems",
+      "description": "Read the persisted purchase-order lines with exact decimal fields.",
+      "signature": "getItems(id: string): Promise<Array<PurchaseOrderItemOutput>>",
+      "returnType": "Promise<Array<PurchaseOrderItemOutput>>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "purchaseOrders.getSupplier",
       "module": "purchaseOrders",
       "className": "PurchaseOrders",
@@ -24285,6 +24407,40 @@
             ]
           }
         },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "purchaseOrders.receive",
+      "module": "purchaseOrders",
+      "className": "PurchaseOrders",
+      "method": "receive",
+      "description": "Record received quantities on a sent purchase order. This updates the PO; warehouse stock must be posted separately through inventory/receiving.",
+      "signature": "receive(id: string, items: Array<ReceivePurchaseOrderItemInput>): Promise<PurchaseOrderOutput>",
+      "returnType": "Promise<PurchaseOrderOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "items"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/ReceivePurchaseOrderItemInput"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "items"
+        ],
         "additionalProperties": false
       }
     },
@@ -26787,23 +26943,72 @@
       }
     },
     {
+      "name": "shipments.addItem",
+      "module": "shipments",
+      "className": "Shipments",
+      "method": "addItem",
+      "description": "Add an order-linked manifest item while packing. Does not fulfill the order or reserve stock. Optional expectedVersion is a positive integer at most 2147483647, checked atomically.",
+      "signature": "addItem(shipmentId: string, input: CreateShipmentItemInput, expectedVersion?: number | undefined | null): Promise<ShipmentItemOutput>",
+      "returnType": "Promise<ShipmentItemOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "shipmentId",
+        "input",
+        "expectedVersion"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "shipmentId": {
+            "type": "string"
+          },
+          "input": {
+            "$ref": "#/definitions/CreateShipmentItemInput"
+          },
+          "expectedVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 2147483647
+          }
+        },
+        "required": [
+          "shipmentId",
+          "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "shipments.cancel",
       "module": "shipments",
       "className": "Shipments",
       "method": "cancel",
-      "description": "Cancel (Shipments.cancel). Returns ShipmentOutput.",
-      "signature": "cancel(id: string): Promise<ShipmentOutput>",
+      "description": "Cancel a shipment; optional expectedVersion must be an integer from 1 to 2147483647.",
+      "signature": "cancel(id: string, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>",
       "returnType": "Promise<ShipmentOutput>",
       "readOnly": false,
       "permission": "write",
       "positional": [
-        "id"
+        "id",
+        "expectedVersion"
       ],
       "parameters": {
         "type": "object",
         "properties": {
           "id": {
             "type": "string"
+          },
+          "expectedVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 2147483647
           }
         },
         "required": [
@@ -26860,19 +27065,28 @@
       "module": "shipments",
       "className": "Shipments",
       "method": "deliver",
-      "description": "Deliver (Shipments.deliver). Returns ShipmentOutput.",
-      "signature": "deliver(id: string): Promise<ShipmentOutput>",
+      "description": "Deliver a shipment; optional expectedVersion must be an integer from 1 to 2147483647.",
+      "signature": "deliver(id: string, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>",
       "returnType": "Promise<ShipmentOutput>",
       "readOnly": false,
       "permission": "write",
       "positional": [
-        "id"
+        "id",
+        "expectedVersion"
       ],
       "parameters": {
         "type": "object",
         "properties": {
           "id": {
             "type": "string"
+          },
+          "expectedVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 2147483647
           }
         },
         "required": [
@@ -26938,18 +27152,54 @@
       }
     },
     {
+      "name": "shipments.removeItem",
+      "module": "shipments",
+      "className": "Shipments",
+      "method": "removeItem",
+      "description": "Remove a manifest item while packing, advancing the shipment version atomically. Optional expectedVersion is a positive integer at most 2147483647, checked atomically.",
+      "signature": "removeItem(itemId: string, expectedVersion?: number | undefined | null): Promise<void>",
+      "returnType": "Promise<void>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "itemId",
+        "expectedVersion"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "itemId": {
+            "type": "string"
+          },
+          "expectedVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 2147483647
+          }
+        },
+        "required": [
+          "itemId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "shipments.ship",
       "module": "shipments",
       "className": "Shipments",
       "method": "ship",
-      "description": "Ship (Shipments.ship). Returns ShipmentOutput.",
-      "signature": "ship(id: string, trackingNumber?: string | undefined | null): Promise<ShipmentOutput>",
+      "description": "Ship a shipment; optional expectedVersion must be an integer from 1 to 2147483647.",
+      "signature": "ship(id: string, trackingNumber?: string | undefined | null, expectedVersion?: number | undefined | null): Promise<ShipmentOutput>",
       "returnType": "Promise<ShipmentOutput>",
       "readOnly": false,
       "permission": "write",
       "positional": [
         "id",
-        "trackingNumber"
+        "trackingNumber",
+        "expectedVersion"
       ],
       "parameters": {
         "type": "object",
@@ -26962,6 +27212,14 @@
               "string",
               "null"
             ]
+          },
+          "expectedVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 2147483647
           }
         },
         "required": [

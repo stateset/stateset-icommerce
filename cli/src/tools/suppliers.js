@@ -7,6 +7,23 @@
 
 import { z } from 'zod';
 import { applyRequired } from '../utils/apply-guard.js';
+const exactCost = z
+  .string()
+  .max(25)
+  .regex(/^(0|[1-9]\d{0,17})(\.\d{1,6})?$/);
+const purchaseLines = z
+  .array(
+    z
+      .object({
+        sku: z.string().min(1).max(64),
+        name: z.string().min(1).max(255),
+        quantity: z.number().int().positive().max(1000000),
+        unitCostExact: exactCost,
+      })
+      .strict(),
+  )
+  .min(1)
+  .max(100);
 
 /**
  * Supplier tool definitions
@@ -133,8 +150,15 @@ export const supplierTools = [
       items: z
         .string()
         .min(1)
-        .describe('JSON array: [{"sku":"X","name":"Y","quantity":10,"unitPrice":5.00}]'),
+        .max(65536)
+        .describe(
+          'JSON array with exact money: [{"sku":"X","name":"Y","quantity":10,"unitCostExact":"5.00"}]',
+        ),
       notes: z.string().optional().describe('Notes'),
+      currency: z
+        .enum(['USD', 'EUR', 'GBP'])
+        .optional()
+        .describe('Ledger currency; defaults to supplier currency'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -144,17 +168,18 @@ export const supplierTools = [
 
       let items;
       try {
-        items = JSON.parse(params.items);
+        items = purchaseLines.parse(JSON.parse(params.items));
       } catch (err) {
         return {
           success: false,
-          error: `Invalid items JSON: ${err.message}. Expected format: [{"sku":"X","name":"Y","quantity":10,"unitPrice":5.00}]`,
+          error: `Invalid items JSON: ${err.message}. Expected format: [{"sku":"X","name":"Y","quantity":10,"unitCostExact":"5.00"}]`,
         };
       }
       const po = await commerce.purchaseOrders.create({
         supplierId: params.supplierId,
         items,
         notes: params.notes,
+        currency: params.currency,
       });
       return { success: true, message: 'PO created', purchaseOrder: po };
     },
@@ -228,6 +253,48 @@ export const supplierTools = [
 
       const po = await commerce.purchaseOrders.cancel(params.purchaseOrderId);
       return { success: true, message: 'PO cancelled', purchaseOrder: po };
+    },
+  },
+  {
+    name: 'get_purchase_order_items',
+    description:
+      'Read persisted purchase-order lines with exact costs and ordered/received quantities.',
+    inputSchema: { purchaseOrderId: z.string().uuid().describe('PO ID') },
+    permission: 'read',
+    handler: async ({ commerce, params }) => ({
+      success: true,
+      items: await commerce.purchaseOrders.getItems(params.purchaseOrderId),
+    }),
+  },
+  {
+    name: 'receive_purchase_order',
+    description:
+      'Record exact received quantities against sent PO lines. This updates the purchase order only; inventory stock must be posted separately through the inventory or warehouse workflow.',
+    inputSchema: {
+      purchaseOrderId: z.string().uuid().describe('PO ID'),
+      items: z
+        .array(
+          z
+            .object({
+              itemId: z.string().uuid(),
+              quantityReceivedExact: exactCost.refine(
+                (value) => /[1-9]/.test(value),
+                'Received quantity must be positive',
+              ),
+            })
+            .strict(),
+        )
+        .min(1)
+        .max(100),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply)
+        return applyRequired('Receive PO quantities (inventory posting is separate)', params);
+      return {
+        success: true,
+        purchaseOrder: await commerce.purchaseOrders.receive(params.purchaseOrderId, params.items),
+      };
     },
   },
 ];
