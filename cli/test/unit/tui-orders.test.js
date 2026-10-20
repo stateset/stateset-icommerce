@@ -706,22 +706,80 @@ test('history skips corrupt, oversize, symlinked, renamed and differently scoped
   await assert.rejects(operations.history({ directory: '/elsewhere' }), /no caller-supplied/);
 });
 
-test('history is bounded, reports partial results and handles absent workspaces', async (t) => {
-  const { operations, directory } = await service(t);
+test('history pages past 100 intents with restored pre-1970 timestamps, seeks past new arrivals and finds older local pending intents', async (t) => {
+  const { operations, directory, calls } = await service(t);
   await operations.apply({ ticketId: (await operations.preview(params)).ticketId });
   const record = JSON.parse(await fs.readFile(path.join(directory, 'last-order-action.json')));
+  const oldFile = path.join(directory, `order-action-${record.id}.json`);
+  await fs.writeFile(oldFile, JSON.stringify({ ...record, state: 'pending' }));
+  await fs.utimes(oldFile, new Date('1950-01-01'), new Date('1950-01-01'));
+  const ids = new Set([record.id]);
   for (let i = 0; i < 101; i++) {
-    const actionId = randomUUID();
+    const actionId = randomUUID(),
+      file = path.join(directory, `order-action-${actionId}.json`);
+    ids.add(actionId);
     await fs.writeFile(
-      path.join(directory, `order-action-${actionId}.json`),
+      file,
       JSON.stringify({ ...record, id: actionId, idempotencyKey: `tui-order:${actionId}` }),
     );
+    // A stable ID tie-breaker is required even when every timestamp is equal.
+    await fs.utimes(file, new Date('1951-02-01'), new Date('1951-02-01'));
   }
-  const history = await operations.history();
-  assert.equal(history.entries.length, 100);
-  assert.equal(history.truncated, true);
+  let page = await operations.history();
+  assert.equal(page.entries.length, 25);
+  assert.equal(page.truncated, false);
+  assert.ok(page.nextCursor);
+  const seen = page.entries.map((e) => e.id);
+  const newerId = randomUUID(),
+    newerFile = path.join(directory, `order-action-${newerId}.json`);
+  await fs.writeFile(
+    newerFile,
+    JSON.stringify({ ...record, id: newerId, idempotencyKey: `tui-order:${newerId}` }),
+  );
+  await fs.utimes(newerFile, new Date('2026-03-01'), new Date('2026-03-01'));
+  while (page.nextCursor) {
+    page = await operations.history({ cursor: page.nextCursor });
+    seen.push(...page.entries.map((e) => e.id));
+  }
+  assert.equal(seen.length, 102);
+  assert.deepEqual(new Set(seen), ids);
+  assert.equal(seen.at(-1), record.id);
+  const pending = await operations.history({ pendingOnly: true });
+  assert.deepEqual(
+    pending.entries.map((e) => e.id),
+    [record.id],
+  );
+  assert.equal(pending.nextCursor, null);
+  assert.equal((await operations.history()).entries[0].id, newerId, 'reload sees new arrivals');
+  assert.equal(calls.filter((c) => c.operation === 'order-reconcile').length, 0);
   operations.directory = path.join(directory, 'absent');
-  assert.deepEqual(await operations.history(), { entries: [], skipped: 0, truncated: false });
+  assert.deepEqual(await operations.history(), {
+    cursor: null,
+    pendingOnly: false,
+    nextCursor: null,
+    entries: [],
+    skipped: 0,
+    truncated: false,
+  });
+});
+
+test('history refuses malformed cursors and filter authority before any native operation', async (t) => {
+  const { operations, calls } = await service(t);
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+  for (const payload of [
+    { cursor: '../file' },
+    { cursor: 5 },
+    { cursor: 'x'.repeat(201) },
+    { cursor: encode(null) },
+    { cursor: encode([0, '../file']) },
+    { cursor: encode([-8640000000000001, id]) },
+    { cursor: encode([1e20, id]) },
+    { cursor: encode([0, id, 'command']) },
+    { pendingOnly: 'true' },
+    { pendingOnly: true, source: '/other.db' },
+  ])
+    await assert.rejects(operations.history(payload), /no caller-supplied/);
+  assert.equal(calls.length, 0);
 });
 
 const historyData = {
@@ -771,8 +829,7 @@ test('history selection owns its keys, compact details scroll, and receipt escap
   assert.match(details, /2 invalid/);
   assert.ok(orderWorkflowLimit(state.input, 20, 8) > 0);
   assert.ok(key(state, '', 'pagedown').state.input.offset > 0);
-  for (const value of ['W', 'P', 'H', 'r', 'APPLY'])
-    assert.equal(key(state, value).effect, undefined);
+  for (const value of ['W', 'P', 'H', 'APPLY']) assert.equal(key(state, value).effect, undefined);
   const selected = key(state, '', 'return');
   assert.equal(selected.effect, 'reconcile-order');
   assert.equal(selected.state.input.historyId, historyData.entries[1].id);
@@ -806,4 +863,89 @@ test('history selection owns its keys, compact details scroll, and receipt escap
   };
   assert.equal(key(empty, '', 'return').effect, undefined);
   assert.match(orderWorkflowLines(empty.input, 118).join('\n'), /No matching/);
+});
+
+test('history paging and filters retain receipt navigation, reload from the start and recover from a failed page request', () => {
+  const cursor = Buffer.from(JSON.stringify([1, id])).toString('base64url');
+  const history = {
+    ...historyData,
+    truncated: false,
+    cursor: null,
+    nextCursor: cursor,
+    pendingOnly: false,
+  };
+  const base = {
+    ...orderState(),
+    input: { kind: 'order-action', phase: 'history', history, selected: 1, offset: 0, busy: false },
+  };
+  const forward = key(base, 'n');
+  assert.equal(forward.effect, 'order-history');
+  assert.deepEqual(forward.state.input.historyRequest, { cursor, pendingOnly: false });
+  assert.deepEqual(forward.state.input.historyNextTrail, [null]);
+  assert.equal(key(forward.state, 'n').effect, undefined);
+  const failure = {
+    ...forward.state,
+    input: { ...forward.state.input, phase: 'failed', busy: false },
+  };
+  const restored = key(failure, '', 'escape').state;
+  assert.equal(restored.input.selected, 1);
+  assert.equal(restored.input.history, history);
+  assert.equal(restored.input.phase, 'history');
+  assert.equal(key(base, 'p').effect, undefined);
+  const filtered = key(base, 'f');
+  assert.deepEqual(filtered.state.input.historyRequest, { cursor: null, pendingOnly: true });
+  const second = {
+    ...base,
+    input: {
+      ...base.input,
+      historyTrail: [null],
+      history: { ...history, cursor, nextCursor: null },
+    },
+  };
+  assert.equal(key(second, 'n').effect, undefined);
+  assert.deepEqual(key(second, 'p').state.input.historyRequest, {
+    cursor: null,
+    pendingOnly: false,
+  });
+  assert.deepEqual(key(second, 'p').state.input.historyNextTrail, []);
+  assert.deepEqual(key(second, 'r').state.input.historyRequest, {
+    cursor: null,
+    pendingOnly: false,
+  });
+  const lookup = key(second, '', 'return').state;
+  const result = { ...lookup, input: { ...lookup.input, busy: false, phase: 'result' } };
+  const back = key(result, '', 'escape').state;
+  assert.deepEqual(back.input.historyTrail, [null]);
+  assert.equal(back.input.selected, 1);
+  const lines = orderWorkflowLines(back.input, 118).join('\n');
+  assert.match(lines, /Page 2/);
+  assert.match(lines, /p previous page/);
+  const pendingEmpty = { ...base.input, history: { ...history, pendingOnly: true, entries: [] } };
+  assert.match(orderWorkflowLines(pendingEmpty, 118).join('\n'), /No local pending/);
+  assert.match(
+    render({ ...base, input: pendingEmpty }, 20, 8, { color: false }),
+    /HISTORY · PENDING/,
+  );
+});
+
+test('history reports a partial scan instead of a complete empty result when the directory budget is exhausted', async (t) => {
+  const { operations, directory, calls } = await service(t);
+  // Unrelated entries also count toward the filesystem budget.
+  for (let start = 0; start < 2001; start += 100)
+    await Promise.all(
+      Array.from({ length: Math.min(100, 2001 - start) }, (_, index) =>
+        fs.writeFile(path.join(directory, `unrelated-${start + index}`), ''),
+      ),
+    );
+  const history = await operations.history({ pendingOnly: true });
+  assert.equal(history.truncated, true);
+  assert.deepEqual(history.entries, []);
+  assert.equal(history.nextCursor, null);
+  const state = {
+    ...orderState(),
+    input: { kind: 'order-action', phase: 'history', history, offset: 0, selected: 0, busy: false },
+  };
+  assert.match(orderWorkflowLines(state.input, 118).join('\n'), /scan limited to 2000/);
+  assert.match(render(state, 20, 8, { color: false }), /PARTIAL/);
+  assert.equal(calls.length, 0);
 });

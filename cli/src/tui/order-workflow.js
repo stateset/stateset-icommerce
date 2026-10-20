@@ -35,6 +35,19 @@ export function orderWorkflowKey(state, text, key) {
   if (input.busy) return { state };
   const next = { ...input };
   if (name === 'escape') {
+    if (input.historyReturn && input.phase === 'failed')
+      return {
+        state: {
+          ...state,
+          input: {
+            kind: 'order-action',
+            phase: 'history',
+            busy: false,
+            offset: 0,
+            ...input.historyReturn,
+          },
+        },
+      };
     if (input.history && input.phase !== 'history')
       return {
         state: {
@@ -43,6 +56,7 @@ export function orderWorkflowKey(state, text, key) {
             kind: 'order-action',
             phase: 'history',
             history: input.history,
+            historyTrail: input.historyTrail || [],
             selected: input.selected,
             offset: 0,
             busy: false,
@@ -65,6 +79,36 @@ export function orderWorkflowKey(state, text, key) {
     };
   if (input.phase === 'history') {
     const entries = input.history.entries;
+    if (['n', 'p', 'f', 'r'].includes(text)) {
+      const history = input.history,
+        trail = input.historyTrail || [];
+      if ((text === 'n' && !history.nextCursor) || (text === 'p' && !trail.length))
+        return { state };
+      const request = {
+        cursor: text === 'n' ? history.nextCursor : text === 'p' ? trail.at(-1) : null,
+        pendingOnly: text === 'f' ? !history.pendingOnly : Boolean(history.pendingOnly),
+      };
+      return {
+        state: {
+          ...state,
+          input: {
+            ...input,
+            phase: 'history-loading',
+            busy: true,
+            offset: 0,
+            historyRequest: request,
+            historyNextTrail:
+              text === 'n'
+                ? [...trail, history.cursor || null]
+                : text === 'p'
+                  ? trail.slice(0, -1)
+                  : [],
+            historyReturn: { history, selected: input.selected, historyTrail: trail },
+          },
+        },
+        effect: 'order-history',
+      };
+    }
     if (['up', 'down', 'home', 'end'].includes(name)) {
       next.selected =
         name === 'home'
@@ -155,6 +199,9 @@ export function orderWorkflowLines(input, size) {
       add(
         `LOCAL ${entry.localState.toUpperCase()} · ${input.selected + 1}/${history.entries.length}`,
       );
+      add(
+        `Page ${(input.historyTrail?.length || 0) + 1} · ${history.pendingOnly ? 'PENDING ONLY' : 'all actions'}`,
+      );
       if (history.truncated) add('PARTIAL HISTORY');
       if (size >= 60) {
         const start = Math.max(0, Math.min(input.selected - 3, history.entries.length - 7));
@@ -175,7 +222,19 @@ export function orderWorkflowLines(input, size) {
       add(`Reviewed action: ${entry.status}`);
       add(`Recorded: ${entry.recordedAt}`);
       add(`Idempotency key: ${entry.idempotencyKey}`);
-    } else add('No matching order action history.');
+    } else {
+      add(
+        history.pendingOnly
+          ? 'No local pending intents on this page.'
+          : 'No matching order action history.',
+      );
+      add(
+        `Page ${(input.historyTrail?.length || 0) + 1} · ${history.pendingOnly ? 'PENDING ONLY' : 'all actions'}`,
+      );
+    }
+    add(
+      `${history.nextCursor ? 'n next page · ' : ''}${input.historyTrail?.length ? 'p previous page · ' : ''}f ${history.pendingOnly ? 'all actions' : 'pending only'} · r reload`,
+    );
     add(
       'Local history is not proof of completion. Enter looks up the native receipt; no command is repeated.',
     );
@@ -184,7 +243,7 @@ export function orderWorkflowLines(input, size) {
       add(`${history.skipped} invalid, unreadable or differently scoped records skipped.`);
     if (history.truncated)
       add(
-        'PARTIAL HISTORY: showing up to 100 actions from at most 2000 directory entries. Older records remain on disk.',
+        'PARTIAL HISTORY: scan limited to 2000 directory entries. Unscanned records remain on disk.',
       );
   } else if (input.phase === 'choose') {
     add(`Order: ${input.orderLabel}`);

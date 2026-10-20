@@ -531,9 +531,11 @@ export async function startTerminal({
           ? { orderId: captured.orderId, status: ORDER_ACTIONS[captured.selected].status }
           : operation === 'apply-order'
             ? { ticketId: captured.preview.ticketId }
-            : operation === 'reconcile-order' && captured.historyId
-              ? { historyId: captured.historyId }
-              : {};
+            : operation === 'order-history'
+              ? captured.historyRequest || {}
+              : operation === 'reconcile-order' && captured.historyId
+                ? { historyId: captured.historyId }
+                : {};
       const result = await backend.request(operation, payload);
       if (!closed && state.input === captured) {
         state = {
@@ -550,7 +552,17 @@ export async function startTerminal({
                   : result.reviewIssues?.length
                     ? 'attention'
                     : 'result',
-            ...(operation === 'order-history' ? { history: result, selected: 0 } : {}),
+            ...(operation === 'order-history'
+              ? {
+                  history: result,
+                  selected: 0,
+                  historyTrail: captured.historyNextTrail || [],
+                  historyReturn: null,
+                  historyRequest: null,
+                  historyNextTrail: null,
+                  historyId: null,
+                }
+              : {}),
             reviewIssues: result.reviewIssues || [],
             ...(operation === 'preview-order' ? { preview: result } : { receipt: result.receipt }),
             message: result.message || result.journalWarning || null,
