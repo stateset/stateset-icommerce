@@ -53,6 +53,21 @@ export function cashBudgetRefusals(report) {
   return [...bySku.values()];
 }
 
+export function timelineEntries(report, query = '') {
+  if (!Array.isArray(report?.timeline)) return null;
+  const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const entries = report.timeline.map((event, index) => ({ event, index }));
+  return {
+    total: entries.length,
+    entries: entries.filter(({ event }) => {
+      const type = typeof event?.type === 'string' ? event.type : '';
+      const sku = typeof event?.sku === 'string' ? event.sku : '';
+      const label = `${type} ${type.replace(/_/g, ' ')} ${sku}`.toLocaleLowerCase();
+      return terms.every((term) => label.includes(term));
+    }),
+  };
+}
+
 export function fillRate(summary) {
   if (
     !Number.isSafeInteger(summary?.demanded) ||

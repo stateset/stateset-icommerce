@@ -13,6 +13,7 @@ import {
   comparisonEvidence,
   fillRate,
   soldTraces,
+  timelineEntries,
 } from './report.js';
 
 const COLORS = { ink: 252, muted: 244, accent: 81, good: 114, warn: 222, bad: 210 };
@@ -71,7 +72,9 @@ export function resultLines(state, size) {
     add('Previous result retained.');
   }
   add(`RESULTS  ${sim.preset} / seed ${sim.seed}`);
-  add('↑ ↓ / PgUp PgDn scroll · Home End · v raw · x export · a use assumptions · Esc lab');
+  add(
+    '↑ ↓ / PgUp PgDn scroll · Home End · t events · v raw · x export · a use assumptions · Esc lab',
+  );
   for (const report of reports) {
     const s = report.summary;
     add(`${report.name}: fill ${fillRate(s)} · lost ${s.lostSales} units`);
@@ -174,6 +177,69 @@ export function resultLines(state, size) {
   add('Conditional projections, not validated forecasts. Esc returns to the lab.');
   return lines;
 }
+
+const EVENT_MONEY = new Set(['amount', 'required', 'cash', 'cashReserve', 'spendableCash']);
+const EVENT_LABELS = {
+  cash: 'Cash after event',
+  amount: 'Purchase spend',
+  required: 'Whole order required',
+  quantity: 'Units',
+  requestedQuantity: 'Target shortfall',
+  extraUnits: 'Extra units from supplier terms',
+  arrivalDay: 'Expected arrival day',
+  nextArrivalDay: 'Next arrival day',
+  remaining: 'Remaining units',
+  firstReceiptBps: 'First receipt (basis points)',
+};
+export function timelineLines(state, size) {
+  const lines = [],
+    add = (line = '') => lines.push(...wrap(line, size));
+  const query = state.input?.kind === 'search' ? state.input.text : state.panelQuery || '';
+  add(`EVENT TIMELINE · ${state.sim.preset} / seed ${state.sim.seed}`);
+  add('Recorded order · / SKU or event · ↑ ↓ Home End · v raw · Esc results');
+  if (query) add(`Filter: ${query}`);
+  const reports = state.sim.result?.results;
+  if (!Array.isArray(reports) || !reports.length) add('Saved reports unavailable.');
+  for (const report of reports || []) {
+    add();
+    const selected = timelineEntries(report, query);
+    add(
+      `${report.name || 'Unnamed plan'} · ${selected ? `${selected.entries.length}/${selected.total} recorded events` : 'timeline unavailable'}`,
+    );
+    if (!selected) continue;
+    if (!selected.total) add('No recorded events.');
+    else if (!selected.entries.length) add('No events match. Esc clears the filter.');
+    for (const { event, index } of selected.entries) {
+      if (!event || typeof event !== 'object' || Array.isArray(event)) {
+        add(`${index + 1}. Invalid recorded event. v opens the raw report.`);
+        continue;
+      }
+      const day = Number.isSafeInteger(event.day) && event.day >= 0 ? event.day : 'unavailable';
+      const type = typeof event.type === 'string' ? event.type.replace(/_/g, ' ') : 'unknown event';
+      add(`${index + 1}. Day ${day} · ${type} · ${event.sku ?? 'SKU unavailable'}`);
+      for (const [key, value] of Object.entries(event)) {
+        if (['day', 'type', 'sku'].includes(key)) continue;
+        const label = Object.hasOwn(EVENT_LABELS, key)
+          ? EVENT_LABELS[key]
+          : key.replace(/([a-z])([A-Z])/g, '$1 $2');
+        const text = EVENT_MONEY.has(key)
+          ? money(event, key, report.currency)
+          : value === null || value === undefined
+            ? 'Unavailable'
+            : typeof value === 'boolean'
+              ? value
+                ? 'Yes'
+                : 'No'
+              : typeof value === 'object'
+                ? JSON.stringify(value)
+                : String(value);
+        add(`${label}: ${text}`);
+      }
+    }
+  }
+  add('Filtered view only; saved reports and exports retain every recorded event.');
+  return lines;
+}
 export function importReviewLines(preview, size) {
   const { settings } = preview,
     lines = [];
@@ -263,7 +329,8 @@ export function scenarioUpdateLimit(review, columns = 80, rows = 24) {
 
 export function panelLimit(state, columns = 80, rows = 24) {
   const { size, available } = terminalLayout(columns, rows);
-  return Math.max(0, resultLines(state, size).length - Math.max(1, available - 1));
+  const lines = state.panel === 'timeline' ? timelineLines(state, size) : resultLines(state, size);
+  return Math.max(0, lines.length - Math.max(1, available - 1));
 }
 
 function tableRow(view, row, size) {
@@ -313,6 +380,7 @@ function staticBody(state, compact = false) {
       'a               Add selected inventory SKU to a plan',
       't / u / b       Related records / customer / back',
       'f               Scrollable comparison results',
+      't (lab/result)  Recorded event timeline · / filter SKU or event',
       'w / l / h       Save scenario / library / run history',
       'x / i / c       Export result / import assumptions / cancel run',
       '/ in library    Filter saved entries without reading the store',
@@ -404,6 +472,7 @@ function compactFooter(state, w) {
   if (['planning', 'product'].includes(input?.kind)) return ' Tab next ^S Esc';
   if (input) return ` ${editorWindow(input.text, input.cursor, w - 2)}`;
   if (state.help || state.detail || state.panel === 'results') return ' ↑↓ Home End Esc';
+  if (state.panel === 'timeline') return ' ↑↓ / filter Esc';
   if (state.sim.running) return ' c cancel · : ?';
   if (state.panel) return ' Enter / : ? Esc';
   if (state.view === 5) return ' s run e edit : ?';
@@ -515,14 +584,20 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       if (editor.error) put(editor.error, 'bad');
       else put('Changes affect the next run. Existing results keep their inputs.', 'muted');
     }
-  } else if (state.panel === 'results' && !state.detail && !state.help && !state.input) {
-    const lines = resultLines(state, size),
+  } else if (
+    ['results', 'timeline'].includes(state.panel) &&
+    !state.detail &&
+    !state.help &&
+    (!state.input || (state.panel === 'timeline' && state.input.kind === 'search'))
+  ) {
+    const timeline = state.panel === 'timeline';
+    const lines = timeline ? timelineLines(state, size) : resultLines(state, size),
       visible = Math.max(1, available - 1);
     const offset = Math.min(state.panelOffset, Math.max(0, lines.length - visible));
     put(
       compact
-        ? `RESULTS ${offset + 1}/${lines.length}`
-        : `COMPARISON · ${offset + 1}–${Math.min(lines.length, offset + visible)} / ${lines.length} lines · Esc lab`,
+        ? `${timeline ? 'EVENTS' : 'RESULTS'} ${offset + 1}/${lines.length}`
+        : `${timeline ? 'EVENT TIMELINE' : 'COMPARISON'} · ${offset + 1}–${Math.min(lines.length, offset + visible)} / ${lines.length} lines · ${timeline ? '/ filter · Esc results' : 'Esc lab'}`,
       'muted',
     );
     lines.slice(offset, offset + visible).forEach((line) => put(line));

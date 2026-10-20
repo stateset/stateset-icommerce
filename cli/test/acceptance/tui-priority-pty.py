@@ -130,6 +130,29 @@ try:
     assert [event['sku'] for event in report['timeline'] if event['type'] == 'purchase_order_sent'] == ['MATCHA-50G']
     assert report['summary']['purchasingSpend'] == '10.00'
     assert report['summary']['endingCash'] == '0.00'
+    original_run = json.loads(json.dumps(saved['runs'][0]))
+    send(b't')
+    frame = screen(b'EVENT TIMELINE')
+    assert b'Day 0' in frame and b'purchase order sent' in frame
+    assert b'Purchase spend: USD 10.00' in frame
+    send(b'/COFFEE budget\r')
+    frame = screen(b'Filter: COFFEE budget')
+    assert b'3/' in frame
+    assert b'purchase budget blocked' in frame
+    assert b'Whole order required: USD 10.00' in frame
+    assert b'Cash after event: USD 0.00' in frame
+    assert b'purchase order sent' not in frame
+    resize(20, 8)
+    screen(b'EVENTS')
+    send(b'\x1b[4~')
+    screen(b'event.')
+    resize(140, 44)
+    screen(b'EVENT TIMELINE')
+    assert json.loads(next(workspace.glob('*/workspace.json')).read_text())['runs'][0] == original_run
+    send(b'\x1b')
+    screen(b'EVENT TIMELINE')
+    send(b'\x1b')
+    screen(b'COMPARISON')
     send(b'\x1b')
     screen(b'Seed 77')
     send(b'jjjs')
@@ -265,6 +288,7 @@ try:
                 'savedScenarioUpdateReviewed': True, 'updateCancellationPreservedFile': True,
                 'updatedScenarioLoadedAfterRestart': True,
                 'fundingAndCashMovementSeparated': True,
+                'nativeTimelineFiltered': True, 'timelineResizeAndReportPreserved': True,
                 'terminalRestored': True}
     (root / 'evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
     print(json.dumps({'evidence': str(root / 'evidence.json'), **evidence}, indent=2))

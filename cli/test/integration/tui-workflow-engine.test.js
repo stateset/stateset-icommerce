@@ -7,8 +7,8 @@ import Database from 'better-sqlite3';
 import { TerminalBackend } from '../../src/tui/backend.js';
 import { DEFAULT_PLANNING } from '../../src/tui/planning.js';
 import { initialState, navigate, handleKey } from '../../src/tui/model.js';
-import { resultLines } from '../../src/tui/render.js';
-import { comparisonEvidence, cashMovement } from '../../src/tui/report.js';
+import { resultLines, timelineLines } from '../../src/tui/render.js';
+import { comparisonEvidence, cashMovement, timelineEntries } from '../../src/tui/report.js';
 
 test(
   'full inventory, cross-page search, related records, multi-SKU execution and owned cancellation',
@@ -175,6 +175,25 @@ test(
         assert.match(explained, /Inventory at cost: on hand USD 10\.00 · in transit USD 0\.00/);
         assert.match(explained, /First refusal day 0: whole order USD 10\.00; cash USD 0\.00/);
         assert.ok(explained.includes(`Priority 1 · ${expected}`));
+        const receipts = timelineEntries(report, `${expected} purchase_received`).entries;
+        assert.equal(receipts.length, 1);
+        assert.equal(receipts[0].event.day, 1);
+        const refusals = timelineEntries(report, `${refused} budget`).entries;
+        assert.deepEqual(
+          refusals.map(({ event }) => event.day),
+          [0, 1, 2],
+        );
+        const eventText = timelineLines(
+          {
+            panelQuery: `${expected} purchase_order_sent`,
+            sim: { preset: 'Steady demand', seed: 42, result: observed },
+          },
+          160,
+        ).join('\n');
+        assert.ok(eventText.includes(`Day 0 · purchase order sent · ${expected}`));
+        assert.match(eventText, /Purchase spend: USD 10\.00/);
+        assert.match(eventText, /Cash after event: USD 0\.00/);
+        assert.match(eventText, /Expected arrival day: 1/);
       }
       let started;
       const ready = new Promise((resolve) => {
