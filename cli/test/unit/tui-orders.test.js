@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { execFile } from 'node:child_process';
@@ -613,4 +614,196 @@ test('unknown apply outcome stays prominent in compact panes and its preview is 
   assert.match(lines, /Prior preview receipt: previewed/);
   assert.doesNotMatch(lines, /Native receipt: previewed/);
   assert.equal(key({ ...orderState(), input }, 'r').state.input.phase, 'uncertain');
+});
+
+test('history finds an earlier pending action after a later action replaces the pointer, and only native lookup supplies an outcome', async (t) => {
+  const { operations, directory, calls } = await service(t);
+  const first = await operations.preview(params),
+    invoke = operations.invoke;
+  operations.invoke = async (operation, payload, config) => {
+    if (operation === 'order-apply') throw new Error('transport lost');
+    return invoke(operation, payload, config);
+  };
+  await assert.rejects(operations.apply({ ticketId: first.ticketId }), /transport lost/);
+  const pendingFile = path.join(directory, `order-action-${first.ticketId}.json`);
+  const pending = JSON.parse(await fs.readFile(pendingFile));
+  await fs.writeFile(
+    pendingFile,
+    JSON.stringify({ ...pending, receipt: receipt('succeeded', 'forged-local-outcome') }),
+  );
+  await fs.utimes(pendingFile, new Date('2026-01-01'), new Date('2026-01-01'));
+  operations.invoke = invoke;
+  const second = await operations.preview(params);
+  await operations.apply({ ticketId: second.ticketId });
+  assert.equal(
+    JSON.parse(await fs.readFile(path.join(directory, 'last-order-action.json'))).id,
+    second.ticketId,
+  );
+  const history = await operations.history();
+  assert.deepEqual(
+    history.entries.map((e) => e.id),
+    [second.ticketId, first.ticketId],
+  );
+  assert.equal(history.entries[1].localState, 'pending');
+  assert.equal(history.entries[1].receipt, undefined);
+  const before = await fs.readFile(pendingFile, 'utf8');
+  operations.tickets.clear();
+  operations.allowApply = false;
+  const result = await operations.reconcile({ historyId: first.ticketId });
+  assert.equal(result.receipt, null);
+  assert.match(result.message, /No native receipt found/);
+  assert.deepEqual(calls.at(-1), {
+    operation: 'order-reconcile',
+    payload: { idempotencyKey: first.idempotencyKey },
+    kernel: kernel(),
+  });
+  assert.equal(await fs.readFile(pendingFile, 'utf8'), before);
+  assert.equal(calls.filter((c) => c.operation === 'order-apply').length, 1);
+});
+
+test('history skips corrupt, oversize, symlinked, renamed and differently scoped intents without trusting local receipts', async (t) => {
+  const { operations, directory, calls } = await service(t);
+  await operations.apply({ ticketId: (await operations.preview(params)).ticketId });
+  const valid = JSON.parse(await fs.readFile(path.join(directory, 'last-order-action.json')));
+  for (const change of [
+    { source: '/different.db' },
+    { principalId: 'user:other' },
+    { storeId: 'store:other' },
+    { params: { ...params, force: true } },
+  ]) {
+    const actionId = randomUUID();
+    await fs.writeFile(
+      path.join(directory, `order-action-${actionId}.json`),
+      JSON.stringify({
+        ...valid,
+        id: actionId,
+        idempotencyKey: `tui-order:${actionId}`,
+        ...change,
+      }),
+    );
+    await assert.rejects(operations.reconcile({ historyId: actionId }));
+  }
+  for (const content of ['{', 'x'.repeat(65537), JSON.stringify(valid)])
+    await fs.writeFile(path.join(directory, `order-action-${randomUUID()}.json`), content);
+  if (process.platform !== 'win32')
+    await fs.symlink(
+      path.join(directory, `order-action-${valid.id}.json`),
+      path.join(directory, `order-action-${randomUUID()}.json`),
+    );
+  const history = await operations.history();
+  assert.equal(history.entries.length, 1);
+  assert.equal(history.entries[0].id, valid.id);
+  assert.equal(history.skipped, process.platform === 'win32' ? 7 : 8);
+  assert.equal(calls.filter((c) => c.operation === 'order-reconcile').length, 0);
+  for (const payload of [
+    null,
+    [],
+    { historyId: '../last-order-action' },
+    { historyId: valid.id, command: params },
+    { historyId: 42 },
+  ])
+    await assert.rejects(operations.reconcile(payload), /no caller-supplied/);
+  await assert.rejects(operations.history({ directory: '/elsewhere' }), /no caller-supplied/);
+});
+
+test('history is bounded, reports partial results and handles absent workspaces', async (t) => {
+  const { operations, directory } = await service(t);
+  await operations.apply({ ticketId: (await operations.preview(params)).ticketId });
+  const record = JSON.parse(await fs.readFile(path.join(directory, 'last-order-action.json')));
+  for (let i = 0; i < 101; i++) {
+    const actionId = randomUUID();
+    await fs.writeFile(
+      path.join(directory, `order-action-${actionId}.json`),
+      JSON.stringify({ ...record, id: actionId, idempotencyKey: `tui-order:${actionId}` }),
+    );
+  }
+  const history = await operations.history();
+  assert.equal(history.entries.length, 100);
+  assert.equal(history.truncated, true);
+  operations.directory = path.join(directory, 'absent');
+  assert.deepEqual(await operations.history(), { entries: [], skipped: 0, truncated: false });
+});
+
+const historyData = {
+  entries: [
+    {
+      id,
+      orderId: id,
+      status: 'confirmed',
+      localState: 'recorded',
+      recordedAt: '2026-10-20T17:00:00Z',
+      idempotencyKey: `tui-order:${id}`,
+    },
+    {
+      id: '6c8c1153-c50a-489c-aa3d-0722a6c48a92',
+      orderId: id,
+      status: 'cancelled',
+      localState: 'pending',
+      recordedAt: '2026-10-20T16:00:00Z',
+      idempotencyKey: 'tui-order:older',
+    },
+  ],
+  skipped: 2,
+  truncated: true,
+};
+test('history selection owns its keys, compact details scroll, and receipt escape restores the selected entry', () => {
+  const opened = key(orderState(), 'H');
+  assert.equal(opened.effect, 'order-history');
+  assert.equal(key(opened.state, '', 'return').effect, undefined);
+  let state = {
+    ...orderState(),
+    input: {
+      kind: 'order-action',
+      phase: 'history',
+      history: historyData,
+      selected: 0,
+      offset: 0,
+      busy: false,
+    },
+  };
+  state = key(state, '', 'down').state;
+  assert.equal(state.input.selected, 1);
+  const compact = render(state, 20, 8, { color: false });
+  assert.match(compact, /LOCAL PENDING/);
+  const details = orderWorkflowLines(state.input, 118).join('\n');
+  assert.match(details, /not proof of completion/);
+  assert.match(details, /PARTIAL HISTORY/);
+  assert.match(details, /2 invalid/);
+  assert.ok(orderWorkflowLimit(state.input, 20, 8) > 0);
+  assert.ok(key(state, '', 'pagedown').state.input.offset > 0);
+  for (const value of ['W', 'P', 'H', 'r', 'APPLY'])
+    assert.equal(key(state, value).effect, undefined);
+  const selected = key(state, '', 'return');
+  assert.equal(selected.effect, 'reconcile-order');
+  assert.equal(selected.state.input.historyId, historyData.entries[1].id);
+  const result = {
+    ...selected.state,
+    input: {
+      ...selected.state.input,
+      phase: 'result',
+      busy: false,
+      receipt: receipt('succeeded', 'native'),
+    },
+  };
+  assert.equal(key(result, '', 'return').effect, undefined);
+  assert.equal(key(result, 'r').state.input.phase, 'result');
+  const failed = {
+    ...result,
+    input: { ...result.input, phase: 'failed', receipt: undefined, error: 'Database unavailable' },
+  };
+  const failureLines = orderWorkflowLines(failed.input, 118).join('\n');
+  assert.match(failureLines, /Receipt lookup unavailable/);
+  assert.doesNotMatch(failureLines, /No native receipt found/);
+  const back = key(result, '', 'escape');
+  assert.equal(back.state.input.phase, 'history');
+  assert.equal(back.state.input.selected, 1);
+  assert.equal(back.state.input.receipt, undefined);
+  assert.equal(key(back.state, '', 'escape').state.input, null);
+  assert.ok(paletteCommands('order action history', orderState()).some((c) => c.key === 'H'));
+  const empty = {
+    ...state,
+    input: { ...state.input, history: { entries: [], skipped: 0, truncated: false }, selected: 0 },
+  };
+  assert.equal(key(empty, '', 'return').effect, undefined);
+  assert.match(orderWorkflowLines(empty.input, 118).join('\n'), /No matching/);
 });

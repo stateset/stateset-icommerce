@@ -1,6 +1,6 @@
 import { ORDER_ACTIONS } from './order-operations.js';
 import { editText, editorWindow } from './editor.js';
-import { wrap } from './text.js';
+import { fit, wrap } from './text.js';
 import { terminalLayout } from './layout.js';
 
 export function orderWorkflowLimit(input, columns, rows) {
@@ -35,6 +35,20 @@ export function orderWorkflowKey(state, text, key) {
   if (input.busy) return { state };
   const next = { ...input };
   if (name === 'escape') {
+    if (input.history && input.phase !== 'history')
+      return {
+        state: {
+          ...state,
+          input: {
+            kind: 'order-action',
+            phase: 'history',
+            history: input.history,
+            selected: input.selected,
+            offset: 0,
+            busy: false,
+          },
+        },
+      };
     if (input.phase === 'confirm')
       return { state: { ...state, input: { ...input, phase: 'review', text: '', error: null } } };
     return { state: { ...state, input: null } };
@@ -49,6 +63,34 @@ export function orderWorkflowKey(state, text, key) {
         },
       },
     };
+  if (input.phase === 'history') {
+    const entries = input.history.entries;
+    if (['up', 'down', 'home', 'end'].includes(name)) {
+      next.selected =
+        name === 'home'
+          ? 0
+          : name === 'end'
+            ? Math.max(0, entries.length - 1)
+            : Math.max(0, Math.min(entries.length - 1, input.selected + (name === 'up' ? -1 : 1)));
+      next.offset = 0;
+    } else if (name === 'return' && entries[input.selected])
+      return {
+        state: {
+          ...state,
+          input: {
+            ...input,
+            phase: 'reconciling',
+            busy: true,
+            offset: 0,
+            historyId: entries[input.selected].id,
+          },
+        },
+        effect: 'reconcile-order',
+      };
+    else if (['pageup', 'pagedown'].includes(name))
+      next.offset = Math.max(0, input.offset + (name === 'pageup' ? -8 : 8));
+    return { state: { ...state, input: next } };
+  }
   if (input.phase === 'choose') {
     if (['up', 'down'].includes(name))
       next.selected =
@@ -106,7 +148,45 @@ export function orderWorkflowKey(state, text, key) {
 export function orderWorkflowLines(input, size) {
   const lines = [],
     add = (value = '') => lines.push(...wrap(value, size));
-  if (input.phase === 'choose') {
+  if (input.phase === 'history') {
+    const history = input.history,
+      entry = history.entries[input.selected];
+    if (entry) {
+      add(
+        `LOCAL ${entry.localState.toUpperCase()} · ${input.selected + 1}/${history.entries.length}`,
+      );
+      if (history.truncated) add('PARTIAL HISTORY');
+      if (size >= 60) {
+        const start = Math.max(0, Math.min(input.selected - 3, history.entries.length - 7));
+        history.entries
+          .slice(start, start + 7)
+          .forEach((item, index) =>
+            add(
+              fit(
+                `${start + index === input.selected ? '›' : ' '} ${start + index + 1}. ${item.localState} → ${item.status} · ${item.orderId}`,
+                size,
+                false,
+              ),
+            ),
+          );
+        add();
+      }
+      add(`Order: ${entry.orderId}`);
+      add(`Reviewed action: ${entry.status}`);
+      add(`Recorded: ${entry.recordedAt}`);
+      add(`Idempotency key: ${entry.idempotencyKey}`);
+    } else add('No matching order action history.');
+    add(
+      'Local history is not proof of completion. Enter looks up the native receipt; no command is repeated.',
+    );
+    add('↑↓ Home End selects · PgUp/PgDn scrolls · Enter looks up · Esc closes');
+    if (history.skipped)
+      add(`${history.skipped} invalid, unreadable or differently scoped records skipped.`);
+    if (history.truncated)
+      add(
+        'PARTIAL HISTORY: showing up to 100 actions from at most 2000 directory entries. Older records remain on disk.',
+      );
+  } else if (input.phase === 'choose') {
     add(`Order: ${input.orderLabel}`);
     ORDER_ACTIONS.forEach((action, index) =>
       add(`${index === input.selected ? '›' : ' '} ${action.label}`),
@@ -117,9 +197,11 @@ export function orderWorkflowLines(input, size) {
     add(
       input.phase === 'applying'
         ? 'Applying reviewed command. Waiting for native receipt…'
-        : input.phase === 'reconciling'
-          ? 'Looking up the last native receipt. No command will be repeated.'
-          : 'Previewing against a private store snapshot…',
+        : input.phase === 'history-loading'
+          ? 'Loading local action history. No native command will run.'
+          : input.phase === 'reconciling'
+            ? 'Looking up the native receipt. No command will be repeated.'
+            : 'Previewing against a private store snapshot…',
     );
     add(
       'Please wait. No second action can start from this review. Ctrl+C exits; an active apply drains before shutdown.',
@@ -154,6 +236,17 @@ export function orderWorkflowLines(input, size) {
         `Operator: ${preview.principalId ?? 'configured principal'} · store ${preview.storeId ?? 'configured store'}`,
       );
       add('This status action does not issue a refund or force cancellation of captured payments.');
+    }
+    if (input.historyId) {
+      add(
+        input.receipt
+          ? `Native receipt: ${input.receipt.status}`
+          : input.phase === 'failed'
+            ? 'Receipt lookup unavailable.'
+            : 'No native receipt found.',
+      );
+      add(`History action: ${input.historyId}`);
+      add('Esc returns to action history.');
     }
     if (input.message) add(input.message);
     if (input.phase === 'uncertain') {

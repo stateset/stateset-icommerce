@@ -205,6 +205,21 @@ test(
             .prepare("UPDATE orders SET status = 'pending', version = version + 1 WHERE id = ?")
             .run(fixture.orders[1].id);
       }
+      // The latest pointer now names a conflict, but earlier native outcomes
+      // remain discoverable and read-only after a different action replaces it.
+      const historyBefore = await Promise.all([hash(database), hash(database + '-wal')]);
+      const history = await backend.request('order-history');
+      assert.equal(history.entries.length, 4);
+      assert.ok(history.entries.some((entry) => entry.id === saved.id));
+      const oldOutcome = await backend.request('reconcile-order', { historyId: saved.id });
+      assert.equal(oldOutcome.receipt.command_id, applied.receipt.command_id);
+      assert.deepEqual(oldOutcome.reviewIssues, []);
+      assert.equal(writer.prepare('SELECT count(*) AS n FROM kernel_receipts').get().n, 4);
+      assert.deepEqual(
+        await Promise.all([hash(database), hash(database + '-wal')]),
+        historyBefore,
+        'history and selected recovery must not write to the source',
+      );
       const paid = await backend.request('preview-order', {
         orderId: fixture.orders[3].id,
         status: 'cancelled',

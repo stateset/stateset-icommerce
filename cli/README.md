@@ -448,7 +448,15 @@ The workspace keeps private per-action intent records and a last-action pointer
 before submitting a live command. It can contain sensitive order and receipt
 information. **Orders → Shift+P** looks up the last native receipt after restart,
 using the same database, workspace, principal and store scope; it never repeats
-a command from editable JSON. While the original session is open, an unknown
+a command from editable JSON. **Orders → Shift+H** browses prior action intents
+when another action has replaced the last-action pointer. Use **↑/↓** or
+**Home/End** to choose an action, **PageUp/PageDown** to scroll its details and
+**Enter** to look up its native receipt; **Esc** returns to history. Local
+`pending`/`recorded` labels are not proof of a native outcome. The browser
+validates database, principal and store scope, skips invalid records and reports
+partial history when its limits (100 actions, 2000 directory entries) are reached.
+It never submits an action or trusts a locally saved receipt as a native result.
+While the original session is open, an unknown
 outcome can retry its host-held ticket with the same key. Without a recovered
 receipt, inspect the current order before starting another action. Existing
 refund, receiving and other tool references remain documentation only.
