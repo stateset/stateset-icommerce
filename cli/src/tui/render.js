@@ -10,6 +10,7 @@ import {
   cashMovement,
   cashMovementDelta,
   cashBudgetRefusals,
+  purchasingExceptions,
   comparisonEvidence,
   fillRate,
   soldTraces,
@@ -23,6 +24,7 @@ const money = (record, field, currency = record?.currency) =>
     : 'Unavailable';
 const shortId = (value) =>
   width(value) > 15 ? `${clean(value).slice(0, 6)}…${clean(value).slice(-7)}` : value;
+const count = (value) => (Number.isSafeInteger(value) && value >= 0 ? value : 'Unavailable');
 
 function detailLines(record, size) {
   if (!record) return ['No record selected.'];
@@ -151,6 +153,61 @@ export function resultLines(state, size) {
       }
       add('Attempts may repeat each day, including day zero; they are not distinct orders.');
     }
+    add();
+    add(`${report.name} · PURCHASE CONSTRAINTS & REVIEWS`);
+    const exceptions = purchasingExceptions(report);
+    if (exceptions === null) add('Timeline unavailable; constraint and review counts are unknown.');
+    else if (!exceptions.length)
+      add('No capacity blocks, reserve blocks or review deferrals recorded.');
+    else {
+      for (const entry of exceptions) {
+        const event = entry.first;
+        const day = count(event.day);
+        if (event.type === 'purchase_review_deferred') {
+          add(`${entry.sku}: ${entry.attempts} deferred review attempt(s)`);
+          add(`First deferral day ${day}: inventory position ${count(event.inventoryPosition)}`);
+          add(
+            `Review interval ${count(event.reviewIntervalDays)} day(s); next review day ${count(event.nextReviewDay)}`,
+          );
+          if (
+            Number.isSafeInteger(event.nextReviewDay) &&
+            Number.isSafeInteger(report.days) &&
+            event.nextReviewDay > report.days
+          )
+            add("Next review is outside this report's horizon.");
+          add('A scheduled review does not guarantee a purchase.');
+          continue;
+        }
+        const reserve = event.type === 'purchase_reserve_blocked';
+        const reason = reserve
+          ? 'reserve'
+          : event.reason === 'maximum_inventory_position'
+            ? 'capacity'
+            : 'constraint';
+        add(`${entry.sku}: ${entry.attempts} ${reason}-blocked attempt(s)`);
+        add(
+          `First block day ${day}: whole order ${money(event, 'required', report.currency)}; cash ${money(event, 'cash', report.currency)}`,
+        );
+        if (reserve)
+          add(
+            `Reserved cash ${money(event, 'cashReserve', report.currency)}; spendable cash ${money(event, 'spendableCash', report.currency)}`,
+          );
+        else if (event.reason === 'maximum_inventory_position')
+          add(
+            `Inventory position with proposed order ${count(event.requiredPosition)}; capacity limit ${count(event.maximumInventoryPosition)}`,
+          );
+        else add(`Recorded constraint: ${event.reason ?? 'Unavailable'}`);
+        add(
+          `Target shortfall ${count(event.requestedQuantity)}; rounded order ${count(event.quantity)}; extra units ${count(event.extraUnits)}`,
+        );
+        add(
+          `Supplier minimum ${count(event.minimumOrderQuantity)}; case pack ${count(event.orderMultiple)}`,
+        );
+      }
+      add(
+        'Counts are recorded attempts, not distinct orders. t shows every event and later outcome.',
+      );
+    }
   }
   add();
   add('EXECUTED ASSUMPTIONS');
@@ -160,6 +217,10 @@ export function resultLines(state, size) {
     add(
       `${plan.name || reports[planIndex]?.name || `Plan ${planIndex + 1}`} · ${plan.days ?? 'Unavailable'} days · ${money(plan, 'startingCash', plan.currency || reports[planIndex]?.currency)} opening cash`,
     );
+    if (plan.cashReserve !== undefined)
+      add(
+        `Cash reserve ${money(plan, 'cashReserve', plan.currency || reports[planIndex]?.currency)}`,
+      );
     for (const [index, item] of (plan.products || []).entries()) {
       add(
         `Priority ${index + 1} · ${item.sku}: stock ${item.initialStock}, price ${item.unitPrice}, cost ${item.unitCost}`,
@@ -171,6 +232,10 @@ export function resultLines(state, size) {
         add(
           `Supplier minimum ${item.purchasing.minimumOrderQuantity} · case pack ${item.purchasing.orderMultiple}`,
         );
+      if (item.purchasing?.reviewIntervalDays !== undefined)
+        add(`Purchase review interval ${count(item.purchasing.reviewIntervalDays)} day(s)`);
+      if (item.purchasing?.maximumInventoryPosition !== undefined)
+        add(`Maximum inventory position ${count(item.purchasing.maximumInventoryPosition)}`);
     }
   }
   add('Cash is shared across SKUs; product input order sets purchase priority.');

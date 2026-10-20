@@ -418,6 +418,13 @@ units and stockout days per SKU, and cash-budget refusals with the first whole-o
 requirement and available cash. Refusal counts are attempts that may recur on
 several days, including day zero; they are not counts of distinct orders.
 Missing timeline evidence is shown as unavailable. Executed assumptions show
+recorded cash reserves, purchase review intervals and inventory position limits
+when present. A separate purchase-constraints section distinguishes reserve and
+capacity blocks from off-cycle review deferrals, with the first recorded exact
+cash requirement, supplier rounding or next review day. Reviews beyond the
+report horizon are labeled; a scheduled review does not promise an order.
+Press **t** for every recorded attempt and subsequent outcome. Each plan retains
+its own counts; missing evidence is never treated as zero. Executed assumptions show
 the purchase-priority order used by each saved plan, including the candidate's
 actual opening cash, demand and supplier lead time. The engine's comparison
 checks distinguish changes in opening cash, horizon, stock, prices/costs,

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { TerminalBackend } from '../../src/tui/backend.js';
@@ -9,6 +10,7 @@ import { DEFAULT_PLANNING } from '../../src/tui/planning.js';
 import { initialState, navigate, handleKey } from '../../src/tui/model.js';
 import { resultLines, timelineLines } from '../../src/tui/render.js';
 import { comparisonEvidence, cashMovement, timelineEntries } from '../../src/tui/report.js';
+import { executeInventoryPlan } from '../../src/simulation/planning.js';
 
 test(
   'full inventory, cross-page search, related records, multi-SKU execution and owned cancellation',
@@ -225,6 +227,72 @@ test(
       );
     } finally {
       await backend.close();
+    }
+  },
+);
+
+test(
+  'native planning decisions explain capacity, reserve and off-cycle reviews without spending cash',
+  { timeout: 45000 },
+  async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'stateset-tui-decisions-'));
+    try {
+      const product = {
+        initialStock: 0,
+        unitPrice: '25.00',
+        unitCost: '1.00',
+        demand: { min: 0, max: 0 },
+        reorderPoint: 0,
+        targetStock: 10,
+        leadTimeDays: 1,
+      };
+      const plan = {
+        name: 'Purchasing rules',
+        currency: 'USD',
+        days: 2,
+        seed: 42,
+        startingCash: '10.00',
+        cashReserve: '5.00',
+        products: [
+          {
+            ...product,
+            sku: 'CAPACITY',
+            targetStock: 3,
+            purchasing: { minimumOrderQuantity: 5, orderMultiple: 4, maximumInventoryPosition: 6 },
+          },
+          { ...product, sku: 'RESERVE', purchasing: { reviewIntervalDays: 3 } },
+          { ...product, sku: 'BUDGET', targetStock: 1, unitCost: '20.00' },
+        ],
+      };
+      const report = await executeInventoryPlan(plan, path.join(directory, 'private.db'));
+      assert.equal(report.summary.purchasingSpend, '0.00');
+      assert.equal(report.summary.endingCash, '10.00');
+      assert.equal(report.summary.constraintBlockedPurchases, 3);
+      assert.equal(report.summary.reserveBlockedPurchases, 1);
+      assert.equal(report.summary.deferredPurchaseReviews, 2);
+      assert.deepEqual(report.purchases, []);
+      assert.equal(report.reconciliation.purchaseOrdersBalanced, true);
+      assert.equal(report.reconciliation.cashFlowBalanced, true);
+      assert.equal(report.reconciliation.inventoryFlowBalanced, true);
+      const before = structuredClone(report);
+      const text = resultLines(
+        {
+          sim: { preset: 'Native policy', seed: 42, result: { inputs: [plan], results: [report] } },
+        },
+        180,
+      ).join('\n');
+      assert.match(text, /CAPACITY: 3 capacity-blocked attempt\(s\)/);
+      assert.match(text, /Inventory position with proposed order 8; capacity limit 6/);
+      assert.match(text, /Target shortfall 3; rounded order 8; extra units 5/);
+      assert.match(text, /RESERVE: 1 reserve-blocked attempt\(s\)/);
+      assert.match(text, /Reserved cash USD 5\.00; spendable cash USD 5\.00/);
+      assert.match(text, /RESERVE: 2 deferred review attempt\(s\)/);
+      assert.match(text, /Review interval 3 day\(s\); next review day 3/);
+      assert.match(text, /Next review is outside this report's horizon/);
+      assert.match(text, /BUDGET: 3 blocked attempt\(s\)/);
+      assert.deepEqual(report, before);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
     }
   },
 );
