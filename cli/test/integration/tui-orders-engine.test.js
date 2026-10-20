@@ -1,9 +1,9 @@
+import { hashFile as hash } from '../fixtures/sqlite-file-evidence.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { createHash } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -19,11 +19,6 @@ const nativeCall = async (script, args) =>
 import { TerminalBackend } from '../../src/tui/backend.js';
 import { reconcileOrder } from '../../src/tui/order-engine.js';
 import { operatorKernel } from '../fixtures/tui-orders.js';
-
-const hash = async (file) =>
-  createHash('sha256')
-    .update(await fs.readFile(file))
-    .digest('hex');
 
 test(
   'governed order preview, native apply, stale version, refusal, idempotency and restart reconciliation',
@@ -70,6 +65,7 @@ test(
       const version = preview.receipt.version_before;
       const applied = await backend.request('apply-order', { ticketId: preview.ticketId });
       assert.equal(applied.receipt.status, 'succeeded');
+      assert.deepEqual(applied.reviewIssues, []);
       assert.ok(applied.receipt.audit_hash);
       assert.equal(
         writer
@@ -151,6 +147,7 @@ test(
       const preReconcile = await Promise.all([hash(database), hash(database + '-wal')]);
       const recovered = await backend.request('reconcile-order');
       assert.equal(recovered.receipt.command_id, applied.receipt.command_id);
+      assert.deepEqual(recovered.reviewIssues, []);
       assert.match(recovered.message, /No command was repeated/);
       assert.deepEqual(
         await Promise.all([hash(database), hash(database + '-wal')]),

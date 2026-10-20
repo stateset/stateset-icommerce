@@ -1,9 +1,9 @@
+import { hashFile as digest } from '../fixtures/sqlite-file-evidence.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { createHash } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { TerminalBackend } from '../../src/tui/backend.js';
 import { execFile } from 'node:child_process';
@@ -19,10 +19,6 @@ const request = (domain, table, extra = {}) => ({
   relation: null,
   ...extra,
 });
-const digest = async (file) =>
-  createHash('sha256')
-    .update(await fs.readFile(file))
-    .digest('hex');
 
 test(
   'native engine resource sweep, exact finance, linked records and source/WAL immutability',

@@ -27,6 +27,35 @@ export function orderAction(value) {
   return { orderId: value.orderId, status: value.status };
 }
 
+// Keep a returned native outcome, including a commit, but never present an
+// inconsistent success as a normal completion or invite an automatic retry.
+export function orderReceiptIssues(receipt, review) {
+  if (receipt?.status !== 'succeeded') return [];
+  const issues = [];
+  if (receipt.version_before !== review.expectedVersion)
+    issues.push(
+      `Reviewed version ${review.expectedVersion}; native receipt started from ${receipt.version_before ?? 'unavailable'}.`,
+    );
+  if (
+    receipt.version_after !== review.expectedVersion + 1 ||
+    receipt.result?.version !== receipt.version_after
+  )
+    issues.push('Native result version does not match the reviewed transition.');
+  if (
+    receipt.aggregate_id !== review.params.orderId ||
+    receipt.result?.id !== review.params.orderId
+  )
+    issues.push('Native result identifies a different or unavailable order.');
+  if (receipt.result?.status !== review.params.status)
+    issues.push('Native result status does not match the reviewed action.');
+  if (
+    receipt.economic_context?.principal?.id !== review.principalId ||
+    receipt.economic_context?.store_id !== review.storeId
+  )
+    issues.push('Native receipt scope does not match the reviewed operator and store.');
+  return issues;
+}
+
 function receiptEvidence(receipt) {
   if (!receipt) return null;
   return Object.fromEntries(
@@ -93,6 +122,8 @@ export class OrderOperations {
       order: data.order,
       expectedVersion: data.receipt?.version_before,
       configHash: digest(kernel),
+      principalId: kernel.principal.id,
+      storeId: kernel.storeId,
       source: this.dbPath,
       previewReceipt: data.receipt,
     };
@@ -160,7 +191,12 @@ export class OrderOperations {
       const kernel = await this.configuration();
       if (digest(kernel) !== ticket.configHash)
         throw new Error('Operator identity or policy changed. Review the order again.');
-      if (ticket.receipt) return { receipt: structuredClone(ticket.receipt), replayed: true };
+      if (ticket.receipt)
+        return {
+          receipt: structuredClone(ticket.receipt),
+          reviewIssues: [...ticket.reviewIssues],
+          replayed: true,
+        };
       const record = {
         version: 1,
         source: this.dbPath,
@@ -191,7 +227,9 @@ export class OrderOperations {
           data.receipt.idempotency_key !== ticket.idempotencyKey ||
           data.receipt.command_type !== 'orders.transition' ||
           !['succeeded', 'rejected', 'failed'].includes(data.receipt.status) ||
-          (data.receipt.aggregate_id && data.receipt.aggregate_id !== ticket.params.orderId)
+          (data.receipt.status !== 'succeeded' &&
+            data.receipt.aggregate_id &&
+            data.receipt.aggregate_id !== ticket.params.orderId)
         )
           throw new Error('The engine did not return a matching order receipt.');
       } catch (error) {
@@ -199,6 +237,8 @@ export class OrderOperations {
         throw error;
       }
       ticket.receipt = structuredClone(data.receipt);
+      ticket.reviewIssues = orderReceiptIssues(ticket.receipt, ticket);
+      const outcome = { ...data, reviewIssues: [...ticket.reviewIssues] };
       // A journal failure after commit must retain the native outcome. The
       // pending entry remains sufficient to reconcile the same key on restart.
       try {
@@ -206,15 +246,16 @@ export class OrderOperations {
           ...record,
           state: 'finished',
           receipt: receiptEvidence(data.receipt),
+          reviewIssues: ticket.reviewIssues,
         });
       } catch {
         return {
-          ...data,
+          ...outcome,
           journalWarning:
             'Native receipt returned; local history could not be updated. Reconcile this action after restart.',
         };
       }
-      return data;
+      return outcome;
     } finally {
       this.applying = false;
     }
@@ -246,7 +287,11 @@ export class OrderOperations {
       await file.close();
     }
     if (
+      !record ||
+      typeof record !== 'object' ||
+      Array.isArray(record) ||
       record.version !== 1 ||
+      !Number.isSafeInteger(record.expectedVersion) ||
       record.source !== this.dbPath ||
       record.principalId !== kernel.principal.id ||
       record.storeId !== kernel.storeId ||
@@ -264,6 +309,7 @@ export class OrderOperations {
       throw new Error('Native receipt does not match the recorded order action.');
     return {
       ...data,
+      reviewIssues: orderReceiptIssues(data.receipt, record),
       idempotencyKey: record.idempotencyKey,
       params: record.params,
       message: data.receipt

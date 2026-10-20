@@ -5,7 +5,7 @@ import { terminalLayout } from './layout.js';
 import { clean, fit, width, wrap } from './text.js';
 import { DEFAULT_PLANNING, planningFields } from './planning.js';
 import { PRODUCT_FIELDS } from './basket.js';
-import { orderWorkflowLines } from './order-workflow.js';
+import { orderWorkflowLines, canReviewOrderAgain } from './order-workflow.js';
 import {
   cashDelta,
   cashMovement,
@@ -591,7 +591,11 @@ function compactFooter(state, w) {
       ? ' Waiting · Ctrl+C exit'
       : input.phase === 'confirm'
         ? ' Enter apply Esc back'
-        : ' Enter / ↑↓ Esc';
+        : input.reviewIssues?.length
+          ? ' Inspect · Esc closes'
+          : canReviewOrderAgain(input)
+            ? ' r review ↑↓ Esc'
+            : ' Enter / ↑↓ Esc';
   if (input?.saving) return ' Saving… please wait';
   if (input?.kind === 'scenario-update') return ' Enter replace Esc';
   if (input?.kind === 'import-review') return ' Enter load Esc';
@@ -664,7 +668,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       compact
         ? `ORDER · ${input.phase}`
         : `ORDER WORKFLOW · ${input.phase.toUpperCase()} · ${offset + 1}/${lines.length}`,
-      'accent',
+      input.reviewIssues?.length ? 'warn' : 'accent',
       true,
     );
     if (compact && input.phase === 'confirm') {

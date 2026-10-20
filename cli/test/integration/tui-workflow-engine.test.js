@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
+import { hashFile as hash } from '../fixtures/sqlite-file-evidence.js';
 import Database from 'better-sqlite3';
 import { TerminalBackend } from '../../src/tui/backend.js';
 import { DEFAULT_PLANNING } from '../../src/tui/planning.js';
@@ -54,9 +55,7 @@ test(
       } finally {
         writer.close();
       }
-      const before = createHash('sha256')
-        .update(await fs.readFile(source))
-        .digest('hex');
+      const before = await hash(source);
       const firstPage = await backend.request('snapshot');
       assert.equal(firstPage.customers.length, 50);
       assert.ok(!firstPage.customers.some((c) => c.email === 'needle-unique@example.test'));
@@ -401,9 +400,7 @@ test(
         'canceled run directories are cleaned',
       );
       assert.equal(
-        createHash('sha256')
-          .update(await fs.readFile(source))
-          .digest('hex'),
+        await hash(source),
         before,
         'browsing and scenarios did not mutate source records',
       );

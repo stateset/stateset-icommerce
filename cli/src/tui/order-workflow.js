@@ -20,6 +20,15 @@ export function orderWorkflow(order) {
   };
 }
 
+export function canReviewOrderAgain(input) {
+  return Boolean(
+    input.orderId &&
+    !input.busy &&
+    !input.reviewIssues?.length &&
+    ['result', 'failed'].includes(input.phase),
+  );
+}
+
 export function orderWorkflowKey(state, text, key) {
   const input = state.input,
     name = key.name;
@@ -30,6 +39,16 @@ export function orderWorkflowKey(state, text, key) {
       return { state: { ...state, input: { ...input, phase: 'review', text: '', error: null } } };
     return { state: { ...state, input: null } };
   }
+  if (text === 'r' && canReviewOrderAgain(input))
+    return {
+      state: {
+        ...state,
+        input: {
+          ...orderWorkflow({ id: input.orderId, orderNumber: input.orderLabel }),
+          selected: input.selected || 0,
+        },
+      },
+    };
   if (input.phase === 'choose') {
     if (['up', 'down'].includes(name))
       next.selected =
@@ -113,6 +132,15 @@ export function orderWorkflowLines(input, size) {
     add(editorWindow(input.text, input.cursor, size));
     add('Enter commits · Esc returns to review');
   } else {
+    if (input.reviewIssues?.length) {
+      add('RECEIPT MISMATCH');
+      add('Inspect the order and native receipt. No command will be repeated from this result.');
+      for (const issue of input.reviewIssues) add(issue);
+    }
+    if (input.phase === 'uncertain') {
+      add('OUTCOME UNKNOWN');
+      add('Enter retries the original key. After restart, P looks up the native receipt.');
+    }
     const preview = input.preview;
     if (preview) {
       add(`Order: ${preview.order.orderNumber || preview.order.id}`);
@@ -135,7 +163,8 @@ export function orderWorkflowLines(input, size) {
     }
     const receipt = input.receipt || preview?.receipt;
     if (receipt) {
-      add(`Native receipt: ${receipt.status}`);
+      const prior = !input.receipt && ['uncertain', 'failed'].includes(input.phase);
+      add(`${prior ? 'Prior preview receipt' : 'Native receipt'}: ${receipt.status}`);
       add(`Command: ${receipt.command_id}`);
       add(`Idempotency key: ${receipt.idempotency_key}`);
       if (receipt.aggregate_id) add(`Order aggregate: ${receipt.aggregate_id}`);
@@ -150,6 +179,8 @@ export function orderWorkflowLines(input, size) {
       add('v toggles full receipt · ↑↓ Home End scroll · Esc closes');
       if (input.raw) for (const line of JSON.stringify(receipt, null, 2).split('\n')) add(line);
     }
+    if (canReviewOrderAgain(input))
+      add('r starts a fresh review of this order · a new preview and typed APPLY are required.');
     if (input.phase === 'review')
       add(
         preview?.applyAllowed
