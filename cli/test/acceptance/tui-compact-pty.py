@@ -30,7 +30,7 @@ await workspace.saveScenario('Purchasing priority', {
   controls:{...initialState().planning,days:2,startingCash:'10.00'},
   products:['COFFEE-250G','MATCHA-50G'].map(sku=>({
     sku,initialStock:0,unitPrice:'2.00',unitCost:'1.00',
-    demand:{min:0,max:0},reorderPoint:0,targetStock:10,leadTimeDays:1,
+    demand:{min:0,max:0},reorderPoint:0,targetStock:3,leadTimeDays:1,
     purchasing:{minimumOrderQuantity:1,orderMultiple:1}
   }))
 });
@@ -99,7 +99,7 @@ try:
     send(b'\x15999999\r')
     screen(b'Seed 999999')
     send(b'e')
-    screen(b'PLAN 1/2')
+    screen(b'PLAN 1/3')
     send(b'\t\x153.25')
     frame = screen('3.25▏'.encode())
     assert b'Opening cash' in frame
@@ -107,7 +107,15 @@ try:
     frame = screen(b'PLANNING ASSUMPTIONS')
     assert b'3.25' in frame
     resize(20, 8)
-    screen(b'PLAN 2/2')
+    screen(b'PLAN 2/3')
+    send(b'\t\x150.50')
+    frame = screen('0.50▏'.encode())
+    assert b'Cash reserve' in frame
+    resize(140, 44)
+    frame = screen(b'PLANNING ASSUMPTIONS')
+    assert b'0.50' in frame and b'withheld from purchases' in frame
+    resize(20, 8)
+    screen(b'PLAN 3/3')
     send(b'\x13')
     screen(b'USD 3.25')
     send(b'w')
@@ -137,7 +145,14 @@ try:
     assert len(saved['runs']) == 1
     run = saved['runs'][0]
     assert run['seed'] == 999999 and run['controls']['startingCash'] == '3.25'
+    assert run['controls']['cashReserve'] == '0.50'
+    assert run['result']['inputs'][0]['cashReserve'] == '0.50'
     assert run['result']['results'][0]['summary']['endingCash'] == '3.25'
+    assert run['result']['results'][0]['summary']['reserveBlockedPurchases'] == 6
+    assert run['result']['results'][0]['summary']['purchasingSpend'] == '0.00'
+    assert run['result']['results'][0]['purchases'] == []
+    assert all(event['required'] == '3.00' and event['cash'] == '3.25' and event['spendableCash'] == '2.75'
+               for event in run['result']['results'][0]['timeline'] if event['type'] == 'purchase_reserve_blocked')
     send(b'\x1b[4~')
     screen(b'lab.')
     resize(140, 44)
@@ -158,6 +173,8 @@ try:
                 'activeCashEditorVisible': True, 'editorSurvivesResize': True,
                 'scenarioSavedAndReviewCanceled': True, 'nativeSimulationCompleted': True,
                 'seed': 999999, 'exactEndingCash': '3.25',
+                'reserveEditedAt20x8': True, 'reserveSurvivesResizeAndSave': True,
+                'nativeReserveBlocksWholeOrders': True, 'exactCashReserve': '0.50',
                 'reportsScrollAndSurviveResize': True, 'terminalRestored': True}
     (root / 'evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
     print(json.dumps({'evidence': str(root / 'evidence.json'), **evidence}, indent=2))

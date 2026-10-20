@@ -411,6 +411,15 @@ The target must exceed the reorder point. Demand-spike comparisons triple the
 baseline demand range; supplier-delay comparisons add three days to the
 baseline lead time; cash-constraint comparisons use 5% of baseline opening cash.
 
+The shared **Cash reserve (USD)** field in **e → planning assumptions** withholds
+an exact amount from purchasing for every selected SKU (or the demo recipe).
+The engine checks the whole rounded order against actual cash and then cash
+remaining above the reserve; it never shrinks an order to fit. Zero is the default.
+A reserve above opening cash is allowed and does not create funds; sales may
+release later purchasing capacity. Cash-constraint comparisons keep the same
+reserve while reducing opening cash. Saving, importing, updating and replaying
+scenarios retain the reserve, and review screens show it before confirmation.
+
 Results show fill rate, lost units, exact ending cash, purchasing spend and
 margin, with exact cash/margin changes against the baseline. The comparison
 also shows the exact lowest cash balance and its first day, purchased/received
