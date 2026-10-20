@@ -461,6 +461,11 @@ and closes its workers. Overview and help also scroll in short panes.
 **w** saves the current scenario under a new name, **l** opens the saved
 scenario library, and **h** opens run history. **Enter** loads a scenario or
 inspects a past run; **Shift+R** replays the inspected run's original inputs.
+In the scenario library, **Shift+N** (or **: → Rename selected saved scenario**)
+edits the selected entry's name in place. **Enter** confirms and **Esc** cancels.
+The saved ID, assumptions, SKU priority and run reports are preserved; renaming
+also works when all 20 scenario slots are full. After a rename, the library
+filter clears and the renamed entry stays selected.
 Use **a** from a result or the selected history entry to load its original
 preset, seed, shared controls and ordered SKU terms into an editable draft.
 This also works after filtering history. Loading neither executes a simulation

@@ -179,6 +179,41 @@ try:
     history = next(item for item in saved['scenarios'] if item['name'] == 'History draft')
     assert history['presetId'] == 'baseline' and history['controls']['startingCash'] == '10.00'
     assert saved['runs'] == original_runs, 'loading, editing and saving drafts never changes or adds runs'
+    before_rename = saved
+    send(b'l/History draft\r')
+    screen(b'1 / 4 entries')
+    send(b'N')
+    screen(b'RENAME SCENARIO')
+    send(b'\x15Canceled name\x1b')
+    screen(b'SAVED SCENARIOS')
+    assert json.loads(next(workspace.glob('*/workspace.json')).read_text()) == before_rename
+    send(b'N')
+    screen(b'RENAME SCENARIO')
+    resize(40, 14)
+    screen(b'RENAME SCENARIO')
+    resize(140, 44)
+    screen(b'RENAME SCENARIO')
+    send(b'\x15Renamed planning draft\r')
+    frame = screen(b'Scenario renamed')
+    assert b'4 / 4 entries' in frame and '› Renamed planning draft'.encode() in frame
+    expected = json.loads(json.dumps(before_rename))
+    next(item for item in expected['scenarios'] if item['id'] == history['id'])['name'] = 'Renamed planning draft'
+    assert json.loads(next(workspace.glob('*/workspace.json')).read_text()) == expected
+    send(b'q')
+    assert child.wait(timeout=15) == 0
+    buffer = b''
+    child = subprocess.Popen(
+        [node, str(repository / 'cli/bin/stateset-tui.js'), '--demo', '--workspace', str(workspace)],
+        stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
+        env={**os.environ, 'TERM': 'xterm-256color'},
+    )
+    screen(b'Engine connected')
+    send(b'6l/Renamed planning draft\r')
+    frame = screen(b'1 / 4 entries')
+    assert '› Renamed planning draft'.encode() in frame
+    send(b'\r')
+    screen(b'Loaded Renamed planning draft')
+    assert json.loads(next(workspace.glob('*/workspace.json')).read_text()) == expected
     send(b'q')
     assert child.wait(timeout=15) == 0
     after = termios.tcgetattr(slave)
@@ -190,6 +225,8 @@ try:
                 'comparisonChecksVisible': True, 'candidateInputsVisible': True,
                 'resultDraftLoadedAndEdited': True, 'filteredHistoryDraftLoaded': True,
                 'originalRunsUnchanged': True,
+                'filteredScenarioRenamedInPlace': True, 'renameCancellationPreservedFile': True,
+                'renamedScenarioLoadedAfterRestart': True,
                 'terminalRestored': True}
     (root / 'evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
     print(json.dumps({'evidence': str(root / 'evidence.json'), **evidence}, indent=2))

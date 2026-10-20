@@ -208,6 +208,17 @@ export class TerminalWorkspace {
       return data;
     });
   }
+  renameScenario(id, name) {
+    if (typeof id !== 'string' || !id) throw new Error('Choose a saved scenario');
+    if (typeof name !== 'string' || !name.trim() || name.length > 80)
+      throw new Error('Choose a scenario name (1–80 characters)');
+    return this.update((data) => {
+      const item = data.scenarios.find((scenario) => scenario.id === id);
+      if (!item) throw new Error('Scenario no longer exists; nothing renamed');
+      item.name = name.trim();
+      return data;
+    });
+  }
   removeEntry(kind, id) {
     if (!['scenarios', 'runs'].includes(kind)) throw new Error('Invalid library kind');
     return this.update((data) => {
