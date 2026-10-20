@@ -2,6 +2,36 @@ import { subtractDecimals } from '../utils/exact-decimal.js';
 import { inventoryComparisonContext } from '../simulation/comparison-context.js';
 import { SIMULATION_LIMITS } from '../simulation/limits.js';
 
+// undefined means unavailable; null is the engine's recorded absence of unmet
+// demand. Empty ending stock alone cannot establish a stockout.
+export function recordedFirstStockout(report) {
+  if (
+    !Number.isSafeInteger(report?.days) ||
+    report.days < 1 ||
+    report.days > SIMULATION_LIMITS.maxPlanningDays
+  )
+    return undefined;
+  const first = report.inventoryFlow?.firstStockout;
+  if (first === null) return null;
+  if (
+    !first ||
+    typeof first !== 'object' ||
+    Array.isArray(first) ||
+    typeof first.sku !== 'string' ||
+    !first.sku ||
+    !Number.isSafeInteger(first.day) ||
+    first.day < 1 ||
+    first.day > report.days ||
+    ![first.demanded, first.sold, first.lostSales].every(
+      (value) => Number.isSafeInteger(value) && value >= 0,
+    ) ||
+    first.lostSales < 1 ||
+    first.demanded - first.sold !== first.lostSales
+  )
+    return undefined;
+  return first;
+}
+
 // Compare recorded SKU policy facts independently of priority, cash and paths.
 // Unknown future rules stay unavailable instead of being silently ignored.
 export function purchasingRulesMatch(reports) {

@@ -213,6 +213,15 @@ try:
     frame = screen(b'RESULTS  Daily reviews')
     assert b'Reorder, sizing & review rules different' in frame
     assert b'Projected paths: demand same' in frame
+    for attempt in range(25):
+        send(b'\x1b[6~')
+        frame = screen(b'COMPARISON')
+        if (b'INVENTORY RISK' in frame and b'No unmet-demand stockout recorded.' in frame
+                and b'No outstanding purchases recorded at horizon.' in frame):
+            break
+    else:
+        raise AssertionError('Inventory risk summary was not reachable by scrolling')
+    assert json.loads(next(workspace.glob('*/workspace.json')).read_text()) == compared
     resize(20, 8)
     screen(b'RESULTS')
     send(b'q')
@@ -229,6 +238,7 @@ try:
                 'nativeCapacityAndReviewDecisions': True,
                 'dailyReviewComparisonSelectedAt20x8': True,
                 'dailyComparisonChangesNativeDecisions': True, 'priorRunUnchanged': True,
+                'inventoryRiskSummaryVisible': True,
                 'reportsScrollAndSurviveResize': True, 'terminalRestored': True}
     (root / 'evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
     print(json.dumps({'evidence': str(root / 'evidence.json'), **evidence}, indent=2))
