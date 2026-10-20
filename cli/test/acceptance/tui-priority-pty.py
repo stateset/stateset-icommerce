@@ -134,6 +134,12 @@ try:
     screen(b'Seed 77')
     send(b'jjjs')
     frame = screen(b'RESULTS  Cash constraint')
+    assert b'Opening cash USD 10.00' in frame and b'Opening cash USD 0.50' in frame
+    assert b'Cash movement USD -10.00' in frame and b'Cash movement USD 0.00' in frame
+    assert b'Change vs baseline: ending cash +0.50' in frame
+    assert b'cash movement +10.00' in frame
+    assert b'Inventory at cost: on hand USD 10.00' in frame
+    assert b'not profit' in frame
     assert b'COMPARISON CHECKS' in frame
     assert b'Opening cash different' in frame
     assert b'Projected paths: demand same' in frame
@@ -258,6 +264,7 @@ try:
                 'renamedScenarioLoadedAfterRestart': True,
                 'savedScenarioUpdateReviewed': True, 'updateCancellationPreservedFile': True,
                 'updatedScenarioLoadedAfterRestart': True,
+                'fundingAndCashMovementSeparated': True,
                 'terminalRestored': True}
     (root / 'evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
     print(json.dumps({'evidence': str(root / 'evidence.json'), **evidence}, indent=2))

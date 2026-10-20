@@ -455,8 +455,16 @@ executed order. The 30-day maximum keeps two compared plans within the native
 cash; each SKU owns its other terms. Without selections, the clearly labeled
 demo recipe remains available. Comparisons apply the shock to every selected SKU.
 
-Successful runs open a dedicated comparison view. **arrows/PgUp/PgDn/Home/End**
-reach every outcome, chart and executed assumption even in short panes;
+Successful runs open a dedicated comparison view with opening and ending cash,
+**cash movement** (ending minus opening cash),
+gross margin, and inventory valued at recorded cost, both on hand and in transit.
+Cash movement is not profit: purchases can turn cash into stock before a sale.
+Comparisons show separate ending-cash and cash-movement deltas, so different
+opening funding remains visible. Movement deltas require matching currencies
+and horizons; missing report evidence stays unavailable and never comes from
+the current draft. These are descriptive outcomes, not a ranking of plans.
+**arrows/PgUp/PgDn/Home/End** reach every outcome, chart and executed assumption
+even in short panes;
 **v** toggles the full structured report and **Esc** returns. **f** reopens the
 comparison. Active runs show elapsed time and the actual plan being executed;
 **c** cancels only the workbench's simulation worker, cleans its private run
