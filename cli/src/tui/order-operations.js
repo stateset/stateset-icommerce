@@ -318,13 +318,41 @@ export class OrderOperations {
     return record;
   }
   async history(payload = {}) {
+    const invalid = () =>
+      new Error(
+        'Order history accepts only a valid page cursor and pending-only filter; no caller-supplied commands or paths.',
+      );
     if (
       !payload ||
       typeof payload !== 'object' ||
       Array.isArray(payload) ||
-      Object.keys(payload).length
+      Object.keys(payload).some((key) => !['cursor', 'pendingOnly'].includes(key)) ||
+      ('pendingOnly' in payload && typeof payload.pendingOnly !== 'boolean')
     )
-      throw new Error('Order history accepts no caller-supplied commands or paths.');
+      throw invalid();
+    const cursor = payload.cursor ?? null,
+      pendingOnly = payload.pendingOnly === true;
+    let before = null;
+    if (cursor !== null) {
+      if (typeof cursor !== 'string' || cursor.length > 200 || !/^[A-Za-z0-9_-]+$/.test(cursor))
+        throw invalid();
+      try {
+        before = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+      } catch {
+        throw invalid();
+      }
+      if (
+        !Array.isArray(before) ||
+        before.length !== 2 ||
+        !Number.isFinite(before[0]) ||
+        before[0] < -8640000000000000 ||
+        before[0] > 8640000000000000 ||
+        typeof before[1] !== 'string' ||
+        !uuid.test(before[1])
+      )
+        throw invalid();
+    }
+    const page = { cursor, pendingOnly, nextCursor: null };
     const kernel = await this.historyContext();
     const candidates = [];
     let scanned = 0,
@@ -334,7 +362,7 @@ export class OrderOperations {
     try {
       directory = await fs.opendir(this.directory);
     } catch (error) {
-      if (error.code === 'ENOENT') return { entries: [], skipped: 0, truncated: false };
+      if (error.code === 'ENOENT') return { ...page, entries: [], skipped: 0, truncated: false };
       throw error;
     }
     // Bound local filesystem work independently of the number of native receipts.
@@ -363,13 +391,28 @@ export class OrderOperations {
     }
     candidates.sort((a, b) => b.modified - a.modified || a.id.localeCompare(b.id));
     const entries = [];
+    let last = null;
     for (const candidate of candidates) {
-      if (entries.length === 100) {
-        truncated = true;
-        break;
-      }
+      // Seek after the last displayed file rather than skipping a row count:
+      // a newer intent must not shift or duplicate the next page.
+      if (
+        before &&
+        !(
+          candidate.modified < before[0] ||
+          (candidate.modified === before[0] && candidate.id.localeCompare(before[1]) > 0)
+        )
+      )
+        continue;
       try {
         const record = await this.readHistory(candidate.name, kernel, candidate.id);
+        if (pendingOnly && record.state !== 'pending') continue;
+        if (entries.length === 25) {
+          page.nextCursor = Buffer.from(JSON.stringify([last.modified, last.id])).toString(
+            'base64url',
+          );
+          break;
+        }
+        last = candidate;
         entries.push({
           id: record.id,
           orderId: record.params.orderId,
@@ -382,7 +425,7 @@ export class OrderOperations {
         skipped++;
       }
     }
-    return { entries, skipped, truncated };
+    return { ...page, entries, skipped, truncated };
   }
   async reconcile(payload = {}) {
     if (

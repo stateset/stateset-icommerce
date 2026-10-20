@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import termios
 import time
+import uuid
 
 repository = Path(__file__).resolve().parents[3]
 root = Path(tempfile.mkdtemp(prefix='tui-orders-pty-'))
@@ -194,17 +195,33 @@ try:
                   'receipt': {**conflict_record['receipt'], 'status': 'succeeded'}}
     old_intent.write_text(json.dumps(old_record))
     os.utime(old_intent, (1700000000, 1700000000))
+    # Put the real pending intent beyond the first history page. These extra
+    # local records have no native receipts and are never submitted.
+    for index in range(25):
+        action_id = str(uuid.uuid4())
+        extra = old_intent.parent / ('order-action-' + action_id + '.json')
+        extra.write_text(json.dumps({**saved, 'id': action_id,
+                                   'idempotencyKey': 'tui-order:' + action_id}))
+        os.utime(extra, (1700100000 + index, 1700100000 + index))
     history_before = old_intent.read_bytes()
     source_before = hashlib.sha256(database.read_bytes()).hexdigest()
     launch()
     send(b'H')
-    screen(b'1/2', absent=b'Loading local')
+    screen(b'1/25', absent=b'Loading local')
+    send(b'f')
+    frame = screen(b'PENDING ONLY')
+    assert b'LOCAL PENDING' in frame
+    assert conflict_record['idempotencyKey'].encode() in frame
+    send(b'f')
+    screen(b'1/25')
+    send(b'nn')
+    screen(b'Page 2')
     resize(20, 8)
-    screen(b'ORDER ')
-    send(b'\x1b[B')
+    screen(b'HISTORY ')
+    send(b'\x1b[4~')
     screen(b'LOCAL PENDING')
     send(b'\x1b[6~')
-    screen(b'ORDER ')
+    screen(b'HISTORY ')
     send(b'\r\r')
     screen(b'Native receipt:')
     resize(140, 44)
@@ -213,7 +230,12 @@ try:
     assert b'kernel.version_conflict' in frame
     assert b'No command was repeated' in frame
     send(b'\x1b')
-    screen(b'LOCAL PENDING')
+    frame = screen(b'LOCAL PENDING')
+    assert b'Page 2' in frame
+    send(b'p')
+    screen(b'1/25')
+    send(b'r')
+    screen(b'1/25')
     send(b'\x1b')
     screen(b'confirmed', absent=b'ORDER WORKFLOW')
     stop()
@@ -225,6 +247,7 @@ try:
                 'versionConflictRefuses': True, 'freshReviewUsesNewTicket': True, 'compact20x8ReviewScroll': True,
                 'confirmationSurvivesResize': True, 'doubleEnterOneNativeReceipt': True,
                 'orderStatusRefreshed': True, 'restartReadOnlyReconciliation': True,
+                'historyPagingAndPendingFilter': True,
                 'olderPendingHistoryRecovery': True, 'localReceiptNotTrusted': True,
                 'historyReadOnlyAndSelectionSurvivesResize': True,
                 'terminalRestored': True, 'orderId': order['id'],

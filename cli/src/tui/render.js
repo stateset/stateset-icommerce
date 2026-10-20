@@ -592,8 +592,10 @@ function compactFooter(state, w) {
       ? ' Waiting · Ctrl+C exit'
       : input.phase === 'history'
         ? input.history?.truncated
-          ? ' PARTIAL ↑↓ Enter Esc'
-          : ' ↑↓ Enter lookup Esc'
+          ? ' PARTIAL n/p f Esc'
+          : w < 60
+            ? ' n/p f ↑↓ Enter Esc'
+            : ' n/p pages f filter r reload ↑↓ Enter Esc'
         : input.historyId
           ? ' ↑↓ scroll Esc back'
           : input.phase === 'confirm'
@@ -673,7 +675,9 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
         : Math.min(input.offset || 0, Math.max(0, lines.length - visible));
     put(
       compact
-        ? `ORDER · ${input.phase}`
+        ? input.phase === 'history'
+          ? `HISTORY · ${input.history.pendingOnly ? 'PENDING' : 'ALL'}`
+          : `ORDER · ${input.phase}`
         : `ORDER WORKFLOW · ${input.phase.toUpperCase()} · ${offset + 1}/${lines.length}`,
       input.reviewIssues?.length ? 'warn' : 'accent',
       true,

@@ -454,7 +454,12 @@ when another action has replaced the last-action pointer. Use **↑/↓** or
 **Enter** to look up its native receipt; **Esc** returns to history. Local
 `pending`/`recorded` labels are not proof of a native outcome. The browser
 validates database, principal and store scope, skips invalid records and reports
-partial history when its limits (100 actions, 2000 directory entries) are reached.
+partial history when its scan limit (2000 directory entries) is reached. History
+shows 25 actions per page: **n/p** moves between pages, **f** toggles local
+pending intents, and **r** reloads from the newest page. Page cursors keep newly
+created intents from shifting later pages; file edits can change the live listing.
+Reload to see current records. The pending filter describes local journal state,
+not a native receipt outcome.
 It never submits an action or trusts a locally saved receipt as a native result.
 While the original session is open, an unknown
 outcome can retry its host-held ticket with the same key. Without a recovered
