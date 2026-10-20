@@ -41,16 +41,40 @@ export function comparisonEvidence(reports) {
 // Refusals are timeline attempts, including repeated days and day zero.
 // Preserve exact recorded money; this is presentation, not purchase sizing.
 export function cashBudgetRefusals(report) {
+  return purchaseAttempts(report, new Set(['purchase_budget_blocked']));
+}
+
+// Group only recorded decisions, separately by event type and SKU. A review
+// deferral is not a refusal or a promise that a later order will be placed.
+export function purchasingExceptions(report) {
+  return purchaseAttempts(
+    report,
+    new Set([
+      'purchase_constraint_blocked',
+      'purchase_reserve_blocked',
+      'purchase_review_deferred',
+    ]),
+  );
+}
+
+function purchaseAttempts(report, types) {
   if (!Array.isArray(report?.timeline)) return null;
-  const bySku = new Map();
+  const groups = [];
+  const byType = new Map();
   for (const event of report.timeline) {
-    if (event?.type !== 'purchase_budget_blocked') continue;
+    if (!types.has(event?.type)) continue;
     const sku = typeof event.sku === 'string' ? event.sku : '(unknown SKU)';
-    const entry = bySku.get(sku) || { sku, attempts: 0, first: event };
+    if (!byType.has(event.type)) byType.set(event.type, new Map());
+    const bySku = byType.get(event.type);
+    let entry = bySku.get(sku);
+    if (!entry) {
+      entry = { sku, attempts: 0, first: event };
+      bySku.set(sku, entry);
+      groups.push(entry);
+    }
     entry.attempts += 1;
-    bySku.set(sku, entry);
   }
-  return [...bySku.values()];
+  return groups;
 }
 
 export function timelineEntries(report, query = '') {
