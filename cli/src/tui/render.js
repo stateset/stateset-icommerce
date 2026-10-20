@@ -1,6 +1,7 @@
 import { explorerBody, explorerDetail } from './explorer-render.js';
 import { VIEWS, records, pageKey, paletteCommands, PRESETS, simulationPlans } from './model.js';
 import { editorWindow } from './editor.js';
+import { terminalLayout } from './layout.js';
 import { clean, fit, width, wrap } from './text.js';
 import { PLANNING_FIELDS } from './planning.js';
 import { PRODUCT_FIELDS } from './basket.js';
@@ -44,10 +45,8 @@ function detailLines(record, size) {
 }
 
 export function detailLimit(state, columns = 80, rows = 24) {
-  const w = Math.max(1, Math.min(220, columns - 1));
-  const h = Math.max(1, Math.min(100, rows - 1));
-  const size = Math.max(1, w - (w >= 110 ? 22 : 2));
-  const visible = Math.max(1, h - 9);
+  const { size, available } = terminalLayout(columns, rows);
+  const visible = Math.max(1, available - 1);
   const record =
     state.view === 6
       ? explorerDetail(state)
@@ -198,9 +197,8 @@ export function importReviewLines(preview, size) {
 }
 
 export function importReviewLimit(preview, columns = 80, rows = 24) {
-  const w = Math.max(1, Math.min(220, columns - 1));
-  const size = Math.max(1, w - (w >= 110 ? 22 : 2));
-  const visible = Math.max(1, Math.min(100, rows - 1) - 9);
+  const { size, available } = terminalLayout(columns, rows);
+  const visible = Math.max(1, available - 1);
   return Math.max(0, importReviewLines(preview, size).length - visible);
 }
 
@@ -242,16 +240,13 @@ export function scenarioUpdateLines(review, size) {
 }
 
 export function scenarioUpdateLimit(review, columns = 80, rows = 24) {
-  const w = Math.max(1, Math.min(220, columns - 1));
-  const size = Math.max(1, w - (w >= 110 ? 22 : 2));
-  const visible = Math.max(1, Math.min(100, rows - 1) - 9);
+  const { size, available } = terminalLayout(columns, rows);
+  const visible = Math.max(1, available - 1);
   return Math.max(0, scenarioUpdateLines(review, size).length - visible);
 }
 
 export function panelLimit(state, columns = 80, rows = 24) {
-  const w = Math.max(1, Math.min(220, columns - 1));
-  const size = Math.max(1, w - (w >= 110 ? 22 : 2));
-  const available = Math.max(1, Math.min(100, rows - 1) - 8);
+  const { size, available } = terminalLayout(columns, rows);
   return Math.max(0, resultLines(state, size).length - Math.max(1, available - 1));
 }
 
@@ -267,9 +262,21 @@ function tableRow(view, row, size) {
   return `${fit(row.name, 23)} ${row.note}`;
 }
 
-function staticBody(state) {
+function staticBody(state, compact = false) {
   const body = [];
   const put = (text = '', tone = 'ink', bold = false) => body.push({ text, tone, bold });
+  if (compact && !state.help) {
+    const counts = state.data?.counts || {};
+    put('COMMERCE', 'accent', true);
+    for (const field of ['orders', 'customers', 'products', 'payments'])
+      put(`${field}: ${counts[field] ?? '—'}`);
+    put(`Stock alerts: ${state.data?.inventoryCount ?? '—'}`);
+    for (const item of state.data?.alerts || []) put(`${item.sku}: ${item.available} available`);
+    put('6 Simulation lab');
+    put('7 Engine explorer');
+    put('1–7 views · : commands');
+    return body;
+  }
   if (state.help) {
     put('KEYBOARD HELP · ↑ ↓ scroll · Esc close', 'accent', true);
     for (const line of [
@@ -365,48 +372,75 @@ function staticBody(state) {
   }
   return body;
 }
+function staticLines(state, size, compact) {
+  const lines = staticBody(state, compact);
+  return compact
+    ? lines.flatMap((item) =>
+        wrap(item.text.replace(/\s{2,}/g, ' '), size).map((text) => ({ ...item, text })),
+      )
+    : lines;
+}
+function compactFooter(state, w) {
+  const input = state.input;
+  if (input?.saving) return ' Saving… please wait';
+  if (input?.kind === 'scenario-update') return ' Enter replace Esc';
+  if (input?.kind === 'import-review') return ' Enter load Esc';
+  if (['planning', 'product'].includes(input?.kind)) return ' Tab next ^S Esc';
+  if (input) return ` ${editorWindow(input.text, input.cursor, w - 2)}`;
+  if (state.help || state.detail || state.panel === 'results') return ' ↑↓ Home End Esc';
+  if (state.sim.running) return ' c cancel · : ?';
+  if (state.panel) return ' Enter / : ? Esc';
+  if (state.view === 5) return ' s run e edit : ?';
+  return ' 1-7 / Enter : ?';
+}
 export function contentLimit(state, _columns = 80, rows = 24) {
-  const available = Math.max(1, Math.min(100, rows - 1) - 8);
-  return Math.max(0, staticBody(state).length - available);
+  const { size, available, compact } = terminalLayout(_columns, rows);
+  return Math.max(0, staticLines(state, size, compact).length - available);
 }
 
 export function render(state, columns = 80, rows = 24, { color = true } = {}) {
-  const w = Math.max(1, Math.min(220, columns - 1));
-  const h = Math.max(1, Math.min(100, rows - 1));
+  const { w, h, compact, sidebar, size, available, usable } = terminalLayout(columns, rows);
   const style = (value, tone = 'ink', bold = false) =>
     color ? `\x1b[${bold ? '1;' : ''}38;5;${COLORS[tone]}m${value}\x1b[0m` : value;
   const out = [];
   const add = (value = '', tone = 'ink', bold = false) =>
     out.push(style(fit(value, w), tone, bold));
-  add(' STATESET  /  iCommerce', 'accent', true);
-  if (w < 38 || h < 12) {
-    add(' Enlarge pane to at least 40 × 14.', 'warn');
+  if (!usable) {
+    add(' STATESET', 'accent', true);
+    add(' Need 20 × 8', 'warn');
     add(' q Quit');
     return out.slice(0, h).join('\n');
   }
-  add(
-    ` ${state.source}  ·  ${state.data ? 'Engine connected' : state.loading ? 'Connecting…' : 'Not connected'}`,
-    'muted',
-  );
-  add(
-    ' ' +
-      VIEWS.map((v, i) =>
-        w < 80 && i !== state.view
-          ? `${i + 1}`
-          : `${i + 1} ${['Home', 'Orders', 'Stock', 'People', 'Pay', 'Lab', 'Explore'][i]}`,
-      ).join('  '),
-    'muted',
-  );
-  add(
-    ` ${VIEWS[state.view]}${(state.input?.kind === 'search' ? state.input.text : state.view === 6 ? state.explorer.query : state.query) ? `  / ${state.input?.kind === 'search' ? state.input.text : state.view === 6 ? state.explorer.query : state.query}` : ''}${state.loading ? '  ·  Refreshing…' : ''}`,
-    'accent',
-    true,
-  );
+  if (compact) {
+    add(
+      ` ${state.view + 1} ${['Home', 'Orders', 'Stock', 'People', 'Pay', 'Lab', 'Explore'][state.view]} · ${state.data ? 'ready' : state.loading ? 'loading' : 'offline'}`,
+      'accent',
+      true,
+    );
+    add(` ${state.source}`, 'muted');
+  } else {
+    add(' STATESET  /  iCommerce', 'accent', true);
+    add(
+      ` ${state.source}  ·  ${state.data ? 'Engine connected' : state.loading ? 'Connecting…' : 'Not connected'}`,
+      'muted',
+    );
+    add(
+      ' ' +
+        VIEWS.map((v, i) =>
+          w < 80 && i !== state.view
+            ? `${i + 1}`
+            : `${i + 1} ${['Home', 'Orders', 'Stock', 'People', 'Pay', 'Lab', 'Explore'][i]}`,
+        ).join('  '),
+      'muted',
+    );
+    add(
+      ` ${VIEWS[state.view]}${(state.input?.kind === 'search' ? state.input.text : state.view === 6 ? state.explorer.query : state.query) ? `  / ${state.input?.kind === 'search' ? state.input.text : state.view === 6 ? state.explorer.query : state.query}` : ''}${state.loading ? '  ·  Refreshing…' : ''}`,
+      'accent',
+      true,
+    );
+  }
   const body = [];
   const put = (text = '', tone = 'ink', bold = false) => body.push({ text, tone, bold });
-  const sidebar = w >= 110;
-  const size = w - (sidebar ? 22 : 2);
-  const available = Math.max(1, h - 8);
   if (['import-review', 'scenario-update'].includes(state.input?.kind)) {
     const update = state.input.kind === 'scenario-update';
     const lines = update
@@ -415,7 +449,9 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       visible = Math.max(1, available - 1);
     const offset = Math.min(state.input.offset, Math.max(0, lines.length - visible));
     put(
-      `${update ? 'UPDATE SCENARIO' : 'IMPORT PREVIEW'} · ${offset + 1}–${Math.min(lines.length, offset + visible)}/${lines.length} · ↑ ↓ scroll`,
+      compact
+        ? `${update ? 'UPDATE' : 'IMPORT'} ${offset + 1}/${lines.length}`
+        : `${update ? 'UPDATE SCENARIO' : 'IMPORT PREVIEW'} · ${offset + 1}–${Math.min(lines.length, offset + visible)}/${lines.length} · ↑ ↓ scroll`,
       'accent',
       true,
     );
@@ -428,33 +464,49 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
         : state.products.length
           ? PLANNING_FIELDS.slice(0, 2)
           : PLANNING_FIELDS;
-    put(
-      editor.kind === 'product'
-        ? `SKU TERMS · ${editor.sku} · assumed USD`
-        : 'PLANNING ASSUMPTIONS  ·  private scenarios only',
-      'accent',
-      true,
-    );
-    put('← → edit · Home/End · Tab next · Ctrl+S save · Esc cancel', 'muted');
-    const visible = Math.max(1, available - 4),
-      start = Math.max(0, editor.field - visible + 1);
-    for (const [index, field] of fields.slice(start, start + visible).entries()) {
-      const active = start + index === editor.field;
+    if (compact) {
+      const field = fields[editor.field];
       put(
-        `${active ? '›' : ' '} ${fit(field.label, Math.min(23, size - 16))} [${active ? editorWindow(editor.draft[field.key], editor.cursor, Math.max(1, size - Math.min(23, size - 16) - 6)) : editor.draft[field.key]}]`,
-        active ? 'accent' : 'ink',
-        active,
+        `${editor.kind === 'product' ? 'SKU' : 'PLAN'} ${editor.field + 1}/${fields.length}`,
+        'accent',
+        true,
       );
-      if (active) put(`  ${field.hint}`, 'muted');
+      put(field.label);
+      put(editorWindow(editor.draft[field.key], editor.cursor, size), 'accent', true);
+      wrap(field.hint, size)
+        .slice(0, Math.max(0, available - 3))
+        .forEach((line) => put(line, 'muted'));
+    } else {
+      put(
+        editor.kind === 'product'
+          ? `SKU TERMS · ${editor.sku} · assumed USD`
+          : 'PLANNING ASSUMPTIONS  ·  private scenarios only',
+        'accent',
+        true,
+      );
+      put('← → edit · Home/End · Tab next · Ctrl+S save · Esc cancel', 'muted');
+      const visible = Math.max(1, available - 4),
+        start = Math.max(0, editor.field - visible + 1);
+      for (const [index, field] of fields.slice(start, start + visible).entries()) {
+        const active = start + index === editor.field;
+        put(
+          `${active ? '›' : ' '} ${fit(field.label, Math.min(23, size - 16))} [${active ? editorWindow(editor.draft[field.key], editor.cursor, Math.max(1, size - Math.min(23, size - 16) - 6)) : editor.draft[field.key]}]`,
+          active ? 'accent' : 'ink',
+          active,
+        );
+        if (active) put(`  ${field.hint}`, 'muted');
+      }
+      if (editor.error) put(editor.error, 'bad');
+      else put('Changes affect the next run. Existing results keep their inputs.', 'muted');
     }
-    if (editor.error) put(editor.error, 'bad');
-    else put('Changes affect the next run. Existing results keep their inputs.', 'muted');
   } else if (state.panel === 'results' && !state.detail && !state.help && !state.input) {
     const lines = resultLines(state, size),
       visible = Math.max(1, available - 1);
     const offset = Math.min(state.panelOffset, Math.max(0, lines.length - visible));
     put(
-      `COMPARISON · ${offset + 1}–${Math.min(lines.length, offset + visible)} / ${lines.length} lines · Esc lab`,
+      compact
+        ? `RESULTS ${offset + 1}/${lines.length}`
+        : `COMPARISON · ${offset + 1}–${Math.min(lines.length, offset + visible)} / ${lines.length} lines · Esc lab`,
       'muted',
     );
     lines.slice(offset, offset + visible).forEach((line) => put(line));
@@ -466,9 +518,11 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     const rows = records(state);
     put(
       {
-        scenarios: 'SAVED SCENARIOS · Enter load · N rename · S update · / filter',
-        history: 'RUN HISTORY · Enter inspect · a use · / filter',
-        products: 'SELECTED SKUS · PURCHASE PRIORITY',
+        scenarios: compact
+          ? 'SCENARIOS'
+          : 'SAVED SCENARIOS · Enter load · N rename · S update · / filter',
+        history: compact ? 'HISTORY' : 'RUN HISTORY · Enter inspect · a use · / filter',
+        products: compact ? 'SKU PRIORITY' : 'SELECTED SKUS · PURCHASE PRIORITY',
       }[state.panel],
       'accent',
       true,
@@ -478,24 +532,31 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       history: state.library.runs,
       products: state.products,
     }[state.panel];
-    if (state.panel === 'products') put('[ earlier · ] later · Enter edit · / filter', 'muted');
+    if (!compact && state.panel === 'products')
+      put('[ earlier · ] later · Enter edit · / filter', 'muted');
     put(
-      `${rows.length} / ${allRows.length} entries${state.panelQuery ? ` · / ${state.panelQuery}` : ''} · ${state.panel === 'products' ? 'd' : 'Shift+D'} remove${state.undoRemoval ? ' · Shift+U undo' : ''}`,
+      compact
+        ? `${rows.length}/${allRows.length}${state.panelQuery ? ` / ${state.panelQuery}` : ''}`
+        : `${rows.length} / ${allRows.length} entries${state.panelQuery ? ` · / ${state.panelQuery}` : ''} · ${state.panel === 'products' ? 'd' : 'Shift+D'} remove${state.undoRemoval ? ' · Shift+U undo' : ''}`,
       'muted',
     );
-    const count = Math.max(1, Math.floor((available - (state.panel === 'products' ? 3 : 2)) / 2));
+    const count = Math.max(
+      1,
+      compact ? available - 2 : Math.floor((available - (state.panel === 'products' ? 3 : 2)) / 2),
+    );
     const start = Math.max(0, state.selected - count + 1);
     rows.slice(start, start + count).forEach((item, i) => {
       put(
         `${start + i === state.selected ? '›' : ' '} ${state.panel === 'products' ? `${allRows.indexOf(item) + 1}. ` : ''}${item.name || item.sku || item.preset}`,
         start + i === state.selected ? 'accent' : 'ink',
       );
-      put(
-        state.panel === 'products'
-          ? `  cost ${item.unitCost} · demand ${item.demand.min}–${item.demand.max} · lead ${item.leadTimeDays}d`
-          : `  ${item.controls.days}d · USD ${item.controls.startingCash} · seed ${item.seed} · ${item.products.length || 1} SKU(s)${item.createdAt ? ' · ' + item.createdAt.slice(0, 10) : ''}`,
-        'muted',
-      );
+      if (!compact)
+        put(
+          state.panel === 'products'
+            ? `  cost ${item.unitCost} · demand ${item.demand.min}–${item.demand.max} · lead ${item.leadTimeDays}d`
+            : `  ${item.controls.days}d · USD ${item.controls.startingCash} · seed ${item.seed} · ${item.products.length || 1} SKU(s)${item.createdAt ? ' · ' + item.createdAt.slice(0, 10) : ''}`,
+          'muted',
+        );
     });
     if (!rows.length)
       put(
@@ -520,7 +581,14 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       'accent',
       true,
     );
-    put(state.input.saving ? 'Renaming… please wait' : 'Enter confirm · Esc cancel', 'muted');
+    put(
+      state.input.saving
+        ? 'Renaming… please wait'
+        : compact
+          ? 'Enter / Esc cancel'
+          : 'Enter confirm · Esc cancel',
+      'muted',
+    );
     put(
       state.input.kind === 'seed'
         ? 'Enter saves a valid seed. Existing results keep their original seed.'
@@ -541,13 +609,14 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       'muted',
     );
   } else if (state.input?.kind === 'palette') {
-    put('COMMAND PALETTE', 'accent', true);
-    put('↑ ↓ select  ·  Enter open  ·  Type to filter  ·  Esc dismiss', 'muted');
+    put(compact ? 'COMMANDS' : 'COMMAND PALETTE', 'accent', true);
+    if (!compact) put('↑ ↓ select  ·  Enter open  ·  Type to filter  ·  Esc dismiss', 'muted');
     const commands = paletteCommands(state.input.text, state),
       selected = state.input.selected || 0;
-    const start = Math.max(0, selected - Math.max(1, available - 2) + 1);
+    const count = Math.max(1, available - (compact ? 1 : 2));
+    const start = Math.max(0, selected - count + 1);
     commands
-      .slice(start, start + Math.max(1, available - 2))
+      .slice(start, start + count)
       .forEach((c, i) =>
         put(
           `${i + start === selected ? '› ' : '  '}${c.label}`,
@@ -556,7 +625,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
       );
     if (!commands.length) put('No matching commands.', 'muted');
   } else if (state.help) {
-    body.push(...staticBody(state));
+    body.push(...staticLines(state, size, compact));
   } else if (!state.data && state.error && state.view !== 5 && state.view !== 6) {
     put('THE ENGINE COULD NOT OPEN', 'bad', true);
     put();
@@ -568,7 +637,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     put();
     put('No records have been loaded. The source store is unchanged.', 'muted');
   } else if (state.view === 0) {
-    body.push(...staticBody(state));
+    body.push(...staticLines(state, size, compact));
   } else if (state.detail) {
     const lines = detailLines(
       state.view === 6
@@ -580,45 +649,54 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     );
     const offset = Math.min(state.detailOffset, Math.max(0, lines.length - available + 1));
     put(
-      state.view === 6
-        ? state.explorer.mode === 'tools'
-          ? 'TOOL REFERENCE · ↑ ↓ scroll · Esc close'
-          : 'STORED RECORD · ↑ ↓ scroll · t links · Esc close'
-        : state.view === 5
-          ? 'RECORD DETAILS · ↑ ↓ scroll · Esc back'
-          : 'DETAILS · t related · u customer · b back · Esc close',
+      compact
+        ? 'DETAILS · ↑↓ Esc'
+        : state.view === 6
+          ? state.explorer.mode === 'tools'
+            ? 'TOOL REFERENCE · ↑ ↓ scroll · Esc close'
+            : 'STORED RECORD · ↑ ↓ scroll · t links · Esc close'
+          : state.view === 5
+            ? 'RECORD DETAILS · ↑ ↓ scroll · Esc back'
+            : 'DETAILS · t related · u customer · b back · Esc close',
       'muted',
     );
     lines.slice(offset, offset + available - 1).forEach((line) => put(line));
   } else if (state.view === 6) {
-    body.push(...explorerBody(state, size, available));
+    body.push(...explorerBody(state, size, available, compact));
   } else {
     const data = records(state),
       field = pageKey(state.view);
     if (state.view === 5) {
-      put(`ISOLATED ENGINE  ·  Seed ${state.seed}  ·  g set · + / -`, 'good');
-      put(
-        `${state.planning.days} days · USD ${state.planning.startingCash} cash · e edit assumptions`,
-        'muted',
-      );
-      put(
-        `${state.products.length || 1} SKU(s) · p selected SKUs · w save · l library · h history`,
-        'accent',
-      );
-      put(
-        state.products.length
-          ? state.products.map((p) => p.sku).join(' · ')
-          : `Demo recipe · Stock ${state.planning.initialStock} · Reorder ${state.planning.reorderPoint} → ${state.planning.targetStock} · Lead ${state.planning.leadTimeDays}d`,
-        'muted',
-      );
+      if (compact) {
+        put(`Seed ${state.seed} · ${state.planning.days}d`, 'good');
+        put(`USD ${state.planning.startingCash} · ${state.products.length || 1} SKU`, 'muted');
+      } else {
+        put(`ISOLATED ENGINE  ·  Seed ${state.seed}  ·  g set · + / -`, 'good');
+        put(
+          `${state.planning.days} days · USD ${state.planning.startingCash} cash · e edit assumptions`,
+          'muted',
+        );
+        put(
+          `${state.products.length || 1} SKU(s) · p selected SKUs · w save · l library · h history`,
+          'accent',
+        );
+        put(
+          state.products.length
+            ? state.products.map((p) => p.sku).join(' · ')
+            : `Demo recipe · Stock ${state.planning.initialStock} · Reorder ${state.planning.reorderPoint} → ${state.planning.targetStock} · Lead ${state.planning.leadTimeDays}d`,
+          'muted',
+        );
+      }
     } else
       put(
-        `Page ${(state.data?.pages?.[field] || 0) + 1} · ${data.length} shown / ${state.data?.matched?.[field] ?? state.data?.counts?.[field] ?? '—'} matches · n / p · o sort`,
+        compact
+          ? `Page ${(state.data?.pages?.[field] || 0) + 1} · ${data.length} rows`
+          : `Page ${(state.data?.pages?.[field] || 0) + 1} · ${data.length} shown / ${state.data?.matched?.[field] ?? state.data?.counts?.[field] ?? '—'} matches · n / p · o sort`,
         'muted',
       );
-    if (state.relation && state.relation.field === field)
+    if (!compact && state.relation && state.relation.field === field)
       put(`Related ${state.relation.column}: ${state.relation.id} · b back`, 'muted');
-    if (state.view !== 5)
+    if (!compact && state.view !== 5)
       put(
         [
           '',
@@ -629,13 +707,16 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
         ][state.view],
         'muted',
       );
-    const listHeight =
-      state.view === 5 ? Math.min(4, Math.max(1, available - 10)) : Math.max(1, available - 3);
+    const listHeight = compact
+      ? Math.max(1, available - 2)
+      : state.view === 5
+        ? Math.min(4, Math.max(1, available - 10))
+        : Math.max(1, available - 3);
     const start = Math.max(0, state.selected - listHeight + 1);
     for (const [i, record] of data.slice(start, start + listHeight).entries()) {
       const selected = i + start === state.selected;
       put(
-        `${selected ? '›' : ' '} ${tableRow(state.view, record, size - 2)}`,
+        `${selected ? '›' : ' '} ${compact ? record.orderNumber || record.sku || record.email || record.paymentNumber || record.name || record.id : tableRow(state.view, record, size - 2)}`,
         selected ? 'accent' : 'ink',
         selected,
       );
@@ -647,7 +728,16 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
           : 'Waiting for the embedded engine…',
         'muted',
       );
-    if (state.view === 5) {
+    if (compact && state.view !== 5 && data[state.selected]) {
+      const item = data[state.selected];
+      put(
+        state.view === 2
+          ? `Available ${item.available ?? '—'}`
+          : item.status || 'Enter for details',
+        'muted',
+      );
+    }
+    if (state.view === 5 && !compact) {
       put();
       const sim = state.sim;
       if (sim.running) put(`RUNNING  ${sim.pending?.preset} / seed ${sim.pending?.seed}`, 'warn');
@@ -673,7 +763,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   }
   for (let i = 0; i < available; i++) {
     const offset =
-      state.help || state.view === 0
+      !state.input && (state.help || state.view === 0)
         ? Math.min(state.contentOffset, Math.max(0, body.length - available))
         : 0;
     const item = body[i + offset] || { text: '', tone: 'ink' };
@@ -697,29 +787,31 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   }
   const errors = state.data?.errors || [];
   add(
-    ` ${state.input?.error ? state.input.error : state.error ? `STALE / ERROR  ${state.error}` : errors.length ? `PARTIAL DATA  ${errors.map((e) => e.section).join(', ')}` : state.sim.running ? `RUNNING ${Math.floor((Date.now() - state.sim.startedAt) / 1000)}s · ${state.sim.progress || 'Engine working'} · c cancel` : state.notice || (state.sim.error ? `Run failed: ${state.sim.error}` : state.data ? `Snapshot ${state.data.checkedAt}  ·  r refresh` : 'Loading engine…')}`,
+    ` ${state.input?.error ? state.input.error : state.error ? `STALE / ERROR  ${state.error}` : errors.length ? `PARTIAL DATA  ${errors.map((e) => e.section).join(', ')}` : state.sim.running ? `RUNNING ${Math.floor((Date.now() - state.sim.startedAt) / 1000)}s · ${state.sim.progress || 'Engine working'} · c cancel` : state.notice || (state.sim.error ? `Run failed: ${state.sim.error}` : compact ? (state.sim.result && state.view === 5 ? 'f results · R replay' : '? keyboard help') : state.data ? `Snapshot ${state.data.checkedAt}  ·  r refresh` : 'Loading engine…')}`,
     state.error || errors.length || state.input?.error || state.sim.error ? 'warn' : 'muted',
   );
   add(
-    state.input?.kind === 'scenario-update'
-      ? state.input.saving
-        ? ' Updating scenario… please wait'
-        : ' Enter replace saved scenario  ↑ ↓ scroll  Esc cancel'
-      : state.input?.kind === 'import-review'
-        ? ' Enter load assumptions  ↑ ↓ scroll  Esc cancel'
-        : ['planning', 'product'].includes(state.input?.kind)
-          ? ' Ctrl+U clear  Tab next  Ctrl+S save  Esc cancel'
-          : state.input
-            ? state.input.saving
-              ? ' Renaming… please wait'
-              : ` ${{ search: '/', palette: ':', save: 'Name: ', rename: 'Name: ', export: 'Path: ', import: 'Path: ', seed: 'Seed:' }[state.input.kind] || ''} ${editorWindow(state.input.text, state.input.cursor, Math.max(1, w - 36))}  Enter accept · Esc cancel`
-            : state.view === 6
-              ? ' d domains  T tools  / search  Enter open  b back  ? help  q quit'
-              : state.view === 5
-                ? ' e edit  p SKUs  l/h library/history  i import  : commands  ? help'
-                : state.view === 2
-                  ? ' a plan SKU  / search  o sort  Enter inspect  ? help  q quit'
-                  : ' / search  o sort  Enter inspect  : commands  ? help  q quit',
+    compact
+      ? compactFooter(state, w)
+      : state.input?.kind === 'scenario-update'
+        ? state.input.saving
+          ? ' Updating scenario… please wait'
+          : ' Enter replace saved scenario  ↑ ↓ scroll  Esc cancel'
+        : state.input?.kind === 'import-review'
+          ? ' Enter load assumptions  ↑ ↓ scroll  Esc cancel'
+          : ['planning', 'product'].includes(state.input?.kind)
+            ? ' Ctrl+U clear  Tab next  Ctrl+S save  Esc cancel'
+            : state.input
+              ? state.input.saving
+                ? ' Renaming… please wait'
+                : ` ${{ search: '/', palette: ':', save: 'Name: ', rename: 'Name: ', export: 'Path: ', import: 'Path: ', seed: 'Seed:' }[state.input.kind] || ''} ${editorWindow(state.input.text, state.input.cursor, Math.max(1, w - 36))}  Enter accept · Esc cancel`
+              : state.view === 6
+                ? ' d domains  T tools  / search  Enter open  b back  ? help  q quit'
+                : state.view === 5
+                  ? ' e edit  p SKUs  l/h library/history  i import  : commands  ? help'
+                  : state.view === 2
+                    ? ' a plan SKU  / search  o sort  Enter inspect  ? help  q quit'
+                    : ' / search  o sort  Enter inspect  : commands  ? help  q quit',
     state.input ? 'accent' : 'muted',
   );
   // Pad each row; stay off the last physical column/row to avoid wrapping and

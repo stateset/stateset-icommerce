@@ -347,7 +347,12 @@ opens the full result for inspection. **q** exits and restores the terminal.
 Search previews matches as you type; **Esc** restores the previous filter.
 The command palette supports arrow-key selection and scrolling. In record and
 report details, **Home/End** jumps to the first/last page.
-The layout adapts to narrow split panes; 40 columns by 14 rows is the minimum.
+The layout adapts to split panes down to **20 columns by 8 rows**. Compact mode
+keeps selected rows and active input fields visible, shows one planning field at
+a time, and retains scrolling for full records, reports and update/import
+reviews. **1–7** switches views, **:** opens commands and **?** opens scrollable
+help. Inputs, selections and completed reports survive switching between compact
+and wider layouts. Panes smaller than 20×8 show a size notice.
 
 Demo records are created by the native embedded engine in a private temporary
 store, visibly labeled `DEMO`. Existing stores are opened with SQLite's
