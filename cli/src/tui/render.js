@@ -5,6 +5,7 @@ import { terminalLayout } from './layout.js';
 import { clean, fit, width, wrap } from './text.js';
 import { DEFAULT_PLANNING, planningFields } from './planning.js';
 import { PRODUCT_FIELDS } from './basket.js';
+import { orderWorkflowLines } from './order-workflow.js';
 import {
   cashDelta,
   cashMovement,
@@ -520,7 +521,9 @@ function staticBody(state, compact = false) {
       '?               Toggle this help',
       'q / Ctrl+C      Quit and restore the terminal',
       '',
-      'Store browsing has no business-write actions.',
+      'W (Orders)      Preview a governed order action',
+      'P (Orders)      Reconcile last native order receipt; no command repeated',
+      'Browsing is read-only. Live order actions require --apply and trusted kernel files.',
       'Lab runs use fresh private engine databases.',
       'Projections reflect assumptions; they are not validated forecasts.',
     ])
@@ -583,6 +586,12 @@ function staticLines(state, size, compact) {
 }
 function compactFooter(state, w) {
   const input = state.input;
+  if (input?.kind === 'order-action')
+    return input.busy
+      ? ' Waiting · Ctrl+C exit'
+      : input.phase === 'confirm'
+        ? ' Enter apply Esc back'
+        : ' Enter / ↑↓ Esc';
   if (input?.saving) return ' Saving… please wait';
   if (input?.kind === 'scenario-update') return ' Enter replace Esc';
   if (input?.kind === 'import-review') return ' Enter load Esc';
@@ -643,7 +652,26 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   }
   const body = [];
   const put = (text = '', tone = 'ink', bold = false) => body.push({ text, tone, bold });
-  if (['import-review', 'scenario-update'].includes(state.input?.kind)) {
+  if (state.input?.kind === 'order-action') {
+    const input = state.input,
+      lines = orderWorkflowLines(input, size);
+    const visible = Math.max(1, available - 1);
+    const offset =
+      input.phase === 'choose' && compact
+        ? Math.min(input.selected + 1, Math.max(0, lines.length - visible))
+        : Math.min(input.offset || 0, Math.max(0, lines.length - visible));
+    put(
+      compact
+        ? `ORDER · ${input.phase}`
+        : `ORDER WORKFLOW · ${input.phase.toUpperCase()} · ${offset + 1}/${lines.length}`,
+      'accent',
+      true,
+    );
+    if (compact && input.phase === 'confirm') {
+      put('Type APPLY');
+      put(editorWindow(input.text, input.cursor, size), 'accent', true);
+    } else lines.slice(offset, offset + visible).forEach((line) => put(line));
+  } else if (['import-review', 'scenario-update'].includes(state.input?.kind)) {
     const update = state.input.kind === 'scenario-update';
     const lines = update
         ? scenarioUpdateLines(state.input, size)
@@ -999,25 +1027,29 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   add(
     compact
       ? compactFooter(state, w)
-      : state.input?.kind === 'scenario-update'
-        ? state.input.saving
-          ? ' Updating scenario… please wait'
-          : ' Enter replace saved scenario  ↑ ↓ scroll  Esc cancel'
-        : state.input?.kind === 'import-review'
-          ? ' Enter load assumptions  ↑ ↓ scroll  Esc cancel'
-          : ['planning', 'product'].includes(state.input?.kind)
-            ? ' Ctrl+U clear  Tab next  Ctrl+S save  Esc cancel'
-            : state.input
-              ? state.input.saving
-                ? ' Renaming… please wait'
-                : ` ${{ search: '/', palette: ':', save: 'Name: ', rename: 'Name: ', export: 'Path: ', import: 'Path: ', seed: 'Seed:' }[state.input.kind] || ''} ${editorWindow(state.input.text, state.input.cursor, Math.max(1, w - 36))}  Enter accept · Esc cancel`
-              : state.view === 6
-                ? ' d domains  T tools  / search  Enter open  b back  ? help  q quit'
-                : state.view === 5
-                  ? ' e edit  p SKUs  l/h library/history  i import  : commands  ? help'
-                  : state.view === 2
-                    ? ' a plan SKU  / search  o sort  Enter inspect  ? help  q quit'
-                    : ' / search  o sort  Enter inspect  : commands  ? help  q quit',
+      : state.input?.kind === 'order-action'
+        ? compactFooter(state, w)
+        : state.input?.kind === 'scenario-update'
+          ? state.input.saving
+            ? ' Updating scenario… please wait'
+            : ' Enter replace saved scenario  ↑ ↓ scroll  Esc cancel'
+          : state.input?.kind === 'import-review'
+            ? ' Enter load assumptions  ↑ ↓ scroll  Esc cancel'
+            : ['planning', 'product'].includes(state.input?.kind)
+              ? ' Ctrl+U clear  Tab next  Ctrl+S save  Esc cancel'
+              : state.input
+                ? state.input.saving
+                  ? ' Renaming… please wait'
+                  : ` ${{ search: '/', palette: ':', save: 'Name: ', rename: 'Name: ', export: 'Path: ', import: 'Path: ', seed: 'Seed:' }[state.input.kind] || ''} ${editorWindow(state.input.text, state.input.cursor, Math.max(1, w - 36))}  Enter accept · Esc cancel`
+                : state.view === 6
+                  ? ' d domains  T tools  / search  Enter open  b back  ? help  q quit'
+                  : state.view === 5
+                    ? ' e edit  p SKUs  l/h library/history  i import  : commands  ? help'
+                    : state.view === 2
+                      ? ' a plan SKU  / search  o sort  Enter inspect  ? help  q quit'
+                      : state.view === 1
+                        ? ' W order action  P last receipt  / search  Enter inspect  ? help'
+                        : ' / search  o sort  Enter inspect  : commands  ? help  q quit',
     state.input ? 'accent' : 'muted',
   );
   // Pad each row; stay off the last physical column/row to avoid wrapping and

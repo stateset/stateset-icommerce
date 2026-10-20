@@ -9,6 +9,7 @@ import {
 import { editText } from './editor.js';
 import { graphemes } from './text.js';
 import { PRODUCT_FIELDS, productEditor, productFromDraft, planningProducts } from './basket.js';
+import { orderWorkflow, orderWorkflowKey } from './order-workflow.js';
 
 export const VIEWS = [
   'Overview',
@@ -216,12 +217,14 @@ export function navigate(state, view) {
 }
 
 // Reducer returns explicit effects; keystrokes never become shell commands or
-// live-store mutations. Search/palette editing owns keys until dismissed.
+// direct store access. Reviewed workflow effects go through the governed host.
+// Search/palette editing owns keys until dismissed.
 export function handleKey(state, text, key = {}) {
   let next = { ...state };
   let effect;
   const name = key.name;
   if (key.ctrl && name === 'c') return { state, effect: 'quit' };
+  if (state.input?.kind === 'order-action') return orderWorkflowKey(state, text, key);
   if (['import-review', 'scenario-update'].includes(state.input?.kind)) {
     if (state.input.saving) return { state };
     if (name === 'escape') {
@@ -445,7 +448,13 @@ export function handleKey(state, text, key = {}) {
     };
   if (name === 'escape')
     return { state: { ...state, detail: false, help: false, query: '', detailOffset: 0 } };
-  if (text === 'q') effect = 'quit';
+  if (text === 'W' && state.view === 1 && !state.loading && !state.sim.running) {
+    const order = state.focusRecord || records(state)[state.selected];
+    if (order?.id) next.input = orderWorkflow(order);
+  } else if (text === 'P' && state.view === 1 && !state.loading && !state.sim.running) {
+    next.input = { kind: 'order-action', phase: 'reconciling', busy: true, offset: 0 };
+    effect = 'reconcile-order';
+  } else if (text === 'q') effect = 'quit';
   else if (text === '?') {
     next.help = !state.help;
     next.contentOffset = 0;
@@ -668,6 +677,14 @@ export function paletteCommands(query = '', state) {
     { label: 'Refresh snapshot', effect: 'refresh' },
     { label: 'Keyboard help', effect: 'help' },
     { label: 'Quit', effect: 'quit' },
+    ...(state?.view === 1 && !state.loading && !state.sim.running
+      ? [
+          ...(records(state)[state.selected]?.id
+            ? [{ label: 'Review selected order status action', key: 'W' }]
+            : []),
+          { label: 'Reconcile last order action receipt', key: 'P' },
+        ]
+      : []),
     ...(state?.view === 5
       ? [
           ...(!state.sim.running

@@ -358,7 +358,7 @@ Demo records are created by the native embedded engine in a private temporary
 store, visibly labeled `DEMO`. Existing stores are opened with SQLite's
 read-only online-backup API, including committed WAL data; the native engine
 then reads and migrates only the private copy. Browsing does not expose
-business-write commands. Store browsing requires the CLI's optional
+business-write commands by default. Store browsing requires the CLI's optional
 `better-sqlite3` dependency and refuses cleanly if it is unavailable.
 
 Open **7** for the engine explorer: all **89 tool domains plus the server runtime**,
@@ -400,8 +400,49 @@ Each plan uses a fresh private store, with exact decimal money and no external
 services or live-store access. Results are conditional projections from the
 displayed assumptions, not validated forecasts. Engine work runs in bounded
 child processes so input and resizing stay responsive; quitting terminates
-those children and removes only the workbench's own temporary directory.
+simulation children and removes only the workbench's own temporary directory.
+An explicitly applied order action drains before exit instead of being cancelled.
 `--json` emits snapshot data without terminal control sequences.
+
+For a named store, **Orders → Shift+W** reviews **confirm**, **start processing**,
+or **cancel** for the selected order. The native kernel checks operator scope,
+capabilities and the order state machine against a fresh private snapshot. The
+review shows the exact order total, intended transition, version, principal,
+store and native preview receipt. This action does not issue refunds or force
+cancellation of captured payments; the engine refuses those cancellations.
+
+Operator-owned policy and principal files are required even to preview these
+workflows. Use your existing kernel configuration (see
+[`kernel/examples/strict-policy.json`](../kernel/examples/strict-policy.json))
+with `orders.transition` granted for the intended tenant/store. The principal
+must have that capability and satisfy the policy's delegation or approval rules.
+No identity or policy is accepted from TUI input or workspace history.
+
+```bash
+stateset-tui --db ./store.db \
+  --kernel-policy ./operator-policy.json \
+  --kernel-principal ./operator-principal.json \
+  --kernel-store-id store:production
+```
+
+Without `--apply`, this remains preview-only. Add `--apply` to explicitly enable
+live order actions; after reviewing, press **Enter**, type **APPLY** exactly, and
+press **Enter** again. **Esc** returns to the review without changing the order.
+Unlike browsing, explicit apply opens the actual store with the native engine
+and may run its migrations. The kernel enforces the reviewed version, performs
+the mutation and writes its receipt/audit atomically. Live action workers use
+SQLite `FULL` synchronization for commits; private simulations keep `NORMAL`. A stale review refuses:
+close it and review the current order again. A repeated apply uses the same
+idempotency key, preventing a second economic effect.
+
+The workspace keeps private per-action intent records and a last-action pointer
+before submitting a live command. It can contain sensitive order and receipt
+information. **Orders → Shift+P** looks up the last native receipt after restart,
+using the same database, workspace, principal and store scope; it never repeats
+a command from editable JSON. While the original session is open, an unknown
+outcome can retry its host-held ticket with the same key. Without a recovered
+receipt, inspect the current order before starting another action. Existing
+refund, receiving and other tool references remain documentation only.
 
 Press **e** in the simulation lab to edit the planning horizon (1–30 days),
 opening cash (an exact USD decimal string), starting inventory, reorder point,

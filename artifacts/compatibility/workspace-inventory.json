@@ -603,16 +603,16 @@
         "count": 26
       },
       {
+        "name": "tui",
+        "count": 21
+      },
+      {
         "name": "adapters",
         "count": 20
       },
       {
         "name": "simulation",
         "count": 20
-      },
-      {
-        "name": "tui",
-        "count": 18
       },
       {
         "name": "utils",

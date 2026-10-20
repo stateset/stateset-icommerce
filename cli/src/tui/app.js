@@ -4,6 +4,8 @@ import { TerminalBackend } from './backend.js';
 import { initialState, handleKey, records, PRESETS } from './model.js';
 import { runRecord, scenarioSettings, useRunAssumptions } from './workspace.js';
 import { productEditor } from './basket.js';
+import { ORDER_ACTIONS } from './order-operations.js';
+import { orderWorkflowLimit } from './order-workflow.js';
 import { readScenarioExport } from './import.js';
 import {
   render,
@@ -22,8 +24,10 @@ export async function startTerminal({
   signals = process,
   workspace = null,
   color = !process.env.NO_COLOR,
+  allowApply = false,
 } = {}) {
   let state = initialState(dbPath ? `Snapshot · ${dbPath}` : 'DEMO · private engine store');
+  if (allowApply) state.source = `APPLY ENABLED · ${dbPath}`;
   let closed = false,
     suspended = false;
   if (workspace) {
@@ -40,6 +44,17 @@ export async function startTerminal({
   });
   const draw = () => {
     if (closed || suspended) return;
+    if (
+      state.input?.kind === 'order-action' &&
+      !state.input.busy &&
+      state.input.phase !== 'choose'
+    ) {
+      const offset = Math.min(
+        state.input.offset || 0,
+        orderWorkflowLimit(state.input, output.columns || 80, output.rows || 24),
+      );
+      if (offset !== state.input.offset) state = { ...state, input: { ...state.input, offset } };
+    }
     if ((state.help || state.view === 0) && !state.input)
       state = {
         ...state,
@@ -508,6 +523,44 @@ export async function startTerminal({
     }
     draw();
   };
+  const orderOperation = async (operation) => {
+    const captured = state.input;
+    try {
+      const payload =
+        operation === 'preview-order'
+          ? { orderId: captured.orderId, status: ORDER_ACTIONS[captured.selected].status }
+          : operation === 'apply-order'
+            ? { ticketId: captured.preview.ticketId }
+            : {};
+      const result = await backend.request(operation, payload);
+      if (!closed && state.input === captured) {
+        state = {
+          ...state,
+          input: {
+            ...captured,
+            busy: false,
+            offset: 0,
+            phase: operation === 'preview-order' ? 'review' : 'result',
+            ...(operation === 'preview-order' ? { preview: result } : { receipt: result.receipt }),
+            message: result.message || result.journalWarning || null,
+          },
+        };
+        if (operation === 'apply-order') void refresh();
+      }
+    } catch (error) {
+      if (!closed && state.input === captured)
+        state = {
+          ...state,
+          input: {
+            ...captured,
+            busy: false,
+            phase: error.outcomeUnknown ? 'uncertain' : 'failed',
+            error: error.message,
+          },
+        };
+    }
+    draw();
+  };
   function onKey(text, key) {
     if (key?.ctrl && key.name === 'z') {
       suspend();
@@ -527,6 +580,8 @@ export async function startTerminal({
       return;
     }
     if (result.effect === 'cancel') backend.cancel('simulate');
+    if (['preview-order', 'apply-order', 'reconcile-order'].includes(result.effect))
+      void orderOperation(result.effect);
     if (['save', 'export', 'import'].includes(result.effect)) void persist(result.effect);
     if (result.effect === 'rename-scenario') void renameScenario();
     if (result.effect === 'update-scenario') void updateScenario();
