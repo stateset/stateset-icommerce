@@ -1,5 +1,5 @@
 import { explorerBody, explorerDetail } from './explorer-render.js';
-import { VIEWS, records, pageKey, paletteCommands, PRESETS } from './model.js';
+import { VIEWS, records, pageKey, paletteCommands, PRESETS, simulationPlans } from './model.js';
 import { editorWindow } from './editor.js';
 import { clean, fit, width, wrap } from './text.js';
 import { PLANNING_FIELDS } from './planning.js';
@@ -204,6 +204,50 @@ export function importReviewLimit(preview, columns = 80, rows = 24) {
   return Math.max(0, importReviewLines(preview, size).length - visible);
 }
 
+export function scenarioUpdateLines(review, size) {
+  const lines = [],
+    add = (line) => lines.push(...wrap(line, size));
+  add(`Target: ${review.expected.name}`);
+  for (const [label, settings] of [
+    ['SAVED', review.expected],
+    ['PROPOSED', review.settings],
+  ]) {
+    const preset = PRESETS.find((p) => p.id === settings.presetId);
+    add(`${label} · ${preset.name} · seed ${settings.seed}`);
+    add(preset.note);
+    // Render the exact baseline plan, including the default recipe when no SKU is selected.
+    const plan = simulationPlans(
+      settings.presetId,
+      settings.seed,
+      settings.controls,
+      settings.products,
+    )[0];
+    add(`${plan.days} days · USD ${plan.startingCash} opening cash`);
+    for (const [index, item] of plan.products.entries()) {
+      add(
+        `Priority ${index + 1} · ${item.sku}: stock ${item.initialStock}, price ${item.unitPrice}, cost ${item.unitCost}`,
+      );
+      add(
+        `Demand ${item.demand.min}–${item.demand.max}/day · reorder ${item.reorderPoint} → ${item.targetStock} · lead ${item.leadTimeDays}d`,
+      );
+      if (item.purchasing)
+        add(
+          `Supplier minimum ${item.purchasing.minimumOrderQuantity} · case pack ${item.purchasing.orderMultiple}`,
+        );
+    }
+  }
+  add('Enter replaces this saved scenario. ID, name and run reports are preserved.');
+  add('No simulation runs. w still saves a separate scenario.');
+  return lines;
+}
+
+export function scenarioUpdateLimit(review, columns = 80, rows = 24) {
+  const w = Math.max(1, Math.min(220, columns - 1));
+  const size = Math.max(1, w - (w >= 110 ? 22 : 2));
+  const visible = Math.max(1, Math.min(100, rows - 1) - 9);
+  return Math.max(0, scenarioUpdateLines(review, size).length - visible);
+}
+
 export function panelLimit(state, columns = 80, rows = 24) {
   const w = Math.max(1, Math.min(220, columns - 1));
   const size = Math.max(1, w - (w >= 110 ? 22 : 2));
@@ -250,6 +294,7 @@ function staticBody(state) {
       'x / i / c       Export result / import assumptions / cancel run',
       '/ in library    Filter saved entries without reading the store',
       'Shift+N         Rename selected saved scenario',
+      'Shift+S         Review current draft as an update to selected saved scenario',
       'Shift+D / U     Remove saved entry / undo last removal',
       'p (lab)         Edit selected SKU planning terms',
       '[ / ] (SKUs)    Move selected SKU earlier / later in purchase priority',
@@ -362,12 +407,15 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
   const sidebar = w >= 110;
   const size = w - (sidebar ? 22 : 2);
   const available = Math.max(1, h - 8);
-  if (state.input?.kind === 'import-review') {
-    const lines = importReviewLines(state.input.preview, size),
+  if (['import-review', 'scenario-update'].includes(state.input?.kind)) {
+    const update = state.input.kind === 'scenario-update';
+    const lines = update
+        ? scenarioUpdateLines(state.input, size)
+        : importReviewLines(state.input.preview, size),
       visible = Math.max(1, available - 1);
     const offset = Math.min(state.input.offset, Math.max(0, lines.length - visible));
     put(
-      `IMPORT PREVIEW · ${offset + 1}–${Math.min(lines.length, offset + visible)}/${lines.length} · ↑ ↓ scroll`,
+      `${update ? 'UPDATE SCENARIO' : 'IMPORT PREVIEW'} · ${offset + 1}–${Math.min(lines.length, offset + visible)}/${lines.length} · ↑ ↓ scroll`,
       'accent',
       true,
     );
@@ -418,7 +466,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     const rows = records(state);
     put(
       {
-        scenarios: 'SAVED SCENARIOS · Enter load · Shift+N rename · / filter',
+        scenarios: 'SAVED SCENARIOS · Enter load · N rename · S update · / filter',
         history: 'RUN HISTORY · Enter inspect · a use · / filter',
         products: 'SELECTED SKUS · PURCHASE PRIORITY',
       }[state.panel],
@@ -653,21 +701,25 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     state.error || errors.length || state.input?.error || state.sim.error ? 'warn' : 'muted',
   );
   add(
-    state.input?.kind === 'import-review'
-      ? ' Enter load assumptions  ↑ ↓ scroll  Esc cancel'
-      : ['planning', 'product'].includes(state.input?.kind)
-        ? ' Ctrl+U clear  Tab next  Ctrl+S save  Esc cancel'
-        : state.input
-          ? state.input.saving
-            ? ' Renaming… please wait'
-            : ` ${{ search: '/', palette: ':', save: 'Name: ', rename: 'Name: ', export: 'Path: ', import: 'Path: ', seed: 'Seed:' }[state.input.kind] || ''} ${editorWindow(state.input.text, state.input.cursor, Math.max(1, w - 36))}  Enter accept · Esc cancel`
-          : state.view === 6
-            ? ' d domains  T tools  / search  Enter open  b back  ? help  q quit'
-            : state.view === 5
-              ? ' e edit  p SKUs  l/h library/history  i import  : commands  ? help'
-              : state.view === 2
-                ? ' a plan SKU  / search  o sort  Enter inspect  ? help  q quit'
-                : ' / search  o sort  Enter inspect  : commands  ? help  q quit',
+    state.input?.kind === 'scenario-update'
+      ? state.input.saving
+        ? ' Updating scenario… please wait'
+        : ' Enter replace saved scenario  ↑ ↓ scroll  Esc cancel'
+      : state.input?.kind === 'import-review'
+        ? ' Enter load assumptions  ↑ ↓ scroll  Esc cancel'
+        : ['planning', 'product'].includes(state.input?.kind)
+          ? ' Ctrl+U clear  Tab next  Ctrl+S save  Esc cancel'
+          : state.input
+            ? state.input.saving
+              ? ' Renaming… please wait'
+              : ` ${{ search: '/', palette: ':', save: 'Name: ', rename: 'Name: ', export: 'Path: ', import: 'Path: ', seed: 'Seed:' }[state.input.kind] || ''} ${editorWindow(state.input.text, state.input.cursor, Math.max(1, w - 36))}  Enter accept · Esc cancel`
+            : state.view === 6
+              ? ' d domains  T tools  / search  Enter open  b back  ? help  q quit'
+              : state.view === 5
+                ? ' e edit  p SKUs  l/h library/history  i import  : commands  ? help'
+                : state.view === 2
+                  ? ' a plan SKU  / search  o sort  Enter inspect  ? help  q quit'
+                  : ' / search  o sort  Enter inspect  : commands  ? help  q quit',
     state.input ? 'accent' : 'muted',
   );
   // Pad each row; stay off the last physical column/row to avoid wrapping and

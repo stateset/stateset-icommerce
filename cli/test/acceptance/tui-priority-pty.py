@@ -199,6 +199,34 @@ try:
     expected = json.loads(json.dumps(before_rename))
     next(item for item in expected['scenarios'] if item['id'] == history['id'])['name'] = 'Renamed planning draft'
     assert json.loads(next(workspace.glob('*/workspace.json')).read_text()) == expected
+    send(b'\r')
+    screen(b'Loaded Renamed planning draft')
+    send(b'e')
+    screen(b'PLANNING ASSUMPTIONS')
+    send(b'\t\x1530.00\x13')
+    screen(b'USD 30.00 cash')
+    send(b'l/Renamed planning draft\r')
+    screen(b'1 / 4 entries')
+    send(b'S')
+    frame = screen(b'UPDATE SCENARIO')
+    assert b'SAVED' in frame and b'PROPOSED' in frame
+    assert b'USD 10.00 opening cash' in frame and b'USD 30.00 opening cash' in frame
+    send(b'\x1b')
+    screen(b'Update canceled')
+    assert json.loads(next(workspace.glob('*/workspace.json')).read_text()) == expected
+    send(b'S')
+    screen(b'UPDATE SCENARIO')
+    resize(40, 14)
+    screen(b'UPDATE SCENARIO')
+    send(b'\x1b[4~')
+    screen(b'No simulation runs')
+    resize(140, 44)
+    screen(b'UPDATE SCENARIO')
+    send(b'\r')
+    frame = screen(b'Scenario updated')
+    assert b'4 / 4 entries' in frame and '› Renamed planning draft'.encode() in frame
+    next(item for item in expected['scenarios'] if item['id'] == history['id'])['controls']['startingCash'] = '30.00'
+    assert json.loads(next(workspace.glob('*/workspace.json')).read_text()) == expected
     send(b'q')
     assert child.wait(timeout=15) == 0
     buffer = b''
@@ -212,7 +240,8 @@ try:
     frame = screen(b'1 / 4 entries')
     assert '› Renamed planning draft'.encode() in frame
     send(b'\r')
-    screen(b'Loaded Renamed planning draft')
+    frame = screen(b'Loaded Renamed planning draft')
+    assert b'USD 30.00 cash' in frame
     assert json.loads(next(workspace.glob('*/workspace.json')).read_text()) == expected
     send(b'q')
     assert child.wait(timeout=15) == 0
@@ -227,6 +256,8 @@ try:
                 'originalRunsUnchanged': True,
                 'filteredScenarioRenamedInPlace': True, 'renameCancellationPreservedFile': True,
                 'renamedScenarioLoadedAfterRestart': True,
+                'savedScenarioUpdateReviewed': True, 'updateCancellationPreservedFile': True,
+                'updatedScenarioLoadedAfterRestart': True,
                 'terminalRestored': True}
     (root / 'evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
     print(json.dumps({'evidence': str(root / 'evidence.json'), **evidence}, indent=2))

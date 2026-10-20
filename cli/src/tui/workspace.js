@@ -219,6 +219,21 @@ export class TerminalWorkspace {
       return data;
     });
   }
+  updateScenario(expected, settings) {
+    if (typeof expected?.id !== 'string' || !expected.id)
+      throw new Error('Choose a saved scenario');
+    const id = expected.id,
+      revision = JSON.stringify(expected),
+      replacement = scenarioSettings(settings);
+    return this.update((data) => {
+      const item = data.scenarios.find((scenario) => scenario.id === id);
+      if (!item) throw new Error('Scenario no longer exists; nothing updated');
+      if (JSON.stringify(item) !== revision)
+        throw new Error('Saved scenario changed. Esc, then Shift+S to review it again.');
+      Object.assign(item, replacement);
+      return data;
+    });
+  }
   removeEntry(kind, id) {
     if (!['scenarios', 'runs'].includes(kind)) throw new Error('Invalid library kind');
     return this.update((data) => {

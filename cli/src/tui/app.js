@@ -5,7 +5,14 @@ import { initialState, handleKey, records, PRESETS } from './model.js';
 import { runRecord, scenarioSettings, useRunAssumptions } from './workspace.js';
 import { productEditor } from './basket.js';
 import { readScenarioExport } from './import.js';
-import { render, detailLimit, panelLimit, importReviewLimit, contentLimit } from './render.js';
+import {
+  render,
+  detailLimit,
+  panelLimit,
+  importReviewLimit,
+  scenarioUpdateLimit,
+  contentLimit,
+} from './render.js';
 
 export async function startTerminal({
   dbPath = null,
@@ -41,14 +48,16 @@ export async function startTerminal({
           contentLimit(state, output.columns || 80, output.rows || 24),
         ),
       };
-    if (state.input?.kind === 'import-review')
+    if (['import-review', 'scenario-update'].includes(state.input?.kind) && !state.input.saving)
       state = {
         ...state,
         input: {
           ...state.input,
           offset: Math.min(
             state.input.offset,
-            importReviewLimit(state.input.preview, output.columns || 80, output.rows || 24),
+            state.input.kind === 'scenario-update'
+              ? scenarioUpdateLimit(state.input, output.columns || 80, output.rows || 24)
+              : importReviewLimit(state.input.preview, output.columns || 80, output.rows || 24),
           ),
         },
       };
@@ -331,6 +340,37 @@ export async function startTerminal({
     }
     draw();
   };
+  const updateScenario = async () => {
+    const review = state.input;
+    try {
+      if (!workspace) throw new Error('No workspace configured');
+      const library = await workspace.updateScenario(review.expected, review.settings);
+      if (!closed && state.input === review)
+        state = {
+          ...state,
+          library,
+          input: null,
+          panelQuery: '',
+          selected: library.scenarios.findIndex((item) => item.id === review.expected.id),
+          notice: 'Scenario updated. Reports unchanged; nothing ran.',
+        };
+    } catch (error) {
+      if (!closed && state.input === review) {
+        const library = workspace?.data || state.library;
+        state = {
+          ...state,
+          library,
+          panelQuery: '',
+          selected: Math.max(
+            0,
+            library.scenarios.findIndex((item) => item.id === review.expected.id),
+          ),
+          input: { ...review, saving: false, error: error.message },
+        };
+      }
+    }
+    draw();
+  };
   const openEntry = () => {
     const item = records(state)[state.selected];
     if (!item) return;
@@ -489,6 +529,7 @@ export async function startTerminal({
     if (result.effect === 'cancel') backend.cancel('simulate');
     if (['save', 'export', 'import'].includes(result.effect)) void persist(result.effect);
     if (result.effect === 'rename-scenario') void renameScenario();
+    if (result.effect === 'update-scenario') void updateScenario();
     if (result.effect === 'apply-import') {
       const settings = state.input.preview.settings;
       state = {

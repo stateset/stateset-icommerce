@@ -203,12 +203,20 @@ export function handleKey(state, text, key = {}) {
   let effect;
   const name = key.name;
   if (key.ctrl && name === 'c') return { state, effect: 'quit' };
-  if (state.input?.kind === 'import-review') {
+  if (['import-review', 'scenario-update'].includes(state.input?.kind)) {
+    if (state.input.saving) return { state };
     if (name === 'escape') {
       next.input = null;
-      next.notice = 'Import canceled; assumptions unchanged';
-    } else if (name === 'return') effect = 'apply-import';
-    else if (['up', 'down', 'pageup', 'pagedown', 'home', 'end'].includes(name))
+      next.notice =
+        state.input.kind === 'import-review'
+          ? 'Import canceled; assumptions unchanged'
+          : 'Update canceled; saved scenario unchanged';
+    } else if (name === 'return') {
+      if (state.input.kind === 'scenario-update') {
+        next.input = { ...state.input, saving: true, error: null };
+        effect = 'update-scenario';
+      } else effect = 'apply-import';
+    } else if (['up', 'down', 'pageup', 'pagedown', 'home', 'end'].includes(name))
       next.input = {
         ...state.input,
         offset:
@@ -450,6 +458,24 @@ export function handleKey(state, text, key = {}) {
   else if (text === 'w' && state.view === 5 && !state.sim.running)
     next.input = { kind: 'save', text: '' };
   else if (
+    text === 'S' &&
+    state.view === 5 &&
+    state.panel === 'scenarios' &&
+    !state.sim.running &&
+    records(state)[state.selected]
+  ) {
+    next.input = {
+      kind: 'scenario-update',
+      offset: 0,
+      expected: structuredClone(records(state)[state.selected]),
+      settings: {
+        presetId: state.selectedPreset,
+        seed: state.seed,
+        controls: planningControls(state.planning),
+        products: planningProducts(state.products),
+      },
+    };
+  } else if (
     text === 'N' &&
     state.view === 5 &&
     state.panel === 'scenarios' &&
@@ -631,7 +657,10 @@ export function paletteCommands(query = '', state) {
                 { label: 'Save scenario', key: 'w' },
                 { label: 'Saved scenarios', key: 'l' },
                 ...(state.panel === 'scenarios' && records(state)[state.selected]
-                  ? [{ label: 'Rename selected saved scenario', key: 'N' }]
+                  ? [
+                      { label: 'Rename selected saved scenario', key: 'N' },
+                      { label: 'Update selected scenario from current draft', key: 'S' },
+                    ]
                   : []),
                 { label: 'Run history', key: 'h' },
                 ...((state.panel === 'history' && records(state)[state.selected]) ||

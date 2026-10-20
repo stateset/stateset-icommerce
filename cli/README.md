@@ -466,6 +466,15 @@ edits the selected entry's name in place. **Enter** confirms and **Esc** cancels
 The saved ID, assumptions, SKU priority and run reports are preserved; renaming
 also works when all 20 scenario slots are full. After a rename, the library
 filter clears and the renamed entry stays selected.
+To replace a saved scenario's assumptions with the current draft, select its
+library entry and press **Shift+S** (or **: → Update selected scenario from
+current draft**). Review the saved and proposed preset, seed, cash, horizon,
+SKU terms and purchasing priority; **↑/↓**, **Home/End** scroll the review.
+**Enter** replaces only that entry's assumptions; **Esc** cancels. Its ID and
+name remain the same, run reports stay unchanged, and no simulation runs.
+Updates also work at the 20-scenario limit. If another window changed or removed
+the entry, the update refuses and refreshes the library; cancel and review again.
+Use **w** to keep both versions as separate scenarios.
 Use **a** from a result or the selected history entry to load its original
 preset, seed, shared controls and ordered SKU terms into an editable draft.
 This also works after filtering history. Loading neither executes a simulation
