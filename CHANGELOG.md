@@ -6,6 +6,35 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Checkout trio for the MCP/CLI surface, mapped to kernel policy:
+  `get_checkout` (unified checkout state with exact-decimal totals and a
+  readiness checklist), `update_checkout` (one validated call applying
+  shipping address, payment method, and coupon, then recalculating tax), and
+  `complete_checkout` now refusing unready carts with the missing pieces.
+  `update_checkout` is a governed composite: in strict kernel mode each step
+  runs as its own typed, policy-checked kernel command
+  (`carts.shipping_address.set`, `carts.payment_method.set`,
+  `carts.coupon.apply`, `carts.tax.calculate`), so granting those capabilities
+  is what grants `update_checkout`.
+
+### Fixed
+
+- Governed composite tools (`agentic_execute_plan`, `update_checkout`) no
+  longer throw "outside the governed kernel catalog" in strict apply mode;
+  the executor yields to the handler so every nested write traverses the
+  governed executor individually, as the kernel boundary documentation
+  describes.
+- WebMCP buyer confirmation: `createWebMCPTools`/`registerWebMCPTools` accept
+  `requireConfirmation` (tool names or a predicate) plus an `onConfirm` host
+  callback, so consequential writes such as `carts.complete` pause for explicit
+  buyer approval before executing. Gated tools report `consequentialHint: true`,
+  fail closed without `onConfirm`, and compose with the `allowApply` preview
+  gate and host abort signals.
+- WebMCP checkout demo: `examples/agents/webmcp` now walks catalog browsing,
+  cart building, and order completion end to end, with the buyer-confirmation
+  gate wired to an order-summary dialog.
 ## [1.39.0] - 2026-10-16
 
 ### Fixed

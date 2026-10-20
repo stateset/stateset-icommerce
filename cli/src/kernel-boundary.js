@@ -1,15 +1,15 @@
 import { createHash } from 'node:crypto';
 
-import { KERNEL_CAPABILITY_BY_TOOL } from './kernel-tool-execution.js';
+import {
+  KERNEL_CAPABILITY_BY_TOOL,
+  KERNEL_GOVERNED_COMPOSITE_TOOLS,
+} from './kernel-tool-execution.js';
 
 export const KERNEL_BOUNDARY_SCHEMA_VERSION = 1;
 
-// These tools may orchestrate mutations, but never perform one directly. In
-// strict mode every nested write still traverses executeGovernedTool and fails
-// closed unless it has a typed kernel command mapping. Keep this allow-list
-// deliberately small and explicit so an orchestration surface cannot masquerade
-// as a read merely to remain discoverable.
-export const KERNEL_GOVERNED_COMPOSITE_TOOLS = Object.freeze(['agentic_execute_plan']);
+// Re-exported: the canonical list lives with the executor that honors it
+// (composites return null there so their handlers run governed sub-steps).
+export { KERNEL_GOVERNED_COMPOSITE_TOOLS };
 const KERNEL_GOVERNED_COMPOSITE_TOOL_SET = new Set(KERNEL_GOVERNED_COMPOSITE_TOOLS);
 
 /**

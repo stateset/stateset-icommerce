@@ -5,22 +5,22 @@
 
 Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/tool-tiers.js` (tiers).
 
-**951 tools** across **89 domains**, plus 15 agentic runtime tools.
+**954 tools** across **89 domains**, plus 15 agentic runtime tools.
 
 ## Stability tiers
 
 | Tier | Tools | Meaning |
 | --- | ---: | --- |
-| core | 209 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
+| core | 211 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
 | extended | 493 | Real, specialised domains (finance, manufacturing, WMS, B2B, engagement). Opt in with `--profile` or `--domains`. |
-| experimental | 264 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete. Only `--profile all`, a curated profile naming the domain, or `--domains`. |
+| experimental | 265 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete. Only `--profile all`, a curated profile naming the domain, or `--domains`. |
 
 ## Profiles
 
 | Profile | Tools | Domains |
 | --- | ---: | --- |
-| all | 966 | every domain |
-| core (default) | 209 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain, simulations |
+| all | 969 | every domain |
+| core (default) | 211 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain, simulations |
 | operations | 204 | inventory, simulations, manufacturing, shipments, suppliers, warranties, warehouse, receiving, fulfillment, quality, lots, serials, cycle-counts, transfer-orders, production-batches, supplier-skus, inbound-shipments, backorders, vendor-returns |
 | finance | 134 | payments, invoices, treasury, accounts-payable, accounts-receivable, cost-accounting, credit, general-ledger, fixed-assets, revenue-recognition, prepayments, vendor-credits, payment-obligations |
 | agents | 257 | simulations, agent-runtime, agent-cards, agent-receipt, a2a, a2a-platform, a2a-automation, a2a-observability, a2a-intelligence, x402, stablecoin, erc8004, treasury, payment-obligations, proofs, audit, policies |
@@ -38,7 +38,7 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | [inventory](#inventory) | core | 7 |
 | [custom-objects](#custom-objects) | extended | 12 |
 | [returns](#returns) | core | 12 |
-| [carts](#carts) | core | 30 |
+| [carts](#carts) | core | 32 |
 | [analytics](#analytics) | core | 14 |
 | [currency](#currency) | extended | 13 |
 | [tax](#tax) | core | 29 |
@@ -82,7 +82,7 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | [audit](#audit) | extended | 4 |
 | [proofs](#proofs) | extended | 7 |
 | [circuit-breaker](#circuit-breaker) | experimental | 8 |
-| [checkout](#checkout) | experimental | 8 |
+| [checkout](#checkout) | experimental | 9 |
 | [compliance](#compliance) | extended | 6 |
 | [catalog](#catalog) | extended | 6 |
 | [a2a-automation](#a2a-automation) | experimental | 32 |
@@ -252,6 +252,8 @@ Tier: **core**
 | `get_shipping_rates` | core | read | Get available shipping rates for a cart based on contents and address. |
 | `mark_cart_ready_for_payment` | core | write | Mark a cart as ready for payment processing. |
 | `begin_cart_checkout` | core | write | Begin the checkout process for a cart. |
+| `get_checkout` | core | read | Read the unified checkout state for a cart: items, exact-decimal totals, shipping, payment, coupon, and a readiness checklist for completion. |
+| `update_checkout` | core | write | Apply checkout details in one validated call: shipping address, payment method, and coupon code, then recalculate tax. In strict kernel mode each step runs as its own governed command (carts.shipping_address.set, carts.payment_method.set, carts.coupon.apply, carts.tax.calculate), so the operator policy governs every mutation; shipping method selection stays on set_cart_shipping outside strict mode. |
 | `complete_checkout` | core | write | Complete the checkout process and convert the cart to an order. This is the final step in the checkout flow. |
 | `cancel_cart` | core | delete | Cancel a shopping cart. |
 | `abandon_cart` | core | write | Mark a cart as abandoned (for recovery campaigns). |
@@ -1046,14 +1048,15 @@ Tier: **experimental** — breaker state is held in process memory, not the stor
 
 ## checkout
 
-Tier: **experimental** — converting a payment link mints order, payment and escrow ids without creating any of them in the store; link totals are floats
+Tier: **experimental** — payment links are new: conversion records buyer commitment, real orders link back via link_payment_link_order; contracts stabilized 2026-10
 
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
 | `create_payment_link` | experimental | write | Create a shareable payment link for instant checkout. Returns a short URL that buyers or agents can use. |
 | `resolve_payment_link` | experimental | read | Resolve a payment link by ID or short code. Returns the link details, items, total, and expiry status. |
-| `express_checkout` | experimental | write | One-call checkout from a payment link. Converts the link into an order and payment. |
-| `agent_instant_checkout` | experimental | write | Agent-to-agent instant checkout. Creates a payment link and converts it in one step. Returns order and escrow IDs for A2A settlement. |
+| `express_checkout` | experimental | write | One-call checkout from a payment link. Records the buyer's commitment to the link terms and returns the items/total. Does not create an order or payment — build the real order with the checkout trio (get_checkout, update_checkout, complete_checkout), then record it with link_payment_link_order. |
+| `link_payment_link_order` | experimental | write | Record the real order (and payment) created from a converted payment link. Links the merchant order system back to the link; order/payment IDs are never minted by the link service. |
+| `agent_instant_checkout` | experimental | write | Agent-to-agent instant checkout. Creates a payment link and records the buyer agent's commitment in one step. Does not create an order, payment, or escrow — settle via the A2A escrow tools and record the real order with link_payment_link_order. |
 | `get_payment_link_status` | experimental | read | Get the status and metrics (views, conversions) for a payment link. |
 | `list_payment_links` | experimental | read | List payment links with optional filters by status and customer. |
 | `revoke_payment_link` | experimental | write | Revoke (cancel) an active payment link. Prevents further checkouts from it. |

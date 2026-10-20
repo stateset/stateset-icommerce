@@ -44,7 +44,7 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 | `carts` | custom | 27 | 2 | - |
 | `catalog` | custom | 6 | 2 | - |
 | `channels` | tool-backed | 8 | 0 | - |
-| `checkout` | custom | 8 | 2 | - |
+| `checkout` | custom | 9 | 2 | - |
 | `circuit-breaker` | custom | 8 | 2 | - |
 | `companies` | tool-backed | 9 | 0 | - |
 | `compliance` | custom | 6 | 2 | - |

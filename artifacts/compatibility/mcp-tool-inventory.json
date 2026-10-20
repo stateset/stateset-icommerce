@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 984,
+  "totalTools": 987,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 966
+      "count": 969
     },
     {
       "name": "stateset-scaffold",
@@ -83,7 +83,7 @@
     },
     {
       "name": "carts",
-      "count": 30
+      "count": 32
     },
     {
       "name": "catalog",
@@ -95,7 +95,7 @@
     },
     {
       "name": "checkout",
-      "count": 8
+      "count": 9
     },
     {
       "name": "circuit_breaker",
@@ -397,18 +397,18 @@
     },
     {
       "name": "read",
-      "count": 487
+      "count": 488
     },
     {
       "name": "write",
-      "count": 429
+      "count": 431
     }
   ],
   "permissionCounts": {
     "admin": 47,
     "delete": 21,
-    "read": 487,
-    "write": 429
+    "read": 488,
+    "write": 431
   },
   "tools": [
     {
@@ -2015,7 +2015,7 @@
     },
     {
       "name": "agent_instant_checkout",
-      "description": "Agent-to-agent instant checkout. Creates a payment link and converts it in one step. Returns order and escrow IDs for A2A settlement.",
+      "description": "Agent-to-agent instant checkout. Creates a payment link and records the buyer agent's commitment in one step. Does not create an order, payment, or escrow — settle via the A2A escrow tools and record the real order with link_payment_link_order.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__agent_instant_checkout",
@@ -4625,7 +4625,7 @@
     },
     {
       "name": "express_checkout",
-      "description": "One-call checkout from a payment link. Converts the link into an order and payment.",
+      "description": "One-call checkout from a payment link. Records the buyer's commitment to the link terms and returns the items/total. Does not create an order or payment — build the real order with the checkout trio (get_checkout, update_checkout, complete_checkout), then record it with link_payment_link_order.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__express_checkout",
@@ -4909,6 +4909,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_channel",
       "policyDomain": "channels",
+      "permission": "read"
+    },
+    {
+      "name": "get_checkout",
+      "description": "Read the unified checkout state for a cart: items, exact-decimal totals, shipping, payment, coupon, and a readiness checklist for completion.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__get_checkout",
+      "policyDomain": "carts",
       "permission": "read"
     },
     {
@@ -6115,6 +6124,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__install_wasm_connector",
       "policyDomain": "connectors",
+      "permission": "write"
+    },
+    {
+      "name": "link_payment_link_order",
+      "description": "Record the real order (and payment) created from a converted payment link. Links the merchant order system back to the link; order/payment IDs are never minted by the link service.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__link_payment_link_order",
+      "policyDomain": "checkout",
       "permission": "write"
     },
     {
@@ -8491,6 +8509,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__update_channel",
       "policyDomain": "channels",
+      "permission": "write"
+    },
+    {
+      "name": "update_checkout",
+      "description": "Apply checkout details in one validated call: shipping address, payment method, and coupon code, then recalculate tax. In strict kernel mode each step runs as its own governed command (carts.shipping_address.set, carts.payment_method.set, carts.coupon.apply, carts.tax.calculate), so the operator policy governs every mutation; shipping method selection stays on set_cart_shipping outside strict mode.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__update_checkout",
+      "policyDomain": "carts",
       "permission": "write"
     },
     {

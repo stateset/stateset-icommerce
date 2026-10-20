@@ -108,7 +108,7 @@ export const checkoutTools = [
   {
     name: 'express_checkout',
     description:
-      'One-call checkout from a payment link. Converts the link into an order and payment.',
+      "One-call checkout from a payment link. Records the buyer's commitment to the link terms and returns the items/total. Does not create an order or payment — build the real order with the checkout trio (get_checkout, update_checkout, complete_checkout), then record it with link_payment_link_order.",
     inputSchema: {
       linkId: z.string().min(1).describe('Payment link ID or short code to checkout'),
       customerId: z.string().min(1).optional().describe('Customer ID for the order'),
@@ -127,12 +127,39 @@ export const checkoutTools = [
   },
 
   // ========================================================================
+  // Link Payment Link to Order
+  // ========================================================================
+  {
+    name: 'link_payment_link_order',
+    description:
+      'Record the real order (and payment) created from a converted payment link. Links the merchant order system back to the link; order/payment IDs are never minted by the link service.',
+    inputSchema: {
+      linkId: z.string().min(1).describe('Payment link ID or short code (must be converted)'),
+      orderId: z.string().min(1).describe('Real order ID from the order system'),
+      paymentId: z.string().min(1).optional().describe('Real payment ID, when known'),
+    },
+    permission: 'write',
+    handler: async ({ params, ...ctx }) => {
+      try {
+        const svc = await getCheckoutSvc(ctx);
+        const result = svc.linkOrder(params.linkId, {
+          orderId: params.orderId,
+          paymentId: params.paymentId,
+        });
+        return { success: true, ...result };
+      } catch (err) {
+        return { success: false, error: err.message };
+      }
+    },
+  },
+
+  // ========================================================================
   // Agent Instant Checkout
   // ========================================================================
   {
     name: 'agent_instant_checkout',
     description:
-      'Agent-to-agent instant checkout. Creates a payment link and converts it in one step. Returns order and escrow IDs for A2A settlement.',
+      "Agent-to-agent instant checkout. Creates a payment link and records the buyer agent's commitment in one step. Does not create an order, payment, or escrow — settle via the A2A escrow tools and record the real order with link_payment_link_order.",
     inputSchema: {
       buyerAgent: z.string().min(1).describe('Buyer agent ID or wallet address'),
       sellerAgent: z.string().min(1).describe('Seller agent ID or wallet address'),

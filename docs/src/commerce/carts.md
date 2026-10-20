@@ -109,6 +109,9 @@ const link = await toolkit.executeTool('create_payment_link', {
 | `set_cart_payment` | Set payment method |
 | `get_shipping_rates` | Get available shipping options |
 | `calculate_cart_total` | Get pricing breakdown (subtotal, tax, shipping, discounts) |
+| `get_checkout` | Read-only unified checkout state with readiness checklist |
+| `update_checkout` | Apply address, payment, coupon in one validated call (governed composite in strict mode) |
+| `complete_checkout` | Convert cart to order (requires --apply; refuses unready carts) |
 | `checkout_cart` | Convert cart to order (requires --apply) |
 | `cancel_cart` | Cancel and release holds |
 | `list_abandoned_carts` | Find stale carts for recovery |

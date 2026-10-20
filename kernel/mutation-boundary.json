@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:a2b8949d925d43684f1d7af9fe7cbc0040e923fc4cf4e32a0cb18a0ccec2bd61",
+  "digest": "sha256:463162fd64b8c73685a9ee5b6dea38f2a1542e5c0bb34843aa7001c68a489076",
   "counts": {
-    "total": 966,
-    "readOnly": 478,
-    "mutations": 488,
+    "total": 969,
+    "readOnly": 479,
+    "mutations": 490,
     "governed": 36,
-    "governedComposite": 1,
-    "blocked": 451
+    "governedComposite": 2,
+    "blocked": 452
   },
   "entries": [
     {
@@ -3511,6 +3511,13 @@
       "commandType": null
     },
     {
+      "name": "get_checkout",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
       "name": "get_company",
       "permission": "read",
       "mutation": false,
@@ -4443,6 +4450,13 @@
     },
     {
       "name": "install_wasm_connector",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "link_payment_link_order",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
@@ -6294,6 +6308,13 @@
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "update_checkout",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed_composite",
       "commandType": null
     },
     {

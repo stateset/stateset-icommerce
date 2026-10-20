@@ -64,6 +64,24 @@ describe('kernel mutation boundary', () => {
     assert.equal(composite.disposition, 'governed_composite');
   });
 
+  it('classifies update_checkout as a governed composite in the checkout trio', () => {
+    const exposed = selectStrictKernelToolDefinitions(ALL_TOOLS);
+    const exposedNames = new Set(exposed.map((tool) => tool.name));
+    // The trio: get_checkout is a read, update_checkout is a governed
+    // composite, complete_checkout maps to the checkout.commit command.
+    assert.equal(exposedNames.has('get_checkout'), true);
+    assert.equal(exposedNames.has('update_checkout'), true);
+    assert.equal(exposedNames.has('complete_checkout'), true);
+    const entries = classifyKernelToolBoundary(ALL_TOOLS).entries;
+    const byName = new Map(entries.map((entry) => [entry.name, entry]));
+    assert.equal(byName.get('get_checkout').disposition, 'read_only');
+    assert.equal(byName.get('update_checkout').disposition, 'governed_composite');
+    assert.equal(byName.get('update_checkout').commandType, null);
+    assert.equal(byName.get('complete_checkout').disposition, 'governed');
+    assert.equal(byName.get('complete_checkout').commandType, 'checkout.commit');
+    assert.ok(KERNEL_GOVERNED_COMPOSITE_TOOLS.includes('update_checkout'));
+  });
+
   it('treats missing and future permission classes as mutations', () => {
     assert.equal(isMutationPermission('read'), false);
     assert.equal(isMutationPermission('write'), true);

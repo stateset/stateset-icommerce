@@ -616,6 +616,10 @@ export function createStatesetMcpServer({
     replayMutationToolCall,
     getAgenticReplayLog: listAgenticReplayEvents,
     policyEngine: policyEngineInstance,
+    // Governed composites (e.g. update_checkout) orchestrate typed kernel
+    // commands through this; every nested write stays policy-checked.
+    executeGovernedTool,
+    kernelStrict: Boolean(kernel && kernel.strict !== false),
   };
   // ---------------------------------------------------------------------------
   // Tool dispatch — bodies in ./mcp/tool-dispatch.js

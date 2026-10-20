@@ -128,6 +128,24 @@ export async function execute(action, args, { output, jsonOutput }) {
       return formatRevocation(result, { jsonOutput });
     }
 
+    case 'link-order': {
+      const [linkId, orderId, paymentId] = args;
+      if (!linkId || !orderId) {
+        throw new Error('Usage: checkout link-order <linkId|shortCode> <orderId> [paymentId]');
+      }
+      const result = svc.linkOrder(linkId, { orderId, paymentId: paymentId || undefined });
+      if (jsonOutput) return result;
+      return {
+        result,
+        formatted:
+          `Payment link linked to order\n` +
+          `${'-'.repeat(32)}\n` +
+          `Link ID:     ${result.linkId}\n` +
+          `Order ID:    ${result.orderId}\n` +
+          `Payment ID:  ${result.paymentId || '(pending)'}`,
+      };
+    }
+
     case 'crypto': {
       const [linkId, walletAddress, network = 'set_chain', customerId] = args;
       if (!linkId || !walletAddress) {
@@ -155,6 +173,7 @@ export async function execute(action, args, { output, jsonOutput }) {
           '  status <linkId|shortCode>                                    Get payment link status\n' +
           '  list [status] [customerId] [limit] [offset]                  List payment links\n' +
           '  revoke <linkId|shortCode>                                    Revoke payment link\n' +
+          '  link-order <linkId|shortCode> <orderId> [paymentId]          Link converted link to real order\n' +
           '  crypto <linkId|shortCode> <walletAddress> [network] [customerId]  Crypto checkout',
       );
   }
@@ -208,9 +227,12 @@ function formatExpressCheckout(result, { jsonOutput }) {
     formatted:
       `Express checkout complete\n` +
       `${'-'.repeat(32)}\n` +
-      `Order ID:    ${result.orderId}\n` +
-      `Payment ID:  ${result.paymentId}\n` +
-      `Short code:  ${result.shortCode}`,
+      `Link ID:     ${result.linkId}\n` +
+      `Short code:  ${result.shortCode}\n` +
+      `Total:       ${result.totalExact} ${result.currency}\n` +
+      `Converted:   ${result.convertedAt}\n` +
+      `Next: create the real order (checkout trio), then link it with:\n` +
+      `  stateset checkout link-order ${result.linkId} <orderId>`,
   };
 }
 
@@ -221,9 +243,10 @@ function formatAgentCheckout(result, { jsonOutput }) {
     formatted:
       `Agent checkout complete\n` +
       `${'-'.repeat(30)}\n` +
-      `Order ID:    ${result.orderId}\n` +
-      `Escrow ID:   ${result.escrowId}\n` +
-      `Link ID:     ${result.linkId}`,
+      `Link ID:     ${result.linkId}\n` +
+      `Short code:  ${result.shortCode}\n` +
+      `Total:       ${result.totalExact} ${result.currency}\n` +
+      `Converted:   ${result.convertedAt}`,
   };
 }
 
@@ -281,9 +304,9 @@ function formatCryptoCheckout(result, walletAddress, network, { jsonOutput }) {
     formatted:
       `Crypto checkout complete\n` +
       `${'-'.repeat(30)}\n` +
-      `Order ID:    ${result.orderId}\n` +
-      `Payment ID:  ${result.paymentId}\n` +
+      `Link ID:     ${result.linkId}\n` +
       `Short code:  ${result.shortCode}\n` +
+      `Total:       ${result.totalExact} ${result.currency}\n` +
       `Wallet:      ${walletAddress}\n` +
       `Network:     ${network}`,
   };
@@ -313,6 +336,10 @@ export const metadata = {
       args: ['[status]', '[customerId]', '[limit]', '[offset]'],
     },
     revoke: { description: 'Revoke payment link', args: ['<linkId|shortCode>'] },
+    'link-order': {
+      description: 'Link converted payment link to real order',
+      args: ['<linkId|shortCode>', '<orderId>', '[paymentId]'],
+    },
     crypto: {
       description: 'Run crypto checkout',
       args: ['<linkId|shortCode>', '<walletAddress>', '[network]', '[customerId]'],

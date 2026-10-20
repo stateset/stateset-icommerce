@@ -76,12 +76,21 @@ describe('createPaymentLink', () => {
     ];
     const result = svc.createPaymentLink({ items });
     assert.equal(result.total, 80); // 3*10 + 2*25
+    assert.equal(result.totalExact, '80.00');
   });
 
   it('handles fractional prices with rounding', () => {
     const items = [{ name: 'A', quantity: 3, unitPrice: 1.33 }];
     const result = svc.createPaymentLink({ items });
     assert.equal(result.total, 3.99);
+    assert.equal(result.totalExact, '3.99');
+  });
+
+  it('computes totals with exact decimal arithmetic (no float drift)', () => {
+    // 0.1 + 0.2 style drift: 3 x 0.1 must be exactly 0.30, not 0.30000000000000004
+    const items = [{ name: 'A', quantity: 3, unitPrice: 0.1 }];
+    const result = svc.createPaymentLink({ items });
+    assert.equal(result.totalExact, '0.30');
   });
 
   it('sets default currency to USD', () => {
@@ -278,27 +287,17 @@ describe('expressCheckout', () => {
     svc = makeSvc();
   });
 
-  it('converts a link and returns order/payment IDs', () => {
+  it('converts a link and returns the commitment (no minted IDs)', () => {
     const link = svc.createPaymentLink({ items: sampleItems() });
     const result = svc.expressCheckout({ linkId: link.linkId });
-    assert.ok(result.orderId);
-    assert.ok(result.paymentId);
+    assert.equal(result.linkId, link.linkId);
     assert.equal(result.shortCode, link.shortCode);
-  });
-
-  it('generates UUID-format order ID', () => {
-    const link = svc.createPaymentLink({ items: sampleItems() });
-    const result = svc.expressCheckout({ linkId: link.linkId });
-    assert.match(result.orderId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-  });
-
-  it('generates UUID-format payment ID', () => {
-    const link = svc.createPaymentLink({ items: sampleItems() });
-    const result = svc.expressCheckout({ linkId: link.linkId });
-    assert.match(
-      result.paymentId,
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-    );
+    assert.ok(result.convertedAt);
+    assert.deepEqual(result.items, link.items ?? result.items);
+    assert.equal(result.currency, 'USD');
+    assert.equal(result.totalExact, link.totalExact);
+    assert.ok(!('orderId' in result), 'must not mint an order ID');
+    assert.ok(!('paymentId' in result), 'must not mint a payment ID');
   });
 
   it('marks link as converted', () => {
@@ -324,12 +323,23 @@ describe('expressCheckout', () => {
     assert.ok(status.link.converted_at >= before);
   });
 
-  it('stores order_id and payment_id on the link', () => {
+  it('leaves order_id/payment_id NULL until linkOrder records the real order', () => {
     const link = svc.createPaymentLink({ items: sampleItems() });
-    const result = svc.expressCheckout({ linkId: link.linkId });
-    const status = svc.getPaymentLinkStatus(link.linkId);
-    assert.equal(status.link.order_id, result.orderId);
-    assert.equal(status.link.payment_id, result.paymentId);
+    svc.expressCheckout({ linkId: link.linkId });
+    let status = svc.getPaymentLinkStatus(link.linkId);
+    assert.equal(status.link.order_id, null);
+    assert.equal(status.link.payment_id, null);
+
+    const linked = svc.linkOrder(link.linkId, { orderId: 'ord-real-1', paymentId: 'pay-real-1' });
+    assert.equal(linked.success, true);
+    status = svc.getPaymentLinkStatus(link.linkId);
+    assert.equal(status.link.order_id, 'ord-real-1');
+    assert.equal(status.link.payment_id, 'pay-real-1');
+  });
+
+  it('linkOrder requires a converted link', () => {
+    const link = svc.createPaymentLink({ items: sampleItems() });
+    assert.throws(() => svc.linkOrder(link.linkId, { orderId: 'ord-x' }), /not converted/i);
   });
 
   it('associates customer ID on checkout', () => {
@@ -375,24 +385,18 @@ describe('agentCheckout', () => {
     svc = makeSvc();
   });
 
-  it('creates and converts a link in one call', () => {
+  it('creates and converts a link in one call (no minted IDs)', () => {
     const result = svc.agentCheckout({
       buyerAgent: 'agent-buyer-1',
       sellerAgent: 'agent-seller-1',
       items: sampleItems(),
     });
-    assert.ok(result.orderId);
-    assert.ok(result.escrowId);
     assert.ok(result.linkId);
-  });
-
-  it('returns a valid escrow ID (UUID)', () => {
-    const result = svc.agentCheckout({
-      buyerAgent: 'agent-buyer',
-      sellerAgent: 'agent-seller',
-      items: sampleItems(),
-    });
-    assert.match(result.escrowId, /^[0-9a-f]{8}-[0-9a-f]{4}/);
+    assert.ok(result.shortCode);
+    assert.ok(result.convertedAt);
+    assert.equal(result.totalExact, '40.00'); // 1*10.00 + 2*15.00
+    assert.ok(!('orderId' in result), 'must not mint an order ID');
+    assert.ok(!('escrowId' in result), 'must not mint an escrow ID');
   });
 
   it('includes both agent names in link metadata', () => {
@@ -429,17 +433,6 @@ describe('agentCheckout', () => {
     });
     const status = svc.getPaymentLinkStatus(result.linkId);
     assert.equal(status.link.currency, 'USDC');
-  });
-
-  it('generates all required IDs as unique values', () => {
-    const result = svc.agentCheckout({
-      buyerAgent: 'b',
-      sellerAgent: 's',
-      items: sampleItems(),
-    });
-    const ids = [result.orderId, result.escrowId, result.linkId];
-    const unique = new Set(ids);
-    assert.equal(unique.size, 3, 'orderId, escrowId, linkId should all be unique');
   });
 
   it('fails without buyerAgent', () => {

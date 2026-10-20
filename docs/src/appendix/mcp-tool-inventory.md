@@ -13,11 +13,11 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Metric | Value |
 | --- | --- |
-| Total tools | 984 |
+| Total tools | 987 |
 | MCP servers | 3 |
 | Policy domains | 91 |
-| Read tools | 487 |
-| Write tools | 429 |
+| Read tools | 488 |
+| Write tools | 431 |
 | Delete tools | 21 |
 | Admin tools | 47 |
 | Unknown permission | 0 |
@@ -26,7 +26,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | MCP server | Tools | Source |
 | --- | --- | --- |
-| stateset-commerce | 966 | `cli/src/mcp-server.js` |
+| stateset-commerce | 969 | `cli/src/mcp-server.js` |
 | stateset-scaffold | 13 | `cli/src/scaffold-server.js` |
 | stateset-x402 | 5 | `cli/src/x402-mcp-server.js` |
 
@@ -49,10 +49,10 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | analytics | 14 |
 | audit | 4 |
 | backorders | 20 |
-| carts | 30 |
+| carts | 32 |
 | catalog | 6 |
 | channels | 8 |
-| checkout | 8 |
+| checkout | 9 |
 | circuit_breaker | 8 |
 | companies | 9 |
 | compliance | 6 |
@@ -132,8 +132,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | --- | --- |
 | admin | 47 |
 | delete | 21 |
-| read | 487 |
-| write | 429 |
+| read | 488 |
+| write | 431 |
 
 ## Tool Registry
 
@@ -639,6 +639,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `get_bom` | `stateset-commerce` | `manufacturing` | `read` |
 | `get_cart` | `stateset-commerce` | `carts` | `read` |
 | `get_channel` | `stateset-commerce` | `channels` | `read` |
+| `get_checkout` | `stateset-commerce` | `carts` | `read` |
 | `get_company` | `stateset-commerce` | `companies` | `read` |
 | `get_coupon` | `stateset-commerce` | `promotions` | `read` |
 | `get_credit_account` | `stateset-commerce` | `credit` | `read` |
@@ -773,6 +774,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `initialize_chart_of_accounts` | `stateset-commerce` | `general_ledger` | `write` |
 | `inspect_batch` | `stateset-commerce` | `proofs` | `read` |
 | `install_wasm_connector` | `stateset-commerce` | `connectors` | `write` |
+| `link_payment_link_order` | `stateset-commerce` | `checkout` | `write` |
 | `link_payment_obligation_bill` | `stateset-commerce` | `payment-obligations` | `write` |
 | `list_active_lots` | `stateset-commerce` | `lots` | `read` |
 | `list_active_quality_holds` | `stateset-commerce` | `quality` | `read` |
@@ -1037,6 +1039,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `update_cart` | `stateset-commerce` | `carts` | `write` |
 | `update_cart_item` | `stateset-commerce` | `carts` | `write` |
 | `update_channel` | `stateset-commerce` | `channels` | `write` |
+| `update_checkout` | `stateset-commerce` | `carts` | `write` |
 | `update_company` | `stateset-commerce` | `companies` | `write` |
 | `update_currency_settings` | `stateset-commerce` | `currency` | `admin` |
 | `update_custom_object` | `stateset-commerce` | `custom_objects` | `write` |

@@ -168,15 +168,45 @@ permissions remain preview-only. `filter: []` exposes no tools. Registration
 uses an owned abort signal to clean up tools, including on partial failure,
 without affecting unrelated tools. A host `signal` can also end registration.
 
-Run the local read-only catalog demo from the repository:
+### Buyer confirmation for consequential writes
+
+`allowApply` is a host-wide switch, but commerce needs a finer gate: an agent
+may build carts freely while the money move — `carts.complete` — waits for
+the buyer. Pass `requireConfirmation` (tool names, or a
+`(toolName, params) => boolean` predicate) with an `onConfirm` callback:
+
+```javascript
+const registration = await registerWebMCPTools(descriptors, {
+  executeTool,
+  allowApply: true, // trusted host: cart-building writes apply
+  requireConfirmation: ['carts.complete'],
+  onConfirm: async ({ tool, params }) => {
+    const cart = await fetchCartSummary(params.id);
+    // Render the summary in your UI and ask the buyer.
+    return showOrderConfirmationDialog(cart); // only exactly `true` approves
+  },
+});
+```
+
+Gated tools report `consequentialHint: true`. Before executing, the adapter
+asks `onConfirm`; a denial (or any return other than exactly `true`) ends the
+call with `{ confirmed: false }` and nothing executes. Without `onConfirm`,
+gated tools fail closed with a `confirmationRequired` preview. Confirmation
+composes with `allowApply` — a confirmed write still previews unless the host
+enabled `allowApply` — and aborts cleanly if the host signal fires mid-dialog.
+The backend must still authorize the tool and enforce policy; the browser
+gate is a UX safeguard, not a security boundary.
+
+Run the local checkout demo from the repository:
 
 ```bash
 node examples/agents/webmcp/server.mjs
 # Open http://127.0.0.1:8091 in a WebMCP-capable browser.
 ```
 
-The demo uses a fresh in-memory database and exposes only `products.list` and
-`products.get`. Its catalog button works when WebMCP is unavailable. It is a
+The demo uses a fresh in-memory database and exposes a curated checkout
+surface: catalog browsing, cart building, and order completion with the buyer
+confirmation above. Its buttons work when WebMCP is unavailable. It is a
 local example; production storefronts should reuse their authenticated API.
 
 The [browser verification guide](../../examples/agents/webmcp/README.md)
