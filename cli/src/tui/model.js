@@ -1,7 +1,7 @@
 import { DOMAINS, explorerRows, explorerKey, openExplorer } from './domains.js';
 import {
   DEFAULT_PLANNING,
-  PLANNING_FIELDS,
+  planningFields,
   planningControls,
   planningEditor,
   constrainedCash,
@@ -68,6 +68,9 @@ export function simulationPlans(preset, seed, controls = DEFAULT_PLANNING, produ
           },
         ],
   };
+  // Keep zero-reserve inputs byte-compatible with existing saved run digests.
+  // The engine defaults an omitted reserve to zero.
+  if (assumptions.cashReserve !== '0.00') base.cashReserve = assumptions.cashReserve;
   if (preset === 'baseline') return [base];
   const candidate = structuredClone(base);
   candidate.name = PRESETS.find((p) => p.id === preset).name;
@@ -235,12 +238,7 @@ export function handleKey(state, text, key = {}) {
   }
   if (state.input?.kind === 'planning' || state.input?.kind === 'product') {
     const editor = state.input,
-      fields =
-        editor.kind === 'product'
-          ? PRODUCT_FIELDS
-          : state.products.length
-            ? PLANNING_FIELDS.slice(0, 2)
-            : PLANNING_FIELDS,
+      fields = editor.kind === 'product' ? PRODUCT_FIELDS : planningFields(state.products),
       field = fields[editor.field];
     const save = () => {
       try {

@@ -7,6 +7,7 @@ export const DEFAULT_PLANNING = Object.freeze({
   reorderPoint: 8,
   targetStock: 24,
   leadTimeDays: 1,
+  cashReserve: '0.00',
 });
 
 export const PLANNING_FIELDS = [
@@ -22,7 +23,18 @@ export const PLANNING_FIELDS = [
     max: 500,
   },
   { key: 'leadTimeDays', label: 'Supplier lead time', hint: '1–14 days', min: 1, max: 14 },
+  {
+    key: 'cashReserve',
+    label: 'Cash reserve (USD)',
+    hint: '0–999999.99; withheld from purchases; may exceed opening cash',
+  },
 ];
+
+export function planningFields(products = []) {
+  return products.length
+    ? PLANNING_FIELDS.filter(({ key }) => ['days', 'startingCash', 'cashReserve'].includes(key))
+    : PLANNING_FIELDS;
+}
 
 export function planningControls(input = DEFAULT_PLANNING) {
   if (!input || typeof input !== 'object' || Array.isArray(input))
@@ -34,9 +46,11 @@ export function planningControls(input = DEFAULT_PLANNING) {
     result = {};
   for (const field of PLANNING_FIELDS) {
     const value = values[field.key];
-    if (field.key === 'startingCash') {
+    if (['startingCash', 'cashReserve'].includes(field.key)) {
       if (typeof value !== 'string' || !/^(0|[1-9]\d{0,5})(\.\d{1,2})?$/.test(value))
-        throw new Error('Opening cash must be a decimal string from 0 to 999999.99');
+        throw new Error(
+          `${field.key === 'cashReserve' ? 'Cash reserve' : 'Opening cash'} must be a decimal string from 0 to 999999.99`,
+        );
       result[field.key] = formatDecimal(value);
     } else {
       if (
@@ -59,10 +73,11 @@ export function constrainedCash(cash) {
 }
 
 export function planningEditor(controls) {
+  const values = planningControls(controls);
   return {
     kind: 'planning',
     field: 0,
     error: null,
-    draft: Object.fromEntries(PLANNING_FIELDS.map(({ key }) => [key, String(controls[key])])),
+    draft: Object.fromEntries(PLANNING_FIELDS.map(({ key }) => [key, String(values[key])])),
   };
 }

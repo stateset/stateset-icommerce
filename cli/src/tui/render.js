@@ -3,7 +3,7 @@ import { VIEWS, records, pageKey, paletteCommands, PRESETS, simulationPlans } fr
 import { editorWindow } from './editor.js';
 import { terminalLayout } from './layout.js';
 import { clean, fit, width, wrap } from './text.js';
-import { PLANNING_FIELDS } from './planning.js';
+import { DEFAULT_PLANNING, planningFields } from './planning.js';
 import { PRODUCT_FIELDS } from './basket.js';
 import {
   cashDelta,
@@ -314,6 +314,7 @@ export function importReviewLines(preview, size) {
   add('File-provided results are discarded; digest is not a signature.');
   add(`${PRESETS.find((p) => p.id === settings.presetId)?.name} · seed ${settings.seed}`);
   add(`${settings.controls.days} days · USD ${settings.controls.startingCash} opening cash`);
+  add(`Cash reserve USD ${settings.controls.cashReserve ?? '0.00'} · shared across SKUs`);
   const products = settings.products.length
     ? settings.products
     : [
@@ -368,6 +369,7 @@ export function scenarioUpdateLines(review, size) {
       settings.products,
     )[0];
     add(`${plan.days} days · USD ${plan.startingCash} opening cash`);
+    add(`Cash reserve USD ${plan.cashReserve ?? '0.00'} · shared across SKUs`);
     for (const [index, item] of plan.products.entries()) {
       add(
         `Priority ${index + 1} · ${item.sku}: stock ${item.initialStock}, price ${item.unitPrice}, cost ${item.unitCost}`,
@@ -608,12 +610,7 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
     lines.slice(offset, offset + visible).forEach((line) => put(line));
   } else if (state.input?.kind === 'planning' || state.input?.kind === 'product') {
     const editor = state.input;
-    const fields =
-      editor.kind === 'product'
-        ? PRODUCT_FIELDS
-        : state.products.length
-          ? PLANNING_FIELDS.slice(0, 2)
-          : PLANNING_FIELDS;
+    const fields = editor.kind === 'product' ? PRODUCT_FIELDS : planningFields(state.products);
     if (compact) {
       const field = fields[editor.field];
       put(
@@ -832,6 +829,8 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
           `${state.planning.days} days · USD ${state.planning.startingCash} cash · e edit assumptions`,
           'muted',
         );
+        if (state.planning.cashReserve && state.planning.cashReserve !== '0.00')
+          put(`USD ${state.planning.cashReserve} reserve · shared across SKUs`, 'muted');
         put(
           `${state.products.length || 1} SKU(s) · p selected SKUs · w save · l library · h history`,
           'accent',
@@ -907,7 +906,8 @@ export function render(state, columns = 80, rows = 24, { color = true } = {}) {
         put(`RESULTS ${sim.preset} / seed ${sim.seed} · f compare · v raw · R replay`, 'good');
         if (
           (sim.presetId && sim.presetId !== state.selectedPreset) ||
-          JSON.stringify(sim.controls) !== JSON.stringify(state.planning) ||
+          JSON.stringify({ ...DEFAULT_PLANNING, ...sim.controls }) !==
+            JSON.stringify({ ...DEFAULT_PLANNING, ...state.planning }) ||
           sim.seed !== state.seed ||
           JSON.stringify(sim.products || []) !== JSON.stringify(state.products)
         )

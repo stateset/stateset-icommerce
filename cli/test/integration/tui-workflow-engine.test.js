@@ -197,6 +197,40 @@ test(
         assert.match(eventText, /Cash after event: USD 0\.00/);
         assert.match(eventText, /Expected arrival day: 1/);
       }
+      const reserved = await backend.request('simulate', {
+        preset: 'cash',
+        seed: 42,
+        controls: { ...priority.planning, cashReserve: '0.01' },
+        products: priority.products,
+      });
+      assert.deepEqual(
+        reserved.inputs.map((plan) => plan.cashReserve),
+        ['0.01', '0.01'],
+      );
+      assert.deepEqual(
+        reserved.inputs.map((plan) => plan.startingCash),
+        ['10.00', '0.50'],
+      );
+      assert.equal(reserved.results[0].summary.reserveBlockedPurchases, 6);
+      assert.equal(reserved.results[0].summary.endingCash, '10.00');
+      assert.equal(reserved.results[0].summary.purchasingSpend, '0.00');
+      assert.equal(reserved.results[1].summary.reserveBlockedPurchases, 0);
+      assert.equal(reserved.results[1].summary.endingCash, '0.50');
+      assert.ok(
+        reserved.results.every(
+          (report) =>
+            report.purchases.length === 0 &&
+            report.reconciliation.purchasingConstraintsBalanced &&
+            report.reconciliation.cashFlowBalanced,
+        ),
+      );
+      const reserveText = resultLines(
+        { sim: { preset: 'Cash constraint', seed: 42, result: reserved } },
+        180,
+      ).join('\n');
+      assert.match(reserveText, /COFFEE-250G: 3 reserve-blocked attempt\(s\)/);
+      assert.match(reserveText, /Reserved cash USD 0\.01; spendable cash USD 9\.99/);
+      assert.match(reserveText, /Cash reserve USD 0\.01/);
       let started;
       const ready = new Promise((resolve) => {
         started = resolve;
