@@ -464,7 +464,41 @@ It never submits an action or trusts a locally saved receipt as a native result.
 While the original session is open, an unknown
 outcome can retry its host-held ticket with the same key. Without a recovered
 receipt, inspect the current order before starting another action. Existing
-refund, receiving and other tool references remain documentation only.
+receiving and other tool references remain documentation only; pending refund requests are described below.
+
+For a named store, **Payments → Shift+W** creates one **pending refund request**.
+Enter an exact decimal amount and a reason; **Tab** changes fields, and **Enter**
+on the reason (or **Ctrl+S**) previews against a private snapshot. Review the
+payment, currency, amount, reason and operator/store scope. An allowed preview
+can continue to typed **APPLY** only with `--apply` enabled and operator-owned
+policy/principal files granting `payments.create_refund` for that tenant/store.
+The native kernel rechecks the payment, outstanding refunds, disputes and policy
+atomically when applying; a competing refund can make an earlier preview refuse.
+The reviewed amount and currency are bound into the native economic commitment;
+a changed payment currency refuses before a refund is created. Operator-owned
+budget and counterparty constraints are preserved.
+
+This operation records a **pending** refund. It does not call a payment provider,
+transfer money, mark the refund completed, or increase the payment's completed
+refund balance. Provider execution and native refund completion are separate
+operations. A success screen keeps that distinction explicit. Contradictory
+receipt amounts, currencies, payment IDs, statuses or scope require inspection;
+the actual native outcome remains visible and cannot be automatically repeated.
+
+This workflow follows the native payments ledger's three-letter currency
+contract, including supported high-precision BTC amounts. USDC/USDT asset
+payments use the separate A2A/x402 rails and need their own governed workflow;
+an unsupported currency refuses rather than being reinterpreted or converted.
+
+Refunds use the same durable host-held ticket boundary as order actions, with
+separate idempotency keys, per-action intent files and a last-refund pointer.
+**Payments → Shift+P** recovers the latest native refund receipt;
+**Shift+H** browses and pages local refund intents. Recovery is read-only,
+requires the original database/workspace and matching principal/store, and never
+replays commands from workspace JSON. Unknown in-session outcomes retry the same
+key. Orders and refunds share a single live-action gate; a running apply drains
+on exit. Refund creation uses no expected aggregate version because it creates
+a new refund; native pending-balance checks remain the concurrency authority.
 
 Press **e** in the simulation lab to edit the planning horizon (1–30 days),
 opening cash (an exact USD decimal string), starting inventory, reorder point,

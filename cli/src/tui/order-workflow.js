@@ -22,14 +22,22 @@ export function orderWorkflow(order) {
 
 export function canReviewOrderAgain(input) {
   return Boolean(
-    input.orderId &&
+    (input.orderId || input.paymentId) &&
     !input.busy &&
     !input.reviewIssues?.length &&
     ['result', 'failed'].includes(input.phase),
   );
 }
 
-export function orderWorkflowKey(state, text, key) {
+export function orderWorkflowKey(
+  state,
+  text,
+  key,
+  workflow = {
+    name: 'order',
+    create: (current) => orderWorkflow({ id: current.orderId, orderNumber: current.orderLabel }),
+  },
+) {
   const input = state.input,
     name = key.name;
   if (input.busy) return { state };
@@ -40,7 +48,7 @@ export function orderWorkflowKey(state, text, key) {
         state: {
           ...state,
           input: {
-            kind: 'order-action',
+            kind: input.kind,
             phase: 'history',
             busy: false,
             offset: 0,
@@ -53,7 +61,7 @@ export function orderWorkflowKey(state, text, key) {
         state: {
           ...state,
           input: {
-            kind: 'order-action',
+            kind: input.kind,
             phase: 'history',
             history: input.history,
             historyTrail: input.historyTrail || [],
@@ -72,7 +80,7 @@ export function orderWorkflowKey(state, text, key) {
       state: {
         ...state,
         input: {
-          ...orderWorkflow({ id: input.orderId, orderNumber: input.orderLabel }),
+          ...workflow.create(input),
           selected: input.selected || 0,
         },
       },
@@ -106,7 +114,7 @@ export function orderWorkflowKey(state, text, key) {
             historyReturn: { history, selected: input.selected, historyTrail: trail },
           },
         },
-        effect: 'order-history',
+        effect: `${workflow.name}-history`,
       };
     }
     if (['up', 'down', 'home', 'end'].includes(name)) {
@@ -129,7 +137,7 @@ export function orderWorkflowKey(state, text, key) {
             historyId: entries[input.selected].id,
           },
         },
-        effect: 'reconcile-order',
+        effect: `reconcile-${workflow.name}`,
       };
     else if (['pageup', 'pagedown'].includes(name))
       next.offset = Math.max(0, input.offset + (name === 'pageup' ? -8 : 8));
@@ -142,7 +150,7 @@ export function orderWorkflowKey(state, text, key) {
     if (name === 'return')
       return {
         state: { ...state, input: { ...input, busy: true, phase: 'previewing' } },
-        effect: 'preview-order',
+        effect: `preview-${workflow.name}`,
       };
   } else if (input.phase === 'confirm') {
     if (name === 'return') {
@@ -151,7 +159,7 @@ export function orderWorkflowKey(state, text, key) {
       else
         return {
           state: { ...state, input: { ...input, phase: 'applying', busy: true, error: null } },
-          effect: 'apply-order',
+          effect: `apply-${workflow.name}`,
         };
     } else {
       const edited = editText(input.text, input.cursor, text, key, {
@@ -168,7 +176,7 @@ export function orderWorkflowKey(state, text, key) {
   } else if (name === 'return' && input.phase === 'uncertain') {
     return {
       state: { ...state, input: { ...input, phase: 'applying', busy: true, error: null } },
-      effect: 'apply-order',
+      effect: `apply-${workflow.name}`,
     };
   } else if (text === 'v' && (input.receipt || input.preview?.receipt)) {
     next.raw = !input.raw;
@@ -189,63 +197,75 @@ export function orderWorkflowKey(state, text, key) {
   return { state: { ...state, input: next } };
 }
 
+export function historyWorkflowLines(
+  input,
+  size,
+  summary = (entry) => ({ resource: 'Order', id: entry.orderId, action: entry.status }),
+) {
+  const lines = [],
+    add = (value = '') => lines.push(...wrap(value, size));
+  const history = input.history,
+    entry = history.entries[input.selected];
+  const selected = entry ? summary(entry) : null;
+  if (entry) {
+    add(
+      `LOCAL ${entry.localState.toUpperCase()} · ${input.selected + 1}/${history.entries.length}`,
+    );
+    add(
+      `Page ${(input.historyTrail?.length || 0) + 1} · ${history.pendingOnly ? 'PENDING ONLY' : 'all actions'}`,
+    );
+    if (history.truncated) add('PARTIAL HISTORY');
+    if (size >= 60) {
+      const start = Math.max(0, Math.min(input.selected - 3, history.entries.length - 7));
+      history.entries
+        .slice(start, start + 7)
+        .forEach((item, index) =>
+          add(
+            fit(
+              `${start + index === input.selected ? '›' : ' '} ${start + index + 1}. ${item.localState} → ${summary(item).action} · ${summary(item).id}`,
+              size,
+              false,
+            ),
+          ),
+        );
+      add();
+    }
+    add(`${selected.resource}: ${selected.id}`);
+    add(`Reviewed action: ${selected.action}`);
+    add(`Recorded: ${entry.recordedAt}`);
+    add(`Idempotency key: ${entry.idempotencyKey}`);
+  } else {
+    add(
+      history.pendingOnly
+        ? 'No local pending intents on this page.'
+        : 'No matching action history.',
+    );
+    add(
+      `Page ${(input.historyTrail?.length || 0) + 1} · ${history.pendingOnly ? 'PENDING ONLY' : 'all actions'}`,
+    );
+  }
+  add(
+    `${history.nextCursor ? 'n next page · ' : ''}${input.historyTrail?.length ? 'p previous page · ' : ''}f ${history.pendingOnly ? 'all actions' : 'pending only'} · r reload`,
+  );
+  add(
+    'Local history is not proof of completion. Enter looks up the native receipt; no command is repeated.',
+  );
+  add('↑↓ Home End selects · PgUp/PgDn scrolls · Enter looks up · Esc closes');
+  if (history.skipped)
+    add(`${history.skipped} invalid, unreadable or differently scoped records skipped.`);
+  if (history.truncated)
+    add(
+      'PARTIAL HISTORY: scan limited to 2000 directory entries. Unscanned records remain on disk.',
+    );
+
+  return lines;
+}
+
 export function orderWorkflowLines(input, size) {
   const lines = [],
     add = (value = '') => lines.push(...wrap(value, size));
-  if (input.phase === 'history') {
-    const history = input.history,
-      entry = history.entries[input.selected];
-    if (entry) {
-      add(
-        `LOCAL ${entry.localState.toUpperCase()} · ${input.selected + 1}/${history.entries.length}`,
-      );
-      add(
-        `Page ${(input.historyTrail?.length || 0) + 1} · ${history.pendingOnly ? 'PENDING ONLY' : 'all actions'}`,
-      );
-      if (history.truncated) add('PARTIAL HISTORY');
-      if (size >= 60) {
-        const start = Math.max(0, Math.min(input.selected - 3, history.entries.length - 7));
-        history.entries
-          .slice(start, start + 7)
-          .forEach((item, index) =>
-            add(
-              fit(
-                `${start + index === input.selected ? '›' : ' '} ${start + index + 1}. ${item.localState} → ${item.status} · ${item.orderId}`,
-                size,
-                false,
-              ),
-            ),
-          );
-        add();
-      }
-      add(`Order: ${entry.orderId}`);
-      add(`Reviewed action: ${entry.status}`);
-      add(`Recorded: ${entry.recordedAt}`);
-      add(`Idempotency key: ${entry.idempotencyKey}`);
-    } else {
-      add(
-        history.pendingOnly
-          ? 'No local pending intents on this page.'
-          : 'No matching order action history.',
-      );
-      add(
-        `Page ${(input.historyTrail?.length || 0) + 1} · ${history.pendingOnly ? 'PENDING ONLY' : 'all actions'}`,
-      );
-    }
-    add(
-      `${history.nextCursor ? 'n next page · ' : ''}${input.historyTrail?.length ? 'p previous page · ' : ''}f ${history.pendingOnly ? 'all actions' : 'pending only'} · r reload`,
-    );
-    add(
-      'Local history is not proof of completion. Enter looks up the native receipt; no command is repeated.',
-    );
-    add('↑↓ Home End selects · PgUp/PgDn scrolls · Enter looks up · Esc closes');
-    if (history.skipped)
-      add(`${history.skipped} invalid, unreadable or differently scoped records skipped.`);
-    if (history.truncated)
-      add(
-        'PARTIAL HISTORY: scan limited to 2000 directory entries. Unscanned records remain on disk.',
-      );
-  } else if (input.phase === 'choose') {
+  if (input.phase === 'history') return historyWorkflowLines(input, size);
+  if (input.phase === 'choose') {
     add(`Order: ${input.orderLabel}`);
     ORDER_ACTIONS.forEach((action, index) =>
       add(`${index === input.selected ? '›' : ' '} ${action.label}`),

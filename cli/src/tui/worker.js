@@ -154,6 +154,10 @@ async function loadStore({ dbPath, directory, payload, operation, kernel }) {
       await seedDemo(commerce);
       fs.writeFileSync(marker, 'ready\n', { mode: 0o600 });
     }
+    if (operation === 'refund-preview') {
+      const { previewRefund } = await import('./refund-engine.js');
+      return await previewRefund(commerce, kernel, payload);
+    }
     if (operation === 'order-preview') {
       const { previewOrder } = await import('./order-engine.js');
       return await previewOrder(commerce, kernel, payload);
@@ -186,13 +190,20 @@ if (process.send)
       });
       let data;
       if (request.operation === 'snapshot') data = await loadStore(request);
-      else if (request.operation === 'order-preview') data = await loadStore(request);
+      else if (['order-preview', 'refund-preview'].includes(request.operation))
+        data = await loadStore(request);
       else if (request.operation === 'order-apply') {
         const { applyOrder } = await import('./order-engine.js');
         data = await applyOrder(request.dbPath, request.kernel, request.payload);
       } else if (request.operation === 'order-reconcile') {
         const { reconcileOrder } = await import('./order-engine.js');
         data = reconcileOrder(request.dbPath, request.kernel, request.payload);
+      } else if (request.operation === 'refund-apply') {
+        const { applyRefund } = await import('./refund-engine.js');
+        data = await applyRefund(request.dbPath, request.kernel, request.payload);
+      } else if (request.operation === 'refund-reconcile') {
+        const { reconcileRefund } = await import('./refund-engine.js');
+        data = reconcileRefund(request.dbPath, request.kernel, request.payload);
       } else if (request.operation === 'simulate') {
         // This process is already bounded and killable by the terminal host.
         // Run directly here so quitting cannot orphan a second worker process.

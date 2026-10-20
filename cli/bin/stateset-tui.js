@@ -21,7 +21,7 @@ Usage:
   --snapshot      Plain terminal screen, suitable for logs
   --json          Snapshot data as JSON; no terminal escape sequences
   --no-color      Disable colors in the interactive workbench
-  --apply         Enable reviewed order actions on --db (trusted kernel files required)
+  --apply         Enable reviewed operator actions on --db (trusted kernel files required)
   --kernel-policy <path>     Operator-owned kernel policy JSON
   --kernel-principal <path>  Operator-owned principal JSON
   --kernel-store-id <id>     Trusted store scope for governed actions
@@ -34,16 +34,18 @@ Lab:  e assumptions · g set seed · p selected SKUs · f results · w save · l
       x export JSON · i import assumptions · Shift+U undo removal · c cancel run · Shift+R replay · + / - seed
 Stock: a adds selected SKU to a private plan; cost/demand/supplier terms are explicit.
 Browse: / search entire view on Enter · o sort · t related records · u customer · b back
-Orders: W reviewed order status workflow · P reconcile last order action
+Orders: W reviewed order status workflow · P last receipt · H action history
+Payments: W pending refund request · P last refund receipt · H refund history
 Explorer: 7 all domains · T tool reference · t linked records · b back · d domains
 Editing: Left/Right/Home/End · Backspace/Delete · Ctrl+U clear · Ctrl+K to end
 All simulations use private native stores. History retains 20 runs per source.
 Exports never overwrite files; workspace data can contain sensitive planning and operation receipts.
 
-No AI credentials required. Browsing stays read-only. Order actions preview first;
+No AI credentials required. Browsing stays read-only. Operator actions preview first;
 --apply, trusted kernel configuration and typed confirmation enable a live change.
 Live browsing needs optional better-sqlite3 for a WAL-consistent backup;
 during browsing, the embedded engine reads and migrates only that temporary snapshot.
+Refund creation records a pending request; provider execution and completion are separate.
 Explicit apply opens the actual store and may run native migrations.
 `;
 
