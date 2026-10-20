@@ -9,7 +9,12 @@ import { TerminalBackend } from '../../src/tui/backend.js';
 import { DEFAULT_PLANNING } from '../../src/tui/planning.js';
 import { initialState, navigate, handleKey } from '../../src/tui/model.js';
 import { resultLines, timelineLines } from '../../src/tui/render.js';
-import { comparisonEvidence, cashMovement, timelineEntries } from '../../src/tui/report.js';
+import {
+  comparisonEvidence,
+  cashMovement,
+  timelineEntries,
+  purchasingRulesMatch,
+} from '../../src/tui/report.js';
 import { executeInventoryPlan } from '../../src/simulation/planning.js';
 import { productEditor, productFromDraft } from '../../src/tui/basket.js';
 
@@ -288,6 +293,73 @@ test(
       assert.match(ruleText, /COFFEE-250G: 1 capacity-blocked attempt\(s\)/);
       assert.match(ruleText, /Inventory position with proposed order 8; capacity limit 6/);
       assert.match(ruleText, /Review interval 3 day\(s\); next review day 3/);
+      const cadenceProducts = [
+        productFromDraft('COFFEE-250G', {
+          ...productEditor(priority.products[0]).draft,
+          initialStock: '1',
+          demandMin: '1',
+          demandMax: '1',
+          targetStock: '3',
+          reviewIntervalDays: '3',
+          maximumInventoryPosition: '4',
+        }),
+      ];
+      const cadence = await backend.request('simulate', {
+        preset: 'daily-review',
+        seed: 42,
+        controls: { ...priority.planning, days: 3, cashReserve: '1.00' },
+        products: cadenceProducts,
+      });
+      assert.equal(cadence.inputs[0].products[0].purchasing.reviewIntervalDays, 3);
+      assert.ok(!Object.hasOwn(cadence.inputs[1].products[0].purchasing, 'reviewIntervalDays'));
+      assert.deepEqual(
+        cadence.results.map((r) => r.summary.lostSales),
+        [2, 0],
+      );
+      assert.deepEqual(
+        cadence.results.map((r) => r.summary.endingCash),
+        ['9.00', '13.00'],
+      );
+      assert.deepEqual(
+        cadence.results.map((r) => r.summary.purchasingSpend),
+        ['3.00', '3.00'],
+      );
+      assert.deepEqual(
+        cadence.results.map((r) => r.summary.deferredPurchaseReviews),
+        [2, 0],
+      );
+      assert.deepEqual(
+        cadence.results.map(
+          (r) => r.timeline.find((event) => event.type === 'purchase_order_sent').day,
+        ),
+        [3, 1],
+      );
+      assert.ok(
+        cadence.results.every(
+          (r) =>
+            r.reconciliation.purchaseOrdersBalanced &&
+            r.reconciliation.inventoryFlowBalanced &&
+            r.reconciliation.cashFlowBalanced,
+        ),
+      );
+      assert.equal(comparisonEvidence(cadence.results).sameDemandPaths, true);
+      assert.equal(comparisonEvidence(cadence.results).sameSupplyPaths, true);
+      assert.equal(purchasingRulesMatch(cadence.results), false);
+      assert.match(
+        resultLines({ sim: { preset: 'Daily reviews', seed: 42, result: cadence } }, 180).join(
+          '\n',
+        ),
+        /Reorder, sizing & review rules different/,
+      );
+      await assert.rejects(
+        backend.request('simulate', {
+          preset: 'daily-review',
+          seed: 42,
+          controls: priority.planning,
+          products: priority.products,
+        }),
+        /needs a selected SKU.*above 1 day/,
+      );
       let started;
       const ready = new Promise((resolve) => {
         started = resolve;

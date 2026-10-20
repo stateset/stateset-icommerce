@@ -188,6 +188,33 @@ try:
     frame = screen(b'Seed 999999')
     assert b'USD 3.25' in frame
     assert json.loads(next(workspace.glob('*/workspace.json')).read_text()) == saved
+    send(b'/Daily reviews\r')
+    frame = screen(b'Daily reviews')
+    assert '› Daily reviews'.encode() in frame
+    send(b's')
+    screen(b'RESULTS')
+    deadline = time.monotonic() + 15
+    while True:
+        compared = json.loads(next(workspace.glob('*/workspace.json')).read_text())
+        if len(compared['runs']) == 2:
+            break
+        assert time.monotonic() < deadline, 'daily comparison was not persisted'
+        time.sleep(0.1)
+    comparison = compared['runs'][0]
+    assert comparison['presetId'] == 'daily-review'
+    assert comparison['products'][0]['purchasing']['reviewIntervalDays'] == 3
+    assert comparison['result']['inputs'][0]['products'][0]['purchasing']['reviewIntervalDays'] == 3
+    assert 'reviewIntervalDays' not in comparison['result']['inputs'][1]['products'][0]['purchasing']
+    assert [r['summary']['deferredPurchaseReviews'] for r in comparison['result']['results']] == [2, 0]
+    assert [r['summary']['constraintBlockedPurchases'] for r in comparison['result']['results']] == [1, 3]
+    assert compared['runs'][1] == saved['runs'][0]
+    resize(140, 44)
+    send(b'\x1b[1~')
+    frame = screen(b'RESULTS  Daily reviews')
+    assert b'Reorder, sizing & review rules different' in frame
+    assert b'Projected paths: demand same' in frame
+    resize(20, 8)
+    screen(b'RESULTS')
     send(b'q')
     assert child.wait(timeout=15) == 0
     after = termios.tcgetattr(slave)
@@ -200,6 +227,8 @@ try:
                 'nativeReserveBlocksWholeOrders': True, 'exactCashReserve': '0.50',
                 'skuReviewAndCapEditedAt20x8': True, 'skuRulesSurviveResizeAndSave': True,
                 'nativeCapacityAndReviewDecisions': True,
+                'dailyReviewComparisonSelectedAt20x8': True,
+                'dailyComparisonChangesNativeDecisions': True, 'priorRunUnchanged': True,
                 'reportsScrollAndSurviveResize': True, 'terminalRestored': True}
     (root / 'evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
     print(json.dumps({'evidence': str(root / 'evidence.json'), **evidence}, indent=2))

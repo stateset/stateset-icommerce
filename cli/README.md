@@ -430,6 +430,16 @@ rounded position blocks the order; it does not shrink it. These rules are retain
 through comparisons, save, import, reviewed updates and replay. Older scenarios
 keep daily reviews and no cap; their recorded inputs and digests remain unchanged.
 
+Select **Daily reviews** to compare the configured SKU purchase calendars with
+daily reviews using the same seed, demand, stock, cash reserve, supplier terms,
+capacity limits and product priority. At least one selected SKU must have a review
+interval above one day; the demo recipe and all-daily plans refuse cleanly rather
+than running a duplicate comparison. Only the candidate's review schedule changes.
+Results label reorder/sizing/review-rule matches separately from capital and
+projected-path checks; matching paths do not imply identical purchasing policy.
+Executed assumptions show both review intervals. Use **a** on the result or saved
+history to edit the original baseline, and **Shift+R** to replay that comparison.
+
 Results show fill rate, lost units, exact ending cash, purchasing spend and
 margin, with exact cash/margin changes against the baseline. The comparison
 also shows the exact lowest cash balance and its first day, purchased/received

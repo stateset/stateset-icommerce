@@ -50,7 +50,7 @@ test('compact lists keep the selected item visible across every view at 20 by 8'
     2: 'STOCK-2',
     3: 'b@store.test',
     4: 'PAY-2',
-    5: 'Cash constraint',
+    5: 'Daily reviews',
   };
   for (let view = 1; view <= 5; view++) {
     const selected = key(state(view), '', 'end').state;

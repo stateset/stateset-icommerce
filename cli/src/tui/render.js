@@ -12,6 +12,7 @@ import {
   cashBudgetRefusals,
   purchasingExceptions,
   comparisonEvidence,
+  purchasingRulesMatch,
   fillRate,
   soldTraces,
   timelineEntries,
@@ -106,6 +107,10 @@ export function resultLines(state, size) {
     );
     add(`                   gross margin ${cashDelta(reports[1], baseline, 'grossMargin')}`);
     add('COMPARISON CHECKS');
+    const policyMatch = purchasingRulesMatch(reports);
+    add(
+      `Reorder, sizing & review rules ${policyMatch === null ? 'Unavailable' : policyMatch ? 'same' : 'different'}`,
+    );
     const context = comparisonEvidence(reports);
     if (!context) add("Saved comparison evidence is unavailable. Inspect each plan's inputs.");
     else {
@@ -232,8 +237,7 @@ export function resultLines(state, size) {
         add(
           `Supplier minimum ${item.purchasing.minimumOrderQuantity} · case pack ${item.purchasing.orderMultiple}`,
         );
-      if (item.purchasing?.reviewIntervalDays !== undefined)
-        add(`Purchase review interval ${count(item.purchasing.reviewIntervalDays)} day(s)`);
+      add(`Purchase review interval ${count(item.purchasing?.reviewIntervalDays ?? 1)} day(s)`);
       if (item.purchasing?.maximumInventoryPosition !== undefined)
         add(`Maximum inventory position ${count(item.purchasing.maximumInventoryPosition)}`);
     }

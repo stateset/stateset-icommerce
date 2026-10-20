@@ -41,6 +41,11 @@ export const PRESETS = [
     name: 'Cash constraint',
     note: 'Compare the baseline with 5% of its opening cash.',
   },
+  {
+    id: 'daily-review',
+    name: 'Daily reviews',
+    note: 'Compare configured SKU schedules with daily purchase reviews; other inputs stay fixed.',
+  },
 ];
 
 export function simulationPlans(preset, seed, controls = DEFAULT_PLANNING, products = []) {
@@ -72,6 +77,13 @@ export function simulationPlans(preset, seed, controls = DEFAULT_PLANNING, produ
   // The engine defaults an omitted reserve to zero.
   if (assumptions.cashReserve !== '0.00') base.cashReserve = assumptions.cashReserve;
   if (preset === 'baseline') return [base];
+  if (
+    preset === 'daily-review' &&
+    !base.products.some((item) => (item.purchasing?.reviewIntervalDays ?? 1) > 1)
+  )
+    throw new Error(
+      'Daily reviews needs a selected SKU with a review interval above 1 day. Use p then e to edit SKU terms.',
+    );
   const candidate = structuredClone(base);
   candidate.name = PRESETS.find((p) => p.id === preset).name;
   if (preset === 'spike')
@@ -79,6 +91,10 @@ export function simulationPlans(preset, seed, controls = DEFAULT_PLANNING, produ
       item.demand = { min: item.demand.min * 3, max: item.demand.max * 3 };
   if (preset === 'delay') for (const item of candidate.products) item.leadTimeDays += 3;
   if (preset === 'cash') candidate.startingCash = constrainedCash(assumptions.startingCash);
+  if (preset === 'daily-review')
+    for (const item of candidate.products) {
+      if (item.purchasing) delete item.purchasing.reviewIntervalDays;
+    }
   return [base, candidate];
 }
 
