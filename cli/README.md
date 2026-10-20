@@ -383,7 +383,7 @@ numbers. Fields are limited to 4096 characters and 64 visible columns per record
 known credential and binary columns are excluded from display and search. These
 are persisted records, not computed financial reports or proof verification.
 
-**Shift+T** opens each domain's searchable **tool reference**, including all **966**
+**Shift+T** opens each domain's searchable **tool reference**, including all **967**
 registered domain/runtime tools, descriptions, permissions, stability tiers and
 experimental prerequisites. This is documentation only: opening a write tool
 never executes it. Metadata is generated from the authoritative registry with
@@ -465,6 +465,32 @@ While the original session is open, an unknown
 outcome can retry its host-held ticket with the same key. Without a recovered
 receipt, inspect the current order before starting another action. Existing
 receiving and other tool references remain documentation only; pending refund requests are described below.
+
+For a named store, **Orders → Shift+S** reviews a shipment that consumes reserved
+physical inventory. Enter optional tracking, then the quantity to ship for each
+line. Zero skips a line; partial and final shipments use the native
+`orders.ship_reserved` command. **Tab/Enter** advances fields, **Ctrl+S** previews,
+and committing requires typed **APPLY**, `--apply`, and an operator policy granting
+`orders.ship_reserved`. The native kernel requires a paid processing or partially
+shipped order with valid, backed reservations. A changed order version refuses;
+refresh and review again. The review lists the selected units, resulting status,
+tracking (including existing tracking retained when the field is blank), operator
+and store. Applying consumes physical stock and its reservations atomically with
+the order update and native receipt; carrier booking is separate.
+
+**Orders → Shift+G** recovers the last shipment receipt; **Shift+J** opens its
+paged local history. Recovery is read-only and never resubmits workspace JSON.
+Unknown in-session outcomes retry the original host ticket and key. Shipments,
+order transitions and refund requests share the live-action gate and drain an
+active apply before exit.
+
+MCP agents can use `get_order` to read `version`, line IDs, quantities and
+`shippedQuantity`, then call `ship_reserved_order` with `expectedVersion`, optional
+tracking, and selected `lines: [{ orderItemId, quantity }]` (omit lines to ship all
+remaining units). Supply an `idempotencyKey` and reuse it for an uncertain retry of
+the exact same dispatch. This tool always requires trusted kernel configuration
+for apply; it never falls back to legacy shipping. `ship_order` records shipping
+without consuming physical stock.
 
 For a named store, **Payments → Shift+W** creates one **pending refund request**.
 Enter an exact decimal amount and a reason; **Tab** changes fields, and **Enter**

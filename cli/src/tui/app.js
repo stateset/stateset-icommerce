@@ -5,6 +5,7 @@ import { initialState, handleKey, records, PRESETS } from './model.js';
 import { runRecord, scenarioSettings, useRunAssumptions } from './workspace.js';
 import { productEditor } from './basket.js';
 import { ORDER_ACTIONS } from './order-operations.js';
+import { shipmentWorkflowLimit } from './shipment-workflow.js';
 import { refundWorkflowLimit } from './refund-workflow.js';
 import { orderWorkflowLimit } from './order-workflow.js';
 import { readScenarioExport } from './import.js';
@@ -46,17 +47,17 @@ export async function startTerminal({
   const draw = () => {
     if (closed || suspended) return;
     if (
-      ['order-action', 'refund-action'].includes(state.input?.kind) &&
+      ['order-action', 'refund-action', 'shipment-action'].includes(state.input?.kind) &&
       !state.input.busy &&
       state.input.phase !== 'choose'
     ) {
       const offset = Math.min(
         state.input.offset || 0,
-        (state.input.kind === 'refund-action' ? refundWorkflowLimit : orderWorkflowLimit)(
-          state.input,
-          output.columns || 80,
-          output.rows || 24,
-        ),
+        (state.input.kind === 'shipment-action'
+          ? shipmentWorkflowLimit
+          : state.input.kind === 'refund-action'
+            ? refundWorkflowLimit
+            : orderWorkflowLimit)(state.input, output.columns || 80, output.rows || 24),
       );
       if (offset !== state.input.offset) state = { ...state, input: { ...state.input, offset } };
     }
@@ -534,18 +535,17 @@ export async function startTerminal({
       isApply = operation.startsWith('apply-'),
       isHistory = operation.endsWith('-history');
     try {
-      const payload =
-        operation === 'preview-refund'
-          ? captured.params
-          : operation === 'preview-order'
-            ? { orderId: captured.orderId, status: ORDER_ACTIONS[captured.selected].status }
-            : isApply
-              ? { ticketId: captured.preview.ticketId }
-              : isHistory
-                ? captured.historyRequest || {}
-                : operation.startsWith('reconcile-') && captured.historyId
-                  ? { historyId: captured.historyId }
-                  : {};
+      const payload = ['preview-refund', 'preview-shipment'].includes(operation)
+        ? captured.params
+        : operation === 'preview-order'
+          ? { orderId: captured.orderId, status: ORDER_ACTIONS[captured.selected].status }
+          : isApply
+            ? { ticketId: captured.preview.ticketId }
+            : isHistory
+              ? captured.historyRequest || {}
+              : operation.startsWith('reconcile-') && captured.historyId
+                ? { historyId: captured.historyId }
+                : {};
       const result = await backend.request(operation, payload);
       if (!closed && state.input === captured) {
         state = {
@@ -618,6 +618,10 @@ export async function startTerminal({
         'apply-order',
         'reconcile-order',
         'order-history',
+        'preview-shipment',
+        'apply-shipment',
+        'reconcile-shipment',
+        'shipment-history',
         'preview-refund',
         'apply-refund',
         'reconcile-refund',

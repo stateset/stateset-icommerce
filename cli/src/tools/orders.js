@@ -88,12 +88,14 @@ export const orderTools = [
           currency: order.currency,
           paymentStatus: order.paymentStatus,
           fulfillmentStatus: order.fulfillmentStatus,
+          version: order.version,
           trackingNumber: order.trackingNumber,
           items: order.items?.map((i) => ({
             id: i.id,
             sku: i.sku,
             name: i.name,
             quantity: i.quantity,
+            shippedQuantity: i.shippedQuantity,
             unitPrice: i.unitPrice,
             unitPriceExact: i.unitPriceExact,
             total: i.total,
@@ -204,8 +206,54 @@ export const orderTools = [
   },
 
   {
+    name: 'ship_reserved_order',
+    description:
+      'Ship all remaining units or selected order lines and atomically consume their reserved physical inventory. Requires a paid processing/partially-shipped order, its reviewed version from get_order, --apply and trusted kernel policy granting orders.ship_reserved. Returns a native receipt; use the same idempotency key for an uncertain retry.',
+    inputSchema: {
+      orderId: z.string().uuid().describe('Order ID'),
+      expectedVersion: z
+        .number()
+        .int()
+        .nonnegative()
+        .max(2147483647)
+        .describe('Reviewed order version from get_order; a stale version refuses'),
+      trackingNumber: z.string().max(200).optional().describe('Shipment tracking number'),
+      lines: z
+        .array(
+          z.object({
+            orderItemId: z.string().uuid().describe('Order line ID from get_order'),
+            quantity: z.number().int().positive().max(2147483647).describe('Units to ship now'),
+          }),
+        )
+        .min(1)
+        .max(100)
+        .optional()
+        .describe('Selected lines and quantities; omit to ship all remaining units'),
+      idempotencyKey: z
+        .string()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe('Reuse for retries of this exact shipment'),
+    },
+    permission: 'write',
+    handler: async ({ params, allowApply }) => {
+      if (!allowApply)
+        return {
+          success: false,
+          error: 'Shipping reserved inventory requires --apply and trusted kernel configuration.',
+          wouldShip: params,
+        };
+      throw new Error(
+        'Reserved-stock shipping requires trusted kernel configuration; no legacy shipping fallback is permitted.',
+      );
+    },
+  },
+
+  {
     name: 'ship_order',
-    description: 'Mark an order as shipped with optional tracking number.',
+    description:
+      'Mark an order as shipped with optional tracking number. For physical stock consumption use ship_reserved_order.',
     inputSchema: {
       orderId: z.string().min(1).describe('Order ID (UUID)'),
       trackingNumber: z.string().optional().describe('Shipping tracking number'),

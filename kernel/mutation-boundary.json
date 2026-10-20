@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:a2b8949d925d43684f1d7af9fe7cbc0040e923fc4cf4e32a0cb18a0ccec2bd61",
+  "digest": "sha256:451b478e14a3818b6f6c417d2177851daf90c460d109f9ff6b4ac093052c4545",
   "counts": {
-    "total": 966,
+    "total": 967,
     "readOnly": 478,
-    "mutations": 488,
-    "governed": 36,
+    "mutations": 489,
+    "governed": 37,
     "governedComposite": 1,
     "blocked": 451
   },
@@ -5980,6 +5980,13 @@
       "mutation": true,
       "disposition": "governed",
       "commandType": "orders.ship"
+    },
+    {
+      "name": "ship_reserved_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "orders.ship_reserved"
     },
     {
       "name": "ship_shipment",

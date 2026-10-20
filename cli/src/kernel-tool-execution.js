@@ -16,6 +16,7 @@ export const KERNEL_CAPABILITY_BY_TOOL = Object.freeze({
   release_reservation: 'inventory.reservation.release',
   update_order_status: 'orders.transition',
   ship_order: 'orders.ship',
+  ship_reserved_order: 'orders.ship_reserved',
   approve_return: 'returns.transition',
   reject_return: 'returns.transition',
   mark_return_received: 'returns.transition',
@@ -226,6 +227,16 @@ function payloadFor(toolName, params, issuedAt = new Date(), actorAddress = null
         order_id: params.orderId,
         tracking_number: params.trackingNumber || null,
         lines: params.lines || null,
+      };
+    case 'ship_reserved_order':
+      return {
+        order_id: params.orderId,
+        tracking_number: params.trackingNumber || null,
+        lines:
+          params.lines?.map((line) => ({
+            order_item_id: line.orderItemId,
+            quantity: line.quantity,
+          })) ?? null,
       };
     case 'approve_return':
     case 'reject_return':
@@ -556,7 +567,10 @@ export function createKernelToolExecutor({ commerce, kernel, allowApply, agentCo
       store_id: String(storeId),
       correlation_id: executionOptions.correlationId || null,
       causation_id: executionOptions.causationId || null,
-      expected_version: executionOptions.expectedVersion ?? null,
+      expected_version:
+        executionOptions.expectedVersion ??
+        (toolName === 'ship_reserved_order' ? params.expectedVersion : null) ??
+        null,
       policy_version: kernelConfig.policy.version || null,
       approval: null,
       authority: null,

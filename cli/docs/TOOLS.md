@@ -5,13 +5,13 @@
 
 Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/tool-tiers.js` (tiers).
 
-**951 tools** across **89 domains**, plus 15 agentic runtime tools.
+**952 tools** across **89 domains**, plus 15 agentic runtime tools.
 
 ## Stability tiers
 
 | Tier | Tools | Meaning |
 | --- | ---: | --- |
-| core | 209 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
+| core | 210 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
 | extended | 493 | Real, specialised domains (finance, manufacturing, WMS, B2B, engagement). Opt in with `--profile` or `--domains`. |
 | experimental | 264 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete. Only `--profile all`, a curated profile naming the domain, or `--domains`. |
 
@@ -19,8 +19,8 @@ Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/t
 
 | Profile | Tools | Domains |
 | --- | ---: | --- |
-| all | 966 | every domain |
-| core (default) | 209 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain, simulations |
+| all | 967 | every domain |
+| core (default) | 210 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain, simulations |
 | operations | 204 | inventory, simulations, manufacturing, shipments, suppliers, warranties, warehouse, receiving, fulfillment, quality, lots, serials, cycle-counts, transfer-orders, production-batches, supplier-skus, inbound-shipments, backorders, vendor-returns |
 | finance | 134 | payments, invoices, treasury, accounts-payable, accounts-receivable, cost-accounting, credit, general-ledger, fixed-assets, revenue-recognition, prepayments, vendor-credits, payment-obligations |
 | agents | 257 | simulations, agent-runtime, agent-cards, agent-receipt, a2a, a2a-platform, a2a-automation, a2a-observability, a2a-intelligence, x402, stablecoin, erc8004, treasury, payment-obligations, proofs, audit, policies |
@@ -33,7 +33,7 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | Domain | Tier | Tools |
 | --- | --- | ---: |
 | [customers](#customers) | core | 11 |
-| [orders](#orders) | core | 6 |
+| [orders](#orders) | core | 7 |
 | [products](#products) | core | 14 |
 | [inventory](#inventory) | core | 7 |
 | [custom-objects](#custom-objects) | extended | 12 |
@@ -150,7 +150,8 @@ Tier: **core**
 | `get_order` | core | read | Get a specific order by ID or order number. Returns full order details including line items. |
 | `create_order` | core | write | Create a new order for a customer with line items. |
 | `update_order_status` | core | write | Update the status of an order. Valid statuses: pending, confirmed, processing, shipped, delivered, cancelled, refunded. |
-| `ship_order` | core | write | Mark an order as shipped with optional tracking number. |
+| `ship_reserved_order` | core | write | Ship all remaining units or selected order lines and atomically consume their reserved physical inventory. Requires a paid processing/partially-shipped order, its reviewed version from get_order, --apply and trusted kernel policy granting orders.ship_reserved. Returns a native receipt; use the same idempotency key for an uncertain retry. |
+| `ship_order` | core | write | Mark an order as shipped with optional tracking number. For physical stock consumption use ship_reserved_order. |
 | `cancel_order` | core | delete | Cancel an order. Only pending or confirmed orders can be cancelled. |
 
 ## products

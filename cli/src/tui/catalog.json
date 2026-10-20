@@ -117,10 +117,17 @@
         "reason": ""
       },
       {
+        "name": "ship_reserved_order",
+        "tier": "core",
+        "permission": "write",
+        "description": "Ship all remaining units or selected order lines and atomically consume their reserved physical inventory. Requires a paid processing/partially-shipped order, its reviewed version from get_order, --apply and trusted kernel policy granting orders.ship_reserved. Returns a native receipt; use the same idempotency key for an uncertain retry.",
+        "reason": ""
+      },
+      {
         "name": "ship_order",
         "tier": "core",
         "permission": "write",
-        "description": "Mark an order as shipped with optional tracking number.",
+        "description": "Mark an order as shipped with optional tracking number. For physical stock consumption use ship_reserved_order.",
         "reason": ""
       },
       {
