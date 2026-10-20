@@ -94,6 +94,24 @@ try:
     screen(b'Purchasing')
     send(b'\r')
     screen(b'Loaded Purchasing')
+    send(b'p\r')
+    screen(b'SKU 1/12')
+    send(b'\t' * 10)
+    screen(b'Review interval')
+    send(b'\x153')
+    screen('3▏'.encode())
+    resize(140, 44)
+    frame = screen(b'SKU TERMS')
+    assert b'review on day zero' in frame
+    resize(20, 8)
+    screen(b'SKU 11/12')
+    send(b'\t\x152')
+    frame = screen('2▏'.encode())
+    assert b'Position cap' in frame
+    send(b'\r')
+    screen(b'SKU PRIORITY')
+    send(b'\x1b')
+    screen(b'Seed 77')
     send(b'g')
     screen(b'SET SIMULATION')
     send(b'\x15999999\r')
@@ -148,7 +166,12 @@ try:
     assert run['controls']['cashReserve'] == '0.50'
     assert run['result']['inputs'][0]['cashReserve'] == '0.50'
     assert run['result']['results'][0]['summary']['endingCash'] == '3.25'
-    assert run['result']['results'][0]['summary']['reserveBlockedPurchases'] == 6
+    assert run['products'][0]['purchasing']['reviewIntervalDays'] == 3
+    assert run['products'][0]['purchasing']['maximumInventoryPosition'] == 2
+    assert run['result']['inputs'][0]['products'][0]['purchasing'] == run['products'][0]['purchasing']
+    assert run['result']['results'][0]['summary']['reserveBlockedPurchases'] == 3
+    assert run['result']['results'][0]['summary']['constraintBlockedPurchases'] == 1
+    assert run['result']['results'][0]['summary']['deferredPurchaseReviews'] == 2
     assert run['result']['results'][0]['summary']['purchasingSpend'] == '0.00'
     assert run['result']['results'][0]['purchases'] == []
     assert all(event['required'] == '3.00' and event['cash'] == '3.25' and event['spendableCash'] == '2.75'
@@ -175,6 +198,8 @@ try:
                 'seed': 999999, 'exactEndingCash': '3.25',
                 'reserveEditedAt20x8': True, 'reserveSurvivesResizeAndSave': True,
                 'nativeReserveBlocksWholeOrders': True, 'exactCashReserve': '0.50',
+                'skuReviewAndCapEditedAt20x8': True, 'skuRulesSurviveResizeAndSave': True,
+                'nativeCapacityAndReviewDecisions': True,
                 'reportsScrollAndSurviveResize': True, 'terminalRestored': True}
     (root / 'evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
     print(json.dumps({'evidence': str(root / 'evidence.json'), **evidence}, indent=2))

@@ -11,6 +11,7 @@ import { initialState, navigate, handleKey } from '../../src/tui/model.js';
 import { resultLines, timelineLines } from '../../src/tui/render.js';
 import { comparisonEvidence, cashMovement, timelineEntries } from '../../src/tui/report.js';
 import { executeInventoryPlan } from '../../src/simulation/planning.js';
+import { productEditor, productFromDraft } from '../../src/tui/basket.js';
 
 test(
   'full inventory, cross-page search, related records, multi-SKU execution and owned cancellation',
@@ -231,6 +232,62 @@ test(
       assert.match(reserveText, /COFFEE-250G: 3 reserve-blocked attempt\(s\)/);
       assert.match(reserveText, /Reserved cash USD 0\.01; spendable cash USD 9\.99/);
       assert.match(reserveText, /Cash reserve USD 0\.01/);
+      const rules = priority.products.map((item, index) =>
+        productFromDraft(item.sku, {
+          ...productEditor(item).draft,
+          reviewIntervalDays: '3',
+          ...(index === 0
+            ? {
+                targetStock: '3',
+                minimumOrderQuantity: '5',
+                orderMultiple: '4',
+                maximumInventoryPosition: '6',
+              }
+            : {}),
+        }),
+      );
+      const scheduled = await backend.request('simulate', {
+        preset: 'delay',
+        seed: 42,
+        controls: { ...priority.planning, cashReserve: '0.01' },
+        products: rules,
+      });
+      assert.ok(
+        scheduled.inputs.every(
+          (plan) =>
+            JSON.stringify(plan.products.map((p) => p.purchasing)) ===
+            JSON.stringify(rules.map((p) => p.purchasing)),
+        ),
+      );
+      for (const report of scheduled.results) {
+        assert.equal(report.summary.constraintBlockedPurchases, 1);
+        assert.equal(report.summary.reserveBlockedPurchases, 1);
+        assert.equal(report.summary.deferredPurchaseReviews, 4);
+        assert.equal(report.summary.endingCash, '10.00');
+        assert.equal(report.summary.purchasingSpend, '0.00');
+        assert.deepEqual(report.purchases, []);
+        assert.equal(report.reconciliation.purchasingConstraintsBalanced, true);
+        assert.equal(report.reconciliation.cashFlowBalanced, true);
+        assert.equal(report.reconciliation.inventoryFlowBalanced, true);
+        assert.deepEqual(
+          report.timeline
+            .filter((event) => event.type === 'purchase_review_deferred')
+            .map((event) => event.day),
+          [1, 1, 2, 2],
+        );
+        assert.equal(
+          report.timeline.find((event) => event.type === 'purchase_constraint_blocked')
+            .requiredPosition,
+          8,
+        );
+      }
+      const ruleText = resultLines(
+        { sim: { preset: 'Supplier delay', seed: 42, result: scheduled } },
+        180,
+      ).join('\n');
+      assert.match(ruleText, /COFFEE-250G: 1 capacity-blocked attempt\(s\)/);
+      assert.match(ruleText, /Inventory position with proposed order 8; capacity limit 6/);
+      assert.match(ruleText, /Review interval 3 day\(s\); next review day 3/);
       let started;
       const ready = new Promise((resolve) => {
         started = resolve;
