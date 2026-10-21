@@ -6,7 +6,10 @@
   "author": "StateSet",
   "license": "MIT OR Apache-2.0",
   "description": "Local commerce status, backups, and agent access for Omarchy.",
-  "kinds": ["service", "bar-widget"],
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
   "entryPoints": {
     "service": "Service.qml",
     "barWidget": "Panel.qml"
@@ -15,12 +18,20 @@
     "displayName": "StateSet Commerce",
     "description": "Store health, operating mode, and commerce actions.",
     "category": "System",
-    "aliases": ["commerce", "icommerce", "stateset"],
+    "aliases": [
+      "commerce",
+      "icommerce",
+      "stateset"
+    ],
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
       "refreshIntervalSec": 120,
-      "notifications": true
+      "notifications": true,
+      "notificationCooldownMin": 15,
+      "notifyFailedPayments": true,
+      "notifyLowStock": true,
+      "notifyPendingReturns": true
     },
     "schema": [
       {
@@ -36,6 +47,33 @@
         "key": "notifications",
         "type": "boolean",
         "label": "Desktop notifications",
+        "defaultValue": true
+      },
+      {
+        "key": "notificationCooldownMin",
+        "type": "integer",
+        "label": "Notification cooldown (minutes)",
+        "min": 1,
+        "max": 240,
+        "step": 1,
+        "defaultValue": 15
+      },
+      {
+        "key": "notifyFailedPayments",
+        "type": "boolean",
+        "label": "Notify on failed payments",
+        "defaultValue": true
+      },
+      {
+        "key": "notifyLowStock",
+        "type": "boolean",
+        "label": "Notify on low stock",
+        "defaultValue": true
+      },
+      {
+        "key": "notifyPendingReturns",
+        "type": "boolean",
+        "label": "Notify on pending returns",
         "defaultValue": true
       }
     ]
