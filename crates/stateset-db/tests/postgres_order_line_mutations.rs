@@ -144,6 +144,25 @@ fn expected_total(order: &stateset_core::Order) -> Decimal {
 
 // Defect 1 ------------------------------------------------------------------
 
+/// `(aggregate_type, payload)` of every outbox fact of `event_type` for this
+/// order. Looked up by aggregate: a window over the shared outbox
+/// (`pending_async(n)`) misses facts once other suites fill it.
+async fn order_facts(
+    db: &PostgresDatabase,
+    order_id: Uuid,
+    event_type: &str,
+) -> Vec<(String, serde_json::Value)> {
+    sqlx::query_as(
+        "SELECT aggregate_type, payload FROM kernel_outbox \
+         WHERE aggregate_id = $1 AND event_type = $2 ORDER BY created_at",
+    )
+    .bind(order_id.to_string())
+    .bind(event_type)
+    .fetch_all(db.pool())
+    .await
+    .expect("outbox facts")
+}
+
 #[tokio::test]
 async fn postgres_add_and_remove_item_keep_order_level_money_in_total() {
     let Some(ctx) = setup().await else { return };
@@ -608,35 +627,25 @@ async fn postgres_line_edits_write_kernel_outbox_events_in_the_same_transaction(
         .expect("add item");
     ctx.db.orders().remove_item_async(id, added.id.into_uuid()).await.expect("remove item");
 
-    let events = ctx.db.kernel_outbox().pending_async(1000).await.expect("pending");
-    let added_event = events
-        .iter()
-        .find(|e| e.event_type == "orders.item_added.v1" && e.aggregate_id == id.to_string())
-        .expect("orders.item_added.v1 event");
-    assert_eq!(added_event.aggregate_type, "order");
-    assert_eq!(added_event.payload["order_item_id"], added.id.to_string());
-    assert_eq!(added_event.payload["sku"], ctx.sku_b);
-    assert_eq!(added_event.payload["quantity"], 3);
-    assert_eq!(added_event.payload["total_amount"], "30.5000", "24.50 + 3 × 2.00");
-    let removed_event = events
-        .iter()
-        .find(|e| e.event_type == "orders.item_removed.v1" && e.aggregate_id == id.to_string())
-        .expect("orders.item_removed.v1 event");
-    assert_eq!(removed_event.payload["order_item_id"], added.id.to_string());
-    assert_eq!(removed_event.payload["total_amount"], "24.5000");
+    let added_events = order_facts(&ctx.db, id, "orders.item_added.v1").await;
+    let [added_event] = added_events.as_slice() else {
+        panic!("one orders.item_added.v1 event, got {added_events:?}");
+    };
+    assert_eq!(added_event.0, "order");
+    assert_eq!(added_event.1["order_item_id"], added.id.to_string());
+    assert_eq!(added_event.1["sku"], ctx.sku_b);
+    assert_eq!(added_event.1["quantity"], 3);
+    assert_eq!(added_event.1["total_amount"], "30.5000", "24.50 + 3 × 2.00");
+    let removed_events = order_facts(&ctx.db, id, "orders.item_removed.v1").await;
+    let [removed_event] = removed_events.as_slice() else {
+        panic!("one orders.item_removed.v1 event, got {removed_events:?}");
+    };
+    assert_eq!(removed_event.1["order_item_id"], added.id.to_string());
+    assert_eq!(removed_event.1["total_amount"], "24.5000");
 
     // A refused edit writes nothing.
     assert!(ctx.db.orders().remove_item_async(id, Uuid::new_v4()).await.is_err());
-    let removed_count = ctx
-        .db
-        .kernel_outbox()
-        .pending_async(1000)
-        .await
-        .expect("pending")
-        .iter()
-        .filter(|e| e.event_type == "orders.item_removed.v1" && e.aggregate_id == id.to_string())
-        .count();
-    assert_eq!(removed_count, 1);
+    assert_eq!(order_facts(&ctx.db, id, "orders.item_removed.v1").await.len(), 1);
 }
 
 #[tokio::test]
