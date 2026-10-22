@@ -50,6 +50,8 @@ pub mod kernel_outbox;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod refund_replay;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
+mod rules;
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod shipment_allocations;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod shipment_updates;

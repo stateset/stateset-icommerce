@@ -584,8 +584,8 @@ async fn postgres_merge_moves_placements_and_keeps_inventory_in_step() {
     let merged = lots
         .merge_async(MergeLots {
             source_lot_ids: vec![a.id, b.id],
-            // Explicit and unique: the generated `MERGED-<timestamp>`
-            // collides when two merges land in the same second.
+            // An explicit number keeps the assertion independent of the
+            // generated default.
             target_lot_number: Some(format!("MERGED-{}", Uuid::new_v4().simple())),
             reason: Some("consolidate".into()),
         })
@@ -647,8 +647,8 @@ async fn postgres_merge_records_genealogy_for_every_source() {
     let merged = lots
         .merge_async(MergeLots {
             source_lot_ids: vec![b.id, a.id], // reverse order: locks are canonical
-            // Explicit and unique: the generated `MERGED-<timestamp>`
-            // collides when two merges land in the same second.
+            // An explicit number keeps the assertion independent of the
+            // generated default.
             target_lot_number: Some(format!("MERGED-{}", Uuid::new_v4().simple())),
             reason: None,
         })

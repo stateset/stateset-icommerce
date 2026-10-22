@@ -1,5 +1,6 @@
 //! SQLite implementation of backorder repository
 
+use crate::rules::backorders::validate_create_backorder;
 use chrono::{DateTime, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -377,17 +378,6 @@ impl SqliteBackorderRepository {
             other => other,
         })
     }
-}
-
-/// A backorder is a promise to ship `quantity` units later; zero or negative
-/// promises are meaningless and would subtract from the summary totals.
-fn validate_create_backorder(input: &CreateBackorder) -> Result<()> {
-    if input.quantity <= Decimal::ZERO {
-        return Err(CommerceError::ValidationError(
-            "Backorder quantity must be greater than zero".to_string(),
-        ));
-    }
-    Ok(())
 }
 
 pub(crate) fn create_backorder_in_tx(

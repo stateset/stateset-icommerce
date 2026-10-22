@@ -2,6 +2,7 @@
 
 use super::inventory::{PgInventoryRepository, ReservationConfirmOutcome, with_pg_inventory_retry};
 use super::map_db_error;
+use crate::rules::backorders::validate_create_backorder;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -17,17 +18,6 @@ use uuid::Uuid;
 /// `reference_type` of the inventory reservation that backs an allocation
 /// (same constant as the SQLite backend).
 pub(crate) const BACKORDER_RESERVATION_REFERENCE: &str = "backorder";
-
-/// A backorder is a promise to ship `quantity` units later; zero or negative
-/// promises are meaningless and would subtract from the summary totals.
-fn validate_create_backorder(input: &CreateBackorder) -> Result<()> {
-    if input.quantity <= Decimal::ZERO {
-        return Err(CommerceError::ValidationError(
-            "Backorder quantity must be greater than zero".to_string(),
-        ));
-    }
-    Ok(())
-}
 
 const ALLOCATION_COLUMNS: &str = "id, backorder_id, sku, quantity, location_id, lot_id, status, allocated_at, expires_at, reservation_id";
 

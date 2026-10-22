@@ -4,6 +4,9 @@ use super::kernel_outbox::append_kernel_event_tx;
 use super::map_db_error;
 use super::resolve_currency_with_executor;
 use crate::KernelOutboxEvent;
+use crate::rules::payments::{
+    ensure_not_refund_by_status_flip, payment_transition_allowed, transition_conflict,
+};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
@@ -61,28 +64,6 @@ const ALL_PAYMENT_STATUSES: [PaymentTransactionStatus; 9] = [
     PaymentTransactionStatus::Disputed,
 ];
 
-/// Whether a persisted status write from `from` to `to` is legal.
-///
-/// The rules live in the domain state machine
-/// ([`PaymentTransactionStatus::can_transition_to`]); this wrapper adds exactly
-/// ONE documented edge that the persistence layer needs and the enum does not
-/// model: `Pending -> Completed`, the single-shot capture used by processors
-/// that settle without an intermediate `Processing` step. Every other answer —
-/// in particular every edge OUT of a settled payment
-/// (`Completed`/`PartiallyRefunded`/`Refunded` -> `Cancelled`/`Failed`, which
-/// would release the slice of the order total that settled money is consuming
-/// and let the order be captured twice) — is the enum's own. Mirrors the SQLite
-/// backend exactly.
-pub(crate) fn payment_transition_allowed(
-    from: PaymentTransactionStatus,
-    to: PaymentTransactionStatus,
-) -> bool {
-    if from == PaymentTransactionStatus::Pending && to == PaymentTransactionStatus::Completed {
-        return true;
-    }
-    from.can_transition_to(to)
-}
-
 /// Every status a payment may currently be in for a write that sets its status
 /// to `target`, to bind to a `status = ANY($n)` predicate. Keeping the check
 /// inside the UPDATE means a concurrent writer cannot slip between the check and
@@ -93,15 +74,6 @@ fn statuses_allowing_transition_to(target: PaymentTransactionStatus) -> Vec<Stri
         .filter(|from| payment_transition_allowed(**from, target))
         .map(ToString::to_string)
         .collect()
-}
-
-/// Conflict error for a refused status write, naming the status the payment is
-/// actually in. Worded identically in the SQLite backend.
-fn transition_conflict(
-    current: PaymentTransactionStatus,
-    target: PaymentTransactionStatus,
-) -> CommerceError {
-    CommerceError::Conflict(format!("Payment is {current} and cannot transition to {target}"))
 }
 
 /// Order-side guards for a capture against `order_id`, all evaluated on ONE
@@ -458,37 +430,6 @@ pub(crate) async fn order_has_payments_pg(
         .fetch_one(&mut *conn)
         .await
         .map_err(map_db_error)
-}
-
-/// Refuse `update` writes that would move a payment INTO `Refunded` /
-/// `PartiallyRefunded` as a bare status flip: those are ledger states written
-/// only by `complete_refund_async`, which also advances `amount_refunded`.
-/// Taking `Completed`/`PartiallyRefunded`/`Disputed -> Refunded` through
-/// `update` left `amount_refunded` stale, so `open_captures_for_order` kept
-/// reporting the money as outstanding. Same-status writes still pass. Worded
-/// identically in the SQLite backend.
-///
-/// `Disputed -> Refunded` is the one exception: it is a lost chargeback, and
-/// the caller records it on the ledger with [`record_lost_chargeback_pg`] in
-/// the same transaction.
-pub(crate) fn ensure_not_refund_by_status_flip(
-    current: PaymentTransactionStatus,
-    target: PaymentTransactionStatus,
-) -> Result<()> {
-    if current != target
-        && !current.is_lost_chargeback(target)
-        && matches!(
-            target,
-            PaymentTransactionStatus::Refunded | PaymentTransactionStatus::PartiallyRefunded
-        )
-    {
-        return Err(CommerceError::ValidationError(format!(
-            "Payment status cannot be set to {target} directly (from {current}); \
-             refunds are recorded through create_refund + complete_refund so that \
-             amount_refunded and the refund ledger stay consistent"
-        )));
-    }
-    Ok(())
 }
 
 /// Record a lost chargeback on `payment` (currently `Disputed`, being moved to
