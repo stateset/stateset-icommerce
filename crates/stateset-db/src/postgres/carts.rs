@@ -3,8 +3,8 @@
 use super::resolve_currency_with_executor;
 use super::{PgOrderRepository, PgPromotionRepository, map_db_error};
 use crate::cart_rules::{
-    DerivedDiscount, coupon_discount_amount, rescale_tax, validate_add_item_money,
-    validate_update_cart_item, validate_update_cart_item_money,
+    DerivedDiscount, coupon_discount_amount, rescale_tax, round_cart_money,
+    validate_add_item_money, validate_update_cart_item, validate_update_cart_item_money,
 };
 use chrono::{DateTime, Duration, Utc};
 use rust_decimal::Decimal;
@@ -459,11 +459,6 @@ impl PgCartRepository {
         .await
         .map_err(map_db_error)?;
 
-        // Round the subtotal to the currency minor unit explicitly (rather than
-        // relying on the DECIMAL(12,2) column to coerce), so the rounding
-        // strategy matches the SQLite backend exactly.
-        let subtotal = subtotal.round_dp(2);
-
         let item_rows: Vec<CartItemRow> =
             sqlx::query_as("SELECT * FROM cart_items WHERE cart_id = $1 ORDER BY created_at")
                 .bind(cart_id)
@@ -471,6 +466,9 @@ impl PgCartRepository {
                 .await
                 .map_err(map_db_error)?;
         let mut cart = row.into_cart(item_rows.into_iter().map(Into::into).collect())?;
+        // Round the subtotal to the cart currency's minor unit explicitly,
+        // with the same rule as the SQLite backend.
+        let subtotal = round_cart_money(subtotal, cart.currency);
         cart.subtotal = subtotal;
         // Tax follows the lines it was computed on (see `rescale_tax`).
         cart.tax_amount = rescale_tax(previous_tax, previous_subtotal, subtotal, cart.currency);
