@@ -253,20 +253,11 @@ impl Finding {
     }
 }
 
-/// Backend-owned sources that live outside `src/<backend>/`.
-///
-/// The saga coordinator is Postgres-only (it takes a `PostgresDatabase` and
-/// speaks sqlx) and holds 13 SQL statements across two transactions,
-/// including the `execute_step` check-then-act — so it belongs under the same
-/// rules as the files in `src/postgres/`. It moved out of this crate into the
-/// `stateset-saga` crate (`crates/stateset-saga/src/lib.rs`, reached here via
-/// a manifest-relative path); the `stateset-db/saga` feature now only
-/// registers the `035_sagas` schema migration. Note the lint only recognises
-/// `CommerceError` rejections and `ensure_*` helpers as state guards; the
-/// coordinator raises `SagaError`, so today it is scanned but produces no
-/// findings. It is listed here so that the moment a guard in it is written in
-/// the crate's normal vocabulary, the gate covers it.
-const EXTRA_SOURCES: &[(&str, &str)] = &[("postgres", "../../stateset-saga/src/lib.rs")];
+/// Backend-owned sources that live outside `src/<backend>/`, as
+/// `(backend dir, manifest-relative path)`. Empty since the saga coordinator
+/// (the only entry) was removed; kept so an out-of-tree backend source can be
+/// brought under the gate again.
+const EXTRA_SOURCES: &[(&str, &str)] = &[];
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")

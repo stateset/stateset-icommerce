@@ -17,8 +17,9 @@
 //! - `sqlite` (default): SQLite database support via rusqlite
 //! - `postgres`: PostgreSQL database support via sqlx (async)
 //! - `vector`: Vector search support via sqlite-vec extension
-//! - `saga`: Registers the `035_sagas` schema migration; the coordinator itself
-//!   lives in the `stateset-saga` crate (which enables this feature).
+//! - `saga`: Registers the `035_sagas` schema migration. The `stateset-saga`
+//!   coordinator that used it was removed in 1.41.0; the migration stays so
+//!   databases that already ran it keep a consistent history.
 //!
 //! ## Usage
 //!

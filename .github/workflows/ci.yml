@@ -171,7 +171,6 @@ jobs:
           cargo clippy -p stateset-core --features metrics --all-targets -- -D warnings
           cargo clippy -p stateset-db --no-default-features --features postgres --lib -- -D warnings
           cargo clippy -p stateset-db --no-default-features --features "postgres,saga" --lib -- -D warnings
-          cargo clippy -p stateset-saga --all-targets -- -D warnings
           cargo clippy -p stateset-embedded --features postgres --all-targets -- -D warnings
 
   audit:
@@ -1183,25 +1182,10 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
-    # The prior aggregate run already used 58 minutes; independent boundary
-    # and live-PostgreSQL saga gates need room to finish as well.
+    # The prior aggregate run already used 58 minutes; the independent
+    # boundary coverage gates need room to finish as well.
     timeout-minutes: 90
     needs: [fmt, clippy]
-
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: stateset_saga_coverage
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d stateset_saga_coverage"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
 
     steps:
       - uses: actions/checkout@v7
@@ -1269,17 +1253,6 @@ jobs:
           path: coverage/stateset-db.json
           if-no-files-found: warn
           retention-days: 30
-
-      - name: Check saga recovery coverage against PostgreSQL
-        env:
-          POSTGRES_URL: postgres://postgres:postgres@localhost:5432/stateset_saga_coverage
-        run: |
-          cargo llvm-cov \
-            -p stateset-saga \
-            --fail-under-lines 90 \
-            --fail-under-functions 80 \
-            --ignore-filename-regex '(/tests/|/benches/|stateset-(core|crypto|db|migrations|primitives)/)' \
-            --summary-only
 
       - name: Generate code coverage
         env:

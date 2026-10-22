@@ -1,6 +1,6 @@
 [package]
 name = "stateset-macros"
-description = "Procedural macros for StateSet iCommerce domain model generation"
+description = "DEPRECATED: procedural macros for StateSet iCommerce domain models (removed in 1.42.0)"
 readme = "README.md"
 version.workspace = true
 edition.workspace = true
