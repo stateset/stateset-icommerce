@@ -1,23 +1,27 @@
 #![cfg(feature = "postgres")]
+#[path = "support/isolated_pg.rs"]
+mod isolated_pg;
 #[path = "support/receipt_promotion.rs"]
 mod support;
 
 use rust_decimal::Decimal;
 use stateset_core::{ExecutionMode, ExecutionStatus, ReservationStatus};
-use stateset_db::PostgresDatabase;
 use uuid::Uuid;
 
-async fn database() -> Option<PostgresDatabase> {
+/// A private database: these tests verify the whole store-wide audit chain,
+/// which concurrently running suites in a shared database can break.
+async fn database() -> Option<isolated_pg::IsolatedPostgres> {
     let Ok(url) = std::env::var("POSTGRES_URL").or_else(|_| std::env::var("DATABASE_URL")) else {
         eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping live receipt promotion");
         return None;
     };
-    Some(PostgresDatabase::connect(url).await.expect("connect and migrate"))
+    Some(isolated_pg::isolated_postgres(&url).await)
 }
 
 #[tokio::test]
 async fn concurrent_preview_promotion_splits_exactly_once() {
-    let Some(db) = database().await else { return };
+    let Some(isolated) = database().await else { return };
+    let db = &isolated.db;
     let sku = format!("PROMOTE-RACE-{}", Uuid::new_v4());
     let item = db.inventory().create_item_async(support::item(&sku)).await.unwrap();
     let source = db.inventory().reserve_async(support::reservation(&sku, 4)).await.unwrap();
@@ -77,11 +81,13 @@ async fn concurrent_preview_promotion_splits_exactly_once() {
         Decimal::from(4)
     );
     assert!(db.kernel_outbox().verify_audit_chain_async().await.unwrap().valid);
+    isolated.drop_database().await;
 }
 
 #[tokio::test]
 async fn promotion_rechecks_current_policy_and_version_and_keeps_rejections_durable() {
-    let Some(db) = database().await else { return };
+    let Some(isolated) = database().await else { return };
+    let db = &isolated.db;
     for scenario in ["policy", "version"] {
         let sku = format!("PROMOTE-{scenario}-{}", Uuid::new_v4());
         db.inventory().create_item_async(support::item(&sku)).await.unwrap();
@@ -145,11 +151,13 @@ async fn promotion_rechecks_current_policy_and_version_and_keeps_rejections_dura
         assert_eq!(quantity, Decimal::from(3));
         assert!(db.kernel_outbox().verify_audit_chain_async().await.unwrap().valid);
     }
+    isolated.drop_database().await;
 }
 
 #[tokio::test]
 async fn promotion_rechecks_expiry_without_replaying_the_preview_result() {
-    let Some(db) = database().await else { return };
+    let Some(isolated) = database().await else { return };
+    let db = &isolated.db;
     let sku = format!("PROMOTE-EXPIRY-{}", Uuid::new_v4());
     db.inventory().create_item_async(support::item(&sku)).await.unwrap();
     let source = db.inventory().reserve_async(support::reservation(&sku, 4)).await.unwrap();
@@ -231,4 +239,5 @@ async fn promotion_rechecks_expiry_without_replaying_the_preview_result() {
     assert_eq!(event.3["balance_version"], 3);
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM kernel_outbox WHERE event_type = 'inventory.reservation_expired.v1' AND aggregate_id = $1").bind(source.id.to_string()).fetch_one(db.pool()).await.unwrap();
     assert_eq!(count, 1, "replay must not emit a second expiry event");
+    isolated.drop_database().await;
 }
