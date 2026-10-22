@@ -605,15 +605,20 @@ async fn completion_requires_dispositions_and_quarantine_holds_without_bins() {
         )
         .await
         .unwrap();
-    let events = db.kernel_outbox().pending_async(1000).await.unwrap();
-    let completion = events
+    // Look the event up by aggregate: a global `pending_async(n)` window is
+    // shared with every concurrently running test and can miss it.
+    let payloads: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT payload FROM kernel_outbox WHERE aggregate_id = $1 ORDER BY created_at",
+    )
+    .bind(ret.id.to_string())
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+    let completion = payloads
         .iter()
-        .find(|e| {
-            e.aggregate_id == ret.id.to_string()
-                && e.payload["status_after"] == ReturnStatus::Completed.to_string()
-        })
+        .find(|payload| payload["status_after"] == ReturnStatus::Completed.to_string())
         .expect("completion event");
-    assert_eq!(completion.payload["undispositioned_units"], 3);
+    assert_eq!(completion["undispositioned_units"], 3);
 }
 
 #[tokio::test]
@@ -663,9 +668,12 @@ async fn disposition_transitions_serials_and_restores_lot() {
     let reloaded = db.returns().get_async(ret.id.into_uuid()).await.unwrap().unwrap();
     assert_eq!(reloaded.items[0].serial_ids, serials);
 
-    // Serial count mismatch rolls everything back.
+    // Serial count mismatch rolls everything back. The second order may
+    // itself reserve or ship units from `wh` (the only stocked location), so
+    // compare against the balance just before the refused call.
     let order = shipped_order(&db, &sku, 2, dec!(10), None).await;
     let ret = received_return(&db, &order, 2).await;
+    let before = on_hand(&db, &sku, wh).await;
     let err = db
         .returns()
         .set_item_disposition_async(
@@ -679,7 +687,7 @@ async fn disposition_transitions_serials_and_restores_lot() {
         .await
         .expect_err("count mismatch");
     assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
-    assert_eq!(on_hand(&db, &sku, wh).await, (dec!(2), dec!(0)));
+    assert_eq!(on_hand(&db, &sku, wh).await, before);
 }
 
 #[tokio::test]
