@@ -38,6 +38,7 @@ describe('MCP server resource ownership', () => {
               'Content-Type': 'application/json',
               Accept: 'application/json, text/event-stream',
               'Mcp-Method': 'tools/call',
+              'MCP-Protocol-Version': '2026-07-28',
               'Mcp-Name': 'a2a_list_failed_notifications',
             },
             body: JSON.stringify({
