@@ -896,7 +896,7 @@ fn verify_one(canonical: &str, signature_hex: &str, pubkey_hex: &str) -> bool {
         Err(_) => return false,
     };
     let sig = Signature::from_bytes(&sig_arr);
-    verifying.verify(canonical.as_bytes(), &sig).is_ok()
+    verifying.verify_strict(canonical.as_bytes(), &sig).is_ok()
 }
 
 // ---------------------------------------------------------------------------

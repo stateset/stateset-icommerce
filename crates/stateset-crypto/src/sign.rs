@@ -2,7 +2,7 @@
 //!
 //! Uses ed25519-dalek for cryptographic operations.
 
-use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 
 use crate::CryptoError;
 
@@ -36,7 +36,7 @@ pub fn verify_event_signature(
         return false;
     };
     let sig = ed25519_dalek::Signature::from_bytes(signature);
-    verifying_key.verify(event_signing_hash, &sig).is_ok()
+    verifying_key.verify_strict(event_signing_hash, &sig).is_ok()
 }
 
 /// Generate a new Ed25519 keypair
@@ -56,6 +56,18 @@ pub fn generate_keypair() -> (zeroize::Zeroizing<[u8; 32]>, [u8; 32]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_identity_key_forgery_that_lenient_verification_accepts() {
+        // The identity point as public key with R = identity and s = 0 is a
+        // "valid" signature over every message under cofactored/lenient
+        // checks. Strict verification must refuse it.
+        let mut identity = [0u8; 32];
+        identity[0] = 1;
+        let mut forged = [0u8; 64];
+        forged[..32].copy_from_slice(&identity);
+        assert!(!verify_event_signature(&[7u8; 32], &forged, &identity));
+    }
 
     #[test]
     fn sign_and_verify_roundtrip() {

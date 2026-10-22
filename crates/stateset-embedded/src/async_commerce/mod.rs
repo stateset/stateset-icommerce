@@ -5,7 +5,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use stateset_embedded::{AsyncCommerce, CreateOrder, CreateOrderItem, CreateX402PaymentIntent, X402Asset, X402Network};
 //! use rust_decimal_macros::dec;
 //!
@@ -17,7 +17,7 @@
 //!
 //!     // Ecommerce orders
 //!     let order = commerce.orders().create(CreateOrder {
-//!         customer_id: uuid::Uuid::new_v4(),
+//!         customer_id: stateset_embedded::CustomerId::new(),
 //!         items: vec![CreateOrderItem {
 //!             sku: "SKU-001".into(),
 //!             name: "Widget".into(),
@@ -46,6 +46,7 @@
 //!
 //!     Ok(())
 //! }
+//! # Ok::<(), stateset_embedded::CommerceError>(())
 //! ```
 
 // Shared imports for every accessor module in this directory —
@@ -514,7 +515,7 @@ macro_rules! impl_opaque_debug {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use stateset_embedded::AsyncCommerce;
 ///
 /// #[tokio::main]
@@ -526,6 +527,7 @@ macro_rules! impl_opaque_debug {
 ///
 ///     Ok(())
 /// }
+/// # Ok::<(), stateset_embedded::CommerceError>(())
 /// ```
 pub struct AsyncCommerce {
     db: Arc<PostgresDatabase>,

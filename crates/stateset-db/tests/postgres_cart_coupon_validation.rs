@@ -24,11 +24,10 @@ use stateset_core::{
 };
 use stateset_db::PostgresDatabase;
 use stateset_db::postgres::{PgCartRepository, PgPromotionRepository};
-use std::env;
 use uuid::Uuid;
 
 fn postgres_url() -> Option<String> {
-    env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 async fn connect() -> Option<PostgresDatabase> {

@@ -1025,3 +1025,19 @@ fn test_cart_promotions_integration() {
     assert_eq!(updated_cart.discount_amount, dec!(25.00));
     assert_eq!(updated_cart.grand_total, dec!(75.00)); // $100 - $25
 }
+
+#[test]
+fn x402_and_a2a_operations_are_counted_in_metrics() {
+    let commerce = Commerce::new(":memory:").expect("commerce");
+    let before = commerce.metrics_snapshot().agent_registrations;
+    commerce
+        .x402()
+        .register_agent(stateset_core::CreateAgentCard {
+            name: "Metrics Agent".into(),
+            wallet_address: format!("0xmetrics-{}", uuid::Uuid::new_v4().simple()),
+            public_key: "metrics-public-key".into(),
+            ..Default::default()
+        })
+        .expect("register agent");
+    assert_eq!(commerce.metrics_snapshot().agent_registrations, before + 1);
+}

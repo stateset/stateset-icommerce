@@ -20,7 +20,6 @@ use stateset_core::{
     DepreciationMethod, FixedAssetCategory, PeriodStatus, RecognitionMethod,
 };
 use stateset_embedded::Commerce;
-use std::env;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Distinct numeric account-number space per test (standard chart numbers
@@ -36,7 +35,7 @@ const fn date(y: i32, m: u32, d: u32) -> NaiveDate {
 /// server never see each other's chart, periods or ledger rows. Returns
 /// `None` (and the test passes vacuously) when no URL is configured.
 fn pg_commerce() -> Option<Commerce> {
-    let base = env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok());
+    let base = stateset_test_utils::postgres_url();
     let base = match base {
         Some(url) => url,
         None => {

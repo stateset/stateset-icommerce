@@ -24,6 +24,7 @@ async-trait = { workspace = true }
 reqwest = { workspace = true }
 stateset-crypto = { workspace = true }
 tempfile = { workspace = true }
+tracing = "0.1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "test-util"] }

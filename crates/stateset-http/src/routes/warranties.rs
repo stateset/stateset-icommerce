@@ -79,6 +79,8 @@ pub(crate) async fn create_warranty(
     state
         .run_blocking(tid.as_deref(), move |c| {
             let input = stateset_core::CreateWarranty {
+                // The engine takes the owner from the order (`CreateWarranty::resolve_customer`).
+                customer_id: stateset_core::CustomerId::nil(),
                 order_id: Some(req.order_id),
                 product_id: Some(req.product_id),
                 warranty_type: req.warranty_type.and_then(|t| t.parse().ok()),

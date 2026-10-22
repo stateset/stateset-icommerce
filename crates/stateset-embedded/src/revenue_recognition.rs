@@ -2,12 +2,36 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```rust,no_run
+//! use chrono::NaiveDate;
+//! use rust_decimal_macros::dec;
+//! use stateset_core::{CreatePerformanceObligation, CreateRevenueContract, RecognitionMethod};
 //! use stateset_embedded::Commerce;
 //!
 //! let commerce = Commerce::new("./store.db")?;
-//! let contract = commerce.revenue_recognition().create_contract(input)?;
+//! # let customer_id = uuid::Uuid::new_v4();
+//! let start = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+//! let end = NaiveDate::from_ymd_opt(2026, 12, 31).unwrap();
+//!
+//! // A 12-month subscription recognized ratably over the year
+//! let contract = commerce.revenue_recognition().create_contract(CreateRevenueContract {
+//!     contract_number: None,
+//!     customer_id,
+//!     order_id: None,
+//!     invoice_id: None,
+//!     transaction_price: dec!(1200.00),
+//!     currency: None,
+//!     effective_date: start,
+//!     obligations: vec![CreatePerformanceObligation {
+//!         description: "Annual subscription".into(),
+//!         standalone_selling_price: None,
+//!         allocated_amount: dec!(1200.00),
+//!         recognition_method: RecognitionMethod::RatableOverTime { start, end },
+//!     }],
+//! })?;
+//! let obligation_id = contract.obligations[0].id;
 //! let schedule = commerce.revenue_recognition().generate_schedule(obligation_id)?;
+//! let through = NaiveDate::from_ymd_opt(2026, 3, 31).unwrap();
 //! let schedule = commerce.revenue_recognition().recognize_period(obligation_id, through)?;
 //! # Ok::<(), stateset_embedded::CommerceError>(())
 //! ```

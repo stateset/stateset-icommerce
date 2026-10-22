@@ -19,7 +19,7 @@ use stateset_embedded::AsyncCommerce;
 use std::sync::Arc;
 
 fn postgres_url() -> Option<String> {
-    std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 async fn setup(commerce: &AsyncCommerce, sku: &str, on_hand: Decimal) {

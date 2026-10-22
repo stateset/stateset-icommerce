@@ -17,6 +17,143 @@ This project follows Keep a Changelog and Semantic Versioning.
   decimals rather than casting to floats). Postgres now lists items in SKU
   order, like SQLite, instead of newest first.
 
+## [1.40.0] - 2026-10-22
+
+### Security
+
+- **Ed25519 verification is strict everywhere it is checked** (event
+  signatures, x402 intents, economic authority, `stateset-icp-client`, the
+  ICP IUT). Lenient verification accepted the identity public key with an
+  `(identity, 0)` signature as valid for any message.
+- `stateset-crypto` PQC private keys: redacted `Debug`, constant-time
+  `PartialEq`, zeroized on drop (all four types; only one zeroized before).
+  Credentials are redacted from `SequencerHttpTransport` and HTTP bearer
+  binding `Debug` output.
+- `stateset-sync` verifies pulled events: payload hashes are recomputed and
+  must match, a page that replays the cursor or repeats an event id or
+  sequence is refused, and `SequencerHttpTransport::with_trusted_agent_key`
+  pins agent keys so every pulled event must carry a valid signature bound
+  to the transport's tenant and store.
+- `stateset-http` `/metrics` behind a trusted proxy took the client IP from
+  the leftmost (client-supplied) `X-Forwarded-For` / `Forwarded` hop, so a
+  spoofed header passed the IP allowlist. The hop chain is now read from the
+  right, skipping trusted proxies.
+- HTTP 500 bodies no longer carry storage detail (table names, driver
+  messages, tenant database paths); it is logged with the request id. 403
+  bodies no longer echo role configuration.
+- Dependency advisories: `rustls-webpki` 0.103.16 (RUSTSEC-2026-0382),
+  `webpki-roots` / `webpki-root-certs` 1.0.10 (RUSTSEC-2026-0381), CLI
+  `@modelcontextprotocol/server` 2.3 and `follow-redirects`, admin
+  `vitest` 4.1.12 / `vite` 8.3.5.
+
+### Fixed
+
+- Warranties sold against an order now belong to that order's customer, on
+  both backends and in the atomic batch. A nil `customer_id` takes the order's
+  customer, a different explicit one is refused (`ValidationError`), and a
+  nil one with an order the store does not hold is `OrderNotFound` (an
+  explicit customer on such an order is kept, as before, on SQLite; Postgres
+  refuses unknown orders through its foreign key). `POST /api/v1/warranties` takes only
+  `order_id` and used to store a random customer id (`CustomerId::default()`
+  is a fresh id), so the buyer got 404 on their own warranty.
+- Kernel A2A escrow and dispute executors refuse a command without a tenant or
+  store scope with a `kernel.tenant_scope_required` receipt instead of
+  panicking when an operator policy waives `requires_tenant` /
+  `requires_store`.
+- Postgres generated lot numbers at one-second resolution, so two lots for
+  SKUs sharing a six-character prefix created in the same second conflicted;
+  the default merged-lot number collided the same way on both backends.
+- Shipment `count` ignored the `tracking_number` filter `list` applies, on
+  both backends.
+- Three-decimal currencies (BHD, KWD, JOD, ...) keep their minor unit in
+  carts: Postgres cart money moves to unconstrained `NUMERIC` (migration
+  107) and cart totals round to the currency's minor unit on both backends.
+- `stateset-http`: `expires_in_hours` on negotiations is bounded (a value
+  near `u32::MAX` panicked the request) and each tenant's in-memory
+  negotiation store is capped.
+- The async order facade emits the same order and item events as the sync
+  facade.
+- FFI `FfiInventoryLevel` refuses a SKU longer than 63 bytes instead of
+  truncating it (which could split a UTF-8 character).
+- `stateset-icp-client` no longer panics on a pre-1970 system clock.
+
+### Added
+
+- `stateset-http`: object-level authorization for **customer-scoped
+  principals**. `ServerBuilder::add_bearer_auth_for_customer(token, actor,
+  customer_uuid)` issues a token whose actor may only read and mutate records
+  owned by that customer (customers, orders, carts, payments, returns,
+  shipments, subscriptions, reviews, wishlists, store credits, invoices,
+  warranties, loyalty accounts). `with_customer_principal(actor,
+  customer_uuid)` does the same for an actor established by a trusted gateway.
+  Lists are filtered to the customer before pagination, creates are bound to
+  the customer, and another customer's record is reported as `404` (identical
+  to a missing id, so no enumeration oracle). Operator principals are
+  unaffected.
+- Every HTTP route is classified in a reviewed table
+  (`crates/stateset-http/src/route_policy.rs`, rendered in
+  `docs/src/security/http-authz.md`). Tests fail if a route is not classified
+  or the doc drifts. A table-driven test drives every route as one customer
+  against another's records.
+- `stateset-authz`: `Action::Destructive`, which requires the `Delete`
+  permission level.
+- `CommerceError::is_retryable()` now covers lock contention: SQLite
+  BUSY/LOCKED and Postgres 40001/40P01/55P03 map to
+  `DbError::TransactionFailed`; Postgres foreign-key violations map to
+  `ValidationError` like SQLite.
+- `SequencerHttpTransport::uses_cleartext_network()`, and a warning when
+  credentials are attached to a plain-HTTP, non-loopback sequencer.
+- `/metrics` counts x402 intents, A2A quotes and purchases, and agent
+  registrations (these counters previously always read zero).
+
+### Changed
+
+- **BEHAVIOUR CHANGE (`stateset-http` authorization):** the role check now
+  takes each route's action from the route table instead of guessing it from
+  the URL's last segment. Migration notes:
+  - Money-moving and irreversible verbs are now `destructive` and need the
+    `Delete` level (the built-in `operator` role or above): void, reverse,
+    write-off, charge, settle, refund, dispose, scrap, unapply, GL period
+    close/lock/reopen, `POST /gl/close-month`, AP payment-run processing,
+    depreciation posting, and store-credit adjust/apply. Most of these were
+    checked as a plain `create` before, so a role with only `Write` could
+    perform them. Grant such roles `Delete` on the resource if they must keep
+    doing so. A few command verbs (for example `submit`, `post`, `release`)
+    move from `create` to `execute`, which needs the same `Write` level.
+  - A matched route whose method has no table row (for example `HEAD`) still
+    fails closed with 403. Requests that match no route now get the router's
+    `404` instead of being role-checked first.
+  - When customer principals are configured, enforcement is always on. An
+    invalid binding (a customer id that is not a UUID, or an actor bound to
+    two customers), or principals with nothing to establish the actor, makes
+    every `/api/v1` call fail with 500 instead of running unenforced.
+- **BEHAVIOUR CHANGE:** five HTTP list endpoints (a2a messages, a2a credit,
+  exchange rates, units of measure, x402) cap their page size like every
+  other list; clients that relied on getting every row must paginate.
+- HTTP extractor rejections (malformed JSON, bad `Content-Type`, unparsable
+  path ids, oversized bodies) return the JSON `{"error": {...}}` contract
+  instead of plain text.
+- HTTP handlers run engine calls on the blocking pool
+  (`AppState::run_blocking`), guarded by a test that fails on any new
+  direct call.
+- Removed the order-create pricing drift check, which logged false warnings
+  for orders with tax or shipping; `stateset-embedded` no longer depends on
+  `stateset-pricing`.
+- Internal: shared backend-agnostic cart rules and domain rules
+  (`stateset-db` `cart_rules`, `rules/`), one settled-receipt prologue for
+  all governed executors, one set of HTTP parsing helpers.
+- Postgres tests fail instead of silently skipping when no database URL is
+  set, unless `STATESET_ALLOW_POSTGRES_SKIP=1`; whole-chain audit tests use
+  private databases.
+- Every `stateset-embedded` doc example now compiles (177 were ignored; 84
+  had drifted from the API).
+
+### Deprecated
+
+- `stateset_db::TransactionContext` and the `stateset_db::transactions`
+  items (never implemented or used by either backend); removal planned for
+  2.0.
+
 ## [1.39.0] - 2026-10-16
 
 ### Fixed

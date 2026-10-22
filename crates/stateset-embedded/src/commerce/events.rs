@@ -10,7 +10,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::Commerce;
     /// use futures::StreamExt;
     ///
@@ -44,7 +44,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::Commerce;
     /// use futures::StreamExt;
     ///
@@ -76,7 +76,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, Webhook};
     ///
     /// let commerce = Commerce::new("./store.db")?;

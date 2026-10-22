@@ -8,7 +8,7 @@ use stateset_db::{HttpIdempotencyRecord, HttpIdempotencyRepository, PostgresData
 use uuid::Uuid;
 
 fn postgres_url() -> Option<String> {
-    std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 #[test]

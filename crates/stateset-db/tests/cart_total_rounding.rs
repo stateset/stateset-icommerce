@@ -1,7 +1,7 @@
 //! Cart subtotal / grand-total money-scale parity.
 //!
 //! A cart stores a `subtotal` and `grand_total`. Both must be real money
-//! amounts (rounded to the currency minor unit, 2 dp) and must agree across
+//! amounts (rounded to the currency minor unit) and must agree across
 //! backends — a stored `grand_total` of `9.999` is not something a buyer can be
 //! charged.
 //!
@@ -71,9 +71,8 @@ fn sqlite_cart_total_rounds_to_cents() {
 #[tokio::test]
 async fn postgres_cart_total_rounds_to_cents() {
     use stateset_db::PostgresDatabase;
-    use std::env;
 
-    let Some(url) = env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok()) else {
+    let Some(url) = stateset_test_utils::postgres_url() else {
         eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
         return;
     };
@@ -94,4 +93,51 @@ async fn postgres_cart_total_rounds_to_cents() {
     assert_eq!(cart.items[0].total, dec!(9.99));
     assert_eq!(cart.subtotal, dec!(9.99));
     assert_eq!(cart.grand_total, dec!(9.99));
+}
+
+/// A three-decimal currency keeps its mils: `1.234 BHD × 3 = 3.702`, not
+/// `3.70`. Postgres stored cart money as `DECIMAL(12,2)` until migration 107.
+fn bhd_cart() -> CreateCart {
+    CreateCart { currency: Some("BHD".parse().expect("BHD")), ..Default::default() }
+}
+
+fn mil_line() -> AddCartItem {
+    AddCartItem {
+        sku: "MILS".into(),
+        name: "Mil-scale line".into(),
+        quantity: 3,
+        unit_price: dec!(1.234),
+        ..Default::default()
+    }
+}
+
+#[cfg(feature = "sqlite")]
+#[test]
+fn sqlite_three_decimal_currency_cart_keeps_its_minor_unit() {
+    use stateset_core::CartRepository;
+    use stateset_db::SqliteDatabase;
+
+    let db = SqliteDatabase::in_memory().expect("in-memory sqlite");
+    let cart = db.carts().create(bhd_cart()).expect("create cart");
+    db.carts().add_item(cart.id, mil_line()).expect("add item");
+    let cart = db.carts().get(cart.id).expect("get").expect("exists");
+    assert_eq!(cart.subtotal, dec!(3.702));
+    assert_eq!(cart.grand_total, dec!(3.702));
+}
+
+#[cfg(feature = "postgres")]
+#[tokio::test]
+async fn postgres_three_decimal_currency_cart_keeps_its_minor_unit() {
+    use stateset_db::PostgresDatabase;
+
+    let Some(url) = stateset_test_utils::postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
+    let cart = db.carts().create_async(bhd_cart()).await.expect("create cart");
+    db.carts().add_item_async(cart.id.into(), mil_line()).await.expect("add item");
+    let cart = db.carts().get_async(cart.id.into()).await.expect("get").expect("exists");
+    assert_eq!(cart.subtotal, dec!(3.702));
+    assert_eq!(cart.grand_total, dec!(3.702));
 }

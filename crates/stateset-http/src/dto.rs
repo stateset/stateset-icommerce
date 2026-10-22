@@ -42,7 +42,7 @@ impl PaginationParams {
 }
 
 #[must_use]
-fn resolve_limit(limit: Option<u32>) -> u32 {
+pub(crate) fn resolve_limit(limit: Option<u32>) -> u32 {
     limit.unwrap_or(PaginationParams::DEFAULT_LIMIT).clamp(1, PaginationParams::MAX_LIMIT)
 }
 

@@ -8,7 +8,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use stateset_embedded::{Commerce, CreateBackorder, BackorderPriority};
 //! use rust_decimal_macros::dec;
 //! use uuid::Uuid;
@@ -22,7 +22,11 @@
 //!     sku: "WIDGET-001".into(),
 //!     quantity: dec!(50),
 //!     priority: Some(BackorderPriority::High),
-//!     ..Default::default()
+//!     order_line_id: None,
+//!     expected_date: None,
+//!     promised_date: None,
+//!     source_location_id: None,
+//!     notes: None,
 //! })?;
 //!
 //! println!("Created backorder {}", backorder.backorder_number);
@@ -62,7 +66,7 @@ impl Backorders {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateBackorder, BackorderPriority};
     /// use rust_decimal_macros::dec;
     /// use chrono::{Utc, Duration};
@@ -79,7 +83,8 @@ impl Backorders {
     ///     priority: Some(BackorderPriority::Critical),
     ///     expected_date: Some(Utc::now() + Duration::days(7)),
     ///     notes: Some("Rush order - customer requested expedite".into()),
-    ///     ..Default::default()
+    ///     promised_date: None,
+    ///     source_location_id: None,
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
@@ -106,7 +111,7 @@ impl Backorders {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, BackorderFilter, BackorderStatus, BackorderPriority};
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -159,7 +164,7 @@ impl Backorders {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, FulfillBackorder, FulfillmentSourceType};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -241,7 +246,7 @@ impl Backorders {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::Commerce;
     ///
     /// let commerce = Commerce::new(":memory:")?;
