@@ -4130,21 +4130,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "stateset-saga"
-version = "1.40.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "sqlx",
- "stateset-db",
- "stateset-test-utils",
- "thiserror 2.0.18",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "stateset-sdk"
 version = "1.40.0"
 dependencies = [

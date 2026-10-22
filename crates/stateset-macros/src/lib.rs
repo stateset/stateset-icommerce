@@ -3,6 +3,11 @@
 
 //! Procedural macros for StateSet iCommerce.
 //!
+//! **Deprecated since 1.41.0; removed in 1.42.0.** Nothing in StateSet uses
+//! these derives (the domain models write their types by hand), so they are
+//! not maintained against the models. Copy the derive you need into your own
+//! crate, or use `schemars` for JSON schemas.
+//!
 //! Provides derive macros to reduce boilerplate in domain model definitions:
 //!
 //! - [`StateSetId`](derive@StateSetId) — Generates a strongly-typed UUID newtype

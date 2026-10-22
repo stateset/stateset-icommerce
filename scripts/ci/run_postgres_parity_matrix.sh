@@ -59,21 +59,11 @@ run_db_postgres() {
 }
 
 run_db_postgres_saga() {
-  # postgres_migrations carries saga-gated migration coverage (the
-  # `stateset-db/saga` feature registers the 035_sagas schema), so it runs in
-  # this lane too. The coordinator itself lives in the stateset-saga crate
-  # since 1.37.0; every postgres_saga* test there is discovered automatically.
+  # The `stateset-db/saga` feature registers the 035_sagas schema migration.
+  # The coordinator crate that used it was removed in 1.41.0 (it had no
+  # users), but deployed databases carry the schema, so the migration and its
+  # coverage in postgres_migrations stay.
   run_cmd cargo test --locked -p stateset-db --no-default-features --features postgres,saga --test postgres_migrations
-
-  mapfile -t saga_tests < <(find "${REPO_ROOT}/crates/stateset-saga/tests" -maxdepth 1 -name 'postgres_saga*.rs' -exec basename {} .rs \; | sort)
-  if [[ ${#saga_tests[@]} -eq 0 ]]; then
-    echo "error: no postgres_saga* tests found in crates/stateset-saga/tests" >&2
-    exit 1
-  fi
-  run_cmd cargo test --locked -p stateset-saga --lib
-  for test_name in "${saga_tests[@]}"; do
-    run_cmd cargo test --locked -p stateset-saga --test "${test_name}"
-  done
 }
 
 run_embedded_postgres() {

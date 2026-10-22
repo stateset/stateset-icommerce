@@ -66,7 +66,6 @@ default = ["sqlite"]
 sqlite = ["dep:stateset-migrations", "dep:rusqlite", "dep:r2d2", "dep:r2d2_sqlite", "dep:tracing", "dep:tempfile", "stateset-core/rusqlite"]
 postgres = ["dep:sqlx", "dep:tokio", "dep:tracing", "stateset-core/sqlx-postgres"]
 vector = ["sqlite", "stateset-migrations/vector", "stateset-core/embeddings"]
-# Experimental: persisted saga coordinator for multi-step orchestration.
-# Kept behind an explicit feature to avoid forcing downstream users to provision
-# a database connection at compile time.
+# Registers the `035_sagas` schema migration. The coordinator crate that used it
+# was removed in 1.41.0; databases that already ran the migration keep it.
 saga = ["postgres"]

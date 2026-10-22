@@ -6,6 +6,19 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Deprecated
+
+- `stateset-macros` (and `stateset-sdk`'s `macros` feature, part of `full`).
+  No StateSet crate uses its derives, so they are not kept in step with the
+  domain models. It is removed in 1.42.0.
+
+### Removed
+
+- The `stateset-saga` crate (the experimental PostgreSQL saga coordinator).
+  Nothing in the workspace or the bindings used it and it was never
+  published. `stateset-db`'s `saga` feature still registers the `035_sagas`
+  migration, so databases that already ran it keep a consistent history.
+
 ## [1.40.0] - 2026-10-22
 
 ### Security

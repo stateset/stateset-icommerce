@@ -4,7 +4,7 @@
 //!
 //! Requires the `postgres` feature and a live database:
 //! `POSTGRES_URL` (or `DATABASE_URL`). Without one the tests print a notice
-//! and pass, exactly like `crates/stateset-saga/tests/postgres_saga.rs`.
+//! and pass.
 //!
 //! The shared database is safe: every fixture uses unique account numbers,
 //! config names, period names and fiscal years, and auto-numbered assets and

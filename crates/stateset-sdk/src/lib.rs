@@ -42,7 +42,7 @@
 //! | `core` | Primitives + Core + DB + Embedded + Observability | Yes |
 //! | `crypto` | VES v1.0 cryptographic operations | No |
 //! | `policy` | Declarative policy engine | No |
-//! | `macros` | Proc macros (`StateSetId`, `GenerateDto`, `JsonSchema`) | No |
+//! | `macros` | **Deprecated, removed in 1.42.0.** Proc macros (`StateSetId`, `GenerateDto`, `JsonSchema`) | No |
 //! | `sync` | Outbox-driven sync engine and sequencer transport facade | No |
 //! | `full` | All features enabled | No |
 //!
@@ -87,6 +87,9 @@ pub use stateset_crypto as crypto;
 pub use stateset_policy as policy;
 
 /// Procedural macros: `#[derive(StateSetId)]`, `#[derive(GenerateDto)]`, `#[derive(JsonSchema)]`.
+///
+/// **Deprecated since 1.41.0**: nothing in StateSet uses them, and the
+/// `macros` feature (and its place in `full`) is removed in 1.42.0.
 #[cfg(feature = "macros")]
 pub use stateset_macros as macros;
 
