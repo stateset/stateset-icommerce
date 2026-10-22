@@ -2,10 +2,11 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```rust,no_run
 //! use stateset_embedded::{Commerce, CreateShipment, CreateShipmentItem, OrderId};
 //!
 //! let commerce = Commerce::new("./store.db")?;
+//! # let order = commerce.orders().get(OrderId::new())?.unwrap();
 //!
 //! // Assumes `order` was created with SKU-001 and a quantity of at least two.
 //! let shipment = commerce.shipments().create(CreateShipment {

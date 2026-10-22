@@ -8,7 +8,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```rust,no_run
 //! use stateset_embedded::{Commerce, CreateReceipt, CreateReceiptItem, ReceiptType};
 //! use rust_decimal_macros::dec;
 //!

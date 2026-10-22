@@ -23,7 +23,7 @@
 //!
 //! ## Usage
 //!
-//! ```ignore
+//! ```rust,no_run
 //! use stateset_embedded::prelude::*;
 //! use rust_decimal_macros::dec;
 //!
@@ -42,6 +42,7 @@
 //!     initial_quantity: Some(dec!(100)),
 //!     ..Default::default()
 //! })?;
+//! # Ok::<(), stateset_embedded::CommerceError>(())
 //! ```
 //!
 //! ## What's in here

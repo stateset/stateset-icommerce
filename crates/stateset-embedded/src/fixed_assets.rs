@@ -2,12 +2,32 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use stateset_embedded::{Commerce, CreateFixedAsset};
+//! ```rust,no_run
+//! use chrono::NaiveDate;
+//! use rust_decimal_macros::dec;
+//! use stateset_core::{CreateFixedAsset, DepreciationMethod, FixedAssetCategory};
+//! use stateset_embedded::Commerce;
 //!
 //! let commerce = Commerce::new("./store.db")?;
-//! let asset = commerce.fixed_assets().create(input)?;
-//! let asset = commerce.fixed_assets().place_in_service(asset.id, date)?;
+//! let acquired = NaiveDate::from_ymd_opt(2026, 1, 15).unwrap();
+//! let asset = commerce.fixed_assets().create(CreateFixedAsset {
+//!     asset_number: None,
+//!     name: "Delivery van".into(),
+//!     description: None,
+//!     category: FixedAssetCategory::Vehicle,
+//!     acquisition_date: acquired,
+//!     acquisition_cost: dec!(36000.00),
+//!     salvage_value: dec!(6000.00),
+//!     useful_life_months: 60,
+//!     depreciation_method: DepreciationMethod::StraightLine,
+//!     in_service_date: None,
+//!     location_id: None,
+//!     asset_account_id: None,
+//!     accumulated_depreciation_account_id: None,
+//!     depreciation_expense_account_id: None,
+//!     currency: None,
+//! })?;
+//! let asset = commerce.fixed_assets().place_in_service(asset.id, acquired)?;
 //! let schedule = commerce.fixed_assets().generate_schedule(asset.id)?;
 //! let asset = commerce.fixed_assets().post_depreciation(asset.id, 1)?;
 //! # Ok::<(), stateset_embedded::CommerceError>(())

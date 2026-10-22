@@ -15,7 +15,7 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use stateset_embedded::{Commerce, CreateCustomer, CreateOrder, CreateOrderItem, CreateInventoryItem};
 //! use rust_decimal_macros::dec;
 //!
@@ -69,28 +69,36 @@
 //! ## Database Backends
 //!
 //! ### SQLite (default)
-//! ```rust,ignore
+//! ```rust,no_run
+//! # use stateset_embedded::Commerce;
 //! let commerce = Commerce::new("./store.db")?;
 //! // or in-memory for testing
 //! let commerce = Commerce::new(":memory:")?;
+//! # Ok::<(), stateset_embedded::CommerceError>(())
 //! ```
 //!
 //! ### PostgreSQL (requires `postgres` feature)
-//! ```rust,ignore
+//! ```rust,no_run
+//! # #[cfg(feature = "postgres")] {
+//! # use stateset_embedded::Commerce;
 //! let commerce = Commerce::with_postgres("postgres://user:pass@localhost/db")?;
 //! // or via builder
 //! let commerce = Commerce::builder()
 //!     .postgres("postgres://localhost/stateset")
 //!     .max_connections(20)
 //!     .build()?;
+//! # }
+//! # Ok::<(), stateset_embedded::CommerceError>(())
 //! ```
 //!
 //! ### Async PostgreSQL API
 //!
 //! For true async operations with PostgreSQL, use `AsyncCommerce`:
 //!
-//! ```rust,ignore
-//! use stateset_embedded::{AsyncCommerce, CreateOrder, CreateOrderItem};
+//! ```rust,no_run
+//! # #[cfg(feature = "postgres")]
+//! # mod example {
+//! use stateset_embedded::{AsyncCommerce, CreateOrder, CreateOrderItem, CustomerId};
 //! use rust_decimal_macros::dec;
 //!
 //! #[tokio::main]
@@ -99,7 +107,7 @@
 //!
 //!     // All operations are truly async
 //!     let order = commerce.orders().create(CreateOrder {
-//!         customer_id: uuid::Uuid::new_v4(),
+//!         customer_id: CustomerId::new(),
 //!         items: vec![CreateOrderItem {
 //!             sku: "SKU-001".into(),
 //!             name: "Widget".into(),
@@ -115,6 +123,12 @@
 //!
 //!     Ok(())
 //! }
+//! # pub fn run() { main().unwrap() }
+//! # }
+//! # #[cfg(feature = "postgres")]
+//! # fn main() { example::run() }
+//! # #[cfg(not(feature = "postgres"))]
+//! # fn main() {}
 //! ```
 //!
 //! ## Architecture

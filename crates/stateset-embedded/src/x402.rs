@@ -14,17 +14,21 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! use stateset_embedded::{Commerce, CreateX402PaymentIntent, X402Network, X402Asset};
-//! use rust_decimal_macros::dec;
+//! ```rust,no_run
+//! use stateset_embedded::{
+//!     Commerce, CreateX402PaymentIntent, SignX402PaymentIntent, X402Asset, X402Network,
+//! };
 //!
 //! let commerce = Commerce::new("./store.db")?;
+//! # let x402_signature_bundle = stateset_core::X402SignatureBundle { ml_dsa_65_signature: vec![] };
+//! # let x402_public_key_bundle = stateset_core::X402PublicKeyBundle { ml_dsa_65_public_key: vec![] };
 //!
-//! // Create a payment intent
+//! // Create a payment intent for 100 USDC (amounts are in the asset's
+//! // smallest unit: 1 USDC = 1_000_000)
 //! let intent = commerce.x402().create_intent(CreateX402PaymentIntent {
 //!     payer_address: "0xBuyer...".into(),
 //!     payee_address: "0xSeller...".into(),
-//!     amount: dec!(100.00),
+//!     amount: 100_000_000,
 //!     asset: X402Asset::Usdc,
 //!     network: X402Network::SetChain,
 //!     ..Default::default()
@@ -208,16 +212,21 @@ impl X402 {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use stateset_embedded::*;
+    /// # let commerce = Commerce::new(":memory:")?;
+    /// # let cart = commerce.carts().get(stateset_core::CartId::new())?.unwrap();
+    /// // A $50.00 USD cart paid in USDC (6 decimals): 50_000_000 base units
     /// let intent = commerce.x402().create_intent(CreateX402PaymentIntent {
     ///     payer_address: "0xBuyer...".into(),
     ///     payee_address: "0xSeller...".into(),
-    ///     amount: dec!(50.00),
+    ///     amount: 50_000_000,
     ///     asset: X402Asset::Usdc,
     ///     network: X402Network::SetChain,
-    ///     cart_id: Some(cart.id),
+    ///     cart_id: Some(cart.id.into()),
     ///     ..Default::default()
     /// })?;
+    /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn create_intent(&self, input: CreateX402PaymentIntent) -> Result<X402PaymentIntent> {
         self.reconcile_with_source(&input)?;
@@ -265,7 +274,12 @@ impl X402 {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use stateset_embedded::*;
+    /// # let commerce = Commerce::new(":memory:")?;
+    /// # let intent = commerce.x402().get_intent(uuid::Uuid::new_v4())?.unwrap();
+    /// # let x402_signature_bundle = stateset_core::X402SignatureBundle { ml_dsa_65_signature: vec![] };
+    /// # let x402_public_key_bundle = stateset_core::X402PublicKeyBundle { ml_dsa_65_public_key: vec![] };
     /// let signed = commerce.x402().sign_intent(intent.id, SignX402PaymentIntent {
     ///     intent_id: intent.id,
     ///     signature_scheme: None,
@@ -274,6 +288,7 @@ impl X402 {
     ///     signature_bundle: Some(x402_signature_bundle),
     ///     public_key_bundle: Some(x402_public_key_bundle),
     /// })?;
+    /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn sign_intent(&self, id: Uuid, input: SignX402PaymentIntent) -> Result<X402PaymentIntent> {
         self.db.x402_payment_intents().sign(id, input)
@@ -299,12 +314,15 @@ impl X402 {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # let commerce = stateset_embedded::Commerce::new(":memory:")?;
+    /// # let intent = commerce.x402().get_intent(uuid::Uuid::new_v4())?.unwrap();
     /// let settled = commerce.x402().mark_settled(
     ///     intent.id,
     ///     "0x1234...abcd",  // Transaction hash
     ///     12345678,         // Block number
     /// )?;
+    /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn mark_settled(
         &self,
@@ -701,19 +719,21 @@ impl X402 {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use stateset_core::{CreateAgentCard, X402Network, X402Asset, A2ASkill, TrustLevel};
+    /// ```rust,no_run
+    /// use stateset_core::{CreateAgentCard, X402Network, X402Asset, A2ASkill};
     ///
+    /// # let commerce = stateset_embedded::Commerce::new(":memory:")?;
     /// let card = commerce.x402().register_agent(CreateAgentCard {
     ///     name: "Widget Seller Bot".into(),
     ///     wallet_address: "0xSeller...".into(),
     ///     public_key: "base64_ed25519_pubkey".into(),
-    ///     supported_networks: vec![X402Network::SetChain, X402Network::Base],
-    ///     supported_assets: vec![X402Asset::Usdc, X402Asset::SsUsd],
+    ///     supported_networks: Some(vec![X402Network::SetChain, X402Network::Base]),
+    ///     supported_assets: Some(vec![X402Asset::Usdc, X402Asset::SsUsd]),
     ///     a2a_skills: Some(vec![A2ASkill::Sell, A2ASkill::Quote, A2ASkill::Fulfill]),
     ///     endpoint_url: Some("https://api.example.com/a2a".into()),
     ///     ..Default::default()
     /// })?;
+    /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn register_agent(&self, input: CreateAgentCard) -> Result<AgentCard> {
         self.db.agent_cards().create(input)
@@ -774,9 +794,10 @@ impl X402 {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_core::{X402Network, X402Asset, A2ASkill};
     ///
+    /// # let commerce = stateset_embedded::Commerce::new(":memory:")?;
     /// // Find all agents that can sell on Set Chain with USDC
     /// let sellers = commerce.x402().discover_agents(
     ///     Some(X402Network::SetChain),
@@ -784,6 +805,7 @@ impl X402 {
     ///     Some(A2ASkill::Sell),
     ///     None,
     /// )?;
+    /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn discover_agents(
         &self,

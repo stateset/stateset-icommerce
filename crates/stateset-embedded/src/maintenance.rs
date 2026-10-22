@@ -15,7 +15,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```rust,no_run
 //! use stateset_embedded::Commerce;
 //!
 //! let commerce = Commerce::new("./store.db")?;
