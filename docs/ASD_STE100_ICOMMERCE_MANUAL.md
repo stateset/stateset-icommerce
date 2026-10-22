@@ -7,7 +7,7 @@
 | Document ID          | SSE-ICOMMERCE-STE-001                            |
 | Issue                | 001, 2026-10-02                                  |
 | Language rule        | ASD-STE100 Issue 8, Simplified Technical English |
-| Engine version       | 1.39.0                                           |
+| Engine version       | 1.40.0                                           |
 | Reader               | Maintenance personnel and operators              |
 | Store file (default) | `./store.db`                                     |
 
@@ -155,13 +155,13 @@ cargo add stateset-sdk --features full
 For Node.js, ENTER:
 
 ```bash
-npm install @stateset/embedded@1.39.0
+npm install @stateset/embedded@1.40.0
 ```
 
 For Python, ENTER:
 
 ```bash
-pip install stateset-embedded==1.39.0
+pip install stateset-embedded==1.40.0
 ```
 
 ### 5.3 Install the CLI and agent servers
@@ -169,7 +169,7 @@ pip install stateset-embedded==1.39.0
 For the CLI and the MCP servers, ENTER:
 
 ```bash
-npm install -g @stateset/cli@1.39.0
+npm install -g @stateset/cli@1.40.0
 ```
 
 ### 5.4 Initialize the store database (Procedure INIT-01)
@@ -535,7 +535,7 @@ Table 1 — Fault isolation
 
 SEND these items with each fault report:
 
-- Engine version (for example, `1.39.0`).
+- Engine version (for example, `1.40.0`).
 - Full command text (hide secrets).
 - Database path and backend type (SQLite or PostgreSQL).
 - Exact error text and time.
