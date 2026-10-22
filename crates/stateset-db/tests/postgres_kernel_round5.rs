@@ -7,6 +7,9 @@
 //!
 //! Requires a live Postgres (`POSTGRES_URL` / `DATABASE_URL`); skipped otherwise.
 
+#[path = "support/isolated_pg.rs"]
+mod isolated_pg;
+
 use chrono::{Duration, Utc};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
@@ -1694,7 +1697,15 @@ async fn postgres_payment_preview_runs_every_check_apply_runs() {
 /// [`stateset_db::Database`] seam, which is what `Commerce` asks.
 #[tokio::test]
 async fn both_backends_expose_the_kernel_audit_chain_through_the_database_trait() {
-    let pg = require_db!();
+    // A private database: the whole store-wide chain is verified, which other
+    // suites running in a shared database can break mid-flight.
+    let Ok(url) = env::var("POSTGRES_URL").or_else(|_| env::var("DATABASE_URL")) else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
+        return;
+    };
+    let isolated = isolated_pg::isolated_postgres(&url).await;
+    let (admin_url, name) = (isolated.admin_url.clone(), isolated.name.clone());
+    let pg = isolated.db;
     let lite = SqliteDatabase::in_memory().expect("sqlite");
 
     // The chain is verified synchronously on both backends; the Postgres path
@@ -1727,4 +1738,5 @@ async fn both_backends_expose_the_kernel_audit_chain_through_the_database_trait(
     .await
     .expect("blocking audit verification");
     assert_eq!(checked, 2, "both backends were verified");
+    isolated_pg::drop_isolated_database(&admin_url, &name).await;
 }
