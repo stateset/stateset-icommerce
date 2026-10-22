@@ -1162,6 +1162,11 @@ impl PgShipmentRepository {
         }
         if filter.carrier.is_some() {
             query.push_str(&format!(" AND carrier = ${}", param_idx));
+            param_idx += 1;
+        }
+        // Same filter set as `list_async`, so a filtered count matches the page.
+        if filter.tracking_number.is_some() {
+            query.push_str(&format!(" AND tracking_number = ${}", param_idx));
         }
 
         let mut q = sqlx::query_as::<_, (i64,)>(&query);
@@ -1174,6 +1179,9 @@ impl PgShipmentRepository {
         }
         if let Some(carrier) = filter.carrier {
             q = q.bind(carrier.to_string());
+        }
+        if let Some(tracking_number) = &filter.tracking_number {
+            q = q.bind(tracking_number);
         }
 
         let (count,) = q.fetch_one(&self.pool).await.map_err(map_db_error)?;

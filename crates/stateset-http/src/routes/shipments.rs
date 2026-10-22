@@ -112,7 +112,8 @@ pub(crate) async fn list_shipments(
                 limit: None,
                 offset: None,
             };
-            let total = commerce.shipments().list(count_filter)?.len();
+            let total = usize::try_from(commerce.shipments().count(count_filter)?)
+                .unwrap_or(usize::MAX);
 
             // Fetch the requested page
             let filter = ShipmentFilter {

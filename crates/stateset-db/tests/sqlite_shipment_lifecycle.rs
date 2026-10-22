@@ -1026,3 +1026,23 @@ fn concurrent_versioned_packing_edits_have_one_winner_even_with_spare_capacity()
     assert!(matches!(stored.items.len(), 0 | 2));
     assert_eq!(events(&db, s.id), 3);
 }
+
+#[test]
+fn count_applies_the_same_tracking_number_filter_as_list() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let untracked = shipment(&db);
+    let tracking = format!("1Z-COUNT-{}", uuid::Uuid::new_v4().simple());
+    db.shipments()
+        .create(CreateShipment {
+            order_id: untracked.order_id,
+            recipient_name: "Ada".into(),
+            shipping_address: "1 Main".into(),
+            tracking_number: Some(tracking.clone()),
+            ..Default::default()
+        })
+        .unwrap();
+    let filter =
+        stateset_core::ShipmentFilter { tracking_number: Some(tracking), ..Default::default() };
+    assert_eq!(db.shipments().list(filter.clone()).unwrap().len(), 1);
+    assert_eq!(db.shipments().count(filter).unwrap(), 1);
+}
