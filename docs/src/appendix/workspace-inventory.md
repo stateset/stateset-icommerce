@@ -48,10 +48,10 @@ and 'stateset-test-utils') so the runtime/product graph is easier to read.
 | `stateset-primitives` | 7 |
 | `stateset-db` | 5 |
 | `stateset-observability` | 3 |
-| `stateset-pricing` | 2 |
 | `stateset-sdk` | 2 |
 | `stateset-a2a` | 1 |
 | `stateset-authz` | 1 |
+| `stateset-jobs` | 1 |
 
 ## Binding Topology
 
