@@ -830,7 +830,7 @@ impl PgSubscriptionRepository {
             q = q.bind(interval.to_string());
         }
         if let Some(search) = &filter.search {
-            q = q.bind(format!("%{}%", search));
+            q = q.bind(format!("%{}%", super::escape_like(search)));
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
@@ -1411,7 +1411,7 @@ impl PgSubscriptionRepository {
             q = q.bind(to_date);
         }
         if let Some(search) = filter.search {
-            q = q.bind(format!("%{}%", search));
+            q = q.bind(format!("%{}%", super::escape_like(&search)));
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;

@@ -721,8 +721,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             params.push(Box::new(i32::from(is_header)));
         }
         if let Some(search) = filter.search {
-            sql.push_str(" AND (name LIKE ? OR account_number LIKE ?)");
-            let search_term = format!("%{search}%");
+            sql.push_str(" AND (name LIKE ? ESCAPE '\\' OR account_number LIKE ? ESCAPE '\\')");
+            let search_term = format!("%{}%", super::escape_like(&search));
             params.push(Box::new(search_term.clone()));
             params.push(Box::new(search_term));
         }
@@ -1217,8 +1217,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         // Free-text search over entry number / description (Postgres uses `ILIKE`;
         // SQLite `LIKE` is case-insensitive for ASCII).
         if let Some(search) = filter.search {
-            sql.push_str(" AND (entry_number LIKE ? OR description LIKE ?)");
-            let term = format!("%{search}%");
+            sql.push_str(
+                " AND (entry_number LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')",
+            );
+            let term = format!("%{}%", super::escape_like(&search));
             params.push(Box::new(term.clone()));
             params.push(Box::new(term));
         }

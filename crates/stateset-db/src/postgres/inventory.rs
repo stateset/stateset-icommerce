@@ -1678,7 +1678,7 @@ impl PgInventoryRepository {
     /// backend's `list`, so they are not applied here either.)
     fn push_item_filter(builder: &mut QueryBuilder<'_, Postgres>, filter: &InventoryFilter) {
         if let Some(sku) = &filter.sku {
-            builder.push(" AND sku ILIKE ").push_bind(format!("%{sku}%"));
+            builder.push(" AND sku ILIKE ").push_bind(format!("%{}%", super::escape_like(sku)));
         }
         if let Some(is_active) = filter.is_active {
             builder.push(" AND is_active = ").push_bind(is_active);

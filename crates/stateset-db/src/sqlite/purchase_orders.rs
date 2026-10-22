@@ -558,8 +558,8 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
         let mut bindings: Vec<String> = Vec::new();
 
         if let Some(name) = filter.name.as_ref() {
-            sql.push_str(" AND LOWER(name) LIKE LOWER(?)");
-            bindings.push(format!("%{name}%"));
+            sql.push_str(" AND LOWER(name) LIKE LOWER(?) ESCAPE '\\'");
+            bindings.push(format!("%{}%", super::escape_like(name)));
         }
         if let Some(country) = filter.country.as_ref() {
             sql.push_str(" AND country = ?");

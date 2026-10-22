@@ -99,8 +99,8 @@ impl SqliteInventoryRepository {
         params: &mut Vec<Box<dyn rusqlite::ToSql>>,
     ) {
         if let Some(sku) = &filter.sku {
-            sql.push_str(" AND sku LIKE ?");
-            params.push(Box::new(format!("%{sku}%")));
+            sql.push_str(" AND sku LIKE ? ESCAPE '\\'");
+            params.push(Box::new(format!("%{}%", super::escape_like(sku))));
         }
         if let Some(is_active) = filter.is_active {
             sql.push_str(" AND is_active = ?");

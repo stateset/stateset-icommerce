@@ -731,7 +731,7 @@ impl PgCustomerRepository {
             builder.push(" AND status != 'deleted'");
         }
         if let Some(email) = &filter.email {
-            let pattern = format!("%{}%", Customer::normalize_email(email));
+            let pattern = format!("%{}%", super::escape_like(&Customer::normalize_email(email)));
             builder.push(" AND email ILIKE ").push_bind(pattern);
         }
         if let Some(tag) = &filter.tag {

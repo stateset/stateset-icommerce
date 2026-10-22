@@ -369,8 +369,8 @@ impl BomRepository for SqliteBomRepository {
             }
 
             if let Some(search) = filter.search {
-                sql.push_str(" AND (name LIKE ? OR bom_number LIKE ?)");
-                let search_pattern = format!("%{search}%");
+                sql.push_str(" AND (name LIKE ? ESCAPE '\\' OR bom_number LIKE ? ESCAPE '\\')");
+                let search_pattern = format!("%{}%", super::escape_like(&search));
                 params.push(Box::new(search_pattern.clone()));
                 params.push(Box::new(search_pattern));
             }
@@ -586,8 +586,8 @@ impl BomRepository for SqliteBomRepository {
         }
 
         if let Some(search) = filter.search {
-            sql.push_str(" AND (name LIKE ? OR bom_number LIKE ?)");
-            let search_pattern = format!("%{search}%");
+            sql.push_str(" AND (name LIKE ? ESCAPE '\\' OR bom_number LIKE ? ESCAPE '\\')");
+            let search_pattern = format!("%{}%", super::escape_like(&search));
             params.push(Box::new(search_pattern.clone()));
             params.push(Box::new(search_pattern));
         }

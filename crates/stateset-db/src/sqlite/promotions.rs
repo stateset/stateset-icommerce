@@ -257,8 +257,8 @@ impl SqlitePromotionRepository {
         }
 
         if let Some(search) = &filter.search {
-            sql.push_str(" AND (name LIKE ? OR code LIKE ? OR description LIKE ?)");
-            let pattern = format!("%{search}%");
+            sql.push_str(" AND (name LIKE ? ESCAPE '\\' OR code LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')");
+            let pattern = format!("%{}%", super::escape_like(search));
             params.push(Box::new(pattern.clone()));
             params.push(Box::new(pattern.clone()));
             params.push(Box::new(pattern));
@@ -621,8 +621,8 @@ impl SqlitePromotionRepository {
         }
 
         if let Some(search) = &filter.search {
-            sql.push_str(" AND code LIKE ?");
-            params.push(Box::new(format!("%{}%", search.to_uppercase())));
+            sql.push_str(" AND code LIKE ? ESCAPE '\\'");
+            params.push(Box::new(format!("%{}%", super::escape_like(&search.to_uppercase()))));
         }
 
         sql.push_str(" ORDER BY created_at DESC");

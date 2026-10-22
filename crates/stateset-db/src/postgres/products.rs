@@ -647,7 +647,7 @@ impl PgProductRepository {
             builder.push(" AND product_type = ").push_bind(product_type.to_string());
         }
         if let Some(search) = &filter.search {
-            let pattern = format!("%{}%", search);
+            let pattern = format!("%{}%", super::escape_like(search));
             builder
                 .push(" AND (name ILIKE ")
                 .push_bind(pattern.clone())

@@ -300,7 +300,7 @@ impl PgRevenueRecognitionRepository {
             q = q.bind(to);
         }
         if let Some(search) = filter.search {
-            q = q.bind(format!("%{search}%"));
+            q = q.bind(format!("%{}%", super::escape_like(&search)));
         }
         if let Some((cursor_created, cursor_id)) = after_cursor {
             q = q.bind(cursor_created).bind(cursor_id);

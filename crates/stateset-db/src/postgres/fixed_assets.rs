@@ -229,7 +229,7 @@ impl PgFixedAssetRepository {
             builder.push(" AND acquisition_date <= ").push_bind(to);
         }
         if let Some(search) = filter.search.as_deref() {
-            let pattern = format!("%{search}%");
+            let pattern = format!("%{}%", super::escape_like(search));
             builder.push(" AND (name ILIKE ").push_bind(pattern.clone());
             builder.push(" OR asset_number ILIKE ").push_bind(pattern).push(")");
         }

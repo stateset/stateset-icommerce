@@ -551,7 +551,7 @@ impl PgCostAccountingRepository {
         );
 
         if let Some(sku) = filter.sku {
-            builder.push(" AND sku ILIKE ").push_bind(format!("%{}%", sku));
+            builder.push(" AND sku ILIKE ").push_bind(format!("%{}%", super::escape_like(&sku)));
         }
         if let Some(method) = filter.cost_method {
             builder.push(" AND cost_method = ").push_bind(method.to_string());

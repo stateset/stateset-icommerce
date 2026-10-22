@@ -167,8 +167,8 @@ impl SegmentRepository for SqliteSegmentRepository {
             params.push(Box::new(segment_type.to_string()));
         }
         if let Some(ref name) = filter.name {
-            sql.push_str(" AND name LIKE ?");
-            params.push(Box::new(format!("%{name}%")));
+            sql.push_str(" AND name LIKE ? ESCAPE '\\'");
+            params.push(Box::new(format!("%{}%", super::escape_like(name))));
         }
 
         sql.push_str(" ORDER BY created_at DESC");

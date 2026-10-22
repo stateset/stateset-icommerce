@@ -488,7 +488,7 @@ impl PgGeneralLedgerRepository {
             builder.push(" AND is_header = ").push_bind(is_header);
         }
         if let Some(search) = filter.search {
-            let term = format!("%{}%", search);
+            let term = format!("%{}%", super::escape_like(&search));
             builder
                 .push(" AND (name ILIKE ")
                 .push_bind(term.clone())
@@ -896,7 +896,7 @@ impl PgGeneralLedgerRepository {
             builder.push(" AND je.source_document_id = ").push_bind(source_doc_id);
         }
         if let Some(search) = filter.search {
-            let term = format!("%{}%", search);
+            let term = format!("%{}%", super::escape_like(&search));
             builder
                 .push(" AND (je.entry_number ILIKE ")
                 .push_bind(term.clone())
