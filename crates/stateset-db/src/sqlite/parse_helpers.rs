@@ -81,27 +81,6 @@ pub(crate) fn parse_datetime_opt(
     }
 }
 
-/// Parse a required `NaiveDate` from a string (YYYY-MM-DD format).
-#[allow(dead_code)]
-pub(crate) fn parse_date(s: &str, entity: &str, field: &str) -> Result<NaiveDate> {
-    NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|e| {
-        CommerceError::DatabaseError(format!("Invalid date for {entity}.{field}: '{s}' - {e}"))
-    })
-}
-
-/// Parse an optional `NaiveDate` from an `Option<String>`.
-#[allow(dead_code)]
-pub(crate) fn parse_date_opt(
-    s: Option<String>,
-    entity: &str,
-    field: &str,
-) -> Result<Option<NaiveDate>> {
-    match s {
-        Some(ref val) if !val.is_empty() => Ok(Some(parse_date(val, entity, field)?)),
-        _ => Ok(None),
-    }
-}
-
 // ============================================================================
 // Decimal Parsing
 // ============================================================================
@@ -134,47 +113,6 @@ pub(crate) fn parse_decimal_opt(
 // JSON Parsing
 // ============================================================================
 
-/// Parse required JSON into a deserializable type.
-///
-/// Returns an error with context if parsing fails.
-#[allow(dead_code)]
-pub(crate) fn parse_json<T: DeserializeOwned>(s: &str, entity: &str, field: &str) -> Result<T> {
-    serde_json::from_str(s).map_err(|e| {
-        // Truncate long JSON strings in error messages
-        let preview = if s.len() > 50 { &s[..50] } else { s };
-        CommerceError::DatabaseError(format!(
-            "Invalid JSON for {entity}.{field}: '{preview}...' - {e}"
-        ))
-    })
-}
-
-/// Parse optional JSON from an `Option<String>`.
-///
-/// Returns Ok(None) if the input is None or empty.
-#[allow(dead_code)]
-pub(crate) fn parse_json_opt<T: DeserializeOwned>(
-    s: Option<String>,
-    entity: &str,
-    field: &str,
-) -> Result<Option<T>> {
-    match s {
-        Some(ref val) if !val.is_empty() => Ok(Some(parse_json(val, entity, field)?)),
-        _ => Ok(None),
-    }
-}
-
-/// Parse JSON with a default value if the string is empty or parsing fails.
-///
-/// This should only be used for non-critical fields where an empty default is acceptable.
-/// For critical data, use `parse_json` instead.
-#[allow(dead_code)]
-pub(crate) fn parse_json_or_default<T: DeserializeOwned + Default>(s: &str) -> T {
-    if s.is_empty() {
-        return T::default();
-    }
-    serde_json::from_str(s).unwrap_or_default()
-}
-
 // ============================================================================
 // Enum Parsing
 // ============================================================================
@@ -197,19 +135,6 @@ where
             e
         ))
     })
-}
-
-/// Parse an optional enum from an `Option<String>`.
-#[allow(dead_code)]
-pub(crate) fn parse_enum_opt<T>(s: Option<String>, entity: &str, field: &str) -> Result<Option<T>>
-where
-    T: std::str::FromStr,
-    T::Err: std::fmt::Display,
-{
-    match s {
-        Some(ref val) if !val.is_empty() => Ok(Some(parse_enum(val, entity, field)?)),
-        _ => Ok(None),
-    }
 }
 
 /// Parse a required enum within a rusqlite row mapping context.
@@ -244,22 +169,6 @@ where
 // ============================================================================
 // Integer Parsing
 // ============================================================================
-
-/// Parse a required i32 from a string.
-#[allow(dead_code)]
-pub(crate) fn parse_i32(s: &str, entity: &str, field: &str) -> Result<i32> {
-    s.parse::<i32>().map_err(|e| {
-        CommerceError::DatabaseError(format!("Invalid i32 for {entity}.{field}: '{s}' - {e}"))
-    })
-}
-
-/// Parse a required i64 from a string.
-#[allow(dead_code)]
-pub(crate) fn parse_i64(s: &str, entity: &str, field: &str) -> Result<i64> {
-    s.parse::<i64>().map_err(|e| {
-        CommerceError::DatabaseError(format!("Invalid i64 for {entity}.{field}: '{s}' - {e}"))
-    })
-}
 
 // ============================================================================
 // Convenience Macros
@@ -516,32 +425,5 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("order.created_at"));
-    }
-
-    #[test]
-    fn test_parse_json_valid() {
-        let result: Result<Vec<String>> = parse_json("[\"a\", \"b\"]", "product", "tags");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), vec!["a", "b"]);
-    }
-
-    #[test]
-    fn test_parse_json_invalid() {
-        let result: Result<Vec<String>> = parse_json("not-json", "product", "tags");
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("product.tags"));
-    }
-
-    #[test]
-    fn test_parse_date_valid() {
-        let result = parse_date("2024-01-15", "invoice", "due_date");
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_parse_date_invalid() {
-        let result = parse_date("15-01-2024", "invoice", "due_date");
-        assert!(result.is_err());
     }
 }

@@ -439,12 +439,6 @@ impl SqlitePurchaseOrderRepository {
 
         Ok(())
     }
-
-    #[allow(dead_code)]
-    fn recalculate_totals(&self, po_id: PurchaseOrderId) -> Result<()> {
-        let conn = self.conn()?;
-        Self::recalculate_totals_with_conn(&conn, po_id)
-    }
 }
 
 impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
