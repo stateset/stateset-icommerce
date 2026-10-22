@@ -241,7 +241,8 @@ pub(crate) async fn list_inventory(
                 limit: None,
                 offset: None,
             };
-            let total = commerce.inventory().list(count_filter)?.len();
+            let total =
+                usize::try_from(commerce.inventory().count(count_filter)?).unwrap_or(usize::MAX);
 
             // Fetch the requested page
             let filter = InventoryFilter {

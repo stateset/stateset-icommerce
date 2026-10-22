@@ -25,6 +25,32 @@ impl SqliteIntegrationMappingRepository {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
+    /// Append the `list`/`count` WHERE conditions for `filter` to `sql` and
+    /// their bind values to `params`. The single definition of the mapping
+    /// filter set: `list` and `count` both call it, so they cannot disagree.
+    fn push_filter(
+        filter: &IntegrationMappingFilter,
+        sql: &mut String,
+        params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+    ) {
+        if let Some(ref integration) = filter.integration {
+            sql.push_str(" AND integration = ?");
+            params.push(Box::new(integration.clone()));
+        }
+        if let Some(ref mapping_group) = filter.mapping_group {
+            sql.push_str(" AND mapping_group = ?");
+            params.push(Box::new(mapping_group.clone()));
+        }
+        if let Some(ref field_name) = filter.field_name {
+            sql.push_str(" AND field_name = ?");
+            params.push(Box::new(field_name.clone()));
+        }
+        if let Some(is_active) = filter.is_active {
+            sql.push_str(" AND is_active = ?");
+            params.push(Box::new(is_active as i32));
+        }
+    }
+
     fn row_to_mapping(row: &rusqlite::Row<'_>) -> rusqlite::Result<IntegrationMapping> {
         Ok(IntegrationMapping {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "integration_mapping", "id")?.into(),
@@ -124,22 +150,7 @@ impl IntegrationMappingRepository for SqliteIntegrationMappingRepository {
         let conn = self.conn()?;
         let mut sql = "SELECT * FROM integration_mappings WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![];
-        if let Some(ref integration) = filter.integration {
-            sql.push_str(" AND integration = ?");
-            params.push(Box::new(integration.clone()));
-        }
-        if let Some(ref mapping_group) = filter.mapping_group {
-            sql.push_str(" AND mapping_group = ?");
-            params.push(Box::new(mapping_group.clone()));
-        }
-        if let Some(ref field_name) = filter.field_name {
-            sql.push_str(" AND field_name = ?");
-            params.push(Box::new(field_name.clone()));
-        }
-        if let Some(is_active) = filter.is_active {
-            sql.push_str(" AND is_active = ?");
-            params.push(Box::new(is_active as i32));
-        }
+        Self::push_filter(&filter, &mut sql, &mut params);
         sql.push_str(" ORDER BY mapping_group, field_name, external_value");
         crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -151,6 +162,18 @@ impl IntegrationMappingRepository for SqliteIntegrationMappingRepository {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(map_db_error)?;
         Ok(rows)
+    }
+
+    fn count(&self, filter: IntegrationMappingFilter) -> Result<u64> {
+        let conn = self.conn()?;
+        let mut sql = "SELECT COUNT(*) FROM integration_mappings WHERE 1=1".to_string();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![];
+        Self::push_filter(&filter, &mut sql, &mut params);
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 =
+            conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
+        Ok(u64::try_from(count).unwrap_or(0))
     }
 
     fn delete(&self, id: IntegrationMappingId) -> Result<()> {

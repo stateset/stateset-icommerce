@@ -68,6 +68,16 @@ pub trait InventoryRepository: Send + Sync {
     /// List inventory items with filter
     fn list(&self, filter: InventoryFilter) -> Result<Vec<InventoryItem>>;
 
+    /// Count inventory items matching `filter`, ignoring `limit` and `offset`.
+    ///
+    /// Applies exactly the filter set that [`list`](Self::list) applies, so a
+    /// filtered count always agrees with the filtered pages. The default body
+    /// loads every matching row; backends override it with a SQL `COUNT(*)`.
+    fn count(&self, filter: InventoryFilter) -> Result<u64> {
+        let filter = InventoryFilter { limit: None, offset: None, ..filter };
+        Ok(self.list(filter)?.len() as u64)
+    }
+
     /// Get items whose available quantity is below their reorder threshold
     /// (`reorder_point + safety_stock`) at any location. Balances without a
     /// `reorder_point` never need reordering; each SKU appears once.

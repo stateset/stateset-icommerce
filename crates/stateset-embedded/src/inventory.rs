@@ -414,6 +414,13 @@ impl Inventory {
         self.db.inventory().list(filter)
     }
 
+    /// Count inventory items matching a filter (`limit`/`offset` ignored).
+    ///
+    /// Applies the same filter set as [`list`](Self::list), as a SQL `COUNT(*)`.
+    pub fn count(&self, filter: InventoryFilter) -> Result<u64> {
+        self.db.inventory().count(filter)
+    }
+
     /// Get items that need reordering (below reorder point).
     pub fn get_reorder_needed(&self) -> Result<Vec<StockLevel>> {
         self.db.inventory().get_reorder_needed()

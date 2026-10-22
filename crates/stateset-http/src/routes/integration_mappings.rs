@@ -165,7 +165,8 @@ pub(crate) async fn list(
                 is_active: params.is_active,
                 ..Default::default()
             };
-            let total = c.integration_mappings().list(base.clone())?.len();
+            let total = usize::try_from(c.integration_mappings().count(base.clone())?)
+                .unwrap_or(usize::MAX);
             let filter = stateset_core::IntegrationMappingFilter {
                 limit: Some(params.limit.unwrap_or(50).clamp(1, 500)),
                 offset: Some(params.offset.unwrap_or(0)),

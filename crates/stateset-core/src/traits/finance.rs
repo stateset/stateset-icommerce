@@ -809,6 +809,17 @@ pub trait FixedAssetRepository: Send + Sync {
     /// List fixed assets with filter.
     fn list(&self, filter: FixedAssetFilter) -> Result<Vec<FixedAsset>>;
 
+    /// Count fixed assets matching `filter`, ignoring `limit`, `offset` and
+    /// `after_cursor`.
+    ///
+    /// Applies exactly the filter set that [`list`](Self::list) applies, so a
+    /// filtered count always agrees with the filtered pages. The default body
+    /// loads every matching row; backends override it with a SQL `COUNT(*)`.
+    fn count(&self, filter: FixedAssetFilter) -> Result<u64> {
+        let filter = FixedAssetFilter { limit: None, offset: None, after_cursor: None, ..filter };
+        Ok(self.list(filter)?.len() as u64)
+    }
+
     /// Update a fixed asset (partial). Terminal assets cannot be updated.
     fn update(&self, id: uuid::Uuid, input: UpdateFixedAsset) -> Result<FixedAsset>;
 

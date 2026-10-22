@@ -9,8 +9,8 @@ use super::map_db_error;
 use crate::KernelOutboxEvent;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use sqlx::FromRow;
 use sqlx::postgres::PgPool;
+use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
     AdjustInventory, BatchResult, CommerceError, CreateInventoryItem, InventoryBalance,
     InventoryFilter, InventoryItem, InventoryRepository, InventoryReservation,
@@ -1669,21 +1669,47 @@ impl PgInventoryRepository {
         .await
     }
 
+    /// Append the item `list`/`count` WHERE conditions for `filter`, with
+    /// their bind values. The single definition of the inventory-item filter
+    /// set: `list_async` and `count_async` both call it, so they cannot
+    /// disagree. Same semantics as the SQLite backend: `sku` is a
+    /// case-insensitive substring match and `is_active` applies only when set.
+    /// (`location_id` and `below_reorder_point` are not applied by either
+    /// backend's `list`, so they are not applied here either.)
+    fn push_item_filter(builder: &mut QueryBuilder<'_, Postgres>, filter: &InventoryFilter) {
+        if let Some(sku) = &filter.sku {
+            builder.push(" AND sku ILIKE ").push_bind(format!("%{sku}%"));
+        }
+        if let Some(is_active) = filter.is_active {
+            builder.push(" AND is_active = ").push_bind(is_active);
+        }
+    }
+
     /// List inventory items (async)
     pub async fn list_async(&self, filter: InventoryFilter) -> Result<Vec<InventoryItem>> {
         let limit = super::effective_limit(filter.limit);
-        let offset = filter.offset.unwrap_or(0) as i64;
+        let offset = i64::from(filter.offset.unwrap_or(0));
 
-        let rows = sqlx::query_as::<_, InventoryItemRow>(
-            "SELECT * FROM inventory_items WHERE is_active = TRUE ORDER BY created_at DESC LIMIT $1 OFFSET $2",
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let mut builder = QueryBuilder::<Postgres>::new("SELECT * FROM inventory_items WHERE 1=1");
+        Self::push_item_filter(&mut builder, &filter);
+        builder.push(" ORDER BY created_at DESC LIMIT ").push_bind(limit);
+        builder.push(" OFFSET ").push_bind(offset);
+
+        let rows: Vec<InventoryItemRow> =
+            builder.build_query_as().fetch_all(&self.pool).await.map_err(map_db_error)?;
 
         Ok(rows.into_iter().map(Self::row_to_item).collect())
+    }
+
+    /// Count inventory items matching `filter`, ignoring `limit`/`offset` (async)
+    pub async fn count_async(&self, filter: InventoryFilter) -> Result<u64> {
+        let mut builder =
+            QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM inventory_items WHERE 1=1");
+        Self::push_item_filter(&mut builder, &filter);
+
+        let (count,): (i64,) =
+            builder.build_query_as().fetch_one(&self.pool).await.map_err(map_db_error)?;
+        Ok(u64::try_from(count).unwrap_or(0))
     }
 
     /// Get items below reorder point (async)
@@ -2078,6 +2104,10 @@ impl InventoryRepository for PgInventoryRepository {
 
     fn list(&self, filter: InventoryFilter) -> Result<Vec<InventoryItem>> {
         super::block_on(self.list_async(filter))
+    }
+
+    fn count(&self, filter: InventoryFilter) -> Result<u64> {
+        super::block_on(self.count_async(filter))
     }
 
     fn get_reorder_needed(&self) -> Result<Vec<StockLevel>> {

@@ -292,7 +292,8 @@ pub(crate) async fn list(
                 search: params.search.clone(),
                 ..Default::default()
             };
-            let total = c.fixed_assets().list(base.clone())?.len();
+            let total =
+                usize::try_from(c.fixed_assets().count(base.clone())?).unwrap_or(usize::MAX);
             let limit = params.limit.unwrap_or(50).clamp(1, 200);
             let filter = stateset_core::FixedAssetFilter {
                 limit: Some(overfetch_limit(limit)),

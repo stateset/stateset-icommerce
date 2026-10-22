@@ -28,6 +28,43 @@ impl SqliteFixedAssetRepository {
         Self { pool }
     }
 
+    /// Append the `list`/`count` WHERE conditions for `filter` to `sql` and
+    /// their bind values to `params`. The single definition of the fixed-asset
+    /// filter set: `list` and `count` both call it, so they cannot disagree.
+    /// The keyset cursor is pagination, not a filter, and stays in `list`.
+    fn push_filter(
+        filter: &FixedAssetFilter,
+        sql: &mut String,
+        params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+    ) {
+        if let Some(category) = filter.category {
+            sql.push_str(" AND category = ?");
+            params.push(Box::new(category.to_string()));
+        }
+        if let Some(status) = filter.status {
+            sql.push_str(" AND status = ?");
+            params.push(Box::new(status.to_string()));
+        }
+        if let Some(location) = filter.location_id {
+            sql.push_str(" AND location_id = ?");
+            params.push(Box::new(location.to_string()));
+        }
+        if let Some(from) = filter.acquired_from {
+            sql.push_str(" AND acquisition_date >= ?");
+            params.push(Box::new(from.to_string()));
+        }
+        if let Some(to) = filter.acquired_to {
+            sql.push_str(" AND acquisition_date <= ?");
+            params.push(Box::new(to.to_string()));
+        }
+        if let Some(search) = filter.search.as_deref() {
+            sql.push_str(" AND (name LIKE ? ESCAPE '\\' OR asset_number LIKE ? ESCAPE '\\')");
+            let pattern = format!("%{}%", super::escape_like(search));
+            params.push(Box::new(pattern.clone()));
+            params.push(Box::new(pattern));
+        }
+    }
+
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
@@ -297,32 +334,7 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
         let conn = self.conn()?;
         let mut sql = "SELECT * FROM fixed_assets WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![];
-        if let Some(category) = filter.category {
-            sql.push_str(" AND category = ?");
-            params.push(Box::new(category.to_string()));
-        }
-        if let Some(status) = filter.status {
-            sql.push_str(" AND status = ?");
-            params.push(Box::new(status.to_string()));
-        }
-        if let Some(location) = filter.location_id {
-            sql.push_str(" AND location_id = ?");
-            params.push(Box::new(location.to_string()));
-        }
-        if let Some(from) = filter.acquired_from {
-            sql.push_str(" AND acquisition_date >= ?");
-            params.push(Box::new(from.to_string()));
-        }
-        if let Some(to) = filter.acquired_to {
-            sql.push_str(" AND acquisition_date <= ?");
-            params.push(Box::new(to.to_string()));
-        }
-        if let Some(search) = filter.search.as_deref() {
-            sql.push_str(" AND (name LIKE ? ESCAPE '\\' OR asset_number LIKE ? ESCAPE '\\')");
-            let pattern = format!("%{}%", super::escape_like(search));
-            params.push(Box::new(pattern.clone()));
-            params.push(Box::new(pattern));
-        }
+        Self::push_filter(&filter, &mut sql, &mut params);
         // Keyset cursor: (created_at, id) for stable DESC ordering
         if let Some((cursor_created, cursor_id)) = &filter.after_cursor {
             sql.push_str(" AND (created_at < ? OR (created_at = ? AND id < ?))");
@@ -341,6 +353,18 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
             .map_err(map_db_error)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(map_db_error)
+    }
+
+    fn count(&self, filter: FixedAssetFilter) -> Result<u64> {
+        let conn = self.conn()?;
+        let mut sql = "SELECT COUNT(*) FROM fixed_assets WHERE 1=1".to_string();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![];
+        Self::push_filter(&filter, &mut sql, &mut params);
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 =
+            conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
+        Ok(u64::try_from(count).unwrap_or(0))
     }
 
     fn update(&self, id: Uuid, input: UpdateFixedAsset) -> Result<FixedAsset> {
