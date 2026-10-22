@@ -8,8 +8,8 @@ use super::{
     resolve_currency_with_conn, uuid_params, with_immediate_transaction,
 };
 use crate::cart_rules::{
-    DerivedDiscount, coupon_discount_amount, rescale_tax, validate_add_item_money,
-    validate_update_cart_item, validate_update_cart_item_money,
+    DerivedDiscount, coupon_discount_amount, rescale_tax, round_cart_money,
+    validate_add_item_money, validate_update_cart_item, validate_update_cart_item_money,
 };
 use chrono::{Duration, Utc};
 use r2d2::Pool;
@@ -370,12 +370,11 @@ impl SqliteCartRepository {
             subtotal += line_subtotal;
         }
 
-        // Round the subtotal to the currency minor unit so the stored value is a
-        // real money amount (a sub-cent subtotal like 9.999 is not chargeable),
-        // matching the Postgres DECIMAL(12,2) columns and the order pipeline.
-        let subtotal = subtotal.round_dp(2);
-
         let mut cart = Self::load_cart_with_conn(conn, cart_id)?.ok_or(CommerceError::NotFound)?;
+        // Round the subtotal to the cart currency's minor unit so the stored
+        // value is a real money amount (a sub-cent USD subtotal like 9.999 is
+        // not chargeable), matching the Postgres backend and the order pipeline.
+        let subtotal = round_cart_money(subtotal, cart.currency);
         // Tax follows the lines it was computed on (see `rescale_tax`).
         cart.tax_amount = rescale_tax(cart.tax_amount, cart.subtotal, subtotal, cart.currency);
         cart.subtotal = subtotal;

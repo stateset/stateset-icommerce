@@ -10,16 +10,11 @@ use stateset_core::{
     validate_price,
 };
 
-/// Decimal places cart money is stored with.
-///
-/// Cart amounts persist in `DECIMAL(12, 2)` columns on Postgres, so no cart
-/// amount may carry more than two decimals regardless of currency.
-const CART_STORAGE_DECIMAL_PLACES: u32 = 2;
-
-/// Round a cart amount to `currency`'s minor unit, never finer than storage
-/// holds: whole units for JPY, cents for USD.
+/// Round a cart amount to `currency`'s minor unit: whole units for JPY,
+/// cents for USD, mils for BHD. Both backends store cart money with enough
+/// scale for every ISO 4217 minor unit (Postgres since migration 107).
 pub(crate) fn round_cart_money(amount: Decimal, currency: CurrencyCode) -> Decimal {
-    amount.round_dp(u32::from(currency.decimal_places()).min(CART_STORAGE_DECIMAL_PLACES))
+    amount.round_dp(u32::from(currency.decimal_places()))
 }
 
 /// Outcome of a backend's `derive_discount`.
@@ -156,12 +151,11 @@ mod tests {
     use rust_decimal_macros::dec;
 
     #[test]
-    fn cart_money_rounds_to_the_currency_minor_unit_within_storage_scale() {
+    fn cart_money_rounds_to_the_currency_minor_unit() {
         assert_eq!(round_cart_money(dec!(33.3333), CurrencyCode::USD), dec!(33.33));
         assert_eq!(round_cart_money(dec!(33.3333), CurrencyCode::JPY), dec!(33));
-        // Three-decimal currencies are held to the two decimals storage keeps.
         let bhd: CurrencyCode = "BHD".parse().expect("BHD");
-        assert_eq!(round_cart_money(dec!(1.2345), bhd), dec!(1.23));
+        assert_eq!(round_cart_money(dec!(1.23456), bhd), dec!(1.235));
     }
 
     #[test]
