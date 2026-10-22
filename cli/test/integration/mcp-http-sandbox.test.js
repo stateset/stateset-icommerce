@@ -73,6 +73,7 @@ async function modern(base, { id = 1, method, params = {} }) {
     'Content-Type': 'application/json',
     Accept: 'application/json, text/event-stream',
     'Mcp-Method': method,
+    'MCP-Protocol-Version': '2026-07-28',
   };
   if (params.name) headers['Mcp-Name'] = params.name;
 
@@ -338,6 +339,7 @@ const listWithOrigin = (base, origin) =>
       'Content-Type': 'application/json',
       Accept: 'application/json, text/event-stream',
       'Mcp-Method': 'tools/list',
+      'MCP-Protocol-Version': '2026-07-28',
       ...(origin ? { Origin: origin } : {}),
     },
     body: JSON.stringify({
@@ -482,6 +484,7 @@ const listWithHeaders = (base, extra = {}) =>
       'Content-Type': 'application/json',
       Accept: 'application/json, text/event-stream',
       'Mcp-Method': 'tools/list',
+      'MCP-Protocol-Version': '2026-07-28',
       ...extra,
     },
     body: JSON.stringify({

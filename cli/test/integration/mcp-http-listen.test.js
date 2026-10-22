@@ -126,6 +126,7 @@ for (const host of ['127.0.0.1', '::1']) {
           'Content-Type': 'application/json',
           Accept: 'application/json, text/event-stream',
           'Mcp-Method': 'tools/list',
+          'MCP-Protocol-Version': '2026-07-28',
         },
         body: JSON.stringify({
           jsonrpc: '2.0',
