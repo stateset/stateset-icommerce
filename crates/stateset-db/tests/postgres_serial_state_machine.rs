@@ -283,8 +283,11 @@ async fn postgres_reservation_lifecycle_is_coherent() {
     let err = db.serials().confirm_reservation_async(expired.id).await.expect_err("expired");
     assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
 
-    let swept = db.serials().release_expired_reservations_async(Utc::now()).await.expect("sweep");
-    assert!(swept >= 1, "at least our expired reservation is swept (got {swept})");
+    // The sweep is store-wide (`FOR UPDATE SKIP LOCKED`) and sibling tests in
+    // this binary sweep concurrently, so another sweeper may close our expired
+    // reservation first and this call can return 0. What must hold is the
+    // outcome for our rows, asserted below.
+    db.serials().release_expired_reservations_async(Utc::now()).await.expect("sweep");
     assert_eq!(status_of(&db, expired_id).await, SerialStatus::Available);
     assert!(
         db.serials()

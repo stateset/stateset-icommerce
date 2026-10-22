@@ -1005,6 +1005,14 @@ pub(crate) fn map_db_error_with(e: rusqlite::Error, values: ConflictValues<'_>) 
                         CommerceError::ValidationError(msg)
                     }
                 }
+                // Lock contention is transient: surface it as a retryable
+                // transaction failure (`CommerceError::is_retryable`) rather
+                // than an opaque string callers have to pattern-match.
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked => {
+                    CommerceError::Database(stateset_core::DbError::TransactionFailed {
+                        message: e.to_string(),
+                    })
+                }
                 _ => {
                     // SQLITE_FULL = 13
                     if err.extended_code == rusqlite::ffi::SQLITE_FULL {
@@ -1558,6 +1566,16 @@ mod tests {
         assert_eq!(case(None, Some(5)), "SELECT * FROM t LIMIT 500 OFFSET 5");
         // Requested limits are capped at the server-side maximum.
         assert_eq!(case(Some(5000), None), "SELECT * FROM t LIMIT 1000");
+    }
+
+    #[test]
+    fn lock_contention_maps_to_a_retryable_typed_error() {
+        let mapped = map_db_error(retryable_error());
+        assert!(mapped.is_retryable(), "{mapped:?}");
+        assert!(matches!(
+            mapped,
+            CommerceError::Database(stateset_core::DbError::TransactionFailed { .. })
+        ));
     }
 
     fn retryable_error() -> rusqlite::Error {
