@@ -6,6 +6,19 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Security
+
+- **Plaintext transports are refused.** `stateset-sync`'s
+  `SequencerHttpTransport` and `stateset-icp-client`'s `Client` now refuse
+  requests to an `http://` (or `grpc://`) URL whose host is not loopback,
+  instead of only warning, so credentials, pulled events, intents and
+  merchant responses never cross a network unencrypted by accident.
+  `https://` and loopback `http://` (a local sequencer or handler) are
+  unaffected. Opt in explicitly for a test rig or trusted private network
+  with `allow_cleartext_network()` (also on `stateset_sdk::SyncRuntime`).
+  **Behaviour change** for deployments that point at a plaintext
+  non-loopback sequencer or handler.
+
 ## [1.40.0] - 2026-10-22
 
 ### Security

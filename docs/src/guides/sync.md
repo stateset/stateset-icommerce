@@ -438,6 +438,8 @@ For durable Rust sync runtimes, persist both layers explicitly:
 
 The Rust crate now also ships a concrete `SequencerHttpTransport` for the documented REST flow (`POST /api/v1/ves/events/ingest`, `GET /api/v1/events`), so the Rust path is no longer just a trait boundary. `SyncEvent` now preserves core VES envelope metadata across push and pull flows, dead-letter entries can be inspected through `dead_letter_for_event`, `dead_letters_for_command`, `dead_letters_for_entity`, `latest_dead_letter_for_command`, and `latest_dead_letter_for_entity` before operators requeue or discard them, and `SyncEngine::confirmations()` plus lookup helpers like `confirmation_for_event`, `confirmations_for_command`, `confirmations_for_entity`, `latest_confirmation_for_command`, and `latest_confirmation_for_entity` expose the retained acknowledgement log when exact receipts are available.
 
+The transport refuses plain `http://` to any host that is not loopback, so credentials and pulled events never cross a network unencrypted by accident. Use `https://` (or `grpcs://`); `http://localhost` and `http://127.0.0.1` stay allowed for a local sequencer. For a test rig or a trusted private network, opt in explicitly with `SequencerHttpTransport::allow_cleartext_network()` (or `SyncRuntime::allow_cleartext_network()`).
+
 ## Event Replay
 
 Replay events to reconstruct state at any point in time:

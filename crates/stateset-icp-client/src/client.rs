@@ -39,6 +39,7 @@ pub struct Client {
     /// `well_known()` and used to verify the merchant signature on
     /// every response payload.
     merchant_pubkey_cache: RwLock<Option<String>>,
+    allow_cleartext_network: bool,
 }
 
 impl std::fmt::Debug for Client {
@@ -62,7 +63,39 @@ impl Client {
             identity,
             agent,
             merchant_pubkey_cache: RwLock::new(None),
+            allow_cleartext_network: false,
         }
+    }
+
+    /// Allow plain `http://` to a non-loopback handler.
+    ///
+    /// Such requests are refused by default, because intents, quotes and the
+    /// merchant's responses would cross the network unencrypted. Loopback
+    /// `http://` (a local handler) and `https://` are always allowed. Use
+    /// this only for a test rig or a trusted private network.
+    #[must_use]
+    pub const fn allow_cleartext_network(mut self) -> Self {
+        self.allow_cleartext_network = true;
+        self
+    }
+
+    /// Whether the handler is plain `http://` on a host that is not loopback.
+    #[must_use]
+    pub fn uses_cleartext_network(&self) -> bool {
+        is_cleartext_non_loopback(&self.handler_url)
+    }
+
+    /// `handler_url` + `path`, refusing a plaintext non-loopback handler
+    /// unless [`Self::allow_cleartext_network`] was called.
+    fn url(&self, path: &str) -> Result<String, Error> {
+        if self.uses_cleartext_network() && !self.allow_cleartext_network {
+            return Err(Error::InvalidInput(format!(
+                "refusing plaintext http to non-loopback ICP handler `{}`; use https, or call \
+                 allow_cleartext_network() for a trusted private network",
+                self.handler_url
+            )));
+        }
+        Ok(format!("{}{path}", self.handler_url))
     }
 
     /// Returns the Agent's AID.
@@ -78,7 +111,7 @@ impl Client {
     /// `merchant_pubkey.raw_hex`) so subsequent verb calls can verify
     /// merchant signatures via [`Client::verify_signed_response`].
     pub fn well_known(&self) -> Result<Value, Error> {
-        let url = format!("{}/icp/v1/.well-known/icp", self.handler_url);
+        let url = self.url("/icp/v1/.well-known/icp")?;
         let resp = self.agent.get(&url).call().map_err(map_ureq)?;
         let text = resp.into_string().map_err(|e| Error::Network(e.to_string()))?;
         let v = parse_value(&text)?;
@@ -118,7 +151,7 @@ impl Client {
 
     /// `GET /icp/v1/settlers` — list the merchant's accepted Settlers.
     pub fn settlers(&self) -> Result<Value, Error> {
-        let url = format!("{}/icp/v1/settlers", self.handler_url);
+        let url = self.url("/icp/v1/settlers")?;
         let resp = self.agent.get(&url).call().map_err(map_ureq)?;
         let text = resp.into_string().map_err(|e| Error::Network(e.to_string()))?;
         parse_value(&text)
@@ -378,7 +411,7 @@ impl Client {
 
     /// `POST /icp/v1/quotes/:id/accept` — accept a quote and open an escrow.
     pub fn accept_quote(&self, quote_id: &str) -> Result<Value, Error> {
-        let url = format!("{}/icp/v1/quotes/{}/accept", self.handler_url, quote_id);
+        let url = self.url(&format!("/icp/v1/quotes/{quote_id}/accept"))?;
         let acceptance = json!({
             "type": "quote.accept", "quote_id": quote_id, "buyer": self.identity.aid()
         });
@@ -445,8 +478,7 @@ impl Client {
         channel_id: &str,
         since: u64,
     ) -> Result<Vec<Value>, Error> {
-        let url =
-            format!("{}/icp/v1/channels/{}/events?since={}", self.handler_url, channel_id, since,);
+        let url = self.url(&format!("/icp/v1/channels/{channel_id}/events?since={since}"))?;
         let resp = self.agent.get(&url).call().map_err(map_ureq)?;
         let text = resp.into_string().map_err(|e| Error::Network(e.to_string()))?;
         let body = parse_value(&text)?;
@@ -458,7 +490,7 @@ impl Client {
 
     /// `GET /icp/v1/settlements/:id` — fetch a co-signed `SettlementReceipt`.
     pub fn get_settlement(&self, settlement_id: &str) -> Result<Value, Error> {
-        let url = format!("{}/icp/v1/settlements/{}", self.handler_url, settlement_id);
+        let url = self.url(&format!("/icp/v1/settlements/{settlement_id}"))?;
         let resp = self.agent.get(&url).call().map_err(map_ureq)?;
         let text = resp.into_string().map_err(|e| Error::Network(e.to_string()))?;
         parse_value(&text)
@@ -469,12 +501,29 @@ impl Client {
         envelope: &crate::IntentEnvelope,
         payload_key: &str,
     ) -> Result<SignedResponse, Error> {
-        let url = format!("{}/icp/v1/intents", self.handler_url);
+        let url = self.url("/icp/v1/intents")?;
         let resp =
             self.agent.post(&url).send_json(serde_json::to_value(envelope)?).map_err(map_ureq)?;
         let text = resp.into_string().map_err(|e| Error::Network(e.to_string()))?;
         parse_signed_response(&text, payload_key)
     }
+}
+
+/// `http://` with a host that is neither `localhost` nor a loopback IP.
+fn is_cleartext_non_loopback(url: &str) -> bool {
+    let Some(rest) = url.get(..7).filter(|p| p.eq_ignore_ascii_case("http://")).map(|_| &url[7..])
+    else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host_port = authority.rsplit('@').next().unwrap_or_default();
+    let host = if let Some(bracketed) = host_port.strip_prefix('[') {
+        bracketed.split(']').next().unwrap_or_default()
+    } else {
+        host_port.split(':').next().unwrap_or_default()
+    };
+    !(host.eq_ignore_ascii_case("localhost")
+        || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback()))
 }
 
 fn trim_trailing_slash(mut s: String) -> String {
@@ -535,6 +584,43 @@ fn map_ureq(err: ureq::Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn identity() -> Identity {
+        Identity::from_seeds_hex(
+            "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+            "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn cleartext_detection_covers_hosts_ports_and_userinfo() {
+        for url in ["http://merchant.example:7402", "HTTP://10.0.0.5", "http://u@shop.example/"] {
+            assert!(is_cleartext_non_loopback(url), "{url}");
+        }
+        for url in [
+            "https://merchant.example",
+            "http://localhost:7402",
+            "http://127.0.0.1",
+            "http://[::1]:7402/x",
+            "http://LOCALHOST",
+        ] {
+            assert!(!is_cleartext_non_loopback(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn plaintext_non_loopback_handler_is_refused_before_any_request() {
+        // `.invalid` never resolves: a refusal must come before any I/O.
+        let client = Client::new("http://merchant.invalid:7402", identity());
+        let error = client.well_known().expect_err("plaintext refused");
+        assert!(
+            matches!(&error, Error::InvalidInput(m) if m.contains("allow_cleartext_network")),
+            "got {error:?}"
+        );
+        let error = client.allow_cleartext_network().well_known().expect_err("no host");
+        assert!(matches!(error, Error::Network(_)), "opted in, it gets to the network: {error:?}");
+    }
 
     #[test]
     fn client_aid_matches_identity() {
