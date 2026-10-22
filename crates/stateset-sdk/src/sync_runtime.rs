@@ -268,6 +268,15 @@ impl SyncRuntime {
         (self.engine, self.transport)
     }
 
+    /// Allow plain `http://` to a non-loopback sequencer, which the transport
+    /// refuses by default. Use only for a test rig or a trusted private
+    /// network; see [`SequencerHttpTransport::allow_cleartext_network`].
+    #[must_use]
+    pub fn allow_cleartext_network(mut self) -> Self {
+        self.transport = self.transport.clone().allow_cleartext_network();
+        self
+    }
+
     /// Configure an API key on the underlying sequencer transport.
     #[must_use]
     pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {

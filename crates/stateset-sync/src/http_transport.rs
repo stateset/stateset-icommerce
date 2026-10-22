@@ -35,6 +35,7 @@ pub struct SequencerHttpTransport {
     bearer_token: Option<String>,
     agent_key_id: u32,
     trusted_agent_keys: Vec<TrustedAgentKey>,
+    allow_cleartext_network: bool,
 }
 
 /// An agent signing key pinned for verifying pulled events.
@@ -57,6 +58,7 @@ impl std::fmt::Debug for SequencerHttpTransport {
             .field("bearer_token", &redact(&self.bearer_token))
             .field("agent_key_id", &self.agent_key_id)
             .field("trusted_agent_keys", &self.trusted_agent_keys.len())
+            .field("allow_cleartext_network", &self.allow_cleartext_network)
             .finish_non_exhaustive()
     }
 }
@@ -132,6 +134,7 @@ impl SequencerHttpTransport {
             bearer_token: None,
             agent_key_id: 0,
             trusted_agent_keys: Vec::new(),
+            allow_cleartext_network: false,
         })
     }
 
@@ -178,13 +181,22 @@ impl SequencerHttpTransport {
         self
     }
 
+    /// Allow plain `http://` to a non-loopback host.
+    ///
+    /// Requests to such a sequencer are refused by default: credentials and
+    /// pulled events would cross the network unencrypted and unauthenticated.
+    /// Use this only for a test rig or a trusted private network.
+    #[must_use]
+    pub const fn allow_cleartext_network(mut self) -> Self {
+        self.allow_cleartext_network = true;
+        self
+    }
+
     /// Whether requests go over plain `http://` to a host that is not
     /// loopback, so credentials and pulled events cross the network
-    /// unencrypted and unauthenticated.
-    ///
-    /// Plain HTTP stays accepted (private-network sequencers use it, and
-    /// `grpc://` maps to it), but callers can refuse such a configuration;
-    /// the transport logs a warning when credentials are attached to one.
+    /// unencrypted and unauthenticated. Such requests are refused unless
+    /// [`Self::allow_cleartext_network`] was called; loopback `http://` (a
+    /// local sequencer) and `https://` are always allowed.
     #[must_use]
     pub fn uses_cleartext_network(&self) -> bool {
         let Ok(url) = Url::parse(&self.base_url) else { return false };
@@ -202,8 +214,9 @@ impl SequencerHttpTransport {
         if self.uses_cleartext_network() {
             tracing::warn!(
                 base_url = %self.base_url,
-                "sequencer credentials will be sent over plaintext http to a non-loopback host; \
-                 use https"
+                "sequencer is plaintext http to a non-loopback host; requests are refused \
+                 unless allow_cleartext_network() is set, and would send credentials \
+                 unencrypted; use https"
             );
         }
     }
@@ -269,6 +282,13 @@ impl SequencerHttpTransport {
     }
 
     fn endpoint(&self, path: &str) -> Result<Url, SyncError> {
+        if self.uses_cleartext_network() && !self.allow_cleartext_network {
+            return Err(SyncError::InvalidConfig(format!(
+                "refusing plaintext http to non-loopback sequencer `{}`; use https, or call \
+                 allow_cleartext_network() for a trusted private network",
+                self.base_url
+            )));
+        }
         Url::parse(&format!("{}{}", self.base_url, path)).map_err(|error| {
             SyncError::Transport(format!("failed to build sequencer endpoint `{path}`: {error}"))
         })
@@ -1415,6 +1435,35 @@ mod tests {
         assert!(!transport("http://127.0.0.1:8080").uses_cleartext_network());
         assert!(!transport("http://localhost:8080").uses_cleartext_network());
         assert!(!transport("http://[::1]:8080").uses_cleartext_network());
+    }
+
+    #[tokio::test]
+    async fn cleartext_non_loopback_requests_are_refused_unless_allowed() {
+        // Nothing listens on this address: a refusal must come before any I/O.
+        let transport = SequencerHttpTransport::new(
+            "http://sequencer.internal.invalid:8080",
+            "agent-1",
+            "tenant-1",
+            "store-1",
+        )
+        .unwrap();
+        let error = transport.healthcheck().await.expect_err("plaintext refused");
+        assert!(
+            matches!(&error, SyncError::InvalidConfig(m) if m.contains("allow_cleartext_network")),
+            "got {error:?}"
+        );
+
+        // Opting in gets past the refusal (and then fails to connect).
+        let error = transport.allow_cleartext_network().healthcheck().await.expect_err("no host");
+        assert!(matches!(error, SyncError::Transport(_)), "got {error:?}");
+    }
+
+    #[tokio::test]
+    async fn loopback_http_is_allowed_without_opt_in() {
+        let (base_url, _requests) = spawn_single_response_server("200 OK", json!({}));
+        let transport = SequencerHttpTransport::new(base_url, "agent-1", "tenant-1", "store-1")
+            .expect("transport");
+        transport.healthcheck().await.expect("loopback sequencer is reachable");
     }
 
     #[tokio::test]
