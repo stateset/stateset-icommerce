@@ -1,6 +1,7 @@
 //! Vendor return endpoints (return-to-supplier).
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -8,7 +9,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_core::{ProductId, VendorReturnId};
 use utoipa::{IntoParams, ToSchema};
@@ -78,14 +78,6 @@ fn to_resp(r: &stateset_core::VendorReturn) -> VendorReturnResponse {
     }
 }
 
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/vendor-returns", post(create).get(list))
@@ -105,33 +97,36 @@ pub(crate) async fn create(
     Json(req): Json<CreateVendorReturnRequest>,
 ) -> Result<(StatusCode, Json<VendorReturnResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let purchase_order_id = match req.purchase_order_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "purchase_order_id")?),
-        None => None,
-    };
-    let mut items = Vec::with_capacity(req.items.len());
-    for i in req.items {
-        let reason = match i.reason.as_deref() {
-            Some(s) => parse_id(s, "reason")?,
-            None => stateset_core::VendorReturnReason::default(),
-        };
-        items.push(stateset_core::CreateVendorReturnItem {
-            product_id: parse_id::<ProductId>(&i.product_id, "product_id")?,
-            quantity: parse_decimal(&i.quantity, "quantity")?,
-            unit_cost: parse_decimal(&i.unit_cost, "unit_cost")?,
-            reason,
-        });
-    }
-    let input = stateset_core::CreateVendorReturn {
-        supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
-        purchase_order_id,
-        currency: None,
-        items,
-        notes: req.notes,
-    };
-    let r = c.vendor_returns().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&r))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let purchase_order_id = match req.purchase_order_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "purchase_order_id")?),
+                None => None,
+            };
+            let mut items = Vec::with_capacity(req.items.len());
+            for i in req.items {
+                let reason = match i.reason.as_deref() {
+                    Some(s) => parse_id(s, "reason")?,
+                    None => stateset_core::VendorReturnReason::default(),
+                };
+                items.push(stateset_core::CreateVendorReturnItem {
+                    product_id: parse_id::<ProductId>(&i.product_id, "product_id")?,
+                    quantity: parse_decimal(&i.quantity, "quantity")?,
+                    unit_cost: parse_decimal(&i.unit_cost, "unit_cost")?,
+                    reason,
+                });
+            }
+            let input = stateset_core::CreateVendorReturn {
+                supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
+                purchase_order_id,
+                currency: None,
+                items,
+                notes: req.notes,
+            };
+            let r = c.vendor_returns().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&r))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "vendor_returns_list", path = "/api/v1/vendor-returns", tag = "vendor_returns",
@@ -144,30 +139,37 @@ pub(crate) async fn list(
     Query(params): Query<VendorReturnFilterParams>,
 ) -> Result<Json<VendorReturnListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let supplier_id = match params.supplier_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
-        None => None,
-    };
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let total = c
-        .vendor_returns()
-        .list(stateset_core::VendorReturnFilter { supplier_id, status, ..Default::default() })?
-        .len();
-    let filter = stateset_core::VendorReturnFilter {
-        supplier_id,
-        status,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-    };
-    let returns = c.vendor_returns().list(filter)?;
-    Ok(Json(VendorReturnListResponse {
-        vendor_returns: returns.iter().map(to_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let supplier_id = match params.supplier_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
+                None => None,
+            };
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let total = c
+                .vendor_returns()
+                .list(stateset_core::VendorReturnFilter {
+                    supplier_id,
+                    status,
+                    ..Default::default()
+                })?
+                .len();
+            let filter = stateset_core::VendorReturnFilter {
+                supplier_id,
+                status,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+            };
+            let returns = c.vendor_returns().list(filter)?;
+            Ok(Json(VendorReturnListResponse {
+                vendor_returns: returns.iter().map(to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "vendor_returns_get_one", path = "/api/v1/vendor-returns/{id}", tag = "vendor_returns",
@@ -180,12 +182,15 @@ pub(crate) async fn get_one(
     Path(id): Path<VendorReturnId>,
 ) -> Result<Json<VendorReturnResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let r = c
-        .vendor_returns()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Vendor return {id} not found")))?;
-    Ok(Json(to_resp(&r)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let r = c
+                .vendor_returns()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Vendor return {id} not found")))?;
+            Ok(Json(to_resp(&r)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "vendor_returns_submit", path = "/api/v1/vendor-returns/{id}/submit", tag = "vendor_returns",
@@ -198,8 +203,9 @@ pub(crate) async fn submit(
     Path(id): Path<VendorReturnId>,
 ) -> Result<Json<VendorReturnResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.vendor_returns().submit(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.vendor_returns().submit(id)?))))
+        .await
 }
 
 #[utoipa::path(post, operation_id = "vendor_returns_process", path = "/api/v1/vendor-returns/{id}/process", tag = "vendor_returns",
@@ -214,8 +220,11 @@ pub(crate) async fn process(
     Json(req): Json<ProcessVendorReturnRequest>,
 ) -> Result<Json<VendorReturnResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.vendor_returns().process(id, req.generate_credit)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(&c.vendor_returns().process(id, req.generate_credit)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "vendor_returns_cancel", path = "/api/v1/vendor-returns/{id}/cancel", tag = "vendor_returns",
@@ -228,8 +237,9 @@ pub(crate) async fn cancel(
     Path(id): Path<VendorReturnId>,
 ) -> Result<Json<VendorReturnResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.vendor_returns().cancel(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.vendor_returns().cancel(id)?))))
+        .await
 }
 
 #[cfg(test)]

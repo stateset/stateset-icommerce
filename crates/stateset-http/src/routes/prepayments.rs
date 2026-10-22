@@ -1,6 +1,7 @@
 //! Prepayment endpoints (advance payments to suppliers).
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -8,7 +9,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_core::PrepaymentId;
 use utoipa::{IntoParams, ToSchema};
@@ -71,14 +71,6 @@ fn to_resp(p: &stateset_core::Prepayment) -> PrepaymentResponse {
     }
 }
 
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/prepayments", post(create).get(list))
@@ -97,17 +89,20 @@ pub(crate) async fn create(
     Json(req): Json<CreatePrepaymentRequest>,
 ) -> Result<(StatusCode, Json<PrepaymentResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::CreatePrepayment {
-        supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
-        amount: parse_decimal(&req.amount, "amount")?,
-        currency: None,
-        method: req.method,
-        reference: req.reference,
-        memo: req.memo,
-    };
-    let p = c.prepayments().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&p))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::CreatePrepayment {
+                supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
+                amount: parse_decimal(&req.amount, "amount")?,
+                currency: None,
+                method: req.method,
+                reference: req.reference,
+                memo: req.memo,
+            };
+            let p = c.prepayments().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&p))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "prepayments_list", path = "/api/v1/prepayments", tag = "prepayments",
@@ -120,30 +115,37 @@ pub(crate) async fn list(
     Query(params): Query<PrepaymentFilterParams>,
 ) -> Result<Json<PrepaymentListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let supplier_id = match params.supplier_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
-        None => None,
-    };
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let total = c
-        .prepayments()
-        .list(stateset_core::PrepaymentFilter { supplier_id, status, ..Default::default() })?
-        .len();
-    let filter = stateset_core::PrepaymentFilter {
-        supplier_id,
-        status,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-    };
-    let prepayments = c.prepayments().list(filter)?;
-    Ok(Json(PrepaymentListResponse {
-        prepayments: prepayments.iter().map(to_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let supplier_id = match params.supplier_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
+                None => None,
+            };
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let total = c
+                .prepayments()
+                .list(stateset_core::PrepaymentFilter {
+                    supplier_id,
+                    status,
+                    ..Default::default()
+                })?
+                .len();
+            let filter = stateset_core::PrepaymentFilter {
+                supplier_id,
+                status,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+            };
+            let prepayments = c.prepayments().list(filter)?;
+            Ok(Json(PrepaymentListResponse {
+                prepayments: prepayments.iter().map(to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "prepayments_get_one", path = "/api/v1/prepayments/{id}", tag = "prepayments",
@@ -156,12 +158,15 @@ pub(crate) async fn get_one(
     Path(id): Path<PrepaymentId>,
 ) -> Result<Json<PrepaymentResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let p = c
-        .prepayments()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Prepayment {id} not found")))?;
-    Ok(Json(to_resp(&p)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let p = c
+                .prepayments()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Prepayment {id} not found")))?;
+            Ok(Json(to_resp(&p)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "prepayments_apply", path = "/api/v1/prepayments/{id}/apply", tag = "prepayments",
@@ -176,13 +181,16 @@ pub(crate) async fn apply(
     Json(req): Json<ApplyPrepaymentRequest>,
 ) -> Result<Json<PrepaymentResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::ApplyPrepayment {
-        target_type: parse_id(&req.target_type, "target_type")?,
-        target_id: parse_id::<Uuid>(&req.target_id, "target_id")?,
-        amount: parse_decimal(&req.amount, "amount")?,
-    };
-    Ok(Json(to_resp(&c.prepayments().apply(id, input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::ApplyPrepayment {
+                target_type: parse_id(&req.target_type, "target_type")?,
+                target_id: parse_id::<Uuid>(&req.target_id, "target_id")?,
+                amount: parse_decimal(&req.amount, "amount")?,
+            };
+            Ok(Json(to_resp(&c.prepayments().apply(id, input)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "prepayments_refund", path = "/api/v1/prepayments/{id}/refund", tag = "prepayments",
@@ -195,8 +203,9 @@ pub(crate) async fn refund(
     Path(id): Path<PrepaymentId>,
 ) -> Result<Json<PrepaymentResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.prepayments().refund(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.prepayments().refund(id)?))))
+        .await
 }
 
 #[cfg(test)]

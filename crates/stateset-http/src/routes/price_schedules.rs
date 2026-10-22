@@ -1,6 +1,7 @@
 //! Price schedule endpoints (time-bounded pricing).
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -9,7 +10,6 @@ use axum::{
     routing::{get, post},
 };
 use chrono::{DateTime, Utc};
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_core::{PriceScheduleId, ProductId};
 use utoipa::{IntoParams, ToSchema};
@@ -96,14 +96,6 @@ fn entry_resp(e: &stateset_core::PriceScheduleEntry) -> PriceScheduleEntryRespon
     PriceScheduleEntryResponse { product_id: e.product_id.to_string(), price: e.price.to_string() }
 }
 
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
 fn parse_dt(s: &str) -> Result<DateTime<Utc>, HttpError> {
     DateTime::parse_from_rfc3339(s)
         .map(|d| d.with_timezone(&Utc))
@@ -128,25 +120,28 @@ pub(crate) async fn create(
     Json(req): Json<CreatePriceScheduleRequest>,
 ) -> Result<(StatusCode, Json<PriceScheduleResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let starts_at = match req.starts_at.as_deref() {
-        Some(s) => Some(parse_dt(s)?),
-        None => None,
-    };
-    let ends_at = match req.ends_at.as_deref() {
-        Some(s) => Some(parse_dt(s)?),
-        None => None,
-    };
-    let input = stateset_core::CreatePriceSchedule {
-        name: req.name,
-        code: req.code,
-        currency: None,
-        starts_at,
-        ends_at,
-        priority: req.priority,
-    };
-    let s = c.price_schedules().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&s))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let starts_at = match req.starts_at.as_deref() {
+                Some(s) => Some(parse_dt(s)?),
+                None => None,
+            };
+            let ends_at = match req.ends_at.as_deref() {
+                Some(s) => Some(parse_dt(s)?),
+                None => None,
+            };
+            let input = stateset_core::CreatePriceSchedule {
+                name: req.name,
+                code: req.code,
+                currency: None,
+                starts_at,
+                ends_at,
+                priority: req.priority,
+            };
+            let s = c.price_schedules().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&s))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "price_schedules_list", path = "/api/v1/price-schedules", tag = "price_schedules",
@@ -159,24 +154,27 @@ pub(crate) async fn list(
     Query(params): Query<PriceScheduleFilterParams>,
 ) -> Result<Json<PriceScheduleListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let total = c
-        .price_schedules()
-        .list(stateset_core::PriceScheduleFilter {
-            is_active: params.is_active,
-            ..Default::default()
-        })?
-        .len();
-    let filter = stateset_core::PriceScheduleFilter {
-        is_active: params.is_active,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-    };
-    let schedules = c.price_schedules().list(filter)?;
-    Ok(Json(PriceScheduleListResponse {
-        price_schedules: schedules.iter().map(to_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let total = c
+                .price_schedules()
+                .list(stateset_core::PriceScheduleFilter {
+                    is_active: params.is_active,
+                    ..Default::default()
+                })?
+                .len();
+            let filter = stateset_core::PriceScheduleFilter {
+                is_active: params.is_active,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+            };
+            let schedules = c.price_schedules().list(filter)?;
+            Ok(Json(PriceScheduleListResponse {
+                price_schedules: schedules.iter().map(to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "price_schedules_resolve", path = "/api/v1/price-schedules/resolve", tag = "price_schedules",
@@ -189,17 +187,20 @@ pub(crate) async fn resolve(
     Query(params): Query<ResolveParams>,
 ) -> Result<Json<ResolveResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let product_id = parse_id::<ProductId>(&params.product_id, "product_id")?;
-    let at = match params.at.as_deref() {
-        Some(s) => parse_dt(s)?,
-        None => Utc::now(),
-    };
-    let price = c.price_schedules().resolve_price(product_id, at)?;
-    Ok(Json(ResolveResponse {
-        product_id: product_id.to_string(),
-        price: price.map(|p| p.to_string()),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let product_id = parse_id::<ProductId>(&params.product_id, "product_id")?;
+            let at = match params.at.as_deref() {
+                Some(s) => parse_dt(s)?,
+                None => Utc::now(),
+            };
+            let price = c.price_schedules().resolve_price(product_id, at)?;
+            Ok(Json(ResolveResponse {
+                product_id: product_id.to_string(),
+                price: price.map(|p| p.to_string()),
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "price_schedules_get_one", path = "/api/v1/price-schedules/{id}", tag = "price_schedules",
@@ -212,12 +213,15 @@ pub(crate) async fn get_one(
     Path(id): Path<PriceScheduleId>,
 ) -> Result<Json<PriceScheduleResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let s = c
-        .price_schedules()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Price schedule {id} not found")))?;
-    Ok(Json(to_resp(&s)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let s = c
+                .price_schedules()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Price schedule {id} not found")))?;
+            Ok(Json(to_resp(&s)))
+        })
+        .await
 }
 
 #[utoipa::path(delete, operation_id = "price_schedules_delete_one", path = "/api/v1/price-schedules/{id}", tag = "price_schedules",
@@ -230,9 +234,12 @@ pub(crate) async fn delete_one(
     Path(id): Path<PriceScheduleId>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.price_schedules().delete(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.price_schedules().delete(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "price_schedules_set_entry", path = "/api/v1/price-schedules/{id}/entries", tag = "price_schedules",
@@ -247,10 +254,13 @@ pub(crate) async fn set_entry(
     Json(req): Json<SetEntryRequest>,
 ) -> Result<Json<PriceScheduleEntryResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let product_id = parse_id::<ProductId>(&req.product_id, "product_id")?;
-    let price = parse_decimal(&req.price, "price")?;
-    Ok(Json(entry_resp(&c.price_schedules().set_entry(id, product_id, price)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let product_id = parse_id::<ProductId>(&req.product_id, "product_id")?;
+            let price = parse_decimal(&req.price, "price")?;
+            Ok(Json(entry_resp(&c.price_schedules().set_entry(id, product_id, price)?)))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "price_schedules_list_entries", path = "/api/v1/price-schedules/{id}/entries", tag = "price_schedules",
@@ -263,9 +273,12 @@ pub(crate) async fn list_entries(
     Path(id): Path<PriceScheduleId>,
 ) -> Result<Json<Vec<PriceScheduleEntryResponse>>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let entries = c.price_schedules().list_entries(id)?;
-    Ok(Json(entries.iter().map(entry_resp).collect()))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let entries = c.price_schedules().list_entries(id)?;
+            Ok(Json(entries.iter().map(entry_resp).collect()))
+        })
+        .await
 }
 
 #[cfg(test)]

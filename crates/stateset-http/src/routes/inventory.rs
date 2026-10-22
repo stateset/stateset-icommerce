@@ -157,12 +157,15 @@ pub(crate) async fn get_stock(
     Path(sku): Path<String>,
 ) -> Result<Json<InventoryResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let stock = commerce
-        .inventory()
-        .get_stock(&sku)?
-        .ok_or_else(|| HttpError::NotFound(format!("Inventory item {sku} not found")))?;
-    Ok(Json(InventoryResponse::from(stock)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let stock = commerce
+                .inventory()
+                .get_stock(&sku)?
+                .ok_or_else(|| HttpError::NotFound(format!("Inventory item {sku} not found")))?;
+            Ok(Json(InventoryResponse::from(stock)))
+        })
+        .await
 }
 
 /// `POST /api/v1/inventory/:sku/adjust`
@@ -192,17 +195,19 @@ pub(crate) async fn adjust_stock(
     }
 
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            // Perform the adjustment
+            commerce.inventory().adjust(&sku, req.quantity, &req.reason)?;
 
-    // Perform the adjustment
-    commerce.inventory().adjust(&sku, req.quantity, &req.reason)?;
-
-    // Fetch updated stock levels
-    let stock = commerce
-        .inventory()
-        .get_stock(&sku)?
-        .ok_or_else(|| HttpError::NotFound(format!("Inventory item {sku} not found")))?;
-    Ok(Json(InventoryResponse::from(stock)))
+            // Fetch updated stock levels
+            let stock = commerce
+                .inventory()
+                .get_stock(&sku)?
+                .ok_or_else(|| HttpError::NotFound(format!("Inventory item {sku} not found")))?;
+            Ok(Json(InventoryResponse::from(stock)))
+        })
+        .await
 }
 
 /// `GET /api/v1/inventory`
@@ -222,40 +227,42 @@ pub(crate) async fn list_inventory(
     Query(params): Query<InventoryFilterParams>,
 ) -> Result<Json<InventoryListResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let limit = params.resolved_limit();
+            let offset = params.resolved_offset();
 
-    let limit = params.resolved_limit();
-    let offset = params.resolved_offset();
+            // Count total matching records (without pagination)
+            let count_filter = InventoryFilter {
+                sku: params.sku.clone(),
+                location_id: None,
+                below_reorder_point: params.below_reorder_point,
+                is_active: params.is_active,
+                limit: None,
+                offset: None,
+            };
+            let total = commerce.inventory().list(count_filter)?.len();
 
-    // Count total matching records (without pagination)
-    let count_filter = InventoryFilter {
-        sku: params.sku.clone(),
-        location_id: None,
-        below_reorder_point: params.below_reorder_point,
-        is_active: params.is_active,
-        limit: None,
-        offset: None,
-    };
-    let total = commerce.inventory().list(count_filter)?.len();
-
-    // Fetch the requested page
-    let filter = InventoryFilter {
-        sku: params.sku,
-        location_id: None,
-        below_reorder_point: params.below_reorder_point,
-        is_active: params.is_active,
-        limit: Some(overfetch_limit(limit)),
-        offset: Some(offset),
-    };
-    let mut items = commerce.inventory().list(filter)?;
-    let has_more = finalize_page(&mut items, limit);
-    Ok(Json(InventoryListResponse {
-        items: items.into_iter().map(InventoryItemResponse::from).collect(),
-        total,
-        limit,
-        offset,
-        has_more,
-    }))
+            // Fetch the requested page
+            let filter = InventoryFilter {
+                sku: params.sku,
+                location_id: None,
+                below_reorder_point: params.below_reorder_point,
+                is_active: params.is_active,
+                limit: Some(overfetch_limit(limit)),
+                offset: Some(offset),
+            };
+            let mut items = commerce.inventory().list(filter)?;
+            let has_more = finalize_page(&mut items, limit);
+            Ok(Json(InventoryListResponse {
+                items: items.into_iter().map(InventoryItemResponse::from).collect(),
+                total,
+                limit,
+                offset,
+                has_more,
+            }))
+        })
+        .await
 }
 
 // ---------------------------------------------------------------------------
@@ -289,15 +296,18 @@ pub(crate) async fn create_reservation(
         ));
     }
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let reservation = commerce.inventory().reserve(
-        &sku,
-        req.quantity,
-        req.reference_type.trim(),
-        req.reference_id.trim(),
-        req.expires_in_seconds,
-    )?;
-    Ok((axum::http::StatusCode::CREATED, Json(ReservationResponse::from(reservation))))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let reservation = commerce.inventory().reserve(
+                &sku,
+                req.quantity,
+                req.reference_type.trim(),
+                req.reference_id.trim(),
+                req.expires_in_seconds,
+            )?;
+            Ok((axum::http::StatusCode::CREATED, Json(ReservationResponse::from(reservation))))
+        })
+        .await
 }
 
 /// `GET /api/v1/inventory/reservations/:reservation_id`
@@ -318,12 +328,15 @@ pub(crate) async fn get_reservation(
     Path(reservation_id): Path<Uuid>,
 ) -> Result<Json<ReservationResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let reservation = commerce
-        .inventory()
-        .get_reservation(reservation_id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Reservation {reservation_id} not found")))?;
-    Ok(Json(ReservationResponse::from(reservation)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let reservation =
+                commerce.inventory().get_reservation(reservation_id)?.ok_or_else(|| {
+                    HttpError::NotFound(format!("Reservation {reservation_id} not found"))
+                })?;
+            Ok(Json(ReservationResponse::from(reservation)))
+        })
+        .await
 }
 
 /// `GET /api/v1/inventory/reservations?reference_type=order&reference_id=...`
@@ -349,14 +362,20 @@ pub(crate) async fn list_reservations(
         ));
     }
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let items: Vec<ReservationResponse> = commerce
-        .inventory()
-        .list_reservations_by_reference(params.reference_type.trim(), params.reference_id.trim())?
-        .into_iter()
-        .map(ReservationResponse::from)
-        .collect();
-    Ok(Json(ReservationListResponse { total: items.len(), items }))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let items: Vec<ReservationResponse> = commerce
+                .inventory()
+                .list_reservations_by_reference(
+                    params.reference_type.trim(),
+                    params.reference_id.trim(),
+                )?
+                .into_iter()
+                .map(ReservationResponse::from)
+                .collect();
+            Ok(Json(ReservationListResponse { total: items.len(), items }))
+        })
+        .await
 }
 
 /// `POST /api/v1/inventory/reservations/:reservation_id/release`
@@ -377,13 +396,16 @@ pub(crate) async fn release_reservation(
     Path(reservation_id): Path<Uuid>,
 ) -> Result<Json<ReservationResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    commerce.inventory().release_reservation(reservation_id)?;
-    let reservation = commerce
-        .inventory()
-        .get_reservation(reservation_id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Reservation {reservation_id} not found")))?;
-    Ok(Json(ReservationResponse::from(reservation)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            commerce.inventory().release_reservation(reservation_id)?;
+            let reservation =
+                commerce.inventory().get_reservation(reservation_id)?.ok_or_else(|| {
+                    HttpError::NotFound(format!("Reservation {reservation_id} not found"))
+                })?;
+            Ok(Json(ReservationResponse::from(reservation)))
+        })
+        .await
 }
 
 /// `POST /api/v1/inventory/reservations/:reservation_id/confirm`
@@ -405,13 +427,16 @@ pub(crate) async fn confirm_reservation(
     Path(reservation_id): Path<Uuid>,
 ) -> Result<Json<ReservationResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    commerce.inventory().confirm_reservation(reservation_id)?;
-    let reservation = commerce
-        .inventory()
-        .get_reservation(reservation_id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Reservation {reservation_id} not found")))?;
-    Ok(Json(ReservationResponse::from(reservation)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            commerce.inventory().confirm_reservation(reservation_id)?;
+            let reservation =
+                commerce.inventory().get_reservation(reservation_id)?.ok_or_else(|| {
+                    HttpError::NotFound(format!("Reservation {reservation_id} not found"))
+                })?;
+            Ok(Json(ReservationResponse::from(reservation)))
+        })
+        .await
 }
 
 /// `POST /api/v1/inventory/reservations/expire`
@@ -438,9 +463,12 @@ pub(crate) async fn expire_reservations(
         .unwrap_or(DEFAULT_EXPIRE_LIMIT)
         .clamp(1, MAX_EXPIRE_LIMIT);
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let expired = commerce.inventory().expire_reservations(Utc::now(), limit)?;
-    Ok(Json(ExpireReservationsResponse { expired, has_more: expired >= u64::from(limit) }))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let expired = commerce.inventory().expire_reservations(Utc::now(), limit)?;
+            Ok(Json(ExpireReservationsResponse { expired, has_more: expired >= u64::from(limit) }))
+        })
+        .await
 }
 
 /// `POST /api/v1/inventory/sweeps/run`

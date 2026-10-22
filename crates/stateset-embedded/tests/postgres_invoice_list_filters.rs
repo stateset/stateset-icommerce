@@ -17,7 +17,7 @@ use stateset_core::{CreateCustomer, CreateInvoice, CreateInvoiceItem, InvoiceFil
 use stateset_embedded::AsyncCommerce;
 
 fn postgres_url() -> Option<String> {
-    std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 fn item(price: Decimal) -> CreateInvoiceItem {

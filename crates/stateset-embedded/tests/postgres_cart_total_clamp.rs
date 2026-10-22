@@ -10,7 +10,7 @@ use stateset_core::{AddCartItem, CreateCart, UpdateCart};
 use stateset_embedded::AsyncCommerce;
 
 fn postgres_url() -> Option<String> {
-    std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 fn item(sku: &str, qty: i32, price: rust_decimal::Decimal) -> AddCartItem {

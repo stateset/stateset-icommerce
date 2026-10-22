@@ -115,36 +115,40 @@ pub(crate) async fn create_exemption(
     Json(req): Json<CreateTaxExemptionRequest>,
 ) -> Result<(StatusCode, Json<TaxExemptionResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let exemption_type: stateset_core::ExemptionType =
+                req.exemption_type.parse().map_err(|_| {
+                    HttpError::BadRequest(format!("Unknown exemption type: {}", req.exemption_type))
+                })?;
+            let exempt_categories = req
+                .exempt_categories
+                .unwrap_or_default()
+                .iter()
+                .map(|value| {
+                    value.parse::<stateset_core::ProductTaxCategory>().map_err(|_| {
+                        HttpError::BadRequest(format!("Unknown product tax category: {value}"))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
 
-    let exemption_type: stateset_core::ExemptionType =
-        req.exemption_type.parse().map_err(|_| {
-            HttpError::BadRequest(format!("Unknown exemption type: {}", req.exemption_type))
-        })?;
-    let exempt_categories = req
-        .exempt_categories
-        .unwrap_or_default()
-        .iter()
-        .map(|value| {
-            value.parse::<stateset_core::ProductTaxCategory>().map_err(|_| {
-                HttpError::BadRequest(format!("Unknown product tax category: {value}"))
-            })
+            let input = stateset_core::CreateTaxExemption {
+                customer_id: req.customer_id,
+                exemption_type,
+                certificate_number: req.certificate_number,
+                issuing_authority: req.issuing_authority,
+                jurisdiction_ids: req.jurisdiction_ids.unwrap_or_default(),
+                exempt_categories,
+                effective_from: req
+                    .effective_from
+                    .unwrap_or_else(|| chrono::Utc::now().date_naive()),
+                expires_at: req.expires_at,
+                notes: req.notes,
+            };
+            let exemption = c.tax().create_exemption(input)?;
+            Ok((StatusCode::CREATED, Json(exemption_to_resp(&exemption))))
         })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let input = stateset_core::CreateTaxExemption {
-        customer_id: req.customer_id,
-        exemption_type,
-        certificate_number: req.certificate_number,
-        issuing_authority: req.issuing_authority,
-        jurisdiction_ids: req.jurisdiction_ids.unwrap_or_default(),
-        exempt_categories,
-        effective_from: req.effective_from.unwrap_or_else(|| chrono::Utc::now().date_naive()),
-        expires_at: req.expires_at,
-        notes: req.notes,
-    };
-    let exemption = c.tax().create_exemption(input)?;
-    Ok((StatusCode::CREATED, Json(exemption_to_resp(&exemption))))
+        .await
 }
 
 #[utoipa::path(get, path = "/api/v1/tax/exemptions", tag = "tax",
@@ -157,16 +161,19 @@ pub(crate) async fn list_exemptions(
     Query(params): Query<TaxExemptionFilterParams>,
 ) -> Result<Json<TaxExemptionListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let customer_id = params
-        .customer_id
-        .ok_or_else(|| HttpError::BadRequest("customer_id is required".into()))?;
-    let exemptions = c.tax().get_customer_exemptions(customer_id)?;
-    let total = exemptions.len();
-    Ok(Json(TaxExemptionListResponse {
-        exemptions: exemptions.iter().map(exemption_to_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let customer_id = params
+                .customer_id
+                .ok_or_else(|| HttpError::BadRequest("customer_id is required".into()))?;
+            let exemptions = c.tax().get_customer_exemptions(customer_id)?;
+            let total = exemptions.len();
+            Ok(Json(TaxExemptionListResponse {
+                exemptions: exemptions.iter().map(exemption_to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, path = "/api/v1/tax/exemptions/{id}", tag = "tax",
@@ -179,12 +186,15 @@ pub(crate) async fn get_exemption(
     Path(id): Path<Uuid>,
 ) -> Result<Json<TaxExemptionResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let exemption = c
-        .tax()
-        .get_exemption(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Tax exemption {id} not found")))?;
-    Ok(Json(exemption_to_resp(&exemption)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let exemption = c
+                .tax()
+                .get_exemption(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Tax exemption {id} not found")))?;
+            Ok(Json(exemption_to_resp(&exemption)))
+        })
+        .await
 }
 
 #[utoipa::path(post, path = "/api/v1/tax/exemptions/{id}/verify", tag = "tax",
@@ -199,7 +209,10 @@ pub(crate) async fn verify_exemption(
     Json(req): Json<VerifyTaxExemptionRequest>,
 ) -> Result<Json<TaxExemptionResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let exemption = c.tax().verify_exemption(id, req.verified.unwrap_or(true))?;
-    Ok(Json(exemption_to_resp(&exemption)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let exemption = c.tax().verify_exemption(id, req.verified.unwrap_or(true))?;
+            Ok(Json(exemption_to_resp(&exemption)))
+        })
+        .await
 }

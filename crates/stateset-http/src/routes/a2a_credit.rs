@@ -160,18 +160,21 @@ pub(crate) async fn create_terms(
     Json(req): Json<CreateCreditTermsRequest>,
 ) -> Result<(StatusCode, Json<CreditTermsResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let payment_terms = parse_payment_terms(req.payment_terms.as_deref())?;
-    let terms = c.x402().create_credit_terms(CreateA2ACreditTerms {
-        tenant_id: tenant_scope(&headers),
-        creditor_agent_id: req.creditor_agent_id,
-        debtor_agent_id: req.debtor_agent_id,
-        credit_limit: req.credit_limit,
-        currency: req.currency,
-        payment_terms,
-        min_trust_tier: None,
-    })?;
-    Ok((StatusCode::CREATED, Json(terms_to_response(&terms))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let payment_terms = parse_payment_terms(req.payment_terms.as_deref())?;
+            let terms = c.x402().create_credit_terms(CreateA2ACreditTerms {
+                tenant_id: tenant_scope(&headers),
+                creditor_agent_id: req.creditor_agent_id,
+                debtor_agent_id: req.debtor_agent_id,
+                credit_limit: req.credit_limit,
+                currency: req.currency,
+                payment_terms,
+                min_trust_tier: None,
+            })?;
+            Ok((StatusCode::CREATED, Json(terms_to_response(&terms))))
+        })
+        .await
 }
 
 /// `GET /api/v1/a2a/credit`
@@ -185,24 +188,27 @@ pub(crate) async fn list_terms(
     Query(params): Query<CreditTermsFilterParams>,
 ) -> Result<Json<Vec<CreditTermsResponse>>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let status = params
-        .status
-        .as_deref()
-        .map(|s| {
-            s.parse::<A2ACreditTermsStatus>()
-                .map_err(|_| HttpError::BadRequest(format!("Invalid status: {s}")))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let status = params
+                .status
+                .as_deref()
+                .map(|s| {
+                    s.parse::<A2ACreditTermsStatus>()
+                        .map_err(|_| HttpError::BadRequest(format!("Invalid status: {s}")))
+                })
+                .transpose()?;
+            let terms = c.x402().list_credit_terms(A2ACreditTermsFilter {
+                tenant_id: tenant_scope(&headers),
+                creditor_agent_id: params.creditor_agent_id,
+                debtor_agent_id: params.debtor_agent_id,
+                status,
+                limit: Some(crate::dto::resolve_limit(params.limit)),
+                offset: params.offset,
+            })?;
+            Ok(Json(terms.iter().map(terms_to_response).collect()))
         })
-        .transpose()?;
-    let terms = c.x402().list_credit_terms(A2ACreditTermsFilter {
-        tenant_id: tenant_scope(&headers),
-        creditor_agent_id: params.creditor_agent_id,
-        debtor_agent_id: params.debtor_agent_id,
-        status,
-        limit: params.limit,
-        offset: params.offset,
-    })?;
-    Ok(Json(terms.iter().map(terms_to_response).collect()))
+        .await
 }
 
 /// `GET /api/v1/a2a/credit/:id`
@@ -216,12 +222,15 @@ pub(crate) async fn get_terms(
     Path(id): Path<Uuid>,
 ) -> Result<Json<CreditTermsResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let terms = c
-        .x402()
-        .get_credit_terms(&tenant_scope(&headers), id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Credit terms {id} not found")))?;
-    Ok(Json(terms_to_response(&terms)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let terms = c
+                .x402()
+                .get_credit_terms(&tenant_scope(&headers), id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Credit terms {id} not found")))?;
+            Ok(Json(terms_to_response(&terms)))
+        })
+        .await
 }
 
 /// `GET /api/v1/a2a/credit/:id/entries`
@@ -235,13 +244,16 @@ pub(crate) async fn list_entries(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<CreditEntryResponse>>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let tenant = tenant_scope(&headers);
-    c.x402()
-        .get_credit_terms(&tenant, id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Credit terms {id} not found")))?;
-    let entries = c.x402().list_credit_terms_entries(&tenant, id)?;
-    Ok(Json(entries.iter().map(entry_to_response).collect()))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let tenant = tenant_scope(&headers);
+            c.x402()
+                .get_credit_terms(&tenant, id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Credit terms {id} not found")))?;
+            let entries = c.x402().list_credit_terms_entries(&tenant, id)?;
+            Ok(Json(entries.iter().map(entry_to_response).collect()))
+        })
+        .await
 }
 
 /// `POST /api/v1/a2a/credit/:id/charge`
@@ -258,27 +270,30 @@ pub(crate) async fn charge_credit(
     Json(req): Json<CreditAmountRequest>,
 ) -> Result<Json<CreditTermsResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let (terms, _entry) = c
-        .x402()
-        .charge_credit_terms(A2ACreditMovement {
-            tenant_id: tenant_scope(&headers),
-            terms_id: id,
-            amount: req.amount,
-            reference_id: req.reference_id,
-            notes: req.notes,
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let (terms, _entry) = c
+                .x402()
+                .charge_credit_terms(A2ACreditMovement {
+                    tenant_id: tenant_scope(&headers),
+                    terms_id: id,
+                    amount: req.amount,
+                    reference_id: req.reference_id,
+                    notes: req.notes,
+                })
+                .map_err(|e| match e {
+                    stateset_core::CommerceError::NotFound => {
+                        HttpError::NotFound(format!("Credit terms {id} not found"))
+                    }
+                    stateset_core::CommerceError::NotPermitted(msg)
+                    | stateset_core::CommerceError::ValidationError(msg) => {
+                        HttpError::BadRequest(format!("Charge failed: {msg}"))
+                    }
+                    other => HttpError::from(other),
+                })?;
+            Ok(Json(terms_to_response(&terms)))
         })
-        .map_err(|e| match e {
-            stateset_core::CommerceError::NotFound => {
-                HttpError::NotFound(format!("Credit terms {id} not found"))
-            }
-            stateset_core::CommerceError::NotPermitted(msg)
-            | stateset_core::CommerceError::ValidationError(msg) => {
-                HttpError::BadRequest(format!("Charge failed: {msg}"))
-            }
-            other => HttpError::from(other),
-        })?;
-    Ok(Json(terms_to_response(&terms)))
+        .await
 }
 
 /// `POST /api/v1/a2a/credit/:id/payment`
@@ -295,26 +310,29 @@ pub(crate) async fn record_payment(
     Json(req): Json<CreditAmountRequest>,
 ) -> Result<Json<CreditTermsResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let (terms, _entry) = c
-        .x402()
-        .record_credit_terms_payment(A2ACreditMovement {
-            tenant_id: tenant_scope(&headers),
-            terms_id: id,
-            amount: req.amount,
-            reference_id: req.reference_id,
-            notes: req.notes,
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let (terms, _entry) = c
+                .x402()
+                .record_credit_terms_payment(A2ACreditMovement {
+                    tenant_id: tenant_scope(&headers),
+                    terms_id: id,
+                    amount: req.amount,
+                    reference_id: req.reference_id,
+                    notes: req.notes,
+                })
+                .map_err(|e| match e {
+                    stateset_core::CommerceError::NotFound => {
+                        HttpError::NotFound(format!("Credit terms {id} not found"))
+                    }
+                    stateset_core::CommerceError::ValidationError(msg) => {
+                        HttpError::BadRequest(format!("Payment failed: {msg}"))
+                    }
+                    other => HttpError::from(other),
+                })?;
+            Ok(Json(terms_to_response(&terms)))
         })
-        .map_err(|e| match e {
-            stateset_core::CommerceError::NotFound => {
-                HttpError::NotFound(format!("Credit terms {id} not found"))
-            }
-            stateset_core::CommerceError::ValidationError(msg) => {
-                HttpError::BadRequest(format!("Payment failed: {msg}"))
-            }
-            other => HttpError::from(other),
-        })?;
-    Ok(Json(terms_to_response(&terms)))
+        .await
 }
 
 #[cfg(test)]

@@ -32,10 +32,16 @@ impl Default for FfiInventoryLevel {
 impl FfiInventoryLevel {
     /// Build from a domain [`StockLevel`].
     pub fn try_from_stock_level(s: &StockLevel) -> Result<Self, FfiErrorCode> {
-        let mut sku = [0u8; 64];
+        // Refuse rather than truncate: cutting at 63 bytes can split a UTF-8
+        // character and hands the caller a SKU that names a different item.
+        // Same rule as `FfiProduct`.
         let bytes = s.sku.as_bytes();
-        let len = bytes.len().min(63);
-        sku[..len].copy_from_slice(&bytes[..len]);
+        if bytes.len() > 63 || bytes.contains(&0) {
+            set_last_error("inventory.sku must contain at most 63 bytes without null bytes");
+            return Err(FfiErrorCode::InvalidArgument);
+        }
+        let mut sku = [0u8; 64];
+        sku[..bytes.len()].copy_from_slice(bytes);
 
         Ok(Self {
             sku,
@@ -111,18 +117,25 @@ mod tests {
     }
 
     #[test]
-    fn inventory_sku_truncation() {
-        let stock = StockLevel {
-            sku: "A".repeat(100),
+    fn inventory_sku_longer_than_the_buffer_is_refused_not_truncated() {
+        let stock = |sku: String| StockLevel {
+            sku,
             name: "Long SKU".to_string(),
             total_on_hand: dec!(10),
             total_allocated: dec!(0),
             total_available: dec!(10),
             locations: vec![],
         };
-        let ffi = FfiInventoryLevel::try_from_stock_level(&stock).unwrap();
+        let ffi = FfiInventoryLevel::try_from_stock_level(&stock("A".repeat(63))).unwrap();
         assert_eq!(ffi.sku_str().len(), 63);
         assert_eq!(ffi.sku[63], 0);
+
+        let err = FfiInventoryLevel::try_from_stock_level(&stock("A".repeat(64))).unwrap_err();
+        assert_eq!(err, FfiErrorCode::InvalidArgument);
+        // 62 ASCII bytes + a 2-byte character: truncation would have split it.
+        let err = FfiInventoryLevel::try_from_stock_level(&stock(format!("{}é", "A".repeat(62))))
+            .unwrap_err();
+        assert_eq!(err, FfiErrorCode::InvalidArgument);
     }
 
     #[test]

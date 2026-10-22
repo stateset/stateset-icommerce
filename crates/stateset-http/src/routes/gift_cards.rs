@@ -154,38 +154,40 @@ pub(crate) async fn create_gift_card(
     Json(req): Json<CreateGiftCardRequest>,
 ) -> Result<(StatusCode, Json<GiftCardResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            if req.initial_balance <= Decimal::ZERO {
+                return Err(HttpError::BadRequest("initial_balance must be positive".to_string()));
+            }
 
-    if req.initial_balance <= Decimal::ZERO {
-        return Err(HttpError::BadRequest("initial_balance must be positive".to_string()));
-    }
+            let currency = req
+                .currency
+                .map(|s| s.parse::<stateset_primitives::CurrencyCode>())
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid currency: {e}")))?
+                .unwrap_or(stateset_primitives::CurrencyCode::USD);
 
-    let currency = req
-        .currency
-        .map(|s| s.parse::<stateset_primitives::CurrencyCode>())
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid currency: {e}")))?
-        .unwrap_or(stateset_primitives::CurrencyCode::USD);
+            let expires_at = req
+                .expires_at
+                .map(|s| {
+                    s.parse::<chrono::DateTime<Utc>>()
+                        .map_err(|e| HttpError::BadRequest(format!("Invalid expires_at: {e}")))
+                })
+                .transpose()?;
 
-    let expires_at = req
-        .expires_at
-        .map(|s| {
-            s.parse::<chrono::DateTime<Utc>>()
-                .map_err(|e| HttpError::BadRequest(format!("Invalid expires_at: {e}")))
+            let gift_card = commerce.gift_cards().create(stateset_core::CreateGiftCard {
+                code: None,
+                initial_balance: req.initial_balance,
+                currency,
+                recipient_email: req.recipient_email,
+                sender_name: None,
+                message: req.message,
+                expires_at,
+            })?;
+
+            Ok((StatusCode::CREATED, Json(gift_card_to_response(gift_card))))
         })
-        .transpose()?;
-
-    let gift_card = commerce.gift_cards().create(stateset_core::CreateGiftCard {
-        code: None,
-        initial_balance: req.initial_balance,
-        currency,
-        recipient_email: req.recipient_email,
-        sender_name: None,
-        message: req.message,
-        expires_at,
-    })?;
-
-    Ok((StatusCode::CREATED, Json(gift_card_to_response(gift_card))))
+        .await
 }
 
 /// `GET /api/v1/gift-cards/{id}`
@@ -206,12 +208,15 @@ pub(crate) async fn get_gift_card(
     Path(id): Path<stateset_primitives::GiftCardId>,
 ) -> Result<Json<GiftCardResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let gift_card = commerce
-        .gift_cards()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Gift card {id} not found")))?;
-    Ok(Json(gift_card_to_response(gift_card)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let gift_card = commerce
+                .gift_cards()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Gift card {id} not found")))?;
+            Ok(Json(gift_card_to_response(gift_card)))
+        })
+        .await
 }
 
 /// `GET /api/v1/gift-cards`
@@ -232,42 +237,44 @@ pub(crate) async fn list_gift_cards(
     Query(params): Query<GiftCardFilterParams>,
 ) -> Result<Json<GiftCardListResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let limit = params.resolved_limit();
+            let offset = params.resolved_offset();
 
-    let limit = params.resolved_limit();
-    let offset = params.resolved_offset();
+            let status = params
+                .status
+                .map(|s| s.parse::<stateset_core::GiftCardStatus>())
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
 
-    let status = params
-        .status
-        .map(|s| s.parse::<stateset_core::GiftCardStatus>())
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
+            // Count total matching records (without pagination)
+            let count_filter =
+                stateset_core::GiftCardFilter { status, code: None, limit: None, offset: None };
+            let total = commerce.gift_cards().list(count_filter)?.len();
 
-    // Count total matching records (without pagination)
-    let count_filter =
-        stateset_core::GiftCardFilter { status, code: None, limit: None, offset: None };
-    let total = commerce.gift_cards().list(count_filter)?.len();
+            // Fetch the requested page
+            let filter = stateset_core::GiftCardFilter {
+                status,
+                code: None,
+                limit: Some(limit.saturating_add(1)),
+                offset: Some(offset),
+            };
+            let mut gift_cards = commerce.gift_cards().list(filter)?;
+            let has_more = gift_cards.len() > limit as usize;
+            if has_more {
+                gift_cards.truncate(limit as usize);
+            }
 
-    // Fetch the requested page
-    let filter = stateset_core::GiftCardFilter {
-        status,
-        code: None,
-        limit: Some(limit.saturating_add(1)),
-        offset: Some(offset),
-    };
-    let mut gift_cards = commerce.gift_cards().list(filter)?;
-    let has_more = gift_cards.len() > limit as usize;
-    if has_more {
-        gift_cards.truncate(limit as usize);
-    }
-
-    Ok(Json(GiftCardListResponse {
-        gift_cards: gift_cards.into_iter().map(gift_card_to_response).collect(),
-        total,
-        limit,
-        offset,
-        has_more,
-    }))
+            Ok(Json(GiftCardListResponse {
+                gift_cards: gift_cards.into_iter().map(gift_card_to_response).collect(),
+                total,
+                limit,
+                offset,
+                has_more,
+            }))
+        })
+        .await
 }
 
 /// `POST /api/v1/gift-cards/{id}/charge`
@@ -291,9 +298,12 @@ pub(crate) async fn charge_gift_card(
     Json(req): Json<GiftCardAmountRequest>,
 ) -> Result<Json<GiftCardTransactionResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let txn = commerce.gift_cards().charge(id, req.amount, req.reference_id)?;
-    Ok(Json(transaction_to_response(txn)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let txn = commerce.gift_cards().charge(id, req.amount, req.reference_id)?;
+            Ok(Json(transaction_to_response(txn)))
+        })
+        .await
 }
 
 /// `POST /api/v1/gift-cards/{id}/refund`
@@ -317,9 +327,12 @@ pub(crate) async fn refund_gift_card(
     Json(req): Json<GiftCardAmountRequest>,
 ) -> Result<Json<GiftCardTransactionResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let txn = commerce.gift_cards().refund(id, req.amount, req.reference_id)?;
-    Ok(Json(transaction_to_response(txn)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let txn = commerce.gift_cards().refund(id, req.amount, req.reference_id)?;
+            Ok(Json(transaction_to_response(txn)))
+        })
+        .await
 }
 
 /// `POST /api/v1/gift-cards/{id}/disable`
@@ -340,9 +353,12 @@ pub(crate) async fn disable_gift_card(
     Path(id): Path<stateset_primitives::GiftCardId>,
 ) -> Result<Json<GiftCardResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let gift_card = commerce.gift_cards().disable(id)?;
-    Ok(Json(gift_card_to_response(gift_card)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let gift_card = commerce.gift_cards().disable(id)?;
+            Ok(Json(gift_card_to_response(gift_card)))
+        })
+        .await
 }
 
 // ============================================================================

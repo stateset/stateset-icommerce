@@ -2,6 +2,7 @@
 
 use crate::dto::{decode_cursor, encode_cursor, finalize_page, overfetch_limit};
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -175,14 +176,6 @@ fn schedule_resp(s: &stateset_core::DepreciationSchedule) -> DepreciationSchedul
     }
 }
 
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
 fn parse_date(s: &str, what: &str) -> Result<NaiveDate, HttpError> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
@@ -227,40 +220,43 @@ pub(crate) async fn create(
     Json(req): Json<CreateFixedAssetRequest>,
 ) -> Result<(StatusCode, Json<FixedAssetResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let in_service_date = match req.in_service_date.as_deref() {
-        Some(s) => Some(parse_date(s, "in_service_date")?),
-        None => None,
-    };
-    let location_id = match req.location_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "location_id")?),
-        None => None,
-    };
-    let input = stateset_core::CreateFixedAsset {
-        asset_number: req.asset_number,
-        name: req.name,
-        description: req.description,
-        category: parse_id(&req.category, "category")?,
-        acquisition_date: parse_date(&req.acquisition_date, "acquisition_date")?,
-        acquisition_cost: parse_decimal(&req.acquisition_cost, "acquisition_cost")?,
-        salvage_value: match req.salvage_value.as_deref() {
-            Some(s) => parse_decimal(s, "salvage_value")?,
-            None => Decimal::ZERO,
-        },
-        useful_life_months: req.useful_life_months,
-        depreciation_method: parse_method(
-            &req.depreciation_method,
-            req.declining_balance_rate.as_deref(),
-        )?,
-        in_service_date,
-        location_id,
-        asset_account_id: None,
-        accumulated_depreciation_account_id: None,
-        depreciation_expense_account_id: None,
-        currency: None,
-    };
-    let a = c.fixed_assets().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&a))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let in_service_date = match req.in_service_date.as_deref() {
+                Some(s) => Some(parse_date(s, "in_service_date")?),
+                None => None,
+            };
+            let location_id = match req.location_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "location_id")?),
+                None => None,
+            };
+            let input = stateset_core::CreateFixedAsset {
+                asset_number: req.asset_number,
+                name: req.name,
+                description: req.description,
+                category: parse_id(&req.category, "category")?,
+                acquisition_date: parse_date(&req.acquisition_date, "acquisition_date")?,
+                acquisition_cost: parse_decimal(&req.acquisition_cost, "acquisition_cost")?,
+                salvage_value: match req.salvage_value.as_deref() {
+                    Some(s) => parse_decimal(s, "salvage_value")?,
+                    None => Decimal::ZERO,
+                },
+                useful_life_months: req.useful_life_months,
+                depreciation_method: parse_method(
+                    &req.depreciation_method,
+                    req.declining_balance_rate.as_deref(),
+                )?,
+                in_service_date,
+                location_id,
+                asset_account_id: None,
+                accumulated_depreciation_account_id: None,
+                depreciation_expense_account_id: None,
+                currency: None,
+            };
+            let a = c.fixed_assets().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&a))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "fixed_assets_list", path = "/api/v1/fixed-assets", tag = "fixed_assets",
@@ -273,48 +269,56 @@ pub(crate) async fn list(
     Query(params): Query<FixedAssetFilterParams>,
 ) -> Result<Json<FixedAssetListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let category = match params.category.as_deref() {
-        Some(s) => Some(parse_id(s, "category")?),
-        None => None,
-    };
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let after_cursor = match &params.after {
-        Some(cursor) => Some(
-            decode_cursor(cursor).ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
-        ),
-        None => None,
-    };
-    let base = stateset_core::FixedAssetFilter {
-        category,
-        status,
-        search: params.search.clone(),
-        ..Default::default()
-    };
-    let total = c.fixed_assets().list(base.clone())?.len();
-    let limit = params.limit.unwrap_or(50).clamp(1, 200);
-    let filter = stateset_core::FixedAssetFilter {
-        limit: Some(overfetch_limit(limit)),
-        offset: if after_cursor.is_some() { Some(0) } else { Some(params.offset.unwrap_or(0)) },
-        after_cursor,
-        ..base
-    };
-    let mut assets = c.fixed_assets().list(filter)?;
-    let has_more = finalize_page(&mut assets, limit);
-    let next_cursor = if has_more {
-        assets.last().map(|a| encode_cursor(&a.created_at.to_rfc3339(), &a.id.to_string()))
-    } else {
-        None
-    };
-    Ok(Json(FixedAssetListResponse {
-        fixed_assets: assets.iter().map(to_resp).collect(),
-        total,
-        next_cursor,
-        has_more,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let category = match params.category.as_deref() {
+                Some(s) => Some(parse_id(s, "category")?),
+                None => None,
+            };
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let after_cursor = match &params.after {
+                Some(cursor) => Some(
+                    decode_cursor(cursor)
+                        .ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+                ),
+                None => None,
+            };
+            let base = stateset_core::FixedAssetFilter {
+                category,
+                status,
+                search: params.search.clone(),
+                ..Default::default()
+            };
+            let total = c.fixed_assets().list(base.clone())?.len();
+            let limit = params.limit.unwrap_or(50).clamp(1, 200);
+            let filter = stateset_core::FixedAssetFilter {
+                limit: Some(overfetch_limit(limit)),
+                offset: if after_cursor.is_some() {
+                    Some(0)
+                } else {
+                    Some(params.offset.unwrap_or(0))
+                },
+                after_cursor,
+                ..base
+            };
+            let mut assets = c.fixed_assets().list(filter)?;
+            let has_more = finalize_page(&mut assets, limit);
+            let next_cursor = if has_more {
+                assets.last().map(|a| encode_cursor(&a.created_at.to_rfc3339(), &a.id.to_string()))
+            } else {
+                None
+            };
+            Ok(Json(FixedAssetListResponse {
+                fixed_assets: assets.iter().map(to_resp).collect(),
+                total,
+                next_cursor,
+                has_more,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "fixed_assets_get_one", path = "/api/v1/fixed-assets/{id}", tag = "fixed_assets",
@@ -327,12 +331,15 @@ pub(crate) async fn get_one(
     Path(id): Path<Uuid>,
 ) -> Result<Json<FixedAssetResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let a = c
-        .fixed_assets()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Fixed asset {id} not found")))?;
-    Ok(Json(to_resp(&a)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let a = c
+                .fixed_assets()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Fixed asset {id} not found")))?;
+            Ok(Json(to_resp(&a)))
+        })
+        .await
 }
 
 #[utoipa::path(put, operation_id = "fixed_assets_update", path = "/api/v1/fixed-assets/{id}", tag = "fixed_assets",
@@ -347,24 +354,27 @@ pub(crate) async fn update(
     Json(req): Json<UpdateFixedAssetRequest>,
 ) -> Result<Json<FixedAssetResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let category = match req.category.as_deref() {
-        Some(s) => Some(parse_id(s, "category")?),
-        None => None,
-    };
-    let salvage_value = match req.salvage_value.as_deref() {
-        Some(s) => Some(parse_decimal(s, "salvage_value")?),
-        None => None,
-    };
-    let input = stateset_core::UpdateFixedAsset {
-        name: req.name,
-        description: req.description,
-        category,
-        salvage_value,
-        useful_life_months: req.useful_life_months,
-        ..Default::default()
-    };
-    Ok(Json(to_resp(&c.fixed_assets().update(id, input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let category = match req.category.as_deref() {
+                Some(s) => Some(parse_id(s, "category")?),
+                None => None,
+            };
+            let salvage_value = match req.salvage_value.as_deref() {
+                Some(s) => Some(parse_decimal(s, "salvage_value")?),
+                None => None,
+            };
+            let input = stateset_core::UpdateFixedAsset {
+                name: req.name,
+                description: req.description,
+                category,
+                salvage_value,
+                useful_life_months: req.useful_life_months,
+                ..Default::default()
+            };
+            Ok(Json(to_resp(&c.fixed_assets().update(id, input)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "fixed_assets_place_in_service", path = "/api/v1/fixed-assets/{id}/place-in-service", tag = "fixed_assets",
@@ -379,9 +389,12 @@ pub(crate) async fn place_in_service(
     Json(req): Json<PlaceInServiceRequest>,
 ) -> Result<Json<FixedAssetResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let date = parse_date(&req.date, "date")?;
-    Ok(Json(to_resp(&c.fixed_assets().place_in_service(id, date)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let date = parse_date(&req.date, "date")?;
+            Ok(Json(to_resp(&c.fixed_assets().place_in_service(id, date)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "fixed_assets_dispose", path = "/api/v1/fixed-assets/{id}/dispose", tag = "fixed_assets",
@@ -396,10 +409,13 @@ pub(crate) async fn dispose(
     Json(req): Json<DisposeFixedAssetRequest>,
 ) -> Result<Json<FixedAssetResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let date = parse_date(&req.date, "date")?;
-    let proceeds = parse_decimal(&req.proceeds, "proceeds")?;
-    Ok(Json(to_resp(&c.fixed_assets().dispose(id, date, proceeds, req.notes)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let date = parse_date(&req.date, "date")?;
+            let proceeds = parse_decimal(&req.proceeds, "proceeds")?;
+            Ok(Json(to_resp(&c.fixed_assets().dispose(id, date, proceeds, req.notes)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "fixed_assets_write_off", path = "/api/v1/fixed-assets/{id}/write-off", tag = "fixed_assets",
@@ -414,9 +430,12 @@ pub(crate) async fn write_off(
     Json(req): Json<WriteOffFixedAssetRequest>,
 ) -> Result<Json<FixedAssetResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let date = parse_date(&req.date, "date")?;
-    Ok(Json(to_resp(&c.fixed_assets().write_off(id, date, req.notes)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let date = parse_date(&req.date, "date")?;
+            Ok(Json(to_resp(&c.fixed_assets().write_off(id, date, req.notes)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "fixed_assets_generate_schedule", path = "/api/v1/fixed-assets/{id}/schedule", tag = "fixed_assets",
@@ -429,8 +448,11 @@ pub(crate) async fn generate_schedule(
     Path(id): Path<Uuid>,
 ) -> Result<Json<DepreciationScheduleResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(schedule_resp(&c.fixed_assets().generate_schedule(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(schedule_resp(&c.fixed_assets().generate_schedule(id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "fixed_assets_get_schedule", path = "/api/v1/fixed-assets/{id}/schedule", tag = "fixed_assets",
@@ -443,12 +465,14 @@ pub(crate) async fn get_schedule(
     Path(id): Path<Uuid>,
 ) -> Result<Json<DepreciationScheduleResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let s = c
-        .fixed_assets()
-        .get_schedule(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("No schedule generated for asset {id}")))?;
-    Ok(Json(schedule_resp(&s)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let s = c.fixed_assets().get_schedule(id)?.ok_or_else(|| {
+                HttpError::NotFound(format!("No schedule generated for asset {id}"))
+            })?;
+            Ok(Json(schedule_resp(&s)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "fixed_assets_post_depreciation", path = "/api/v1/fixed-assets/{id}/post-depreciation", tag = "fixed_assets",
@@ -463,8 +487,11 @@ pub(crate) async fn post_depreciation(
     Json(req): Json<PostDepreciationRequest>,
 ) -> Result<Json<FixedAssetResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.fixed_assets().post_depreciation(id, req.periods.unwrap_or(1))?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(&c.fixed_assets().post_depreciation(id, req.periods.unwrap_or(1))?)))
+        })
+        .await
 }
 
 #[cfg(test)]

@@ -18,7 +18,7 @@ use stateset_core::{CreateCustomer, CreateWarranty, ProductId, WarrantyFilter, W
 use stateset_db::PostgresDatabase;
 
 fn postgres_url() -> Option<String> {
-    std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 #[tokio::test]

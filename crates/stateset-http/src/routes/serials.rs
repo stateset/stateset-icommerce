@@ -1,6 +1,7 @@
 //! Serial number endpoints (creation, lookup, reservation, lifecycle transitions).
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::parse_id;
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -98,10 +99,6 @@ fn to_resp(s: &stateset_core::SerialNumber) -> SerialResponse {
     }
 }
 
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/serials", post(create).get(list))
@@ -123,20 +120,23 @@ pub(crate) async fn create(
     Json(req): Json<CreateSerialRequest>,
 ) -> Result<(StatusCode, Json<SerialResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let lot_id = match req.lot_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "lot_id")?),
-        None => None,
-    };
-    let serial = c.serials().create(stateset_core::CreateSerialNumber {
-        serial: req.serial,
-        sku: req.sku,
-        lot_id,
-        lot_number: req.lot_number,
-        notes: req.notes,
-        ..Default::default()
-    })?;
-    Ok((StatusCode::CREATED, Json(to_resp(&serial))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let lot_id = match req.lot_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "lot_id")?),
+                None => None,
+            };
+            let serial = c.serials().create(stateset_core::CreateSerialNumber {
+                serial: req.serial,
+                sku: req.sku,
+                lot_id,
+                lot_number: req.lot_number,
+                notes: req.notes,
+                ..Default::default()
+            })?;
+            Ok((StatusCode::CREATED, Json(to_resp(&serial))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "serials_list", path = "/api/v1/serials", tag = "serials",
@@ -149,26 +149,29 @@ pub(crate) async fn list(
     Query(params): Query<SerialFilterParams>,
 ) -> Result<Json<SerialListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let base = stateset_core::SerialFilter {
-        sku: params.sku,
-        serial: params.serial,
-        status,
-        lot_number: params.lot_number,
-        ..Default::default()
-    };
-    let total = c.serials().count(base.clone())?;
-    let filter = stateset_core::SerialFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    };
-    let serials = c.serials().list(filter)?;
-    Ok(Json(SerialListResponse { serials: serials.iter().map(to_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let base = stateset_core::SerialFilter {
+                sku: params.sku,
+                serial: params.serial,
+                status,
+                lot_number: params.lot_number,
+                ..Default::default()
+            };
+            let total = c.serials().count(base.clone())?;
+            let filter = stateset_core::SerialFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            };
+            let serials = c.serials().list(filter)?;
+            Ok(Json(SerialListResponse { serials: serials.iter().map(to_resp).collect(), total }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "serials_get_one", path = "/api/v1/serials/{id}", tag = "serials",
@@ -181,12 +184,15 @@ pub(crate) async fn get_one(
     Path(id): Path<Uuid>,
 ) -> Result<Json<SerialResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let serial = c
-        .serials()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Serial {id} not found")))?;
-    Ok(Json(to_resp(&serial)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let serial = c
+                .serials()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Serial {id} not found")))?;
+            Ok(Json(to_resp(&serial)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "serials_reserve", path = "/api/v1/serials/{id}/reserve", tag = "serials",
@@ -201,27 +207,30 @@ pub(crate) async fn reserve(
     Json(req): Json<ReserveSerialRequest>,
 ) -> Result<(StatusCode, Json<SerialReservationResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let reference_id = match req.reference_id.as_deref() {
-        Some(s) => parse_id::<Uuid>(s, "reference_id")?,
-        None => Uuid::nil(),
-    };
-    let r = c.serials().reserve(stateset_core::ReserveSerialNumber {
-        serial_id: id,
-        reference_type: req.reference_type.unwrap_or_else(|| "api".to_string()),
-        reference_id,
-        reserved_by: req.reserved_by,
-        expires_in_seconds: req.expires_in_seconds,
-    })?;
-    Ok((
-        StatusCode::CREATED,
-        Json(SerialReservationResponse {
-            reservation_id: r.id.to_string(),
-            serial_id: r.serial_id.to_string(),
-            reference_type: r.reference_type,
-            expires_at: r.expires_at.map(|d| d.to_rfc3339()),
-        }),
-    ))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let reference_id = match req.reference_id.as_deref() {
+                Some(s) => parse_id::<Uuid>(s, "reference_id")?,
+                None => Uuid::nil(),
+            };
+            let r = c.serials().reserve(stateset_core::ReserveSerialNumber {
+                serial_id: id,
+                reference_type: req.reference_type.unwrap_or_else(|| "api".to_string()),
+                reference_id,
+                reserved_by: req.reserved_by,
+                expires_in_seconds: req.expires_in_seconds,
+            })?;
+            Ok((
+                StatusCode::CREATED,
+                Json(SerialReservationResponse {
+                    reservation_id: r.id.to_string(),
+                    serial_id: r.serial_id.to_string(),
+                    reference_type: r.reference_type,
+                    expires_at: r.expires_at.map(|d| d.to_rfc3339()),
+                }),
+            ))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "serials_release_reservation",
@@ -235,9 +244,12 @@ pub(crate) async fn release_reservation(
     Path(reservation_id): Path<Uuid>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.serials().release_reservation(reservation_id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.serials().release_reservation(reservation_id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "serials_ship", path = "/api/v1/serials/{id}/ship", tag = "serials",
@@ -252,9 +264,12 @@ pub(crate) async fn ship(
     Json(req): Json<ShipSerialRequest>,
 ) -> Result<Json<SerialResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let shipment_id = parse_id::<Uuid>(&req.shipment_id, "shipment_id")?;
-    Ok(Json(to_resp(&c.serials().mark_shipped(id, shipment_id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let shipment_id = parse_id::<Uuid>(&req.shipment_id, "shipment_id")?;
+            Ok(Json(to_resp(&c.serials().mark_shipped(id, shipment_id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "serials_return", path = "/api/v1/serials/{id}/return", tag = "serials",
@@ -269,9 +284,12 @@ pub(crate) async fn mark_returned(
     Json(req): Json<ReturnSerialRequest>,
 ) -> Result<Json<SerialResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let return_id = parse_id::<Uuid>(&req.return_id, "return_id")?;
-    Ok(Json(to_resp(&c.serials().mark_returned(id, return_id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let return_id = parse_id::<Uuid>(&req.return_id, "return_id")?;
+            Ok(Json(to_resp(&c.serials().mark_returned(id, return_id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "serials_scrap", path = "/api/v1/serials/{id}/scrap", tag = "serials",
@@ -286,8 +304,11 @@ pub(crate) async fn scrap(
     Json(req): Json<ScrapSerialRequest>,
 ) -> Result<Json<SerialResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.serials().scrap(id, &req.reason)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(&c.serials().scrap(id, &req.reason)?)))
+        })
+        .await
 }
 
 #[cfg(test)]

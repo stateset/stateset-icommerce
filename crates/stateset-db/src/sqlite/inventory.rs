@@ -57,7 +57,7 @@ fn should_retry_inventory_error(err: &CommerceError) -> bool {
         CommerceError::DatabaseError(message) => {
             message.contains("database is locked") || message.contains("database table is locked")
         }
-        _ => false,
+        other => other.is_retryable(),
     }
 }
 

@@ -20,7 +20,7 @@ use stateset_db::PostgresDatabase;
 use uuid::Uuid;
 
 async fn connect() -> Option<PostgresDatabase> {
-    let url = std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())?;
+    let url = stateset_test_utils::postgres_url()?;
     Some(PostgresDatabase::connect(&url).await.expect("connect + migrate"))
 }
 

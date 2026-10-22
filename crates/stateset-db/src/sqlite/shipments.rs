@@ -1068,6 +1068,12 @@ impl ShipmentRepository for SqliteShipmentRepository {
             params.push(Box::new(carrier.to_string()));
         }
 
+        // Same filter set as `list`, so a filtered count matches the page.
+        if let Some(tracking_number) = filter.tracking_number {
+            sql.push_str(" AND tracking_number = ?");
+            params.push(Box::new(tracking_number));
+        }
+
         let param_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
 

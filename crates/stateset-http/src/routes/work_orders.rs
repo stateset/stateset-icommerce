@@ -2,6 +2,7 @@
 
 use crate::dto::{decode_cursor, encode_cursor, finalize_page, overfetch_limit};
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id, parse_opt_decimal};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -10,7 +11,6 @@ use axum::{
     routing::{get, post},
 };
 use chrono::{DateTime, Utc};
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_core::ProductId;
 use utoipa::{IntoParams, ToSchema};
@@ -156,20 +156,8 @@ fn task_to_resp(t: &stateset_core::WorkOrderTask) -> WorkOrderTaskResponse {
     }
 }
 
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
 fn parse_opt_id<T: std::str::FromStr>(s: Option<&str>, what: &str) -> Result<Option<T>, HttpError> {
     s.map(|v| parse_id(v, what)).transpose()
-}
-
-fn parse_opt_decimal(s: Option<&str>, what: &str) -> Result<Option<Decimal>, HttpError> {
-    s.map(|v| parse_decimal(v, what)).transpose()
 }
 
 fn parse_opt_datetime(s: Option<&str>, what: &str) -> Result<Option<DateTime<Utc>>, HttpError> {
@@ -216,29 +204,37 @@ pub(crate) async fn create(
     Json(req): Json<CreateWorkOrderRequest>,
 ) -> Result<(StatusCode, Json<WorkOrderResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let priority = match req.priority.as_deref() {
-        Some(s) => Some(parse_id(s, "priority")?),
-        None => None,
-    };
-    let tasks = match req.tasks {
-        Some(tasks) => Some(tasks.into_iter().map(to_task_input).collect::<Result<Vec<_>, _>>()?),
-        None => None,
-    };
-    let input = stateset_core::CreateWorkOrder {
-        product_id: parse_id::<ProductId>(&req.product_id, "product_id")?,
-        bom_id: parse_opt_id::<Uuid>(req.bom_id.as_deref(), "bom_id")?,
-        work_center_id: req.work_center_id,
-        assigned_to: parse_opt_id::<Uuid>(req.assigned_to.as_deref(), "assigned_to")?,
-        priority,
-        quantity_to_build: parse_decimal(&req.quantity_to_build, "quantity_to_build")?,
-        scheduled_start: parse_opt_datetime(req.scheduled_start.as_deref(), "scheduled_start")?,
-        scheduled_end: parse_opt_datetime(req.scheduled_end.as_deref(), "scheduled_end")?,
-        notes: req.notes,
-        tasks,
-    };
-    let wo = c.work_orders().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&wo))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let priority = match req.priority.as_deref() {
+                Some(s) => Some(parse_id(s, "priority")?),
+                None => None,
+            };
+            let tasks = match req.tasks {
+                Some(tasks) => {
+                    Some(tasks.into_iter().map(to_task_input).collect::<Result<Vec<_>, _>>()?)
+                }
+                None => None,
+            };
+            let input = stateset_core::CreateWorkOrder {
+                product_id: parse_id::<ProductId>(&req.product_id, "product_id")?,
+                bom_id: parse_opt_id::<Uuid>(req.bom_id.as_deref(), "bom_id")?,
+                work_center_id: req.work_center_id,
+                assigned_to: parse_opt_id::<Uuid>(req.assigned_to.as_deref(), "assigned_to")?,
+                priority,
+                quantity_to_build: parse_decimal(&req.quantity_to_build, "quantity_to_build")?,
+                scheduled_start: parse_opt_datetime(
+                    req.scheduled_start.as_deref(),
+                    "scheduled_start",
+                )?,
+                scheduled_end: parse_opt_datetime(req.scheduled_end.as_deref(), "scheduled_end")?,
+                notes: req.notes,
+                tasks,
+            };
+            let wo = c.work_orders().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&wo))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "work_orders_list", path = "/api/v1/work-orders", tag = "work_orders",
@@ -251,52 +247,62 @@ pub(crate) async fn list(
     Query(params): Query<WorkOrderFilterParams>,
 ) -> Result<Json<WorkOrderListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let product_id = parse_opt_id::<ProductId>(params.product_id.as_deref(), "product_id")?;
-    let bom_id = parse_opt_id::<Uuid>(params.bom_id.as_deref(), "bom_id")?;
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let priority = match params.priority.as_deref() {
-        Some(s) => Some(parse_id(s, "priority")?),
-        None => None,
-    };
-    let base = stateset_core::WorkOrderFilter {
-        product_id,
-        bom_id,
-        status,
-        priority,
-        work_center_id: params.work_center_id.clone(),
-        ..Default::default()
-    };
-    let after_cursor = match &params.after {
-        Some(cursor) => Some(
-            decode_cursor(cursor).ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
-        ),
-        None => None,
-    };
-    let total = c.work_orders().count(base.clone())?;
-    let limit = params.limit.unwrap_or(50).clamp(1, 200);
-    let filter = stateset_core::WorkOrderFilter {
-        limit: Some(overfetch_limit(limit)),
-        offset: if after_cursor.is_some() { Some(0) } else { Some(params.offset.unwrap_or(0)) },
-        after_cursor,
-        ..base
-    };
-    let mut orders = c.work_orders().list(filter)?;
-    let has_more = finalize_page(&mut orders, limit);
-    let next_cursor = if has_more {
-        orders.last().map(|wo| encode_cursor(&wo.created_at.to_rfc3339(), &wo.id.to_string()))
-    } else {
-        None
-    };
-    Ok(Json(WorkOrderListResponse {
-        work_orders: orders.iter().map(to_resp).collect(),
-        total,
-        next_cursor,
-        has_more,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let product_id = parse_opt_id::<ProductId>(params.product_id.as_deref(), "product_id")?;
+            let bom_id = parse_opt_id::<Uuid>(params.bom_id.as_deref(), "bom_id")?;
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let priority = match params.priority.as_deref() {
+                Some(s) => Some(parse_id(s, "priority")?),
+                None => None,
+            };
+            let base = stateset_core::WorkOrderFilter {
+                product_id,
+                bom_id,
+                status,
+                priority,
+                work_center_id: params.work_center_id.clone(),
+                ..Default::default()
+            };
+            let after_cursor = match &params.after {
+                Some(cursor) => Some(
+                    decode_cursor(cursor)
+                        .ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+                ),
+                None => None,
+            };
+            let total = c.work_orders().count(base.clone())?;
+            let limit = params.limit.unwrap_or(50).clamp(1, 200);
+            let filter = stateset_core::WorkOrderFilter {
+                limit: Some(overfetch_limit(limit)),
+                offset: if after_cursor.is_some() {
+                    Some(0)
+                } else {
+                    Some(params.offset.unwrap_or(0))
+                },
+                after_cursor,
+                ..base
+            };
+            let mut orders = c.work_orders().list(filter)?;
+            let has_more = finalize_page(&mut orders, limit);
+            let next_cursor = if has_more {
+                orders
+                    .last()
+                    .map(|wo| encode_cursor(&wo.created_at.to_rfc3339(), &wo.id.to_string()))
+            } else {
+                None
+            };
+            Ok(Json(WorkOrderListResponse {
+                work_orders: orders.iter().map(to_resp).collect(),
+                total,
+                next_cursor,
+                has_more,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "work_orders_get_one", path = "/api/v1/work-orders/{id}", tag = "work_orders",
@@ -309,12 +315,15 @@ pub(crate) async fn get_one(
     Path(id): Path<Uuid>,
 ) -> Result<Json<WorkOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let wo = c
-        .work_orders()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Work order {id} not found")))?;
-    Ok(Json(to_resp(&wo)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let wo = c
+                .work_orders()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Work order {id} not found")))?;
+            Ok(Json(to_resp(&wo)))
+        })
+        .await
 }
 
 #[utoipa::path(put, operation_id = "work_orders_update", path = "/api/v1/work-orders/{id}", tag = "work_orders",
@@ -329,25 +338,31 @@ pub(crate) async fn update(
     Json(req): Json<UpdateWorkOrderRequest>,
 ) -> Result<Json<WorkOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let priority = match req.priority.as_deref() {
-        Some(s) => Some(parse_id(s, "priority")?),
-        None => None,
-    };
-    let input = stateset_core::UpdateWorkOrder {
-        work_center_id: req.work_center_id,
-        assigned_to: parse_opt_id::<Uuid>(req.assigned_to.as_deref(), "assigned_to")?,
-        priority,
-        quantity_to_build: parse_opt_decimal(
-            req.quantity_to_build.as_deref(),
-            "quantity_to_build",
-        )?,
-        scheduled_start: parse_opt_datetime(req.scheduled_start.as_deref(), "scheduled_start")?,
-        scheduled_end: parse_opt_datetime(req.scheduled_end.as_deref(), "scheduled_end")?,
-        notes: req.notes,
-        ..Default::default()
-    };
-    Ok(Json(to_resp(&c.work_orders().update(id, input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let priority = match req.priority.as_deref() {
+                Some(s) => Some(parse_id(s, "priority")?),
+                None => None,
+            };
+            let input = stateset_core::UpdateWorkOrder {
+                work_center_id: req.work_center_id,
+                assigned_to: parse_opt_id::<Uuid>(req.assigned_to.as_deref(), "assigned_to")?,
+                priority,
+                quantity_to_build: parse_opt_decimal(
+                    req.quantity_to_build.as_deref(),
+                    "quantity_to_build",
+                )?,
+                scheduled_start: parse_opt_datetime(
+                    req.scheduled_start.as_deref(),
+                    "scheduled_start",
+                )?,
+                scheduled_end: parse_opt_datetime(req.scheduled_end.as_deref(), "scheduled_end")?,
+                notes: req.notes,
+                ..Default::default()
+            };
+            Ok(Json(to_resp(&c.work_orders().update(id, input)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "work_orders_start", path = "/api/v1/work-orders/{id}/start", tag = "work_orders",
@@ -360,8 +375,9 @@ pub(crate) async fn start(
     Path(id): Path<Uuid>,
 ) -> Result<Json<WorkOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.work_orders().start(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.work_orders().start(id)?))))
+        .await
 }
 
 #[utoipa::path(post, operation_id = "work_orders_complete", path = "/api/v1/work-orders/{id}/complete", tag = "work_orders",
@@ -376,9 +392,12 @@ pub(crate) async fn complete(
     Json(req): Json<CompleteWorkOrderRequest>,
 ) -> Result<Json<WorkOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let qty = parse_decimal(&req.quantity_completed, "quantity_completed")?;
-    Ok(Json(to_resp(&c.work_orders().complete(id, qty)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let qty = parse_decimal(&req.quantity_completed, "quantity_completed")?;
+            Ok(Json(to_resp(&c.work_orders().complete(id, qty)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "work_orders_hold", path = "/api/v1/work-orders/{id}/hold", tag = "work_orders",
@@ -391,8 +410,7 @@ pub(crate) async fn hold(
     Path(id): Path<Uuid>,
 ) -> Result<Json<WorkOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.work_orders().hold(id)?)))
+    state.run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.work_orders().hold(id)?)))).await
 }
 
 #[utoipa::path(post, operation_id = "work_orders_resume", path = "/api/v1/work-orders/{id}/resume", tag = "work_orders",
@@ -405,8 +423,9 @@ pub(crate) async fn resume(
     Path(id): Path<Uuid>,
 ) -> Result<Json<WorkOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.work_orders().resume(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.work_orders().resume(id)?))))
+        .await
 }
 
 #[utoipa::path(post, operation_id = "work_orders_cancel", path = "/api/v1/work-orders/{id}/cancel", tag = "work_orders",
@@ -419,8 +438,9 @@ pub(crate) async fn cancel(
     Path(id): Path<Uuid>,
 ) -> Result<Json<WorkOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.work_orders().cancel(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.work_orders().cancel(id)?))))
+        .await
 }
 
 #[utoipa::path(post, operation_id = "work_orders_add_task", path = "/api/v1/work-orders/{id}/tasks", tag = "work_orders",
@@ -435,9 +455,12 @@ pub(crate) async fn add_task(
     Json(req): Json<CreateWorkOrderTaskRequest>,
 ) -> Result<(StatusCode, Json<WorkOrderTaskResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let task = c.work_orders().add_task(id, to_task_input(req)?)?;
-    Ok((StatusCode::CREATED, Json(task_to_resp(&task))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let task = c.work_orders().add_task(id, to_task_input(req)?)?;
+            Ok((StatusCode::CREATED, Json(task_to_resp(&task))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "work_orders_list_tasks", path = "/api/v1/work-orders/{id}/tasks", tag = "work_orders",
@@ -450,12 +473,15 @@ pub(crate) async fn list_tasks(
     Path(id): Path<Uuid>,
 ) -> Result<Json<WorkOrderTaskListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let tasks = c.work_orders().get_tasks(id)?;
-    Ok(Json(WorkOrderTaskListResponse {
-        total: tasks.len(),
-        tasks: tasks.iter().map(task_to_resp).collect(),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let tasks = c.work_orders().get_tasks(id)?;
+            Ok(Json(WorkOrderTaskListResponse {
+                total: tasks.len(),
+                tasks: tasks.iter().map(task_to_resp).collect(),
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "work_orders_start_task", path = "/api/v1/work-orders/tasks/{task_id}/start", tag = "work_orders",
@@ -468,8 +494,11 @@ pub(crate) async fn start_task(
     Path(task_id): Path<Uuid>,
 ) -> Result<Json<WorkOrderTaskResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(task_to_resp(&c.work_orders().start_task(task_id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(task_to_resp(&c.work_orders().start_task(task_id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "work_orders_complete_task", path = "/api/v1/work-orders/tasks/{task_id}/complete", tag = "work_orders",
@@ -484,9 +513,12 @@ pub(crate) async fn complete_task(
     Json(req): Json<CompleteWorkOrderTaskRequest>,
 ) -> Result<Json<WorkOrderTaskResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let actual_hours = parse_opt_decimal(req.actual_hours.as_deref(), "actual_hours")?;
-    Ok(Json(task_to_resp(&c.work_orders().complete_task(task_id, actual_hours)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let actual_hours = parse_opt_decimal(req.actual_hours.as_deref(), "actual_hours")?;
+            Ok(Json(task_to_resp(&c.work_orders().complete_task(task_id, actual_hours)?)))
+        })
+        .await
 }
 
 #[cfg(test)]

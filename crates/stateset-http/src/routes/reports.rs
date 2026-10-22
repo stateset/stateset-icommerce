@@ -1,10 +1,10 @@
 //! Computed report endpoints (no persistence) — e.g. inventory aging.
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id};
 use crate::state::AppState;
 use axum::{Json, Router, http::StatusCode, routing::post};
 use chrono::{NaiveDate, Utc};
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_core::ProductId;
 use utoipa::ToSchema;
@@ -43,14 +43,6 @@ pub(crate) struct InventoryAgingResponse {
     pub buckets: Vec<AgingBucketResponse>,
     pub total_quantity: String,
     pub total_value: String,
-}
-
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
 }
 
 fn parse_date(s: &str) -> Result<NaiveDate, HttpError> {

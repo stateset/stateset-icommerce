@@ -69,18 +69,21 @@ pub(crate) async fn create_segment(
     Json(req): Json<CreateSegmentRequest>,
 ) -> Result<(StatusCode, Json<SegmentResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::CreateSegment {
-        name: req.name,
-        description: req.description,
-        segment_type: req
-            .segment_type
-            .and_then(|t| t.parse().ok())
-            .unwrap_or(stateset_core::SegmentType::Static),
-        rules: vec![],
-    };
-    let s = c.segments().create(input)?;
-    Ok((StatusCode::CREATED, Json(seg_to_resp(&s))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::CreateSegment {
+                name: req.name,
+                description: req.description,
+                segment_type: req
+                    .segment_type
+                    .and_then(|t| t.parse().ok())
+                    .unwrap_or(stateset_core::SegmentType::Static),
+                rules: vec![],
+            };
+            let s = c.segments().create(input)?;
+            Ok((StatusCode::CREATED, Json(seg_to_resp(&s))))
+        })
+        .await
 }
 
 #[utoipa::path(get, path = "/api/v1/segments", tag = "segments", params(SegmentFilterParams),
@@ -92,16 +95,22 @@ pub(crate) async fn list_segments(
     Query(params): Query<SegmentFilterParams>,
 ) -> Result<Json<SegmentListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let filter = stateset_core::SegmentFilter {
-        name: params.search,
-        segment_type: None,
-        offset: Some(params.offset.unwrap_or(0)),
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-    };
-    let segs = c.segments().list(filter)?;
-    let total = segs.len();
-    Ok(Json(SegmentListResponse { segments: segs.iter().map(seg_to_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let filter = stateset_core::SegmentFilter {
+                name: params.search,
+                segment_type: None,
+                offset: Some(params.offset.unwrap_or(0)),
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+            };
+            let segs = c.segments().list(filter)?;
+            let total = segs.len();
+            Ok(Json(SegmentListResponse {
+                segments: segs.iter().map(seg_to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, path = "/api/v1/segments/{id}", tag = "segments",
@@ -114,12 +123,15 @@ pub(crate) async fn get_segment(
     Path(id): Path<SegmentId>,
 ) -> Result<Json<SegmentResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let s = c
-        .segments()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Segment {id} not found")))?;
-    Ok(Json(seg_to_resp(&s)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let s = c
+                .segments()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Segment {id} not found")))?;
+            Ok(Json(seg_to_resp(&s)))
+        })
+        .await
 }
 
 #[utoipa::path(delete, path = "/api/v1/segments/{id}", tag = "segments",
@@ -132,9 +144,12 @@ pub(crate) async fn delete_segment(
     Path(id): Path<SegmentId>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.segments().delete(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.segments().delete(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[utoipa::path(post, path = "/api/v1/segments/{id}/members/{customer_id}", tag = "segments",
@@ -148,9 +163,12 @@ pub(crate) async fn add_member(
     Path((id, cid)): Path<(SegmentId, CustomerId)>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.segments().add_member(id, cid)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.segments().add_member(id, cid)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[utoipa::path(delete, path = "/api/v1/segments/{id}/members/{customer_id}", tag = "segments",
@@ -164,7 +182,10 @@ pub(crate) async fn remove_member(
     Path((id, cid)): Path<(SegmentId, CustomerId)>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.segments().remove_member(id, cid)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.segments().remove_member(id, cid)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }

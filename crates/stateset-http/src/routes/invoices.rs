@@ -47,12 +47,15 @@ pub(crate) async fn get_invoice(
     Path(id): Path<Uuid>,
 ) -> Result<Json<InvoiceResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let invoice = commerce
-        .invoices()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Invoice {id} not found")))?;
-    Ok(Json(InvoiceResponse::from(invoice)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let invoice = commerce
+                .invoices()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Invoice {id} not found")))?;
+            Ok(Json(InvoiceResponse::from(invoice)))
+        })
+        .await
 }
 
 /// `GET /api/v1/invoices`
@@ -73,92 +76,95 @@ pub(crate) async fn list_invoices(
     Query(params): Query<InvoiceFilterParams>,
 ) -> Result<Json<InvoiceListResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
 
-    let limit = params.resolved_limit();
-    let offset = params.resolved_offset();
+            let limit = params.resolved_limit();
+            let offset = params.resolved_offset();
 
-    // Parse filter parameters
-    let customer_id = params
-        .customer_id
-        .map(|s| s.parse::<CustomerId>())
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid customer_id: {e}")))?;
-    let order_id = params
-        .order_id
-        .map(|s| s.parse::<OrderId>())
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid order_id: {e}")))?;
-    let status = params
-        .status
-        .as_deref()
-        .map(InvoiceStatus::from_str)
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}. Valid values: draft, sent, viewed, paid, partially_paid, overdue, void, written_off")))?;
-    let invoice_type =
-        params.invoice_type.as_deref().map(InvoiceType::from_str).transpose().map_err(|e| {
-            HttpError::BadRequest(format!(
-                "Invalid invoice_type: {e}. Valid values: standard, credit, proforma, recurring"
-            ))
-        })?;
-    let from_date = params
-        .from_date
-        .map(|s| s.parse())
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid from_date: {e}")))?;
-    let to_date = params
-        .to_date
-        .map(|s| s.parse())
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid to_date: {e}")))?;
+            // Parse filter parameters
+            let customer_id = params
+                .customer_id
+                .map(|s| s.parse::<CustomerId>())
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid customer_id: {e}")))?;
+            let order_id = params
+                .order_id
+                .map(|s| s.parse::<OrderId>())
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid order_id: {e}")))?;
+            let status = params
+                .status
+                .as_deref()
+                .map(InvoiceStatus::from_str)
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}. Valid values: draft, sent, viewed, paid, partially_paid, overdue, void, written_off")))?;
+            let invoice_type =
+                params.invoice_type.as_deref().map(InvoiceType::from_str).transpose().map_err(|e| {
+                    HttpError::BadRequest(format!(
+                        "Invalid invoice_type: {e}. Valid values: standard, credit, proforma, recurring"
+                    ))
+                })?;
+            let from_date = params
+                .from_date
+                .map(|s| s.parse())
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid from_date: {e}")))?;
+            let to_date = params
+                .to_date
+                .map(|s| s.parse())
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid to_date: {e}")))?;
 
-    // Count total matching records (without pagination)
-    let count_filter = InvoiceFilter {
-        customer_id,
-        order_id,
-        status,
-        invoice_type,
-        overdue_only: params.overdue_only,
-        from_date,
-        to_date,
-        due_from: None,
-        due_to: None,
-        min_total: None,
-        max_total: None,
-        min_balance: None,
-        invoice_number: None,
-        limit: None,
-        offset: None,
-    };
-    let total = commerce.invoices().list(count_filter)?.len();
+            // Count total matching records (without pagination)
+            let count_filter = InvoiceFilter {
+                customer_id,
+                order_id,
+                status,
+                invoice_type,
+                overdue_only: params.overdue_only,
+                from_date,
+                to_date,
+                due_from: None,
+                due_to: None,
+                min_total: None,
+                max_total: None,
+                min_balance: None,
+                invoice_number: None,
+                limit: None,
+                offset: None,
+            };
+            let total = commerce.invoices().list(count_filter)?.len();
 
-    // Fetch the requested page
-    let filter = InvoiceFilter {
-        customer_id,
-        order_id,
-        status,
-        invoice_type,
-        overdue_only: params.overdue_only,
-        from_date,
-        to_date,
-        due_from: None,
-        due_to: None,
-        min_total: None,
-        max_total: None,
-        min_balance: None,
-        invoice_number: None,
-        limit: Some(overfetch_limit(limit)),
-        offset: Some(offset),
-    };
-    let mut invoices = commerce.invoices().list(filter)?;
-    let has_more = finalize_page(&mut invoices, limit);
-    Ok(Json(InvoiceListResponse {
-        invoices: invoices.into_iter().map(InvoiceResponse::from).collect(),
-        total,
-        limit,
-        offset,
-        has_more,
-    }))
+            // Fetch the requested page
+            let filter = InvoiceFilter {
+                customer_id,
+                order_id,
+                status,
+                invoice_type,
+                overdue_only: params.overdue_only,
+                from_date,
+                to_date,
+                due_from: None,
+                due_to: None,
+                min_total: None,
+                max_total: None,
+                min_balance: None,
+                invoice_number: None,
+                limit: Some(overfetch_limit(limit)),
+                offset: Some(offset),
+            };
+            let mut invoices = commerce.invoices().list(filter)?;
+            let has_more = finalize_page(&mut invoices, limit);
+            Ok(Json(InvoiceListResponse {
+                invoices: invoices.into_iter().map(InvoiceResponse::from).collect(),
+                total,
+                limit,
+                offset,
+                has_more,
+            }))
+        })
+        .await
 }
 
 /// `POST /api/v1/invoices`
@@ -186,26 +192,32 @@ pub(crate) async fn create_invoice(
     Json(req): Json<CreateInvoiceRequest>,
 ) -> Result<(StatusCode, Json<InvoiceResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let invoice_type = req
+                .invoice_type
+                .as_deref()
+                .map(InvoiceType::from_str)
+                .transpose()
+                .map_err(|e| {
+                HttpError::BadRequest(format!(
+                    "Invalid invoice_type: {e}. Valid values: standard, credit, proforma, recurring"
+                ))
+            })?;
 
-    let invoice_type =
-        req.invoice_type.as_deref().map(InvoiceType::from_str).transpose().map_err(|e| {
-            HttpError::BadRequest(format!(
-                "Invalid invoice_type: {e}. Valid values: standard, credit, proforma, recurring"
-            ))
-        })?;
-
-    let input = CreateInvoice {
-        customer_id: req.customer_id,
-        order_id: req.order_id,
-        invoice_type,
-        payment_terms: req.payment_terms,
-        currency: req.currency.map(|c| c.parse().unwrap_or_default()),
-        notes: req.notes,
-        ..Default::default()
-    };
-    let invoice = commerce.invoices().create(input)?;
-    Ok((StatusCode::CREATED, Json(InvoiceResponse::from(invoice))))
+            let input = CreateInvoice {
+                customer_id: req.customer_id,
+                order_id: req.order_id,
+                invoice_type,
+                payment_terms: req.payment_terms,
+                currency: req.currency.map(|c| c.parse().unwrap_or_default()),
+                notes: req.notes,
+                ..Default::default()
+            };
+            let invoice = commerce.invoices().create(input)?;
+            Ok((StatusCode::CREATED, Json(InvoiceResponse::from(invoice))))
+        })
+        .await
 }
 
 /// `POST /api/v1/invoices/:id/send`
@@ -226,9 +238,12 @@ pub(crate) async fn send_invoice(
     Path(id): Path<Uuid>,
 ) -> Result<Json<InvoiceResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let invoice = commerce.invoices().send(id)?;
-    Ok(Json(InvoiceResponse::from(invoice)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let invoice = commerce.invoices().send(id)?;
+            Ok(Json(InvoiceResponse::from(invoice)))
+        })
+        .await
 }
 
 /// `POST /api/v1/invoices/:id/payments`
@@ -251,16 +266,19 @@ pub(crate) async fn record_invoice_payment(
     Json(req): Json<RecordInvoicePaymentRequest>,
 ) -> Result<Json<InvoiceResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let input = RecordInvoicePayment {
-        amount: req.amount,
-        payment_id: None,
-        payment_method: req.payment_method,
-        reference: req.reference,
-        notes: req.notes,
-    };
-    let invoice = commerce.invoices().record_payment(id, input)?;
-    Ok(Json(InvoiceResponse::from(invoice)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let input = RecordInvoicePayment {
+                amount: req.amount,
+                payment_id: None,
+                payment_method: req.payment_method,
+                reference: req.reference,
+                notes: req.notes,
+            };
+            let invoice = commerce.invoices().record_payment(id, input)?;
+            Ok(Json(InvoiceResponse::from(invoice)))
+        })
+        .await
 }
 
 #[cfg(test)]

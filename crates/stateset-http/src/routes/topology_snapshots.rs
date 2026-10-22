@@ -1,6 +1,7 @@
 //! Customer operational topology snapshot endpoints.
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::parse_id;
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -69,10 +70,6 @@ fn to_resp(s: &stateset_core::TopologySnapshot) -> SnapshotResponse {
     }
 }
 
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/topology-snapshots", post(capture).get(list))
@@ -90,17 +87,20 @@ pub(crate) async fn capture(
     Json(req): Json<CaptureRequest>,
 ) -> Result<(StatusCode, Json<SnapshotResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::CaptureTopologySnapshot {
-        channels_total: req.channels_total,
-        channels_active: req.channels_active,
-        warehouses_total: req.warehouses_total,
-        products_total: req.products_total,
-        open_orders: req.open_orders,
-        signals: req.signals,
-    };
-    let s = c.topology_snapshots().capture(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&s))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::CaptureTopologySnapshot {
+                channels_total: req.channels_total,
+                channels_active: req.channels_active,
+                warehouses_total: req.warehouses_total,
+                products_total: req.products_total,
+                open_orders: req.open_orders,
+                signals: req.signals,
+            };
+            let s = c.topology_snapshots().capture(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&s))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "topology_snapshots_list", path = "/api/v1/topology-snapshots", tag = "topology_snapshots",
@@ -113,22 +113,28 @@ pub(crate) async fn list(
     Query(params): Query<SnapshotFilterParams>,
 ) -> Result<Json<SnapshotListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let health = match params.health.as_deref() {
-        Some(s) => Some(parse_id(s, "health")?),
-        None => None,
-    };
-    let total = c
-        .topology_snapshots()
-        .list(stateset_core::TopologySnapshotFilter { health, ..Default::default() })?
-        .len();
-    let filter = stateset_core::TopologySnapshotFilter {
-        health,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-    };
-    let snapshots = c.topology_snapshots().list(filter)?;
-    Ok(Json(SnapshotListResponse { snapshots: snapshots.iter().map(to_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let health = match params.health.as_deref() {
+                Some(s) => Some(parse_id(s, "health")?),
+                None => None,
+            };
+            let total = c
+                .topology_snapshots()
+                .list(stateset_core::TopologySnapshotFilter { health, ..Default::default() })?
+                .len();
+            let filter = stateset_core::TopologySnapshotFilter {
+                health,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+            };
+            let snapshots = c.topology_snapshots().list(filter)?;
+            Ok(Json(SnapshotListResponse {
+                snapshots: snapshots.iter().map(to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "topology_snapshots_latest", path = "/api/v1/topology-snapshots/latest", tag = "topology_snapshots",
@@ -139,12 +145,15 @@ pub(crate) async fn latest(
     headers: HeaderMap,
 ) -> Result<Json<SnapshotResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let s = c
-        .topology_snapshots()
-        .latest()?
-        .ok_or_else(|| HttpError::NotFound("no topology snapshots captured yet".into()))?;
-    Ok(Json(to_resp(&s)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let s = c
+                .topology_snapshots()
+                .latest()?
+                .ok_or_else(|| HttpError::NotFound("no topology snapshots captured yet".into()))?;
+            Ok(Json(to_resp(&s)))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "topology_snapshots_get_one", path = "/api/v1/topology-snapshots/{id}", tag = "topology_snapshots",
@@ -157,12 +166,15 @@ pub(crate) async fn get_one(
     Path(id): Path<TopologySnapshotId>,
 ) -> Result<Json<SnapshotResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let s = c
-        .topology_snapshots()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Topology snapshot {id} not found")))?;
-    Ok(Json(to_resp(&s)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let s = c
+                .topology_snapshots()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Topology snapshot {id} not found")))?;
+            Ok(Json(to_resp(&s)))
+        })
+        .await
 }
 
 #[utoipa::path(delete, operation_id = "topology_snapshots_delete_one", path = "/api/v1/topology-snapshots/{id}", tag = "topology_snapshots",
@@ -175,9 +187,12 @@ pub(crate) async fn delete_one(
     Path(id): Path<TopologySnapshotId>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.topology_snapshots().delete(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.topology_snapshots().delete(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[cfg(test)]

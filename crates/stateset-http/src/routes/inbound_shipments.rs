@@ -1,6 +1,7 @@
 //! Inbound shipment endpoints (advance ship notices).
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -8,7 +9,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_core::{InboundShipmentId, InboundShipmentItemId, ProductId, WarehouseId};
 use utoipa::{IntoParams, ToSchema};
@@ -99,14 +99,6 @@ fn to_resp(s: &stateset_core::InboundShipment) -> InboundShipmentResponse {
     }
 }
 
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/inbound-shipments", post(create).get(list))
@@ -127,35 +119,38 @@ pub(crate) async fn create(
     Json(req): Json<CreateInboundShipmentRequest>,
 ) -> Result<(StatusCode, Json<InboundShipmentResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let purchase_order_id = match req.purchase_order_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "purchase_order_id")?),
-        None => None,
-    };
-    let warehouse_id = match req.warehouse_id.as_deref() {
-        Some(s) => Some(parse_id::<WarehouseId>(s, "warehouse_id")?),
-        None => None,
-    };
-    let mut items = Vec::with_capacity(req.items.len());
-    for i in req.items {
-        items.push(stateset_core::CreateInboundShipmentItem {
-            product_id: parse_id::<ProductId>(&i.product_id, "product_id")?,
-            sku: i.sku,
-            quantity_expected: parse_decimal(&i.quantity_expected, "quantity_expected")?,
-        });
-    }
-    let input = stateset_core::CreateInboundShipment {
-        supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
-        purchase_order_id,
-        warehouse_id,
-        carrier: req.carrier,
-        tracking_number: req.tracking_number,
-        expected_at: None,
-        items,
-        notes: req.notes,
-    };
-    let s = c.inbound_shipments().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&s))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let purchase_order_id = match req.purchase_order_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "purchase_order_id")?),
+                None => None,
+            };
+            let warehouse_id = match req.warehouse_id.as_deref() {
+                Some(s) => Some(parse_id::<WarehouseId>(s, "warehouse_id")?),
+                None => None,
+            };
+            let mut items = Vec::with_capacity(req.items.len());
+            for i in req.items {
+                items.push(stateset_core::CreateInboundShipmentItem {
+                    product_id: parse_id::<ProductId>(&i.product_id, "product_id")?,
+                    sku: i.sku,
+                    quantity_expected: parse_decimal(&i.quantity_expected, "quantity_expected")?,
+                });
+            }
+            let input = stateset_core::CreateInboundShipment {
+                supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
+                purchase_order_id,
+                warehouse_id,
+                carrier: req.carrier,
+                tracking_number: req.tracking_number,
+                expected_at: None,
+                items,
+                notes: req.notes,
+            };
+            let s = c.inbound_shipments().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&s))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "inbound_shipments_list", path = "/api/v1/inbound-shipments", tag = "inbound_shipments",
@@ -168,31 +163,38 @@ pub(crate) async fn list(
     Query(params): Query<InboundShipmentFilterParams>,
 ) -> Result<Json<InboundShipmentListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let supplier_id = match params.supplier_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
-        None => None,
-    };
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let total = c
-        .inbound_shipments()
-        .list(stateset_core::InboundShipmentFilter { supplier_id, status, ..Default::default() })?
-        .len();
-    let filter = stateset_core::InboundShipmentFilter {
-        supplier_id,
-        status,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..Default::default()
-    };
-    let shipments = c.inbound_shipments().list(filter)?;
-    Ok(Json(InboundShipmentListResponse {
-        inbound_shipments: shipments.iter().map(to_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let supplier_id = match params.supplier_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
+                None => None,
+            };
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let total = c
+                .inbound_shipments()
+                .list(stateset_core::InboundShipmentFilter {
+                    supplier_id,
+                    status,
+                    ..Default::default()
+                })?
+                .len();
+            let filter = stateset_core::InboundShipmentFilter {
+                supplier_id,
+                status,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..Default::default()
+            };
+            let shipments = c.inbound_shipments().list(filter)?;
+            Ok(Json(InboundShipmentListResponse {
+                inbound_shipments: shipments.iter().map(to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "inbound_shipments_get_one", path = "/api/v1/inbound-shipments/{id}", tag = "inbound_shipments",
@@ -205,12 +207,15 @@ pub(crate) async fn get_one(
     Path(id): Path<InboundShipmentId>,
 ) -> Result<Json<InboundShipmentResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let s = c
-        .inbound_shipments()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Inbound shipment {id} not found")))?;
-    Ok(Json(to_resp(&s)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let s = c
+                .inbound_shipments()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Inbound shipment {id} not found")))?;
+            Ok(Json(to_resp(&s)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "inbound_shipments_mark_in_transit", path = "/api/v1/inbound-shipments/{id}/in-transit", tag = "inbound_shipments",
@@ -223,8 +228,11 @@ pub(crate) async fn mark_in_transit(
     Path(id): Path<InboundShipmentId>,
 ) -> Result<Json<InboundShipmentResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.inbound_shipments().mark_in_transit(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(&c.inbound_shipments().mark_in_transit(id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "inbound_shipments_mark_arrived", path = "/api/v1/inbound-shipments/{id}/arrived", tag = "inbound_shipments",
@@ -237,8 +245,11 @@ pub(crate) async fn mark_arrived(
     Path(id): Path<InboundShipmentId>,
 ) -> Result<Json<InboundShipmentResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.inbound_shipments().mark_arrived(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(&c.inbound_shipments().mark_arrived(id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "inbound_shipments_receive", path = "/api/v1/inbound-shipments/{id}/receive", tag = "inbound_shipments",
@@ -253,10 +264,13 @@ pub(crate) async fn receive(
     Json(req): Json<ReceiveLineRequest>,
 ) -> Result<Json<InboundShipmentResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let item_id: InboundShipmentItemId = parse_id(&req.item_id, "item_id")?;
-    let qty = parse_decimal(&req.quantity, "quantity")?;
-    Ok(Json(to_resp(&c.inbound_shipments().receive_line(id, item_id, qty)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let item_id: InboundShipmentItemId = parse_id(&req.item_id, "item_id")?;
+            let qty = parse_decimal(&req.quantity, "quantity")?;
+            Ok(Json(to_resp(&c.inbound_shipments().receive_line(id, item_id, qty)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "inbound_shipments_cancel", path = "/api/v1/inbound-shipments/{id}/cancel", tag = "inbound_shipments",
@@ -269,8 +283,11 @@ pub(crate) async fn cancel(
     Path(id): Path<InboundShipmentId>,
 ) -> Result<Json<InboundShipmentResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.inbound_shipments().cancel(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(&c.inbound_shipments().cancel(id)?)))
+        })
+        .await
 }
 
 #[cfg(test)]

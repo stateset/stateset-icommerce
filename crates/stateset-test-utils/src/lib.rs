@@ -35,6 +35,8 @@
 
 pub mod assertions;
 pub mod fixtures;
+pub mod postgres;
 
 // Re-export commonly used items for convenience.
 pub use fixtures::*;
+pub use postgres::postgres_url;

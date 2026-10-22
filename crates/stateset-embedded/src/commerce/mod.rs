@@ -141,7 +141,7 @@ pub enum CommerceBackend {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use stateset_embedded::Commerce;
 ///
 /// // SQLite (default)

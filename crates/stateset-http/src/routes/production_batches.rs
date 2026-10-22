@@ -86,17 +86,20 @@ pub(crate) async fn create(
     Json(req): Json<CreateProductionBatchRequest>,
 ) -> Result<(StatusCode, Json<ProductionBatchResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::CreateProductionBatch {
-        name: req.name,
-        vendor_id: None,
-        work_order_ids: parse_uuids(&req.work_order_ids)?,
-        notes: req.notes,
-        scheduled_start: None,
-        scheduled_end: None,
-    };
-    let b = c.production_batches().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&b))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::CreateProductionBatch {
+                name: req.name,
+                vendor_id: None,
+                work_order_ids: parse_uuids(&req.work_order_ids)?,
+                notes: req.notes,
+                scheduled_start: None,
+                scheduled_end: None,
+            };
+            let b = c.production_batches().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&b))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "production_batches_list", path = "/api/v1/production-batches", tag = "production_batches",
@@ -109,28 +112,31 @@ pub(crate) async fn list(
     Query(params): Query<ProductionBatchFilterParams>,
 ) -> Result<Json<ProductionBatchListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let status = match params.status.as_deref() {
-        Some(s) => {
-            Some(s.parse().map_err(|_| HttpError::BadRequest(format!("invalid status: {s}")))?)
-        }
-        None => None,
-    };
-    let total = c
-        .production_batches()
-        .list(stateset_core::ProductionBatchFilter { status, ..Default::default() })?
-        .len();
-    let filter = stateset_core::ProductionBatchFilter {
-        status,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..Default::default()
-    };
-    let batches = c.production_batches().list(filter)?;
-    Ok(Json(ProductionBatchListResponse {
-        production_batches: batches.iter().map(to_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let status = match params.status.as_deref() {
+                Some(s) => Some(
+                    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid status: {s}")))?,
+                ),
+                None => None,
+            };
+            let total = c
+                .production_batches()
+                .list(stateset_core::ProductionBatchFilter { status, ..Default::default() })?
+                .len();
+            let filter = stateset_core::ProductionBatchFilter {
+                status,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..Default::default()
+            };
+            let batches = c.production_batches().list(filter)?;
+            Ok(Json(ProductionBatchListResponse {
+                production_batches: batches.iter().map(to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "production_batches_get_one", path = "/api/v1/production-batches/{id}", tag = "production_batches",
@@ -143,12 +149,15 @@ pub(crate) async fn get_one(
     Path(id): Path<ProductionBatchId>,
 ) -> Result<Json<ProductionBatchResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let b = c
-        .production_batches()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Production batch {id} not found")))?;
-    Ok(Json(to_resp(&b)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let b = c
+                .production_batches()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Production batch {id} not found")))?;
+            Ok(Json(to_resp(&b)))
+        })
+        .await
 }
 
 #[utoipa::path(delete, operation_id = "production_batches_delete_one", path = "/api/v1/production-batches/{id}", tag = "production_batches",
@@ -161,9 +170,12 @@ pub(crate) async fn delete_one(
     Path(id): Path<ProductionBatchId>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.production_batches().delete(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.production_batches().delete(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "production_batches_add_work_orders", path = "/api/v1/production-batches/{id}/work-orders", tag = "production_batches",
@@ -178,9 +190,13 @@ pub(crate) async fn add_work_orders(
     Json(req): Json<WorkOrdersRequest>,
 ) -> Result<Json<ProductionBatchResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let b = c.production_batches().add_work_orders(id, parse_uuids(&req.work_order_ids)?)?;
-    Ok(Json(to_resp(&b)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let b =
+                c.production_batches().add_work_orders(id, parse_uuids(&req.work_order_ids)?)?;
+            Ok(Json(to_resp(&b)))
+        })
+        .await
 }
 
 #[cfg(test)]

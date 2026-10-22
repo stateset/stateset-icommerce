@@ -2,6 +2,7 @@
 //! write-offs, dunning, customer statements).
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -9,7 +10,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
@@ -274,14 +274,6 @@ pub(crate) struct ArCustomerStatementResponse {
 // Helpers
 // ============================================================================
 
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
 fn parse_datetime(s: &str, what: &str) -> Result<chrono::DateTime<chrono::Utc>, HttpError> {
     chrono::DateTime::parse_from_rfc3339(s)
         .map(|d| d.with_timezone(&chrono::Utc))
@@ -404,17 +396,20 @@ pub(crate) async fn aging_summary(
     headers: HeaderMap,
 ) -> Result<Json<ArAgingResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let a = c.accounts_receivable().get_aging_summary()?;
-    Ok(Json(ArAgingResponse {
-        current: a.current.to_string(),
-        days_1_30: a.days_1_30.to_string(),
-        days_31_60: a.days_31_60.to_string(),
-        days_61_90: a.days_61_90.to_string(),
-        days_over_90: a.days_over_90.to_string(),
-        total: a.total.to_string(),
-        as_of_date: a.as_of_date.to_rfc3339(),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let a = c.accounts_receivable().get_aging_summary()?;
+            Ok(Json(ArAgingResponse {
+                current: a.current.to_string(),
+                days_1_30: a.days_1_30.to_string(),
+                days_31_60: a.days_31_60.to_string(),
+                days_61_90: a.days_61_90.to_string(),
+                days_over_90: a.days_over_90.to_string(),
+                total: a.total.to_string(),
+                as_of_date: a.as_of_date.to_rfc3339(),
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "ar_aging_report", path = "/api/v1/ar/aging/customers", tag = "accounts_receivable",
@@ -427,24 +422,27 @@ pub(crate) async fn aging_report(
     Query(params): Query<ArAgingReportParams>,
 ) -> Result<Json<ArCustomerAgingListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let customer_id = match params.customer_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "customer_id")?),
-        None => None,
-    };
-    let filter = stateset_core::ArAgingFilter {
-        customer_id,
-        overdue_only: params.overdue_only,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..Default::default()
-    };
-    let rows = c.accounts_receivable().get_aging_report(filter)?;
-    let total = rows.len();
-    Ok(Json(ArCustomerAgingListResponse {
-        customers: rows.iter().map(customer_aging_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let customer_id = match params.customer_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "customer_id")?),
+                None => None,
+            };
+            let filter = stateset_core::ArAgingFilter {
+                customer_id,
+                overdue_only: params.overdue_only,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..Default::default()
+            };
+            let rows = c.accounts_receivable().get_aging_report(filter)?;
+            let total = rows.len();
+            Ok(Json(ArCustomerAgingListResponse {
+                customers: rows.iter().map(customer_aging_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "ar_customer_aging", path = "/api/v1/ar/aging/customers/{customer_id}", tag = "accounts_receivable",
@@ -457,12 +455,15 @@ pub(crate) async fn customer_aging(
     Path(customer_id): Path<Uuid>,
 ) -> Result<Json<ArCustomerAgingResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let aging = c
-        .accounts_receivable()
-        .get_customer_aging(customer_id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Customer {customer_id} has no AR aging")))?;
-    Ok(Json(customer_aging_resp(&aging)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let aging =
+                c.accounts_receivable().get_customer_aging(customer_id)?.ok_or_else(|| {
+                    HttpError::NotFound(format!("Customer {customer_id} has no AR aging"))
+                })?;
+            Ok(Json(customer_aging_resp(&aging)))
+        })
+        .await
 }
 
 // ============================================================================
@@ -479,27 +480,30 @@ pub(crate) async fn apply_payment(
     Json(req): Json<ApplyArPaymentRequest>,
 ) -> Result<(StatusCode, Json<ArPaymentApplicationListResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let mut applications = Vec::with_capacity(req.applications.len());
-    for a in req.applications {
-        applications.push(stateset_core::PaymentApplicationLine {
-            invoice_id: parse_id::<Uuid>(&a.invoice_id, "invoice_id")?,
-            amount: parse_decimal(&a.amount, "application amount")?,
-        });
-    }
-    let input = stateset_core::ApplyPaymentToInvoices {
-        payment_id: parse_id::<Uuid>(&req.payment_id, "payment_id")?,
-        applications,
-    };
-    let applied = c.accounts_receivable().apply_payment_to_invoices(input)?;
-    let total = applied.len();
-    Ok((
-        StatusCode::CREATED,
-        Json(ArPaymentApplicationListResponse {
-            applications: applied.iter().map(application_resp).collect(),
-            total,
-        }),
-    ))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let mut applications = Vec::with_capacity(req.applications.len());
+            for a in req.applications {
+                applications.push(stateset_core::PaymentApplicationLine {
+                    invoice_id: parse_id::<Uuid>(&a.invoice_id, "invoice_id")?,
+                    amount: parse_decimal(&a.amount, "application amount")?,
+                });
+            }
+            let input = stateset_core::ApplyPaymentToInvoices {
+                payment_id: parse_id::<Uuid>(&req.payment_id, "payment_id")?,
+                applications,
+            };
+            let applied = c.accounts_receivable().apply_payment_to_invoices(input)?;
+            let total = applied.len();
+            Ok((
+                StatusCode::CREATED,
+                Json(ArPaymentApplicationListResponse {
+                    applications: applied.iter().map(application_resp).collect(),
+                    total,
+                }),
+            ))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "ar_unapply_payment", path = "/api/v1/ar/payment-applications/{id}/unapply", tag = "accounts_receivable",
@@ -512,9 +516,12 @@ pub(crate) async fn unapply_payment(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.accounts_receivable().unapply_payment(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.accounts_receivable().unapply_payment(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 // ============================================================================
@@ -531,20 +538,23 @@ pub(crate) async fn create_credit_memo(
     Json(req): Json<CreateArCreditMemoRequest>,
 ) -> Result<(StatusCode, Json<ArCreditMemoResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let original_invoice_id = match req.original_invoice_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "original_invoice_id")?),
-        None => None,
-    };
-    let input = stateset_core::CreateCreditMemo {
-        customer_id: parse_id::<Uuid>(&req.customer_id, "customer_id")?,
-        original_invoice_id,
-        reason: parse_id(&req.reason, "reason")?,
-        amount: parse_decimal(&req.amount, "amount")?,
-        notes: req.notes,
-    };
-    let memo = c.accounts_receivable().create_credit_memo(input)?;
-    Ok((StatusCode::CREATED, Json(credit_memo_resp(&memo))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let original_invoice_id = match req.original_invoice_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "original_invoice_id")?),
+                None => None,
+            };
+            let input = stateset_core::CreateCreditMemo {
+                customer_id: parse_id::<Uuid>(&req.customer_id, "customer_id")?,
+                original_invoice_id,
+                reason: parse_id(&req.reason, "reason")?,
+                amount: parse_decimal(&req.amount, "amount")?,
+                notes: req.notes,
+            };
+            let memo = c.accounts_receivable().create_credit_memo(input)?;
+            Ok((StatusCode::CREATED, Json(credit_memo_resp(&memo))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "ar_list_credit_memos", path = "/api/v1/ar/credit-memos", tag = "accounts_receivable",
@@ -557,28 +567,31 @@ pub(crate) async fn list_credit_memos(
     Query(params): Query<ArCreditMemoFilterParams>,
 ) -> Result<Json<ArCreditMemoListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let customer_id = match params.customer_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "customer_id")?),
-        None => None,
-    };
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let filter = stateset_core::CreditMemoFilter {
-        customer_id,
-        status,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..Default::default()
-    };
-    let memos = c.accounts_receivable().list_credit_memos(filter)?;
-    let total = memos.len();
-    Ok(Json(ArCreditMemoListResponse {
-        credit_memos: memos.iter().map(credit_memo_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let customer_id = match params.customer_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "customer_id")?),
+                None => None,
+            };
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let filter = stateset_core::CreditMemoFilter {
+                customer_id,
+                status,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..Default::default()
+            };
+            let memos = c.accounts_receivable().list_credit_memos(filter)?;
+            let total = memos.len();
+            Ok(Json(ArCreditMemoListResponse {
+                credit_memos: memos.iter().map(credit_memo_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "ar_apply_credit_memo", path = "/api/v1/ar/credit-memos/{id}/apply", tag = "accounts_receivable",
@@ -593,13 +606,16 @@ pub(crate) async fn apply_credit_memo(
     Json(req): Json<ApplyArCreditMemoRequest>,
 ) -> Result<Json<ArCreditMemoResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::ApplyCreditMemo {
-        credit_memo_id: id,
-        invoice_id: parse_id::<Uuid>(&req.invoice_id, "invoice_id")?,
-        amount: parse_decimal(&req.amount, "amount")?,
-    };
-    Ok(Json(credit_memo_resp(&c.accounts_receivable().apply_credit_memo(input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::ApplyCreditMemo {
+                credit_memo_id: id,
+                invoice_id: parse_id::<Uuid>(&req.invoice_id, "invoice_id")?,
+                amount: parse_decimal(&req.amount, "amount")?,
+            };
+            Ok(Json(credit_memo_resp(&c.accounts_receivable().apply_credit_memo(input)?)))
+        })
+        .await
 }
 
 // ============================================================================
@@ -616,16 +632,19 @@ pub(crate) async fn create_write_off(
     Json(req): Json<CreateArWriteOffRequest>,
 ) -> Result<(StatusCode, Json<ArWriteOffResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::CreateWriteOff {
-        invoice_id: parse_id::<Uuid>(&req.invoice_id, "invoice_id")?,
-        amount: parse_decimal(&req.amount, "amount")?,
-        reason: parse_id(&req.reason, "reason")?,
-        notes: req.notes,
-        approved_by: req.approved_by,
-    };
-    let write_off = c.accounts_receivable().create_write_off(input)?;
-    Ok((StatusCode::CREATED, Json(write_off_resp(&write_off))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::CreateWriteOff {
+                invoice_id: parse_id::<Uuid>(&req.invoice_id, "invoice_id")?,
+                amount: parse_decimal(&req.amount, "amount")?,
+                reason: parse_id(&req.reason, "reason")?,
+                notes: req.notes,
+                approved_by: req.approved_by,
+            };
+            let write_off = c.accounts_receivable().create_write_off(input)?;
+            Ok((StatusCode::CREATED, Json(write_off_resp(&write_off))))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "ar_reverse_write_off", path = "/api/v1/ar/write-offs/{id}/reverse", tag = "accounts_receivable",
@@ -638,8 +657,11 @@ pub(crate) async fn reverse_write_off(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ArWriteOffResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(write_off_resp(&c.accounts_receivable().reverse_write_off(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(write_off_resp(&c.accounts_receivable().reverse_write_off(id)?)))
+        })
+        .await
 }
 
 // ============================================================================
@@ -656,32 +678,35 @@ pub(crate) async fn record_collection_activity(
     Json(req): Json<CreateArCollectionActivityRequest>,
 ) -> Result<(StatusCode, Json<ArCollectionActivityResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let dunning_letter_type = match req.dunning_letter_type.as_deref() {
-        Some(s) => Some(parse_id(s, "dunning_letter_type")?),
-        None => None,
-    };
-    let promise_to_pay_date = match req.promise_to_pay_date.as_deref() {
-        Some(s) => Some(parse_datetime(s, "promise_to_pay_date")?),
-        None => None,
-    };
-    let promise_to_pay_amount = match req.promise_to_pay_amount.as_deref() {
-        Some(s) => Some(parse_decimal(s, "promise_to_pay_amount")?),
-        None => None,
-    };
-    let input = stateset_core::CreateCollectionActivity {
-        invoice_id: parse_id::<Uuid>(&req.invoice_id, "invoice_id")?,
-        activity_type: parse_id(&req.activity_type, "activity_type")?,
-        dunning_letter_type,
-        notes: req.notes,
-        contact_method: req.contact_method,
-        contact_result: req.contact_result,
-        promise_to_pay_date,
-        promise_to_pay_amount,
-        performed_by: req.performed_by,
-    };
-    let activity = c.accounts_receivable().log_collection_activity(input)?;
-    Ok((StatusCode::CREATED, Json(activity_resp(&activity))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let dunning_letter_type = match req.dunning_letter_type.as_deref() {
+                Some(s) => Some(parse_id(s, "dunning_letter_type")?),
+                None => None,
+            };
+            let promise_to_pay_date = match req.promise_to_pay_date.as_deref() {
+                Some(s) => Some(parse_datetime(s, "promise_to_pay_date")?),
+                None => None,
+            };
+            let promise_to_pay_amount = match req.promise_to_pay_amount.as_deref() {
+                Some(s) => Some(parse_decimal(s, "promise_to_pay_amount")?),
+                None => None,
+            };
+            let input = stateset_core::CreateCollectionActivity {
+                invoice_id: parse_id::<Uuid>(&req.invoice_id, "invoice_id")?,
+                activity_type: parse_id(&req.activity_type, "activity_type")?,
+                dunning_letter_type,
+                notes: req.notes,
+                contact_method: req.contact_method,
+                contact_result: req.contact_result,
+                promise_to_pay_date,
+                promise_to_pay_amount,
+                performed_by: req.performed_by,
+            };
+            let activity = c.accounts_receivable().log_collection_activity(input)?;
+            Ok((StatusCode::CREATED, Json(activity_resp(&activity))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "ar_list_collection_activities", path = "/api/v1/ar/collection-activities", tag = "accounts_receivable",
@@ -694,33 +719,36 @@ pub(crate) async fn list_collection_activities(
     Query(params): Query<ArCollectionActivityFilterParams>,
 ) -> Result<Json<ArCollectionActivityListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let invoice_id = match params.invoice_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "invoice_id")?),
-        None => None,
-    };
-    let customer_id = match params.customer_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "customer_id")?),
-        None => None,
-    };
-    let activity_type = match params.activity_type.as_deref() {
-        Some(s) => Some(parse_id(s, "activity_type")?),
-        None => None,
-    };
-    let filter = stateset_core::CollectionActivityFilter {
-        invoice_id,
-        customer_id,
-        activity_type,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..Default::default()
-    };
-    let activities = c.accounts_receivable().list_collection_activities(filter)?;
-    let total = activities.len();
-    Ok(Json(ArCollectionActivityListResponse {
-        activities: activities.iter().map(activity_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let invoice_id = match params.invoice_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "invoice_id")?),
+                None => None,
+            };
+            let customer_id = match params.customer_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "customer_id")?),
+                None => None,
+            };
+            let activity_type = match params.activity_type.as_deref() {
+                Some(s) => Some(parse_id(s, "activity_type")?),
+                None => None,
+            };
+            let filter = stateset_core::CollectionActivityFilter {
+                invoice_id,
+                customer_id,
+                activity_type,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..Default::default()
+            };
+            let activities = c.accounts_receivable().list_collection_activities(filter)?;
+            let total = activities.len();
+            Ok(Json(ArCollectionActivityListResponse {
+                activities: activities.iter().map(activity_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 // ============================================================================
@@ -735,13 +763,16 @@ pub(crate) async fn invoices_due_for_dunning(
     headers: HeaderMap,
 ) -> Result<Json<ArDunningInvoiceListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let invoices = c.accounts_receivable().get_invoices_due_for_dunning()?;
-    let total = invoices.len();
-    Ok(Json(ArDunningInvoiceListResponse {
-        invoices: invoices.iter().map(dunning_invoice_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let invoices = c.accounts_receivable().get_invoices_due_for_dunning()?;
+            let total = invoices.len();
+            Ok(Json(ArDunningInvoiceListResponse {
+                invoices: invoices.iter().map(dunning_invoice_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "ar_send_dunning", path = "/api/v1/ar/invoices/{invoice_id}/dunning", tag = "accounts_receivable",
@@ -756,14 +787,17 @@ pub(crate) async fn send_dunning(
     Json(req): Json<SendArDunningRequest>,
 ) -> Result<(StatusCode, Json<ArCollectionActivityResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let letter_type = parse_id(&req.letter_type, "letter_type")?;
-    let activity = c.accounts_receivable().send_dunning_letter(
-        invoice_id,
-        letter_type,
-        req.sent_by.as_deref(),
-    )?;
-    Ok((StatusCode::CREATED, Json(activity_resp(&activity))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let letter_type = parse_id(&req.letter_type, "letter_type")?;
+            let activity = c.accounts_receivable().send_dunning_letter(
+                invoice_id,
+                letter_type,
+                req.sent_by.as_deref(),
+            )?;
+            Ok((StatusCode::CREATED, Json(activity_resp(&activity))))
+        })
+        .await
 }
 
 // ============================================================================
@@ -781,46 +815,49 @@ pub(crate) async fn customer_statement(
     Query(params): Query<ArStatementParams>,
 ) -> Result<Json<ArCustomerStatementResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let period_start = match params.period_start.as_deref() {
-        Some(s) => Some(parse_datetime(s, "period_start")?),
-        None => None,
-    };
-    let period_end = match params.period_end.as_deref() {
-        Some(s) => Some(parse_datetime(s, "period_end")?),
-        None => None,
-    };
-    let request = stateset_core::GenerateStatementRequest {
-        customer_id,
-        period_start,
-        period_end,
-        include_paid_invoices: params.include_paid_invoices,
-    };
-    let s = c.accounts_receivable().generate_statement(request)?;
-    Ok(Json(ArCustomerStatementResponse {
-        customer_id: s.customer_id.to_string(),
-        customer_name: s.customer_name,
-        period_start: s.period_start.to_rfc3339(),
-        period_end: s.period_end.to_rfc3339(),
-        opening_balance: s.opening_balance.to_string(),
-        total_invoices: s.total_invoices.to_string(),
-        total_payments: s.total_payments.to_string(),
-        total_credits: s.total_credits.to_string(),
-        closing_balance: s.closing_balance.to_string(),
-        line_items: s
-            .line_items
-            .iter()
-            .map(|l| ArStatementLineResponse {
-                date: l.date.to_rfc3339(),
-                transaction_type: l.transaction_type.to_string(),
-                reference_number: l.reference_number.clone(),
-                description: l.description.clone(),
-                debit: l.debit.map(|d| d.to_string()),
-                credit: l.credit.map(|d| d.to_string()),
-                balance: l.balance.to_string(),
-            })
-            .collect(),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let period_start = match params.period_start.as_deref() {
+                Some(s) => Some(parse_datetime(s, "period_start")?),
+                None => None,
+            };
+            let period_end = match params.period_end.as_deref() {
+                Some(s) => Some(parse_datetime(s, "period_end")?),
+                None => None,
+            };
+            let request = stateset_core::GenerateStatementRequest {
+                customer_id,
+                period_start,
+                period_end,
+                include_paid_invoices: params.include_paid_invoices,
+            };
+            let s = c.accounts_receivable().generate_statement(request)?;
+            Ok(Json(ArCustomerStatementResponse {
+                customer_id: s.customer_id.to_string(),
+                customer_name: s.customer_name,
+                period_start: s.period_start.to_rfc3339(),
+                period_end: s.period_end.to_rfc3339(),
+                opening_balance: s.opening_balance.to_string(),
+                total_invoices: s.total_invoices.to_string(),
+                total_payments: s.total_payments.to_string(),
+                total_credits: s.total_credits.to_string(),
+                closing_balance: s.closing_balance.to_string(),
+                line_items: s
+                    .line_items
+                    .iter()
+                    .map(|l| ArStatementLineResponse {
+                        date: l.date.to_rfc3339(),
+                        transaction_type: l.transaction_type.to_string(),
+                        reference_number: l.reference_number.clone(),
+                        description: l.description.clone(),
+                        debit: l.debit.map(|d| d.to_string()),
+                        credit: l.credit.map(|d| d.to_string()),
+                        balance: l.balance.to_string(),
+                    })
+                    .collect(),
+            }))
+        })
+        .await
 }
 
 #[cfg(test)]

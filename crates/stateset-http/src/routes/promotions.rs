@@ -82,19 +82,22 @@ pub(crate) async fn create_promotion(
     Json(req): Json<CreatePromotionRequest>,
 ) -> Result<(StatusCode, Json<PromotionResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::CreatePromotion {
-        name: req.name,
-        description: req.description,
-        promotion_type: req
-            .promotion_type
-            .parse()
-            .map_err(|e| HttpError::BadRequest(format!("{e}")))?,
-        code: req.code.clone(),
-        ..Default::default()
-    };
-    let p = c.promotions().create(input)?;
-    Ok((StatusCode::CREATED, Json(promo_to_resp(&p))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::CreatePromotion {
+                name: req.name,
+                description: req.description,
+                promotion_type: req
+                    .promotion_type
+                    .parse()
+                    .map_err(|e| HttpError::BadRequest(format!("{e}")))?,
+                code: req.code.clone(),
+                ..Default::default()
+            };
+            let p = c.promotions().create(input)?;
+            Ok((StatusCode::CREATED, Json(promo_to_resp(&p))))
+        })
+        .await
 }
 
 #[utoipa::path(get, path = "/api/v1/promotions", tag = "promotions", params(PromotionFilterParams),
@@ -106,19 +109,22 @@ pub(crate) async fn list_promotions(
     Query(params): Query<PromotionFilterParams>,
 ) -> Result<Json<PromotionListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let filter = stateset_core::PromotionFilter {
-        status: params.status.and_then(|s| s.parse().ok()),
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..Default::default()
-    };
-    let promos = c.promotions().list(filter)?;
-    let total = promos.len();
-    Ok(Json(PromotionListResponse {
-        promotions: promos.iter().map(promo_to_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let filter = stateset_core::PromotionFilter {
+                status: params.status.and_then(|s| s.parse().ok()),
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..Default::default()
+            };
+            let promos = c.promotions().list(filter)?;
+            let total = promos.len();
+            Ok(Json(PromotionListResponse {
+                promotions: promos.iter().map(promo_to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, path = "/api/v1/promotions/{id}", tag = "promotions",
@@ -131,12 +137,15 @@ pub(crate) async fn get_promotion(
     Path(id): Path<PromotionId>,
 ) -> Result<Json<PromotionResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let p = c
-        .promotions()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Promotion {id} not found")))?;
-    Ok(Json(promo_to_resp(&p)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let p = c
+                .promotions()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Promotion {id} not found")))?;
+            Ok(Json(promo_to_resp(&p)))
+        })
+        .await
 }
 
 #[utoipa::path(patch, path = "/api/v1/promotions/{id}/activate", tag = "promotions",
@@ -149,9 +158,12 @@ pub(crate) async fn activate_promotion(
     Path(id): Path<PromotionId>,
 ) -> Result<Json<PromotionResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let p = c.promotions().activate(id)?;
-    Ok(Json(promo_to_resp(&p)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let p = c.promotions().activate(id)?;
+            Ok(Json(promo_to_resp(&p)))
+        })
+        .await
 }
 
 #[utoipa::path(patch, path = "/api/v1/promotions/{id}/deactivate", tag = "promotions",
@@ -164,7 +176,10 @@ pub(crate) async fn deactivate_promotion(
     Path(id): Path<PromotionId>,
 ) -> Result<Json<PromotionResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let p = c.promotions().deactivate(id)?;
-    Ok(Json(promo_to_resp(&p)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let p = c.promotions().deactivate(id)?;
+            Ok(Json(promo_to_resp(&p)))
+        })
+        .await
 }

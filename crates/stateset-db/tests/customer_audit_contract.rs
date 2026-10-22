@@ -155,9 +155,7 @@ impl PgStore {
     }
 
     fn open() -> Option<Self> {
-        let Some(url) =
-            std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
-        else {
+        let Some(url) = stateset_test_utils::postgres_url() else {
             assert!(
                 matches!(
                     std::env::var("STATESET_ALLOW_POSTGRES_SKIP").ok().as_deref(),

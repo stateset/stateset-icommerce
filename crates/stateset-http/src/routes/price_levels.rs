@@ -1,6 +1,7 @@
 //! Price level endpoints (B2B pricing tiers).
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -87,14 +88,6 @@ fn entry_resp(e: &stateset_core::PriceLevelEntry) -> PriceLevelEntryResponse {
     PriceLevelEntryResponse { product_id: e.product_id.to_string(), price: e.price.to_string() }
 }
 
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/price-levels", post(create).get(list))
@@ -112,25 +105,28 @@ pub(crate) async fn create(
     Json(req): Json<CreatePriceLevelRequest>,
 ) -> Result<(StatusCode, Json<PriceLevelResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let adjustment_type = match req.adjustment_type.as_deref() {
-        Some(s) => parse_id(s, "adjustment_type")?,
-        None => stateset_core::PriceAdjustmentType::default(),
-    };
-    let adjustment_value = match req.adjustment_value.as_deref() {
-        Some(s) => parse_decimal(s, "adjustment_value")?,
-        None => Decimal::ZERO,
-    };
-    let input = stateset_core::CreatePriceLevel {
-        name: req.name,
-        code: req.code,
-        description: req.description,
-        adjustment_type,
-        adjustment_value,
-        currency: None,
-    };
-    let l = c.price_levels().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&l))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let adjustment_type = match req.adjustment_type.as_deref() {
+                Some(s) => parse_id(s, "adjustment_type")?,
+                None => stateset_core::PriceAdjustmentType::default(),
+            };
+            let adjustment_value = match req.adjustment_value.as_deref() {
+                Some(s) => parse_decimal(s, "adjustment_value")?,
+                None => Decimal::ZERO,
+            };
+            let input = stateset_core::CreatePriceLevel {
+                name: req.name,
+                code: req.code,
+                description: req.description,
+                adjustment_type,
+                adjustment_value,
+                currency: None,
+            };
+            let l = c.price_levels().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&l))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "price_levels_list", path = "/api/v1/price-levels", tag = "price_levels",
@@ -143,21 +139,27 @@ pub(crate) async fn list(
     Query(params): Query<PriceLevelFilterParams>,
 ) -> Result<Json<PriceLevelListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let total = c
-        .price_levels()
-        .list(stateset_core::PriceLevelFilter {
-            is_active: params.is_active,
-            ..Default::default()
-        })?
-        .len();
-    let filter = stateset_core::PriceLevelFilter {
-        is_active: params.is_active,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-    };
-    let levels = c.price_levels().list(filter)?;
-    Ok(Json(PriceLevelListResponse { price_levels: levels.iter().map(to_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let total = c
+                .price_levels()
+                .list(stateset_core::PriceLevelFilter {
+                    is_active: params.is_active,
+                    ..Default::default()
+                })?
+                .len();
+            let filter = stateset_core::PriceLevelFilter {
+                is_active: params.is_active,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+            };
+            let levels = c.price_levels().list(filter)?;
+            Ok(Json(PriceLevelListResponse {
+                price_levels: levels.iter().map(to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "price_levels_get_one", path = "/api/v1/price-levels/{id}", tag = "price_levels",
@@ -170,12 +172,15 @@ pub(crate) async fn get_one(
     Path(id): Path<PriceLevelId>,
 ) -> Result<Json<PriceLevelResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let l = c
-        .price_levels()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Price level {id} not found")))?;
-    Ok(Json(to_resp(&l)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let l = c
+                .price_levels()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Price level {id} not found")))?;
+            Ok(Json(to_resp(&l)))
+        })
+        .await
 }
 
 #[utoipa::path(put, operation_id = "price_levels_update", path = "/api/v1/price-levels/{id}", tag = "price_levels",
@@ -190,23 +195,26 @@ pub(crate) async fn update(
     Json(req): Json<UpdatePriceLevelRequest>,
 ) -> Result<Json<PriceLevelResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let adjustment_type = match req.adjustment_type.as_deref() {
-        Some(s) => Some(parse_id(s, "adjustment_type")?),
-        None => None,
-    };
-    let adjustment_value = match req.adjustment_value.as_deref() {
-        Some(s) => Some(parse_decimal(s, "adjustment_value")?),
-        None => None,
-    };
-    let input = stateset_core::UpdatePriceLevel {
-        name: req.name,
-        description: req.description,
-        adjustment_type,
-        adjustment_value,
-        is_active: req.is_active,
-    };
-    Ok(Json(to_resp(&c.price_levels().update(id, input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let adjustment_type = match req.adjustment_type.as_deref() {
+                Some(s) => Some(parse_id(s, "adjustment_type")?),
+                None => None,
+            };
+            let adjustment_value = match req.adjustment_value.as_deref() {
+                Some(s) => Some(parse_decimal(s, "adjustment_value")?),
+                None => None,
+            };
+            let input = stateset_core::UpdatePriceLevel {
+                name: req.name,
+                description: req.description,
+                adjustment_type,
+                adjustment_value,
+                is_active: req.is_active,
+            };
+            Ok(Json(to_resp(&c.price_levels().update(id, input)?)))
+        })
+        .await
 }
 
 #[utoipa::path(delete, operation_id = "price_levels_delete_one", path = "/api/v1/price-levels/{id}", tag = "price_levels",
@@ -219,9 +227,12 @@ pub(crate) async fn delete_one(
     Path(id): Path<PriceLevelId>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.price_levels().delete(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.price_levels().delete(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "price_levels_set_entry", path = "/api/v1/price-levels/{id}/entries", tag = "price_levels",
@@ -236,10 +247,13 @@ pub(crate) async fn set_entry(
     Json(req): Json<SetEntryRequest>,
 ) -> Result<Json<PriceLevelEntryResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let product_id = parse_id::<ProductId>(&req.product_id, "product_id")?;
-    let price = parse_decimal(&req.price, "price")?;
-    Ok(Json(entry_resp(&c.price_levels().set_entry(id, product_id, price)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let product_id = parse_id::<ProductId>(&req.product_id, "product_id")?;
+            let price = parse_decimal(&req.price, "price")?;
+            Ok(Json(entry_resp(&c.price_levels().set_entry(id, product_id, price)?)))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "price_levels_list_entries", path = "/api/v1/price-levels/{id}/entries", tag = "price_levels",
@@ -252,9 +266,12 @@ pub(crate) async fn list_entries(
     Path(id): Path<PriceLevelId>,
 ) -> Result<Json<Vec<PriceLevelEntryResponse>>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let entries = c.price_levels().list_entries(id)?;
-    Ok(Json(entries.iter().map(entry_resp).collect()))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let entries = c.price_levels().list_entries(id)?;
+            Ok(Json(entries.iter().map(entry_resp).collect()))
+        })
+        .await
 }
 
 #[cfg(test)]

@@ -71,16 +71,19 @@ pub(crate) async fn create_zone(
     Json(req): Json<CreateShippingZoneRequest>,
 ) -> Result<(StatusCode, Json<ShippingZoneResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::CreateShippingZone {
-        name: req.name,
-        countries: req.countries,
-        regions: req.regions.unwrap_or_default(),
-        postal_codes: req.postal_codes.unwrap_or_default(),
-        priority: req.priority,
-    };
-    let z = c.shipping_zones().create(input)?;
-    Ok((StatusCode::CREATED, Json(zone_to_resp(&z))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::CreateShippingZone {
+                name: req.name,
+                countries: req.countries,
+                regions: req.regions.unwrap_or_default(),
+                postal_codes: req.postal_codes.unwrap_or_default(),
+                priority: req.priority,
+            };
+            let z = c.shipping_zones().create(input)?;
+            Ok((StatusCode::CREATED, Json(zone_to_resp(&z))))
+        })
+        .await
 }
 
 #[utoipa::path(get, path = "/api/v1/shipping-zones", tag = "shipping",
@@ -93,20 +96,25 @@ pub(crate) async fn list_zones(
     Query(params): Query<ShippingZoneFilterParams>,
 ) -> Result<Json<ShippingZoneListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            // Count the full matching set before applying the page window so that
+            // `total` reflects the number of matching zones, not the page size.
+            let count_filter = stateset_core::ShippingZoneFilter::default();
+            let total = c.shipping_zones().list(count_filter)?.len();
 
-    // Count the full matching set before applying the page window so that
-    // `total` reflects the number of matching zones, not the page size.
-    let count_filter = stateset_core::ShippingZoneFilter::default();
-    let total = c.shipping_zones().list(count_filter)?.len();
-
-    let filter = stateset_core::ShippingZoneFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..Default::default()
-    };
-    let zones = c.shipping_zones().list(filter)?;
-    Ok(Json(ShippingZoneListResponse { zones: zones.iter().map(zone_to_resp).collect(), total }))
+            let filter = stateset_core::ShippingZoneFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..Default::default()
+            };
+            let zones = c.shipping_zones().list(filter)?;
+            Ok(Json(ShippingZoneListResponse {
+                zones: zones.iter().map(zone_to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, path = "/api/v1/shipping-zones/{id}", tag = "shipping",
@@ -119,12 +127,15 @@ pub(crate) async fn get_zone(
     Path(id): Path<ShippingZoneId>,
 ) -> Result<Json<ShippingZoneResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let z = c
-        .shipping_zones()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Zone {id} not found")))?;
-    Ok(Json(zone_to_resp(&z)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let z = c
+                .shipping_zones()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Zone {id} not found")))?;
+            Ok(Json(zone_to_resp(&z)))
+        })
+        .await
 }
 
 #[utoipa::path(delete, path = "/api/v1/shipping-zones/{id}", tag = "shipping",
@@ -137,9 +148,12 @@ pub(crate) async fn delete_zone(
     Path(id): Path<ShippingZoneId>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.shipping_zones().delete(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.shipping_zones().delete(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[cfg(test)]

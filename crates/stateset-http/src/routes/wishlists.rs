@@ -138,18 +138,20 @@ pub(crate) async fn create_wishlist(
     Json(req): Json<CreateWishlistRequest>,
 ) -> Result<(StatusCode, Json<WishlistResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let wishlist = commerce.wishlists().create(stateset_core::CreateWishlist {
+                customer_id: req
+                    .customer_id
+                    .parse()
+                    .map_err(|e| HttpError::BadRequest(format!("Invalid customer_id: {e}")))?,
+                name: req.name.unwrap_or_else(|| "My Wishlist".to_string()),
+                is_public: req.is_public.unwrap_or(false),
+            })?;
 
-    let wishlist = commerce.wishlists().create(stateset_core::CreateWishlist {
-        customer_id: req
-            .customer_id
-            .parse()
-            .map_err(|e| HttpError::BadRequest(format!("Invalid customer_id: {e}")))?,
-        name: req.name.unwrap_or_else(|| "My Wishlist".to_string()),
-        is_public: req.is_public.unwrap_or(false),
-    })?;
-
-    Ok((StatusCode::CREATED, Json(wishlist_to_response(wishlist))))
+            Ok((StatusCode::CREATED, Json(wishlist_to_response(wishlist))))
+        })
+        .await
 }
 
 /// `GET /api/v1/wishlists/{id}`
@@ -170,12 +172,15 @@ pub(crate) async fn get_wishlist(
     Path(id): Path<stateset_primitives::WishlistId>,
 ) -> Result<Json<WishlistResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let wishlist = commerce
-        .wishlists()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Wishlist {id} not found")))?;
-    Ok(Json(wishlist_to_response(wishlist)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let wishlist = commerce
+                .wishlists()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Wishlist {id} not found")))?;
+            Ok(Json(wishlist_to_response(wishlist)))
+        })
+        .await
 }
 
 /// `GET /api/v1/wishlists`
@@ -196,42 +201,48 @@ pub(crate) async fn list_wishlists(
     Query(params): Query<WishlistFilterParams>,
 ) -> Result<Json<WishlistListResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let limit = params.resolved_limit();
+            let offset = params.resolved_offset();
 
-    let limit = params.resolved_limit();
-    let offset = params.resolved_offset();
+            let customer_id = params
+                .customer_id
+                .map(|s| s.parse::<stateset_primitives::CustomerId>())
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid customer_id: {e}")))?;
 
-    let customer_id = params
-        .customer_id
-        .map(|s| s.parse::<stateset_primitives::CustomerId>())
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid customer_id: {e}")))?;
+            // Count total matching records (without pagination)
+            let count_filter = stateset_core::WishlistFilter {
+                customer_id,
+                is_public: None,
+                limit: None,
+                offset: None,
+            };
+            let total = commerce.wishlists().list(count_filter)?.len();
 
-    // Count total matching records (without pagination)
-    let count_filter =
-        stateset_core::WishlistFilter { customer_id, is_public: None, limit: None, offset: None };
-    let total = commerce.wishlists().list(count_filter)?.len();
+            // Fetch the requested page
+            let filter = stateset_core::WishlistFilter {
+                customer_id,
+                is_public: None,
+                limit: Some(limit.saturating_add(1)),
+                offset: Some(offset),
+            };
+            let mut wishlists = commerce.wishlists().list(filter)?;
+            let has_more = wishlists.len() > limit as usize;
+            if has_more {
+                wishlists.truncate(limit as usize);
+            }
 
-    // Fetch the requested page
-    let filter = stateset_core::WishlistFilter {
-        customer_id,
-        is_public: None,
-        limit: Some(limit.saturating_add(1)),
-        offset: Some(offset),
-    };
-    let mut wishlists = commerce.wishlists().list(filter)?;
-    let has_more = wishlists.len() > limit as usize;
-    if has_more {
-        wishlists.truncate(limit as usize);
-    }
-
-    Ok(Json(WishlistListResponse {
-        wishlists: wishlists.into_iter().map(wishlist_to_response).collect(),
-        total,
-        limit,
-        offset,
-        has_more,
-    }))
+            Ok(Json(WishlistListResponse {
+                wishlists: wishlists.into_iter().map(wishlist_to_response).collect(),
+                total,
+                limit,
+                offset,
+                has_more,
+            }))
+        })
+        .await
 }
 
 /// `DELETE /api/v1/wishlists/{id}`
@@ -252,9 +263,12 @@ pub(crate) async fn delete_wishlist(
     Path(id): Path<stateset_primitives::WishlistId>,
 ) -> Result<StatusCode, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    commerce.wishlists().delete(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            commerce.wishlists().delete(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 /// `POST /api/v1/wishlists/{id}/items`
@@ -278,28 +292,30 @@ pub(crate) async fn add_item(
     Json(req): Json<AddWishlistItemRequest>,
 ) -> Result<Json<WishlistResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let product_id: stateset_primitives::ProductId = req
+                .product_id
+                .parse()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid product_id: {e}")))?;
 
-    let product_id: stateset_primitives::ProductId = req
-        .product_id
-        .parse()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid product_id: {e}")))?;
-
-    let _item = commerce.wishlists().add_item(
-        id,
-        stateset_core::AddWishlistItem {
-            product_id,
-            variant_id: None,
-            note: req.note,
-            quantity: None,
-            priority: None,
-        },
-    )?;
-    let wishlist = commerce
-        .wishlists()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Wishlist {id} not found")))?;
-    Ok(Json(wishlist_to_response(wishlist)))
+            let _item = commerce.wishlists().add_item(
+                id,
+                stateset_core::AddWishlistItem {
+                    product_id,
+                    variant_id: None,
+                    note: req.note,
+                    quantity: None,
+                    priority: None,
+                },
+            )?;
+            let wishlist = commerce
+                .wishlists()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Wishlist {id} not found")))?;
+            Ok(Json(wishlist_to_response(wishlist)))
+        })
+        .await
 }
 
 /// `DELETE /api/v1/wishlists/{id}/items/{product_id}`
@@ -323,13 +339,16 @@ pub(crate) async fn remove_item(
     Path((id, product_id)): Path<(stateset_primitives::WishlistId, stateset_primitives::ProductId)>,
 ) -> Result<Json<WishlistResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    commerce.wishlists().remove_item(id, product_id)?;
-    let wishlist = commerce
-        .wishlists()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Wishlist {id} not found")))?;
-    Ok(Json(wishlist_to_response(wishlist)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            commerce.wishlists().remove_item(id, product_id)?;
+            let wishlist = commerce
+                .wishlists()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Wishlist {id} not found")))?;
+            Ok(Json(wishlist_to_response(wishlist)))
+        })
+        .await
 }
 
 // ============================================================================

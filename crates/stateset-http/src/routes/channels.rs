@@ -91,17 +91,20 @@ pub(crate) async fn create(
     Json(req): Json<CreateChannelRequest>,
 ) -> Result<(StatusCode, Json<ChannelResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::CreateChannel {
-        name: req.name,
-        channel_type: parse_channel_type(&req.channel_type)?,
-        integration: req.integration,
-        default_warehouse_id: None,
-        tags: Vec::new(),
-        metadata: serde_json::Value::Null,
-    };
-    let ch = c.channels().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&ch))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::CreateChannel {
+                name: req.name,
+                channel_type: parse_channel_type(&req.channel_type)?,
+                integration: req.integration,
+                default_warehouse_id: None,
+                tags: Vec::new(),
+                metadata: serde_json::Value::Null,
+            };
+            let ch = c.channels().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&ch))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "channels_list", path = "/api/v1/channels", tag = "channels",
@@ -114,32 +117,37 @@ pub(crate) async fn list(
     Query(params): Query<ChannelFilterParams>,
 ) -> Result<Json<ChannelListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let channel_type = match params.channel_type.as_deref() {
+                Some(s) => Some(parse_channel_type(s)?),
+                None => None,
+            };
+            let status = match params.status.as_deref() {
+                Some(s) => Some(
+                    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid status: {s}")))?,
+                ),
+                None => None,
+            };
 
-    let channel_type = match params.channel_type.as_deref() {
-        Some(s) => Some(parse_channel_type(s)?),
-        None => None,
-    };
-    let status = match params.status.as_deref() {
-        Some(s) => {
-            Some(s.parse().map_err(|_| HttpError::BadRequest(format!("invalid status: {s}")))?)
-        }
-        None => None,
-    };
-
-    let total = c
-        .channels()
-        .list(stateset_core::ChannelFilter { channel_type, status, ..Default::default() })?
-        .len();
-    let filter = stateset_core::ChannelFilter {
-        channel_type,
-        status,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..Default::default()
-    };
-    let channels = c.channels().list(filter)?;
-    Ok(Json(ChannelListResponse { channels: channels.iter().map(to_resp).collect(), total }))
+            let total = c
+                .channels()
+                .list(stateset_core::ChannelFilter { channel_type, status, ..Default::default() })?
+                .len();
+            let filter = stateset_core::ChannelFilter {
+                channel_type,
+                status,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..Default::default()
+            };
+            let channels = c.channels().list(filter)?;
+            Ok(Json(ChannelListResponse {
+                channels: channels.iter().map(to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "channels_get_one", path = "/api/v1/channels/{id}", tag = "channels",
@@ -152,12 +160,15 @@ pub(crate) async fn get_one(
     Path(id): Path<ChannelId>,
 ) -> Result<Json<ChannelResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let ch = c
-        .channels()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Channel {id} not found")))?;
-    Ok(Json(to_resp(&ch)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let ch = c
+                .channels()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Channel {id} not found")))?;
+            Ok(Json(to_resp(&ch)))
+        })
+        .await
 }
 
 #[utoipa::path(put, operation_id = "channels_update", path = "/api/v1/channels/{id}", tag = "channels",
@@ -172,21 +183,24 @@ pub(crate) async fn update(
     Json(req): Json<UpdateChannelRequest>,
 ) -> Result<Json<ChannelResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let status = match req.status.as_deref() {
-        Some(s) => {
-            Some(s.parse().map_err(|_| HttpError::BadRequest(format!("invalid status: {s}")))?)
-        }
-        None => None,
-    };
-    let input = stateset_core::UpdateChannel {
-        name: req.name,
-        integration: req.integration,
-        status,
-        ..Default::default()
-    };
-    let ch = c.channels().update(id, input)?;
-    Ok(Json(to_resp(&ch)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let status = match req.status.as_deref() {
+                Some(s) => Some(
+                    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid status: {s}")))?,
+                ),
+                None => None,
+            };
+            let input = stateset_core::UpdateChannel {
+                name: req.name,
+                integration: req.integration,
+                status,
+                ..Default::default()
+            };
+            let ch = c.channels().update(id, input)?;
+            Ok(Json(to_resp(&ch)))
+        })
+        .await
 }
 
 #[utoipa::path(delete, operation_id = "channels_delete_one", path = "/api/v1/channels/{id}", tag = "channels",
@@ -199,9 +213,12 @@ pub(crate) async fn delete_one(
     Path(id): Path<ChannelId>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.channels().delete(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.channels().delete(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "channels_set_lock", path = "/api/v1/channels/{id}/lock", tag = "channels",
@@ -216,9 +233,12 @@ pub(crate) async fn set_lock(
     Json(req): Json<LockChannelRequest>,
 ) -> Result<Json<ChannelResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let ch = c.channels().set_lock(id, req.locked)?;
-    Ok(Json(to_resp(&ch)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let ch = c.channels().set_lock(id, req.locked)?;
+            Ok(Json(to_resp(&ch)))
+        })
+        .await
 }
 
 #[cfg(test)]

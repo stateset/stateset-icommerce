@@ -14,10 +14,10 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use stateset_embedded::notifications::{NotificationConfig, NotificationService, WebhookEmailBackend};
 //!
-//! let backend = WebhookEmailBackend::new("https://relay.example.com/email", Some("hmac-secret"))
+//! let backend = WebhookEmailBackend::new("https://relay.example.com/email", Some("hmac-secret".to_string()))
 //!     .with_outbound_allowlist(["relay.example.com"]);
 //! let config = NotificationConfig {
 //!     from_name: "Acme Store".into(),

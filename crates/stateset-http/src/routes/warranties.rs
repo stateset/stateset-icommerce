@@ -76,16 +76,21 @@ pub(crate) async fn create_warranty(
     Json(req): Json<CreateWarrantyRequest>,
 ) -> Result<(StatusCode, Json<WarrantyResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::CreateWarranty {
-        order_id: Some(req.order_id),
-        product_id: Some(req.product_id),
-        warranty_type: req.warranty_type.and_then(|t| t.parse().ok()),
-        duration_months: req.duration_months,
-        ..Default::default()
-    };
-    let w = c.warranties().create(input)?;
-    Ok((StatusCode::CREATED, Json(warranty_to_resp(&w))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::CreateWarranty {
+                // The engine takes the owner from the order (`CreateWarranty::resolve_customer`).
+                customer_id: stateset_core::CustomerId::nil(),
+                order_id: Some(req.order_id),
+                product_id: Some(req.product_id),
+                warranty_type: req.warranty_type.and_then(|t| t.parse().ok()),
+                duration_months: req.duration_months,
+                ..Default::default()
+            };
+            let w = c.warranties().create(input)?;
+            Ok((StatusCode::CREATED, Json(warranty_to_resp(&w))))
+        })
+        .await
 }
 
 #[utoipa::path(get, path = "/api/v1/warranties", tag = "warranties", params(WarrantyFilterParams),
@@ -97,20 +102,23 @@ pub(crate) async fn list_warranties(
     Query(params): Query<WarrantyFilterParams>,
 ) -> Result<Json<WarrantyListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let filter = stateset_core::WarrantyFilter {
-        status: params.status.and_then(|s| s.parse().ok()),
-        customer_id: params.customer_id.and_then(|c| c.parse().ok()),
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..Default::default()
-    };
-    let warranties = c.warranties().list(filter)?;
-    let total = warranties.len();
-    Ok(Json(WarrantyListResponse {
-        warranties: warranties.iter().map(warranty_to_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let filter = stateset_core::WarrantyFilter {
+                status: params.status.and_then(|s| s.parse().ok()),
+                customer_id: params.customer_id.and_then(|c| c.parse().ok()),
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..Default::default()
+            };
+            let warranties = c.warranties().list(filter)?;
+            let total = warranties.len();
+            Ok(Json(WarrantyListResponse {
+                warranties: warranties.iter().map(warranty_to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, path = "/api/v1/warranties/{id}", tag = "warranties",
@@ -123,10 +131,13 @@ pub(crate) async fn get_warranty(
     Path(id): Path<Uuid>,
 ) -> Result<Json<WarrantyResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let w = c
-        .warranties()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Warranty {id} not found")))?;
-    Ok(Json(warranty_to_resp(&w)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let w = c
+                .warranties()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Warranty {id} not found")))?;
+            Ok(Json(warranty_to_resp(&w)))
+        })
+        .await
 }

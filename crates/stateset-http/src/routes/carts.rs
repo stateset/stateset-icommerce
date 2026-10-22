@@ -1,6 +1,7 @@
 //! Cart and checkout endpoints.
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id, parse_opt_decimal};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -8,7 +9,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post, put},
 };
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_core::{CartId, ProductId};
 use utoipa::{IntoParams, ToSchema};
@@ -151,18 +151,6 @@ pub(crate) struct CheckoutResultResponse {
 // Helpers
 // ============================================================================
 
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_opt_decimal(s: Option<&str>, what: &str) -> Result<Option<Decimal>, HttpError> {
-    s.map(|v| parse_decimal(v, what)).transpose()
-}
-
 fn to_address(a: CartAddressRequest) -> stateset_core::CartAddress {
     stateset_core::CartAddress {
         first_name: a.first_name.unwrap_or_default(),
@@ -261,33 +249,36 @@ pub(crate) async fn create(
     Json(req): Json<CreateCartRequest>,
 ) -> Result<(StatusCode, Json<CartResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let customer_id = req
-        .customer_id
-        .as_deref()
-        .map(|s| parse_id::<Uuid>(s, "customer_id"))
-        .transpose()?
-        .map(Into::into);
-    let currency = req.currency.as_deref().map(|s| parse_id(s, "currency")).transpose()?;
-    let items = if req.items.is_empty() {
-        None
-    } else {
-        Some(req.items.into_iter().map(to_add_item).collect::<Result<Vec<_>, _>>()?)
-    };
-    let input = stateset_core::CreateCart {
-        customer_id,
-        customer_email: req.customer_email,
-        customer_name: req.customer_name,
-        currency,
-        items,
-        shipping_address: None,
-        billing_address: None,
-        notes: req.notes,
-        metadata: None,
-        expires_in_minutes: req.expires_in_minutes,
-    };
-    let cart = c.carts().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&cart))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let customer_id = req
+                .customer_id
+                .as_deref()
+                .map(|s| parse_id::<Uuid>(s, "customer_id"))
+                .transpose()?
+                .map(Into::into);
+            let currency = req.currency.as_deref().map(|s| parse_id(s, "currency")).transpose()?;
+            let items = if req.items.is_empty() {
+                None
+            } else {
+                Some(req.items.into_iter().map(to_add_item).collect::<Result<Vec<_>, _>>()?)
+            };
+            let input = stateset_core::CreateCart {
+                customer_id,
+                customer_email: req.customer_email,
+                customer_name: req.customer_name,
+                currency,
+                items,
+                shipping_address: None,
+                billing_address: None,
+                notes: req.notes,
+                metadata: None,
+                expires_in_minutes: req.expires_in_minutes,
+            };
+            let cart = c.carts().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&cart))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "carts_list", path = "/api/v1/carts", tag = "carts",
@@ -300,28 +291,31 @@ pub(crate) async fn list(
     Query(params): Query<CartFilterParams>,
 ) -> Result<Json<CartListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let customer_id = params
-        .customer_id
-        .as_deref()
-        .map(|s| parse_id::<Uuid>(s, "customer_id"))
-        .transpose()?
-        .map(Into::into);
-    let status = params.status.as_deref().map(|s| parse_id(s, "status")).transpose()?;
-    let base = stateset_core::CartFilter {
-        customer_id,
-        customer_email: params.customer_email.clone(),
-        status,
-        ..Default::default()
-    };
-    let total = usize::try_from(c.carts().count(base.clone())?).unwrap_or(usize::MAX);
-    let filter = stateset_core::CartFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    };
-    let carts = c.carts().list(filter)?;
-    Ok(Json(CartListResponse { carts: carts.iter().map(to_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let customer_id = params
+                .customer_id
+                .as_deref()
+                .map(|s| parse_id::<Uuid>(s, "customer_id"))
+                .transpose()?
+                .map(Into::into);
+            let status = params.status.as_deref().map(|s| parse_id(s, "status")).transpose()?;
+            let base = stateset_core::CartFilter {
+                customer_id,
+                customer_email: params.customer_email.clone(),
+                status,
+                ..Default::default()
+            };
+            let total = usize::try_from(c.carts().count(base.clone())?).unwrap_or(usize::MAX);
+            let filter = stateset_core::CartFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            };
+            let carts = c.carts().list(filter)?;
+            Ok(Json(CartListResponse { carts: carts.iter().map(to_resp).collect(), total }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "carts_get_one", path = "/api/v1/carts/{id}", tag = "carts",
@@ -334,10 +328,15 @@ pub(crate) async fn get_one(
     Path(id): Path<CartId>,
 ) -> Result<Json<CartResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let cart =
-        c.carts().get(id)?.ok_or_else(|| HttpError::NotFound(format!("Cart {id} not found")))?;
-    Ok(Json(to_resp(&cart)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let cart = c
+                .carts()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Cart {id} not found")))?;
+            Ok(Json(to_resp(&cart)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "carts_add_item", path = "/api/v1/carts/{id}/items", tag = "carts",
@@ -352,9 +351,12 @@ pub(crate) async fn add_item(
     Json(req): Json<AddCartItemRequest>,
 ) -> Result<(StatusCode, Json<CartItemResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let item = c.carts().add_item(id, to_add_item(req)?)?;
-    Ok((StatusCode::CREATED, Json(item_resp(&item))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let item = c.carts().add_item(id, to_add_item(req)?)?;
+            Ok((StatusCode::CREATED, Json(item_resp(&item))))
+        })
+        .await
 }
 
 #[utoipa::path(put, operation_id = "carts_update_item", path = "/api/v1/carts/{id}/items/{item_id}", tag = "carts",
@@ -375,14 +377,20 @@ pub(crate) async fn update_item(
         )));
     }
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::UpdateCartItem {
-        quantity: req.quantity,
-        unit_price: parse_opt_decimal(req.unit_price.as_deref(), "unit_price")?,
-        discount_amount: parse_opt_decimal(req.discount_amount.as_deref(), "discount_amount")?,
-        metadata: None,
-    };
-    Ok(Json(item_resp(&c.carts().update_item(item_id, input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::UpdateCartItem {
+                quantity: req.quantity,
+                unit_price: parse_opt_decimal(req.unit_price.as_deref(), "unit_price")?,
+                discount_amount: parse_opt_decimal(
+                    req.discount_amount.as_deref(),
+                    "discount_amount",
+                )?,
+                metadata: None,
+            };
+            Ok(Json(item_resp(&c.carts().update_item(item_id, input)?)))
+        })
+        .await
 }
 
 #[utoipa::path(delete, operation_id = "carts_remove_item", path = "/api/v1/carts/{id}/items/{item_id}", tag = "carts",
@@ -396,9 +404,12 @@ pub(crate) async fn remove_item(
     Path((_id, item_id)): Path<(CartId, Uuid)>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.carts().remove_item(item_id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.carts().remove_item(item_id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 // `409` when the cart is no longer active: the shipping charge is money on
@@ -420,14 +431,20 @@ pub(crate) async fn set_shipping(
     Json(req): Json<SetCartShippingRequest>,
 ) -> Result<Json<CartResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::SetCartShipping {
-        shipping_address: to_address(req.shipping_address),
-        shipping_method: req.shipping_method,
-        shipping_carrier: req.shipping_carrier,
-        shipping_amount: parse_opt_decimal(req.shipping_amount.as_deref(), "shipping_amount")?,
-    };
-    Ok(Json(to_resp(&c.carts().set_shipping(id, input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::SetCartShipping {
+                shipping_address: to_address(req.shipping_address),
+                shipping_method: req.shipping_method,
+                shipping_carrier: req.shipping_carrier,
+                shipping_amount: parse_opt_decimal(
+                    req.shipping_amount.as_deref(),
+                    "shipping_amount",
+                )?,
+            };
+            Ok(Json(to_resp(&c.carts().set_shipping(id, input)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "carts_set_payment", path = "/api/v1/carts/{id}/payment", tag = "carts",
@@ -442,13 +459,16 @@ pub(crate) async fn set_payment(
     Json(req): Json<SetCartPaymentRequest>,
 ) -> Result<Json<CartResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::SetCartPayment {
-        payment_method: req.payment_method,
-        payment_token: req.payment_token,
-        billing_address: req.billing_address.map(to_address),
-    };
-    Ok(Json(to_resp(&c.carts().set_payment(id, input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::SetCartPayment {
+                payment_method: req.payment_method,
+                payment_token: req.payment_token,
+                billing_address: req.billing_address.map(to_address),
+            };
+            Ok(Json(to_resp(&c.carts().set_payment(id, input)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "carts_complete", path = "/api/v1/carts/{id}/complete", tag = "carts",
@@ -461,16 +481,19 @@ pub(crate) async fn complete(
     Path(id): Path<CartId>,
 ) -> Result<Json<CheckoutResultResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let result = c.carts().complete(id)?;
-    Ok(Json(CheckoutResultResponse {
-        cart_id: result.cart_id.to_string(),
-        order_id: result.order_id.to_string(),
-        order_number: result.order_number,
-        payment_id: result.payment_id.map(|p| p.to_string()),
-        total_charged: result.total_charged.to_string(),
-        currency: result.currency.to_string(),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let result = c.carts().complete(id)?;
+            Ok(Json(CheckoutResultResponse {
+                cart_id: result.cart_id.to_string(),
+                order_id: result.order_id.to_string(),
+                order_number: result.order_number,
+                payment_id: result.payment_id.map(|p| p.to_string()),
+                total_charged: result.total_charged.to_string(),
+                currency: result.currency.to_string(),
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "carts_cancel", path = "/api/v1/carts/{id}/cancel", tag = "carts",
@@ -483,8 +506,7 @@ pub(crate) async fn cancel(
     Path(id): Path<CartId>,
 ) -> Result<Json<CartResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.carts().cancel(id)?)))
+    state.run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.carts().cancel(id)?)))).await
 }
 
 #[cfg(test)]

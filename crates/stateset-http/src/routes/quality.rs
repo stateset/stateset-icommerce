@@ -2,6 +2,7 @@
 
 use crate::dto::{decode_cursor, encode_cursor, finalize_page, overfetch_limit};
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -9,7 +10,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
@@ -237,14 +237,6 @@ fn hold_to_resp(h: &stateset_core::QualityHold) -> QualityHoldResponse {
     }
 }
 
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
 fn parse_opt_id<T: std::str::FromStr>(s: Option<&str>, what: &str) -> Result<Option<T>, HttpError> {
     s.map(|v| parse_id(v, what)).transpose()
 }
@@ -275,27 +267,33 @@ pub(crate) async fn create_inspection(
     Json(req): Json<CreateInspectionRequest>,
 ) -> Result<(StatusCode, Json<InspectionResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let mut items = Vec::with_capacity(req.items.len());
-    for i in req.items {
-        items.push(stateset_core::CreateInspectionItem {
-            sku: i.sku,
-            lot_number: i.lot_number,
-            serial_number: i.serial_number,
-            quantity_to_inspect: parse_decimal(&i.quantity_to_inspect, "quantity_to_inspect")?,
-        });
-    }
-    let input = stateset_core::CreateInspection {
-        inspection_type: parse_id(&req.inspection_type, "inspection_type")?,
-        reference_type: req.reference_type,
-        reference_id: parse_id::<Uuid>(&req.reference_id, "reference_id")?,
-        inspector_id: req.inspector_id,
-        scheduled_at: None,
-        notes: req.notes,
-        items,
-    };
-    let inspection = c.quality().create_inspection(input)?;
-    Ok((StatusCode::CREATED, Json(inspection_to_resp(&inspection))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let mut items = Vec::with_capacity(req.items.len());
+            for i in req.items {
+                items.push(stateset_core::CreateInspectionItem {
+                    sku: i.sku,
+                    lot_number: i.lot_number,
+                    serial_number: i.serial_number,
+                    quantity_to_inspect: parse_decimal(
+                        &i.quantity_to_inspect,
+                        "quantity_to_inspect",
+                    )?,
+                });
+            }
+            let input = stateset_core::CreateInspection {
+                inspection_type: parse_id(&req.inspection_type, "inspection_type")?,
+                reference_type: req.reference_type,
+                reference_id: parse_id::<Uuid>(&req.reference_id, "reference_id")?,
+                inspector_id: req.inspector_id,
+                scheduled_at: None,
+                notes: req.notes,
+                items,
+            };
+            let inspection = c.quality().create_inspection(input)?;
+            Ok((StatusCode::CREATED, Json(inspection_to_resp(&inspection))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "quality_list_inspections", path = "/api/v1/quality/inspections", tag = "quality",
@@ -308,48 +306,58 @@ pub(crate) async fn list_inspections(
     Query(params): Query<InspectionFilterParams>,
 ) -> Result<Json<InspectionListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let inspection_type = match params.inspection_type.as_deref() {
-        Some(s) => Some(parse_id(s, "inspection_type")?),
-        None => None,
-    };
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let base = stateset_core::InspectionFilter {
-        inspection_type,
-        status,
-        reference_type: params.reference_type.clone(),
-        ..Default::default()
-    };
-    let after_cursor = match &params.after {
-        Some(cursor) => Some(
-            decode_cursor(cursor).ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
-        ),
-        None => None,
-    };
-    let total = c.quality().count_inspections(base.clone())?;
-    let limit = params.limit.unwrap_or(50).clamp(1, 200);
-    let filter = stateset_core::InspectionFilter {
-        limit: Some(overfetch_limit(limit)),
-        offset: if after_cursor.is_some() { Some(0) } else { Some(params.offset.unwrap_or(0)) },
-        after_cursor,
-        ..base
-    };
-    let mut inspections = c.quality().list_inspections(filter)?;
-    let has_more = finalize_page(&mut inspections, limit);
-    let next_cursor = if has_more {
-        inspections.last().map(|i| encode_cursor(&i.created_at.to_rfc3339(), &i.id.to_string()))
-    } else {
-        None
-    };
-    Ok(Json(InspectionListResponse {
-        inspections: inspections.iter().map(inspection_to_resp).collect(),
-        total,
-        next_cursor,
-        has_more,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let inspection_type = match params.inspection_type.as_deref() {
+                Some(s) => Some(parse_id(s, "inspection_type")?),
+                None => None,
+            };
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let base = stateset_core::InspectionFilter {
+                inspection_type,
+                status,
+                reference_type: params.reference_type.clone(),
+                ..Default::default()
+            };
+            let after_cursor = match &params.after {
+                Some(cursor) => Some(
+                    decode_cursor(cursor)
+                        .ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+                ),
+                None => None,
+            };
+            let total = c.quality().count_inspections(base.clone())?;
+            let limit = params.limit.unwrap_or(50).clamp(1, 200);
+            let filter = stateset_core::InspectionFilter {
+                limit: Some(overfetch_limit(limit)),
+                offset: if after_cursor.is_some() {
+                    Some(0)
+                } else {
+                    Some(params.offset.unwrap_or(0))
+                },
+                after_cursor,
+                ..base
+            };
+            let mut inspections = c.quality().list_inspections(filter)?;
+            let has_more = finalize_page(&mut inspections, limit);
+            let next_cursor = if has_more {
+                inspections
+                    .last()
+                    .map(|i| encode_cursor(&i.created_at.to_rfc3339(), &i.id.to_string()))
+            } else {
+                None
+            };
+            Ok(Json(InspectionListResponse {
+                inspections: inspections.iter().map(inspection_to_resp).collect(),
+                total,
+                next_cursor,
+                has_more,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "quality_get_inspection", path = "/api/v1/quality/inspections/{id}", tag = "quality",
@@ -362,12 +370,15 @@ pub(crate) async fn get_inspection(
     Path(id): Path<Uuid>,
 ) -> Result<Json<InspectionResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let inspection = c
-        .quality()
-        .get_inspection(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Inspection {id} not found")))?;
-    Ok(Json(inspection_to_resp(&inspection)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let inspection = c
+                .quality()
+                .get_inspection(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Inspection {id} not found")))?;
+            Ok(Json(inspection_to_resp(&inspection)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "quality_start_inspection", path = "/api/v1/quality/inspections/{id}/start", tag = "quality",
@@ -380,8 +391,11 @@ pub(crate) async fn start_inspection(
     Path(id): Path<Uuid>,
 ) -> Result<Json<InspectionResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(inspection_to_resp(&c.quality().start_inspection(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(inspection_to_resp(&c.quality().start_inspection(id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "quality_record_inspection_result", path = "/api/v1/quality/inspections/{id}/results", tag = "quality",
@@ -396,22 +410,25 @@ pub(crate) async fn record_inspection_result(
     Json(req): Json<RecordInspectionResultRequest>,
 ) -> Result<Json<InspectionResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::RecordInspectionResult {
-        item_id: parse_id::<Uuid>(&req.item_id, "item_id")?,
-        quantity_passed: parse_decimal(&req.quantity_passed, "quantity_passed")?,
-        quantity_failed: parse_decimal(&req.quantity_failed, "quantity_failed")?,
-        result: parse_id(&req.result, "result")?,
-        defect_codes: req.defect_codes,
-        measurements: None,
-        notes: req.notes,
-    };
-    c.quality().record_inspection_result(input)?;
-    let inspection = c
-        .quality()
-        .get_inspection(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Inspection {id} not found")))?;
-    Ok(Json(inspection_to_resp(&inspection)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::RecordInspectionResult {
+                item_id: parse_id::<Uuid>(&req.item_id, "item_id")?,
+                quantity_passed: parse_decimal(&req.quantity_passed, "quantity_passed")?,
+                quantity_failed: parse_decimal(&req.quantity_failed, "quantity_failed")?,
+                result: parse_id(&req.result, "result")?,
+                defect_codes: req.defect_codes,
+                measurements: None,
+                notes: req.notes,
+            };
+            c.quality().record_inspection_result(input)?;
+            let inspection = c
+                .quality()
+                .get_inspection(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Inspection {id} not found")))?;
+            Ok(Json(inspection_to_resp(&inspection)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "quality_complete_inspection", path = "/api/v1/quality/inspections/{id}/complete", tag = "quality",
@@ -424,8 +441,11 @@ pub(crate) async fn complete_inspection(
     Path(id): Path<Uuid>,
 ) -> Result<Json<InspectionResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(inspection_to_resp(&c.quality().complete_inspection(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(inspection_to_resp(&c.quality().complete_inspection(id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "quality_create_ncr", path = "/api/v1/quality/ncrs", tag = "quality",
@@ -438,20 +458,23 @@ pub(crate) async fn create_ncr(
     Json(req): Json<CreateNcrRequest>,
 ) -> Result<(StatusCode, Json<NcrResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::CreateNonConformance {
-        inspection_id: parse_opt_id::<Uuid>(req.inspection_id.as_deref(), "inspection_id")?,
-        source: parse_id(&req.source, "source")?,
-        severity: parse_id(&req.severity, "severity")?,
-        sku: req.sku,
-        lot_number: req.lot_number,
-        serial_number: req.serial_number,
-        quantity_affected: parse_decimal(&req.quantity_affected, "quantity_affected")?,
-        description: req.description,
-        assigned_to: req.assigned_to,
-    };
-    let ncr = c.quality().create_ncr(input)?;
-    Ok((StatusCode::CREATED, Json(ncr_to_resp(&ncr))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::CreateNonConformance {
+                inspection_id: parse_opt_id::<Uuid>(req.inspection_id.as_deref(), "inspection_id")?,
+                source: parse_id(&req.source, "source")?,
+                severity: parse_id(&req.severity, "severity")?,
+                sku: req.sku,
+                lot_number: req.lot_number,
+                serial_number: req.serial_number,
+                quantity_affected: parse_decimal(&req.quantity_affected, "quantity_affected")?,
+                description: req.description,
+                assigned_to: req.assigned_to,
+            };
+            let ncr = c.quality().create_ncr(input)?;
+            Ok((StatusCode::CREATED, Json(ncr_to_resp(&ncr))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "quality_list_ncrs", path = "/api/v1/quality/ncrs", tag = "quality",
@@ -464,34 +487,37 @@ pub(crate) async fn list_ncrs(
     Query(params): Query<NcrFilterParams>,
 ) -> Result<Json<NcrListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let source = match params.source.as_deref() {
-        Some(s) => Some(parse_id(s, "source")?),
-        None => None,
-    };
-    let severity = match params.severity.as_deref() {
-        Some(s) => Some(parse_id(s, "severity")?),
-        None => None,
-    };
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let base = stateset_core::NonConformanceFilter {
-        source,
-        severity,
-        status,
-        sku: params.sku.clone(),
-        ..Default::default()
-    };
-    let total = c.quality().count_ncrs(base.clone())?;
-    let filter = stateset_core::NonConformanceFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    };
-    let ncrs = c.quality().list_ncrs(filter)?;
-    Ok(Json(NcrListResponse { ncrs: ncrs.iter().map(ncr_to_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let source = match params.source.as_deref() {
+                Some(s) => Some(parse_id(s, "source")?),
+                None => None,
+            };
+            let severity = match params.severity.as_deref() {
+                Some(s) => Some(parse_id(s, "severity")?),
+                None => None,
+            };
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let base = stateset_core::NonConformanceFilter {
+                source,
+                severity,
+                status,
+                sku: params.sku.clone(),
+                ..Default::default()
+            };
+            let total = c.quality().count_ncrs(base.clone())?;
+            let filter = stateset_core::NonConformanceFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            };
+            let ncrs = c.quality().list_ncrs(filter)?;
+            Ok(Json(NcrListResponse { ncrs: ncrs.iter().map(ncr_to_resp).collect(), total }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "quality_get_ncr", path = "/api/v1/quality/ncrs/{id}", tag = "quality",
@@ -504,12 +530,15 @@ pub(crate) async fn get_ncr(
     Path(id): Path<Uuid>,
 ) -> Result<Json<NcrResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let ncr = c
-        .quality()
-        .get_ncr(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("NCR {id} not found")))?;
-    Ok(Json(ncr_to_resp(&ncr)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let ncr = c
+                .quality()
+                .get_ncr(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("NCR {id} not found")))?;
+            Ok(Json(ncr_to_resp(&ncr)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "quality_disposition_ncr", path = "/api/v1/quality/ncrs/{id}/disposition", tag = "quality",
@@ -524,20 +553,23 @@ pub(crate) async fn disposition_ncr(
     Json(req): Json<DispositionNcrRequest>,
 ) -> Result<Json<NcrResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let disposition_quantity = match req.disposition_quantity.as_deref() {
-        Some(s) => Some(parse_decimal(s, "disposition_quantity")?),
-        None => None,
-    };
-    let input = stateset_core::UpdateNonConformance {
-        disposition: Some(parse_id(&req.disposition, "disposition")?),
-        disposition_quantity,
-        root_cause: req.root_cause,
-        corrective_action: req.corrective_action,
-        preventive_action: req.preventive_action,
-        ..Default::default()
-    };
-    Ok(Json(ncr_to_resp(&c.quality().update_ncr(id, input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let disposition_quantity = match req.disposition_quantity.as_deref() {
+                Some(s) => Some(parse_decimal(s, "disposition_quantity")?),
+                None => None,
+            };
+            let input = stateset_core::UpdateNonConformance {
+                disposition: Some(parse_id(&req.disposition, "disposition")?),
+                disposition_quantity,
+                root_cause: req.root_cause,
+                corrective_action: req.corrective_action,
+                preventive_action: req.preventive_action,
+                ..Default::default()
+            };
+            Ok(Json(ncr_to_resp(&c.quality().update_ncr(id, input)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "quality_close_ncr", path = "/api/v1/quality/ncrs/{id}/close", tag = "quality",
@@ -550,8 +582,9 @@ pub(crate) async fn close_ncr(
     Path(id): Path<Uuid>,
 ) -> Result<Json<NcrResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(ncr_to_resp(&c.quality().close_ncr(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| Ok(Json(ncr_to_resp(&c.quality().close_ncr(id)?))))
+        .await
 }
 
 #[utoipa::path(post, operation_id = "quality_create_hold", path = "/api/v1/quality/holds", tag = "quality",
@@ -564,22 +597,25 @@ pub(crate) async fn create_hold(
     Json(req): Json<CreateQualityHoldRequest>,
 ) -> Result<(StatusCode, Json<QualityHoldResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::CreateQualityHold {
-        sku: req.sku,
-        lot_number: req.lot_number,
-        serial_number: req.serial_number,
-        location_id: None,
-        quantity: parse_decimal(&req.quantity, "quantity")?,
-        reason: req.reason,
-        hold_type: parse_id(&req.hold_type, "hold_type")?,
-        ncr_id: parse_opt_id::<Uuid>(req.ncr_id.as_deref(), "ncr_id")?,
-        inspection_id: parse_opt_id::<Uuid>(req.inspection_id.as_deref(), "inspection_id")?,
-        placed_by: req.placed_by,
-        expires_at: None,
-    };
-    let hold = c.quality().create_hold(input)?;
-    Ok((StatusCode::CREATED, Json(hold_to_resp(&hold))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::CreateQualityHold {
+                sku: req.sku,
+                lot_number: req.lot_number,
+                serial_number: req.serial_number,
+                location_id: None,
+                quantity: parse_decimal(&req.quantity, "quantity")?,
+                reason: req.reason,
+                hold_type: parse_id(&req.hold_type, "hold_type")?,
+                ncr_id: parse_opt_id::<Uuid>(req.ncr_id.as_deref(), "ncr_id")?,
+                inspection_id: parse_opt_id::<Uuid>(req.inspection_id.as_deref(), "inspection_id")?,
+                placed_by: req.placed_by,
+                expires_at: None,
+            };
+            let hold = c.quality().create_hold(input)?;
+            Ok((StatusCode::CREATED, Json(hold_to_resp(&hold))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "quality_list_holds", path = "/api/v1/quality/holds", tag = "quality",
@@ -592,26 +628,32 @@ pub(crate) async fn list_holds(
     Query(params): Query<QualityHoldFilterParams>,
 ) -> Result<Json<QualityHoldListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let hold_type = match params.hold_type.as_deref() {
-        Some(s) => Some(parse_id(s, "hold_type")?),
-        None => None,
-    };
-    let base = stateset_core::QualityHoldFilter {
-        sku: params.sku.clone(),
-        lot_number: params.lot_number.clone(),
-        hold_type,
-        active_only: params.active_only,
-        ..Default::default()
-    };
-    let total = c.quality().list_holds(base.clone())?.len();
-    let filter = stateset_core::QualityHoldFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    };
-    let holds = c.quality().list_holds(filter)?;
-    Ok(Json(QualityHoldListResponse { holds: holds.iter().map(hold_to_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let hold_type = match params.hold_type.as_deref() {
+                Some(s) => Some(parse_id(s, "hold_type")?),
+                None => None,
+            };
+            let base = stateset_core::QualityHoldFilter {
+                sku: params.sku.clone(),
+                lot_number: params.lot_number.clone(),
+                hold_type,
+                active_only: params.active_only,
+                ..Default::default()
+            };
+            let total = c.quality().list_holds(base.clone())?.len();
+            let filter = stateset_core::QualityHoldFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            };
+            let holds = c.quality().list_holds(filter)?;
+            Ok(Json(QualityHoldListResponse {
+                holds: holds.iter().map(hold_to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "quality_get_hold", path = "/api/v1/quality/holds/{id}", tag = "quality",
@@ -624,12 +666,15 @@ pub(crate) async fn get_hold(
     Path(id): Path<Uuid>,
 ) -> Result<Json<QualityHoldResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let hold = c
-        .quality()
-        .get_hold(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Quality hold {id} not found")))?;
-    Ok(Json(hold_to_resp(&hold)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let hold = c
+                .quality()
+                .get_hold(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Quality hold {id} not found")))?;
+            Ok(Json(hold_to_resp(&hold)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "quality_release_hold", path = "/api/v1/quality/holds/{id}/release", tag = "quality",
@@ -644,12 +689,15 @@ pub(crate) async fn release_hold(
     Json(req): Json<ReleaseQualityHoldRequest>,
 ) -> Result<Json<QualityHoldResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::ReleaseQualityHold {
-        released_by: req.released_by,
-        release_notes: req.release_notes,
-    };
-    Ok(Json(hold_to_resp(&c.quality().release_hold(id, input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::ReleaseQualityHold {
+                released_by: req.released_by,
+                release_notes: req.release_notes,
+            };
+            Ok(Json(hold_to_resp(&c.quality().release_hold(id, input)?)))
+        })
+        .await
 }
 
 #[cfg(test)]

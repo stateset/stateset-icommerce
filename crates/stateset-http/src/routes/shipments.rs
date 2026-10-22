@@ -49,12 +49,15 @@ pub(crate) async fn get_shipment(
     Path(id): Path<ShipmentId>,
 ) -> Result<Json<ShipmentResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let shipment = commerce
-        .shipments()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Shipment {id} not found")))?;
-    Ok(Json(ShipmentResponse::from(shipment)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let shipment = commerce
+                .shipments()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Shipment {id} not found")))?;
+            Ok(Json(ShipmentResponse::from(shipment)))
+        })
+        .await
 }
 
 /// `GET /api/v1/shipments`
@@ -75,59 +78,63 @@ pub(crate) async fn list_shipments(
     Query(params): Query<ShipmentFilterParams>,
 ) -> Result<Json<ShipmentListResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
 
-    let limit = params.resolved_limit();
-    let offset = params.resolved_offset();
+            let limit = params.resolved_limit();
+            let offset = params.resolved_offset();
 
-    // Parse filter parameters
-    let order_id = params
-        .order_id
-        .map(|s| s.parse::<OrderId>())
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid order_id: {e}")))?;
-    let status = params
-        .status
-        .as_deref()
-        .map(ShipmentStatus::from_str)
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}. Valid values: pending, processing, ready_to_ship, shipped, in_transit, out_for_delivery, delivered, failed, returned, cancelled, on_hold")))?;
-    let carrier =
-        params.carrier.as_deref().map(ShippingCarrier::from_str).transpose().map_err(|e| {
-            HttpError::BadRequest(format!(
-                "Invalid carrier: {e}. Valid values: fedex, ups, usps, dhl, other"
-            ))
-        })?;
+            // Parse filter parameters
+            let order_id = params
+                .order_id
+                .map(|s| s.parse::<OrderId>())
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid order_id: {e}")))?;
+            let status = params
+                .status
+                .as_deref()
+                .map(ShipmentStatus::from_str)
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}. Valid values: pending, processing, ready_to_ship, shipped, in_transit, out_for_delivery, delivered, failed, returned, cancelled, on_hold")))?;
+            let carrier =
+                params.carrier.as_deref().map(ShippingCarrier::from_str).transpose().map_err(|e| {
+                    HttpError::BadRequest(format!(
+                        "Invalid carrier: {e}. Valid values: fedex, ups, usps, dhl, other"
+                    ))
+                })?;
 
-    // Count total matching records (without pagination)
-    let count_filter = ShipmentFilter {
-        order_id,
-        status,
-        carrier,
-        tracking_number: params.tracking_number.clone(),
-        limit: None,
-        offset: None,
-    };
-    let total = commerce.shipments().list(count_filter)?.len();
+            // Count total matching records (without pagination)
+            let count_filter = ShipmentFilter {
+                order_id,
+                status,
+                carrier,
+                tracking_number: params.tracking_number.clone(),
+                limit: None,
+                offset: None,
+            };
+            let total = usize::try_from(commerce.shipments().count(count_filter)?)
+                .unwrap_or(usize::MAX);
 
-    // Fetch the requested page
-    let filter = ShipmentFilter {
-        order_id,
-        status,
-        carrier,
-        tracking_number: params.tracking_number,
-        limit: Some(overfetch_limit(limit)),
-        offset: Some(offset),
-    };
-    let mut shipments = commerce.shipments().list(filter)?;
-    let has_more = finalize_page(&mut shipments, limit);
-    Ok(Json(ShipmentListResponse {
-        shipments: shipments.into_iter().map(ShipmentResponse::from).collect(),
-        total,
-        limit,
-        offset,
-        has_more,
-    }))
+            // Fetch the requested page
+            let filter = ShipmentFilter {
+                order_id,
+                status,
+                carrier,
+                tracking_number: params.tracking_number,
+                limit: Some(overfetch_limit(limit)),
+                offset: Some(offset),
+            };
+            let mut shipments = commerce.shipments().list(filter)?;
+            let has_more = finalize_page(&mut shipments, limit);
+            Ok(Json(ShipmentListResponse {
+                shipments: shipments.into_iter().map(ShipmentResponse::from).collect(),
+                total,
+                limit,
+                offset,
+                has_more,
+            }))
+        })
+        .await
 }
 
 /// `POST /api/v1/shipments`
@@ -155,37 +162,37 @@ pub(crate) async fn create_shipment(
     Json(req): Json<CreateShipmentRequest>,
 ) -> Result<(StatusCode, Json<ShipmentResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let carrier =
+                req.carrier.as_deref().map(ShippingCarrier::from_str).transpose().map_err(|e| {
+                    HttpError::BadRequest(format!(
+                        "Invalid carrier: {e}. Valid values: fedex, ups, usps, dhl, other"
+                    ))
+                })?;
 
-    let carrier =
-        req.carrier.as_deref().map(ShippingCarrier::from_str).transpose().map_err(|e| {
-            HttpError::BadRequest(format!(
-                "Invalid carrier: {e}. Valid values: fedex, ups, usps, dhl, other"
-            ))
-        })?;
+            let shipping_method =
+                req.shipping_method.as_deref().map(ShippingMethod::from_str).transpose().map_err(
+                    |error| HttpError::BadRequest(format!("Invalid shipping_method: {error}")),
+                )?;
 
-    let shipping_method = req
-        .shipping_method
-        .as_deref()
-        .map(ShippingMethod::from_str)
-        .transpose()
-        .map_err(|error| HttpError::BadRequest(format!("Invalid shipping_method: {error}")))?;
-
-    let input = CreateShipment {
-        order_id: req.order_id,
-        carrier,
-        shipping_method,
-        tracking_number: req.tracking_number,
-        recipient_name: req.recipient_name.unwrap_or_default(),
-        recipient_email: req.recipient_email,
-        recipient_phone: req.recipient_phone,
-        shipping_address: req.shipping_address.unwrap_or_default(),
-        notes: req.notes,
-        items: req.items.map(|items| items.into_iter().map(Into::into).collect()),
-        ..Default::default()
-    };
-    let shipment = commerce.shipments().create(input)?;
-    Ok((StatusCode::CREATED, Json(ShipmentResponse::from(shipment))))
+            let input = CreateShipment {
+                order_id: req.order_id,
+                carrier,
+                shipping_method,
+                tracking_number: req.tracking_number,
+                recipient_name: req.recipient_name.unwrap_or_default(),
+                recipient_email: req.recipient_email,
+                recipient_phone: req.recipient_phone,
+                shipping_address: req.shipping_address.unwrap_or_default(),
+                notes: req.notes,
+                items: req.items.map(|items| items.into_iter().map(Into::into).collect()),
+                ..Default::default()
+            };
+            let shipment = commerce.shipments().create(input)?;
+            Ok((StatusCode::CREATED, Json(ShipmentResponse::from(shipment))))
+        })
+        .await
 }
 
 /// Optional parent version for packing edits. Checked inside the native transaction.
@@ -215,13 +222,16 @@ pub(crate) async fn add_shipment_item(
     Json(req): Json<CreateShipmentItemRequest>,
 ) -> Result<(StatusCode, Json<ShipmentItemResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let item = commerce.shipments().add_item_with_version(
-        id,
-        req.into(),
-        precondition.expected_version,
-    )?;
-    Ok((StatusCode::CREATED, Json(item.into())))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let item = commerce.shipments().add_item_with_version(
+                id,
+                req.into(),
+                precondition.expected_version,
+            )?;
+            Ok((StatusCode::CREATED, Json(item.into())))
+        })
+        .await
 }
 
 /// Remove a manifest item belonging to this shipment. Requires delete permission.
@@ -241,17 +251,24 @@ pub(crate) async fn remove_shipment_item(
     Query(precondition): Query<PackingPrecondition>,
 ) -> Result<StatusCode, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let shipment = commerce
-        .shipments()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Shipment {id} not found")))?;
-    // Parent linkage is immutable. Never let an item ID bypass the path's shipment scope.
-    if !shipment.items.iter().any(|item| item.id == item_id) {
-        return Err(HttpError::NotFound(format!("Item {item_id} not found in shipment {id}")));
-    }
-    commerce.shipments().remove_item_with_version(item_id, precondition.expected_version)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let shipment = commerce
+                .shipments()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Shipment {id} not found")))?;
+            // Parent linkage is immutable. Never let an item ID bypass the path's shipment scope.
+            if !shipment.items.iter().any(|item| item.id == item_id) {
+                return Err(HttpError::NotFound(format!(
+                    "Item {item_id} not found in shipment {id}"
+                )));
+            }
+            commerce
+                .shipments()
+                .remove_item_with_version(item_id, precondition.expected_version)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 /// Patch one native shipment without skipping lifecycle guards.
@@ -270,48 +287,50 @@ pub(crate) async fn update_shipment(
     Json(req): Json<UpdateShipmentRequest>,
 ) -> Result<Json<ShipmentResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let status = req
-        .status
-        .as_deref()
-        .map(ShipmentStatus::from_str)
-        .transpose()
-        .map_err(|error| HttpError::ValidationError(format!("Invalid status: {error}")))?;
-    if status == Some(ShipmentStatus::Cancelled) {
-        return Err(HttpError::ValidationError("Use the shipment cancellation endpoint".into()));
-    }
-    let carrier = req
-        .carrier
-        .as_deref()
-        .map(ShippingCarrier::from_str)
-        .transpose()
-        .map_err(|error| HttpError::ValidationError(format!("Invalid carrier: {error}")))?;
-    let decimal = |name: &str,
-                   value: Option<String>|
-     -> Result<Option<rust_decimal::Decimal>, HttpError> {
-        value
-            .map(|value| {
-                rust_decimal::Decimal::from_str_exact(&value)
-                    .map_err(|error| HttpError::ValidationError(format!("Invalid {name}: {error}")))
-            })
-            .transpose()
-    };
-    let input = UpdateShipment {
-        expected_version: req.expected_version,
-        status,
-        carrier,
-        tracking_number: req.tracking_number,
-        recipient_name: req.recipient_name,
-        recipient_email: req.recipient_email,
-        recipient_phone: req.recipient_phone,
-        shipping_address: req.shipping_address,
-        weight_kg: decimal("weight_kg", req.weight_kg)?,
-        dimensions: req.dimensions,
-        shipping_cost: decimal("shipping_cost", req.shipping_cost)?,
-        estimated_delivery: req.estimated_delivery,
-        notes: req.notes,
-    };
-    Ok(Json(commerce.shipments().update(id, input)?.into()))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let status =
+                req.status.as_deref().map(ShipmentStatus::from_str).transpose().map_err(
+                    |error| HttpError::ValidationError(format!("Invalid status: {error}")),
+                )?;
+            if status == Some(ShipmentStatus::Cancelled) {
+                return Err(HttpError::ValidationError(
+                    "Use the shipment cancellation endpoint".into(),
+                ));
+            }
+            let carrier =
+                req.carrier.as_deref().map(ShippingCarrier::from_str).transpose().map_err(
+                    |error| HttpError::ValidationError(format!("Invalid carrier: {error}")),
+                )?;
+            let decimal = |name: &str,
+                           value: Option<String>|
+             -> Result<Option<rust_decimal::Decimal>, HttpError> {
+                value
+                    .map(|value| {
+                        rust_decimal::Decimal::from_str_exact(&value).map_err(|error| {
+                            HttpError::ValidationError(format!("Invalid {name}: {error}"))
+                        })
+                    })
+                    .transpose()
+            };
+            let input = UpdateShipment {
+                expected_version: req.expected_version,
+                status,
+                carrier,
+                tracking_number: req.tracking_number,
+                recipient_name: req.recipient_name,
+                recipient_email: req.recipient_email,
+                recipient_phone: req.recipient_phone,
+                shipping_address: req.shipping_address,
+                weight_kg: decimal("weight_kg", req.weight_kg)?,
+                dimensions: req.dimensions,
+                shipping_cost: decimal("shipping_cost", req.shipping_cost)?,
+                estimated_delivery: req.estimated_delivery,
+                notes: req.notes,
+            };
+            Ok(Json(commerce.shipments().update(id, input)?.into()))
+        })
+        .await
 }
 
 /// Cancel before carrier handoff, retaining shipment items and tracking history.
@@ -330,20 +349,23 @@ pub(crate) async fn cancel_shipment(
     Json(req): Json<CancelShipmentRequest>,
 ) -> Result<Json<ShipmentResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    Ok(Json(
-        commerce
-            .shipments()
-            .update(
-                id,
-                UpdateShipment {
-                    status: Some(ShipmentStatus::Cancelled),
-                    expected_version: req.expected_version,
-                    ..Default::default()
-                },
-            )?
-            .into(),
-    ))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            Ok(Json(
+                commerce
+                    .shipments()
+                    .update(
+                        id,
+                        UpdateShipment {
+                            status: Some(ShipmentStatus::Cancelled),
+                            expected_version: req.expected_version,
+                            ..Default::default()
+                        },
+                    )?
+                    .into(),
+            ))
+        })
+        .await
 }
 
 /// `POST /api/v1/shipments/:id/deliver`
@@ -364,9 +386,12 @@ pub(crate) async fn deliver_shipment(
     Path(id): Path<ShipmentId>,
 ) -> Result<Json<ShipmentResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let shipment = commerce.shipments().mark_delivered(id)?;
-    Ok(Json(ShipmentResponse::from(shipment)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let shipment = commerce.shipments().mark_delivered(id)?;
+            Ok(Json(ShipmentResponse::from(shipment)))
+        })
+        .await
 }
 
 #[cfg(test)]

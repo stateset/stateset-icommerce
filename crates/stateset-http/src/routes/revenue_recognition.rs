@@ -2,6 +2,7 @@
 
 use crate::dto::{decode_cursor, encode_cursor, finalize_page, overfetch_limit};
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -10,7 +11,6 @@ use axum::{
     routing::{get, post},
 };
 use chrono::NaiveDate;
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_core::RecognitionMethod;
 use utoipa::{IntoParams, ToSchema};
@@ -181,14 +181,6 @@ fn schedule_resp(s: &stateset_core::RevenueSchedule) -> RevenueScheduleResponse 
     }
 }
 
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
 fn parse_date(s: &str, what: &str) -> Result<NaiveDate, HttpError> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
@@ -233,40 +225,43 @@ pub(crate) async fn create_contract(
     Json(req): Json<CreateRevenueContractRequest>,
 ) -> Result<(StatusCode, Json<RevenueContractResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let order_id = match req.order_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "order_id")?),
-        None => None,
-    };
-    let invoice_id = match req.invoice_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "invoice_id")?),
-        None => None,
-    };
-    let mut obligations = Vec::with_capacity(req.obligations.len());
-    for ob in &req.obligations {
-        let standalone_selling_price = match ob.standalone_selling_price.as_deref() {
-            Some(s) => Some(parse_decimal(s, "standalone_selling_price")?),
-            None => None,
-        };
-        obligations.push(stateset_core::CreatePerformanceObligation {
-            description: ob.description.clone(),
-            standalone_selling_price,
-            allocated_amount: parse_decimal(&ob.allocated_amount, "allocated_amount")?,
-            recognition_method: parse_method(ob)?,
-        });
-    }
-    let input = stateset_core::CreateRevenueContract {
-        contract_number: req.contract_number,
-        customer_id: parse_id::<Uuid>(&req.customer_id, "customer_id")?,
-        order_id,
-        invoice_id,
-        transaction_price: parse_decimal(&req.transaction_price, "transaction_price")?,
-        currency: None,
-        effective_date: parse_date(&req.effective_date, "effective_date")?,
-        obligations,
-    };
-    let contract = c.revenue_recognition().create_contract(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&contract))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let order_id = match req.order_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "order_id")?),
+                None => None,
+            };
+            let invoice_id = match req.invoice_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "invoice_id")?),
+                None => None,
+            };
+            let mut obligations = Vec::with_capacity(req.obligations.len());
+            for ob in &req.obligations {
+                let standalone_selling_price = match ob.standalone_selling_price.as_deref() {
+                    Some(s) => Some(parse_decimal(s, "standalone_selling_price")?),
+                    None => None,
+                };
+                obligations.push(stateset_core::CreatePerformanceObligation {
+                    description: ob.description.clone(),
+                    standalone_selling_price,
+                    allocated_amount: parse_decimal(&ob.allocated_amount, "allocated_amount")?,
+                    recognition_method: parse_method(ob)?,
+                });
+            }
+            let input = stateset_core::CreateRevenueContract {
+                contract_number: req.contract_number,
+                customer_id: parse_id::<Uuid>(&req.customer_id, "customer_id")?,
+                order_id,
+                invoice_id,
+                transaction_price: parse_decimal(&req.transaction_price, "transaction_price")?,
+                currency: None,
+                effective_date: parse_date(&req.effective_date, "effective_date")?,
+                obligations,
+            };
+            let contract = c.revenue_recognition().create_contract(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&contract))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "revenue_recognition_list_contracts", path = "/api/v1/revenue-contracts", tag = "revenue_recognition",
@@ -279,51 +274,61 @@ pub(crate) async fn list_contracts(
     Query(params): Query<RevenueContractFilterParams>,
 ) -> Result<Json<RevenueContractListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let customer_id = match params.customer_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "customer_id")?),
-        None => None,
-    };
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let after_cursor = match &params.after {
-        Some(cursor) => Some(
-            decode_cursor(cursor).ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
-        ),
-        None => None,
-    };
-    let total = c
-        .revenue_recognition()
-        .list_contracts(stateset_core::RevenueContractFilter {
-            customer_id,
-            status,
-            ..Default::default()
-        })?
-        .len();
-    let limit = params.limit.unwrap_or(50).clamp(1, 200);
-    let filter = stateset_core::RevenueContractFilter {
-        customer_id,
-        status,
-        limit: Some(overfetch_limit(limit)),
-        offset: if after_cursor.is_some() { Some(0) } else { Some(params.offset.unwrap_or(0)) },
-        after_cursor,
-        ..Default::default()
-    };
-    let mut contracts = c.revenue_recognition().list_contracts(filter)?;
-    let has_more = finalize_page(&mut contracts, limit);
-    let next_cursor = if has_more {
-        contracts.last().map(|ct| encode_cursor(&ct.created_at.to_rfc3339(), &ct.id.to_string()))
-    } else {
-        None
-    };
-    Ok(Json(RevenueContractListResponse {
-        revenue_contracts: contracts.iter().map(to_resp).collect(),
-        total,
-        next_cursor,
-        has_more,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let customer_id = match params.customer_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "customer_id")?),
+                None => None,
+            };
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let after_cursor = match &params.after {
+                Some(cursor) => Some(
+                    decode_cursor(cursor)
+                        .ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+                ),
+                None => None,
+            };
+            let total = c
+                .revenue_recognition()
+                .list_contracts(stateset_core::RevenueContractFilter {
+                    customer_id,
+                    status,
+                    ..Default::default()
+                })?
+                .len();
+            let limit = params.limit.unwrap_or(50).clamp(1, 200);
+            let filter = stateset_core::RevenueContractFilter {
+                customer_id,
+                status,
+                limit: Some(overfetch_limit(limit)),
+                offset: if after_cursor.is_some() {
+                    Some(0)
+                } else {
+                    Some(params.offset.unwrap_or(0))
+                },
+                after_cursor,
+                ..Default::default()
+            };
+            let mut contracts = c.revenue_recognition().list_contracts(filter)?;
+            let has_more = finalize_page(&mut contracts, limit);
+            let next_cursor = if has_more {
+                contracts
+                    .last()
+                    .map(|ct| encode_cursor(&ct.created_at.to_rfc3339(), &ct.id.to_string()))
+            } else {
+                None
+            };
+            Ok(Json(RevenueContractListResponse {
+                revenue_contracts: contracts.iter().map(to_resp).collect(),
+                total,
+                next_cursor,
+                has_more,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "revenue_recognition_get_contract", path = "/api/v1/revenue-contracts/{id}", tag = "revenue_recognition",
@@ -336,12 +341,15 @@ pub(crate) async fn get_contract(
     Path(id): Path<Uuid>,
 ) -> Result<Json<RevenueContractResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let contract = c
-        .revenue_recognition()
-        .get_contract(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Revenue contract {id} not found")))?;
-    Ok(Json(to_resp(&contract)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let contract = c
+                .revenue_recognition()
+                .get_contract(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Revenue contract {id} not found")))?;
+            Ok(Json(to_resp(&contract)))
+        })
+        .await
 }
 
 #[utoipa::path(put, operation_id = "revenue_recognition_update_contract", path = "/api/v1/revenue-contracts/{id}", tag = "revenue_recognition",
@@ -356,26 +364,33 @@ pub(crate) async fn update_contract(
     Json(req): Json<UpdateRevenueContractRequest>,
 ) -> Result<Json<RevenueContractResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let status = match req.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let order_id = match req.order_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "order_id")?),
-        None => None,
-    };
-    let invoice_id = match req.invoice_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "invoice_id")?),
-        None => None,
-    };
-    let effective_date = match req.effective_date.as_deref() {
-        Some(s) => Some(parse_date(s, "effective_date")?),
-        None => None,
-    };
-    let input =
-        stateset_core::UpdateRevenueContract { order_id, invoice_id, status, effective_date };
-    Ok(Json(to_resp(&c.revenue_recognition().update_contract(id, input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let status = match req.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let order_id = match req.order_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "order_id")?),
+                None => None,
+            };
+            let invoice_id = match req.invoice_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "invoice_id")?),
+                None => None,
+            };
+            let effective_date = match req.effective_date.as_deref() {
+                Some(s) => Some(parse_date(s, "effective_date")?),
+                None => None,
+            };
+            let input = stateset_core::UpdateRevenueContract {
+                order_id,
+                invoice_id,
+                status,
+                effective_date,
+            };
+            Ok(Json(to_resp(&c.revenue_recognition().update_contract(id, input)?)))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "revenue_recognition_list_obligations", path = "/api/v1/revenue-contracts/{id}/obligations", tag = "revenue_recognition",
@@ -388,9 +403,12 @@ pub(crate) async fn list_obligations(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<PerformanceObligationResponse>>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let obligations = c.revenue_recognition().list_obligations(id)?;
-    Ok(Json(obligations.iter().map(obligation_resp).collect()))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let obligations = c.revenue_recognition().list_obligations(id)?;
+            Ok(Json(obligations.iter().map(obligation_resp).collect()))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "revenue_recognition_generate_schedule", path = "/api/v1/revenue-obligations/{id}/schedule", tag = "revenue_recognition",
@@ -403,8 +421,11 @@ pub(crate) async fn generate_schedule(
     Path(id): Path<Uuid>,
 ) -> Result<Json<RevenueScheduleResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(schedule_resp(&c.revenue_recognition().generate_schedule(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(schedule_resp(&c.revenue_recognition().generate_schedule(id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "revenue_recognition_get_schedule", path = "/api/v1/revenue-obligations/{id}/schedule", tag = "revenue_recognition",
@@ -417,12 +438,14 @@ pub(crate) async fn get_schedule(
     Path(id): Path<Uuid>,
 ) -> Result<Json<RevenueScheduleResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let s = c
-        .revenue_recognition()
-        .get_schedule(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("No schedule generated for obligation {id}")))?;
-    Ok(Json(schedule_resp(&s)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let s = c.revenue_recognition().get_schedule(id)?.ok_or_else(|| {
+                HttpError::NotFound(format!("No schedule generated for obligation {id}"))
+            })?;
+            Ok(Json(schedule_resp(&s)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "revenue_recognition_recognize", path = "/api/v1/revenue-obligations/{id}/recognize", tag = "revenue_recognition",
@@ -437,9 +460,12 @@ pub(crate) async fn recognize(
     Json(req): Json<RecognizeRevenueRequest>,
 ) -> Result<Json<RevenueScheduleResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let through = parse_date(&req.through, "through")?;
-    Ok(Json(schedule_resp(&c.revenue_recognition().recognize_period(id, through)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let through = parse_date(&req.through, "through")?;
+            Ok(Json(schedule_resp(&c.revenue_recognition().recognize_period(id, through)?)))
+        })
+        .await
 }
 
 #[cfg(test)]

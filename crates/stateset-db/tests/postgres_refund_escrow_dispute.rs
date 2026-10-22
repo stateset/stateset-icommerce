@@ -14,7 +14,7 @@ use stateset_db::PostgresDatabase;
 use uuid::Uuid;
 
 fn postgres_url() -> Option<String> {
-    std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 fn policy() -> KernelPolicy {

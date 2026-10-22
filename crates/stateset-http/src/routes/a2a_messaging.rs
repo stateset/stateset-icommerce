@@ -122,19 +122,25 @@ pub(crate) async fn send_message(
     Json(req): Json<SendMessageRequest>,
 ) -> Result<(StatusCode, Json<MessageResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let conversation_id =
-        req.conversation_id.as_deref().map(|s| parse_uuid(s, "conversation_id")).transpose()?;
-    let message = c.x402().send_agent_message(SendA2AAgentMessage {
-        tenant_id: tenant_scope(&headers),
-        conversation_id,
-        from_agent_id: parse_uuid(&req.from_agent_id, "from_agent_id")?,
-        to_agent_id: parse_uuid(&req.to_agent_id, "to_agent_id")?,
-        message_type: req.message_type,
-        payload: req.payload,
-        max_attempts: req.max_attempts,
-    })?;
-    Ok((StatusCode::CREATED, Json(msg_to_response(&message))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let conversation_id = req
+                .conversation_id
+                .as_deref()
+                .map(|s| parse_uuid(s, "conversation_id"))
+                .transpose()?;
+            let message = c.x402().send_agent_message(SendA2AAgentMessage {
+                tenant_id: tenant_scope(&headers),
+                conversation_id,
+                from_agent_id: parse_uuid(&req.from_agent_id, "from_agent_id")?,
+                to_agent_id: parse_uuid(&req.to_agent_id, "to_agent_id")?,
+                message_type: req.message_type,
+                payload: req.payload,
+                max_attempts: req.max_attempts,
+            })?;
+            Ok((StatusCode::CREATED, Json(msg_to_response(&message))))
+        })
+        .await
 }
 
 /// `GET /api/v1/a2a/messages`
@@ -148,37 +154,40 @@ pub(crate) async fn list_messages(
     Query(params): Query<MessageFilterParams>,
 ) -> Result<Json<Vec<MessageResponse>>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let status = match params.status.as_deref() {
-        None => Some(A2AAgentMessageStatus::Pending),
-        Some("all") => None,
-        Some(raw) => Some(
-            raw.parse::<A2AAgentMessageStatus>()
-                .map_err(|_| HttpError::BadRequest(format!("Invalid status: {raw}")))?,
-        ),
-    };
-    let messages = c.x402().list_agent_messages(A2AAgentMessageFilter {
-        tenant_id: tenant_scope(&headers),
-        conversation_id: params
-            .conversation_id
-            .as_deref()
-            .map(|s| parse_uuid(s, "conversation_id"))
-            .transpose()?,
-        to_agent_id: params
-            .to_agent_id
-            .as_deref()
-            .map(|s| parse_uuid(s, "to_agent_id"))
-            .transpose()?,
-        from_agent_id: params
-            .from_agent_id
-            .as_deref()
-            .map(|s| parse_uuid(s, "from_agent_id"))
-            .transpose()?,
-        status,
-        limit: params.limit,
-        offset: params.offset,
-    })?;
-    Ok(Json(messages.iter().map(msg_to_response).collect()))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let status = match params.status.as_deref() {
+                None => Some(A2AAgentMessageStatus::Pending),
+                Some("all") => None,
+                Some(raw) => Some(
+                    raw.parse::<A2AAgentMessageStatus>()
+                        .map_err(|_| HttpError::BadRequest(format!("Invalid status: {raw}")))?,
+                ),
+            };
+            let messages = c.x402().list_agent_messages(A2AAgentMessageFilter {
+                tenant_id: tenant_scope(&headers),
+                conversation_id: params
+                    .conversation_id
+                    .as_deref()
+                    .map(|s| parse_uuid(s, "conversation_id"))
+                    .transpose()?,
+                to_agent_id: params
+                    .to_agent_id
+                    .as_deref()
+                    .map(|s| parse_uuid(s, "to_agent_id"))
+                    .transpose()?,
+                from_agent_id: params
+                    .from_agent_id
+                    .as_deref()
+                    .map(|s| parse_uuid(s, "from_agent_id"))
+                    .transpose()?,
+                status,
+                limit: Some(crate::dto::resolve_limit(params.limit)),
+                offset: params.offset,
+            })?;
+            Ok(Json(messages.iter().map(msg_to_response).collect()))
+        })
+        .await
 }
 
 /// `GET /api/v1/a2a/messages/:id`
@@ -192,12 +201,15 @@ pub(crate) async fn get_message(
     Path(id): Path<Uuid>,
 ) -> Result<Json<MessageResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let message = c
-        .x402()
-        .get_agent_message(&tenant_scope(&headers), id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Message {id} not found")))?;
-    Ok(Json(msg_to_response(&message)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let message = c
+                .x402()
+                .get_agent_message(&tenant_scope(&headers), id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Message {id} not found")))?;
+            Ok(Json(msg_to_response(&message)))
+        })
+        .await
 }
 
 /// `POST /api/v1/a2a/messages/:id/acknowledge`
@@ -211,15 +223,19 @@ pub(crate) async fn acknowledge_message(
     Path(id): Path<Uuid>,
 ) -> Result<Json<MessageResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let message =
-        c.x402().acknowledge_agent_message(&tenant_scope(&headers), id).map_err(|e| match e {
-            stateset_core::CommerceError::NotFound => {
-                HttpError::NotFound(format!("Message {id} not found"))
-            }
-            other => HttpError::from(other),
-        })?;
-    Ok(Json(msg_to_response(&message)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let message = c.x402().acknowledge_agent_message(&tenant_scope(&headers), id).map_err(
+                |e| match e {
+                    stateset_core::CommerceError::NotFound => {
+                        HttpError::NotFound(format!("Message {id} not found"))
+                    }
+                    other => HttpError::from(other),
+                },
+            )?;
+            Ok(Json(msg_to_response(&message)))
+        })
+        .await
 }
 
 /// `POST /api/v1/a2a/messages/:id/fail`
@@ -235,16 +251,20 @@ pub(crate) async fn fail_message(
     Json(req): Json<FailMessageRequest>,
 ) -> Result<Json<MessageResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let message = c.x402().fail_agent_message(&tenant_scope(&headers), id, &req.error).map_err(
-        |e| match e {
-            stateset_core::CommerceError::NotFound => {
-                HttpError::NotFound(format!("Message {id} not found"))
-            }
-            other => HttpError::from(other),
-        },
-    )?;
-    Ok(Json(msg_to_response(&message)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let message = c
+                .x402()
+                .fail_agent_message(&tenant_scope(&headers), id, &req.error)
+                .map_err(|e| match e {
+                    stateset_core::CommerceError::NotFound => {
+                        HttpError::NotFound(format!("Message {id} not found"))
+                    }
+                    other => HttpError::from(other),
+                })?;
+            Ok(Json(msg_to_response(&message)))
+        })
+        .await
 }
 
 #[cfg(test)]

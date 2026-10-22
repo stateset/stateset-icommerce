@@ -1,6 +1,7 @@
 //! Purgatory endpoints (order ingestion staging).
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -8,7 +9,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_core::{ChannelId, ProductId, PurgatoryLineItemId, PurgatoryOrderId};
 use utoipa::{IntoParams, ToSchema};
@@ -100,14 +100,6 @@ fn to_resp(o: &stateset_core::PurgatoryOrder) -> PurgatoryOrderResponse {
     }
 }
 
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/purgatory/orders", post(ingest).get(list))
@@ -126,32 +118,35 @@ pub(crate) async fn ingest(
     Json(req): Json<IngestOrderRequest>,
 ) -> Result<(StatusCode, Json<PurgatoryOrderResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let channel_id = match req.channel_id.as_deref() {
-        Some(s) => Some(parse_id::<ChannelId>(s, "channel_id")?),
-        None => None,
-    };
-    let mut items = Vec::with_capacity(req.items.len());
-    for i in req.items {
-        let product_id = match i.product_id.as_deref() {
-            Some(s) => Some(parse_id::<ProductId>(s, "product_id")?),
-            None => None,
-        };
-        items.push(stateset_core::IngestLineItem {
-            external_sku: i.external_sku,
-            quantity: parse_decimal(&i.quantity, "quantity")?,
-            product_id,
-        });
-    }
-    let input = stateset_core::IngestOrder {
-        channel_id,
-        external_order_id: req.external_order_id,
-        external_status: req.external_status,
-        metadata: req.metadata,
-        items,
-    };
-    let o = c.purgatory().ingest(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&o))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let channel_id = match req.channel_id.as_deref() {
+                Some(s) => Some(parse_id::<ChannelId>(s, "channel_id")?),
+                None => None,
+            };
+            let mut items = Vec::with_capacity(req.items.len());
+            for i in req.items {
+                let product_id = match i.product_id.as_deref() {
+                    Some(s) => Some(parse_id::<ProductId>(s, "product_id")?),
+                    None => None,
+                };
+                items.push(stateset_core::IngestLineItem {
+                    external_sku: i.external_sku,
+                    quantity: parse_decimal(&i.quantity, "quantity")?,
+                    product_id,
+                });
+            }
+            let input = stateset_core::IngestOrder {
+                channel_id,
+                external_order_id: req.external_order_id,
+                external_status: req.external_status,
+                metadata: req.metadata,
+                items,
+            };
+            let o = c.purgatory().ingest(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&o))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "purgatory_list", path = "/api/v1/purgatory/orders", tag = "purgatory",
@@ -164,24 +159,27 @@ pub(crate) async fn list(
     Query(params): Query<PurgatoryFilterParams>,
 ) -> Result<Json<PurgatoryListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let channel_id = match params.channel_id.as_deref() {
-        Some(s) => Some(parse_id::<ChannelId>(s, "channel_id")?),
-        None => None,
-    };
-    let base = stateset_core::PurgatoryFilter {
-        channel_id,
-        is_posted: params.is_posted,
-        ..Default::default()
-    };
-    let total = c.purgatory().list(base.clone())?.len();
-    let filter = stateset_core::PurgatoryFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    };
-    let orders = c.purgatory().list(filter)?;
-    Ok(Json(PurgatoryListResponse { orders: orders.iter().map(to_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let channel_id = match params.channel_id.as_deref() {
+                Some(s) => Some(parse_id::<ChannelId>(s, "channel_id")?),
+                None => None,
+            };
+            let base = stateset_core::PurgatoryFilter {
+                channel_id,
+                is_posted: params.is_posted,
+                ..Default::default()
+            };
+            let total = c.purgatory().list(base.clone())?.len();
+            let filter = stateset_core::PurgatoryFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            };
+            let orders = c.purgatory().list(filter)?;
+            Ok(Json(PurgatoryListResponse { orders: orders.iter().map(to_resp).collect(), total }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "purgatory_get_one", path = "/api/v1/purgatory/orders/{id}", tag = "purgatory",
@@ -194,12 +192,15 @@ pub(crate) async fn get_one(
     Path(id): Path<PurgatoryOrderId>,
 ) -> Result<Json<PurgatoryOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let o = c
-        .purgatory()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Purgatory order {id} not found")))?;
-    Ok(Json(to_resp(&o)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let o = c
+                .purgatory()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Purgatory order {id} not found")))?;
+            Ok(Json(to_resp(&o)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "purgatory_post_order", path = "/api/v1/purgatory/orders/{id}/post", tag = "purgatory",
@@ -212,8 +213,7 @@ pub(crate) async fn post_order(
     Path(id): Path<PurgatoryOrderId>,
 ) -> Result<Json<PurgatoryOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.purgatory().post(id)?)))
+    state.run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.purgatory().post(id)?)))).await
 }
 
 #[utoipa::path(post, operation_id = "purgatory_map_line", path = "/api/v1/purgatory/orders/{id}/lines/{line_id}", tag = "purgatory",
@@ -231,17 +231,20 @@ pub(crate) async fn map_line(
     Json(req): Json<MapLineRequest>,
 ) -> Result<Json<PurgatoryOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let product_id = match req.product_id.as_deref() {
-        Some(s) => Some(parse_id::<ProductId>(s, "product_id")?),
-        None => None,
-    };
-    let input = stateset_core::MapPurgatoryLine {
-        product_id,
-        ignore_item: req.ignore_item,
-        non_physical: req.non_physical,
-    };
-    Ok(Json(to_resp(&c.purgatory().map_line(id, line_id, input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let product_id = match req.product_id.as_deref() {
+                Some(s) => Some(parse_id::<ProductId>(s, "product_id")?),
+                None => None,
+            };
+            let input = stateset_core::MapPurgatoryLine {
+                product_id,
+                ignore_item: req.ignore_item,
+                non_physical: req.non_physical,
+            };
+            Ok(Json(to_resp(&c.purgatory().map_line(id, line_id, input)?)))
+        })
+        .await
 }
 
 #[utoipa::path(delete, operation_id = "purgatory_delete_one", path = "/api/v1/purgatory/orders/{id}", tag = "purgatory",
@@ -254,9 +257,12 @@ pub(crate) async fn delete_one(
     Path(id): Path<PurgatoryOrderId>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.purgatory().delete(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.purgatory().delete(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[cfg(test)]
