@@ -20,7 +20,7 @@ use stateset_core::{
 use stateset_embedded::AsyncCommerce;
 
 fn postgres_url() -> Option<String> {
-    std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 const fn date(y: i32, m: u32, d: u32) -> NaiveDate {

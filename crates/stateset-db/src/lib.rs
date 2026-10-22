@@ -42,6 +42,8 @@
 
 pub(crate) mod a2a_participants;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
+mod cart_rules;
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod customer_facts;
 pub mod error_helpers;
 pub mod http_idempotency;

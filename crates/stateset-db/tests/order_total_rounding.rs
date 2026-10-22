@@ -166,9 +166,8 @@ fn penny_item(sku: &str) -> CreateOrderItem {
 #[tokio::test]
 async fn postgres_order_total_rounds_and_foots() {
     use stateset_db::PostgresDatabase;
-    use std::env;
 
-    let Some(url) = env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok()) else {
+    let Some(url) = stateset_test_utils::postgres_url() else {
         eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
         return;
     };

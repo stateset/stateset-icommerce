@@ -16,11 +16,10 @@ use stateset_core::{
     WarehouseAddress, WarehouseType,
 };
 use stateset_db::PostgresDatabase;
-use std::env;
 use uuid::Uuid;
 
 fn postgres_url() -> Option<String> {
-    env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 macro_rules! require_pg {

@@ -189,8 +189,7 @@
       "stateset-embedded": [
         "stateset-core",
         "stateset-db",
-        "stateset-observability",
-        "stateset-pricing"
+        "stateset-observability"
       ],
       "stateset-embedded-node": [
         "stateset-core",
@@ -408,14 +407,6 @@
         ]
       },
       {
-        "name": "stateset-pricing",
-        "dependentCount": 2,
-        "dependents": [
-          "stateset-embedded",
-          "stateset-embedded-wasm"
-        ]
-      },
-      {
         "name": "stateset-sdk",
         "dependentCount": 2,
         "dependents": [
@@ -463,6 +454,13 @@
         "dependentCount": 1,
         "dependents": [
           "stateset-sdk"
+        ]
+      },
+      {
+        "name": "stateset-pricing",
+        "dependentCount": 1,
+        "dependents": [
+          "stateset-embedded-wasm"
         ]
       },
       {

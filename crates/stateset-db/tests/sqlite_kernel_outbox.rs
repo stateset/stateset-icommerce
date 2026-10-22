@@ -2771,6 +2771,54 @@ fn scope_escrow_command<T>(mut command: CommandEnvelope<T>) -> CommandEnvelope<T
 }
 
 #[test]
+fn kernel_a2a_escrow_without_tenant_scope_is_a_rejection_not_a_panic() {
+    // An operator policy may waive `requires_tenant` / `requires_store`; the
+    // tenant-keyed escrow executor must then refuse, never panic.
+    let db = SqliteDatabase::in_memory().expect("create database");
+    let mut policy = payment_policy();
+    let rule = policy.commands.get_mut("a2a.escrow.create").expect("escrow rule");
+    rule.requires_tenant = false;
+    rule.requires_store = false;
+    let mut principal = escrow_principal("a2a.escrow.create");
+    principal.tenant_id = None;
+    let mut command = CommandEnvelope::preview(
+        "a2a.escrow.create",
+        "a2a-escrow-create-unscoped-1",
+        principal,
+        CreateA2AEscrow {
+            quote_id: None,
+            payment_id: None,
+            buyer_address: "did:key:buyer".into(),
+            seller_address: "did:key:seller".into(),
+            amount: dec!(10),
+            asset: "USDC".into(),
+            network: "set_chain".into(),
+            release_conditions: vec![],
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
+            auto_release_after: None,
+            metadata: None,
+        },
+    );
+    command.policy_version = Some("commerce-policy-1".into());
+    command.mode = ExecutionMode::Apply;
+
+    let receipt = db
+        .kernel_executor(policy)
+        .execute_create_a2a_escrow(&command)
+        .expect("durable rejection receipt");
+    assert_eq!(receipt.status, ExecutionStatus::Rejected);
+    assert_eq!(receipt.error_code.as_deref(), Some("kernel.tenant_scope_required"));
+    assert!(receipt.result.is_none());
+    let escrows: i64 = db
+        .pool()
+        .get()
+        .expect("connection")
+        .query_row("SELECT COUNT(*) FROM a2a_escrows", [], |row| row.get(0))
+        .expect("count escrows");
+    assert_eq!(escrows, 0);
+}
+
+#[test]
 fn kernel_a2a_escrow_create_fund_and_refund_are_exact_atomic_and_replayable() {
     let db = SqliteDatabase::in_memory().expect("create database");
     let create = scope_escrow_command(CommandEnvelope::preview(

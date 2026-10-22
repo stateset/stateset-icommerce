@@ -14,7 +14,7 @@ use stateset_core::CreateSerialNumber;
 use stateset_embedded::AsyncCommerce;
 
 fn postgres_url() -> Option<String> {
-    std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 async fn make_serial(commerce: &AsyncCommerce, sku: &str, serial: &str) -> uuid::Uuid {

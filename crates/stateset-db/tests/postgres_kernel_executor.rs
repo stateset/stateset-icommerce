@@ -20,7 +20,7 @@ use stateset_core::{
     TransitionOrder, TransitionReturn, UpdateOrder, X402Asset, X402IntentStatus, X402Network,
 };
 use stateset_db::PostgresDatabase;
-use std::{env, sync::Arc};
+use std::sync::Arc;
 use uuid::Uuid;
 
 fn reseal_checkpoint(checkpoint: &mut stateset_db::kernel_outbox::KernelAuditCheckpoint) {
@@ -36,7 +36,7 @@ fn reseal_checkpoint(checkpoint: &mut stateset_db::kernel_outbox::KernelAuditChe
 }
 
 fn postgres_url() -> Option<String> {
-    env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 fn policy() -> KernelPolicy {
@@ -897,6 +897,50 @@ async fn postgres_kernel_subscription_charge_converges_on_one_pending_payment() 
     assert_eq!(charge.payment.amount, dec!(41.25));
     assert_eq!(charge.billing_cycle.payment_id, Some(charge.payment.id.to_string()));
     assert!(db.kernel_outbox().verify_audit_chain_async().await.expect("verify chain").valid);
+}
+
+#[tokio::test]
+async fn postgres_kernel_a2a_escrow_without_tenant_scope_is_a_rejection_not_a_panic() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping A2A tenant-scope proof");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect and migrate");
+    let mut policy = policy();
+    let rule = policy.commands.get_mut("a2a.escrow.create").expect("escrow rule");
+    rule.requires_tenant = false;
+    rule.requires_store = false;
+    let suffix = Uuid::new_v4();
+    let mut command = kernel_command(
+        "a2a.escrow.create",
+        format!("pg-a2a-unscoped-{suffix}"),
+        "a2a.escrow.create",
+        CreateA2AEscrow {
+            quote_id: None,
+            payment_id: None,
+            buyer_address: format!("did:key:buyer:{suffix}"),
+            seller_address: format!("did:key:seller:{suffix}"),
+            amount: dec!(10),
+            asset: "USDC".into(),
+            network: "set_chain".into(),
+            release_conditions: vec![],
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(24),
+            auto_release_after: None,
+            metadata: None,
+        },
+    );
+    command.principal.tenant_id = None;
+    command.store_id = None;
+    command.mode = ExecutionMode::Apply;
+
+    let receipt = db
+        .kernel_executor(policy)
+        .execute_create_a2a_escrow_async(&command)
+        .await
+        .expect("durable rejection receipt");
+    assert_eq!(receipt.status, ExecutionStatus::Rejected);
+    assert_eq!(receipt.error_code.as_deref(), Some("kernel.tenant_scope_required"));
+    assert!(receipt.result.is_none());
 }
 
 #[tokio::test]

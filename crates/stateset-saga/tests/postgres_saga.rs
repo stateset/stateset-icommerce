@@ -1,11 +1,11 @@
 use serde_json::json;
 use stateset_db::PostgresDatabase;
 use stateset_saga::SagaCoordinator;
-use std::{env, sync::Arc};
+use std::sync::Arc;
 use uuid::Uuid;
 
 fn postgres_url() -> Option<String> {
-    env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 #[tokio::test]

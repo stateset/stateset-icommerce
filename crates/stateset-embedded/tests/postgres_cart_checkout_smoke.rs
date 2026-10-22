@@ -11,8 +11,6 @@ use stateset_db::PostgresDatabase;
 #[cfg(feature = "postgres")]
 use stateset_embedded::AsyncCommerce;
 #[cfg(feature = "postgres")]
-use std::env;
-#[cfg(feature = "postgres")]
 use std::sync::Arc;
 #[cfg(feature = "postgres")]
 use std::time::Duration;
@@ -21,7 +19,7 @@ use uuid::Uuid;
 
 #[cfg(feature = "postgres")]
 fn postgres_url() -> Option<String> {
-    env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 #[cfg(feature = "postgres")]
