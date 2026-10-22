@@ -88,6 +88,26 @@ impl SqliteInventoryRepository {
         Self { pool }
     }
 
+    /// Append the item `list`/`count` WHERE conditions for `filter` to `sql`
+    /// and their bind values to `params`. The single definition of the
+    /// inventory-item filter set: `list` and `count` both call it, so they
+    /// cannot disagree. (`location_id` and `below_reorder_point` are not
+    /// applied by `list`, so they are not applied here either.)
+    fn push_item_filter(
+        filter: &InventoryFilter,
+        sql: &mut String,
+        params: &mut Vec<Box<dyn rusqlite::ToSql>>,
+    ) {
+        if let Some(sku) = &filter.sku {
+            sql.push_str(" AND sku LIKE ?");
+            params.push(Box::new(format!("%{sku}%")));
+        }
+        if let Some(is_active) = filter.is_active {
+            sql.push_str(" AND is_active = ?");
+            params.push(Box::new(i32::from(is_active)));
+        }
+    }
+
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
@@ -1938,15 +1958,7 @@ impl InventoryRepository for SqliteInventoryRepository {
         let conn = self.conn()?;
         let mut sql = "SELECT * FROM inventory_items WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
-
-        if let Some(sku) = &filter.sku {
-            sql.push_str(" AND sku LIKE ?");
-            params.push(Box::new(format!("%{sku}%")));
-        }
-        if let Some(is_active) = &filter.is_active {
-            sql.push_str(" AND is_active = ?");
-            params.push(Box::new(i32::from(*is_active)));
-        }
+        Self::push_item_filter(&filter, &mut sql, &mut params);
 
         sql.push_str(" ORDER BY sku");
 
@@ -1982,6 +1994,19 @@ impl InventoryRepository for SqliteInventoryRepository {
             .map_err(map_db_error)?;
 
         Ok(items)
+    }
+
+    fn count(&self, filter: InventoryFilter) -> Result<u64> {
+        let conn = self.conn()?;
+        let mut sql = "SELECT COUNT(*) FROM inventory_items WHERE 1=1".to_string();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
+        Self::push_item_filter(&filter, &mut sql, &mut params);
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(std::convert::AsRef::as_ref).collect();
+        let count: i64 =
+            conn.query_row(&sql, params_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
+        Ok(u64::try_from(count).unwrap_or(0))
     }
 
     fn get_reorder_needed(&self) -> Result<Vec<StockLevel>> {

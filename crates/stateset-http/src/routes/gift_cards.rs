@@ -251,7 +251,8 @@ pub(crate) async fn list_gift_cards(
             // Count total matching records (without pagination)
             let count_filter =
                 stateset_core::GiftCardFilter { status, code: None, limit: None, offset: None };
-            let total = commerce.gift_cards().list(count_filter)?.len();
+            let total =
+                usize::try_from(commerce.gift_cards().count(count_filter)?).unwrap_or(usize::MAX);
 
             // Fetch the requested page
             let filter = stateset_core::GiftCardFilter {

@@ -61,6 +61,14 @@ impl IntegrationMappings {
         self.db.integration_mappings().list(filter)
     }
 
+    /// Count mappings matching a filter (`limit`/`offset` ignored).
+    ///
+    /// Applies the same filter set as [`list`](Self::list), as a SQL `COUNT(*)`.
+    pub fn count(&self, filter: IntegrationMappingFilter) -> Result<u64> {
+        self.ensure()?;
+        self.db.integration_mappings().count(filter)
+    }
+
     /// Delete a mapping.
     pub fn delete(&self, id: IntegrationMappingId) -> Result<()> {
         self.ensure()?;

@@ -3,8 +3,8 @@
 use super::map_db_error;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use sqlx::FromRow;
 use sqlx::postgres::PgPool;
+use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
     CommerceError, CreateGiftCard, CurrencyCode, GiftCard, GiftCardFilter, GiftCardId,
     GiftCardRepository, GiftCardStatus, GiftCardTransaction, GiftCardTransactionId,
@@ -241,49 +241,48 @@ impl PgGiftCardRepository {
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
+    /// Append the `list`/`count` WHERE conditions for `filter`, with their
+    /// bind values. The single definition of the gift-card filter set:
+    /// `list_async` and `count_async` both call it, so they cannot disagree.
+    fn push_filter(builder: &mut QueryBuilder<'_, Postgres>, filter: &GiftCardFilter) {
+        if let Some(status) = filter.status {
+            builder.push(" AND status = ").push_bind(status.to_string());
+        }
+        if let Some(ref code) = filter.code {
+            builder.push(" AND code = ").push_bind(code.clone());
+        }
+    }
+
     /// List gift cards with filter (async)
     pub async fn list_async(&self, filter: GiftCardFilter) -> Result<Vec<GiftCard>> {
-        let mut sql = String::from(
+        let mut builder = QueryBuilder::<Postgres>::new(
             "SELECT id, code, initial_balance, current_balance, currency, status,
              recipient_email, sender_name, message, expires_at, created_at, updated_at
              FROM gift_cards WHERE 1=1",
         );
-        let mut param_idx: u32 = 1;
+        Self::push_filter(&mut builder, &filter);
 
-        if filter.status.is_some() {
-            sql.push_str(&format!(" AND status = ${param_idx}"));
-            param_idx += 1;
-        }
-        if filter.code.is_some() {
-            sql.push_str(&format!(" AND code = ${param_idx}"));
-            param_idx += 1;
-        }
-
-        sql.push_str(" ORDER BY created_at DESC");
-
-        sql.push_str(&format!(" LIMIT ${param_idx}"));
-        param_idx += 1;
-        if filter.offset.is_some() {
-            sql.push_str(&format!(" OFFSET ${param_idx}"));
-            let _ = param_idx;
-        }
-
-        let mut query = sqlx::query_as::<_, GiftCardRow>(&sql);
-
-        if let Some(status) = &filter.status {
-            query = query.bind(status.to_string());
-        }
-        if let Some(ref code) = filter.code {
-            query = query.bind(code.clone());
-        }
-        query = query.bind(super::effective_limit(filter.limit));
+        builder.push(" ORDER BY created_at DESC");
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
-            query = query.bind(offset as i64);
+            builder.push(" OFFSET ").push_bind(i64::from(offset));
         }
 
-        let rows = query.fetch_all(&self.pool).await.map_err(map_db_error)?;
+        let rows: Vec<GiftCardRow> =
+            builder.build_query_as().fetch_all(&self.pool).await.map_err(map_db_error)?;
 
         rows.into_iter().map(Self::row_to_gift_card).collect()
+    }
+
+    /// Count gift cards matching `filter`, ignoring `limit`/`offset` (async)
+    pub async fn count_async(&self, filter: GiftCardFilter) -> Result<u64> {
+        let mut builder =
+            QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM gift_cards WHERE 1=1");
+        Self::push_filter(&mut builder, &filter);
+
+        let (count,): (i64,) =
+            builder.build_query_as().fetch_one(&self.pool).await.map_err(map_db_error)?;
+        Ok(u64::try_from(count).unwrap_or(0))
     }
 
     /// Charge (debit) a gift card (async)
@@ -511,6 +510,10 @@ impl GiftCardRepository for PgGiftCardRepository {
 
     fn list(&self, filter: GiftCardFilter) -> Result<Vec<GiftCard>> {
         super::block_on(self.list_async(filter))
+    }
+
+    fn count(&self, filter: GiftCardFilter) -> Result<u64> {
+        super::block_on(self.count_async(filter))
     }
 
     fn charge(

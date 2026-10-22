@@ -86,6 +86,15 @@ impl FixedAssets {
         self.db.fixed_assets().list(filter)
     }
 
+    /// Count fixed assets matching a filter (`limit`, `offset` and
+    /// `after_cursor` ignored).
+    ///
+    /// Applies the same filter set as [`list`](Self::list), as a SQL `COUNT(*)`.
+    pub fn count(&self, filter: FixedAssetFilter) -> Result<u64> {
+        self.ensure()?;
+        self.db.fixed_assets().count(filter)
+    }
+
     /// Update a fixed asset (partial).
     pub fn update(&self, id: Uuid, input: UpdateFixedAsset) -> Result<FixedAsset> {
         self.ensure()?;

@@ -2,8 +2,8 @@
 
 use super::map_db_error;
 use chrono::{DateTime, Utc};
-use sqlx::FromRow;
 use sqlx::postgres::PgPool;
+use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
     CommerceError, CreateIntegrationMapping, IntegrationMapping, IntegrationMappingFilter,
     IntegrationMappingId, IntegrationMappingRepository, MappingLookup, Result,
@@ -117,6 +117,24 @@ impl PgIntegrationMappingRepository {
         self.fetch_async(id.into()).await?.ok_or(CommerceError::NotFound)
     }
 
+    /// Append the `list`/`count` WHERE conditions for `filter`, with their
+    /// bind values. The single definition of the mapping filter set:
+    /// `list_async` and `count_async` both call it, so they cannot disagree.
+    fn push_filter(builder: &mut QueryBuilder<'_, Postgres>, filter: &IntegrationMappingFilter) {
+        if let Some(ref integration) = filter.integration {
+            builder.push(" AND integration = ").push_bind(integration.clone());
+        }
+        if let Some(ref mapping_group) = filter.mapping_group {
+            builder.push(" AND mapping_group = ").push_bind(mapping_group.clone());
+        }
+        if let Some(ref field_name) = filter.field_name {
+            builder.push(" AND field_name = ").push_bind(field_name.clone());
+        }
+        if let Some(is_active) = filter.is_active {
+            builder.push(" AND is_active = ").push_bind(is_active);
+        }
+    }
+
     /// List integration mappings (async)
     pub async fn list_async(
         &self,
@@ -125,45 +143,26 @@ impl PgIntegrationMappingRepository {
         let limit = super::effective_limit(filter.limit);
         let offset = i64::from(filter.offset.unwrap_or(0));
 
-        let mut query = String::from("SELECT * FROM integration_mappings WHERE 1=1");
-        let mut param_idx = 1;
-        if filter.integration.is_some() {
-            query.push_str(&format!(" AND integration = ${param_idx}"));
-            param_idx += 1;
-        }
-        if filter.mapping_group.is_some() {
-            query.push_str(&format!(" AND mapping_group = ${param_idx}"));
-            param_idx += 1;
-        }
-        if filter.field_name.is_some() {
-            query.push_str(&format!(" AND field_name = ${param_idx}"));
-            param_idx += 1;
-        }
-        if filter.is_active.is_some() {
-            query.push_str(&format!(" AND is_active = ${param_idx}"));
-            param_idx += 1;
-        }
-        query.push_str(&format!(
-            " ORDER BY mapping_group, field_name, external_value LIMIT ${} OFFSET ${}",
-            param_idx,
-            param_idx + 1
-        ));
+        let mut builder =
+            QueryBuilder::<Postgres>::new("SELECT * FROM integration_mappings WHERE 1=1");
+        Self::push_filter(&mut builder, &filter);
+        builder.push(" ORDER BY mapping_group, field_name, external_value LIMIT ");
+        builder.push_bind(limit).push(" OFFSET ").push_bind(offset);
 
-        let mut q = sqlx::query_as::<_, IntegrationMappingRow>(&query);
-        if let Some(ref integration) = filter.integration {
-            q = q.bind(integration.clone());
-        }
-        if let Some(ref mapping_group) = filter.mapping_group {
-            q = q.bind(mapping_group.clone());
-        }
-        if let Some(ref field_name) = filter.field_name {
-            q = q.bind(field_name.clone());
-        }
-        if let Some(is_active) = filter.is_active {
-            q = q.bind(is_active);
-        }
-        let rows = q.bind(limit).bind(offset).fetch_all(&self.pool).await.map_err(map_db_error)?;
+        let rows: Vec<IntegrationMappingRow> =
+            builder.build_query_as().fetch_all(&self.pool).await.map_err(map_db_error)?;
         Ok(rows.into_iter().map(Self::row_to_mapping).collect())
+    }
+
+    /// Count integration mappings matching `filter`, ignoring `limit`/`offset` (async)
+    pub async fn count_async(&self, filter: IntegrationMappingFilter) -> Result<u64> {
+        let mut builder =
+            QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM integration_mappings WHERE 1=1");
+        Self::push_filter(&mut builder, &filter);
+
+        let (count,): (i64,) =
+            builder.build_query_as().fetch_one(&self.pool).await.map_err(map_db_error)?;
+        Ok(u64::try_from(count).unwrap_or(0))
     }
 
     /// Delete an integration mapping (async)
@@ -248,6 +247,10 @@ impl IntegrationMappingRepository for PgIntegrationMappingRepository {
 
     fn list(&self, filter: IntegrationMappingFilter) -> Result<Vec<IntegrationMapping>> {
         super::block_on(self.list_async(filter))
+    }
+
+    fn count(&self, filter: IntegrationMappingFilter) -> Result<u64> {
+        super::block_on(self.count_async(filter))
     }
 
     fn delete(&self, id: IntegrationMappingId) -> Result<()> {

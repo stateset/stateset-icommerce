@@ -24,6 +24,24 @@ impl SqliteGiftCardRepository {
         Self { pool }
     }
 
+    /// Append the `list`/`count` WHERE conditions for `filter` to `sql` and
+    /// their bind values to `params`. The single definition of the gift-card
+    /// filter set: `list` and `count` both call it, so they cannot disagree.
+    fn push_filter(
+        filter: &GiftCardFilter,
+        sql: &mut String,
+        params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+    ) {
+        if let Some(status) = filter.status {
+            sql.push_str(" AND status = ?");
+            params.push(Box::new(status.to_string()));
+        }
+        if let Some(ref code) = filter.code {
+            sql.push_str(" AND code = ?");
+            params.push(Box::new(code.clone()));
+        }
+    }
+
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
@@ -203,15 +221,7 @@ impl GiftCardRepository for SqliteGiftCardRepository {
         let conn = self.conn()?;
         let mut sql = "SELECT * FROM gift_cards WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![];
-
-        if let Some(status) = filter.status {
-            sql.push_str(" AND status = ?");
-            params.push(Box::new(status.to_string()));
-        }
-        if let Some(ref code) = filter.code {
-            sql.push_str(" AND code = ?");
-            params.push(Box::new(code.clone()));
-        }
+        Self::push_filter(&filter, &mut sql, &mut params);
 
         sql.push_str(" ORDER BY created_at DESC");
 
@@ -233,6 +243,19 @@ impl GiftCardRepository for SqliteGiftCardRepository {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(map_db_error)?;
         Ok(cards)
+    }
+
+    fn count(&self, filter: GiftCardFilter) -> Result<u64> {
+        let conn = self.conn()?;
+        let mut sql = "SELECT COUNT(*) FROM gift_cards WHERE 1=1".to_string();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![];
+        Self::push_filter(&filter, &mut sql, &mut params);
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let count: i64 =
+            conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0)).map_err(map_db_error)?;
+        Ok(u64::try_from(count).unwrap_or(0))
     }
 
     fn charge(

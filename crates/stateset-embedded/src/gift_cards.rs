@@ -98,6 +98,14 @@ impl GiftCards {
         self.db.gift_cards().list(filter)
     }
 
+    /// Count gift cards matching a filter (`limit`/`offset` ignored).
+    ///
+    /// Applies the same filter set as [`list`](Self::list), as a SQL `COUNT(*)`.
+    pub fn count(&self, filter: GiftCardFilter) -> Result<u64> {
+        self.ensure_supported()?;
+        self.db.gift_cards().count(filter)
+    }
+
     /// Charge (debit) a gift card.
     ///
     /// Reduces the gift card balance by the specified amount.

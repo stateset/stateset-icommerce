@@ -332,6 +332,16 @@ pub trait GiftCardRepository: Send + Sync {
     /// List gift cards with filter
     fn list(&self, filter: GiftCardFilter) -> Result<Vec<GiftCard>>;
 
+    /// Count gift cards matching `filter`, ignoring `limit` and `offset`.
+    ///
+    /// Applies exactly the filter set that [`list`](Self::list) applies, so a
+    /// filtered count always agrees with the filtered pages. The default body
+    /// loads every matching row; backends override it with a SQL `COUNT(*)`.
+    fn count(&self, filter: GiftCardFilter) -> Result<u64> {
+        let filter = GiftCardFilter { limit: None, offset: None, ..filter };
+        Ok(self.list(filter)?.len() as u64)
+    }
+
     /// Charge (debit) a gift card
     fn charge(
         &self,

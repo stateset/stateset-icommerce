@@ -3,8 +3,8 @@
 use super::{map_db_error, resolve_currency_with_executor};
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
-use sqlx::FromRow;
 use sqlx::postgres::PgPool;
+use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
     AssetDisposal, CommerceError, CreateFixedAsset, CurrencyCode, DepreciationEntry,
     DepreciationEntryStatus, DepreciationMethod, DepreciationSchedule, FixedAsset,
@@ -208,76 +208,65 @@ impl PgFixedAssetRepository {
         self.load_asset_async(id).await
     }
 
+    /// Append the `list`/`count` WHERE conditions for `filter`, with their
+    /// bind values. The single definition of the fixed-asset filter set:
+    /// `list_async` and `count_async` both call it, so they cannot disagree.
+    /// The keyset cursor is pagination, not a filter, and stays in `list_async`.
+    fn push_filter(builder: &mut QueryBuilder<'_, Postgres>, filter: &FixedAssetFilter) {
+        if let Some(category) = filter.category {
+            builder.push(" AND category = ").push_bind(category.to_string());
+        }
+        if let Some(status) = filter.status {
+            builder.push(" AND status = ").push_bind(status.to_string());
+        }
+        if let Some(location) = filter.location_id {
+            builder.push(" AND location_id = ").push_bind(location);
+        }
+        if let Some(from) = filter.acquired_from {
+            builder.push(" AND acquisition_date >= ").push_bind(from);
+        }
+        if let Some(to) = filter.acquired_to {
+            builder.push(" AND acquisition_date <= ").push_bind(to);
+        }
+        if let Some(search) = filter.search.as_deref() {
+            let pattern = format!("%{search}%");
+            builder.push(" AND (name ILIKE ").push_bind(pattern.clone());
+            builder.push(" OR asset_number ILIKE ").push_bind(pattern).push(")");
+        }
+    }
+
     /// List fixed assets (async)
     pub async fn list_async(&self, filter: FixedAssetFilter) -> Result<Vec<FixedAsset>> {
         let after_cursor = super::parse_after_cursor(filter.after_cursor.as_ref())?;
         let limit = super::effective_limit(filter.limit);
         // Offset pagination applies only in non-cursor mode.
         let offset = if after_cursor.is_none() { i64::from(filter.offset.unwrap_or(0)) } else { 0 };
-        let mut query = String::from("SELECT * FROM fixed_assets WHERE 1=1");
-        let mut idx = 1;
-        if filter.category.is_some() {
-            query.push_str(&format!(" AND category = ${idx}"));
-            idx += 1;
-        }
-        if filter.status.is_some() {
-            query.push_str(&format!(" AND status = ${idx}"));
-            idx += 1;
-        }
-        if filter.location_id.is_some() {
-            query.push_str(&format!(" AND location_id = ${idx}"));
-            idx += 1;
-        }
-        if filter.acquired_from.is_some() {
-            query.push_str(&format!(" AND acquisition_date >= ${idx}"));
-            idx += 1;
-        }
-        if filter.acquired_to.is_some() {
-            query.push_str(&format!(" AND acquisition_date <= ${idx}"));
-            idx += 1;
-        }
-        if filter.search.is_some() {
-            query.push_str(&format!(" AND (name ILIKE ${idx} OR asset_number ILIKE ${idx})"));
-            idx += 1;
-        }
-        if after_cursor.is_some() {
-            // Keyset cursor: (created_at, id) for stable DESC ordering
-            query.push_str(&format!(
-                " AND (created_at < ${idx} OR (created_at = ${idx} AND id < ${}))",
-                idx + 1
-            ));
-            idx += 2;
-        }
-        query.push_str(&format!(
-            " ORDER BY created_at DESC, id DESC LIMIT ${} OFFSET ${}",
-            idx,
-            idx + 1
-        ));
-
-        let mut q = sqlx::query_as::<_, FixedAssetRow>(&query);
-        if let Some(category) = filter.category {
-            q = q.bind(category.to_string());
-        }
-        if let Some(status) = filter.status {
-            q = q.bind(status.to_string());
-        }
-        if let Some(location) = filter.location_id {
-            q = q.bind(location);
-        }
-        if let Some(from) = filter.acquired_from {
-            q = q.bind(from);
-        }
-        if let Some(to) = filter.acquired_to {
-            q = q.bind(to);
-        }
-        if let Some(search) = filter.search {
-            q = q.bind(format!("%{search}%"));
-        }
+        let mut builder = QueryBuilder::<Postgres>::new("SELECT * FROM fixed_assets WHERE 1=1");
+        Self::push_filter(&mut builder, &filter);
         if let Some((cursor_created, cursor_id)) = after_cursor {
-            q = q.bind(cursor_created).bind(cursor_id);
+            // Keyset cursor: (created_at, id) for stable DESC ordering
+            builder.push(" AND (created_at < ").push_bind(cursor_created);
+            builder.push(" OR (created_at = ").push_bind(cursor_created);
+            builder.push(" AND id < ").push_bind(cursor_id).push("))");
         }
-        let rows = q.bind(limit).bind(offset).fetch_all(&self.pool).await.map_err(map_db_error)?;
+        builder.push(" ORDER BY created_at DESC, id DESC LIMIT ").push_bind(limit);
+        builder.push(" OFFSET ").push_bind(offset);
+
+        let rows: Vec<FixedAssetRow> =
+            builder.build_query_as().fetch_all(&self.pool).await.map_err(map_db_error)?;
         rows.into_iter().map(Self::row_to_asset).collect()
+    }
+
+    /// Count fixed assets matching `filter`, ignoring `limit`, `offset` and
+    /// `after_cursor` (async)
+    pub async fn count_async(&self, filter: FixedAssetFilter) -> Result<u64> {
+        let mut builder =
+            QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM fixed_assets WHERE 1=1");
+        Self::push_filter(&mut builder, &filter);
+
+        let (count,): (i64,) =
+            builder.build_query_as().fetch_one(&self.pool).await.map_err(map_db_error)?;
+        Ok(u64::try_from(count).unwrap_or(0))
     }
 
     /// Update a fixed asset (async)
@@ -671,6 +660,10 @@ impl FixedAssetRepository for PgFixedAssetRepository {
 
     fn list(&self, filter: FixedAssetFilter) -> Result<Vec<FixedAsset>> {
         super::block_on(self.list_async(filter))
+    }
+
+    fn count(&self, filter: FixedAssetFilter) -> Result<u64> {
+        super::block_on(self.count_async(filter))
     }
 
     fn update(&self, id: Uuid, input: UpdateFixedAsset) -> Result<FixedAsset> {
