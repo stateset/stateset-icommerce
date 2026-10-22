@@ -4,6 +4,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, urlparse
 
 from stateset_embedded import (
     SyncConfirmation,
@@ -16,6 +17,7 @@ from stateset_embedded import (
     SyncRuntime,
     SyncSnapshot,
     SyncStatus,
+    payload_plain_hash,
 )
 
 
@@ -157,9 +159,12 @@ class _SequencerStubHandler(BaseHTTPRequestHandler):
             return
 
         if self.path.startswith("/api/v1/events?"):
+            # Like the real sequencer, serve only events at or after `from`;
+            # the client refuses a page that replays its cursor.
+            start = int(parse_qs(urlparse(self.path).query).get("from", ["0"])[0])
             self._send_json(
                 {
-                    "events": [
+                    "events": [] if start > 3 else [
                         {
                             "envelope": {
                                 "event_id": self.state["pulled_event_id"],
@@ -168,7 +173,11 @@ class _SequencerStubHandler(BaseHTTPRequestHandler):
                                 "event_type": "order.confirmed",
                                 "command_id": "cmd-pull-1",
                                 "payload": {"status": "confirmed"},
-                                "payload_plain_hash": "hash-pull-1",
+                                # The transport recomputes this and refuses a
+                                # page whose claimed hash does not match.
+                                "payload_plain_hash": bytes(
+                                    payload_plain_hash(json.dumps({"status": "confirmed"}))
+                                ).hex(),
                                 "agent_signature": "sig-pull-1",
                                 "source_agent_id": "sequencer",
                                 "agent_key_id": 3,

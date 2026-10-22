@@ -11,11 +11,10 @@ use stateset_core::{
     PromotionUsageFilter, RejectionReason, UpdateOrder,
 };
 use stateset_db::PostgresDatabase;
-use std::env;
 use uuid::Uuid;
 
 async fn connect() -> Option<PostgresDatabase> {
-    let url = env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())?;
+    let url = stateset_test_utils::postgres_url()?;
     Some(PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations"))
 }
 

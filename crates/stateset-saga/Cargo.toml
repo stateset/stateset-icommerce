@@ -26,6 +26,7 @@ serde_json = { workspace = true }
 sqlx = { workspace = true }
 
 [dev-dependencies]
+stateset-test-utils = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]

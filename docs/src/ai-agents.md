@@ -14,14 +14,14 @@ MCP-native clients.
 ## Install
 
 ```bash
-npm install @stateset/cli@1.39.0 @stateset/embedded@1.39.0
+npm install @stateset/cli@1.40.0 @stateset/embedded@1.40.0
 ```
 
 For Python runtimes:
 
 ```bash
-pip install stateset-embedded==1.39.0
-pip install "stateset-embedded[agents]==1.39.0"
+pip install stateset-embedded==1.40.0
+pip install "stateset-embedded[agents]==1.40.0"
 ```
 
 From the repo checkout, the examples under `examples/agents/` also run against
@@ -488,7 +488,7 @@ The setup creates a configuration entry in your MCP client's config file:
   "mcpServers": {
     "stateset-commerce": {
       "command": "npx",
-      "args": ["-y", "-p", "@stateset/cli@1.39.0", "stateset-mcp", "--db", "./store.db"]
+      "args": ["-y", "-p", "@stateset/cli@1.40.0", "stateset-mcp", "--db", "./store.db"]
     }
   }
 }
@@ -535,8 +535,9 @@ npx -y -p @stateset/cli stateset-mcp-http           # http://127.0.0.1:8090/mcp
 
 Because serving is per-request, only `POST /mcp` is supported — the 2025 session
 verbs `GET` and `DELETE` return `405`. There is no `initialize` handshake on the
-modern path: each request carries its own `_meta` envelope plus the `Mcp-Method`
-and `Mcp-Name` headers.
+modern path: each request carries its own `_meta` envelope plus the
+`MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` headers (SEP-2243; requests
+missing `MCP-Protocol-Version` or `Mcp-Method` are refused with `400`).
 
 Flags: `--host 0.0.0.0` to expose, `--db <path>` for a durable store (writes
 then require `--apply`), `--read-only` to disable writes, `--no-seed` for an
@@ -601,7 +602,7 @@ The TypeScript SDK's `StreamableHTTPClientTransport` takes the same header via
 curl -sS https://mcp.example.com/mcp \
   -H "Authorization: Bearer $KEY" \
   -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
-  -H 'Mcp-Method: tools/list' \
+  -H 'MCP-Protocol-Version: 2026-07-28' -H 'Mcp-Method: tools/list' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"curl","version":"0"},"io.modelcontextprotocol/clientCapabilities":{}}}}'
 ```
 

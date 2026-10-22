@@ -1,5 +1,9 @@
 //! SQLite implementation of Lot repository
 
+use crate::rules::lots::{
+    ensure_consolidatable_source, ensure_transition, generate_lot_number,
+    generate_merged_lot_number, validate_merge_sources,
+};
 use crate::sqlite::{
     SqliteSerialRepository, map_db_error, parse_datetime_opt_row, parse_datetime_row,
     parse_decimal_opt_row, parse_decimal_row, parse_decimal_strict, parse_enum_row, parse_json_row,
@@ -22,38 +26,6 @@ use uuid::Uuid;
 #[derive(Debug)]
 pub struct SqliteLotRepository {
     pool: Pool<SqliteConnectionManager>,
-}
-
-/// Refuse to use `lot` as a source for a stock-moving operation (`merge`,
-/// `split`) unless the units it holds are genuinely sellable.
-///
-/// Both operations create a *new* lot whose `status`, `quantity_reserved` and
-/// `quantity_quarantined` are reset, so anything blocked on the source would be
-/// laundered into free, sellable stock. Conservatively we require:
-///
-/// * status == `Active` — quarantined / on-hold / expired / recalled / scrapped
-///   stock must be released (or disposed of) through its own workflow first, and
-///   a `Consumed` lot has nothing left to move;
-/// * no quarantined units — belt-and-braces alongside the status check.
-///
-/// Reservations are handled per operation: `split` only moves units within
-/// `quantity_available()` (reservations stay on the original lot), whereas
-/// `merge` additionally refuses any open reservation because it zeroes the
-/// source and would orphan the reservation rows.
-fn ensure_consolidatable_source(lot: &Lot, operation: &str) -> Result<()> {
-    if lot.status != LotStatus::Active {
-        return Err(CommerceError::ValidationError(format!(
-            "Cannot {operation} lot {} ({}): status is {} (only active lots may be {operation}d)",
-            lot.lot_number, lot.id, lot.status
-        )));
-    }
-    if lot.quantity_quarantined > Decimal::ZERO {
-        return Err(CommerceError::ValidationError(format!(
-            "Cannot {operation} lot {} ({}): {} units are quarantined",
-            lot.lot_number, lot.id, lot.quantity_quarantined
-        )));
-    }
-    Ok(())
 }
 
 /// Refuse a stock-moving operation (`consume`, `reserve`, `confirm_reservation`)
@@ -95,37 +67,6 @@ fn ensure_unexpired(lot: &Lot, now: chrono::DateTime<Utc>, operation: &str) -> R
     Ok(())
 }
 
-/// Refuse a workflow status change that the [`LotStatus`] transition table
-/// does not allow, naming the lot and both states.
-fn ensure_transition(lot: &Lot, next: LotStatus, operation: &str) -> Result<()> {
-    if lot.status.can_transition_to(next) {
-        Ok(())
-    } else {
-        Err(CommerceError::ValidationError(format!(
-            "Cannot {operation} lot {} ({}): status is {} (cannot move to {next})",
-            lot.lot_number, lot.id, lot.status
-        )))
-    }
-}
-
-/// Reject a `MergeLots` request whose source list is malformed before any row
-/// is touched: fewer than two lots, or the same lot listed twice (which would
-/// double-count its quantity on the merged lot).
-fn validate_merge_sources(source_lot_ids: &[Uuid]) -> Result<()> {
-    if source_lot_ids.len() < 2 {
-        return Err(CommerceError::ValidationError("Need at least 2 lots to merge".to_string()));
-    }
-    let mut seen = std::collections::HashSet::with_capacity(source_lot_ids.len());
-    for id in source_lot_ids {
-        if !seen.insert(*id) {
-            return Err(CommerceError::ValidationError(format!(
-                "Cannot merge: duplicate source lot id {id}"
-            )));
-        }
-    }
-    Ok(())
-}
-
 impl SqliteLotRepository {
     /// Hop budget for [`Self::ancestor_lots_on`]: deep enough for any real
     /// split/merge history, small enough that a corrupt table cannot turn a
@@ -139,20 +80,6 @@ impl SqliteLotRepository {
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
-    }
-
-    fn generate_lot_number(sku: &str) -> String {
-        // Include millisecond timestamp + random uuid suffix so concurrent lot creation
-        // (or multiple in the same second, common in tests/batch flows) cannot collide
-        // on the UNIQUE constraint.
-        let timestamp_ms = Utc::now().timestamp_millis();
-        let random_suffix = (Uuid::new_v4().as_u128() & 0xFFFF_FFFF) as u32;
-        format!(
-            "LOT-{}-{}-{:08x}",
-            sku.chars().take(6).collect::<String>().to_uppercase(),
-            timestamp_ms,
-            random_suffix
-        )
     }
 
     fn row_to_lot(row: &rusqlite::Row<'_>) -> rusqlite::Result<Lot> {
@@ -1074,7 +1001,7 @@ impl LotRepository for SqliteLotRepository {
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
 
         let id = Uuid::new_v4();
-        let lot_number = input.lot_number.unwrap_or_else(|| Self::generate_lot_number(&input.sku));
+        let lot_number = input.lot_number.unwrap_or_else(|| generate_lot_number(&input.sku));
         let now = Utc::now();
         let production_date = input.production_date.unwrap_or(now);
         let attributes_json = input
@@ -2042,9 +1969,7 @@ impl LotRepository for SqliteLotRepository {
 
         // Create new merged lot
         let new_lot_id = Uuid::new_v4();
-        let new_lot_number = input
-            .target_lot_number
-            .unwrap_or_else(|| format!("MERGED-{}", Utc::now().format("%Y%m%d%H%M%S")));
+        let new_lot_number = input.target_lot_number.unwrap_or_else(generate_merged_lot_number);
 
         // Get first lot as template
         let template: Lot = tx

@@ -19,9 +19,7 @@ use stateset_db::PostgresDatabase;
 use uuid::Uuid;
 
 async fn connect() -> Option<PostgresDatabase> {
-    let Some(url) =
-        std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
-    else {
+    let Some(url) = stateset_test_utils::postgres_url() else {
         eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
         return None;
     };

@@ -19,11 +19,10 @@ use stateset_core::{
     PriceAdjustmentType,
 };
 use stateset_db::PostgresDatabase;
-use std::env;
 use uuid::Uuid;
 
 fn postgres_url() -> Option<String> {
-    env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 /// Point the shared store at a trading currency.

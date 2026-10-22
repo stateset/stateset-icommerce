@@ -100,6 +100,51 @@ impl<'a, C: Serialize> CommandRun<'a, C> {
         self
     }
 
+    /// Reject the command unless it names both a tenant and a store.
+    ///
+    /// Tenant-scoped aggregates (A2A escrows, disputes, credit) are keyed by
+    /// tenant and store. An operator policy may set `requires_tenant` or
+    /// `requires_store` to `false`, so the policy verdict alone does not
+    /// guarantee the scope is present; this guard does, and turns a missing
+    /// scope into a sealed rejection receipt instead of a panic.
+    #[must_use]
+    pub fn require_tenant_scope(self) -> Self {
+        self.then_guard(|run| {
+            let present = |value: Option<&str>| value.is_some_and(|value| !value.is_empty());
+            if present(run.command.principal.tenant_id.as_deref())
+                && present(run.command.store_id.as_deref())
+            {
+                None
+            } else {
+                Some(GuardRejection::never(
+                    "kernel.tenant_scope_required",
+                    format!(
+                        "{} requires both a principal tenant_id and a store_id",
+                        run.command.command_type
+                    ),
+                ))
+            }
+        })
+    }
+
+    /// The `(tenant_id, store_id)` this command is scoped to.
+    ///
+    /// Only meaningful after [`Self::require_tenant_scope`] and once
+    /// [`Self::guard_receipt`] has returned `None`; both values are then
+    /// non-empty. Returns empty strings otherwise, which match no row.
+    #[must_use]
+    pub fn tenant_scope(&self) -> (&'a str, &'a str) {
+        debug_assert!(
+            self.guard.is_some()
+                || (self.command.principal.tenant_id.is_some() && self.command.store_id.is_some()),
+            "tenant_scope() used without require_tenant_scope()"
+        );
+        (
+            self.command.principal.tenant_id.as_deref().unwrap_or_default(),
+            self.command.store_id.as_deref().unwrap_or_default(),
+        )
+    }
+
     /// Whether the caller asked for a non-mutating preview.
     #[must_use]
     pub fn is_preview(&self) -> bool {

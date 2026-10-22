@@ -259,7 +259,7 @@ pub(crate) async fn list_intents(
         batch_id: None,
         from_date: None,
         to_date: None,
-        limit: params.limit,
+        limit: Some(crate::dto::resolve_limit(params.limit)),
         offset: params.offset,
     };
     let intents = state

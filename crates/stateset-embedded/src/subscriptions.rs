@@ -9,11 +9,12 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use stateset_embedded::{Commerce, CreateSubscriptionPlan, CreateSubscription, BillingInterval};
 //! use rust_decimal_macros::dec;
 //!
 //! let commerce = Commerce::new("./store.db")?;
+//! # let customer = commerce.customers().get(stateset_embedded::CustomerId::new())?.unwrap();
 //!
 //! // Create a subscription plan
 //! let plan = commerce.subscriptions().create_plan(CreateSubscriptionPlan {
@@ -75,7 +76,7 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateSubscriptionPlan, BillingInterval};
     /// use rust_decimal_macros::dec;
     ///
@@ -108,7 +109,7 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, SubscriptionPlanFilter, PlanStatus};
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -147,14 +148,14 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use stateset_embedded::{Commerce, CreateSubscription};
+    /// ```rust,no_run
+    /// use stateset_embedded::{Commerce, CreateSubscription, CustomerId};
     /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
     /// let subscription = commerce.subscriptions().subscribe(CreateSubscription {
-    ///     customer_id: Uuid::new_v4(),
+    ///     customer_id: CustomerId::new(),
     ///     plan_id: Uuid::new_v4(),
     ///     payment_method_id: Some("pm_1234".into()),
     ///     ..Default::default()
@@ -183,15 +184,14 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use stateset_embedded::{Commerce, SubscriptionFilter, SubscriptionStatus};
-    /// use uuid::Uuid;
+    /// ```rust,no_run
+    /// use stateset_embedded::{Commerce, CustomerId, SubscriptionFilter, SubscriptionStatus};
     ///
     /// let commerce = Commerce::new(":memory:")?;
     ///
     /// // List active subscriptions for a customer
     /// let subs = commerce.subscriptions().list(SubscriptionFilter {
-    ///     customer_id: Some(Uuid::new_v4()),
+    ///     customer_id: Some(CustomerId::new()),
     ///     status: Some(SubscriptionStatus::Active),
     ///     ..Default::default()
     /// })?;
@@ -217,15 +217,15 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, PauseSubscription};
-    /// use uuid::Uuid;
     /// use chrono::{Utc, Duration};
     ///
     /// let commerce = Commerce::new(":memory:")?;
+    /// # let subscription_id = stateset_core::SubscriptionId::new();
     ///
     /// // Pause for 30 days
-    /// commerce.subscriptions().pause(Uuid::new_v4(), PauseSubscription {
+    /// commerce.subscriptions().pause(subscription_id, PauseSubscription {
     ///     resume_at: Some(Utc::now() + Duration::days(30)),
     ///     reason: Some("Customer requested vacation hold".into()),
     /// })?;
@@ -249,20 +249,20 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CancelSubscription};
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
+    /// # let subscription_id = stateset_core::SubscriptionId::new();
     ///
     /// // Cancel at end of period
-    /// commerce.subscriptions().cancel(Uuid::new_v4(), CancelSubscription {
+    /// commerce.subscriptions().cancel(subscription_id, CancelSubscription {
     ///     reason: Some("Customer found alternative".into()),
     ///     ..Default::default()
     /// })?;
     ///
     /// // Immediate cancellation
-    /// commerce.subscriptions().cancel(Uuid::new_v4(), CancelSubscription {
+    /// commerce.subscriptions().cancel(subscription_id, CancelSubscription {
     ///     immediate: Some(true),
     ///     reason: Some("Refund requested".into()),
     ///     ..Default::default()
@@ -280,13 +280,13 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, SkipBillingCycle};
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
+    /// # let subscription_id = stateset_core::SubscriptionId::new();
     ///
-    /// commerce.subscriptions().skip_next_cycle(Uuid::new_v4(), SkipBillingCycle {
+    /// commerce.subscriptions().skip_next_cycle(subscription_id, SkipBillingCycle {
     ///     reason: Some("Customer traveling".into()),
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
@@ -384,13 +384,13 @@ impl Subscriptions {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::Commerce;
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
+    /// # let subscription_id = stateset_core::SubscriptionId::new();
     ///
-    /// let events = commerce.subscriptions().get_events(Uuid::new_v4())?;
+    /// let events = commerce.subscriptions().get_events(subscription_id)?;
     /// for event in events {
     ///     println!("{}: {}", event.event_type, event.description);
     /// }

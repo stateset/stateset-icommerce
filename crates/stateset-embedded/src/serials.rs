@@ -8,7 +8,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```rust,no_run
 //! use stateset_embedded::{Commerce, CreateSerialNumber};
 //!
 //! let commerce = Commerce::new("./store.db")?;
