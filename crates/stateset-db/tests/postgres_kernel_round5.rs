@@ -1699,7 +1699,7 @@ async fn postgres_payment_preview_runs_every_check_apply_runs() {
 async fn both_backends_expose_the_kernel_audit_chain_through_the_database_trait() {
     // A private database: the whole store-wide chain is verified, which other
     // suites running in a shared database can break mid-flight.
-    let Ok(url) = env::var("POSTGRES_URL").or_else(|_| env::var("DATABASE_URL")) else {
+    let Some(url) = stateset_test_utils::postgres_url() else {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
         return;
     };

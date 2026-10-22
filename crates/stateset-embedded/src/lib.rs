@@ -1,4 +1,8 @@
 #![deny(unsafe_code)]
+// The per-domain modules are private (their types are re-exported), so their
+// module docs are maintainer documentation rather than rendered API docs. Their
+// examples are still compiled as `no_run` doctests to keep them true to the API.
+#![allow(rustdoc::private_doc_tests)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
