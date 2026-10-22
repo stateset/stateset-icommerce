@@ -59,6 +59,7 @@ mod events_replay;
 mod idempotency;
 mod middleware;
 pub mod openapi;
+mod parsing;
 pub mod routes;
 mod server;
 mod state;

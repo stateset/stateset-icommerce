@@ -1,6 +1,7 @@
 //! Price schedule endpoints (time-bounded pricing).
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -9,7 +10,6 @@ use axum::{
     routing::{get, post},
 };
 use chrono::{DateTime, Utc};
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_core::{PriceScheduleId, ProductId};
 use utoipa::{IntoParams, ToSchema};
@@ -94,14 +94,6 @@ fn to_resp(s: &stateset_core::PriceSchedule) -> PriceScheduleResponse {
 
 fn entry_resp(e: &stateset_core::PriceScheduleEntry) -> PriceScheduleEntryResponse {
     PriceScheduleEntryResponse { product_id: e.product_id.to_string(), price: e.price.to_string() }
-}
-
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
 }
 
 fn parse_dt(s: &str) -> Result<DateTime<Utc>, HttpError> {

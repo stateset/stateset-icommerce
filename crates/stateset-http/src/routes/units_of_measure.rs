@@ -1,6 +1,7 @@
 //! Units of measure, unit classes, and conversion rule endpoints.
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::parse_id;
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -102,10 +103,6 @@ fn rule_resp(r: &stateset_core::UnitConversionRule) -> ConversionRuleResponse {
         to_uom_id: r.to_uom_id.to_string(),
         factor: r.factor.to_string(),
     }
-}
-
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
 }
 
 fn parse_factor(s: &str) -> Result<Decimal, HttpError> {

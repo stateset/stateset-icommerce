@@ -1,6 +1,7 @@
 //! Supplier SKU endpoints (per-supplier SKU / unit-cost overrides).
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::parse_id;
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -61,10 +62,6 @@ fn to_resp(s: &stateset_core::SupplierSku) -> SupplierSkuResponse {
         currency: s.currency.to_string(),
         is_preferred: s.is_preferred,
     }
-}
-
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
 }
 
 fn parse_decimal_opt(s: Option<&str>) -> Result<Option<Decimal>, HttpError> {

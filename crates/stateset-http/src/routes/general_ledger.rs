@@ -1,6 +1,7 @@
 //! General ledger endpoints (chart of accounts, journal entries, periods, reports).
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -483,14 +484,6 @@ fn to_period_resp(p: &stateset_core::GlPeriod) -> GlPeriodResponse {
         locked_by: p.locked_by.clone(),
         created_at: p.created_at.to_rfc3339(),
     }
-}
-
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
 }
 
 fn parse_date(s: &str, what: &str) -> Result<NaiveDate, HttpError> {
