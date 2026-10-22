@@ -68,6 +68,7 @@ use uuid::Uuid;
 /// as well as agent card management for AI agent commerce.
 pub struct X402 {
     db: Arc<dyn Database>,
+    metrics: Option<stateset_observability::Metrics>,
 }
 
 /// Fiat currency a stablecoin asset is pegged to; `None` for volatile assets
@@ -180,7 +181,20 @@ impl std::fmt::Debug for X402 {
 impl X402 {
     /// Create a new X402 operations instance
     pub fn new(db: Arc<dyn Database>) -> Self {
-        Self { db }
+        Self { db, metrics: None }
+    }
+
+    /// Count intents, quotes, purchases and agent registrations on `metrics`
+    /// (the handle the `Commerce` accessor passes in).
+    pub(crate) fn with_metrics(mut self, metrics: stateset_observability::Metrics) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    fn record(&self, record: impl FnOnce(&stateset_observability::Metrics)) {
+        if let Some(metrics) = &self.metrics {
+            record(metrics);
+        }
     }
 
     // ========================================================================
@@ -221,7 +235,9 @@ impl X402 {
     /// ```
     pub fn create_intent(&self, input: CreateX402PaymentIntent) -> Result<X402PaymentIntent> {
         self.reconcile_with_source(&input)?;
-        self.db.x402_payment_intents().create(input)
+        let intent = self.db.x402_payment_intents().create(input)?;
+        self.record(stateset_observability::Metrics::record_x402_intent_created);
+        Ok(intent)
     }
 
     /// An intent created for a cart or order must be for exactly what that
@@ -312,7 +328,9 @@ impl X402 {
         tx_hash: &str,
         block_number: u64,
     ) -> Result<X402PaymentIntent> {
-        self.db.x402_payment_intents().mark_settled(id, tx_hash, block_number)
+        let intent = self.db.x402_payment_intents().mark_settled(id, tx_hash, block_number)?;
+        self.record(stateset_observability::Metrics::record_x402_intent_settled);
+        Ok(intent)
     }
 
     /// Mark a sequenced intent as included in a published batch commitment
@@ -416,7 +434,9 @@ impl X402 {
 
     /// Create a new A2A quote
     pub fn create_quote(&self, input: CreateA2AQuote) -> Result<SkillQuote> {
-        self.db.a2a_quotes().create_quote(input)
+        let quote = self.db.a2a_quotes().create_quote(input)?;
+        self.record(stateset_observability::Metrics::record_a2a_quote_created);
+        Ok(quote)
     }
 
     /// Get an A2A quote by ID
@@ -446,7 +466,9 @@ impl X402 {
 
     /// Create a new A2A purchase
     pub fn create_purchase(&self, input: CreateA2APurchase) -> Result<A2APurchase> {
-        self.db.a2a_purchases().create_purchase(input)
+        let purchase = self.db.a2a_purchases().create_purchase(input)?;
+        self.record(stateset_observability::Metrics::record_a2a_purchase_created);
+        Ok(purchase)
     }
 
     /// Get an A2A purchase by ID
@@ -716,7 +738,9 @@ impl X402 {
     /// })?;
     /// ```
     pub fn register_agent(&self, input: CreateAgentCard) -> Result<AgentCard> {
-        self.db.agent_cards().create(input)
+        let card = self.db.agent_cards().create(input)?;
+        self.record(stateset_observability::Metrics::record_agent_registration);
+        Ok(card)
     }
 
     /// Get an agent card by ID
