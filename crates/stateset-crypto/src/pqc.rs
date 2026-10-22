@@ -90,8 +90,40 @@ pub struct HybridSigningPublicKey {
     pub ml_dsa_65_public_key: Vec<u8>,
 }
 
+/// Implements the hygiene every private-key container needs: `Debug` that
+/// never prints key bytes, constant-time equality, and zeroization on drop.
+macro_rules! secret_key_material {
+    ($name:ident { $($field:ident),+ $(,)? }) => {
+        impl core::fmt::Debug for $name {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.debug_struct(stringify!($name))
+                    $(.field(stringify!($field), &"<redacted>"))+
+                    .finish()
+            }
+        }
+
+        impl PartialEq for $name {
+            fn eq(&self, other: &Self) -> bool {
+                use subtle::ConstantTimeEq;
+                let mut equal = subtle::Choice::from(1u8);
+                $(equal &= self.$field[..].ct_eq(&other.$field[..]);)+
+                equal.into()
+            }
+        }
+
+        impl Eq for $name {}
+
+        impl Drop for $name {
+            fn drop(&mut self) {
+                use zeroize::Zeroize;
+                $(self.$field.zeroize();)+
+            }
+        }
+    };
+}
+
 /// Private component of a hybrid Ed25519 + ML-DSA-65 keypair.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct HybridSigningPrivateKey {
     /// Ed25519 signing seed (32 bytes).
     #[serde(with = "hex")]
@@ -101,13 +133,7 @@ pub struct HybridSigningPrivateKey {
     pub ml_dsa_65_seed: [u8; 32],
 }
 
-impl Drop for HybridSigningPrivateKey {
-    fn drop(&mut self) {
-        use zeroize::Zeroize;
-        self.ed25519_private_key.zeroize();
-        self.ml_dsa_65_seed.zeroize();
-    }
-}
+secret_key_material!(HybridSigningPrivateKey { ed25519_private_key, ml_dsa_65_seed });
 
 /// Full hybrid Ed25519 + ML-DSA-65 keypair material.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,7 +169,7 @@ pub struct HybridRecipientPublicKey {
 }
 
 /// Hybrid recipient private key material for `X25519 + ML-KEM-768`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct HybridRecipientPrivateKey {
     /// Classical X25519 private key.
     #[serde(with = "hex")]
@@ -152,6 +178,8 @@ pub struct HybridRecipientPrivateKey {
     #[serde(with = "hex")]
     pub ml_kem_768_seed: [u8; 64],
 }
+
+secret_key_material!(HybridRecipientPrivateKey { x25519_private_key, ml_kem_768_seed });
 
 /// Full hybrid recipient keypair material.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,12 +224,14 @@ pub struct StrictSigningPublicKey {
 }
 
 /// ML-DSA-65-only signing key seed for PQC-strict mode.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StrictSigningPrivateKey {
     /// ML-DSA-65 seed (32 bytes).
     #[serde(with = "hex")]
     pub ml_dsa_65_seed: [u8; 32],
 }
+
+secret_key_material!(StrictSigningPrivateKey { ml_dsa_65_seed });
 
 /// Full ML-DSA-65-only keypair for PQC-strict mode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -223,12 +253,14 @@ pub struct StrictRecipientPublicKey {
 }
 
 /// ML-KEM-768-only recipient private key for PQC-strict mode.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct StrictRecipientPrivateKey {
     /// ML-KEM-768 seed (64 bytes).
     #[serde(with = "hex")]
     pub ml_kem_768_seed: [u8; 64],
 }
+
+secret_key_material!(StrictRecipientPrivateKey { ml_kem_768_seed });
 
 /// Full ML-KEM-768-only recipient keypair for PQC-strict mode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1567,6 +1599,30 @@ pub fn test_vector_ml_kem_public_key(seed: &[u8; 64]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn private_key_debug_never_prints_key_bytes() {
+        fn leaks(rendered: &str, secret: &[u8]) -> bool {
+            let decimal = secret[..8].iter().map(u8::to_string).collect::<Vec<_>>().join(", ");
+            rendered.contains(&decimal) || rendered.contains(&hex::encode(&secret[..8]))
+        }
+
+        let signing = generate_hybrid_signing_keypair().expect("keypair");
+        let rendered = format!("{signing:?}");
+        assert!(rendered.contains("<redacted>"));
+        assert!(!leaks(&rendered, &signing.private.ed25519_private_key));
+        assert!(!leaks(&rendered, &signing.private.ml_dsa_65_seed));
+
+        let recipient = generate_hybrid_recipient_keypair(7).expect("keypair");
+        let rendered = format!("{recipient:?}");
+        assert!(!leaks(&rendered, &recipient.private.x25519_private_key));
+        assert!(!leaks(&rendered, &recipient.private.ml_kem_768_seed));
+
+        // Equality stays usable (now constant-time).
+        assert_eq!(recipient.private.clone(), recipient.private);
+        let other = generate_hybrid_recipient_keypair(7).expect("keypair");
+        assert_ne!(other.private, recipient.private);
+    }
     use crate::hash::PayloadAadParams;
     use serde_json::json;
 

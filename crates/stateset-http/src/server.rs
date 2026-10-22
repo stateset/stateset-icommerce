@@ -33,11 +33,21 @@ const REQUEST_BODY_MAX_BYTES_ENV: &str = "STATESET_HTTP_MAX_BODY_BYTES";
 const ALLOW_UNAUTHENTICATED_ENV: &str = "STATESET_HTTP_ALLOW_UNAUTHENTICATED";
 const REQUIRE_IDEMPOTENCY_KEYS_ENV: &str = "STATESET_HTTP_REQUIRE_IDEMPOTENCY_KEYS";
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 struct AdditionalApiBearerBinding {
     token: String,
     bound_tenant_id: Option<String>,
     bound_actor_id: Option<String>,
+}
+
+impl std::fmt::Debug for AdditionalApiBearerBinding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdditionalApiBearerBinding")
+            .field("token", &"<redacted>")
+            .field("bound_tenant_id", &self.bound_tenant_id)
+            .field("bound_actor_id", &self.bound_actor_id)
+            .finish()
+    }
 }
 
 impl AdditionalApiBearerBinding {

@@ -7,7 +7,7 @@ use crate::{
     PolicyDecisionEvidence, PrincipalKind,
 };
 use chrono::{DateTime, Utc};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -734,7 +734,7 @@ impl EconomicReceipt {
                 return false;
             };
             VerifyingKey::from_bytes(key).is_ok_and(|verifying_key| {
-                verifying_key.verify(&hash, &Signature::from_bytes(&signature_bytes)).is_ok()
+                verifying_key.verify_strict(&hash, &Signature::from_bytes(&signature_bytes)).is_ok()
             })
         })
     }

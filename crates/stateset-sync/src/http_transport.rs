@@ -24,7 +24,7 @@ const DEFAULT_VES_VERSION: u32 = 1;
 /// This mirrors the JS REST client by pushing signed VES envelopes to
 /// `/api/v1/ves/events/ingest` and pulling canonical events from
 /// `/api/v1/events`.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SequencerHttpTransport {
     client: Client,
     base_url: String,
@@ -34,6 +34,31 @@ pub struct SequencerHttpTransport {
     api_key: Option<String>,
     bearer_token: Option<String>,
     agent_key_id: u32,
+    trusted_agent_keys: Vec<TrustedAgentKey>,
+}
+
+/// An agent signing key pinned for verifying pulled events.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TrustedAgentKey {
+    source_agent_id: String,
+    agent_key_id: u32,
+    public_key: [u8; 32],
+}
+
+impl std::fmt::Debug for SequencerHttpTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redact = |secret: &Option<String>| secret.as_ref().map(|_| "<redacted>");
+        f.debug_struct("SequencerHttpTransport")
+            .field("base_url", &self.base_url)
+            .field("agent_id", &self.agent_id)
+            .field("tenant_id", &self.tenant_id)
+            .field("store_id", &self.store_id)
+            .field("api_key", &redact(&self.api_key))
+            .field("bearer_token", &redact(&self.bearer_token))
+            .field("agent_key_id", &self.agent_key_id)
+            .field("trusted_agent_keys", &self.trusted_agent_keys.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl SequencerHttpTransport {
@@ -106,6 +131,7 @@ impl SequencerHttpTransport {
             api_key: None,
             bearer_token: None,
             agent_key_id: 0,
+            trusted_agent_keys: Vec::new(),
         })
     }
 
@@ -123,6 +149,30 @@ impl SequencerHttpTransport {
     #[must_use]
     pub fn with_bearer_token(mut self, bearer_token: impl Into<String>) -> Self {
         self.bearer_token = Some(bearer_token.into());
+        self
+    }
+
+    /// Pin an agent's Ed25519 public key for verifying pulled events.
+    ///
+    /// Once at least one key is pinned, every pulled event must carry a
+    /// signature from a pinned `(source_agent_id, agent_key_id)` that
+    /// verifies over the VES event signing hash, computed with this
+    /// transport's tenant and store. Any other event fails the whole page, so
+    /// a sequencer (or anything between it and this client) cannot inject or
+    /// rewrite events. With no pinned keys pulled signatures are not checked;
+    /// payload hashes always are.
+    #[must_use]
+    pub fn with_trusted_agent_key(
+        mut self,
+        source_agent_id: impl Into<String>,
+        agent_key_id: u32,
+        public_key: [u8; 32],
+    ) -> Self {
+        self.trusted_agent_keys.push(TrustedAgentKey {
+            source_agent_id: source_agent_id.into(),
+            agent_key_id,
+            public_key,
+        });
         self
     }
 
@@ -382,6 +432,76 @@ impl SequencerHttpTransport {
         Ok(head)
     }
 
+    /// Verify a pulled event's Ed25519 signature against the pinned keys.
+    fn verify_pulled_signature(
+        &self,
+        event: &SyncEvent,
+        created_at: &str,
+    ) -> Result<(), SyncError> {
+        let reject = |reason: &str| {
+            Err(SyncError::Transport(format!(
+                "sequencer event {} failed signature verification: {reason}",
+                event.id
+            )))
+        };
+        let (Some(source_agent_id), Some(agent_key_id)) =
+            (event.source_agent_id.as_deref(), event.agent_key_id)
+        else {
+            return reject("missing source_agent_id or agent_key_id");
+        };
+        let Some(key) = self
+            .trusted_agent_keys
+            .iter()
+            .find(|key| key.source_agent_id == source_agent_id && key.agent_key_id == agent_key_id)
+        else {
+            return reject(&format!("agent `{source_agent_id}` key {agent_key_id} is not pinned"));
+        };
+        let Some(signature) = event.signature.as_deref() else {
+            return reject("missing agent_signature");
+        };
+        let Ok(signature) = <[u8; 64]>::try_from(
+            hex::decode(strip_hex_prefix(signature)).unwrap_or_default().as_slice(),
+        ) else {
+            return reject("agent_signature is not 64 hex-encoded bytes");
+        };
+        let Ok(payload_plain_hash) =
+            <[u8; 32]>::try_from(hex::decode(&event.hash).unwrap_or_default().as_slice())
+        else {
+            return reject("payload hash is not 32 hex-encoded bytes");
+        };
+        let event_id = event.id.to_string();
+        let signing_hash = stateset_crypto::hash::compute_event_signing_hash(
+            &stateset_crypto::hash::EventSigningParams {
+                ves_version: DEFAULT_VES_VERSION,
+                tenant_id: &self.tenant_id,
+                store_id: &self.store_id,
+                event_id: &event_id,
+                source_agent_id,
+                agent_key_id,
+                entity_type: &event.entity_type,
+                entity_id: &event.entity_id,
+                event_type: &event.event_type,
+                created_at,
+                payload_kind: 0,
+                payload_plain_hash: &payload_plain_hash,
+                payload_cipher_hash: &ZERO_HASH,
+            },
+        );
+        match signing_hash {
+            Ok(hash)
+                if stateset_crypto::sign::verify_event_signature(
+                    &hash,
+                    &signature,
+                    &key.public_key,
+                ) =>
+            {
+                Ok(())
+            }
+            Ok(_) => reject("signature does not verify"),
+            Err(error) => reject(&format!("cannot compute signing hash: {error}")),
+        }
+    }
+
     fn map_pulled_event(&self, event: PulledEvent) -> Result<SyncEvent, SyncError> {
         let sequence = event.envelope.sequence_number.ok_or_else(|| {
             SyncError::Transport("sequencer event was missing sequence_number".into())
@@ -398,7 +518,8 @@ impl SequencerHttpTransport {
                     )
                 },
             )?;
-        let timestamp = DateTime::parse_from_rfc3339(timestamp_raw)
+        let timestamp_raw = timestamp_raw.to_string();
+        let timestamp = DateTime::parse_from_rfc3339(&timestamp_raw)
             .map(|parsed| parsed.with_timezone(&Utc))
             .map_err(|error| {
                 SyncError::Transport(format!(
@@ -425,10 +546,18 @@ impl SequencerHttpTransport {
         mapped.source_agent_id = event.envelope.source_agent_id;
         mapped.agent_key_id = event.envelope.agent_key_id;
         mapped.kernel = event.envelope.kernel.filter(|kernel| !kernel.is_empty());
-        if let Some(payload_hash) =
-            event.envelope.payload_plain_hash.or(event.envelope.payload_hash)
+        // `SyncEvent::with_id` hashed the payload we actually received. A
+        // sequencer-supplied hash is only a claim: it must match.
+        if let Some(claimed) = event.envelope.payload_plain_hash.or(event.envelope.payload_hash)
+            && !strip_hex_prefix(&claimed).eq_ignore_ascii_case(&mapped.hash)
         {
-            mapped.hash = payload_hash;
+            return Err(SyncError::Transport(format!(
+                "sequencer event {} payload hash {claimed} does not match its payload ({})",
+                mapped.id, mapped.hash
+            )));
+        }
+        if !self.trusted_agent_keys.is_empty() {
+            self.verify_pulled_signature(&mapped, &timestamp_raw)?;
         }
 
         Ok(mapped)
@@ -901,6 +1030,10 @@ struct PulledEnvelope {
     sequence_number: Option<u64>,
 }
 
+fn strip_hex_prefix(value: &str) -> &str {
+    value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")).unwrap_or(value)
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Write};
@@ -1255,7 +1388,7 @@ mod tests {
                             "event_type": "order.shipped",
                             "command_id": "cmd-7",
                             "payload": { "status": "shipped" },
-                            "payload_plain_hash": "abc123",
+                            "payload_plain_hash": SyncEvent::compute_hash(&json!({ "status": "shipped" })),
                             "agent_signature": "deadbeef",
                             "agent_signature_scheme": 3,
                             "agent_signature_bundle": { "ml_dsa_65_signature": "cafebabe" },
@@ -1323,7 +1456,7 @@ mod tests {
             )),
             Some(("budget-remote", 4200, Some(800)))
         );
-        assert_eq!(event.hash, "abc123");
+        assert_eq!(event.hash, SyncEvent::compute_hash(&json!({ "status": "shipped" })));
 
         let captured = requests.recv().unwrap();
         assert!(captured.request_line.contains("GET /api/v1/events?"));
@@ -1332,6 +1465,146 @@ mod tests {
         assert!(captured.request_line.contains("from=7"));
         assert!(captured.request_line.contains("limit=50"));
         assert!(captured.headers.to_ascii_lowercase().contains("authorization: bearer jwt-token"));
+    }
+
+    fn pulled_page(envelope: serde_json::Value) -> serde_json::Value {
+        json!({ "events": [{ "envelope": envelope }], "head_sequence": 1, "has_more": false })
+    }
+
+    #[tokio::test]
+    async fn pull_rejects_an_event_whose_claimed_hash_does_not_match_its_payload() {
+        let (base_url, _requests) = spawn_single_response_server(
+            "200 OK",
+            pulled_page(json!({
+                "event_id": Uuid::new_v4(),
+                "entity_type": "order",
+                "entity_id": "ORD-1",
+                "event_type": "order.updated",
+                "payload": { "total": "999.00" },
+                "payload_plain_hash": SyncEvent::compute_hash(&json!({ "total": "1.00" })),
+                "created_at": "2024-03-01T00:00:00Z",
+                "sequence_number": 1
+            })),
+        );
+        let transport =
+            SequencerHttpTransport::new(base_url, "agent-1", "tenant-1", "store-1").unwrap();
+        let error = transport.pull_events(0, 10).await.unwrap_err();
+        assert!(error.to_string().contains("does not match its payload"), "{error}");
+    }
+
+    /// A pulled envelope signed by `private_key` over this tenant/store.
+    fn signed_envelope(
+        private_key: &[u8; 32],
+        tenant_id: &str,
+        store_id: &str,
+        source_agent_id: &str,
+        signed_payload: &serde_json::Value,
+        delivered_payload: &serde_json::Value,
+    ) -> serde_json::Value {
+        let event_id = Uuid::new_v4();
+        let created_at = "2024-03-01T00:00:00Z";
+        let plain_hash = SyncEvent::compute_hash(signed_payload);
+        let plain_bytes: [u8; 32] = hex::decode(&plain_hash).unwrap().try_into().unwrap();
+        let event_id_text = event_id.to_string();
+        let signing_hash = stateset_crypto::hash::compute_event_signing_hash(
+            &stateset_crypto::hash::EventSigningParams {
+                ves_version: DEFAULT_VES_VERSION,
+                tenant_id,
+                store_id,
+                event_id: &event_id_text,
+                source_agent_id,
+                agent_key_id: 3,
+                entity_type: "order",
+                entity_id: "ORD-1",
+                event_type: "order.updated",
+                created_at,
+                payload_kind: 0,
+                payload_plain_hash: &plain_bytes,
+                payload_cipher_hash: &ZERO_HASH,
+            },
+        )
+        .unwrap();
+        let signature = stateset_crypto::sign::sign_event_hash(&signing_hash, private_key).unwrap();
+        json!({
+            "event_id": event_id,
+            "entity_type": "order",
+            "entity_id": "ORD-1",
+            "event_type": "order.updated",
+            "payload": delivered_payload,
+            "agent_signature": format!("0x{}", hex::encode(signature)),
+            "source_agent_id": source_agent_id,
+            "agent_key_id": 3,
+            "created_at": created_at,
+            "sequence_number": 1
+        })
+    }
+
+    #[tokio::test]
+    async fn pinned_agent_keys_verify_pulled_signatures_and_refuse_forgeries() {
+        let tenant = Uuid::new_v4().to_string();
+        let store = Uuid::new_v4().to_string();
+        let agent = Uuid::new_v4().to_string();
+        let (private_key, public_key) = stateset_crypto::sign::generate_keypair();
+        let payload = json!({ "status": "shipped" });
+        let transport_for = |base_url: String| {
+            SequencerHttpTransport::new(base_url, "agent-local", &tenant, &store)
+                .unwrap()
+                .with_trusted_agent_key(&agent, 3, public_key)
+        };
+
+        // Genuine event: accepted.
+        let (base_url, _requests) = spawn_single_response_server(
+            "200 OK",
+            pulled_page(signed_envelope(&private_key, &tenant, &store, &agent, &payload, &payload)),
+        );
+        let pulled = transport_for(base_url).pull_events(0, 10).await.unwrap();
+        assert_eq!(pulled.events.len(), 1);
+
+        // Payload rewritten after signing (hash recomputed, signature stale).
+        let (base_url, _requests) = spawn_single_response_server(
+            "200 OK",
+            pulled_page(signed_envelope(
+                &private_key,
+                &tenant,
+                &store,
+                &agent,
+                &payload,
+                &json!({ "status": "refunded" }),
+            )),
+        );
+        let error = transport_for(base_url).pull_events(0, 10).await.unwrap_err();
+        assert!(error.to_string().contains("does not verify"), "{error}");
+
+        // Signed for another tenant: the signing hash binds tenant and store.
+        let (base_url, _requests) = spawn_single_response_server(
+            "200 OK",
+            pulled_page(signed_envelope(
+                &private_key,
+                &Uuid::new_v4().to_string(),
+                &store,
+                &agent,
+                &payload,
+                &payload,
+            )),
+        );
+        let error = transport_for(base_url).pull_events(0, 10).await.unwrap_err();
+        assert!(error.to_string().contains("does not verify"), "{error}");
+
+        // An agent whose key is not pinned.
+        let stranger = Uuid::new_v4().to_string();
+        let (base_url, _requests) = spawn_single_response_server(
+            "200 OK",
+            pulled_page(signed_envelope(
+                &private_key,
+                &tenant,
+                &store,
+                &stranger,
+                &payload,
+                &payload,
+            )),
+        );
+        let error = transport_for(base_url).pull_events(0, 10).await.unwrap_err();
+        assert!(error.to_string().contains("is not pinned"), "{error}");
     }
 
     #[tokio::test]

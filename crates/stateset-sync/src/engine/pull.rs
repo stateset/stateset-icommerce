@@ -46,7 +46,8 @@ impl SyncEngine {
                 result.events.len()
             )));
         }
-        // Validate pagination before any buffer, cursor, or outbox mutation.
+        // Validate the page before any buffer, cursor, or outbox mutation.
+        Self::validate_pulled_page(since, &result.events)?;
         let next_cursor = Self::resolve_next_cursor(
             since,
             &result.events,
@@ -118,6 +119,35 @@ impl SyncEngine {
         self.finish_outbox_cleanup()?;
 
         Ok(result)
+    }
+
+    /// Refuse a page that replays already-consumed history or repeats an
+    /// event: every event must sit strictly after `since`, and no event id or
+    /// sequence number may appear twice.
+    pub(super) fn validate_pulled_page(since: u64, events: &[SyncEvent]) -> Result<(), SyncError> {
+        let mut ids = HashSet::with_capacity(events.len());
+        let mut sequences = HashSet::with_capacity(events.len());
+        for event in events {
+            if event.sequence <= since {
+                return Err(SyncError::Transport(format!(
+                    "pulled event {} has sequence {} at or before the pull cursor {since}",
+                    event.id, event.sequence
+                )));
+            }
+            if !ids.insert(event.id) {
+                return Err(SyncError::Transport(format!(
+                    "pulled page repeats event {}",
+                    event.id
+                )));
+            }
+            if !sequences.insert(event.sequence) {
+                return Err(SyncError::Transport(format!(
+                    "pulled page repeats sequence {}",
+                    event.sequence
+                )));
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn resolve_next_cursor(
