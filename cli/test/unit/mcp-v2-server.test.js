@@ -46,6 +46,7 @@ function collectionFixture(tools, serverOptions = {}) {
           'Content-Type': 'application/json',
           Accept: 'application/json, text/event-stream',
           'Mcp-Method': method,
+          'MCP-Protocol-Version': '2026-07-28',
           ...(params.name ? { 'Mcp-Name': params.name } : {}),
         },
         body: JSON.stringify({

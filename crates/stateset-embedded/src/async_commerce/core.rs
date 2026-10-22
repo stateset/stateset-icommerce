@@ -32,62 +32,9 @@ impl AsyncOrders {
     /// Create a new order.
     ///
     /// Mirrors the sync [`Orders::create`](crate::Orders::create) behaviour:
-    /// it computes the expected order total via `stateset_pricing`, warns on
-    /// pricing drift between the persisted total and the engine total, records
-    /// metrics, and emits a [`CommerceEvent::OrderCreated`] event.
+    /// records metrics and emits a [`CommerceEvent::OrderCreated`] event.
     pub async fn create(&self, input: CreateOrder) -> Result<Order> {
-        // Validate pricing: compute expected total via pricing engine.
-        let pricing_items: Vec<stateset_pricing::LineItem> = input
-            .items
-            .iter()
-            .map(|item| stateset_pricing::LineItem {
-                sku: item.sku.clone(),
-                name: item.name.clone(),
-                unit_price: item.unit_price,
-                quantity: item.quantity as u32,
-                discount: item.discount.map(stateset_pricing::LineDiscount::FixedAmount),
-                tax_rate: None,
-            })
-            .collect();
-        let pricing_input = stateset_pricing::OrderTotalInput {
-            items: pricing_items,
-            shipping_cost: Decimal::ZERO,
-            shipping_tax_rate: None,
-            order_discount: None,
-            fees: vec![],
-            rounding: {
-                let minor = stateset_pricing::minor_units_for_currency(
-                    &input.currency.unwrap_or_default().to_string(),
-                );
-                stateset_pricing::RoundingPolicy::new(stateset_pricing::RoundingMode::HalfUp, minor)
-            },
-        };
-        let pricing_total = stateset_pricing::try_compute_order_total(&pricing_input).ok();
-        if let Some(ref computed) = pricing_total {
-            tracing::debug!(
-                computed_total = %computed.grand_total,
-                subtotal = %computed.subtotal,
-                discount = %computed.total_discount,
-                "Pricing engine computed order total"
-            );
-        }
-
         let order = self.db.orders().create_async(input).await?;
-
-        // Detect pricing drift: warn if DB total diverges from pricing engine.
-        if let Some(computed) = pricing_total {
-            let diff = (order.total_amount - computed.grand_total).abs();
-            if diff > Decimal::new(1, 2) {
-                // Divergence > $0.01
-                tracing::warn!(
-                    order_id = %order.id,
-                    db_total = %order.total_amount,
-                    engine_total = %computed.grand_total,
-                    diff = %diff,
-                    "Pricing drift detected: DB total differs from pricing engine"
-                );
-            }
-        }
 
         self.metrics.record_order_created(
             &order.customer_id.to_string(),
@@ -119,7 +66,19 @@ impl AsyncOrders {
 
     /// Update an order.
     pub async fn update(&self, id: Uuid, input: UpdateOrder) -> Result<Order> {
-        self.db.orders().update_async(id, input).await
+        #[cfg(feature = "events")]
+        let previous = self.db.orders().get_async(id).await?;
+
+        let updated = self.db.orders().update_async(id, input).await?;
+
+        #[cfg(feature = "events")]
+        if let Some(previous) = previous {
+            for event in crate::orders::order_change_events(&previous, &updated) {
+                self.emit(event);
+            }
+        }
+
+        Ok(updated)
     }
 
     /// Update order status.
@@ -159,12 +118,28 @@ impl AsyncOrders {
 
     /// Add an item to an order.
     pub async fn add_item(&self, order_id: Uuid, item: CreateOrderItem) -> Result<OrderItem> {
-        self.db.orders().add_item_async(order_id, item).await
+        let order_item = self.db.orders().add_item_async(order_id, item).await?;
+        #[cfg(feature = "events")]
+        self.emit(CommerceEvent::OrderItemAdded {
+            order_id: order_id.into(),
+            item_id: order_item.id,
+            sku: order_item.sku.clone(),
+            quantity: order_item.quantity,
+            timestamp: chrono::Utc::now(),
+        });
+        Ok(order_item)
     }
 
     /// Remove an item from an order.
     pub async fn remove_item(&self, order_id: Uuid, item_id: Uuid) -> Result<()> {
-        self.db.orders().remove_item_async(order_id, item_id).await
+        self.db.orders().remove_item_async(order_id, item_id).await?;
+        #[cfg(feature = "events")]
+        self.emit(CommerceEvent::OrderItemRemoved {
+            order_id: order_id.into(),
+            item_id: item_id.into(),
+            timestamp: chrono::Utc::now(),
+        });
+        Ok(())
     }
 
     /// Count orders matching a filter.

@@ -9,12 +9,11 @@ use stateset_core::{
 };
 use stateset_db::PostgresDatabase;
 use std::collections::HashMap;
-use std::env;
 use uuid::Uuid;
 
 #[cfg(feature = "postgres")]
 fn postgres_url() -> Option<String> {
-    env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 #[cfg(feature = "postgres")]

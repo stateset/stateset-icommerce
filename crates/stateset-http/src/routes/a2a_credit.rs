@@ -203,7 +203,7 @@ pub(crate) async fn list_terms(
                 creditor_agent_id: params.creditor_agent_id,
                 debtor_agent_id: params.debtor_agent_id,
                 status,
-                limit: params.limit,
+                limit: Some(crate::dto::resolve_limit(params.limit)),
                 offset: params.offset,
             })?;
             Ok(Json(terms.iter().map(terms_to_response).collect()))

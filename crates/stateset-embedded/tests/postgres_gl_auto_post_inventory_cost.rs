@@ -23,7 +23,7 @@ use stateset_embedded::AsyncCommerce;
 mod common;
 
 fn postgres_url() -> Option<String> {
-    std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 #[tokio::test]

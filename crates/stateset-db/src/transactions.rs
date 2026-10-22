@@ -1,12 +1,17 @@
 //! Transaction abstraction with saga support
 //!
 //! Provides ACID transactions and distributed saga pattern for multi-step operations.
+#![allow(deprecated)]
 
 use thiserror::Error;
 
 /// Error types for transaction operations
 #[derive(Error, Debug)]
 #[non_exhaustive]
+#[deprecated(
+    since = "1.40.0",
+    note = "unused by both backends; repositories run their own transactions. Removed in 2.0"
+)]
 pub enum TransactionError {
     #[error("Transaction failed: {0}")]
     TransactionFailed(String),
@@ -25,10 +30,18 @@ pub enum TransactionError {
 }
 
 /// Result type for transaction operations
+#[deprecated(
+    since = "1.40.0",
+    note = "unused by both backends; repositories run their own transactions. Removed in 2.0"
+)]
 pub type TransactionResult<T> = Result<T, TransactionError>;
 
 /// Transaction lifecycle state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[deprecated(
+    since = "1.40.0",
+    note = "unused by both backends; repositories run their own transactions. Removed in 2.0"
+)]
 pub enum TransactionState {
     /// Transaction is active and can execute steps
     Active,
@@ -41,6 +54,10 @@ pub enum TransactionState {
 }
 
 /// Trait for operations that can participate in transactions
+#[deprecated(
+    since = "1.40.0",
+    note = "unused by both backends; repositories run their own transactions. Removed in 2.0"
+)]
 pub trait Transactional {
     type Output;
 
@@ -52,6 +69,10 @@ pub trait Transactional {
 }
 
 /// Trait for repository-level transaction support
+#[deprecated(
+    since = "1.40.0",
+    note = "unused by both backends; repositories run their own transactions. Removed in 2.0"
+)]
 pub trait TransactionalRepository {
     /// Begin a new transaction
     fn begin_transaction(&self) -> TransactionResult<TransactionHandle>;
@@ -63,6 +84,10 @@ pub trait TransactionalRepository {
 }
 
 /// Handle for an active transaction
+#[deprecated(
+    since = "1.40.0",
+    note = "unused by both backends; repositories run their own transactions. Removed in 2.0"
+)]
 pub struct TransactionHandle {
     id: String,
     state: TransactionState,
@@ -173,6 +198,10 @@ impl Default for TransactionHandle {
 /// Sagas execute a sequence of operations with compensating actions
 /// to handle failures gracefully.
 #[derive(Debug)]
+#[deprecated(
+    since = "1.40.0",
+    note = "unused by both backends; repositories run their own transactions. Removed in 2.0"
+)]
 pub struct Saga {
     handle: TransactionHandle,
 }
@@ -204,6 +233,10 @@ impl Default for Saga {
 
 /// Builder for transaction batches
 #[must_use]
+#[deprecated(
+    since = "1.40.0",
+    note = "unused by both backends; repositories run their own transactions. Removed in 2.0"
+)]
 pub struct TransactionBuilder {
     operations: Vec<Box<dyn Transactional<Output = ()>>>,
 }

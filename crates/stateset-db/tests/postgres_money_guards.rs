@@ -27,10 +27,9 @@ use stateset_db::PostgresDatabase;
 use stateset_db::postgres::{
     PgGiftCardRepository, PgLoyaltyProgramRepository, PgStoreCreditRepository,
 };
-use std::env;
 
 fn postgres_url() -> Option<String> {
-    env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 async fn connect() -> Option<PostgresDatabase> {

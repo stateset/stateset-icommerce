@@ -84,7 +84,7 @@ pub(crate) async fn list_rates(
         .run_blocking(tid.as_deref(), move |c| {
             let filter = stateset_core::ExchangeRateFilter {
                 base_currency: params.base_currency.and_then(|s| s.parse().ok()),
-                limit: params.limit,
+                limit: Some(crate::dto::resolve_limit(params.limit)),
                 offset: params.offset,
                 ..Default::default()
             };

@@ -2,7 +2,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```rust,no_run
 //! use stateset_embedded::{Commerce, CreateWarranty, ProductId, WarrantyType};
 //! use uuid::Uuid;
 //!

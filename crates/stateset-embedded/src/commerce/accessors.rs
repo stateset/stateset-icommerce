@@ -14,17 +14,16 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use stateset_embedded::{Commerce, CreateOrder, CreateOrderItem};
+    /// ```rust,no_run
+    /// use stateset_embedded::{Commerce, CreateOrder, CreateOrderItem, CustomerId, ProductId};
     /// use rust_decimal_macros::dec;
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
     /// let order = commerce.orders().create(CreateOrder {
-    ///     customer_id: Uuid::new_v4(),
+    ///     customer_id: CustomerId::new(),
     ///     items: vec![CreateOrderItem {
-    ///         product_id: Uuid::new_v4(),
+    ///         product_id: ProductId::new(),
     ///         sku: "SKU-001".into(),
     ///         name: "Widget".into(),
     ///         quantity: 2,
@@ -51,7 +50,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateInventoryItem};
     /// use rust_decimal_macros::dec;
     ///
@@ -88,7 +87,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateCustomer};
     ///
     /// let commerce = Commerce::new("./store.db")?;
@@ -117,7 +116,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateProduct, CreateProductVariant};
     /// use rust_decimal_macros::dec;
     ///
@@ -170,17 +169,16 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use stateset_embedded::{Commerce, CreateReturn, CreateReturnItem, ReturnReason};
-    /// use uuid::Uuid;
+    /// ```rust,no_run
+    /// use stateset_embedded::{Commerce, CreateReturn, CreateReturnItem, OrderId, OrderItemId, ReturnReason};
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
     /// let ret = commerce.returns().create(CreateReturn {
-    ///     order_id: Uuid::new_v4(),
+    ///     order_id: OrderId::new(),
     ///     reason: ReturnReason::Defective,
     ///     items: vec![CreateReturnItem {
-    ///         order_item_id: Uuid::new_v4(),
+    ///         order_item_id: OrderItemId::new(),
     ///         quantity: 1,
     ///         ..Default::default()
     ///     }],
@@ -204,15 +202,14 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use stateset_embedded::{Commerce, CreateBom, CreateBomComponent};
+    /// ```rust,no_run
+    /// use stateset_embedded::{Commerce, CreateBom, CreateBomComponent, ProductId};
     /// use rust_decimal_macros::dec;
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
     /// let bom = commerce.bom().create(CreateBom {
-    ///     product_id: Uuid::new_v4(),
+    ///     product_id: ProductId::new(),
     ///     name: "Widget Assembly".into(),
     ///     components: Some(vec![
     ///         CreateBomComponent {
@@ -234,15 +231,14 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use stateset_embedded::{Commerce, CreateWorkOrder};
+    /// ```rust,no_run
+    /// use stateset_embedded::{Commerce, CreateWorkOrder, ProductId};
     /// use rust_decimal_macros::dec;
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
     /// let wo = commerce.work_orders().create(CreateWorkOrder {
-    ///     product_id: Uuid::new_v4(),
+    ///     product_id: ProductId::new(),
     ///     quantity_to_build: dec!(100),
     ///     ..Default::default()
     /// })?;
@@ -260,11 +256,11 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateShipment, CreateShipmentItem, ShippingCarrier};
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new("./store.db")?;
+    /// # let order = commerce.orders().get(stateset_embedded::OrderId::new())?.unwrap();
     ///
     /// let shipment = commerce.shipments().create(CreateShipment {
     ///     order_id: order.id, // Existing order with at least two SKU-001 units.
@@ -300,15 +296,14 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use stateset_embedded::{Commerce, CreatePayment, PaymentMethodType, CardBrand};
+    /// ```rust,no_run
+    /// use stateset_embedded::{Commerce, CreatePayment, OrderId, PaymentMethodType, CardBrand};
     /// use rust_decimal_macros::dec;
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
     /// let payment = commerce.payments().create(CreatePayment {
-    ///     order_id: Some(Uuid::new_v4()),
+    ///     order_id: Some(OrderId::new()),
     ///     payment_method: PaymentMethodType::CreditCard,
     ///     amount: dec!(99.99),
     ///     card_brand: Some(CardBrand::Visa),
@@ -329,22 +324,21 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use stateset_embedded::{Commerce, CreateWarranty, WarrantyType};
-    /// use uuid::Uuid;
+    /// ```rust,no_run
+    /// use stateset_embedded::{Commerce, CreateWarranty, CustomerId, ProductId, WarrantyType};
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
     /// let warranty = commerce.warranties().create(CreateWarranty {
-    ///     customer_id: Uuid::new_v4(),
-    ///     product_id: Some(Uuid::new_v4()),
+    ///     customer_id: CustomerId::new(),
+    ///     product_id: Some(ProductId::new()),
     ///     warranty_type: Some(WarrantyType::Extended),
     ///     duration_months: Some(24),
     ///     ..Default::default()
     /// })?;
     ///
     /// // Check if warranty is valid
-    /// assert!(commerce.warranties().is_valid(warranty.id)?);
+    /// assert!(commerce.warranties().is_valid(warranty.id.into())?);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     #[must_use]
@@ -356,7 +350,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier};
     /// use rust_decimal_macros::dec;
     ///
@@ -383,9 +377,9 @@ impl Commerce {
     /// })?;
     ///
     /// // Approve and send
-    /// let po = commerce.purchase_orders().submit(po.id)?;
-    /// let po = commerce.purchase_orders().approve(po.id, "admin")?;
-    /// let po = commerce.purchase_orders().send(po.id)?;
+    /// let po = commerce.purchase_orders().submit(po.id.into())?;
+    /// let po = commerce.purchase_orders().approve(po.id.into(), "admin")?;
+    /// let po = commerce.purchase_orders().send(po.id.into())?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     #[must_use]
@@ -397,15 +391,14 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use stateset_embedded::{Commerce, CreateInvoice, CreateInvoiceItem, RecordInvoicePayment};
+    /// ```rust,no_run
+    /// use stateset_embedded::{Commerce, CreateInvoice, CreateInvoiceItem, CustomerId, RecordInvoicePayment};
     /// use rust_decimal_macros::dec;
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
     /// let invoice = commerce.invoices().create(CreateInvoice {
-    ///     customer_id: Uuid::new_v4(),
+    ///     customer_id: CustomerId::new(),
     ///     billing_email: Some("customer@example.com".into()),
     ///     items: vec![CreateInvoiceItem {
     ///         description: "Professional Services".into(),
@@ -417,8 +410,8 @@ impl Commerce {
     /// })?;
     ///
     /// // Send and record payment
-    /// let invoice = commerce.invoices().send(invoice.id)?;
-    /// let invoice = commerce.invoices().record_payment(invoice.id, RecordInvoicePayment {
+    /// let invoice = commerce.invoices().send(invoice.id.into())?;
+    /// let invoice = commerce.invoices().record_payment(invoice.id.into(), RecordInvoicePayment {
     ///     amount: dec!(1500.00),
     ///     payment_method: Some("credit_card".into()),
     ///     ..Default::default()
@@ -434,7 +427,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateCart, AddCartItem, CartAddress};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -482,7 +475,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, AnalyticsQuery, TimePeriod};
     ///
     /// let commerce = Commerce::new("./store.db")?;
@@ -519,7 +512,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, Currency, ConvertCurrency};
     /// use rust_decimal_macros::dec;
     ///
@@ -566,7 +559,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, TaxCalculationRequest, TaxLineItem, TaxAddress, ProductTaxCategory};
     /// use rust_decimal_macros::dec;
     ///
@@ -617,7 +610,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreatePromotion, PromotionType, ApplyPromotionsRequest, PromotionLineItem};
     /// use rust_decimal_macros::dec;
     ///
@@ -639,7 +632,10 @@ impl Commerce {
     ///     promotion_id: promo.id,
     ///     code: "SUMMER20".into(),
     ///     usage_limit: Some(100),
-    ///     ..Default::default()
+    ///     per_customer_limit: None,
+    ///     starts_at: None,
+    ///     ends_at: None,
+    ///     metadata: None,
     /// })?;
     ///
     /// // Apply promotions to a cart
@@ -648,10 +644,13 @@ impl Commerce {
     ///     coupon_codes: vec!["SUMMER20".into()],
     ///     line_items: vec![PromotionLineItem {
     ///         id: "item-1".into(),
+    ///         product_id: None,
+    ///         variant_id: None,
+    ///         sku: Some("SKU-001".into()),
+    ///         category_ids: vec![],
     ///         quantity: 2,
     ///         unit_price: dec!(50.00),
     ///         line_total: dec!(100.00),
-    ///         ..Default::default()
     ///     }],
     ///     ..Default::default()
     /// })?;
@@ -669,10 +668,9 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use stateset_embedded::{Commerce, CreateSubscriptionPlan, CreateSubscription, BillingInterval};
+    /// ```rust,no_run
+    /// use stateset_embedded::{Commerce, CreateSubscriptionPlan, CreateSubscription, BillingInterval, CustomerId};
     /// use rust_decimal_macros::dec;
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
@@ -690,7 +688,7 @@ impl Commerce {
     ///
     /// // Subscribe a customer
     /// let subscription = commerce.subscriptions().subscribe(CreateSubscription {
-    ///     customer_id: Uuid::new_v4(),
+    ///     customer_id: CustomerId::new(),
     ///     plan_id: plan.id,
     ///     ..Default::default()
     /// })?;
@@ -707,7 +705,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateInspection, InspectionType};
     /// use uuid::Uuid;
     ///
@@ -732,7 +730,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateLot};
     /// use chrono::{Utc, Duration};
     /// use rust_decimal_macros::dec;
@@ -742,9 +740,18 @@ impl Commerce {
     /// let lot = commerce.lots().create(CreateLot {
     ///     lot_number: Some("LOT-2025-001".into()),
     ///     sku: "RAW-001".into(),
-    ///     quantity_produced: dec!(1000),
+    ///     quantity: dec!(1000),
+    ///     production_date: Some(Utc::now()),
     ///     expiration_date: Some(Utc::now() + Duration::days(365)),
-    ///     ..Default::default()
+    ///     best_before_date: None,
+    ///     supplier_lot: None,
+    ///     supplier_id: None,
+    ///     work_order_id: None,
+    ///     purchase_order_id: None,
+    ///     cost_per_unit: None,
+    ///     attributes: None,
+    ///     notes: None,
+    ///     initial_location_id: None,
     /// })?;
     ///
     /// println!("Created lot {}", lot.lot_number);
@@ -759,7 +766,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateSerialNumber};
     ///
     /// let commerce = Commerce::new("./store.db")?;
@@ -782,7 +789,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateWarehouse, CreateLocation, WarehouseType, LocationType};
     ///
     /// let commerce = Commerce::new("./store.db")?;
@@ -823,7 +830,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateReceipt, CreateReceiptItem, ReceiptType};
     /// use rust_decimal_macros::dec;
     ///
@@ -853,16 +860,15 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use stateset_embedded::{Commerce, CreateWave, PickTaskFilter};
-    /// use uuid::Uuid;
+    /// ```rust,no_run
+    /// use stateset_embedded::{Commerce, CreateWave, OrderId};
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
     /// // Create a wave from orders
     /// let wave = commerce.fulfillment().create_wave(CreateWave {
     ///     warehouse_id: 1,
-    ///     order_ids: vec![Uuid::new_v4()],
+    ///     order_ids: vec![OrderId::new()],
     ///     ..Default::default()
     /// })?;
     ///
@@ -879,7 +885,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateBill, CreateBillItem};
     /// use rust_decimal_macros::dec;
     /// use chrono::{Utc, Duration};
@@ -921,7 +927,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, SetItemCost, CostMethod};
     /// use rust_decimal_macros::dec;
     ///
@@ -949,16 +955,15 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use stateset_embedded::{Commerce, CreateCreditAccount};
+    /// ```rust,no_run
+    /// use stateset_embedded::{Commerce, CreateCreditAccount, CustomerId};
     /// use rust_decimal_macros::dec;
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
     /// // Create credit account for a customer
     /// let account = commerce.credit().create_credit_account(CreateCreditAccount {
-    ///     customer_id: Uuid::new_v4(),
+    ///     customer_id: CustomerId::new(),
     ///     credit_limit: dec!(10000.00),
     ///     payment_terms: Some("Net 30".into()),
     ///     ..Default::default()
@@ -978,7 +983,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateBackorder, BackorderPriority};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -992,7 +997,11 @@ impl Commerce {
     ///     sku: "WIDGET-001".into(),
     ///     quantity: dec!(50),
     ///     priority: Some(BackorderPriority::High),
-    ///     ..Default::default()
+    ///     order_line_id: None,
+    ///     expected_date: None,
+    ///     promised_date: None,
+    ///     source_location_id: None,
+    ///     notes: None,
     /// })?;
     ///
     /// // Get overdue backorders
@@ -1012,7 +1021,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::Commerce;
     ///
     /// let commerce = Commerce::new("./store.db")?;
@@ -1042,7 +1051,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateJournalEntry};
     /// use chrono::NaiveDate;
     ///
@@ -1089,17 +1098,17 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateX402PaymentIntent, X402Network, X402Asset};
-    /// use rust_decimal_macros::dec;
     ///
     /// let commerce = Commerce::new("./store.db")?;
     ///
-    /// // Create a payment intent
+    /// // Create a payment intent for 100 USDC (amounts are in the asset's
+    /// // smallest unit: 1 USDC = 1_000_000)
     /// let intent = commerce.x402().create_intent(CreateX402PaymentIntent {
     ///     payer_address: "0xBuyer...".into(),
     ///     payee_address: "0xSeller...".into(),
-    ///     amount: dec!(100.00),
+    ///     amount: 100_000_000,
     ///     asset: X402Asset::Usdc,
     ///     network: X402Network::SetChain,
     ///     ..Default::default()
@@ -1112,24 +1121,24 @@ impl Commerce {
     ///     name: "Commerce Bot".into(),
     ///     wallet_address: "0xAgent...".into(),
     ///     public_key: "ed25519_pubkey_base64".into(),
-    ///     supported_networks: vec![X402Network::SetChain],
-    ///     supported_assets: vec![X402Asset::Usdc, X402Asset::SsUsd],
+    ///     supported_networks: Some(vec![X402Network::SetChain]),
+    ///     supported_assets: Some(vec![X402Asset::Usdc, X402Asset::SsUsd]),
     ///     a2a_skills: Some(vec![A2ASkill::Sell, A2ASkill::Quote]),
     ///     ..Default::default()
     /// })?;
     ///
     /// // Discover agents with specific capabilities
     /// let sellers = commerce.x402().discover_agents(
-    ///     Some(vec![X402Network::SetChain]),
-    ///     Some(vec![X402Asset::Usdc]),
-    ///     Some(vec!["Sell".to_string()]),
+    ///     Some(X402Network::SetChain),
+    ///     Some(X402Asset::Usdc),
+    ///     Some(A2ASkill::Sell),
     ///     None,
     /// )?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     #[must_use]
     pub fn x402(&self) -> X402 {
-        X402::new(self.db.clone())
+        X402::new(self.db.clone()).with_metrics(self.metrics.clone())
     }
 
     /// Access ERC-8004 trustless agent registries.
@@ -1226,7 +1235,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// let commerce = stateset_embedded::Commerce::new("./store.db")?;
     /// let report = commerce.maintenance().backup_to("./backups/nightly.db")?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
@@ -1402,7 +1411,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateCart, AddCartItem, CartAddress};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -1436,7 +1445,7 @@ impl Commerce {
     /// })?;
     ///
     /// // Calculate and apply tax
-    /// let result = commerce.calculate_cart_tax(cart.id)?;
+    /// let result = commerce.calculate_cart_tax(cart.id.into())?;
     /// println!("Tax: ${}", result.total_tax);
     /// println!("Updated cart total: ${}", commerce.carts().get(cart.id)?.unwrap().grand_total);
     /// # Ok::<(), stateset_embedded::CommerceError>(())
@@ -1519,7 +1528,7 @@ impl Commerce {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateCart, AddCartItem};
     /// use rust_decimal_macros::dec;
     ///
@@ -1543,7 +1552,7 @@ impl Commerce {
     /// commerce.carts().apply_discount(cart.id, "SUMMER20")?;
     ///
     /// // Calculate and apply promotions
-    /// let result = commerce.apply_cart_promotions(cart.id)?;
+    /// let result = commerce.apply_cart_promotions(cart.id.into())?;
     /// println!("Discount: ${}", result.total_discount);
     /// println!("Applied promotions: {:?}", result.applied_promotions.len());
     ///

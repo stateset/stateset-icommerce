@@ -10,11 +10,12 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! use stateset_embedded::{Commerce, CreatePromotion, PromotionType, PromotionTrigger};
+//! ```rust,no_run
+//! use stateset_embedded::{Commerce, CreatePromotion, PromotionType};
 //! use rust_decimal_macros::dec;
 //!
 //! let commerce = Commerce::new("./store.db")?;
+//! # let cart_id = uuid::Uuid::new_v4();
 //!
 //! // Create a 20% off promotion
 //! let promo = commerce.promotions().create(CreatePromotion {
@@ -27,8 +28,8 @@
 //! // Activate the promotion
 //! commerce.promotions().activate(promo.id)?;
 //!
-//! // Apply promotions to a cart
-//! let result = commerce.promotions().apply_to_cart(cart_id)?;
+//! // Apply promotions to a cart (recomputes and stores the cart's discount)
+//! let result = commerce.apply_cart_promotions(cart_id)?;
 //! println!("Discount: ${}", result.total_discount);
 //! # Ok::<(), stateset_embedded::CommerceError>(())
 //! ```
@@ -67,7 +68,7 @@ impl Promotions {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreatePromotion, PromotionType};
     /// use rust_decimal_macros::dec;
     ///
@@ -100,7 +101,7 @@ impl Promotions {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, PromotionFilter, PromotionStatus};
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -130,12 +131,13 @@ impl Promotions {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// use stateset_core::PromotionId;
     /// use stateset_embedded::Commerce;
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
-    /// commerce.promotions().activate(Uuid::new_v4())?;
+    /// # let promotion_id = PromotionId::new();
+    /// commerce.promotions().activate(promotion_id)?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
     pub fn activate(&self, id: PromotionId) -> Result<Promotion> {
@@ -155,17 +157,21 @@ impl Promotions {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// use stateset_core::PromotionId;
     /// use stateset_embedded::{Commerce, CreateCouponCode};
-    /// use uuid::Uuid;
     ///
     /// let commerce = Commerce::new(":memory:")?;
+    /// # let promotion_id = PromotionId::new();
     ///
     /// let coupon = commerce.promotions().create_coupon(CreateCouponCode {
-    ///     promotion_id: Uuid::new_v4(),
+    ///     promotion_id,
     ///     code: "SUMMER25".into(),
     ///     usage_limit: Some(100),
-    ///     ..Default::default()
+    ///     per_customer_limit: Some(1),
+    ///     starts_at: None,
+    ///     ends_at: None,
+    ///     metadata: None,
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
@@ -204,7 +210,7 @@ impl Promotions {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::Commerce;
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -252,7 +258,7 @@ impl Promotions {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, ApplyPromotionsRequest, PromotionLineItem};
     /// use rust_decimal_macros::dec;
     ///
@@ -264,10 +270,13 @@ impl Promotions {
     ///     coupon_codes: vec!["SUMMER25".into()],
     ///     line_items: vec![PromotionLineItem {
     ///         id: "item-1".into(),
+    ///         product_id: None,
+    ///         variant_id: None,
+    ///         sku: Some("SKU-001".into()),
+    ///         category_ids: vec![],
     ///         quantity: 2,
     ///         unit_price: dec!(75.00),
     ///         line_total: dec!(150.00),
-    ///         ..Default::default()
     ///     }],
     ///     ..Default::default()
     /// })?;

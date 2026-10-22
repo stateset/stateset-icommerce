@@ -1,6 +1,7 @@
 //! SQLite implementation of General Ledger repository
 
 use crate::KernelOutboxEvent;
+use crate::rules::general_ledger::source_document_key;
 use crate::sqlite::kernel_outbox::append_kernel_event_tx;
 use crate::sqlite::{
     map_db_error, parse_uuid, resolve_currency_with_conn, with_immediate_transaction,
@@ -21,32 +22,6 @@ use stateset_core::{
     generate_journal_entry_number,
 };
 use uuid::Uuid;
-
-/// Families where one journal entry per source document is an invariant.
-/// Recognition and depreciation post many entries per document and are
-/// deliberately excluded. The returned key feeds the unique
-/// `gl_journal_entries.source_document_key` backstop index.
-fn source_document_key(
-    source_document_type: Option<&str>,
-    source_document_id: Option<Uuid>,
-) -> Option<String> {
-    const SINGLE_ENTRY_TYPES: [&str; 8] = [
-        "invoice",
-        "payment",
-        "bill",
-        "bill_payment",
-        "cost_transaction",
-        "write_off",
-        "period_close",
-        "reversal",
-    ];
-    match (source_document_type, source_document_id) {
-        (Some(kind), Some(id)) if SINGLE_ENTRY_TYPES.contains(&kind) => {
-            Some(format!("{kind}:{id}"))
-        }
-        _ => None,
-    }
-}
 
 /// Reduce a stored RFC3339 timestamp to its calendar date, erroring in
 /// `rusqlite` terms for use inside transaction closures.

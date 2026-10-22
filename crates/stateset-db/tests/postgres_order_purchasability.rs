@@ -21,7 +21,6 @@ use stateset_core::{
     ProductId, ProductStatus, SetCartPayment, UpdateProduct,
 };
 use stateset_db::PostgresDatabase;
-use std::env;
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
@@ -29,7 +28,7 @@ use uuid::Uuid;
 // ---------------------------------------------------------------------------
 
 fn postgres_url() -> Option<String> {
-    env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 async fn connect() -> Option<PostgresDatabase> {

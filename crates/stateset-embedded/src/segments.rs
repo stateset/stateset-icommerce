@@ -2,15 +2,16 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use stateset_embedded::{Commerce, CreateSegment, SegmentType};
 //!
 //! let commerce = Commerce::new("./store.db")?;
 //!
 //! let segment = commerce.segments().create(CreateSegment {
 //!     name: "VIP Customers".into(),
+//!     description: None,
 //!     segment_type: SegmentType::Static,
-//!     ..Default::default()
+//!     rules: vec![], // static segments are populated by adding members
 //! })?;
 //!
 //! println!("Segment created: {}", segment.name);
@@ -54,7 +55,7 @@ impl Segments {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateSegment, SegmentType};
     ///
     /// let commerce = Commerce::new("./store.db")?;
@@ -63,7 +64,7 @@ impl Segments {
     ///     name: "High Spenders".into(),
     ///     segment_type: SegmentType::Dynamic,
     ///     description: Some("Customers who have spent over $1000".into()),
-    ///     ..Default::default()
+    ///     rules: vec![],
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```

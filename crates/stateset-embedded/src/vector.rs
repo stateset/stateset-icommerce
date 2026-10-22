@@ -6,7 +6,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use stateset_embedded::Commerce;
 //!
 //! let commerce = Commerce::new("./store.db")?;
@@ -22,6 +22,7 @@
 //! for result in results {
 //!     println!("{}: {} (score: {:.2})", result.entity.name, result.entity.id, result.score);
 //! }
+//! # Ok::<(), stateset_embedded::CommerceError>(())
 //! ```
 
 use stateset_core::{

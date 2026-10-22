@@ -182,7 +182,7 @@ pub(crate) async fn list_messages(
                     .map(|s| parse_uuid(s, "from_agent_id"))
                     .transpose()?,
                 status,
-                limit: params.limit,
+                limit: Some(crate::dto::resolve_limit(params.limit)),
                 offset: params.offset,
             })?;
             Ok(Json(messages.iter().map(msg_to_response).collect()))
