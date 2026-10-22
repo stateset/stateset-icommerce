@@ -130,6 +130,24 @@ async fn postgres_an_unknown_order_is_not_found() {
 }
 
 #[tokio::test]
+async fn postgres_an_external_order_is_still_refused_by_the_foreign_key() {
+    // Unlike SQLite, the Postgres schema has `warranties_order_id_fkey`, so an
+    // order this store does not hold was never accepted here, owner or not.
+    let db = require_db!();
+    let owner = customer(&db).await;
+    let result = db
+        .warranties()
+        .create_async(CreateWarranty {
+            customer_id: owner,
+            order_id: Some(OrderId::new()),
+            ..Default::default()
+        })
+        .await;
+    assert!(result.is_err(), "{result:?}");
+    assert_eq!(owned_by(&db, owner).await, 0);
+}
+
+#[tokio::test]
 async fn postgres_a_warranty_without_an_order_keeps_its_customer() {
     let db = require_db!();
     let owner = customer(&db).await;

@@ -120,6 +120,23 @@ fn an_unknown_order_is_not_found() {
 }
 
 #[test]
+fn an_explicit_customer_with_an_external_order_is_kept() {
+    // An order this store does not hold (e.g. imported from elsewhere): the
+    // explicit owner stands, as before.
+    let db = SqliteDatabase::in_memory().expect("db");
+    let owner = customer(&db);
+    let warranty = db
+        .warranties()
+        .create(CreateWarranty {
+            customer_id: owner,
+            order_id: Some(OrderId::new()),
+            ..Default::default()
+        })
+        .expect("create warranty");
+    assert_eq!(warranty.customer_id, owner);
+}
+
+#[test]
 fn a_warranty_without_an_order_keeps_its_customer() {
     let db = SqliteDatabase::in_memory().expect("db");
     let owner = customer(&db);

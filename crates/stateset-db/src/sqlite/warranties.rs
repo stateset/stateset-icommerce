@@ -7,7 +7,7 @@ use super::{
 };
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{Row, params};
+use rusqlite::{OptionalExtension, Row, params};
 use stateset_core::{
     BatchResult, ClaimResolution, ClaimStatus, CommerceError, CreateWarranty, CreateWarrantyClaim,
     CustomerId, OrderId, OrderItemId, ProductId, Result, UpdateWarranty, UpdateWarrantyClaim,
@@ -460,7 +460,8 @@ impl SqliteWarrantyRepository {
     }
 }
 
-/// The customer of `order_id` (`None` when no order is named): a warranty
+/// The customer of `order_id` (`None` when no order is named or the store
+/// holds no such order): a warranty
 /// sold against an order belongs to that order's customer
 /// ([`CreateWarranty::resolve_customer`]).
 fn order_customer(
@@ -468,19 +469,17 @@ fn order_customer(
     order_id: Option<stateset_core::OrderId>,
 ) -> Result<Option<stateset_core::CustomerId>> {
     let Some(order_id) = order_id else { return Ok(None) };
-    let raw: String = conn
+    let raw: Option<String> = conn
         .query_row("SELECT customer_id FROM orders WHERE id = ?", [order_id.to_string()], |row| {
             row.get(0)
         })
-        .map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => {
-                CommerceError::OrderNotFound(order_id.into_uuid())
-            }
-            e => map_db_error(e),
-        })?;
-    raw.parse()
-        .map(Some)
-        .map_err(|e| CommerceError::DatabaseError(format!("order {order_id} customer_id: {e}")))
+        .optional()
+        .map_err(map_db_error)?;
+    raw.map(|raw| {
+        raw.parse()
+            .map_err(|e| CommerceError::DatabaseError(format!("order {order_id} customer_id: {e}")))
+    })
+    .transpose()
 }
 
 impl WarrantyRepository for SqliteWarrantyRepository {

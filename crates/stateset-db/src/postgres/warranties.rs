@@ -1566,7 +1566,8 @@ impl PgWarrantyRepository {
     }
 }
 
-/// The customer of `order_id` (`None` when no order is named): a warranty
+/// The customer of `order_id` (`None` when no order is named or the store
+/// holds no such order): a warranty
 /// sold against an order belongs to that order's customer
 /// ([`CreateWarranty::resolve_customer`]).
 async fn order_customer<'e, E>(
@@ -1582,9 +1583,7 @@ where
         .fetch_optional(executor)
         .await
         .map_err(map_db_error)?;
-    owner
-        .map(|owner| Some(owner.into()))
-        .ok_or_else(|| CommerceError::OrderNotFound(order_id.into_uuid()))
+    Ok(owner.map(Into::into))
 }
 
 impl WarrantyRepository for PgWarrantyRepository {
