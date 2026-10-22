@@ -472,15 +472,9 @@ impl SqliteKernelExecutor {
         let initial_quantity = input.initial_quantity.unwrap_or_default();
 
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                if let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "inventory_item")?
-                {
-                    return Ok(stored);
-                }
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) =
+                settled_receipt_tx(tx, command, &run, &request_hash, "inventory_item")?
+            {
                 return Ok(receipt);
             }
             let sku_exists: bool = tx.query_row(
@@ -602,16 +596,8 @@ impl SqliteKernelExecutor {
             .map_err(|error| CommerceError::ValidationError(error.to_string()))?;
 
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                if let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "product")?
-                {
-                    return Ok(stored);
-                }
-            }
-
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "product")?
+            {
                 return Ok(receipt);
             }
 
@@ -802,14 +788,8 @@ impl SqliteKernelExecutor {
         let started_at = run.started_at;
 
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
-                && let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "payment")?
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "payment")?
             {
-                return Ok(stored);
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
             // Every check apply performs must run before the preview answer
@@ -929,14 +909,7 @@ impl SqliteKernelExecutor {
         let payment_id = input.payment_id.to_string();
 
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
-                && let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "refund")?
-            {
-                return Ok(stored);
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "refund")? {
                 return Ok(receipt);
             }
 
@@ -1075,19 +1048,9 @@ impl SqliteKernelExecutor {
         let started_at = run.started_at;
 
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                if let Replay::Return(stored) = replay_or_conflict(
-                    tx,
-                    command,
-                    &request_hash,
-                    existing,
-                    "inventory_reservation",
-                )? {
-                    return Ok(stored);
-                }
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) =
+                settled_receipt_tx(tx, command, &run, &request_hash, "inventory_reservation")?
+            {
                 return Ok(receipt);
             }
 
@@ -1293,19 +1256,9 @@ impl SqliteKernelExecutor {
         let started_at = run.started_at;
 
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                if let Replay::Return(stored) = replay_or_conflict(
-                    tx,
-                    command,
-                    &request_hash,
-                    existing,
-                    "inventory_reservation",
-                )? {
-                    return Ok(stored);
-                }
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) =
+                settled_receipt_tx(tx, command, &run, &request_hash, "inventory_reservation")?
+            {
                 return Ok(receipt);
             }
 
@@ -1520,14 +1473,7 @@ impl SqliteKernelExecutor {
         let order_id = command.payload.order_id.to_string();
 
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
-                && let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "order")?
-            {
-                return Ok(stored);
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "order")? {
                 return Ok(receipt);
             }
 
@@ -1739,14 +1685,7 @@ impl SqliteKernelExecutor {
         let order_id = command.payload.order_id.to_string();
 
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
-                && let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "order")?
-            {
-                return Ok(stored);
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "order")? {
                 return Ok(receipt);
             }
             let lines = command.payload.lines.as_deref().unwrap_or_default();
@@ -2084,15 +2023,7 @@ impl SqliteKernelExecutor {
         let policy = run.policy.clone();
         let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                if let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "return")?
-                {
-                    return Ok(stored);
-                }
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "return")? {
                 return Ok(receipt);
             }
             let mut returned = match tx.query_row(
@@ -2263,14 +2194,9 @@ impl SqliteKernelExecutor {
         let started_at = run.started_at;
 
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
-                && let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "a2a_escrow")?
+            if let Some(receipt) =
+                settled_receipt_tx(tx, command, &run, &request_hash, "a2a_escrow")?
             {
-                return Ok(stored);
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
             if run.is_preview() {
@@ -2379,14 +2305,9 @@ impl SqliteKernelExecutor {
         let request_hash = run.request_hash.clone();
         let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
-                && let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "a2a_escrow")?
+            if let Some(receipt) =
+                settled_receipt_tx(tx, command, &run, &request_hash, "a2a_escrow")?
             {
-                return Ok(stored);
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
             let loaded = load_a2a_escrow_sqlite(
@@ -2461,15 +2382,9 @@ impl SqliteKernelExecutor {
         let policy = run.policy.clone();
         let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                if let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "a2a_escrow")?
-                {
-                    return Ok(stored);
-                }
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) =
+                settled_receipt_tx(tx, command, &run, &request_hash, "a2a_escrow")?
+            {
                 return Ok(receipt);
             }
             let mut escrow = match load_a2a_escrow_sqlite(
@@ -2586,15 +2501,9 @@ impl SqliteKernelExecutor {
         let policy = run.policy.clone();
         let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                if let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "a2a_dispute")?
-                {
-                    return Ok(stored);
-                }
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) =
+                settled_receipt_tx(tx, command, &run, &request_hash, "a2a_dispute")?
+            {
                 return Ok(receipt);
             }
             let tenant_id = run.tenant_scope().0;
@@ -2781,19 +2690,9 @@ impl SqliteKernelExecutor {
         let policy = run.policy.clone();
         let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                if let Replay::Return(stored) = replay_or_conflict(
-                    tx,
-                    command,
-                    &request_hash,
-                    existing,
-                    "a2a_dispute_evidence",
-                )? {
-                    return Ok(stored);
-                }
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) =
+                settled_receipt_tx(tx, command, &run, &request_hash, "a2a_dispute_evidence")?
+            {
                 return Ok(receipt);
             }
             let tenant_id = run.tenant_scope().0;
@@ -2948,15 +2847,9 @@ impl SqliteKernelExecutor {
         let policy = run.policy.clone();
         let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                if let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "a2a_dispute")?
-                {
-                    return Ok(stored);
-                }
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) =
+                settled_receipt_tx(tx, command, &run, &request_hash, "a2a_dispute")?
+            {
                 return Ok(receipt);
             }
             let tenant_id = run.tenant_scope().0;
@@ -3205,15 +3098,9 @@ impl SqliteKernelExecutor {
         let policy = run.policy.clone();
         let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                if let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "a2a_escrow")?
-                {
-                    return Ok(stored);
-                }
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) =
+                settled_receipt_tx(tx, command, &run, &request_hash, "a2a_escrow")?
+            {
                 return Ok(receipt);
             }
             let mut escrow = match load_a2a_escrow_sqlite(
@@ -3310,15 +3197,9 @@ impl SqliteKernelExecutor {
         let started_at = run.started_at;
 
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                if let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "a2a_escrow")?
-                {
-                    return Ok(stored);
-                }
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) =
+                settled_receipt_tx(tx, command, &run, &request_hash, "a2a_escrow")?
+            {
                 return Ok(receipt);
             }
             let escrow = match load_a2a_escrow_sqlite(
@@ -3471,15 +3352,9 @@ impl SqliteKernelExecutor {
         let subscription_repo = SqliteSubscriptionRepository::new(self.pool.clone());
 
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                if let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "billing_cycle")?
-                {
-                    return Ok(stored);
-                }
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) =
+                settled_receipt_tx(tx, command, &run, &request_hash, "billing_cycle")?
+            {
                 return Ok(receipt);
             }
             let cycle = match tx.query_row(
@@ -3738,15 +3613,8 @@ impl SqliteKernelExecutor {
         let cart_repo = SqliteCartRepository::new(self.pool.clone());
 
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                if let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "checkout")?
-                {
-                    return Ok(stored);
-                }
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "checkout")?
+            {
                 return Ok(receipt);
             }
 
@@ -3969,15 +3837,9 @@ impl SqliteKernelExecutor {
         let policy = run.policy.clone();
         let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                if let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "journal_entry")?
-                {
-                    return Ok(stored);
-                }
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) =
+                settled_receipt_tx(tx, command, &run, &request_hash, "journal_entry")?
+            {
                 return Ok(receipt);
             }
             let mut entry = match SqliteGeneralLedgerRepository::load_journal_entry_with_conn(
@@ -4117,15 +3979,9 @@ impl SqliteKernelExecutor {
         let policy = run.policy.clone();
         let started_at = run.started_at;
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)? {
-                if let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "x402_payment_intent")?
-                {
-                    return Ok(stored);
-                }
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) =
+                settled_receipt_tx(tx, command, &run, &request_hash, "x402_payment_intent")?
+            {
                 return Ok(receipt);
             }
             let mut intent = match tx.query_row(
@@ -4241,14 +4097,8 @@ impl SqliteKernelExecutor {
         .then_guard(|_| create_customer_guard(input));
         let request_hash = run.request_hash.clone();
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
-                && let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "customer")?
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "customer")?
             {
-                return Ok(stored);
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
             seal_storefront_step(
@@ -4293,14 +4143,7 @@ impl SqliteKernelExecutor {
         let request_hash = run.request_hash.clone();
         let carts = SqliteCartRepository::new(self.pool.clone());
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
-                && let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "cart")?
-            {
-                return Ok(stored);
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "cart")? {
                 return Ok(receipt);
             }
             seal_storefront_step(tx, &run, &request_hash, StorefrontAggregate::Cart, None, |tx| {
@@ -4335,14 +4178,7 @@ impl SqliteKernelExecutor {
         let carts = SqliteCartRepository::new(self.pool.clone());
         let target = Some(input.cart_id.to_string());
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
-                && let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "cart")?
-            {
-                return Ok(stored);
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "cart")? {
                 return Ok(receipt);
             }
             seal_storefront_step(
@@ -4387,14 +4223,7 @@ impl SqliteKernelExecutor {
         let request_hash = run.request_hash.clone();
         let target = Some(input.cart_id.to_string());
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
-                && let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "cart")?
-            {
-                return Ok(stored);
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "cart")? {
                 return Ok(receipt);
             }
             seal_storefront_step(
@@ -4443,14 +4272,7 @@ impl SqliteKernelExecutor {
         let request_hash = run.request_hash.clone();
         let target = Some(input.cart_id.to_string());
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
-                && let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "cart")?
-            {
-                return Ok(stored);
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "cart")? {
                 return Ok(receipt);
             }
             seal_storefront_step(
@@ -4495,14 +4317,7 @@ impl SqliteKernelExecutor {
         let carts = SqliteCartRepository::new(self.pool.clone());
         let target = Some(input.cart_id.to_string());
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
-                && let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "cart")?
-            {
-                return Ok(stored);
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "cart")? {
                 return Ok(receipt);
             }
             seal_storefront_step(
@@ -4576,14 +4391,7 @@ impl SqliteKernelExecutor {
         let request_hash = run.request_hash.clone();
         let target = Some(input.cart_id.to_string());
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
-                && let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "cart")?
-            {
-                return Ok(stored);
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "cart")? {
                 return Ok(receipt);
             }
             seal_storefront_step(
@@ -4637,14 +4445,8 @@ impl SqliteKernelExecutor {
         let request_hash = run.request_hash.clone();
         let target = Some(input.payment_id.to_string());
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
-                && let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "payment")?
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "payment")?
             {
-                return Ok(stored);
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
             seal_storefront_step(
@@ -4701,14 +4503,8 @@ impl SqliteKernelExecutor {
         .then_guard(|_| create_shipment_guard(input));
         let request_hash = run.request_hash.clone();
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
-                && let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "shipment")?
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "shipment")?
             {
-                return Ok(stored);
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
             seal_storefront_step(
@@ -4771,14 +4567,7 @@ impl SqliteKernelExecutor {
         .then_guard(|_| create_return_guard(&input));
         let request_hash = run.request_hash.clone();
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
-                && let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "return")?
-            {
-                return Ok(stored);
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "return")? {
                 return Ok(receipt);
             }
             seal_storefront_step(tx, &run, &request_hash, StorefrontAggregate::Return, None, |tx| {
@@ -4819,14 +4608,7 @@ impl SqliteKernelExecutor {
         let request_hash = run.request_hash.clone();
         let target = Some(input.return_id.to_string());
         with_immediate_transaction(&self.pool, |tx| {
-            if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
-                && let Replay::Return(stored) =
-                    replay_or_conflict(tx, command, &request_hash, existing, "return")?
-            {
-                return Ok(stored);
-            }
-            if let Some(mut receipt) = run.guard_receipt() {
-                append_receipt(tx, &request_hash, &mut receipt)?;
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "return")? {
                 return Ok(receipt);
             }
             seal_storefront_step(
@@ -5305,6 +5087,31 @@ fn open_dispute_for_payment(
         |row| Ok((row.get(0)?, row.get(1)?)),
     )
     .optional()
+}
+
+/// The receipt a governed command already settles to without executing: a
+/// replay of the receipt stored under its idempotency key, or the sealed
+/// rejection its envelope/domain guard demands. `None` means execute.
+///
+/// A durable preview being promoted to apply is not settled: it continues.
+fn settled_receipt_tx<C: Serialize, T: Serialize + DeserializeOwned>(
+    tx: &rusqlite::Transaction<'_>,
+    command: &CommandEnvelope<C>,
+    run: &CommandRun<'_, C>,
+    request_hash: &str,
+    aggregate_type: &str,
+) -> rusqlite::Result<Option<ExecutionReceipt<T>>> {
+    if let Some(existing) = receipt_by_idempotency_key_tx(tx, &command.idempotency_key)?
+        && let Replay::Return(stored) =
+            replay_or_conflict(tx, command, request_hash, existing, aggregate_type)?
+    {
+        return Ok(Some(stored));
+    }
+    if let Some(mut receipt) = run.guard_receipt() {
+        append_receipt(tx, request_hash, &mut receipt)?;
+        return Ok(Some(receipt));
+    }
+    Ok(None)
 }
 
 fn replay_or_conflict<C, T: DeserializeOwned>(

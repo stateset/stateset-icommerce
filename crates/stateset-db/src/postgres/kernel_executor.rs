@@ -369,19 +369,9 @@ impl PgKernelExecutor {
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
         advisory_lock_pg(tx.as_mut(), LOCK_NS_INVENTORY_SKU, &input.sku).await?;
 
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "inventory_item").await?
         {
-            if let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "inventory_item")
-                    .await?
-            {
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                return Ok(stored);
-            }
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
@@ -517,22 +507,10 @@ impl PgKernelExecutor {
             advisory_lock_pg(tx.as_mut(), LOCK_NS_PRODUCT_SKU, sku).await?;
         }
 
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "product").await?
         {
-            if let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "product").await?
-            {
-                tx.commit()
-                    .await
-                    .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-                return Ok(stored);
-            }
-        }
-
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-            tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
+            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
 
@@ -717,16 +695,9 @@ impl PgKernelExecutor {
 
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
-            && let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "payment").await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "payment").await?
         {
-            tx.commit().await.map_err(pg_err)?;
-            return Ok(stored);
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
@@ -859,16 +830,9 @@ impl PgKernelExecutor {
 
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
-            && let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "refund").await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "refund").await?
         {
-            tx.commit().await.map_err(pg_err)?;
-            return Ok(stored);
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
@@ -1055,26 +1019,10 @@ impl PgKernelExecutor {
             .await
             .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "inventory_reservation")
+                .await?
         {
-            if let Replay::Return(stored) = replay_or_conflict(
-                tx.as_mut(),
-                command,
-                &request_hash,
-                existing,
-                "inventory_reservation",
-            )
-            .await?
-            {
-                tx.commit()
-                    .await
-                    .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-                return Ok(stored);
-            }
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
             return Ok(receipt);
         }
@@ -1283,26 +1231,10 @@ impl PgKernelExecutor {
             .await
             .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "inventory_reservation")
+                .await?
         {
-            if let Replay::Return(stored) = replay_or_conflict(
-                tx.as_mut(),
-                command,
-                &request_hash,
-                existing,
-                "inventory_reservation",
-            )
-            .await?
-            {
-                tx.commit()
-                    .await
-                    .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-                return Ok(stored);
-            }
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
             return Ok(receipt);
         }
@@ -1551,16 +1483,9 @@ impl PgKernelExecutor {
 
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
-            && let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "order").await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "order").await?
         {
-            tx.commit().await.map_err(pg_err)?;
-            return Ok(stored);
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
@@ -1776,16 +1701,9 @@ impl PgKernelExecutor {
 
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
-            && let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "order").await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "order").await?
         {
-            tx.commit().await.map_err(pg_err)?;
-            return Ok(stored);
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
@@ -2178,18 +2096,9 @@ impl PgKernelExecutor {
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "return").await?
         {
-            if let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "return").await?
-            {
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                return Ok(stored);
-            }
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
@@ -2354,17 +2263,9 @@ impl PgKernelExecutor {
         let started_at = run.started_at;
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
-            && let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "a2a_escrow")
-                    .await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "a2a_escrow").await?
         {
-            tx.commit().await.map_err(pg_err)?;
-            return Ok(stored);
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
@@ -2455,17 +2356,9 @@ impl PgKernelExecutor {
         let started_at = run.started_at;
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
-            && let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "a2a_escrow")
-                    .await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "a2a_escrow").await?
         {
-            tx.commit().await.map_err(pg_err)?;
-            return Ok(stored);
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
@@ -2548,19 +2441,9 @@ impl PgKernelExecutor {
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "a2a_escrow").await?
         {
-            if let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "a2a_escrow")
-                    .await?
-            {
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                return Ok(stored);
-            }
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
@@ -2679,19 +2562,9 @@ impl PgKernelExecutor {
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "a2a_dispute").await?
         {
-            if let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "a2a_dispute")
-                    .await?
-            {
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                return Ok(stored);
-            }
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
@@ -2881,24 +2754,10 @@ impl PgKernelExecutor {
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "a2a_dispute_evidence")
+                .await?
         {
-            if let Replay::Return(stored) = replay_or_conflict(
-                tx.as_mut(),
-                command,
-                &request_hash,
-                existing,
-                "a2a_dispute_evidence",
-            )
-            .await?
-            {
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                return Ok(stored);
-            }
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
@@ -3062,19 +2921,9 @@ impl PgKernelExecutor {
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "a2a_dispute").await?
         {
-            if let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "a2a_dispute")
-                    .await?
-            {
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                return Ok(stored);
-            }
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
@@ -3327,19 +3176,9 @@ impl PgKernelExecutor {
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "a2a_escrow").await?
         {
-            if let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "a2a_escrow")
-                    .await?
-            {
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                return Ok(stored);
-            }
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
@@ -3441,19 +3280,9 @@ impl PgKernelExecutor {
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "a2a_escrow").await?
         {
-            if let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "a2a_escrow")
-                    .await?
-            {
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                return Ok(stored);
-            }
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
@@ -3611,19 +3440,9 @@ impl PgKernelExecutor {
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "billing_cycle").await?
         {
-            if let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "billing_cycle")
-                    .await?
-            {
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                return Ok(stored);
-            }
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
@@ -3892,19 +3711,9 @@ impl PgKernelExecutor {
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "checkout").await?
         {
-            if let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "checkout")
-                    .await?
-            {
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                return Ok(stored);
-            }
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
@@ -4163,19 +3972,9 @@ impl PgKernelExecutor {
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "journal_entry").await?
         {
-            if let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "journal_entry")
-                    .await?
-            {
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                return Ok(stored);
-            }
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
@@ -4335,24 +4134,10 @@ impl PgKernelExecutor {
         let mut tx =
             self.pool.begin().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "x402_payment_intent")
+                .await?
         {
-            if let Replay::Return(stored) = replay_or_conflict(
-                tx.as_mut(),
-                command,
-                &request_hash,
-                existing,
-                "x402_payment_intent",
-            )
-            .await?
-            {
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                return Ok(stored);
-            }
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
@@ -4480,17 +4265,9 @@ impl PgKernelExecutor {
         let request_hash = run.request_hash.clone();
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
-            && let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "customer")
-                    .await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "customer").await?
         {
-            tx.commit().await.map_err(pg_err)?;
-            return Ok(stored);
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
@@ -4531,16 +4308,9 @@ impl PgKernelExecutor {
         let carts = PgCartRepository::new(self.pool.clone());
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
-            && let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "cart").await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "cart").await?
         {
-            tx.commit().await.map_err(pg_err)?;
-            return Ok(stored);
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
@@ -4583,16 +4353,9 @@ impl PgKernelExecutor {
         let carts = PgCartRepository::new(self.pool.clone());
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
-            && let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "cart").await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "cart").await?
         {
-            tx.commit().await.map_err(pg_err)?;
-            return Ok(stored);
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
@@ -4644,16 +4407,9 @@ impl PgKernelExecutor {
         let request_hash = run.request_hash.clone();
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
-            && let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "cart").await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "cart").await?
         {
-            tx.commit().await.map_err(pg_err)?;
-            return Ok(stored);
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
@@ -4704,16 +4460,9 @@ impl PgKernelExecutor {
         let request_hash = run.request_hash.clone();
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
-            && let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "cart").await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "cart").await?
         {
-            tx.commit().await.map_err(pg_err)?;
-            return Ok(stored);
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
@@ -4768,16 +4517,9 @@ impl PgKernelExecutor {
         let carts = PgCartRepository::new(self.pool.clone());
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
-            && let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "cart").await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "cart").await?
         {
-            tx.commit().await.map_err(pg_err)?;
-            return Ok(stored);
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
@@ -4870,16 +4612,9 @@ impl PgKernelExecutor {
         let request_hash = run.request_hash.clone();
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
-            && let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "cart").await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "cart").await?
         {
-            tx.commit().await.map_err(pg_err)?;
-            return Ok(stored);
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
@@ -4938,16 +4673,9 @@ impl PgKernelExecutor {
         let request_hash = run.request_hash.clone();
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
-            && let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "payment").await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "payment").await?
         {
-            tx.commit().await.map_err(pg_err)?;
-            return Ok(stored);
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
@@ -5016,17 +4744,9 @@ impl PgKernelExecutor {
         let request_hash = run.request_hash.clone();
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
-            && let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "shipment")
-                    .await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "shipment").await?
         {
-            tx.commit().await.map_err(pg_err)?;
-            return Ok(stored);
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
@@ -5085,16 +4805,9 @@ impl PgKernelExecutor {
         let request_hash = run.request_hash.clone();
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
-            && let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "return").await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "return").await?
         {
-            tx.commit().await.map_err(pg_err)?;
-            return Ok(stored);
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
@@ -5143,16 +4856,9 @@ impl PgKernelExecutor {
         let request_hash = run.request_hash.clone();
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
-        if let Some(existing) =
-            receipt_by_idempotency_key_tx(tx.as_mut(), &command.idempotency_key).await?
-            && let Replay::Return(stored) =
-                replay_or_conflict(tx.as_mut(), command, &request_hash, existing, "return").await?
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "return").await?
         {
-            tx.commit().await.map_err(pg_err)?;
-            return Ok(stored);
-        }
-        if let Some(mut receipt) = run.guard_receipt() {
-            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
             tx.commit().await.map_err(pg_err)?;
             return Ok(receipt);
         }
@@ -5593,6 +5299,33 @@ async fn a2a_release_conditions_met_pg(
         }
     }
     Ok(true)
+}
+
+/// The receipt a governed command already settles to without executing: a
+/// replay of the receipt stored under its idempotency key, or the sealed
+/// rejection its envelope/domain guard demands. `None` means execute; the
+/// caller commits the transaction before returning a settled receipt.
+///
+/// A durable preview being promoted to apply is not settled: it continues.
+async fn settled_receipt_tx<C: Serialize, T: Serialize + DeserializeOwned>(
+    tx: &mut sqlx::PgConnection,
+    command: &CommandEnvelope<C>,
+    run: &CommandRun<'_, C>,
+    request_hash: &str,
+    aggregate_type: &str,
+) -> Result<Option<ExecutionReceipt<T>>> {
+    if let Some(existing) =
+        receipt_by_idempotency_key_tx(&mut *tx, &command.idempotency_key).await?
+        && let Replay::Return(stored) =
+            replay_or_conflict(&mut *tx, command, request_hash, existing, aggregate_type).await?
+    {
+        return Ok(Some(stored));
+    }
+    if let Some(mut receipt) = run.guard_receipt() {
+        append_receipt(tx, request_hash, &mut receipt).await?;
+        return Ok(Some(receipt));
+    }
+    Ok(None)
 }
 
 async fn replay_or_conflict<C, T: DeserializeOwned>(
