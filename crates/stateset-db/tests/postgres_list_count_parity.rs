@@ -62,3 +62,12 @@ fn postgres_integration_mapping_count_matches_list() {
     };
     support::integration_mapping_parity(&db.integration_mappings(), LIST_CAP);
 }
+
+#[test]
+fn postgres_lot_count_matches_list() {
+    let Some((_runtime, db)) = database() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    support::lot_parity(&db.lots(), LIST_CAP);
+}

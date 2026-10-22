@@ -8,6 +8,13 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Fixed
 
+- Lot lists now apply every `LotFilter` field, and `count` applies the same
+  filters as `list` on both backends. `list` ignored `work_order_id`,
+  `purchase_order_id`, `expiring_before`, `expiring_after` and `location_id`;
+  `count` honoured only `sku` and `status`, so `GET /lots?lot_number=...`
+  reported the SKU's whole lot count as `total`. SQLite's `has_quantity`
+  compared a TEXT decimal with `> 0` (text comparison); positivity is now read
+  exactly, and `has_quantity: false` selects exhausted lots.
 - SQLite: comparisons of RFC 3339 timestamp columns against "now" were
   wrong for the rest of the current UTC day, because `datetime('now')`
   renders `YYYY-MM-DD HH:MM:SS` and the stored `...T...` sorts after it. A
