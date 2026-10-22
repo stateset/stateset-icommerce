@@ -1022,6 +1022,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     }
 
     fn list_locations(&self, filter: LocationFilter) -> Result<Vec<Location>> {
+        crate::rules::warehouse::reject_untracked_capacity_filter(&filter)?;
         let conn = self.conn()?;
         let mut sql = "SELECT * FROM locations WHERE 1=1".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -1152,6 +1153,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     }
 
     fn count_locations(&self, filter: LocationFilter) -> Result<u64> {
+        crate::rules::warehouse::reject_untracked_capacity_filter(&filter)?;
         let conn = self.conn()?;
         let mut sql = "SELECT COUNT(*) FROM locations WHERE 1=1".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();

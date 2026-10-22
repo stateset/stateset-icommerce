@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
 use sqlx::postgres::PgPool;
+use sqlx::{Postgres, QueryBuilder};
 use stateset_core::{
     AllocateBackorder, AllocationStatus, Backorder, BackorderAllocation, BackorderFilter,
     BackorderFulfillment, BackorderPriority, BackorderRepository, BackorderStatus,
@@ -639,56 +640,39 @@ impl PgBackorderRepository {
     }
 
     pub async fn list_backorders_async(&self, filter: BackorderFilter) -> Result<Vec<Backorder>> {
-        let mut sql = "SELECT id, backorder_number, order_id, order_line_id, customer_id, sku,
+        let mut builder = QueryBuilder::<Postgres>::new(
+            "SELECT id, backorder_number, order_id, order_line_id, customer_id, sku,
                 quantity_ordered, quantity_fulfilled, quantity_remaining, status, priority,
                 expected_date, promised_date, source_location_id, notes, created_at, updated_at
-            FROM backorders WHERE 1=1"
-            .to_string();
-        let mut param_idx = 1;
-
-        if filter.order_id.is_some() {
-            sql.push_str(&format!(" AND order_id = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.customer_id.is_some() {
-            sql.push_str(&format!(" AND customer_id = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.sku.is_some() {
-            sql.push_str(&format!(" AND sku = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.status.is_some() {
-            sql.push_str(&format!(" AND status = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.priority.is_some() {
-            sql.push_str(&format!(" AND priority = ${}", param_idx));
-        }
-
-        sql.push_str(" ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END, created_at ASC");
-
-        sql.push_str(&format!(" LIMIT {}", super::effective_limit(filter.limit)));
-
-        let mut q = sqlx::query_as::<_, BackorderRow>(&sql);
-
+            FROM backorders WHERE 1=1",
+        );
         if let Some(order_id) = filter.order_id {
-            q = q.bind(order_id);
+            builder.push(" AND order_id = ").push_bind(order_id);
         }
         if let Some(customer_id) = filter.customer_id {
-            q = q.bind(customer_id);
+            builder.push(" AND customer_id = ").push_bind(customer_id);
         }
         if let Some(sku) = filter.sku {
-            q = q.bind(sku);
+            builder.push(" AND sku = ").push_bind(sku);
         }
         if let Some(status) = filter.status {
-            q = q.bind(status.to_string());
+            builder.push(" AND status = ").push_bind(status.to_string());
         }
         if let Some(priority) = filter.priority {
-            q = q.bind(priority.to_string());
+            builder.push(" AND priority = ").push_bind(priority.to_string());
+        }
+        if let Some(expected_before) = filter.expected_before {
+            builder
+                .push(" AND expected_date IS NOT NULL AND expected_date < ")
+                .push_bind(expected_before);
         }
 
-        let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
+        builder.push(" ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END, created_at ASC");
+        builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
+        builder.push(" OFFSET ").push_bind(i64::from(filter.offset.unwrap_or(0)));
+
+        let rows: Vec<BackorderRow> =
+            builder.build_query_as().fetch_all(&self.pool).await.map_err(map_db_error)?;
         rows.into_iter().map(Self::row_to_backorder).collect::<Result<Vec<_>>>()
     }
 
