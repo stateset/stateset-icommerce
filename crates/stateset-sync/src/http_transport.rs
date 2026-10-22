@@ -116,6 +116,7 @@ impl SequencerHttpTransport {
     #[must_use]
     pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
         self.api_key = Some(api_key.into());
+        self.warn_if_credentials_travel_in_cleartext();
         self
     }
 
@@ -123,7 +124,38 @@ impl SequencerHttpTransport {
     #[must_use]
     pub fn with_bearer_token(mut self, bearer_token: impl Into<String>) -> Self {
         self.bearer_token = Some(bearer_token.into());
+        self.warn_if_credentials_travel_in_cleartext();
         self
+    }
+
+    /// Whether requests go over plain `http://` to a host that is not
+    /// loopback, so credentials and pulled events cross the network
+    /// unencrypted and unauthenticated.
+    ///
+    /// Plain HTTP stays accepted (private-network sequencers use it, and
+    /// `grpc://` maps to it), but callers can refuse such a configuration;
+    /// the transport logs a warning when credentials are attached to one.
+    #[must_use]
+    pub fn uses_cleartext_network(&self) -> bool {
+        let Ok(url) = Url::parse(&self.base_url) else { return false };
+        if url.scheme() != "http" {
+            return false;
+        }
+        url.host_str().is_some_and(|host| {
+            let host = host.trim_start_matches('[').trim_end_matches(']');
+            !(host.eq_ignore_ascii_case("localhost")
+                || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback()))
+        })
+    }
+
+    fn warn_if_credentials_travel_in_cleartext(&self) {
+        if self.uses_cleartext_network() {
+            tracing::warn!(
+                base_url = %self.base_url,
+                "sequencer credentials will be sent over plaintext http to a non-loopback host; \
+                 use https"
+            );
+        }
     }
 
     /// Configure the agent key id that corresponds to event signatures.
@@ -1238,6 +1270,18 @@ mod tests {
             head.commitment_manifest.as_ref().map(|manifest| manifest.signer_id.as_str()),
             Some("sequencer-a")
         );
+    }
+
+    #[test]
+    fn cleartext_network_is_detected_for_non_loopback_http_only() {
+        let transport =
+            |url: &str| SequencerHttpTransport::new(url, "agent-1", "tenant-1", "store-1").unwrap();
+        assert!(transport("http://sequencer.internal:8080").uses_cleartext_network());
+        assert!(transport("grpc://10.0.0.5:50051").uses_cleartext_network());
+        assert!(!transport("https://sequencer.stateset.com").uses_cleartext_network());
+        assert!(!transport("http://127.0.0.1:8080").uses_cleartext_network());
+        assert!(!transport("http://localhost:8080").uses_cleartext_network());
+        assert!(!transport("http://[::1]:8080").uses_cleartext_network());
     }
 
     #[tokio::test]
