@@ -1,6 +1,7 @@
 //! Fulfillment endpoints (waves, pick tasks, pack tasks, ship tasks).
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id, parse_opt_decimal};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -8,7 +9,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_core::{FulfillmentId, OrderId};
 use utoipa::{IntoParams, ToSchema};
@@ -274,18 +274,6 @@ fn ship_resp(s: &stateset_core::ShipTask) -> ShipTaskResponse {
         assigned_to: s.assigned_to.clone(),
         created_at: s.created_at.to_rfc3339(),
     }
-}
-
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_opt_decimal(s: Option<&str>, what: &str) -> Result<Option<Decimal>, HttpError> {
-    s.map(|v| parse_decimal(v, what)).transpose()
 }
 
 fn parse_opt<T: std::str::FromStr>(s: Option<&str>, what: &str) -> Result<Option<T>, HttpError> {

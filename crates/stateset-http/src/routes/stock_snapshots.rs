@@ -1,6 +1,7 @@
 //! Stock snapshot endpoints (point-in-time inventory).
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -8,7 +9,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_core::{ProductId, StockSnapshotId};
 use utoipa::{IntoParams, ToSchema};
@@ -100,14 +100,6 @@ fn summary(s: &stateset_core::StockSnapshot) -> SnapshotSummary {
         total_units: s.total_units.to_string(),
         captured_at: s.captured_at.to_rfc3339(),
     }
-}
-
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
 }
 
 pub fn router() -> Router<AppState> {

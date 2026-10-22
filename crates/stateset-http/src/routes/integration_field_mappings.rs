@@ -1,6 +1,7 @@
 //! Integration field-mapping endpoints (field-path mappings).
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::parse_id;
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -96,10 +97,6 @@ fn to_resp(m: &stateset_core::IntegrationFieldMapping) -> FieldMappingResponse {
         fallback: m.fallback.clone(),
         is_active: m.is_active,
     }
-}
-
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
 }
 
 fn to_input(
