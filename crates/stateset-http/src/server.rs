@@ -1051,6 +1051,7 @@ impl ServerBuilder {
         if let Some(ownership) = ownership {
             router = router.layer(from_fn_with_state(ownership, enforce_ownership));
         }
+        router = router.layer(axum::middleware::map_response(crate::error::json_client_errors));
         middleware::apply_middleware(
             router,
             self.enable_cors,

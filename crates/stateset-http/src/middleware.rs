@@ -394,10 +394,18 @@ async fn require_authorization(
         engine.authorize(actor_id, &resource, &action)
     };
 
+    // The engine's reason names roles and permission levels: operator
+    // configuration a client should not learn. Log it; answer generically.
     match decision {
         AccessDecision::Allowed => next.run(request).await,
-        AccessDecision::Denied { reason } => HttpError::Forbidden(reason).into_response(),
-        AccessDecision::RequiresApproval { reason } => HttpError::Forbidden(reason).into_response(),
+        AccessDecision::Denied { reason } => {
+            tracing::warn!(actor_id, %reason, "authorization denied");
+            HttpError::Forbidden("authorization denied".to_string()).into_response()
+        }
+        AccessDecision::RequiresApproval { reason } => {
+            tracing::warn!(actor_id, %reason, "authorization requires approval");
+            HttpError::Forbidden("authorization requires approval".to_string()).into_response()
+        }
         _ => HttpError::Forbidden("authorization denied".to_string()).into_response(),
     }
 }

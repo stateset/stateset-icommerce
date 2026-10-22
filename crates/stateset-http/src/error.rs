@@ -159,6 +159,55 @@ impl IntoResponse for HttpError {
     }
 }
 
+/// Largest plain-text rejection body rewritten into an [`ErrorBody`].
+const MAX_REJECTION_BODY_BYTES: usize = 8 * 1024;
+
+/// Rewrite axum's plain-text extractor rejections into the API's JSON error
+/// contract.
+///
+/// Malformed JSON, a wrong `Content-Type`, an unparsable `Path<Uuid>` or an
+/// oversized body are rejected by extractors before a handler runs, and axum
+/// answers those with a `text/plain` body. Clients of this API parse
+/// `{"error": {"code", "message"}}` on every error, so any `text/plain` 4xx
+/// is re-wrapped with its status and message intact.
+pub(crate) async fn json_client_errors(response: Response) -> Response {
+    let status = response.status();
+    let is_plain_text = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/plain"));
+    if !status.is_client_error() || !is_plain_text {
+        return response;
+    }
+    let (parts, body) = response.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, MAX_REJECTION_BODY_BYTES).await else {
+        return (parts.status, parts.headers).into_response();
+    };
+    let code = match status {
+        StatusCode::BAD_REQUEST => "bad_request",
+        StatusCode::PAYLOAD_TOO_LARGE => "payload_too_large",
+        StatusCode::UNSUPPORTED_MEDIA_TYPE => "unsupported_media_type",
+        StatusCode::UNPROCESSABLE_ENTITY => "validation_error",
+        _ => "client_error",
+    };
+    let body = ErrorBody {
+        error: ErrorDetail {
+            code: code.to_string(),
+            message: String::from_utf8_lossy(&bytes).into_owned(),
+            invariant: None,
+        },
+    };
+    let mut rewritten = (status, axum::Json(body)).into_response();
+    // Keep response metadata other layers set (request id, CORS, rate limit).
+    for (name, value) in &parts.headers {
+        if name != axum::http::header::CONTENT_TYPE && name != axum::http::header::CONTENT_LENGTH {
+            rewritten.headers_mut().insert(name.clone(), value.clone());
+        }
+    }
+    rewritten
+}
+
 impl From<CommerceError> for HttpError {
     fn from(err: CommerceError) -> Self {
         // An invariant violation keeps the status and short code it would have
@@ -282,6 +331,47 @@ mod tests {
         let err = HttpError::Forbidden("denied".into());
         assert_eq!(err.status_code(), StatusCode::FORBIDDEN);
         assert_eq!(err.code(), "forbidden");
+    }
+
+    #[tokio::test]
+    async fn plain_text_rejections_become_json_errors() {
+        use axum::Router;
+        use axum::extract::Path;
+        use axum::routing::post;
+        use tower::ServiceExt;
+
+        async fn handler(
+            Path(_id): Path<uuid::Uuid>,
+            axum::Json(_body): axum::Json<serde_json::Value>,
+        ) {
+        }
+        let app = Router::new()
+            .route("/things/{id}", post(handler))
+            .layer(axum::middleware::map_response(json_client_errors));
+
+        let request = |uri: &str, body: &'static str| {
+            axum::http::Request::post(uri)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap()
+        };
+        for (uri, body, status) in [
+            ("/things/not-a-uuid", "{}", StatusCode::BAD_REQUEST),
+            ("/things/00000000-0000-0000-0000-000000000001", "{not json", StatusCode::BAD_REQUEST),
+        ] {
+            let response = app.clone().oneshot(request(uri, body)).await.unwrap();
+            assert_eq!(response.status(), status);
+            assert!(
+                response.headers()[axum::http::header::CONTENT_TYPE]
+                    .to_str()
+                    .unwrap()
+                    .starts_with("application/json")
+            );
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(json["error"]["code"], "bad_request");
+            assert!(!json["error"]["message"].as_str().unwrap().is_empty());
+        }
     }
 
     #[tokio::test]
