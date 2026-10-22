@@ -7,6 +7,10 @@ use super::{
     parse_enum_row, parse_json_opt_row, parse_uuid_opt_row, parse_uuid_row,
     resolve_currency_with_conn, uuid_params, with_immediate_transaction,
 };
+use crate::cart_rules::{
+    DerivedDiscount, coupon_discount_amount, rescale_tax, validate_add_item_money,
+    validate_update_cart_item, validate_update_cart_item_money,
+};
 use chrono::{Duration, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -19,7 +23,7 @@ use stateset_core::{
     ProductId, Result, SetCartPayment, SetCartShipping, SetCartX402Payment, ShippingRate,
     UpdateCart, UpdateCartItem, X402AwaitingSettlementData, X402CheckoutResult,
     X402IntentCreatedData, X402IntentStatus, X402PaymentRequiredData, validate_batch_size,
-    validate_currency_code, validate_email, validate_money_scale, validate_price,
+    validate_currency_code, validate_email, validate_price,
 };
 use uuid::Uuid;
 
@@ -373,7 +377,7 @@ impl SqliteCartRepository {
 
         let mut cart = Self::load_cart_with_conn(conn, cart_id)?.ok_or(CommerceError::NotFound)?;
         // Tax follows the lines it was computed on (see `rescale_tax`).
-        cart.tax_amount = rescale_tax(cart.tax_amount, cart.subtotal, subtotal);
+        cart.tax_amount = rescale_tax(cart.tax_amount, cart.subtotal, subtotal, cart.currency);
         cart.subtotal = subtotal;
 
         // The discount is derived from the cart as it is NOW, never a frozen
@@ -437,41 +441,6 @@ impl SqliteCartRepository {
             Err(other) => Err(other),
         }
     }
-}
-
-/// Outcome of [`SqliteCartRepository::derive_discount`].
-#[derive(Debug, Clone)]
-pub(crate) struct DerivedDiscount {
-    /// Discount the cart carries, capped at what the cart can cover.
-    pub(crate) amount: Decimal,
-    /// `discount_description` to store (`None` keeps the stored one).
-    pub(crate) description: Option<String>,
-    /// Why the cart's coupon no longer qualifies, if it does not.
-    pub(crate) coupon_error: Option<String>,
-}
-
-impl DerivedDiscount {
-    fn capped(cart: &Cart, amount: Decimal, description: Option<String>) -> Self {
-        Self {
-            amount: cap_discount(cart, amount),
-            description: description.or_else(|| cart.discount_description.clone()),
-            coupon_error: None,
-        }
-    }
-
-    /// `subtotal + tax + shipping - amount`, which the cap keeps non-negative.
-    fn grand_total(&self, cart: &Cart) -> Decimal {
-        (cart.subtotal + cart.tax_amount + cart.shipping_amount - self.amount)
-            .round_dp(2)
-            .max(Decimal::ZERO)
-    }
-}
-
-/// Clamp a discount into `[0, subtotal + tax + shipping]` so the order minted
-/// from the cart can never have a negative total.
-pub(crate) fn cap_discount(cart: &Cart, amount: Decimal) -> Decimal {
-    let coverable = (cart.subtotal + cart.tax_amount + cart.shipping_amount).max(Decimal::ZERO);
-    amount.max(Decimal::ZERO).min(coverable)
 }
 
 impl CartRepository for SqliteCartRepository {
@@ -2611,46 +2580,6 @@ impl SqliteCartRepository {
     }
 }
 
-/// Order-level discount a coupon-activated promotion grants on `cart`,
-/// rounded to the cart currency's precision so the cart's money math stays on
-/// minor-unit boundaries (percentage-off with an optional cap, or a fixed
-/// amount never exceeding the subtotal).
-pub(crate) fn coupon_discount_amount(promotion: &stateset_core::Promotion, cart: &Cart) -> Decimal {
-    let request = stateset_core::ApplyPromotionsRequest::from_cart(
-        cart,
-        cart.coupon_code.as_deref().unwrap_or_default(),
-    );
-    let raw = promotion.calculate_discount(&request, Decimal::ZERO);
-    cap_discount(cart, raw).round_dp(u32::from(cart.currency.decimal_places()))
-}
-
-/// Carry a cart's tax across a change of its lines.
-///
-/// The cart stores only a tax *amount* (set by `set_tax`, normally from the
-/// tax engine), not the rate or jurisdiction it came from, so the storage
-/// layer cannot re-run the engine. It keeps the effective rate instead: the
-/// stored tax is scaled by `new_subtotal / previous_subtotal`, which is exact
-/// for a single-rate cart and a best-effort estimate for mixed-rate lines —
-/// the embedded cart accessor re-runs the tax engine after each mutation when
-/// it can and overwrites this estimate. Tax that was never set (zero) stays
-/// zero, and a cart emptied of lines carries no tax.
-pub(crate) fn rescale_tax(
-    previous_tax: Decimal,
-    previous_subtotal: Decimal,
-    new_subtotal: Decimal,
-) -> Decimal {
-    if previous_tax <= Decimal::ZERO || previous_subtotal <= Decimal::ZERO {
-        return previous_tax.max(Decimal::ZERO);
-    }
-    if new_subtotal == previous_subtotal {
-        return previous_tax;
-    }
-    if new_subtotal <= Decimal::ZERO {
-        return Decimal::ZERO;
-    }
-    (previous_tax * new_subtotal / previous_subtotal).round_dp(2)
-}
-
 /// The customer identity Apply would attribute this cart's redemption to,
 /// resolved WITHOUT writing.
 ///
@@ -2877,56 +2806,6 @@ pub(crate) fn guard_cart_line_with_conn(
             return Err(CommerceError::ValidationError(format!(
                 "unit_price {unit_price} for SKU '{sku}' does not match the catalog price \
                  {catalog}; catalog lines are priced from the catalog"
-            )));
-        }
-    }
-    Ok(())
-}
-
-/// Invariant M1 (`commerce.money.scale_exceeds_currency`) for a line being
-/// added: no money input may carry more decimals than the cart currency's
-/// minor unit, because the line total and cart subtotal are rounded to it
-/// and a sub-minor-unit price would silently lose money.
-pub(crate) fn validate_add_item_money(currency: CurrencyCode, item: &AddCartItem) -> Result<()> {
-    validate_money_scale(currency, item.unit_price)?;
-    if let Some(original) = item.original_price {
-        validate_money_scale(currency, original)?;
-    }
-    Ok(())
-}
-
-/// Invariant M1 for a line update (see [`validate_add_item_money`]).
-pub(crate) fn validate_update_cart_item_money(
-    currency: CurrencyCode,
-    input: &UpdateCartItem,
-) -> Result<()> {
-    if let Some(unit_price) = input.unit_price {
-        validate_money_scale(currency, unit_price)?;
-    }
-    if let Some(discount) = input.discount_amount {
-        validate_money_scale(currency, discount)?;
-    }
-    Ok(())
-}
-
-/// Reject a cart-item update that would store a non-positive quantity, a
-/// negative price or a negative line discount. Quantity 0 is NOT a silent
-/// remove: callers must use `remove_item`.
-pub(crate) fn validate_update_cart_item(input: &UpdateCartItem) -> Result<()> {
-    if let Some(quantity) = input.quantity {
-        if quantity < 1 {
-            return Err(CommerceError::ValidationError(format!(
-                "Item quantity must be positive, got {quantity}; remove the item instead"
-            )));
-        }
-    }
-    if let Some(unit_price) = input.unit_price {
-        validate_price(unit_price)?;
-    }
-    if let Some(discount) = input.discount_amount {
-        if discount < Decimal::ZERO {
-            return Err(CommerceError::ValidationError(format!(
-                "Item discount must not be negative, got {discount}"
             )));
         }
     }

@@ -32,6 +32,44 @@ type StoreKey = (Option<String>, Uuid);
 /// process-local and negotiations do not survive a restart.
 type NegotiationStore = Arc<RwLock<HashMap<StoreKey, stateset_a2a::negotiation::Negotiation>>>;
 
+/// Longest negotiation lifetime a client may request (one year). Unbounded
+/// values overflow the date range when added to "now".
+const MAX_EXPIRES_IN_HOURS: u32 = 24 * 365;
+
+/// Most negotiations one tenant may hold in the process-local store.
+const MAX_NEGOTIATIONS_PER_TENANT: usize = 10_000;
+
+/// Keep a tenant under [`MAX_NEGOTIATIONS_PER_TENANT`]: drop its finished or
+/// expired negotiations first, and refuse the create if it is still full of
+/// live ones.
+fn make_room_for_tenant(
+    store: &mut HashMap<StoreKey, stateset_a2a::negotiation::Negotiation>,
+    tenant_id: Option<&String>,
+) -> Result<(), HttpError> {
+    use stateset_a2a::negotiation::NegotiationStatus;
+    let held = store.keys().filter(|(tenant, _)| tenant.as_ref() == tenant_id).count();
+    if held < MAX_NEGOTIATIONS_PER_TENANT {
+        return Ok(());
+    }
+    store.retain(|(tenant, _), negotiation| {
+        tenant.as_ref() != tenant_id
+            || !(matches!(
+                negotiation.status,
+                NegotiationStatus::Accepted
+                    | NegotiationStatus::Rejected
+                    | NegotiationStatus::Expired
+            ) || NegotiationEngine::is_expired(negotiation))
+    });
+    let held = store.keys().filter(|(tenant, _)| tenant.as_ref() == tenant_id).count();
+    if held < MAX_NEGOTIATIONS_PER_TENANT {
+        Ok(())
+    } else {
+        Err(HttpError::TooManyRequests(format!(
+            "tenant already holds {MAX_NEGOTIATIONS_PER_TENANT} open negotiations"
+        )))
+    }
+}
+
 /// Build the negotiations sub-router.
 pub fn router() -> Router<AppState> {
     let store: NegotiationStore = Arc::new(RwLock::new(HashMap::new()));
@@ -140,8 +178,14 @@ pub(crate) async fn create_negotiation(
     if req.initial_offer <= Decimal::ZERO {
         return Err(HttpError::BadRequest("Invalid amount: initial_offer must be positive".into()));
     }
+    let expires_in_hours = req.expires_in_hours.unwrap_or(24);
+    if !(1..=MAX_EXPIRES_IN_HOURS).contains(&expires_in_hours) {
+        return Err(HttpError::BadRequest(format!(
+            "expires_in_hours must be between 1 and {MAX_EXPIRES_IN_HOURS}"
+        )));
+    }
     let tenant_id = tenant_id_from_headers(&headers);
-    let expires = Utc::now() + Duration::hours(i64::from(req.expires_in_hours.unwrap_or(24)));
+    let expires = Utc::now() + Duration::hours(i64::from(expires_in_hours));
 
     let neg = NegotiationEngine::create(
         req.buyer_agent_id,
@@ -156,6 +200,7 @@ pub(crate) async fn create_negotiation(
 
     let resp = neg_to_response(&neg);
     let mut guard = store.write().map_err(|_| HttpError::InternalError("Lock poisoned".into()))?;
+    make_room_for_tenant(&mut guard, tenant_id.as_ref())?;
     guard.insert((tenant_id, neg.id), neg);
 
     Ok((StatusCode::CREATED, Json(resp)))
@@ -310,6 +355,76 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::CREATED);
         let json = json_body(resp).await;
         json["id"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn create_negotiation_rejects_out_of_range_expiry_instead_of_panicking() {
+        let app = app();
+        for hours in [0_u64, u64::from(u32::MAX)] {
+            let body = serde_json::json!({
+                "buyer_agent_id": "agent-buyer",
+                "seller_agent_id": "agent-seller",
+                "initial_offer": "10",
+                "expires_in_hours": hours,
+            });
+            let resp = app.clone().oneshot(post_json("/negotiations", None, &body)).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "expires_in_hours={hours}");
+        }
+    }
+
+    #[test]
+    fn full_tenant_evicts_finished_negotiations_then_refuses_live_ones() {
+        use stateset_a2a::negotiation::NegotiationStatus;
+        let tenant = Some("acme".to_string());
+        let mut store = HashMap::new();
+        for index in 0..MAX_NEGOTIATIONS_PER_TENANT {
+            let mut negotiation = NegotiationEngine::create(
+                "buyer",
+                "seller",
+                Decimal::ONE,
+                "USD",
+                10,
+                Utc::now() + Duration::hours(1),
+                None,
+                None,
+            );
+            if index == 0 {
+                negotiation.status = NegotiationStatus::Accepted;
+            }
+            store.insert((tenant.clone(), negotiation.id), negotiation);
+        }
+        // Another tenant's negotiations neither count nor get evicted.
+        let other = NegotiationEngine::create(
+            "buyer",
+            "seller",
+            Decimal::ONE,
+            "USD",
+            10,
+            Utc::now() + Duration::hours(1),
+            None,
+            None,
+        );
+        store.insert((None, other.id), other);
+
+        make_room_for_tenant(&mut store, tenant.as_ref()).expect("finished one is evicted");
+        assert_eq!(store.len(), MAX_NEGOTIATIONS_PER_TENANT);
+
+        let refill = NegotiationEngine::create(
+            "buyer",
+            "seller",
+            Decimal::ONE,
+            "USD",
+            10,
+            Utc::now() + Duration::hours(1),
+            None,
+            None,
+        );
+        store.insert((tenant.clone(), refill.id), refill);
+        assert!(matches!(
+            make_room_for_tenant(&mut store, tenant.as_ref()),
+            Err(HttpError::TooManyRequests(_))
+        ));
+        assert!(store.keys().any(|(tenant, _)| tenant.is_none()));
     }
 
     #[tokio::test]

@@ -30,7 +30,7 @@ use tokio::sync::Barrier;
 use uuid::Uuid;
 
 fn postgres_url() -> Option<String> {
-    std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 macro_rules! db_or_skip {

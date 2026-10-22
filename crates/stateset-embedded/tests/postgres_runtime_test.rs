@@ -15,7 +15,7 @@
 use stateset_embedded::Commerce;
 
 fn pg_url() -> Option<String> {
-    let url = std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok());
+    let url = stateset_test_utils::postgres_url();
     if url.is_none() {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping postgres runtime test");
     }

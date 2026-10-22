@@ -2250,6 +2250,7 @@ impl SqliteKernelExecutor {
             EnvelopeGuard::create(CREATE_A2A_ESCROW_COMMAND),
             "a2a_escrow",
         )?
+        .require_tenant_scope()
         .then_guard(|run| create_escrow_guard(input, run.started_at))
         .then_guard(|_| {
             economic_asset_guard(
@@ -2281,8 +2282,8 @@ impl SqliteKernelExecutor {
             let id = Uuid::new_v4().to_string();
             let created = A2AEscrow {
                 id: id.clone(),
-                tenant_id: command.principal.tenant_id.clone().expect("policy validated tenant"),
-                store_id: command.store_id.clone().expect("policy validated store"),
+                tenant_id: run.tenant_scope().0.to_string(),
+                store_id: run.tenant_scope().1.to_string(),
                 status: A2AEscrowStatus::Created,
                 quote_id: input.quote_id.clone(),
                 payment_id: input.payment_id.clone(),
@@ -2373,6 +2374,7 @@ impl SqliteKernelExecutor {
             EnvelopeGuard::unversioned(FUND_A2A_ESCROW_COMMAND, ESCROW_UNVERSIONED),
             "a2a_escrow",
         )?
+        .require_tenant_scope()
         .then_guard(|_| escrow_id_guard(&command.payload.escrow_id));
         let request_hash = run.request_hash.clone();
         let started_at = run.started_at;
@@ -2390,8 +2392,8 @@ impl SqliteKernelExecutor {
             let loaded = load_a2a_escrow_sqlite(
                 tx,
                 &command.payload.escrow_id,
-                command.principal.tenant_id.as_deref().expect("policy validated tenant"),
-                command.store_id.as_deref().expect("policy validated store"),
+                run.tenant_scope().0,
+                run.tenant_scope().1,
             )
             .optional()?;
             let escrow = match plan_fund_escrow(loaded, started_at) {
@@ -2453,6 +2455,7 @@ impl SqliteKernelExecutor {
             EnvelopeGuard::unversioned(DISPUTE_A2A_ESCROW_COMMAND, ESCROW_UNVERSIONED),
             "a2a_escrow",
         )?
+        .require_tenant_scope()
         .then_guard(|_| dispute_escrow_guard(&command.payload));
         let request_hash = run.request_hash.clone();
         let policy = run.policy.clone();
@@ -2472,8 +2475,8 @@ impl SqliteKernelExecutor {
             let mut escrow = match load_a2a_escrow_sqlite(
                 tx,
                 &command.payload.escrow_id,
-                command.principal.tenant_id.as_deref().expect("policy validated tenant"),
-                command.store_id.as_deref().expect("policy validated store"),
+                run.tenant_scope().0,
+                run.tenant_scope().1,
             ) {
                 Ok(escrow) => escrow,
                 Err(rusqlite::Error::QueryReturnedNoRows) => {
@@ -2571,6 +2574,7 @@ impl SqliteKernelExecutor {
             EnvelopeGuard::unversioned(FILE_A2A_DISPUTE_COMMAND, ESCROW_UNVERSIONED),
             "a2a_dispute",
         )?
+        .require_tenant_scope()
         .then_guard(|run| {
             file_dispute_guard(
                 input,
@@ -2593,9 +2597,8 @@ impl SqliteKernelExecutor {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
-            let tenant_id =
-                command.principal.tenant_id.as_deref().expect("policy validated tenant");
-            let store_id = command.store_id.as_deref().expect("policy validated store");
+            let tenant_id = run.tenant_scope().0;
+            let store_id = run.tenant_scope().1;
             let escrow = match load_a2a_escrow_sqlite(tx, &input.escrow_id, tenant_id, store_id) {
                 Ok(value) => value,
                 Err(rusqlite::Error::QueryReturnedNoRows) => {
@@ -2770,6 +2773,7 @@ impl SqliteKernelExecutor {
             EnvelopeGuard::unversioned(SUBMIT_A2A_EVIDENCE_COMMAND, ESCROW_UNVERSIONED),
             "a2a_dispute_evidence",
         )?
+        .require_tenant_scope()
         .then_guard(|_| {
             submit_evidence_guard(input, principal_controls_address(command, &input.submitted_by))
         });
@@ -2792,9 +2796,8 @@ impl SqliteKernelExecutor {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
-            let tenant_id =
-                command.principal.tenant_id.as_deref().expect("policy validated tenant");
-            let store_id = command.store_id.as_deref().expect("policy validated store");
+            let tenant_id = run.tenant_scope().0;
+            let store_id = run.tenant_scope().1;
             let dispute = match load_a2a_dispute_sqlite(tx, &input.dispute_id, tenant_id, store_id)
             {
                 Ok(value) => value,
@@ -2939,6 +2942,7 @@ impl SqliteKernelExecutor {
             EnvelopeGuard::unversioned(RESOLVE_A2A_DISPUTE_COMMAND, ESCROW_UNVERSIONED),
             "a2a_dispute",
         )?
+        .require_tenant_scope()
         .then_guard(|_| resolve_dispute_guard(input));
         let request_hash = run.request_hash.clone();
         let policy = run.policy.clone();
@@ -2955,9 +2959,8 @@ impl SqliteKernelExecutor {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
-            let tenant_id =
-                command.principal.tenant_id.as_deref().expect("policy validated tenant");
-            let store_id = command.store_id.as_deref().expect("policy validated store");
+            let tenant_id = run.tenant_scope().0;
+            let store_id = run.tenant_scope().1;
             let mut dispute =
                 match load_a2a_dispute_sqlite(tx, &input.dispute_id, tenant_id, store_id) {
                     Ok(value) => value,
@@ -3196,6 +3199,7 @@ impl SqliteKernelExecutor {
             EnvelopeGuard::unversioned(REFUND_A2A_ESCROW_COMMAND, ESCROW_UNVERSIONED),
             "a2a_escrow",
         )?
+        .require_tenant_scope()
         .then_guard(|_| escrow_settlement_guard(&command.payload.escrow_id));
         let request_hash = run.request_hash.clone();
         let policy = run.policy.clone();
@@ -3215,8 +3219,8 @@ impl SqliteKernelExecutor {
             let mut escrow = match load_a2a_escrow_sqlite(
                 tx,
                 &command.payload.escrow_id,
-                command.principal.tenant_id.as_deref().expect("policy validated tenant"),
-                command.store_id.as_deref().expect("policy validated store"),
+                run.tenant_scope().0,
+                run.tenant_scope().1,
             ) {
                 Ok(escrow) => escrow,
                 Err(rusqlite::Error::QueryReturnedNoRows) => {
@@ -3299,6 +3303,7 @@ impl SqliteKernelExecutor {
             EnvelopeGuard::unversioned(RELEASE_A2A_ESCROW_COMMAND, ESCROW_UNVERSIONED),
             "a2a_escrow",
         )?
+        .require_tenant_scope()
         .then_guard(|_| escrow_settlement_guard(&command.payload.escrow_id));
         let request_hash = run.request_hash.clone();
         let policy = run.policy.clone();
@@ -3319,8 +3324,8 @@ impl SqliteKernelExecutor {
             let escrow = match load_a2a_escrow_sqlite(
                 tx,
                 &command.payload.escrow_id,
-                command.principal.tenant_id.as_deref().expect("policy validated tenant"),
-                command.store_id.as_deref().expect("policy validated store"),
+                run.tenant_scope().0,
+                run.tenant_scope().1,
             ) {
                 Ok(escrow) => escrow,
                 Err(rusqlite::Error::QueryReturnedNoRows) => {

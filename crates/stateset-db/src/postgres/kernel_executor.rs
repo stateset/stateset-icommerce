@@ -2341,6 +2341,7 @@ impl PgKernelExecutor {
             EnvelopeGuard::create(CREATE_A2A_ESCROW_COMMAND),
             "a2a_escrow",
         )?
+        .require_tenant_scope()
         .then_guard(|run| create_escrow_guard(input, run.started_at))
         .then_guard(|_| {
             economic_asset_guard(
@@ -2376,8 +2377,8 @@ impl PgKernelExecutor {
         let id = Uuid::new_v4().to_string();
         let created = A2AEscrow {
             id: id.clone(),
-            tenant_id: command.principal.tenant_id.clone().expect("policy validated tenant"),
-            store_id: command.store_id.clone().expect("policy validated store"),
+            tenant_id: run.tenant_scope().0.to_string(),
+            store_id: run.tenant_scope().1.to_string(),
             status: A2AEscrowStatus::Created,
             quote_id: input.quote_id.clone(),
             payment_id: input.payment_id.clone(),
@@ -2448,6 +2449,7 @@ impl PgKernelExecutor {
             EnvelopeGuard::unversioned(FUND_A2A_ESCROW_COMMAND, ESCROW_UNVERSIONED),
             "a2a_escrow",
         )?
+        .require_tenant_scope()
         .then_guard(|_| escrow_id_guard(&command.payload.escrow_id));
         let request_hash = run.request_hash.clone();
         let started_at = run.started_at;
@@ -2470,8 +2472,8 @@ impl PgKernelExecutor {
         let loaded = load_a2a_escrow_pg(
             tx.as_mut(),
             &command.payload.escrow_id,
-            command.principal.tenant_id.as_deref().expect("policy validated tenant"),
-            command.store_id.as_deref().expect("policy validated store"),
+            run.tenant_scope().0,
+            run.tenant_scope().1,
         )
         .await?
         .map(a2a_escrow_from_pg)
@@ -2538,6 +2540,7 @@ impl PgKernelExecutor {
             EnvelopeGuard::unversioned(DISPUTE_A2A_ESCROW_COMMAND, ESCROW_UNVERSIONED),
             "a2a_escrow",
         )?
+        .require_tenant_scope()
         .then_guard(|_| dispute_escrow_guard(&command.payload));
         let request_hash = run.request_hash.clone();
         let policy = run.policy.clone();
@@ -2564,8 +2567,8 @@ impl PgKernelExecutor {
         let Some(row) = load_a2a_escrow_pg(
             tx.as_mut(),
             &command.payload.escrow_id,
-            command.principal.tenant_id.as_deref().expect("policy validated tenant"),
-            command.store_id.as_deref().expect("policy validated store"),
+            run.tenant_scope().0,
+            run.tenant_scope().1,
         )
         .await?
         else {
@@ -2662,6 +2665,7 @@ impl PgKernelExecutor {
             EnvelopeGuard::unversioned(FILE_A2A_DISPUTE_COMMAND, ESCROW_UNVERSIONED),
             "a2a_dispute",
         )?
+        .require_tenant_scope()
         .then_guard(|run| {
             file_dispute_guard(
                 input,
@@ -2691,8 +2695,8 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
-        let tenant_id = command.principal.tenant_id.as_deref().expect("policy validated tenant");
-        let store_id = command.store_id.as_deref().expect("policy validated store");
+        let tenant_id = run.tenant_scope().0;
+        let store_id = run.tenant_scope().1;
         let Some(row) =
             load_a2a_escrow_pg(tx.as_mut(), &input.escrow_id, tenant_id, store_id).await?
         else {
@@ -2864,6 +2868,7 @@ impl PgKernelExecutor {
             EnvelopeGuard::unversioned(SUBMIT_A2A_EVIDENCE_COMMAND, ESCROW_UNVERSIONED),
             "a2a_dispute_evidence",
         )?
+        .require_tenant_scope()
         .then_guard(|_| {
             submit_evidence_guard(
                 input,
@@ -2897,8 +2902,8 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
-        let tenant_id = command.principal.tenant_id.as_deref().expect("policy validated tenant");
-        let store_id = command.store_id.as_deref().expect("policy validated store");
+        let tenant_id = run.tenant_scope().0;
+        let store_id = run.tenant_scope().1;
         let Some(row) =
             load_a2a_dispute_pg(tx.as_mut(), &input.dispute_id, tenant_id, store_id).await?
         else {
@@ -3049,6 +3054,7 @@ impl PgKernelExecutor {
             EnvelopeGuard::unversioned(RESOLVE_A2A_DISPUTE_COMMAND, ESCROW_UNVERSIONED),
             "a2a_dispute",
         )?
+        .require_tenant_scope()
         .then_guard(|_| resolve_dispute_guard(input));
         let request_hash = run.request_hash.clone();
         let policy = run.policy.clone();
@@ -3072,8 +3078,8 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
-        let tenant_id = command.principal.tenant_id.as_deref().expect("policy validated tenant");
-        let store_id = command.store_id.as_deref().expect("policy validated store");
+        let tenant_id = run.tenant_scope().0;
+        let store_id = run.tenant_scope().1;
         let Some(row) =
             load_a2a_dispute_pg(tx.as_mut(), &input.dispute_id, tenant_id, store_id).await?
         else {
@@ -3313,6 +3319,7 @@ impl PgKernelExecutor {
             EnvelopeGuard::unversioned(REFUND_A2A_ESCROW_COMMAND, ESCROW_UNVERSIONED),
             "a2a_escrow",
         )?
+        .require_tenant_scope()
         .then_guard(|_| escrow_settlement_guard(&command.payload.escrow_id));
         let request_hash = run.request_hash.clone();
         let policy = run.policy.clone();
@@ -3339,8 +3346,8 @@ impl PgKernelExecutor {
         let Some(row) = load_a2a_escrow_pg(
             tx.as_mut(),
             &command.payload.escrow_id,
-            command.principal.tenant_id.as_deref().expect("policy validated tenant"),
-            command.store_id.as_deref().expect("policy validated store"),
+            run.tenant_scope().0,
+            run.tenant_scope().1,
         )
         .await?
         else {
@@ -3426,6 +3433,7 @@ impl PgKernelExecutor {
             EnvelopeGuard::unversioned(RELEASE_A2A_ESCROW_COMMAND, ESCROW_UNVERSIONED),
             "a2a_escrow",
         )?
+        .require_tenant_scope()
         .then_guard(|_| escrow_settlement_guard(&command.payload.escrow_id));
         let request_hash = run.request_hash.clone();
         let policy = run.policy.clone();
@@ -3458,8 +3466,8 @@ impl PgKernelExecutor {
                     WHERE id = $1 AND tenant_id = $2 AND store_id = $3 FOR UPDATE",
         )
         .bind(&command.payload.escrow_id)
-        .bind(command.principal.tenant_id.as_deref().expect("policy validated tenant"))
-        .bind(command.store_id.as_deref().expect("policy validated store"))
+        .bind(run.tenant_scope().0)
+        .bind(run.tenant_scope().1)
         .fetch_optional(tx.as_mut())
         .await
         .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
