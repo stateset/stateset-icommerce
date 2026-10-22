@@ -1125,6 +1125,16 @@ pub(crate) fn map_db_error(e: sqlx::Error) -> CommerceError {
                     }
                     // 23514: check_violation
                     "23514" => CommerceError::ValidationError(message),
+                    // 23503: foreign_key_violation — a referenced row does not
+                    // exist, the same class SQLite reports as a validation error.
+                    "23503" => CommerceError::ValidationError(message),
+                    // 40001 serialization_failure, 40P01 deadlock_detected,
+                    // 55P03 lock_not_available: transient, retryable.
+                    "40001" | "40P01" | "55P03" => {
+                        CommerceError::Database(stateset_core::DbError::TransactionFailed {
+                            message: format!("{code}: {message}"),
+                        })
+                    }
                     // 23502: not_null_violation
                     "23502" => CommerceError::ValidationError(message),
                     _ => CommerceError::DatabaseError(message),
@@ -1441,6 +1451,17 @@ mod tests {
             code: code.map(str::to_string),
             message: message.to_string(),
         }))
+    }
+
+    #[test]
+    fn map_db_error_types_contention_and_foreign_keys() {
+        for code in ["40001", "40P01", "55P03"] {
+            let mapped = map_db_error(mock_db_error(Some(code), "contention"));
+            assert!(mapped.is_retryable(), "{code}: {mapped:?}");
+        }
+        let fk = map_db_error(mock_db_error(Some("23503"), "violates foreign key constraint"));
+        assert!(matches!(fk, CommerceError::ValidationError(_)), "{fk:?}");
+        assert!(!fk.is_retryable());
     }
 
     #[test]
