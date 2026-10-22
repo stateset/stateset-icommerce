@@ -68,6 +68,10 @@ pub enum HttpError {
     },
 }
 
+/// Response message for every [`HttpError::InternalError`]; the detail is
+/// logged, never returned.
+pub(crate) const INTERNAL_ERROR_PUBLIC_MESSAGE: &str = "Internal error: the request could not be completed; quote the x-request-id response header when reporting it";
+
 /// JSON body for error responses.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ErrorBody {
@@ -134,10 +138,20 @@ impl HttpError {
 impl IntoResponse for HttpError {
     fn into_response(self) -> Response {
         let status = self.status_code();
+        // Internal failures carry storage detail (table names, driver
+        // messages, file paths). Log it server-side, where the request span
+        // holds the `x-request-id` the client also receives, and send only a
+        // generic message.
+        let message = if let Self::InternalError(detail) = &self {
+            tracing::error!(error = %detail, "internal error while handling request");
+            INTERNAL_ERROR_PUBLIC_MESSAGE.to_string()
+        } else {
+            self.to_string()
+        };
         let body = ErrorBody {
             error: ErrorDetail {
                 code: self.code().to_string(),
-                message: self.to_string(),
+                message,
                 invariant: self.invariant_code(),
             },
         };
@@ -239,6 +253,21 @@ mod tests {
         let err = HttpError::InternalError("boom".into());
         assert_eq!(err.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(err.code(), "internal_error");
+    }
+
+    #[tokio::test]
+    async fn internal_error_body_hides_storage_detail() {
+        let err = HttpError::from(CommerceError::DatabaseError(
+            "Query failed on orders: no such column: secret at /var/lib/tenants/acme.db".into(),
+        ));
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("body");
+        let body = String::from_utf8(bytes.to_vec()).expect("utf8");
+        assert!(body.contains("internal_error"), "{body}");
+        assert!(!body.contains("orders"), "{body}");
+        assert!(!body.contains("/var/lib"), "{body}");
+        assert!(!body.contains("no such column"), "{body}");
     }
 
     #[test]

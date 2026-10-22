@@ -2671,3 +2671,24 @@ async fn lost_push_response_retries_stable_ids_after_restart() {
         assert!(reopened.confirmation_for_event(id).is_some());
     }
 }
+
+#[test]
+fn pulled_page_refuses_replayed_and_duplicated_events() {
+    let event = |sequence: u64| {
+        SyncEvent::new("order.created", "order", "ORD-1", serde_json::json!({}))
+            .with_remote_sequence(sequence)
+    };
+    assert!(SyncEngine::validate_pulled_page(4, &[event(5), event(6)]).is_ok());
+
+    let replayed = SyncEngine::validate_pulled_page(5, &[event(5)]).unwrap_err();
+    assert!(replayed.to_string().contains("at or before the pull cursor"), "{replayed}");
+
+    let first = event(7);
+    let mut same_id = event(8);
+    same_id.id = first.id;
+    let repeated = SyncEngine::validate_pulled_page(0, &[first, same_id]).unwrap_err();
+    assert!(repeated.to_string().contains("repeats event"), "{repeated}");
+
+    let repeated_sequence = SyncEngine::validate_pulled_page(0, &[event(9), event(9)]).unwrap_err();
+    assert!(repeated_sequence.to_string().contains("repeats sequence"), "{repeated_sequence}");
+}

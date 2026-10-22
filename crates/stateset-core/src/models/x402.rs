@@ -38,7 +38,7 @@
 //! ```
 
 use chrono::{DateTime, Utc};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rs_merkle::{MerkleProof, algorithms::Sha256 as MerkleSha256};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
@@ -874,7 +874,7 @@ impl X402PaymentIntent {
                 let public_key = VerifyingKey::from_bytes(&decode_hex_array::<32>(public_key_hex)?)
                     .map_err(|e| X402CryptoError::InvalidKey(e.to_string()))?;
 
-                Ok(public_key.verify(&signing_hash, &signature).is_ok())
+                Ok(public_key.verify_strict(&signing_hash, &signature).is_ok())
             }
             X402SignatureScheme::MlDsa65 => {
                 let signature_bundle = self
