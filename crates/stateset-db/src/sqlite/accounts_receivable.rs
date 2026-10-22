@@ -807,7 +807,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             "SELECT id, invoice_number, order_id, customer_id, status, invoice_date, due_date, subtotal, tax_amount, shipping_amount, discount_amount, total, amount_paid, balance_due, currency, notes, terms, created_at, updated_at
              FROM invoices
              WHERE status NOT IN ('paid', 'voided', 'written_off')
-               AND due_date < datetime('now')
+               AND due_date < strftime('%Y-%m-%dT%H:%M:%f', 'now')
                AND (last_dunning_date IS NULL OR last_dunning_date < datetime('now', '-7 days'))
              ORDER BY due_date ASC"
         ).map_err(map_db_error)?;
@@ -1143,7 +1143,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             Self::recalculate_invoice_with_conn(tx, wo.invoice_id.into()).map_err(to_rusqlite)?;
             tx.execute(
                 "UPDATE invoices SET status = 'overdue'
-                 WHERE id = ?1 AND due_date < datetime('now') AND status NOT IN ('paid', 'voided')",
+                 WHERE id = ?1 AND due_date < strftime('%Y-%m-%dT%H:%M:%f', 'now') AND status NOT IN ('paid', 'voided')",
                 params![wo.invoice_id.to_string()],
             )?;
 
@@ -1980,7 +1980,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         )?;
 
         let sales_sql = format!(
-            "SELECT total FROM invoices WHERE created_at >= datetime('now', '-{days} days')"
+            "SELECT total FROM invoices WHERE created_at >= strftime('%Y-%m-%dT%H:%M:%f', 'now', '-{days} days')"
         );
         let total_sales = sum_decimal_query(&conn, &sales_sql, &[], "invoices", "total")?;
 

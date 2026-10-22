@@ -630,7 +630,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             params_vec.push(Box::new(invoice_type.to_string()));
         }
         if filter.overdue_only.unwrap_or(false) {
-            sql.push_str(" AND due_date < datetime('now') AND status NOT IN ('paid', 'voided')");
+            sql.push_str(" AND due_date < strftime('%Y-%m-%dT%H:%M:%f', 'now') AND status NOT IN ('paid', 'voided')");
         }
         if let Some(from_date) = &filter.from_date {
             sql.push_str(" AND invoice_date >= ?");
@@ -1042,7 +1042,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             params_vec.push(Box::new(status.to_string()));
         }
         if filter.overdue_only.unwrap_or(false) {
-            sql.push_str(" AND due_date < datetime('now') AND status NOT IN ('paid', 'voided')");
+            sql.push_str(" AND due_date < strftime('%Y-%m-%dT%H:%M:%f', 'now') AND status NOT IN ('paid', 'voided')");
         }
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =

@@ -641,7 +641,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         }
         if filter.active_only.unwrap_or(false) {
             sql.push_str(
-                " AND status = 'active' AND (end_date IS NULL OR end_date > datetime('now'))",
+                " AND status = 'active' AND (end_date IS NULL OR end_date > strftime('%Y-%m-%dT%H:%M:%f', 'now'))",
             );
         }
 
@@ -1162,7 +1162,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         }
         if filter.active_only.unwrap_or(false) {
             sql.push_str(
-                " AND status = 'active' AND (end_date IS NULL OR end_date > datetime('now'))",
+                " AND status = 'active' AND (end_date IS NULL OR end_date > strftime('%Y-%m-%dT%H:%M:%f', 'now'))",
             );
         }
 
