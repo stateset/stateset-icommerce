@@ -2,6 +2,7 @@
 //!
 //! Handles warranty registration, coverage tracking, and claims processing.
 
+use crate::errors::{CommerceError, Result};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -233,6 +234,42 @@ pub struct CreateWarranty {
     pub terms: Option<String>,
     /// Notes
     pub notes: Option<String>,
+}
+
+impl CreateWarranty {
+    /// The customer a warranty for this input belongs to.
+    ///
+    /// A warranty sold against an order belongs to that order's customer:
+    /// `order_customer` is the customer of `order_id` (`None` when the input
+    /// names no order). A nil `customer_id` takes the order's customer; an
+    /// explicit one must match it. Pass [`CustomerId::nil`] to mean "the
+    /// order's customer": `CustomerId::default()` is a fresh random id, not nil.
+    ///
+    /// `order_customer` is also `None` when `order_id` names an order this
+    /// store does not hold (e.g. one imported from another system): an explicit
+    /// `customer_id` is then kept as given, but a nil one has no owner to take. Without an order the input's
+    /// `customer_id` is used as given.
+    ///
+    /// # Errors
+    ///
+    /// [`CommerceError::ValidationError`] when an explicit `customer_id`
+    /// differs from the order's customer; [`CommerceError::OrderNotFound`]
+    /// when `customer_id` is nil and `order_id` names no known order.
+    pub fn resolve_customer(&self, order_customer: Option<CustomerId>) -> Result<CustomerId> {
+        match order_customer {
+            Some(owner) if self.customer_id.is_nil() || self.customer_id == owner => Ok(owner),
+            Some(owner) => Err(CommerceError::ValidationError(format!(
+                "warranty customer {} does not match order customer {owner}",
+                self.customer_id
+            ))),
+            None => match self.order_id {
+                Some(order_id) if self.customer_id.is_nil() => {
+                    Err(CommerceError::OrderNotFound(order_id.into_uuid()))
+                }
+                _ => Ok(self.customer_id),
+            },
+        }
+    }
 }
 
 /// Input for updating a warranty
