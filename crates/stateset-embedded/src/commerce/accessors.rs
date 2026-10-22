@@ -1129,7 +1129,7 @@ impl Commerce {
     /// ```
     #[must_use]
     pub fn x402(&self) -> X402 {
-        X402::new(self.db.clone())
+        X402::new(self.db.clone()).with_metrics(self.metrics.clone())
     }
 
     /// Access ERC-8004 trustless agent registries.
