@@ -454,6 +454,7 @@ fn resolve_metrics_client_ip(
         &X_FORWARDED_FOR,
         &X_REAL_IP,
         state.metrics_header_limits(),
+        &|ip| state.is_metrics_trusted_proxy(ip),
     );
 
     if state.has_metrics_trusted_proxies() {
@@ -540,34 +541,37 @@ fn parse_forwarded_client_ip_with_reason(
     x_forwarded_for: &HeaderName,
     x_real_ip: &HeaderName,
     limits: MetricsHeaderLimits,
+    is_trusted_proxy: &dyn Fn(IpAddr) -> bool,
 ) -> Result<IpAddr, ForwardedClientIpFailureReason> {
     let mut saw_oversized = false;
     let mut saw_invalid = false;
 
-    if let Some(value) = headers.get(forwarded) {
-        match value.to_str() {
-            Ok(value) if value.len() <= limits.forwarded_header_value_bytes() => {
-                if let Some(ip) = parse_forwarded_header_for_ip(value) {
-                    return Ok(ip);
-                }
-                saw_invalid = true;
+    match joined_header_value(headers, forwarded) {
+        Some(Ok(value)) if value.len() <= limits.forwarded_header_value_bytes() => {
+            if let Some(ip) =
+                forwarded_header_hops(&value).and_then(|hops| client_hop(&hops, is_trusted_proxy))
+            {
+                return Ok(ip);
             }
-            Ok(_) => saw_oversized = true,
-            Err(_) => saw_invalid = true,
+            saw_invalid = true;
         }
+        Some(Ok(_)) => saw_oversized = true,
+        Some(Err(())) => saw_invalid = true,
+        None => {}
     }
 
-    if let Some(value) = headers.get(x_forwarded_for) {
-        match value.to_str() {
-            Ok(value) if value.len() <= limits.x_forwarded_for_header_value_bytes() => {
-                if let Some(ip) = parse_x_forwarded_for_ip(value) {
-                    return Ok(ip);
-                }
-                saw_invalid = true;
+    match joined_header_value(headers, x_forwarded_for) {
+        Some(Ok(value)) if value.len() <= limits.x_forwarded_for_header_value_bytes() => {
+            if let Some(ip) =
+                x_forwarded_for_hops(&value).and_then(|hops| client_hop(&hops, is_trusted_proxy))
+            {
+                return Ok(ip);
             }
-            Ok(_) => saw_oversized = true,
-            Err(_) => saw_invalid = true,
+            saw_invalid = true;
         }
+        Some(Ok(_)) => saw_oversized = true,
+        Some(Err(())) => saw_invalid = true,
+        None => {}
     }
 
     if let Some(value) = headers.get(x_real_ip) {
@@ -592,28 +596,65 @@ fn parse_forwarded_client_ip_with_reason(
     }
 }
 
-fn parse_forwarded_header_for_ip(value: &str) -> Option<IpAddr> {
-    let first_hop = value.split(',').next()?.trim();
-    for param in first_hop.split(';') {
-        let (key, raw_value) = param.split_once('=')?;
-        if !key.trim().eq_ignore_ascii_case("for") {
-            continue;
-        }
-
-        let value = raw_value.trim().trim_matches('"').trim();
-        if value.is_empty() || value.starts_with('_') {
-            return None;
-        }
-        if let Some(inner) = value.strip_prefix('[').and_then(|v| v.split(']').next()) {
-            return inner.parse::<IpAddr>().ok();
-        }
-        return parse_client_ip(value);
-    }
-    None
+/// Every field line of `name`, comma-joined (RFC 9110 field combination), so
+/// a hop list split across repeated header lines is read as one list. `None`
+/// when the header is absent, `Some(Err(()))` when a line is not visible ASCII.
+fn joined_header_value(headers: &HeaderMap, name: &HeaderName) -> Option<Result<String, ()>> {
+    let mut lines = headers.get_all(name).iter().peekable();
+    lines.peek()?;
+    Some(
+        lines
+            .map(|line| line.to_str().map_err(|_| ()))
+            .collect::<Result<Vec<_>, ()>>()
+            .map(|lines| lines.join(",")),
+    )
 }
 
-fn parse_x_forwarded_for_ip(value: &str) -> Option<IpAddr> {
-    parse_client_ip(value.split(',').next()?.trim())
+/// The `for=` address of every element of a `Forwarded` header, in order.
+/// `None` if any element names an obfuscated, unknown or unparsable address:
+/// a hop chain that cannot be read in full cannot be trusted at all.
+fn forwarded_header_hops(value: &str) -> Option<Vec<IpAddr>> {
+    let mut hops = Vec::new();
+    for element in value.split(',') {
+        let mut found = None;
+        for param in element.split(';') {
+            let (key, raw_value) = param.split_once('=')?;
+            if !key.trim().eq_ignore_ascii_case("for") {
+                continue;
+            }
+            let value = raw_value.trim().trim_matches('"').trim();
+            if value.is_empty() || value.starts_with('_') {
+                return None;
+            }
+            let ip = match value.strip_prefix('[').and_then(|v| v.split(']').next()) {
+                Some(inner) => inner.parse::<IpAddr>().ok()?,
+                None => parse_client_ip(value)?,
+            };
+            found = Some(ip);
+            break;
+        }
+        hops.push(found?);
+    }
+    Some(hops)
+}
+
+/// Every address of an `X-Forwarded-For` list, in order; `None` if any entry
+/// is not an address.
+fn x_forwarded_for_hops(value: &str) -> Option<Vec<IpAddr>> {
+    value.split(',').map(parse_client_ip).collect()
+}
+
+/// The client a proxy chain vouches for.
+///
+/// Each proxy appends the address it received the request from, so the
+/// leftmost entries are whatever the client chose to send. Walk from the
+/// right, skipping hops that are themselves trusted proxies, and take the
+/// first one that is not; if every hop is a trusted proxy, the original
+/// client is the leftmost. Taking the leftmost hop unconditionally let a
+/// client spoof `X-Forwarded-For: <allowlisted ip>` past the metrics IP
+/// allowlist.
+fn client_hop(hops: &[IpAddr], is_trusted_proxy: &dyn Fn(IpAddr) -> bool) -> Option<IpAddr> {
+    hops.iter().rev().copied().find(|ip| !is_trusted_proxy(*ip)).or_else(|| hops.first().copied())
 }
 
 fn parse_client_ip(value: &str) -> Option<IpAddr> {
@@ -1549,6 +1590,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn spoofed_leftmost_forwarded_hop_cannot_pass_the_ip_allowlist() {
+        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"))
+            .with_metrics_bearer_auth("metrics-token")
+            .with_metrics_ip_allowlist(["127.0.0.1".parse().unwrap()])
+            .with_metrics_trusted_proxies(["10.0.0.0/8".parse().unwrap()]);
+        let router = router().with_state(state);
+
+        // The client sent `X-Forwarded-For: 127.0.0.1`; the trusted proxy
+        // appended the real peer. The client is 203.0.113.9, not allowlisted.
+        let mut spoofed = metrics_request_with_peer("metrics-token", "10.1.2.3:8080");
+        spoofed.headers_mut().insert("x-forwarded-for", "127.0.0.1, 203.0.113.9".parse().unwrap());
+        assert_eq!(router.clone().oneshot(spoofed).await.unwrap().status(), StatusCode::FORBIDDEN);
+
+        // Same trick split across two header lines.
+        let mut split = metrics_request_with_peer("metrics-token", "10.1.2.3:8080");
+        split.headers_mut().append("x-forwarded-for", "127.0.0.1".parse().unwrap());
+        split.headers_mut().append("x-forwarded-for", "203.0.113.9".parse().unwrap());
+        assert_eq!(router.clone().oneshot(split).await.unwrap().status(), StatusCode::FORBIDDEN);
+
+        let mut spoofed_forwarded = metrics_request_with_peer("metrics-token", "10.1.2.3:8080");
+        spoofed_forwarded
+            .headers_mut()
+            .insert("forwarded", "for=127.0.0.1, for=203.0.113.9".parse().unwrap());
+        assert_eq!(
+            router.clone().oneshot(spoofed_forwarded).await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+
+        // An allowlisted client behind a chain of trusted proxies still passes.
+        let mut chained = metrics_request_with_peer("metrics-token", "10.1.2.3:8080");
+        chained.headers_mut().insert("x-forwarded-for", "127.0.0.1, 10.9.9.9".parse().unwrap());
+        assert_eq!(router.oneshot(chained).await.unwrap().status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
     async fn metrics_access_counters_track_forwarded_parse_failure_reasons() {
         let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"))
             .with_metrics_bearer_auth("metrics-token")
@@ -1904,16 +1980,35 @@ mod tests {
     }
 
     #[test]
-    fn parse_x_forwarded_for_ip_reads_first_hop() {
+    fn x_forwarded_for_hops_reads_every_entry_in_order() {
         assert_eq!(
-            parse_x_forwarded_for_ip("203.0.113.10, 10.0.0.1"),
-            Some("203.0.113.10".parse().unwrap())
+            x_forwarded_for_hops("203.0.113.10:443, 10.0.0.1"),
+            Some(vec!["203.0.113.10".parse().unwrap(), "10.0.0.1".parse().unwrap()])
+        );
+        assert_eq!(x_forwarded_for_hops("203.0.113.10, invalid"), None);
+    }
+
+    #[test]
+    fn client_hop_skips_trusted_proxies_from_the_right() {
+        let trusted: IpAddr = "10.0.0.2".parse().unwrap();
+        let is_trusted = |ip: IpAddr| ip == trusted;
+        let hops =
+            |list: &[&str]| list.iter().map(|ip| ip.parse().unwrap()).collect::<Vec<IpAddr>>();
+        // A client-supplied leftmost hop is ignored: the trusted proxy appended
+        // the real peer after it.
+        assert_eq!(
+            client_hop(&hops(&["127.0.0.1", "203.0.113.9"]), &is_trusted),
+            Some("203.0.113.9".parse().unwrap())
         );
         assert_eq!(
-            parse_x_forwarded_for_ip("203.0.113.10:443, 10.0.0.1"),
-            Some("203.0.113.10".parse().unwrap())
+            client_hop(&hops(&["127.0.0.1", "203.0.113.9", "10.0.0.2"]), &is_trusted),
+            Some("203.0.113.9".parse().unwrap())
         );
-        assert_eq!(parse_x_forwarded_for_ip("invalid"), None);
+        assert_eq!(
+            client_hop(&hops(&["198.51.100.4", "10.0.0.2"]), &is_trusted),
+            Some("198.51.100.4".parse().unwrap())
+        );
+        assert_eq!(client_hop(&hops(&["10.0.0.2"]), &is_trusted), Some(trusted));
     }
 
     #[test]
@@ -1925,16 +2020,16 @@ mod tests {
     }
 
     #[test]
-    fn parse_forwarded_header_for_ip_reads_for_parameter() {
+    fn forwarded_header_hops_reads_for_parameters() {
         assert_eq!(
-            parse_forwarded_header_for_ip("for=203.0.113.60;proto=https"),
-            Some("203.0.113.60".parse().unwrap())
+            forwarded_header_hops("for=203.0.113.60;proto=https"),
+            Some(vec!["203.0.113.60".parse().unwrap()])
         );
         assert_eq!(
-            parse_forwarded_header_for_ip("for=\"[2001:db8::1]:8443\";by=198.51.100.2"),
-            Some("2001:db8::1".parse().unwrap())
+            forwarded_header_hops("for=\"[2001:db8::1]:8443\";by=198.51.100.2, for=10.0.0.2"),
+            Some(vec!["2001:db8::1".parse().unwrap(), "10.0.0.2".parse().unwrap()])
         );
-        assert_eq!(parse_forwarded_header_for_ip("for=_hidden"), None);
+        assert_eq!(forwarded_header_hops("for=_hidden"), None);
     }
 
     #[test]
@@ -1958,6 +2053,7 @@ mod tests {
             &HeaderName::from_static("x-forwarded-for"),
             &HeaderName::from_static("x-real-ip"),
             limits,
+            &|_| false,
         )
         .ok();
         assert_eq!(resolved, Some("127.0.0.1".parse().unwrap()));
@@ -1980,6 +2076,7 @@ mod tests {
             &HeaderName::from_static("x-forwarded-for"),
             &HeaderName::from_static("x-real-ip"),
             limits,
+            &|_| false,
         )
         .ok();
         assert_eq!(resolved, None);
@@ -1996,6 +2093,7 @@ mod tests {
             &HeaderName::from_static("x-forwarded-for"),
             &HeaderName::from_static("x-real-ip"),
             MetricsHeaderLimits::new(2048, 2048, 8).unwrap(),
+            &|_| false,
         )
         .ok();
         assert_eq!(rejected, None);
@@ -2006,6 +2104,7 @@ mod tests {
             &HeaderName::from_static("x-forwarded-for"),
             &HeaderName::from_static("x-real-ip"),
             MetricsHeaderLimits::new(2048, 2048, 32).unwrap(),
+            &|_| false,
         )
         .ok();
         assert_eq!(accepted, Some("127.0.0.1".parse().unwrap()));
@@ -2025,7 +2124,8 @@ mod tests {
                 &forwarded,
                 &x_forwarded_for,
                 &x_real_ip,
-                limits
+                limits,
+                &|_| false,
             ),
             Err(ForwardedClientIpFailureReason::Missing)
         );
@@ -2038,7 +2138,8 @@ mod tests {
                 &forwarded,
                 &x_forwarded_for,
                 &x_real_ip,
-                limits
+                limits,
+                &|_| false,
             ),
             Err(ForwardedClientIpFailureReason::Invalid)
         );
@@ -2056,7 +2157,8 @@ mod tests {
                 &forwarded,
                 &x_forwarded_for,
                 &x_real_ip,
-                limits
+                limits,
+                &|_| false,
             ),
             Err(ForwardedClientIpFailureReason::Oversized)
         );
