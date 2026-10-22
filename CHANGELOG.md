@@ -6,6 +6,17 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- Inventory item lists (`InventoryRepository::list`/`count`, `GET
+  /inventory`) now apply the `location_id` and `below_reorder_point`
+  filters on both backends. They were accepted and silently ignored, so a
+  low-stock query returned every item. `location_id` keeps items with a
+  balance at that location; `below_reorder_point` compares available stock
+  with reorder point plus safety stock, exactly (SQLite parses its TEXT
+  decimals rather than casting to floats). Postgres now lists items in SKU
+  order, like SQLite, instead of newest first.
+
 ## [1.40.0] - 2026-10-22
 
 ### Security

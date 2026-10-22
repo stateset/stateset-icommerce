@@ -1673,15 +1673,37 @@ impl PgInventoryRepository {
     /// their bind values. The single definition of the inventory-item filter
     /// set: `list_async` and `count_async` both call it, so they cannot
     /// disagree. Same semantics as the SQLite backend: `sku` is a
-    /// case-insensitive substring match and `is_active` applies only when set.
-    /// (`location_id` and `below_reorder_point` are not applied by either
-    /// backend's `list`, so they are not applied here either.)
+    /// case-insensitive substring match and `is_active` applies only when set;
+    /// `location_id` keeps items with a balance at that location, and
+    /// `below_reorder_point` keeps items with (`Some(true)`) or without
+    /// (`Some(false)`) a balance below its reorder threshold (reorder point
+    /// plus safety stock), at the filtered location when one is given.
     fn push_item_filter(builder: &mut QueryBuilder<'_, Postgres>, filter: &InventoryFilter) {
         if let Some(sku) = &filter.sku {
             builder.push(" AND sku ILIKE ").push_bind(format!("%{}%", super::escape_like(sku)));
         }
         if let Some(is_active) = filter.is_active {
             builder.push(" AND is_active = ").push_bind(is_active);
+        }
+        if let Some(location_id) = filter.location_id {
+            builder
+                .push(
+                    " AND EXISTS (SELECT 1 FROM inventory_balances b \
+                     WHERE b.item_id = inventory_items.id AND b.location_id = ",
+                )
+                .push_bind(location_id)
+                .push(")");
+        }
+        if let Some(below) = filter.below_reorder_point {
+            builder.push(if below { " AND EXISTS" } else { " AND NOT EXISTS" }).push(
+                " (SELECT 1 FROM inventory_balances b \
+                 WHERE b.item_id = inventory_items.id AND b.reorder_point IS NOT NULL \
+                 AND b.quantity_available < b.reorder_point + COALESCE(b.safety_stock, 0)",
+            );
+            if let Some(location_id) = filter.location_id {
+                builder.push(" AND b.location_id = ").push_bind(location_id);
+            }
+            builder.push(")");
         }
     }
 
@@ -1692,7 +1714,8 @@ impl PgInventoryRepository {
 
         let mut builder = QueryBuilder::<Postgres>::new("SELECT * FROM inventory_items WHERE 1=1");
         Self::push_item_filter(&mut builder, &filter);
-        builder.push(" ORDER BY created_at DESC LIMIT ").push_bind(limit);
+        // SKU order, as in the SQLite backend (SKUs are unique).
+        builder.push(" ORDER BY sku LIMIT ").push_bind(limit);
         builder.push(" OFFSET ").push_bind(offset);
 
         let rows: Vec<InventoryItemRow> =

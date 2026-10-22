@@ -91,13 +91,20 @@ impl SqliteInventoryRepository {
     /// Append the item `list`/`count` WHERE conditions for `filter` to `sql`
     /// and their bind values to `params`. The single definition of the
     /// inventory-item filter set: `list` and `count` both call it, so they
-    /// cannot disagree. (`location_id` and `below_reorder_point` are not
-    /// applied by `list`, so they are not applied here either.)
+    /// cannot disagree.
+    ///
+    /// `location_id` keeps items with a balance at that location.
+    /// `below_reorder_point` keeps items with (`Some(true)`) or without
+    /// (`Some(false)`) a balance below its reorder threshold, at the filtered
+    /// location when one is given. Quantities are TEXT decimals, so that
+    /// comparison runs on exact `Decimal`s in Rust and the matching ids are
+    /// bound as one JSON array.
     fn push_item_filter(
+        conn: &rusqlite::Connection,
         filter: &InventoryFilter,
         sql: &mut String,
         params: &mut Vec<Box<dyn rusqlite::ToSql>>,
-    ) {
+    ) -> Result<()> {
         if let Some(sku) = &filter.sku {
             sql.push_str(" AND sku LIKE ? ESCAPE '\\'");
             params.push(Box::new(format!("%{}%", super::escape_like(sku))));
@@ -106,6 +113,68 @@ impl SqliteInventoryRepository {
             sql.push_str(" AND is_active = ?");
             params.push(Box::new(i32::from(is_active)));
         }
+        if let Some(location_id) = filter.location_id {
+            sql.push_str(
+                " AND EXISTS (SELECT 1 FROM inventory_balances b \
+                 WHERE b.item_id = inventory_items.id AND b.location_id = ?)",
+            );
+            params.push(Box::new(location_id));
+        }
+        if let Some(below) = filter.below_reorder_point {
+            let ids = Self::item_ids_below_reorder_threshold(conn, filter.location_id)?;
+            let ids = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+            sql.push_str(if below {
+                " AND id IN (SELECT value FROM json_each(?))"
+            } else {
+                " AND id NOT IN (SELECT value FROM json_each(?))"
+            });
+            params.push(Box::new(format!("[{ids}]")));
+        }
+        Ok(())
+    }
+
+    /// Ids of items with a balance (at `location_id`, when given) whose
+    /// available quantity is below its reorder threshold: reorder point plus
+    /// safety stock, as in `InventoryBalance::reorder_threshold`.
+    fn item_ids_below_reorder_threshold(
+        conn: &rusqlite::Connection,
+        location_id: Option<i32>,
+    ) -> Result<Vec<i64>> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT item_id, quantity_available, reorder_point, safety_stock
+                 FROM inventory_balances
+                 WHERE reorder_point IS NOT NULL AND (?1 IS NULL OR location_id = ?1)",
+            )
+            .map_err(map_db_error)?;
+        let rows = stmt
+            .query_map([location_id], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+
+        let mut ids = Vec::new();
+        for (item_id, available, reorder_point, safety_stock) in rows {
+            let available =
+                parse_decimal_strict(&available, "inventory_balance", "quantity_available")?;
+            let reorder_point =
+                parse_decimal_strict(&reorder_point, "inventory_balance", "reorder_point")?;
+            let safety_stock = safety_stock
+                .map(|v| parse_decimal_strict(&v, "inventory_balance", "safety_stock"))
+                .transpose()?
+                .unwrap_or(Decimal::ZERO);
+            if available < reorder_point + safety_stock && !ids.contains(&item_id) {
+                ids.push(item_id);
+            }
+        }
+        Ok(ids)
     }
 
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
@@ -1958,7 +2027,7 @@ impl InventoryRepository for SqliteInventoryRepository {
         let conn = self.conn()?;
         let mut sql = "SELECT * FROM inventory_items WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
-        Self::push_item_filter(&filter, &mut sql, &mut params);
+        Self::push_item_filter(&conn, &filter, &mut sql, &mut params)?;
 
         sql.push_str(" ORDER BY sku");
 
@@ -2000,7 +2069,7 @@ impl InventoryRepository for SqliteInventoryRepository {
         let conn = self.conn()?;
         let mut sql = "SELECT COUNT(*) FROM inventory_items WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
-        Self::push_item_filter(&filter, &mut sql, &mut params);
+        Self::push_item_filter(&conn, &filter, &mut sql, &mut params)?;
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
@@ -3041,6 +3110,42 @@ mod tests {
         let skus: Vec<&str> = needs.iter().map(|s| s.sku.as_str()).collect();
         assert!(skus.contains(&"LOW-001"));
         assert!(!skus.contains(&"HEALTHY-001"));
+    }
+
+    #[test]
+    fn below_reorder_point_filter_uses_exact_threshold_with_safety_stock() {
+        let repo = fresh_repo();
+        // 12.0001 < 10 + 2.0002: below only once safety stock is counted.
+        let mut buffered = item("FILTER-BUFFERED");
+        buffered.initial_quantity = Some(dec!(12.0001));
+        buffered.reorder_point = Some(dec!(10));
+        buffered.safety_stock = Some(dec!(2.0002));
+        repo.create_item(buffered).expect("buffered");
+        // Exactly at the threshold is not below it.
+        let mut at_threshold = item("FILTER-AT");
+        at_threshold.initial_quantity = Some(dec!(10.0000000001));
+        at_threshold.reorder_point = Some(dec!(10.0000000001));
+        at_threshold.safety_stock = None;
+        repo.create_item(at_threshold).expect("at threshold");
+        // No reorder point: never below.
+        let mut untracked = item("FILTER-UNTRACKED");
+        untracked.initial_quantity = Some(dec!(0));
+        untracked.reorder_point = None;
+        repo.create_item(untracked).expect("untracked");
+
+        let skus = |below: bool| -> Vec<String> {
+            repo.list(InventoryFilter {
+                sku: Some("FILTER-".into()),
+                below_reorder_point: Some(below),
+                ..Default::default()
+            })
+            .expect("list")
+            .into_iter()
+            .map(|item| item.sku)
+            .collect()
+        };
+        assert_eq!(skus(true), vec!["FILTER-BUFFERED"]);
+        assert_eq!(skus(false), vec!["FILTER-AT", "FILTER-UNTRACKED"]);
     }
 
     #[test]

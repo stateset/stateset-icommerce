@@ -98,10 +98,11 @@ pub(crate) fn gift_card_parity(repo: &impl GiftCardRepository, list_cap: Option<
     );
 }
 
-/// Inventory items: `sku` (substring), `is_active`, plus `location_id` and
-/// `below_reorder_point`, which neither backend's `list` applies today; count
-/// must agree with list for them too. `deactivate` flips one item inactive
-/// (the repository has no API for it).
+/// Inventory items: `sku` (substring), `is_active`, `location_id` (has a
+/// balance there) and `below_reorder_point` (has a balance below its reorder
+/// threshold). `deactivate` flips one item inactive (the repository has no API
+/// for it). The `ALT` item holds 50 against a reorder point of 10, so it is the
+/// only one not below its threshold.
 pub(crate) fn inventory_parity(
     repo: &impl InventoryRepository,
     list_cap: Option<usize>,
@@ -109,11 +110,11 @@ pub(crate) fn inventory_parity(
 ) {
     let tag = tag();
     let skus = [format!("PAR-{tag}-A"), format!("PAR-{tag}-B"), format!("ALT-{tag}-C")];
-    for sku in &skus {
+    for (i, sku) in skus.iter().enumerate() {
         repo.create_item(CreateInventoryItem {
             sku: sku.clone(),
             name: "Parity item".into(),
-            initial_quantity: Some(Decimal::from(5)),
+            initial_quantity: Some(Decimal::from(if i == 2 { 50 } else { 5 })),
             reorder_point: Some(Decimal::from(10)),
             ..Default::default()
         })
@@ -147,11 +148,26 @@ pub(crate) fn inventory_parity(
     );
     check("sku + active", InventoryFilter { is_active: Some(true), ..pinned() }, Some(2));
     check("sku + inactive", InventoryFilter { is_active: Some(false), ..pinned() }, Some(1));
-    check("sku + location_id", InventoryFilter { location_id: Some(1), ..pinned() }, None);
+    check("sku + location_id", InventoryFilter { location_id: Some(1), ..pinned() }, Some(3));
+    check(
+        "sku + unknown location_id",
+        InventoryFilter { location_id: Some(9_999), ..pinned() },
+        Some(0),
+    );
     check(
         "sku + below_reorder_point",
         InventoryFilter { below_reorder_point: Some(true), ..pinned() },
-        None,
+        Some(2),
+    );
+    check(
+        "sku + not below_reorder_point",
+        InventoryFilter { below_reorder_point: Some(false), ..pinned() },
+        Some(1),
+    );
+    check(
+        "sku + below_reorder_point at an unknown location",
+        InventoryFilter { below_reorder_point: Some(true), location_id: Some(9_999), ..pinned() },
+        Some(0),
     );
     check(
         "every field",
@@ -162,8 +178,15 @@ pub(crate) fn inventory_parity(
             below_reorder_point: Some(true),
             ..Default::default()
         },
-        None,
+        Some(1),
     );
+    let below: Vec<String> = repo
+        .list(InventoryFilter { below_reorder_point: Some(true), ..pinned() })
+        .unwrap()
+        .into_iter()
+        .map(|item| item.sku)
+        .collect();
+    assert_eq!(below, vec![skus[0].clone(), skus[1].clone()], "listed in SKU order");
 }
 
 /// Fixed assets: `category`, `status`, `location_id`, `acquired_from`,
