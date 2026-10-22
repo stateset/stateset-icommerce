@@ -4,6 +4,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, urlparse
 
 from stateset_embedded import (
     SyncConfirmation,
@@ -158,9 +159,12 @@ class _SequencerStubHandler(BaseHTTPRequestHandler):
             return
 
         if self.path.startswith("/api/v1/events?"):
+            # Like the real sequencer, serve only events at or after `from`;
+            # the client refuses a page that replays its cursor.
+            start = int(parse_qs(urlparse(self.path).query).get("from", ["0"])[0])
             self._send_json(
                 {
-                    "events": [
+                    "events": [] if start > 3 else [
                         {
                             "envelope": {
                                 "event_id": self.state["pulled_event_id"],
