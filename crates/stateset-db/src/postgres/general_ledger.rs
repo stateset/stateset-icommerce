@@ -3,6 +3,7 @@
 use super::kernel_outbox::append_kernel_event_tx;
 use super::{block_on, map_db_error, resolve_currency_with_executor};
 use crate::KernelOutboxEvent;
+use crate::rules::general_ledger::source_document_key;
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
@@ -18,31 +19,6 @@ use stateset_core::{
     create_default_chart_of_accounts, generate_journal_entry_number,
 };
 use uuid::Uuid;
-
-/// Families where one journal entry per source document is an invariant —
-/// mirrors the SQLite backend; feeds the unique
-/// `gl_journal_entries.source_document_key` backstop index.
-fn source_document_key(
-    source_document_type: Option<&str>,
-    source_document_id: Option<Uuid>,
-) -> Option<String> {
-    const SINGLE_ENTRY_TYPES: [&str; 8] = [
-        "invoice",
-        "payment",
-        "bill",
-        "bill_payment",
-        "cost_transaction",
-        "write_off",
-        "period_close",
-        "reversal",
-    ];
-    match (source_document_type, source_document_id) {
-        (Some(kind), Some(id)) if SINGLE_ENTRY_TYPES.contains(&kind) => {
-            Some(format!("{kind}:{id}"))
-        }
-        _ => None,
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct PgGeneralLedgerRepository {

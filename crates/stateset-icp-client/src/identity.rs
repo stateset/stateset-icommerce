@@ -110,14 +110,16 @@ impl Identity {
 /// supplied public key, `false` otherwise (including on any malformed input).
 /// Never panics; safe to call with attacker-controlled input.
 pub fn verify_ed25519(message: &[u8], signature_hex: &str, pubkey_hex: &str) -> bool {
-    use ed25519_dalek::{Signature, Verifier};
+    use ed25519_dalek::Signature;
     let Ok(sig_bytes) = hex::decode(signature_hex) else { return false };
     let Ok(sig_arr): Result<[u8; 64], _> = sig_bytes.try_into() else { return false };
     let Ok(pub_bytes) = hex::decode(pubkey_hex) else { return false };
     let Ok(pub_arr): Result<[u8; 32], _> = pub_bytes.try_into() else { return false };
     let Ok(verifying) = VerifyingKey::from_bytes(&pub_arr) else { return false };
     let sig = Signature::from_bytes(&sig_arr);
-    verifying.verify(message, &sig).is_ok()
+    // `verify_strict` rejects malleable signatures and small-order keys,
+    // which plain `verify` accepts.
+    verifying.verify_strict(message, &sig).is_ok()
 }
 
 fn decode_seed(hex_str: &str) -> Result<[u8; 32], Error> {

@@ -106,7 +106,6 @@ pub struct Scheduler {
 /// Metadata about a currently running job.
 #[derive(Debug, Clone)]
 struct RunningJob {
-    #[allow(dead_code)]
     definition_name: String,
     started_at: DateTime<Utc>,
     timeout: std::time::Duration,

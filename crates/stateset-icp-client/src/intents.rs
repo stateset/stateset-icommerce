@@ -58,10 +58,11 @@ pub(crate) fn fresh_intent_id() -> String {
 
 /// Format `now` and `now+window_secs` as RFC 3339 in UTC.
 pub(crate) fn rfc3339_window(window_secs: i64) -> (String, String) {
+    // A clock set before 1970 yields an already-expired window (the merchant
+    // refuses it) instead of panicking the caller.
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_secs() as i64;
+        .map_or(0, |elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(0));
     (format_rfc3339(now), format_rfc3339(now + window_secs))
 }
 

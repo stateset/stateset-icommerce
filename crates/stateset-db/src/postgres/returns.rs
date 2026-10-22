@@ -13,6 +13,7 @@ use super::kernel_outbox::append_kernel_event_tx;
 use super::payments::{create_refund_pg_tx, open_captures_for_order_pg, refundable_remaining_pg};
 use super::{block_on, map_db_error};
 use crate::KernelOutboxEvent;
+use crate::rules::returns::same_return_request;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
@@ -250,21 +251,6 @@ async fn delete_return_pg(conn: &mut PgConnection, id: Uuid) -> Result<()> {
         .await
         .map_err(map_db_error)?;
     Ok(())
-}
-
-/// Whether `existing` is the return that `input` describes (same order, same
-/// lines), so an idempotent replay can be told apart from key reuse.
-fn same_return_request(existing: &Return, input: &CreateReturn) -> bool {
-    if existing.order_id != input.order_id || existing.items.len() != input.items.len() {
-        return false;
-    }
-    let mut have: Vec<(Uuid, i32)> =
-        existing.items.iter().map(|i| (i.order_item_id.into_uuid(), i.quantity)).collect();
-    let mut want: Vec<(Uuid, i32)> =
-        input.items.iter().map(|i| (i.order_item_id.into_uuid(), i.quantity)).collect();
-    have.sort_unstable();
-    want.sort_unstable();
-    have == want
 }
 
 /// Resolve an idempotent replay: the return already stored under `key`, if

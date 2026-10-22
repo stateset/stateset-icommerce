@@ -545,7 +545,6 @@ pub(crate) async fn append_kernel_event_tx(
 ///
 /// This is the whole guarantee Phase B buys: the fact commits with the
 /// mutation or not at all. Callers must already hold an active transaction.
-#[allow(dead_code)]
 pub(crate) async fn record_outbox_fact(
     tx: &mut sqlx::PgConnection,
     fact: crate::kernel_outbox::RecordedFact<'_>,

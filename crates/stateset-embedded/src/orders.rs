@@ -53,38 +53,8 @@ impl Orders {
 
     #[cfg(feature = "events")]
     fn emit_order_change_events(&self, previous: &Order, updated: &Order) {
-        if previous.status != updated.status {
-            self.emit(CommerceEvent::OrderStatusChanged {
-                order_id: updated.id,
-                from_status: previous.status,
-                to_status: updated.status,
-                timestamp: updated.updated_at,
-            });
-            if updated.status == OrderStatus::Cancelled {
-                self.emit(CommerceEvent::OrderCancelled {
-                    order_id: updated.id,
-                    reason: updated.notes.clone(),
-                    timestamp: updated.updated_at,
-                });
-            }
-        }
-
-        if previous.payment_status != updated.payment_status {
-            self.emit(CommerceEvent::OrderPaymentStatusChanged {
-                order_id: updated.id,
-                from_status: previous.payment_status,
-                to_status: updated.payment_status,
-                timestamp: updated.updated_at,
-            });
-        }
-
-        if previous.fulfillment_status != updated.fulfillment_status {
-            self.emit(CommerceEvent::OrderFulfillmentStatusChanged {
-                order_id: updated.id,
-                from_status: previous.fulfillment_status,
-                to_status: updated.fulfillment_status,
-                timestamp: updated.updated_at,
-            });
+        for event in order_change_events(previous, updated) {
+            self.emit(event);
         }
     }
 
@@ -124,58 +94,8 @@ impl Orders {
     pub fn create(&self, input: CreateOrder) -> Result<Order> {
         tracing::info!("creating order");
 
-        // Validate pricing: compute expected total via pricing engine
-        let pricing_items: Vec<stateset_pricing::LineItem> = input
-            .items
-            .iter()
-            .map(|item| stateset_pricing::LineItem {
-                sku: item.sku.clone(),
-                name: item.name.clone(),
-                unit_price: item.unit_price,
-                quantity: item.quantity as u32,
-                discount: item.discount.map(stateset_pricing::LineDiscount::FixedAmount),
-                tax_rate: None,
-            })
-            .collect();
-        let pricing_input = stateset_pricing::OrderTotalInput {
-            items: pricing_items,
-            shipping_cost: rust_decimal::Decimal::ZERO,
-            shipping_tax_rate: None,
-            order_discount: None,
-            fees: vec![],
-            rounding: {
-                let minor = stateset_pricing::minor_units_for_currency(
-                    &input.currency.unwrap_or_default().to_string(),
-                );
-                stateset_pricing::RoundingPolicy::new(stateset_pricing::RoundingMode::HalfUp, minor)
-            },
-        };
-        let pricing_total = stateset_pricing::try_compute_order_total(&pricing_input).ok();
-        if let Some(ref computed) = pricing_total {
-            tracing::debug!(
-                computed_total = %computed.grand_total,
-                subtotal = %computed.subtotal,
-                discount = %computed.total_discount,
-                "Pricing engine computed order total"
-            );
-        }
-
         let order = self.db.orders().create(input)?;
 
-        // Detect pricing drift: warn if DB total diverges from pricing engine
-        if let Some(computed) = pricing_total {
-            let diff = (order.total_amount - computed.grand_total).abs();
-            if diff > rust_decimal::Decimal::new(1, 2) {
-                // Divergence > $0.01
-                tracing::warn!(
-                    order_id = %order.id,
-                    db_total = %order.total_amount,
-                    engine_total = %computed.grand_total,
-                    diff = %diff,
-                    "Pricing drift detected: DB total differs from pricing engine"
-                );
-            }
-        }
         self.metrics.record_order_created(
             &order.customer_id.to_string(),
             order.total_amount.to_f64().unwrap_or(0.0),
@@ -413,4 +333,45 @@ impl Orders {
         tracing::info!("marking order as delivered");
         self.update_status(id, OrderStatus::Delivered)
     }
+}
+
+/// The events implied by an order moving from `previous` to `updated`.
+///
+/// Shared by the sync [`Orders`] and async facades so both publish the same
+/// facts for the same change.
+#[cfg(feature = "events")]
+pub(crate) fn order_change_events(previous: &Order, updated: &Order) -> Vec<CommerceEvent> {
+    let mut events = Vec::new();
+    if previous.status != updated.status {
+        events.push(CommerceEvent::OrderStatusChanged {
+            order_id: updated.id,
+            from_status: previous.status,
+            to_status: updated.status,
+            timestamp: updated.updated_at,
+        });
+        if updated.status == OrderStatus::Cancelled {
+            events.push(CommerceEvent::OrderCancelled {
+                order_id: updated.id,
+                reason: updated.notes.clone(),
+                timestamp: updated.updated_at,
+            });
+        }
+    }
+    if previous.payment_status != updated.payment_status {
+        events.push(CommerceEvent::OrderPaymentStatusChanged {
+            order_id: updated.id,
+            from_status: previous.payment_status,
+            to_status: updated.payment_status,
+            timestamp: updated.updated_at,
+        });
+    }
+    if previous.fulfillment_status != updated.fulfillment_status {
+        events.push(CommerceEvent::OrderFulfillmentStatusChanged {
+            order_id: updated.id,
+            from_status: previous.fulfillment_status,
+            to_status: updated.fulfillment_status,
+            timestamp: updated.updated_at,
+        });
+    }
+    events
 }

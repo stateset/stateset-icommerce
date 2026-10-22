@@ -262,10 +262,6 @@ criteria = "safe-to-deploy"
 version = "0.4.31"
 criteria = "safe-to-deploy"
 
-[[exemptions.concurrent-queue]]
-version = "2.5.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.console]]
 version = "0.16.4"
 criteria = "safe-to-run"
@@ -1224,10 +1220,6 @@ criteria = "safe-to-deploy"
 version = "0.1.31"
 criteria = "safe-to-deploy"
 
-[[exemptions.tracing-core]]
-version = "0.1.36"
-criteria = "safe-to-deploy"
-
 [[exemptions.tracing-opentelemetry]]
 version = "0.34.0"
 criteria = "safe-to-deploy"
@@ -1346,7 +1338,7 @@ version = "0.26.11"
 criteria = "safe-to-deploy"
 
 [[exemptions.webpki-roots]]
-version = "1.0.6"
+version = "1.0.10"
 criteria = "safe-to-deploy"
 
 [[exemptions.whoami]]

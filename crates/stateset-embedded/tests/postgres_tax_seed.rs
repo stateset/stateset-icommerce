@@ -20,7 +20,7 @@ use stateset_embedded::{
 };
 
 fn postgres_url() -> Option<String> {
-    std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 /// A freshly created, empty database, dropped when the value is dropped.

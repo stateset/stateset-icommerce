@@ -194,7 +194,7 @@ pub(crate) async fn list_uoms(
             };
             let uoms = c.units_of_measure().list_uoms(stateset_core::UnitOfMeasureFilter {
                 class_id,
-                limit: params.limit,
+                limit: Some(crate::dto::resolve_limit(params.limit)),
                 offset: params.offset,
             })?;
             Ok(Json(uoms.iter().map(uom_resp).collect()))

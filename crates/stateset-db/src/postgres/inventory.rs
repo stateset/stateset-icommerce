@@ -37,7 +37,7 @@ fn should_retry_pg_inventory_error(err: &CommerceError) -> bool {
                 || message.contains("40001")
                 || message.contains("40P01")
         }
-        _ => false,
+        other => other.is_retryable(),
     }
 }
 

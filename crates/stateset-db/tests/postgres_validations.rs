@@ -6,12 +6,11 @@ use stateset_core::{
     CreateOrderItem, CreateProduct, CreateProductVariant, ProductId, UpdateCustomer, UpdateProduct,
 };
 use stateset_db::PostgresDatabase;
-use std::env;
 use uuid::Uuid;
 
 #[cfg(feature = "postgres")]
 fn postgres_url() -> Option<String> {
-    env::var("POSTGRES_URL").ok().or_else(|| env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 #[cfg(feature = "postgres")]

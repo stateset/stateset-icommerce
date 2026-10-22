@@ -47,7 +47,7 @@ async fn agent(db: &PostgresDatabase, skill: A2ASkill) -> Uuid {
 }
 
 fn postgres_url() -> Option<String> {
-    std::env::var("POSTGRES_URL").ok().or_else(|| std::env::var("DATABASE_URL").ok())
+    stateset_test_utils::postgres_url()
 }
 
 fn item() -> QuotedItem {
