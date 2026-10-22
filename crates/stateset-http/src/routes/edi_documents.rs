@@ -1,6 +1,7 @@
 //! EDI document endpoints (trading-partner document tracking + reporting).
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::parse_id;
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -82,10 +83,6 @@ fn to_resp(d: &stateset_core::EdiDocument) -> EdiDocumentResponse {
         error_message: d.error_message.clone(),
         created_at: d.created_at.to_rfc3339(),
     }
-}
-
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
 }
 
 pub fn router() -> Router<AppState> {

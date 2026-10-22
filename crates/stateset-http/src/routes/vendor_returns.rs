@@ -1,6 +1,7 @@
 //! Vendor return endpoints (return-to-supplier).
 
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -8,7 +9,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_core::{ProductId, VendorReturnId};
 use utoipa::{IntoParams, ToSchema};
@@ -76,14 +76,6 @@ fn to_resp(r: &stateset_core::VendorReturn) -> VendorReturnResponse {
         credit_generated: r.credit_generated,
         created_at: r.created_at.to_rfc3339(),
     }
-}
-
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
 }
 
 pub fn router() -> Router<AppState> {

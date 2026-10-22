@@ -2,6 +2,7 @@
 
 use crate::dto::{decode_cursor, encode_cursor, finalize_page, overfetch_limit};
 use crate::error::{ErrorBody, HttpError};
+use crate::parsing::{parse_decimal, parse_id};
 use crate::state::{AppState, tenant_id_from_headers};
 use axum::{
     Json, Router,
@@ -9,7 +10,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
@@ -235,14 +235,6 @@ fn hold_to_resp(h: &stateset_core::QualityHold) -> QualityHoldResponse {
         released_at: h.released_at.map(|t| t.to_rfc3339()),
         placed_at: h.placed_at.to_rfc3339(),
     }
-}
-
-fn parse_id<T: std::str::FromStr>(s: &str, what: &str) -> Result<T, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
-}
-
-fn parse_decimal(s: &str, what: &str) -> Result<Decimal, HttpError> {
-    s.parse().map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s}")))
 }
 
 fn parse_opt_id<T: std::str::FromStr>(s: Option<&str>, what: &str) -> Result<Option<T>, HttpError> {
