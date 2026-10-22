@@ -6,6 +6,8 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.40.1] - 2026-10-22
+
 ### Security
 
 - The generated storefront pins Next.js 16.4.2 (was 16.3.8). 16.3.8 is
