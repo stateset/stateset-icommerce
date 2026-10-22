@@ -386,3 +386,92 @@ pub(crate) fn integration_mapping_parity(
         Some(1),
     );
 }
+
+/// Lots: every `LotFilter` field. Three lots of one tagged SKU: `soon` (10
+/// days to expiry, supplier, location 1), `later` (40 days, work order,
+/// location 2) and `spent` (no expiry, purchase order, location 1, fully
+/// consumed). `list_cap` is the backend's page size for an unbounded `list`.
+pub(crate) fn lot_parity(repo: &impl LotRepository, list_cap: Option<usize>) {
+    let sku = format!("LOT-{}", tag());
+    let now = chrono::Utc::now();
+    let (supplier, work_order, purchase_order) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let lot = |days: Option<i64>, location: i32, input: CreateLot| {
+        repo.create(CreateLot {
+            sku: sku.clone(),
+            quantity: Decimal::from(10),
+            expiration_date: days.map(|d| now + chrono::Duration::days(d)),
+            initial_location_id: Some(location),
+            ..input
+        })
+        .unwrap()
+    };
+    let soon = lot(Some(10), 1, CreateLot { supplier_id: Some(supplier), ..Default::default() });
+    lot(Some(40), 2, CreateLot { work_order_id: Some(work_order), ..Default::default() });
+    let spent =
+        lot(None, 1, CreateLot { purchase_order_id: Some(purchase_order), ..Default::default() });
+    repo.consume(ConsumeLot {
+        lot_id: spent.id,
+        quantity: Decimal::from(10),
+        reference_type: "parity".into(),
+        reference_id: Uuid::new_v4(),
+        location_id: Some(1),
+        performed_by: None,
+    })
+    .unwrap();
+
+    let check = |label: &str, filter: LotFilter, expected: Option<u64>| {
+        let count = repo.count(filter.clone()).unwrap();
+        assert_parity(label, count, repo.list(filter.clone()).unwrap().len(), list_cap);
+        if let Some(expected) = expected {
+            assert_eq!(count, expected, "{label}: expected count");
+        }
+        let paged = LotFilter { limit: Some(1), offset: Some(1), ..filter };
+        assert_eq!(repo.count(paged).unwrap(), count, "{label}: count ignores limit/offset");
+    };
+    let pinned = || LotFilter { sku: Some(sku.clone()), ..Default::default() };
+    let days = |d| Some(now + chrono::Duration::days(d));
+
+    check("no filter", LotFilter::default(), None);
+    check(
+        "has_quantity (unpinned)",
+        LotFilter { has_quantity: Some(true), ..Default::default() },
+        None,
+    );
+    check("sku", pinned(), Some(3));
+    check(
+        "lot_number",
+        LotFilter { lot_number: Some(soon.lot_number.clone()), ..pinned() },
+        Some(1),
+    );
+    check("supplier", LotFilter { supplier_id: Some(supplier), ..pinned() }, Some(1));
+    check("work order", LotFilter { work_order_id: Some(work_order), ..pinned() }, Some(1));
+    check(
+        "purchase order",
+        LotFilter { purchase_order_id: Some(purchase_order), ..pinned() },
+        Some(1),
+    );
+    check("has quantity", LotFilter { has_quantity: Some(true), ..pinned() }, Some(2));
+    check("no quantity", LotFilter { has_quantity: Some(false), ..pinned() }, Some(1));
+    check("expiring before 20d", LotFilter { expiring_before: days(20), ..pinned() }, Some(1));
+    check("expiring after 20d", LotFilter { expiring_after: days(20), ..pinned() }, Some(1));
+    check(
+        "expiring between 5d and 50d",
+        LotFilter { expiring_after: days(5), expiring_before: days(50), ..pinned() },
+        Some(2),
+    );
+    check("location 1", LotFilter { location_id: Some(1), ..pinned() }, Some(2));
+    check("location 2", LotFilter { location_id: Some(2), ..pinned() }, Some(1));
+    check("unknown location", LotFilter { location_id: Some(9_999), ..pinned() }, Some(0));
+    check(
+        "every field",
+        LotFilter {
+            lot_number: Some(soon.lot_number),
+            supplier_id: Some(supplier),
+            has_quantity: Some(true),
+            expiring_before: days(20),
+            location_id: Some(1),
+            ..pinned()
+        },
+        Some(1),
+    );
+}

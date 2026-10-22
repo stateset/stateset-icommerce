@@ -1181,25 +1181,65 @@ impl PgLotRepository {
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
-    pub async fn list_async(&self, filter: LotFilter) -> Result<Vec<Lot>> {
-        let mut builder = QueryBuilder::<Postgres>::new("SELECT * FROM lots WHERE 1=1");
-
+    /// Append the `list`/`count` WHERE conditions for `filter`, with their
+    /// bind values. The single definition of the lot filter set, with the
+    /// SQLite backend's semantics: `expiring_before`/`expiring_after` are
+    /// exclusive bounds on lots that have an expiration date, `has_quantity`
+    /// keeps lots with (`Some(true)`) or without (`Some(false)`) a positive
+    /// `quantity_remaining`, and `location_id` keeps lots recorded at that
+    /// location.
+    fn push_lot_filter(builder: &mut QueryBuilder<'_, Postgres>, filter: &LotFilter) {
         if let Some(sku) = &filter.sku {
-            builder.push(" AND sku = ").push_bind(sku);
+            builder.push(" AND sku = ").push_bind(sku.clone());
         }
         if let Some(lot_number) = &filter.lot_number {
-            builder.push(" AND lot_number = ").push_bind(lot_number);
+            builder.push(" AND lot_number = ").push_bind(lot_number.clone());
         }
         if let Some(status) = &filter.status {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
-        if let Some(supplier_id) = &filter.supplier_id {
+        if let Some(supplier_id) = filter.supplier_id {
             builder.push(" AND supplier_id = ").push_bind(supplier_id);
         }
-        if filter.has_quantity == Some(true) {
-            builder.push(" AND quantity_remaining > 0");
+        if let Some(work_order_id) = filter.work_order_id {
+            builder.push(" AND work_order_id = ").push_bind(work_order_id);
         }
+        if let Some(purchase_order_id) = filter.purchase_order_id {
+            builder.push(" AND purchase_order_id = ").push_bind(purchase_order_id);
+        }
+        if let Some(before) = filter.expiring_before {
+            builder
+                .push(" AND expiration_date IS NOT NULL AND expiration_date < ")
+                .push_bind(before);
+        }
+        if let Some(after) = filter.expiring_after {
+            builder
+                .push(" AND expiration_date IS NOT NULL AND expiration_date > ")
+                .push_bind(after);
+        }
+        match filter.has_quantity {
+            Some(true) => {
+                builder.push(" AND quantity_remaining > 0");
+            }
+            Some(false) => {
+                builder.push(" AND quantity_remaining <= 0");
+            }
+            None => {}
+        }
+        if let Some(location_id) = filter.location_id {
+            builder
+                .push(
+                    " AND EXISTS (SELECT 1 FROM lot_locations ll \
+                     WHERE ll.lot_id = lots.id AND ll.location_id = ",
+                )
+                .push_bind(location_id)
+                .push(")");
+        }
+    }
 
+    pub async fn list_async(&self, filter: LotFilter) -> Result<Vec<Lot>> {
+        let mut builder = QueryBuilder::<Postgres>::new("SELECT * FROM lots WHERE 1=1");
+        Self::push_lot_filter(&mut builder, &filter);
         builder.push(" ORDER BY created_at DESC");
 
         let limit = super::effective_limit(filter.limit);
@@ -2410,13 +2450,7 @@ impl PgLotRepository {
 
     pub async fn count_async(&self, filter: LotFilter) -> Result<u64> {
         let mut builder = QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM lots WHERE 1=1");
-
-        if let Some(sku) = &filter.sku {
-            builder.push(" AND sku = ").push_bind(sku);
-        }
-        if let Some(status) = &filter.status {
-            builder.push(" AND status = ").push_bind(status.to_string());
-        }
+        Self::push_lot_filter(&mut builder, &filter);
 
         let row =
             builder.build_query_as::<(i64,)>().fetch_one(&self.pool).await.map_err(map_db_error)?;

@@ -36,3 +36,10 @@ fn sqlite_integration_mapping_count_matches_list() {
     let db = SqliteDatabase::in_memory().unwrap();
     support::integration_mapping_parity(&db.integration_mappings(), None);
 }
+
+#[test]
+fn sqlite_lot_count_matches_list() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    // SQLite `list` returns at most 100 lots without a limit.
+    support::lot_parity(&db.lots(), Some(100));
+}

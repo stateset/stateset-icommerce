@@ -78,6 +78,78 @@ impl SqliteLotRepository {
         Self { pool }
     }
 
+    /// Append the `list`/`count` WHERE conditions for `filter` to `sql` and
+    /// their bind values to `params`. The single definition of the lot filter
+    /// set: `list` and `count` both call it, so they cannot disagree.
+    ///
+    /// `expiring_before`/`expiring_after` are exclusive bounds on lots that
+    /// have an expiration date; stored and bound values are both RFC 3339, so
+    /// the text comparison is a time comparison. `has_quantity` keeps lots
+    /// with (`Some(true)`) or without (`Some(false)`) a positive
+    /// `quantity_remaining`; that column is a TEXT decimal, so positivity is
+    /// read from its digits (no sign and at least one non-zero digit) rather
+    /// than with `> 0`, which SQLite compares as text (`'0.0000' > '0'`).
+    /// `location_id` keeps lots recorded at that location.
+    fn push_lot_filter(
+        filter: &LotFilter,
+        sql: &mut String,
+        params: &mut Vec<Box<dyn rusqlite::ToSql>>,
+    ) {
+        const POSITIVE: &str = "(quantity_remaining NOT LIKE '-%' \
+             AND TRIM(REPLACE(quantity_remaining, '.', ''), '0') <> '')";
+
+        if let Some(sku) = &filter.sku {
+            sql.push_str(" AND sku = ?");
+            params.push(Box::new(sku.clone()));
+        }
+        if let Some(lot_number) = &filter.lot_number {
+            sql.push_str(" AND lot_number = ?");
+            params.push(Box::new(lot_number.clone()));
+        }
+        if let Some(status) = &filter.status {
+            sql.push_str(" AND status = ?");
+            params.push(Box::new(status.to_string()));
+        }
+        if let Some(supplier_id) = &filter.supplier_id {
+            sql.push_str(" AND supplier_id = ?");
+            params.push(Box::new(supplier_id.to_string()));
+        }
+        if let Some(work_order_id) = &filter.work_order_id {
+            sql.push_str(" AND work_order_id = ?");
+            params.push(Box::new(work_order_id.to_string()));
+        }
+        if let Some(purchase_order_id) = &filter.purchase_order_id {
+            sql.push_str(" AND purchase_order_id = ?");
+            params.push(Box::new(purchase_order_id.to_string()));
+        }
+        if let Some(before) = filter.expiring_before {
+            sql.push_str(" AND expiration_date IS NOT NULL AND expiration_date < ?");
+            params.push(Box::new(before.to_rfc3339()));
+        }
+        if let Some(after) = filter.expiring_after {
+            sql.push_str(" AND expiration_date IS NOT NULL AND expiration_date > ?");
+            params.push(Box::new(after.to_rfc3339()));
+        }
+        match filter.has_quantity {
+            Some(true) => {
+                sql.push_str(" AND ");
+                sql.push_str(POSITIVE);
+            }
+            Some(false) => {
+                sql.push_str(" AND NOT ");
+                sql.push_str(POSITIVE);
+            }
+            None => {}
+        }
+        if let Some(location_id) = filter.location_id {
+            sql.push_str(
+                " AND EXISTS (SELECT 1 FROM lot_locations ll \
+                 WHERE ll.lot_id = lots.id AND ll.location_id = ?)",
+            );
+            params.push(Box::new(location_id));
+        }
+    }
+
     fn conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
@@ -1221,40 +1293,12 @@ impl LotRepository for SqliteLotRepository {
 
     fn list(&self, filter: LotFilter) -> Result<Vec<Lot>> {
         let conn = self.conn()?;
-
-        let mut conditions = vec!["1=1"];
+        let mut sql = "SELECT * FROM lots WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
-
-        if let Some(sku) = &filter.sku {
-            conditions.push("sku = ?");
-            params.push(Box::new(sku.clone()));
-        }
-        if let Some(lot_number) = &filter.lot_number {
-            conditions.push("lot_number = ?");
-            params.push(Box::new(lot_number.clone()));
-        }
-        if let Some(status) = &filter.status {
-            conditions.push("status = ?");
-            params.push(Box::new(status.to_string()));
-        }
-        if let Some(supplier_id) = &filter.supplier_id {
-            conditions.push("supplier_id = ?");
-            params.push(Box::new(supplier_id.to_string()));
-        }
-        if filter.has_quantity == Some(true) {
-            conditions.push("quantity_remaining > 0");
-        }
-
-        let limit = filter.limit.unwrap_or(100);
-        let offset = filter.offset.unwrap_or(0);
-
-        let sql = format!(
-            "SELECT * FROM lots WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            conditions.join(" AND ")
-        );
-
-        params.push(Box::new(i64::from(limit)));
-        params.push(Box::new(i64::from(offset)));
+        Self::push_lot_filter(&filter, &mut sql, &mut params);
+        sql.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
+        params.push(Box::new(i64::from(filter.limit.unwrap_or(100))));
+        params.push(Box::new(i64::from(filter.offset.unwrap_or(0))));
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
@@ -2513,26 +2557,15 @@ impl LotRepository for SqliteLotRepository {
 
     fn count(&self, filter: LotFilter) -> Result<u64> {
         let conn = self.conn()?;
-
-        let mut conditions = vec!["1=1"];
+        let mut sql = "SELECT COUNT(*) FROM lots WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
-
-        if let Some(sku) = &filter.sku {
-            conditions.push("sku = ?");
-            params.push(Box::new(sku.clone()));
-        }
-        if let Some(status) = &filter.status {
-            conditions.push("status = ?");
-            params.push(Box::new(status.to_string()));
-        }
-
-        let sql = format!("SELECT COUNT(*) FROM lots WHERE {}", conditions.join(" AND "));
+        Self::push_lot_filter(&filter, &mut sql, &mut params);
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
 
         conn.query_row(&sql, params_refs.as_slice(), |row| row.get::<_, i64>(0))
-            .map(|c| c as u64)
+            .map(|c| u64::try_from(c).unwrap_or(0))
             .map_err(map_db_error)
     }
 
