@@ -2361,7 +2361,7 @@ impl LotRepository for SqliteLotRepository {
         let mut stmt = conn
             .prepare(
                 "SELECT * FROM lots WHERE status = 'active' AND expiration_date IS NOT NULL
-                 AND expiration_date <= ? AND expiration_date > datetime('now')
+                 AND expiration_date <= ? AND expiration_date > strftime('%Y-%m-%dT%H:%M:%f', 'now')
                  ORDER BY expiration_date ASC",
             )
             .map_err(map_db_error)?;
@@ -2381,7 +2381,7 @@ impl LotRepository for SqliteLotRepository {
         let mut stmt = conn
             .prepare(
                 "SELECT * FROM lots WHERE status = 'active' AND expiration_date IS NOT NULL
-                 AND expiration_date <= datetime('now') ORDER BY expiration_date ASC",
+                 AND expiration_date <= strftime('%Y-%m-%dT%H:%M:%f', 'now') ORDER BY expiration_date ASC",
             )
             .map_err(map_db_error)?;
 
@@ -3170,6 +3170,32 @@ mod tests {
         assert!(ids.contains(&soon.id));
         assert!(!ids.contains(&later.id));
         assert!(!ids.contains(&no_exp.id));
+    }
+
+    #[test]
+    fn lot_that_expired_a_minute_ago_is_expired_not_expiring() {
+        // Stored RFC 3339 ('...T...') against `datetime('now')` ('... ...')
+        // compared 'T' > ' ', so a lot that expired earlier on the current UTC
+        // day was neither expired nor excluded from "expiring".
+        let repo = fresh_repo();
+        let lot = make_lot(&repo, "SKU-JUST-EXPIRED", dec!(10));
+        repo.conn()
+            .expect("conn")
+            .execute(
+                "UPDATE lots SET expiration_date = ? WHERE id = ?",
+                rusqlite::params![
+                    (Utc::now() - Duration::minutes(1)).to_rfc3339(),
+                    lot.id.to_string()
+                ],
+            )
+            .expect("backdate expiry");
+
+        let expired: Vec<_> =
+            repo.get_expired_lots().expect("expired").into_iter().map(|l| l.id).collect();
+        assert!(expired.contains(&lot.id), "a past expiration_date is expired");
+        let expiring: Vec<_> =
+            repo.get_expiring_lots(7).expect("expiring").into_iter().map(|l| l.id).collect();
+        assert!(!expiring.contains(&lot.id), "an expired lot is not still expiring");
     }
 
     #[test]

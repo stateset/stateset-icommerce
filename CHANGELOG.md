@@ -8,6 +8,17 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Fixed
 
+- SQLite: comparisons of RFC 3339 timestamp columns against "now" were
+  wrong for the rest of the current UTC day, because `datetime('now')`
+  renders `YYYY-MM-DD HH:MM:SS` and the stored `...T...` sorts after it. A
+  lot that expired that morning was neither returned by `get_expired_lots`
+  nor excluded from `get_expiring_lots`; a warranty that ended that morning
+  still counted as active; an invoice due that morning was not yet overdue
+  (Postgres, using `NOW()`, already said it was). These now compare against
+  `strftime('%Y-%m-%dT%H:%M:%f', 'now')`, and a test gate refuses new raw
+  `column <op> datetime('now')` comparisons. Accounts-payable `due_date`
+  keeps its deliberate day-granular rule, which matches Postgres's
+  `CURRENT_DATE`.
 - Inventory item lists (`InventoryRepository::list`/`count`, `GET
   /inventory`) now apply the `location_id` and `below_reorder_point`
   filters on both backends. They were accepted and silently ignored, so a
