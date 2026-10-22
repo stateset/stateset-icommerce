@@ -541,32 +541,35 @@ pub(crate) async fn create_account(
     Json(req): Json<CreateGlAccountRequest>,
 ) -> Result<(StatusCode, Json<GlAccountResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let account_sub_type = match req.account_sub_type.as_deref() {
-        Some(s) => Some(parse_id(s, "account_sub_type")?),
-        None => None,
-    };
-    let parent_account_id = match req.parent_account_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "parent_account_id")?),
-        None => None,
-    };
-    let currency = match req.currency.as_deref() {
-        Some(s) => Some(parse_id(s, "currency")?),
-        None => None,
-    };
-    let input = stateset_core::CreateGlAccount {
-        account_number: req.account_number,
-        name: req.name,
-        description: req.description,
-        account_type: parse_id(&req.account_type, "account_type")?,
-        account_sub_type,
-        parent_account_id,
-        is_header: req.is_header,
-        is_posting: req.is_posting,
-        currency,
-    };
-    let account = c.general_ledger().create_account(input)?;
-    Ok((StatusCode::CREATED, Json(to_account_resp(&account))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let account_sub_type = match req.account_sub_type.as_deref() {
+                Some(s) => Some(parse_id(s, "account_sub_type")?),
+                None => None,
+            };
+            let parent_account_id = match req.parent_account_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "parent_account_id")?),
+                None => None,
+            };
+            let currency = match req.currency.as_deref() {
+                Some(s) => Some(parse_id(s, "currency")?),
+                None => None,
+            };
+            let input = stateset_core::CreateGlAccount {
+                account_number: req.account_number,
+                name: req.name,
+                description: req.description,
+                account_type: parse_id(&req.account_type, "account_type")?,
+                account_sub_type,
+                parent_account_id,
+                is_header: req.is_header,
+                is_posting: req.is_posting,
+                currency,
+            };
+            let account = c.general_ledger().create_account(input)?;
+            Ok((StatusCode::CREATED, Json(to_account_resp(&account))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "general_ledger_list_accounts", path = "/api/v1/gl/accounts", tag = "general_ledger",
@@ -579,32 +582,35 @@ pub(crate) async fn list_accounts(
     Query(params): Query<GlAccountFilterParams>,
 ) -> Result<Json<GlAccountListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let account_type = match params.account_type.as_deref() {
-        Some(s) => Some(parse_id(s, "account_type")?),
-        None => None,
-    };
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let base = stateset_core::GlAccountFilter {
-        account_type,
-        status,
-        search: params.search.clone(),
-        ..Default::default()
-    };
-    let total = c.general_ledger().list_accounts(base.clone())?.len();
-    let filter = stateset_core::GlAccountFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    };
-    let accounts = c.general_ledger().list_accounts(filter)?;
-    Ok(Json(GlAccountListResponse {
-        accounts: accounts.iter().map(to_account_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let account_type = match params.account_type.as_deref() {
+                Some(s) => Some(parse_id(s, "account_type")?),
+                None => None,
+            };
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let base = stateset_core::GlAccountFilter {
+                account_type,
+                status,
+                search: params.search.clone(),
+                ..Default::default()
+            };
+            let total = c.general_ledger().list_accounts(base.clone())?.len();
+            let filter = stateset_core::GlAccountFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            };
+            let accounts = c.general_ledger().list_accounts(filter)?;
+            Ok(Json(GlAccountListResponse {
+                accounts: accounts.iter().map(to_account_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "general_ledger_get_account", path = "/api/v1/gl/accounts/{id}", tag = "general_ledger",
@@ -617,12 +623,15 @@ pub(crate) async fn get_account(
     Path(id): Path<Uuid>,
 ) -> Result<Json<GlAccountResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let account = c
-        .general_ledger()
-        .get_account(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("GL account {id} not found")))?;
-    Ok(Json(to_account_resp(&account)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let account = c
+                .general_ledger()
+                .get_account(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("GL account {id} not found")))?;
+            Ok(Json(to_account_resp(&account)))
+        })
+        .await
 }
 
 // ============================================================================
@@ -639,39 +648,42 @@ pub(crate) async fn create_journal_entry(
     Json(req): Json<CreateJournalEntryRequest>,
 ) -> Result<(StatusCode, Json<JournalEntryResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let entry_type = match req.entry_type.as_deref() {
-        Some(s) => Some(parse_id(s, "entry_type")?),
-        None => None,
-    };
-    let mut lines = Vec::with_capacity(req.lines.len());
-    for line in req.lines {
-        lines.push(stateset_core::CreateJournalEntryLine {
-            account_id: parse_id::<Uuid>(&line.account_id, "account_id")?,
-            description: line.description,
-            debit_amount: match line.debit_amount.as_deref() {
-                Some(s) => parse_decimal(s, "debit_amount")?,
-                None => Decimal::ZERO,
-            },
-            credit_amount: match line.credit_amount.as_deref() {
-                Some(s) => parse_decimal(s, "credit_amount")?,
-                None => Decimal::ZERO,
-            },
-            reference_type: None,
-            reference_id: None,
-        });
-    }
-    let input = stateset_core::CreateJournalEntry {
-        entry_date: parse_date(&req.entry_date, "entry_date")?,
-        entry_type,
-        description: req.description,
-        lines,
-        source_document_type: None,
-        source_document_id: None,
-        auto_post: req.auto_post,
-    };
-    let entry = c.general_ledger().create_journal_entry(input)?;
-    Ok((StatusCode::CREATED, Json(to_entry_resp(&entry))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let entry_type = match req.entry_type.as_deref() {
+                Some(s) => Some(parse_id(s, "entry_type")?),
+                None => None,
+            };
+            let mut lines = Vec::with_capacity(req.lines.len());
+            for line in req.lines {
+                lines.push(stateset_core::CreateJournalEntryLine {
+                    account_id: parse_id::<Uuid>(&line.account_id, "account_id")?,
+                    description: line.description,
+                    debit_amount: match line.debit_amount.as_deref() {
+                        Some(s) => parse_decimal(s, "debit_amount")?,
+                        None => Decimal::ZERO,
+                    },
+                    credit_amount: match line.credit_amount.as_deref() {
+                        Some(s) => parse_decimal(s, "credit_amount")?,
+                        None => Decimal::ZERO,
+                    },
+                    reference_type: None,
+                    reference_id: None,
+                });
+            }
+            let input = stateset_core::CreateJournalEntry {
+                entry_date: parse_date(&req.entry_date, "entry_date")?,
+                entry_type,
+                description: req.description,
+                lines,
+                source_document_type: None,
+                source_document_id: None,
+                auto_post: req.auto_post,
+            };
+            let entry = c.general_ledger().create_journal_entry(input)?;
+            Ok((StatusCode::CREATED, Json(to_entry_resp(&entry))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "general_ledger_list_journal_entries", path = "/api/v1/gl/journal-entries", tag = "general_ledger",
@@ -684,51 +696,54 @@ pub(crate) async fn list_journal_entries(
     Query(params): Query<JournalEntryFilterParams>,
 ) -> Result<Json<JournalEntryListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let period_id = match params.period_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "period_id")?),
-        None => None,
-    };
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let entry_type = match params.entry_type.as_deref() {
-        Some(s) => Some(parse_id(s, "entry_type")?),
-        None => None,
-    };
-    let account_id = match params.account_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "account_id")?),
-        None => None,
-    };
-    let from_date = match params.from_date.as_deref() {
-        Some(s) => Some(parse_date(s, "from_date")?),
-        None => None,
-    };
-    let to_date = match params.to_date.as_deref() {
-        Some(s) => Some(parse_date(s, "to_date")?),
-        None => None,
-    };
-    let base = stateset_core::JournalEntryFilter {
-        period_id,
-        status,
-        entry_type,
-        account_id,
-        from_date,
-        to_date,
-        ..Default::default()
-    };
-    let total = c.general_ledger().list_journal_entries(base.clone())?.len();
-    let filter = stateset_core::JournalEntryFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    };
-    let entries = c.general_ledger().list_journal_entries(filter)?;
-    Ok(Json(JournalEntryListResponse {
-        journal_entries: entries.iter().map(to_entry_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let period_id = match params.period_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "period_id")?),
+                None => None,
+            };
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let entry_type = match params.entry_type.as_deref() {
+                Some(s) => Some(parse_id(s, "entry_type")?),
+                None => None,
+            };
+            let account_id = match params.account_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "account_id")?),
+                None => None,
+            };
+            let from_date = match params.from_date.as_deref() {
+                Some(s) => Some(parse_date(s, "from_date")?),
+                None => None,
+            };
+            let to_date = match params.to_date.as_deref() {
+                Some(s) => Some(parse_date(s, "to_date")?),
+                None => None,
+            };
+            let base = stateset_core::JournalEntryFilter {
+                period_id,
+                status,
+                entry_type,
+                account_id,
+                from_date,
+                to_date,
+                ..Default::default()
+            };
+            let total = c.general_ledger().list_journal_entries(base.clone())?.len();
+            let filter = stateset_core::JournalEntryFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            };
+            let entries = c.general_ledger().list_journal_entries(filter)?;
+            Ok(Json(JournalEntryListResponse {
+                journal_entries: entries.iter().map(to_entry_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "general_ledger_get_journal_entry", path = "/api/v1/gl/journal-entries/{id}", tag = "general_ledger",
@@ -741,12 +756,15 @@ pub(crate) async fn get_journal_entry(
     Path(id): Path<Uuid>,
 ) -> Result<Json<JournalEntryResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let entry = c
-        .general_ledger()
-        .get_journal_entry(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Journal entry {id} not found")))?;
-    Ok(Json(to_entry_resp(&entry)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let entry = c
+                .general_ledger()
+                .get_journal_entry(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Journal entry {id} not found")))?;
+            Ok(Json(to_entry_resp(&entry)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "general_ledger_post_journal_entry", path = "/api/v1/gl/journal-entries/{id}/post", tag = "general_ledger",
@@ -761,9 +779,12 @@ pub(crate) async fn post_journal_entry(
     Json(req): Json<PostJournalEntryRequest>,
 ) -> Result<Json<JournalEntryResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let posted_by = actor_or_default(req.posted_by);
-    Ok(Json(to_entry_resp(&c.general_ledger().post_journal_entry(id, &posted_by)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let posted_by = actor_or_default(req.posted_by);
+            Ok(Json(to_entry_resp(&c.general_ledger().post_journal_entry(id, &posted_by)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "general_ledger_void_journal_entry", path = "/api/v1/gl/journal-entries/{id}/void", tag = "general_ledger",
@@ -776,8 +797,11 @@ pub(crate) async fn void_journal_entry(
     Path(id): Path<Uuid>,
 ) -> Result<Json<JournalEntryResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_entry_resp(&c.general_ledger().void_journal_entry(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_entry_resp(&c.general_ledger().void_journal_entry(id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "general_ledger_reverse_journal_entry", path = "/api/v1/gl/journal-entries/{id}/reverse", tag = "general_ledger",
@@ -792,12 +816,15 @@ pub(crate) async fn reverse_journal_entry(
     Json(req): Json<ReverseJournalEntryRequest>,
 ) -> Result<Json<JournalEntryResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let reversal_date = match req.reversal_date.as_deref() {
-        Some(s) => parse_date(s, "reversal_date")?,
-        None => chrono::Utc::now().date_naive(),
-    };
-    Ok(Json(to_entry_resp(&c.general_ledger().reverse_journal_entry(id, reversal_date)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let reversal_date = match req.reversal_date.as_deref() {
+                Some(s) => parse_date(s, "reversal_date")?,
+                None => chrono::Utc::now().date_naive(),
+            };
+            Ok(Json(to_entry_resp(&c.general_ledger().reverse_journal_entry(id, reversal_date)?)))
+        })
+        .await
 }
 
 // ============================================================================
@@ -821,38 +848,41 @@ pub(crate) async fn revalue(
     Json(req): Json<RevalueRequest>,
 ) -> Result<Json<RevaluationResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let as_of_date = match req.as_of_date.as_deref() {
-        Some(s) => parse_date(s, "as_of_date")?,
-        None => chrono::Utc::now().date_naive(),
-    };
-    let base_currency = match req.base_currency.as_deref() {
-        Some(s) => Some(parse_id::<stateset_core::Currency>(s, "base_currency")?),
-        None => None,
-    };
-    let result = c.general_ledger().revalue(as_of_date, base_currency)?;
-    Ok(Json(RevaluationResponse {
-        as_of_date: result.as_of_date.to_string(),
-        base_currency: result.base_currency.to_string(),
-        total_unrealized_gain_loss: result.total_unrealized_gain_loss.to_string(),
-        lines: result
-            .lines
-            .iter()
-            .map(|l| RevaluationLineResponse {
-                account_id: l.account_id.to_string(),
-                account_number: l.account_number.clone(),
-                account_name: l.account_name.clone(),
-                currency: l.currency.to_string(),
-                foreign_balance: l.foreign_balance.to_string(),
-                carrying_value: l.carrying_value.to_string(),
-                rate: l.rate.to_string(),
-                revalued_value: l.revalued_value.to_string(),
-                adjustment: l.adjustment.to_string(),
-                unrealized_gain_loss: l.unrealized_gain_loss.to_string(),
-            })
-            .collect(),
-        journal_entry: result.journal_entry.as_ref().map(to_entry_resp),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let as_of_date = match req.as_of_date.as_deref() {
+                Some(s) => parse_date(s, "as_of_date")?,
+                None => chrono::Utc::now().date_naive(),
+            };
+            let base_currency = match req.base_currency.as_deref() {
+                Some(s) => Some(parse_id::<stateset_core::Currency>(s, "base_currency")?),
+                None => None,
+            };
+            let result = c.general_ledger().revalue(as_of_date, base_currency)?;
+            Ok(Json(RevaluationResponse {
+                as_of_date: result.as_of_date.to_string(),
+                base_currency: result.base_currency.to_string(),
+                total_unrealized_gain_loss: result.total_unrealized_gain_loss.to_string(),
+                lines: result
+                    .lines
+                    .iter()
+                    .map(|l| RevaluationLineResponse {
+                        account_id: l.account_id.to_string(),
+                        account_number: l.account_number.clone(),
+                        account_name: l.account_name.clone(),
+                        currency: l.currency.to_string(),
+                        foreign_balance: l.foreign_balance.to_string(),
+                        carrying_value: l.carrying_value.to_string(),
+                        rate: l.rate.to_string(),
+                        revalued_value: l.revalued_value.to_string(),
+                        adjustment: l.adjustment.to_string(),
+                        unrealized_gain_loss: l.unrealized_gain_loss.to_string(),
+                    })
+                    .collect(),
+                journal_entry: result.journal_entry.as_ref().map(to_entry_resp),
+            }))
+        })
+        .await
 }
 
 fn to_close_month_step_resp(step: &stateset_core::CloseMonthStepReport) -> CloseMonthStepResponse {
@@ -875,29 +905,32 @@ pub(crate) async fn close_month(
     Json(req): Json<CloseMonthRequest>,
 ) -> Result<Json<CloseMonthResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let period_id: Uuid = parse_id(&req.period_id, "period_id")?;
-    let options = stateset_core::CloseMonthOptions {
-        dry_run: req.dry_run.unwrap_or(false),
-        skip_depreciation: req.skip_depreciation.unwrap_or(false),
-        skip_revenue_recognition: req.skip_revenue_recognition.unwrap_or(false),
-        skip_fx_revaluation: req.skip_fx_revaluation.unwrap_or(false),
-        skip_period_close: req.skip_period_close.unwrap_or(false),
-        fail_on_warnings: req.fail_on_warnings.unwrap_or(false),
-        closed_by: Some(actor_or_default(req.closed_by)),
-    };
-    let report = c.general_ledger().close_month(period_id, options)?;
-    Ok(Json(CloseMonthResponse {
-        period_id: report.period_id.to_string(),
-        period_name: report.period_name.clone(),
-        dry_run: report.dry_run,
-        depreciation: to_close_month_step_resp(&report.depreciation),
-        revenue_recognition: to_close_month_step_resp(&report.revenue_recognition),
-        fx_revaluation: to_close_month_step_resp(&report.fx_revaluation),
-        period_close: to_close_month_step_resp(&report.period_close),
-        closing_entry: report.closing_entry.as_ref().map(to_entry_resp),
-        period_status: report.period_status.to_string(),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let period_id: Uuid = parse_id(&req.period_id, "period_id")?;
+            let options = stateset_core::CloseMonthOptions {
+                dry_run: req.dry_run.unwrap_or(false),
+                skip_depreciation: req.skip_depreciation.unwrap_or(false),
+                skip_revenue_recognition: req.skip_revenue_recognition.unwrap_or(false),
+                skip_fx_revaluation: req.skip_fx_revaluation.unwrap_or(false),
+                skip_period_close: req.skip_period_close.unwrap_or(false),
+                fail_on_warnings: req.fail_on_warnings.unwrap_or(false),
+                closed_by: Some(actor_or_default(req.closed_by)),
+            };
+            let report = c.general_ledger().close_month(period_id, options)?;
+            Ok(Json(CloseMonthResponse {
+                period_id: report.period_id.to_string(),
+                period_name: report.period_name.clone(),
+                dry_run: report.dry_run,
+                depreciation: to_close_month_step_resp(&report.depreciation),
+                revenue_recognition: to_close_month_step_resp(&report.revenue_recognition),
+                fx_revaluation: to_close_month_step_resp(&report.fx_revaluation),
+                period_close: to_close_month_step_resp(&report.period_close),
+                closing_entry: report.closing_entry.as_ref().map(to_entry_resp),
+                period_status: report.period_status.to_string(),
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "general_ledger_trial_balance", path = "/api/v1/gl/trial-balance", tag = "general_ledger",
@@ -910,26 +943,29 @@ pub(crate) async fn trial_balance(
     Query(params): Query<AsOfDateParams>,
 ) -> Result<Json<TrialBalanceResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let report = c.general_ledger().get_trial_balance(as_of_or_today(&params)?)?;
-    Ok(Json(TrialBalanceResponse {
-        as_of_date: report.as_of_date.to_string(),
-        total_debits: report.total_debits.to_string(),
-        total_credits: report.total_credits.to_string(),
-        is_balanced: report.is_balanced,
-        lines: report
-            .lines
-            .iter()
-            .map(|l| TrialBalanceLineResponse {
-                account_id: l.account_id.to_string(),
-                account_number: l.account_number.clone(),
-                account_name: l.account_name.clone(),
-                account_type: l.account_type.to_string(),
-                debit_balance: l.debit_balance.to_string(),
-                credit_balance: l.credit_balance.to_string(),
-            })
-            .collect(),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let report = c.general_ledger().get_trial_balance(as_of_or_today(&params)?)?;
+            Ok(Json(TrialBalanceResponse {
+                as_of_date: report.as_of_date.to_string(),
+                total_debits: report.total_debits.to_string(),
+                total_credits: report.total_credits.to_string(),
+                is_balanced: report.is_balanced,
+                lines: report
+                    .lines
+                    .iter()
+                    .map(|l| TrialBalanceLineResponse {
+                        account_id: l.account_id.to_string(),
+                        account_number: l.account_number.clone(),
+                        account_name: l.account_name.clone(),
+                        account_type: l.account_type.to_string(),
+                        debit_balance: l.debit_balance.to_string(),
+                        credit_balance: l.credit_balance.to_string(),
+                    })
+                    .collect(),
+            }))
+        })
+        .await
 }
 
 fn to_balance_sheet_line(l: &stateset_core::BalanceSheetLine) -> BalanceSheetLineResponse {
@@ -953,17 +989,20 @@ pub(crate) async fn balance_sheet(
     Query(params): Query<AsOfDateParams>,
 ) -> Result<Json<BalanceSheetResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let report = c.general_ledger().get_balance_sheet(as_of_or_today(&params)?)?;
-    Ok(Json(BalanceSheetResponse {
-        as_of_date: report.as_of_date.to_string(),
-        total_assets: report.total_assets.to_string(),
-        total_liabilities: report.total_liabilities.to_string(),
-        total_equity: report.total_equity.to_string(),
-        assets: report.assets.iter().map(to_balance_sheet_line).collect(),
-        liabilities: report.liabilities.iter().map(to_balance_sheet_line).collect(),
-        equity: report.equity.iter().map(to_balance_sheet_line).collect(),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let report = c.general_ledger().get_balance_sheet(as_of_or_today(&params)?)?;
+            Ok(Json(BalanceSheetResponse {
+                as_of_date: report.as_of_date.to_string(),
+                total_assets: report.total_assets.to_string(),
+                total_liabilities: report.total_liabilities.to_string(),
+                total_equity: report.total_equity.to_string(),
+                assets: report.assets.iter().map(to_balance_sheet_line).collect(),
+                liabilities: report.liabilities.iter().map(to_balance_sheet_line).collect(),
+                equity: report.equity.iter().map(to_balance_sheet_line).collect(),
+            }))
+        })
+        .await
 }
 
 fn to_income_statement_line(l: &stateset_core::IncomeStatementLine) -> IncomeStatementLineResponse {
@@ -987,22 +1026,27 @@ pub(crate) async fn income_statement(
     Query(params): Query<IncomeStatementParams>,
 ) -> Result<Json<IncomeStatementResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let start_date = parse_date(&params.start_date, "start_date")?;
-    let end_date = parse_date(&params.end_date, "end_date")?;
-    if end_date < start_date {
-        return Err(HttpError::BadRequest("end_date must not precede start_date".to_string()));
-    }
-    let report = c.general_ledger().get_income_statement(start_date, end_date)?;
-    Ok(Json(IncomeStatementResponse {
-        period_start: report.period_start.to_string(),
-        period_end: report.period_end.to_string(),
-        total_revenue: report.total_revenue.to_string(),
-        total_expenses: report.total_expenses.to_string(),
-        net_income: report.net_income.to_string(),
-        revenue_lines: report.revenue_lines.iter().map(to_income_statement_line).collect(),
-        expense_lines: report.expense_lines.iter().map(to_income_statement_line).collect(),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let start_date = parse_date(&params.start_date, "start_date")?;
+            let end_date = parse_date(&params.end_date, "end_date")?;
+            if end_date < start_date {
+                return Err(HttpError::BadRequest(
+                    "end_date must not precede start_date".to_string(),
+                ));
+            }
+            let report = c.general_ledger().get_income_statement(start_date, end_date)?;
+            Ok(Json(IncomeStatementResponse {
+                period_start: report.period_start.to_string(),
+                period_end: report.period_end.to_string(),
+                total_revenue: report.total_revenue.to_string(),
+                total_expenses: report.total_expenses.to_string(),
+                net_income: report.net_income.to_string(),
+                revenue_lines: report.revenue_lines.iter().map(to_income_statement_line).collect(),
+                expense_lines: report.expense_lines.iter().map(to_income_statement_line).collect(),
+            }))
+        })
+        .await
 }
 
 // ============================================================================
@@ -1019,21 +1063,26 @@ pub(crate) async fn create_period(
     Json(req): Json<CreateGlPeriodRequest>,
 ) -> Result<(StatusCode, Json<GlPeriodResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let start_date = parse_date(&req.start_date, "start_date")?;
-    let end_date = parse_date(&req.end_date, "end_date")?;
-    if end_date < start_date {
-        return Err(HttpError::BadRequest("end_date must not precede start_date".to_string()));
-    }
-    let input = stateset_core::CreateGlPeriod {
-        period_name: req.period_name,
-        fiscal_year: req.fiscal_year,
-        period_number: req.period_number,
-        start_date,
-        end_date,
-    };
-    let period = c.general_ledger().create_period(input)?;
-    Ok((StatusCode::CREATED, Json(to_period_resp(&period))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let start_date = parse_date(&req.start_date, "start_date")?;
+            let end_date = parse_date(&req.end_date, "end_date")?;
+            if end_date < start_date {
+                return Err(HttpError::BadRequest(
+                    "end_date must not precede start_date".to_string(),
+                ));
+            }
+            let input = stateset_core::CreateGlPeriod {
+                period_name: req.period_name,
+                fiscal_year: req.fiscal_year,
+                period_number: req.period_number,
+                start_date,
+                end_date,
+            };
+            let period = c.general_ledger().create_period(input)?;
+            Ok((StatusCode::CREATED, Json(to_period_resp(&period))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "general_ledger_list_periods", path = "/api/v1/gl/periods", tag = "general_ledger",
@@ -1046,24 +1095,30 @@ pub(crate) async fn list_periods(
     Query(params): Query<GlPeriodFilterParams>,
 ) -> Result<Json<GlPeriodListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let base = stateset_core::GlPeriodFilter {
-        fiscal_year: params.fiscal_year,
-        status,
-        ..Default::default()
-    };
-    let total = c.general_ledger().list_periods(base.clone())?.len();
-    let filter = stateset_core::GlPeriodFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    };
-    let periods = c.general_ledger().list_periods(filter)?;
-    Ok(Json(GlPeriodListResponse { periods: periods.iter().map(to_period_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let base = stateset_core::GlPeriodFilter {
+                fiscal_year: params.fiscal_year,
+                status,
+                ..Default::default()
+            };
+            let total = c.general_ledger().list_periods(base.clone())?.len();
+            let filter = stateset_core::GlPeriodFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            };
+            let periods = c.general_ledger().list_periods(filter)?;
+            Ok(Json(GlPeriodListResponse {
+                periods: periods.iter().map(to_period_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "general_ledger_open_period", path = "/api/v1/gl/periods/{id}/open", tag = "general_ledger",
@@ -1076,8 +1131,11 @@ pub(crate) async fn open_period(
     Path(id): Path<Uuid>,
 ) -> Result<Json<GlPeriodResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_period_resp(&c.general_ledger().open_period(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_period_resp(&c.general_ledger().open_period(id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "general_ledger_close_period", path = "/api/v1/gl/periods/{id}/close", tag = "general_ledger",
@@ -1092,9 +1150,12 @@ pub(crate) async fn close_period(
     Json(req): Json<ClosePeriodRequest>,
 ) -> Result<Json<GlPeriodResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let closed_by = actor_or_default(req.closed_by);
-    Ok(Json(to_period_resp(&c.general_ledger().close_period(id, &closed_by)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let closed_by = actor_or_default(req.closed_by);
+            Ok(Json(to_period_resp(&c.general_ledger().close_period(id, &closed_by)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "general_ledger_lock_period", path = "/api/v1/gl/periods/{id}/lock", tag = "general_ledger",
@@ -1109,9 +1170,12 @@ pub(crate) async fn lock_period(
     Json(req): Json<LockPeriodRequest>,
 ) -> Result<Json<GlPeriodResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let locked_by = actor_or_default(req.locked_by);
-    Ok(Json(to_period_resp(&c.general_ledger().lock_period(id, &locked_by)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let locked_by = actor_or_default(req.locked_by);
+            Ok(Json(to_period_resp(&c.general_ledger().lock_period(id, &locked_by)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "general_ledger_reopen_period", path = "/api/v1/gl/periods/{id}/reopen", tag = "general_ledger",
@@ -1124,8 +1188,11 @@ pub(crate) async fn reopen_period(
     Path(id): Path<Uuid>,
 ) -> Result<Json<GlPeriodResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_period_resp(&c.general_ledger().reopen_period(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_period_resp(&c.general_ledger().reopen_period(id)?)))
+        })
+        .await
 }
 
 #[cfg(test)]

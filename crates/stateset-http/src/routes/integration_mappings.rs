@@ -119,9 +119,12 @@ pub(crate) async fn create(
     Json(req): Json<CreateIntegrationMappingRequest>,
 ) -> Result<(StatusCode, Json<IntegrationMappingResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let m = c.integration_mappings().create(to_input(req))?;
-    Ok((StatusCode::CREATED, Json(to_resp(&m))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let m = c.integration_mappings().create(to_input(req))?;
+            Ok((StatusCode::CREATED, Json(to_resp(&m))))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "integration_mappings_bulk_create", path = "/api/v1/integration-mappings/bulk", tag = "integration_mappings",
@@ -134,10 +137,13 @@ pub(crate) async fn bulk_create(
     Json(req): Json<BulkCreateRequest>,
 ) -> Result<Json<BulkResultResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let items = req.mappings.into_iter().map(to_input).collect();
-    let affected = c.integration_mappings().bulk_upsert(items)?;
-    Ok(Json(BulkResultResponse { affected }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let items = req.mappings.into_iter().map(to_input).collect();
+            let affected = c.integration_mappings().bulk_upsert(items)?;
+            Ok(Json(BulkResultResponse { affected }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "integration_mappings_list", path = "/api/v1/integration-mappings", tag = "integration_mappings",
@@ -150,25 +156,28 @@ pub(crate) async fn list(
     Query(params): Query<IntegrationMappingFilterParams>,
 ) -> Result<Json<IntegrationMappingListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let base = stateset_core::IntegrationMappingFilter {
-        integration: params.integration.clone(),
-        mapping_group: params.mapping_group.clone(),
-        field_name: params.field_name.clone(),
-        is_active: params.is_active,
-        ..Default::default()
-    };
-    let total = c.integration_mappings().list(base.clone())?.len();
-    let filter = stateset_core::IntegrationMappingFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 500)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    };
-    let mappings = c.integration_mappings().list(filter)?;
-    Ok(Json(IntegrationMappingListResponse {
-        mappings: mappings.iter().map(to_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let base = stateset_core::IntegrationMappingFilter {
+                integration: params.integration.clone(),
+                mapping_group: params.mapping_group.clone(),
+                field_name: params.field_name.clone(),
+                is_active: params.is_active,
+                ..Default::default()
+            };
+            let total = c.integration_mappings().list(base.clone())?.len();
+            let filter = stateset_core::IntegrationMappingFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 500)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            };
+            let mappings = c.integration_mappings().list(filter)?;
+            Ok(Json(IntegrationMappingListResponse {
+                mappings: mappings.iter().map(to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "integration_mappings_resolve", path = "/api/v1/integration-mappings/resolve", tag = "integration_mappings",
@@ -181,15 +190,18 @@ pub(crate) async fn resolve(
     Query(params): Query<ResolveParams>,
 ) -> Result<Json<ResolveResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let lookup = stateset_core::MappingLookup {
-        integration: params.integration,
-        mapping_group: params.mapping_group,
-        field_name: params.field_name,
-        external_value: params.external_value,
-    };
-    let internal_value = c.integration_mappings().resolve(&lookup)?;
-    Ok(Json(ResolveResponse { internal_value }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let lookup = stateset_core::MappingLookup {
+                integration: params.integration,
+                mapping_group: params.mapping_group,
+                field_name: params.field_name,
+                external_value: params.external_value,
+            };
+            let internal_value = c.integration_mappings().resolve(&lookup)?;
+            Ok(Json(ResolveResponse { internal_value }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "integration_mappings_get_one", path = "/api/v1/integration-mappings/{id}", tag = "integration_mappings",
@@ -202,12 +214,14 @@ pub(crate) async fn get_one(
     Path(id): Path<IntegrationMappingId>,
 ) -> Result<Json<IntegrationMappingResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let m = c
-        .integration_mappings()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Integration mapping {id} not found")))?;
-    Ok(Json(to_resp(&m)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let m = c.integration_mappings().get(id)?.ok_or_else(|| {
+                HttpError::NotFound(format!("Integration mapping {id} not found"))
+            })?;
+            Ok(Json(to_resp(&m)))
+        })
+        .await
 }
 
 #[utoipa::path(put, operation_id = "integration_mappings_update", path = "/api/v1/integration-mappings/{id}", tag = "integration_mappings",
@@ -222,12 +236,15 @@ pub(crate) async fn update(
     Json(req): Json<UpdateIntegrationMappingRequest>,
 ) -> Result<Json<IntegrationMappingResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::UpdateIntegrationMapping {
-        internal_value: req.internal_value,
-        is_active: req.is_active,
-    };
-    Ok(Json(to_resp(&c.integration_mappings().update(id, input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::UpdateIntegrationMapping {
+                internal_value: req.internal_value,
+                is_active: req.is_active,
+            };
+            Ok(Json(to_resp(&c.integration_mappings().update(id, input)?)))
+        })
+        .await
 }
 
 #[utoipa::path(delete, operation_id = "integration_mappings_delete_one", path = "/api/v1/integration-mappings/{id}", tag = "integration_mappings",
@@ -240,9 +257,12 @@ pub(crate) async fn delete_one(
     Path(id): Path<IntegrationMappingId>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.integration_mappings().delete(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.integration_mappings().delete(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[cfg(test)]

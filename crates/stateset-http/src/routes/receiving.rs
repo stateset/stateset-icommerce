@@ -283,39 +283,42 @@ pub(crate) async fn create_receipt(
     Json(req): Json<CreateReceiptRequest>,
 ) -> Result<(StatusCode, Json<ReceiptResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let receipt_type = match req.receipt_type.as_deref() {
-        Some(s) => parse_id(s, "receipt_type")?,
-        None => stateset_core::ReceiptType::default(),
-    };
-    let mut items = Vec::with_capacity(req.items.len());
-    for i in req.items {
-        items.push(stateset_core::CreateReceiptItem {
-            sku: i.sku,
-            description: i.description,
-            po_line_id: parse_opt(i.po_line_id.as_deref(), "po_line_id")?,
-            expected_quantity: parse_decimal(&i.expected_quantity, "expected_quantity")?,
-            unit_cost: parse_opt_decimal(i.unit_cost.as_deref(), "unit_cost")?,
-            lot_number: i.lot_number,
-            expiration_date: None,
-            notes: i.notes,
-        });
-    }
-    let r = c.receiving().create_receipt(stateset_core::CreateReceipt {
-        receipt_number: None,
-        receipt_type,
-        reference_type: req.reference_type,
-        reference_id: parse_opt(req.reference_id.as_deref(), "reference_id")?,
-        supplier_id: parse_opt(req.supplier_id.as_deref(), "supplier_id")?,
-        warehouse_id: req.warehouse_id,
-        carrier: req.carrier,
-        tracking_number: req.tracking_number,
-        expected_date: parse_opt_datetime(req.expected_date.as_deref(), "expected_date")?,
-        notes: req.notes,
-        created_by: req.created_by,
-        items,
-    })?;
-    Ok((StatusCode::CREATED, Json(receipt_resp(&r))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let receipt_type = match req.receipt_type.as_deref() {
+                Some(s) => parse_id(s, "receipt_type")?,
+                None => stateset_core::ReceiptType::default(),
+            };
+            let mut items = Vec::with_capacity(req.items.len());
+            for i in req.items {
+                items.push(stateset_core::CreateReceiptItem {
+                    sku: i.sku,
+                    description: i.description,
+                    po_line_id: parse_opt(i.po_line_id.as_deref(), "po_line_id")?,
+                    expected_quantity: parse_decimal(&i.expected_quantity, "expected_quantity")?,
+                    unit_cost: parse_opt_decimal(i.unit_cost.as_deref(), "unit_cost")?,
+                    lot_number: i.lot_number,
+                    expiration_date: None,
+                    notes: i.notes,
+                });
+            }
+            let r = c.receiving().create_receipt(stateset_core::CreateReceipt {
+                receipt_number: None,
+                receipt_type,
+                reference_type: req.reference_type,
+                reference_id: parse_opt(req.reference_id.as_deref(), "reference_id")?,
+                supplier_id: parse_opt(req.supplier_id.as_deref(), "supplier_id")?,
+                warehouse_id: req.warehouse_id,
+                carrier: req.carrier,
+                tracking_number: req.tracking_number,
+                expected_date: parse_opt_datetime(req.expected_date.as_deref(), "expected_date")?,
+                notes: req.notes,
+                created_by: req.created_by,
+                items,
+            })?;
+            Ok((StatusCode::CREATED, Json(receipt_resp(&r))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "receiving_receipt_list", path = "/api/v1/receipts", tag = "receiving",
@@ -328,21 +331,27 @@ pub(crate) async fn list_receipts(
     Query(params): Query<ReceiptFilterParams>,
 ) -> Result<Json<ReceiptListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let base = stateset_core::ReceiptFilter {
-        warehouse_id: params.warehouse_id,
-        receipt_type: parse_opt(params.receipt_type.as_deref(), "receipt_type")?,
-        status: parse_opt(params.status.as_deref(), "status")?,
-        supplier_id: parse_opt(params.supplier_id.as_deref(), "supplier_id")?,
-        ..Default::default()
-    };
-    let total = c.receiving().count_receipts(base.clone())?;
-    let receipts = c.receiving().list_receipts(stateset_core::ReceiptFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    })?;
-    Ok(Json(ReceiptListResponse { receipts: receipts.iter().map(receipt_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let base = stateset_core::ReceiptFilter {
+                warehouse_id: params.warehouse_id,
+                receipt_type: parse_opt(params.receipt_type.as_deref(), "receipt_type")?,
+                status: parse_opt(params.status.as_deref(), "status")?,
+                supplier_id: parse_opt(params.supplier_id.as_deref(), "supplier_id")?,
+                ..Default::default()
+            };
+            let total = c.receiving().count_receipts(base.clone())?;
+            let receipts = c.receiving().list_receipts(stateset_core::ReceiptFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            })?;
+            Ok(Json(ReceiptListResponse {
+                receipts: receipts.iter().map(receipt_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "receiving_receipt_get_one", path = "/api/v1/receipts/{id}", tag = "receiving",
@@ -355,12 +364,15 @@ pub(crate) async fn get_receipt(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ReceiptResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let r = c
-        .receiving()
-        .get_receipt(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Receipt {id} not found")))?;
-    Ok(Json(receipt_resp(&r)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let r = c
+                .receiving()
+                .get_receipt(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Receipt {id} not found")))?;
+            Ok(Json(receipt_resp(&r)))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "receiving_receipt_items", path = "/api/v1/receipts/{id}/items", tag = "receiving",
@@ -373,12 +385,15 @@ pub(crate) async fn list_receipt_items(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ReceiptItemListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let items = c.receiving().get_receipt_items(id)?;
-    Ok(Json(ReceiptItemListResponse {
-        total: items.len(),
-        items: items.iter().map(receipt_item_resp).collect(),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let items = c.receiving().get_receipt_items(id)?;
+            Ok(Json(ReceiptItemListResponse {
+                total: items.len(),
+                items: items.iter().map(receipt_item_resp).collect(),
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "receiving_receipt_start", path = "/api/v1/receipts/{id}/start", tag = "receiving",
@@ -391,8 +406,11 @@ pub(crate) async fn start_receiving(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ReceiptResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(receipt_resp(&c.receiving().start_receiving(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(receipt_resp(&c.receiving().start_receiving(id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "receiving_receipt_receive_items", path = "/api/v1/receipts/{id}/receive", tag = "receiving",
@@ -407,30 +425,33 @@ pub(crate) async fn receive_items(
     Json(req): Json<ReceiveItemsRequest>,
 ) -> Result<Json<ReceiptResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let mut items = Vec::with_capacity(req.items.len());
-    for i in req.items {
-        items.push(stateset_core::ReceiveItemLine {
-            receipt_item_id: parse_id(&i.receipt_item_id, "receipt_item_id")?,
-            quantity_received: parse_decimal(&i.quantity_received, "quantity_received")?,
-            quantity_rejected: parse_opt_decimal(
-                i.quantity_rejected.as_deref(),
-                "quantity_rejected",
-            )?,
-            rejection_reason: i.rejection_reason,
-            lot_number: i.lot_number,
-            serial_numbers: i.serial_numbers,
-            expiration_date: None,
-            notes: i.notes,
-        });
-    }
-    let r = c.receiving().receive_items(stateset_core::ReceiveItems {
-        receipt_id: id,
-        items,
-        receiving_location_id: req.receiving_location_id,
-        received_by: req.received_by,
-    })?;
-    Ok(Json(receipt_resp(&r)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let mut items = Vec::with_capacity(req.items.len());
+            for i in req.items {
+                items.push(stateset_core::ReceiveItemLine {
+                    receipt_item_id: parse_id(&i.receipt_item_id, "receipt_item_id")?,
+                    quantity_received: parse_decimal(&i.quantity_received, "quantity_received")?,
+                    quantity_rejected: parse_opt_decimal(
+                        i.quantity_rejected.as_deref(),
+                        "quantity_rejected",
+                    )?,
+                    rejection_reason: i.rejection_reason,
+                    lot_number: i.lot_number,
+                    serial_numbers: i.serial_numbers,
+                    expiration_date: None,
+                    notes: i.notes,
+                });
+            }
+            let r = c.receiving().receive_items(stateset_core::ReceiveItems {
+                receipt_id: id,
+                items,
+                receiving_location_id: req.receiving_location_id,
+                received_by: req.received_by,
+            })?;
+            Ok(Json(receipt_resp(&r)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "receiving_receipt_complete", path = "/api/v1/receipts/{id}/complete", tag = "receiving",
@@ -443,8 +464,11 @@ pub(crate) async fn complete_receiving(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ReceiptResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(receipt_resp(&c.receiving().complete_receiving(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(receipt_resp(&c.receiving().complete_receiving(id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "receiving_receipt_cancel", path = "/api/v1/receipts/{id}/cancel", tag = "receiving",
@@ -457,8 +481,11 @@ pub(crate) async fn cancel_receipt(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ReceiptResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(receipt_resp(&c.receiving().cancel_receipt(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(receipt_resp(&c.receiving().cancel_receipt(id)?)))
+        })
+        .await
 }
 
 // ============================================================================
@@ -475,19 +502,22 @@ pub(crate) async fn create_put_away(
     Json(req): Json<CreatePutAwayRequest>,
 ) -> Result<(StatusCode, Json<PutAwayResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let p = c.receiving().create_put_away(stateset_core::CreatePutAway {
-        receipt_id: parse_id(&req.receipt_id, "receipt_id")?,
-        receipt_item_id: parse_id(&req.receipt_item_id, "receipt_item_id")?,
-        sku: req.sku,
-        from_location_id: req.from_location_id,
-        to_location_id: req.to_location_id,
-        quantity: parse_decimal(&req.quantity, "quantity")?,
-        lot_id: parse_opt(req.lot_id.as_deref(), "lot_id")?,
-        assigned_to: req.assigned_to,
-        notes: req.notes,
-    })?;
-    Ok((StatusCode::CREATED, Json(put_away_resp(&p))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let p = c.receiving().create_put_away(stateset_core::CreatePutAway {
+                receipt_id: parse_id(&req.receipt_id, "receipt_id")?,
+                receipt_item_id: parse_id(&req.receipt_item_id, "receipt_item_id")?,
+                sku: req.sku,
+                from_location_id: req.from_location_id,
+                to_location_id: req.to_location_id,
+                quantity: parse_decimal(&req.quantity, "quantity")?,
+                lot_id: parse_opt(req.lot_id.as_deref(), "lot_id")?,
+                assigned_to: req.assigned_to,
+                notes: req.notes,
+            })?;
+            Ok((StatusCode::CREATED, Json(put_away_resp(&p))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "receiving_put_away_list", path = "/api/v1/put-aways", tag = "receiving",
@@ -500,24 +530,27 @@ pub(crate) async fn list_put_aways(
     Query(params): Query<PutAwayFilterParams>,
 ) -> Result<Json<PutAwayListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let base = stateset_core::PutAwayFilter {
-        receipt_id: parse_opt(params.receipt_id.as_deref(), "receipt_id")?,
-        warehouse_id: params.warehouse_id,
-        status: parse_opt(params.status.as_deref(), "status")?,
-        assigned_to: params.assigned_to.clone(),
-        ..Default::default()
-    };
-    let total = c.receiving().count_put_aways(base.clone())?;
-    let put_aways = c.receiving().list_put_aways(stateset_core::PutAwayFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    })?;
-    Ok(Json(PutAwayListResponse {
-        put_aways: put_aways.iter().map(put_away_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let base = stateset_core::PutAwayFilter {
+                receipt_id: parse_opt(params.receipt_id.as_deref(), "receipt_id")?,
+                warehouse_id: params.warehouse_id,
+                status: parse_opt(params.status.as_deref(), "status")?,
+                assigned_to: params.assigned_to.clone(),
+                ..Default::default()
+            };
+            let total = c.receiving().count_put_aways(base.clone())?;
+            let put_aways = c.receiving().list_put_aways(stateset_core::PutAwayFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            })?;
+            Ok(Json(PutAwayListResponse {
+                put_aways: put_aways.iter().map(put_away_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "receiving_put_away_get_one", path = "/api/v1/put-aways/{id}", tag = "receiving",
@@ -530,12 +563,15 @@ pub(crate) async fn get_put_away(
     Path(id): Path<Uuid>,
 ) -> Result<Json<PutAwayResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let p = c
-        .receiving()
-        .get_put_away(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Put-away {id} not found")))?;
-    Ok(Json(put_away_resp(&p)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let p = c
+                .receiving()
+                .get_put_away(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Put-away {id} not found")))?;
+            Ok(Json(put_away_resp(&p)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "receiving_put_away_complete", path = "/api/v1/put-aways/{id}/complete", tag = "receiving",
@@ -550,14 +586,17 @@ pub(crate) async fn complete_put_away(
     Json(req): Json<CompletePutAwayRequest>,
 ) -> Result<Json<PutAwayResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let p = c.receiving().complete_put_away(stateset_core::CompletePutAway {
-        put_away_id: id,
-        actual_location_id: req.actual_location_id,
-        completed_by: req.completed_by,
-        notes: req.notes,
-    })?;
-    Ok(Json(put_away_resp(&p)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let p = c.receiving().complete_put_away(stateset_core::CompletePutAway {
+                put_away_id: id,
+                actual_location_id: req.actual_location_id,
+                completed_by: req.completed_by,
+                notes: req.notes,
+            })?;
+            Ok(Json(put_away_resp(&p)))
+        })
+        .await
 }
 
 #[cfg(test)]

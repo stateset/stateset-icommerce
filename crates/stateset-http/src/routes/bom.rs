@@ -162,23 +162,26 @@ pub(crate) async fn create(
     Json(req): Json<CreateBomRequest>,
 ) -> Result<(StatusCode, Json<BomResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let components = match req.components {
-        Some(comps) => {
-            Some(comps.into_iter().map(to_component_input).collect::<Result<Vec<_>, _>>()?)
-        }
-        None => None,
-    };
-    let input = stateset_core::CreateBom {
-        product_id: parse_id::<ProductId>(&req.product_id, "product_id")?,
-        name: req.name,
-        description: req.description,
-        revision: req.revision,
-        components,
-        created_by: None,
-    };
-    let bom = c.bom().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&bom))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let components = match req.components {
+                Some(comps) => {
+                    Some(comps.into_iter().map(to_component_input).collect::<Result<Vec<_>, _>>()?)
+                }
+                None => None,
+            };
+            let input = stateset_core::CreateBom {
+                product_id: parse_id::<ProductId>(&req.product_id, "product_id")?,
+                name: req.name,
+                description: req.description,
+                revision: req.revision,
+                components,
+                created_by: None,
+            };
+            let bom = c.bom().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&bom))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "bom_list", path = "/api/v1/boms", tag = "bom",
@@ -191,29 +194,32 @@ pub(crate) async fn list(
     Query(params): Query<BomFilterParams>,
 ) -> Result<Json<BomListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let product_id = match params.product_id.as_deref() {
-        Some(s) => Some(parse_id::<ProductId>(s, "product_id")?),
-        None => None,
-    };
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let base = stateset_core::BomFilter {
-        product_id,
-        status,
-        search: params.search.clone(),
-        ..Default::default()
-    };
-    let total = c.bom().count(base.clone())?;
-    let filter = stateset_core::BomFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    };
-    let boms = c.bom().list(filter)?;
-    Ok(Json(BomListResponse { boms: boms.iter().map(to_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let product_id = match params.product_id.as_deref() {
+                Some(s) => Some(parse_id::<ProductId>(s, "product_id")?),
+                None => None,
+            };
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let base = stateset_core::BomFilter {
+                product_id,
+                status,
+                search: params.search.clone(),
+                ..Default::default()
+            };
+            let total = c.bom().count(base.clone())?;
+            let filter = stateset_core::BomFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            };
+            let boms = c.bom().list(filter)?;
+            Ok(Json(BomListResponse { boms: boms.iter().map(to_resp).collect(), total }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "bom_get_one", path = "/api/v1/boms/{id}", tag = "bom",
@@ -226,9 +232,15 @@ pub(crate) async fn get_one(
     Path(id): Path<Uuid>,
 ) -> Result<Json<BomResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let bom = c.bom().get(id)?.ok_or_else(|| HttpError::NotFound(format!("BOM {id} not found")))?;
-    Ok(Json(to_resp(&bom)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let bom = c
+                .bom()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("BOM {id} not found")))?;
+            Ok(Json(to_resp(&bom)))
+        })
+        .await
 }
 
 #[utoipa::path(put, operation_id = "bom_update", path = "/api/v1/boms/{id}", tag = "bom",
@@ -243,19 +255,22 @@ pub(crate) async fn update(
     Json(req): Json<UpdateBomRequest>,
 ) -> Result<Json<BomResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let status = match req.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let input = stateset_core::UpdateBom {
-        name: req.name,
-        description: req.description,
-        revision: req.revision,
-        status,
-        updated_by: None,
-    };
-    Ok(Json(to_resp(&c.bom().update(id, input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let status = match req.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let input = stateset_core::UpdateBom {
+                name: req.name,
+                description: req.description,
+                revision: req.revision,
+                status,
+                updated_by: None,
+            };
+            Ok(Json(to_resp(&c.bom().update(id, input)?)))
+        })
+        .await
 }
 
 #[utoipa::path(delete, operation_id = "bom_delete", path = "/api/v1/boms/{id}", tag = "bom",
@@ -268,9 +283,12 @@ pub(crate) async fn delete_one(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.bom().delete(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.bom().delete(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "bom_activate", path = "/api/v1/boms/{id}/activate", tag = "bom",
@@ -283,8 +301,7 @@ pub(crate) async fn activate(
     Path(id): Path<Uuid>,
 ) -> Result<Json<BomResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.bom().activate(id)?)))
+    state.run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.bom().activate(id)?)))).await
 }
 
 #[utoipa::path(post, operation_id = "bom_add_component", path = "/api/v1/boms/{id}/components", tag = "bom",
@@ -299,9 +316,12 @@ pub(crate) async fn add_component(
     Json(req): Json<CreateBomComponentRequest>,
 ) -> Result<(StatusCode, Json<BomComponentResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let component = c.bom().add_component(id, to_component_input(req)?)?;
-    Ok((StatusCode::CREATED, Json(component_to_resp(&component))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let component = c.bom().add_component(id, to_component_input(req)?)?;
+            Ok((StatusCode::CREATED, Json(component_to_resp(&component))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "bom_list_components", path = "/api/v1/boms/{id}/components", tag = "bom",
@@ -314,12 +334,15 @@ pub(crate) async fn list_components(
     Path(id): Path<Uuid>,
 ) -> Result<Json<BomComponentListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let components = c.bom().get_components(id)?;
-    Ok(Json(BomComponentListResponse {
-        total: components.len(),
-        components: components.iter().map(component_to_resp).collect(),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let components = c.bom().get_components(id)?;
+            Ok(Json(BomComponentListResponse {
+                total: components.len(),
+                components: components.iter().map(component_to_resp).collect(),
+            }))
+        })
+        .await
 }
 
 #[cfg(test)]

@@ -96,20 +96,23 @@ pub(crate) async fn create(
     Json(req): Json<CreateVendorCreditRequest>,
 ) -> Result<(StatusCode, Json<VendorCreditResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let vendor_return_id = match req.vendor_return_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "vendor_return_id")?),
-        None => None,
-    };
-    let input = stateset_core::CreateVendorCredit {
-        supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
-        vendor_return_id,
-        amount: parse_decimal(&req.amount, "amount")?,
-        currency: None,
-        memo: req.memo,
-    };
-    let credit = c.vendor_credits().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&credit))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let vendor_return_id = match req.vendor_return_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "vendor_return_id")?),
+                None => None,
+            };
+            let input = stateset_core::CreateVendorCredit {
+                supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
+                vendor_return_id,
+                amount: parse_decimal(&req.amount, "amount")?,
+                currency: None,
+                memo: req.memo,
+            };
+            let credit = c.vendor_credits().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&credit))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "vendor_credits_list", path = "/api/v1/vendor-credits", tag = "vendor_credits",
@@ -122,30 +125,37 @@ pub(crate) async fn list(
     Query(params): Query<VendorCreditFilterParams>,
 ) -> Result<Json<VendorCreditListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let supplier_id = match params.supplier_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
-        None => None,
-    };
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let total = c
-        .vendor_credits()
-        .list(stateset_core::VendorCreditFilter { supplier_id, status, ..Default::default() })?
-        .len();
-    let filter = stateset_core::VendorCreditFilter {
-        supplier_id,
-        status,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-    };
-    let credits = c.vendor_credits().list(filter)?;
-    Ok(Json(VendorCreditListResponse {
-        vendor_credits: credits.iter().map(to_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let supplier_id = match params.supplier_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
+                None => None,
+            };
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let total = c
+                .vendor_credits()
+                .list(stateset_core::VendorCreditFilter {
+                    supplier_id,
+                    status,
+                    ..Default::default()
+                })?
+                .len();
+            let filter = stateset_core::VendorCreditFilter {
+                supplier_id,
+                status,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+            };
+            let credits = c.vendor_credits().list(filter)?;
+            Ok(Json(VendorCreditListResponse {
+                vendor_credits: credits.iter().map(to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "vendor_credits_get_one", path = "/api/v1/vendor-credits/{id}", tag = "vendor_credits",
@@ -158,12 +168,15 @@ pub(crate) async fn get_one(
     Path(id): Path<VendorCreditId>,
 ) -> Result<Json<VendorCreditResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let credit = c
-        .vendor_credits()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Vendor credit {id} not found")))?;
-    Ok(Json(to_resp(&credit)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let credit = c
+                .vendor_credits()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Vendor credit {id} not found")))?;
+            Ok(Json(to_resp(&credit)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "vendor_credits_apply", path = "/api/v1/vendor-credits/{id}/apply", tag = "vendor_credits",
@@ -178,13 +191,16 @@ pub(crate) async fn apply(
     Json(req): Json<ApplyVendorCreditRequest>,
 ) -> Result<Json<VendorCreditResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::ApplyVendorCredit {
-        target_type: parse_id(&req.target_type, "target_type")?,
-        target_id: parse_id::<Uuid>(&req.target_id, "target_id")?,
-        amount: parse_decimal(&req.amount, "amount")?,
-    };
-    Ok(Json(to_resp(&c.vendor_credits().apply(id, input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::ApplyVendorCredit {
+                target_type: parse_id(&req.target_type, "target_type")?,
+                target_id: parse_id::<Uuid>(&req.target_id, "target_id")?,
+                amount: parse_decimal(&req.amount, "amount")?,
+            };
+            Ok(Json(to_resp(&c.vendor_credits().apply(id, input)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "vendor_credits_cancel", path = "/api/v1/vendor-credits/{id}/cancel", tag = "vendor_credits",
@@ -197,8 +213,9 @@ pub(crate) async fn cancel(
     Path(id): Path<VendorCreditId>,
 ) -> Result<Json<VendorCreditResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.vendor_credits().cancel(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.vendor_credits().cancel(id)?))))
+        .await
 }
 
 #[cfg(test)]

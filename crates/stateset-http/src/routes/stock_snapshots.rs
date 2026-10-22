@@ -127,20 +127,23 @@ pub(crate) async fn capture(
     Json(req): Json<CaptureRequest>,
 ) -> Result<(StatusCode, Json<SnapshotResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let mut lines = Vec::with_capacity(req.lines.len());
-    for l in req.lines {
-        lines.push(stateset_core::CaptureStockLine {
-            product_id: parse_id::<ProductId>(&l.product_id, "product_id")?,
-            sku: l.sku,
-            quantity_on_hand: parse_decimal(&l.quantity_on_hand, "quantity_on_hand")?,
-            quantity_available: parse_decimal(&l.quantity_available, "quantity_available")?,
-            location: l.location,
-        });
-    }
-    let input = stateset_core::CaptureStockSnapshot { label: req.label, lines };
-    let s = c.stock_snapshots().capture(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&s))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let mut lines = Vec::with_capacity(req.lines.len());
+            for l in req.lines {
+                lines.push(stateset_core::CaptureStockLine {
+                    product_id: parse_id::<ProductId>(&l.product_id, "product_id")?,
+                    sku: l.sku,
+                    quantity_on_hand: parse_decimal(&l.quantity_on_hand, "quantity_on_hand")?,
+                    quantity_available: parse_decimal(&l.quantity_available, "quantity_available")?,
+                    location: l.location,
+                });
+            }
+            let input = stateset_core::CaptureStockSnapshot { label: req.label, lines };
+            let s = c.stock_snapshots().capture(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&s))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "stock_snapshots_list", path = "/api/v1/stock-snapshots", tag = "stock_snapshots",
@@ -153,14 +156,21 @@ pub(crate) async fn list(
     Query(params): Query<SnapshotFilterParams>,
 ) -> Result<Json<SnapshotListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let total = c.stock_snapshots().list(stateset_core::StockSnapshotFilter::default())?.len();
-    let filter = stateset_core::StockSnapshotFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-    };
-    let snapshots = c.stock_snapshots().list(filter)?;
-    Ok(Json(SnapshotListResponse { snapshots: snapshots.iter().map(summary).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let total =
+                c.stock_snapshots().list(stateset_core::StockSnapshotFilter::default())?.len();
+            let filter = stateset_core::StockSnapshotFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+            };
+            let snapshots = c.stock_snapshots().list(filter)?;
+            Ok(Json(SnapshotListResponse {
+                snapshots: snapshots.iter().map(summary).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "stock_snapshots_latest", path = "/api/v1/stock-snapshots/latest", tag = "stock_snapshots",
@@ -171,12 +181,15 @@ pub(crate) async fn latest(
     headers: HeaderMap,
 ) -> Result<Json<SnapshotResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let s = c
-        .stock_snapshots()
-        .latest()?
-        .ok_or_else(|| HttpError::NotFound("no stock snapshots captured yet".into()))?;
-    Ok(Json(to_resp(&s)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let s = c
+                .stock_snapshots()
+                .latest()?
+                .ok_or_else(|| HttpError::NotFound("no stock snapshots captured yet".into()))?;
+            Ok(Json(to_resp(&s)))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "stock_snapshots_get_one", path = "/api/v1/stock-snapshots/{id}", tag = "stock_snapshots",
@@ -189,12 +202,15 @@ pub(crate) async fn get_one(
     Path(id): Path<StockSnapshotId>,
 ) -> Result<Json<SnapshotResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let s = c
-        .stock_snapshots()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Stock snapshot {id} not found")))?;
-    Ok(Json(to_resp(&s)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let s = c
+                .stock_snapshots()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Stock snapshot {id} not found")))?;
+            Ok(Json(to_resp(&s)))
+        })
+        .await
 }
 
 #[utoipa::path(delete, operation_id = "stock_snapshots_delete_one", path = "/api/v1/stock-snapshots/{id}", tag = "stock_snapshots",
@@ -207,9 +223,12 @@ pub(crate) async fn delete_one(
     Path(id): Path<StockSnapshotId>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.stock_snapshots().delete(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.stock_snapshots().delete(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[cfg(test)]

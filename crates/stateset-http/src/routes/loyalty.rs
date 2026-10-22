@@ -141,16 +141,19 @@ pub(crate) async fn create_program(
     Json(req): Json<CreateLoyaltyProgramRequest>,
 ) -> Result<(StatusCode, Json<LoyaltyProgramResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let program =
+                commerce.loyalty().create_program(stateset_core::CreateLoyaltyProgram {
+                    name: req.name,
+                    description: req.description,
+                    points_per_dollar: req.points_per_dollar.unwrap_or(1),
+                    tiers: vec![],
+                })?;
 
-    let program = commerce.loyalty().create_program(stateset_core::CreateLoyaltyProgram {
-        name: req.name,
-        description: req.description,
-        points_per_dollar: req.points_per_dollar.unwrap_or(1),
-        tiers: vec![],
-    })?;
-
-    Ok((StatusCode::CREATED, Json(program_to_response(program))))
+            Ok((StatusCode::CREATED, Json(program_to_response(program))))
+        })
+        .await
 }
 
 /// `GET /api/v1/loyalty/programs`
@@ -171,29 +174,31 @@ pub(crate) async fn list_programs(
     Query(params): Query<LoyaltyProgramFilterParams>,
 ) -> Result<Json<LoyaltyProgramListResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let limit = params.resolved_limit();
+            let offset = params.resolved_offset();
 
-    let limit = params.resolved_limit();
-    let offset = params.resolved_offset();
+            // Fetch all programs (no filter struct exists) and paginate in-memory
+            let all_programs = commerce.loyalty().list_programs()?;
+            let total = all_programs.len();
 
-    // Fetch all programs (no filter struct exists) and paginate in-memory
-    let all_programs = commerce.loyalty().list_programs()?;
-    let total = all_programs.len();
+            let mut programs: Vec<_> =
+                all_programs.into_iter().skip(offset as usize).take(limit as usize + 1).collect();
+            let has_more = programs.len() > limit as usize;
+            if has_more {
+                programs.truncate(limit as usize);
+            }
 
-    let mut programs: Vec<_> =
-        all_programs.into_iter().skip(offset as usize).take(limit as usize + 1).collect();
-    let has_more = programs.len() > limit as usize;
-    if has_more {
-        programs.truncate(limit as usize);
-    }
-
-    Ok(Json(LoyaltyProgramListResponse {
-        programs: programs.into_iter().map(program_to_response).collect(),
-        total,
-        limit,
-        offset,
-        has_more,
-    }))
+            Ok(Json(LoyaltyProgramListResponse {
+                programs: programs.into_iter().map(program_to_response).collect(),
+                total,
+                limit,
+                offset,
+                has_more,
+            }))
+        })
+        .await
 }
 
 /// `POST /api/v1/loyalty/enroll`
@@ -215,20 +220,23 @@ pub(crate) async fn enroll_customer(
     Json(req): Json<EnrollCustomerRequest>,
 ) -> Result<(StatusCode, Json<LoyaltyAccountResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let program_id: stateset_primitives::LoyaltyProgramId = req
+                .program_id
+                .parse()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid program_id: {e}")))?;
+            let customer_id: stateset_primitives::CustomerId = req
+                .customer_id
+                .parse()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid customer_id: {e}")))?;
 
-    let program_id: stateset_primitives::LoyaltyProgramId = req
-        .program_id
-        .parse()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid program_id: {e}")))?;
-    let customer_id: stateset_primitives::CustomerId = req
-        .customer_id
-        .parse()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid customer_id: {e}")))?;
-
-    let account =
-        commerce.loyalty().enroll(stateset_core::EnrollCustomer { customer_id, program_id })?;
-    Ok((StatusCode::CREATED, Json(account_to_response(account))))
+            let account = commerce
+                .loyalty()
+                .enroll(stateset_core::EnrollCustomer { customer_id, program_id })?;
+            Ok((StatusCode::CREATED, Json(account_to_response(account))))
+        })
+        .await
 }
 
 /// `GET /api/v1/loyalty/accounts/{id}`
@@ -249,12 +257,15 @@ pub(crate) async fn get_account(
     Path(id): Path<stateset_primitives::LoyaltyAccountId>,
 ) -> Result<Json<LoyaltyAccountResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let account = commerce
-        .loyalty()
-        .get_account(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Loyalty account {id} not found")))?;
-    Ok(Json(account_to_response(account)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let account = commerce
+                .loyalty()
+                .get_account(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Loyalty account {id} not found")))?;
+            Ok(Json(account_to_response(account)))
+        })
+        .await
 }
 
 // ============================================================================

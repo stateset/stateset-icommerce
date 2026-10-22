@@ -86,17 +86,20 @@ pub(crate) async fn create_subscription(
     Json(req): Json<CreateSubscriptionRequest>,
 ) -> Result<(StatusCode, Json<SubscriptionResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let input = stateset_core::CreateSubscription {
-        customer_id: req.customer_id,
-        plan_id: req.plan_id,
-        payment_method_id: req.payment_method_id,
-        skip_trial: req.skip_trial,
-        coupon_code: req.coupon_code,
-        ..Default::default()
-    };
-    let sub = commerce.subscriptions().subscribe(input)?;
-    Ok((StatusCode::CREATED, Json(sub_to_response(&sub))))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let input = stateset_core::CreateSubscription {
+                customer_id: req.customer_id,
+                plan_id: req.plan_id,
+                payment_method_id: req.payment_method_id,
+                skip_trial: req.skip_trial,
+                coupon_code: req.coupon_code,
+                ..Default::default()
+            };
+            let sub = commerce.subscriptions().subscribe(input)?;
+            Ok((StatusCode::CREATED, Json(sub_to_response(&sub))))
+        })
+        .await
 }
 
 #[utoipa::path(get, path = "/api/v1/subscriptions", tag = "subscriptions",
@@ -109,20 +112,23 @@ pub(crate) async fn list_subscriptions(
     Query(params): Query<SubscriptionFilterParams>,
 ) -> Result<Json<SubscriptionListResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let filter = stateset_core::SubscriptionFilter {
-        customer_id: params.customer_id.and_then(|c| c.parse().ok()),
-        status: params.status.and_then(|s| s.parse().ok()),
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..Default::default()
-    };
-    let subs = commerce.subscriptions().list(filter)?;
-    let total = subs.len();
-    Ok(Json(SubscriptionListResponse {
-        subscriptions: subs.iter().map(sub_to_response).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let filter = stateset_core::SubscriptionFilter {
+                customer_id: params.customer_id.and_then(|c| c.parse().ok()),
+                status: params.status.and_then(|s| s.parse().ok()),
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..Default::default()
+            };
+            let subs = commerce.subscriptions().list(filter)?;
+            let total = subs.len();
+            Ok(Json(SubscriptionListResponse {
+                subscriptions: subs.iter().map(sub_to_response).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, path = "/api/v1/subscriptions/{id}", tag = "subscriptions",
@@ -135,12 +141,15 @@ pub(crate) async fn get_subscription(
     Path(id): Path<SubscriptionId>,
 ) -> Result<Json<SubscriptionResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let sub = commerce
-        .subscriptions()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Subscription {id} not found")))?;
-    Ok(Json(sub_to_response(&sub)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let sub = commerce
+                .subscriptions()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Subscription {id} not found")))?;
+            Ok(Json(sub_to_response(&sub)))
+        })
+        .await
 }
 
 #[utoipa::path(patch, path = "/api/v1/subscriptions/{id}/pause", tag = "subscriptions",
@@ -153,9 +162,13 @@ pub(crate) async fn pause_subscription(
     Path(id): Path<SubscriptionId>,
 ) -> Result<Json<SubscriptionResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let sub = commerce.subscriptions().pause(id, stateset_core::PauseSubscription::default())?;
-    Ok(Json(sub_to_response(&sub)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let sub =
+                commerce.subscriptions().pause(id, stateset_core::PauseSubscription::default())?;
+            Ok(Json(sub_to_response(&sub)))
+        })
+        .await
 }
 
 #[utoipa::path(patch, path = "/api/v1/subscriptions/{id}/resume", tag = "subscriptions",
@@ -168,9 +181,12 @@ pub(crate) async fn resume_subscription(
     Path(id): Path<SubscriptionId>,
 ) -> Result<Json<SubscriptionResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let sub = commerce.subscriptions().resume(id)?;
-    Ok(Json(sub_to_response(&sub)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let sub = commerce.subscriptions().resume(id)?;
+            Ok(Json(sub_to_response(&sub)))
+        })
+        .await
 }
 
 #[utoipa::path(patch, path = "/api/v1/subscriptions/{id}/cancel", tag = "subscriptions",
@@ -183,7 +199,12 @@ pub(crate) async fn cancel_subscription(
     Path(id): Path<SubscriptionId>,
 ) -> Result<Json<SubscriptionResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let sub = commerce.subscriptions().cancel(id, stateset_core::CancelSubscription::default())?;
-    Ok(Json(sub_to_response(&sub)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let sub = commerce
+                .subscriptions()
+                .cancel(id, stateset_core::CancelSubscription::default())?;
+            Ok(Json(sub_to_response(&sub)))
+        })
+        .await
 }

@@ -117,22 +117,25 @@ pub(crate) async fn create_store_credit(
     Json(req): Json<CreateStoreCreditRequest>,
 ) -> Result<(StatusCode, Json<StoreCreditResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let currency = CurrencyCode::from_str(req.currency.as_deref().unwrap_or("USD"))
-        .map_err(|e| HttpError::BadRequest(format!("Invalid currency: {e}")))?;
-    let reason = StoreCreditReason::from_str(req.reason.as_deref().unwrap_or("manual"))
-        .unwrap_or(StoreCreditReason::Manual);
-    let input = stateset_core::CreateStoreCredit {
-        customer_id: req.customer_id,
-        amount: req.amount,
-        currency,
-        reason,
-        reference_id: None,
-        note: req.note,
-        expires_at: None,
-    };
-    let sc = commerce.store_credits().create(input)?;
-    Ok((StatusCode::CREATED, Json(sc_to_response(&sc))))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let currency = CurrencyCode::from_str(req.currency.as_deref().unwrap_or("USD"))
+                .map_err(|e| HttpError::BadRequest(format!("Invalid currency: {e}")))?;
+            let reason = StoreCreditReason::from_str(req.reason.as_deref().unwrap_or("manual"))
+                .unwrap_or(StoreCreditReason::Manual);
+            let input = stateset_core::CreateStoreCredit {
+                customer_id: req.customer_id,
+                amount: req.amount,
+                currency,
+                reason,
+                reference_id: None,
+                note: req.note,
+                expires_at: None,
+            };
+            let sc = commerce.store_credits().create(input)?;
+            Ok((StatusCode::CREATED, Json(sc_to_response(&sc))))
+        })
+        .await
 }
 
 #[utoipa::path(get, path = "/api/v1/store-credits", tag = "store_credits",
@@ -145,20 +148,23 @@ pub(crate) async fn list_store_credits(
     Query(params): Query<StoreCreditFilterParams>,
 ) -> Result<Json<StoreCreditListResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let filter = stateset_core::StoreCreditFilter {
-        customer_id: params.customer_id.and_then(|c| c.parse().ok()),
-        status: params.status.and_then(|s| s.parse().ok()),
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..Default::default()
-    };
-    let credits = commerce.store_credits().list(filter)?;
-    let total = credits.len();
-    Ok(Json(StoreCreditListResponse {
-        store_credits: credits.iter().map(sc_to_response).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let filter = stateset_core::StoreCreditFilter {
+                customer_id: params.customer_id.and_then(|c| c.parse().ok()),
+                status: params.status.and_then(|s| s.parse().ok()),
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..Default::default()
+            };
+            let credits = commerce.store_credits().list(filter)?;
+            let total = credits.len();
+            Ok(Json(StoreCreditListResponse {
+                store_credits: credits.iter().map(sc_to_response).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, path = "/api/v1/store-credits/{id}", tag = "store_credits",
@@ -171,12 +177,15 @@ pub(crate) async fn get_store_credit(
     Path(id): Path<StoreCreditId>,
 ) -> Result<Json<StoreCreditResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let sc = commerce
-        .store_credits()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Store credit {id} not found")))?;
-    Ok(Json(sc_to_response(&sc)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let sc = commerce
+                .store_credits()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Store credit {id} not found")))?;
+            Ok(Json(sc_to_response(&sc)))
+        })
+        .await
 }
 
 #[utoipa::path(post, path = "/api/v1/store-credits/{id}/adjust", tag = "store_credits",
@@ -191,11 +200,17 @@ pub(crate) async fn adjust_store_credit(
     Json(req): Json<AdjustStoreCreditRequest>,
 ) -> Result<Json<StoreCreditResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let input =
-        stateset_core::AdjustStoreCredit { amount: req.amount, note: req.note, reference_id: None };
-    let sc = commerce.store_credits().adjust(id, input)?;
-    Ok(Json(sc_to_response(&sc)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let input = stateset_core::AdjustStoreCredit {
+                amount: req.amount,
+                note: req.note,
+                reference_id: None,
+            };
+            let sc = commerce.store_credits().adjust(id, input)?;
+            Ok(Json(sc_to_response(&sc)))
+        })
+        .await
 }
 
 /// `POST /api/v1/store-credits/{id}/apply` — debit a store credit (e.g.
@@ -216,17 +231,20 @@ pub(crate) async fn apply_store_credit(
     Json(req): Json<ApplyStoreCreditRequest>,
 ) -> Result<Json<StoreCreditTransactionResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let txn = commerce.store_credits().apply(id, req.amount, req.reference_id)?;
-    Ok(Json(StoreCreditTransactionResponse {
-        id: txn.id.to_string(),
-        store_credit_id: txn.store_credit_id.to_string(),
-        amount: txn.amount,
-        balance_after: txn.balance_after,
-        transaction_type: txn.transaction_type.to_string(),
-        reference_id: txn.reference_id,
-        created_at: txn.created_at.to_rfc3339(),
-    }))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let txn = commerce.store_credits().apply(id, req.amount, req.reference_id)?;
+            Ok(Json(StoreCreditTransactionResponse {
+                id: txn.id.to_string(),
+                store_credit_id: txn.store_credit_id.to_string(),
+                amount: txn.amount,
+                balance_after: txn.balance_after,
+                transaction_type: txn.transaction_type.to_string(),
+                reference_id: txn.reference_id,
+                created_at: txn.created_at.to_rfc3339(),
+            }))
+        })
+        .await
 }
 
 #[cfg(test)]

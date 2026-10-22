@@ -129,12 +129,15 @@ pub(crate) async fn create_class(
     Json(req): Json<CreateUnitClassRequest>,
 ) -> Result<(StatusCode, Json<UnitClassResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let class = c.units_of_measure().create_class(stateset_core::CreateUnitClass {
-        name: req.name,
-        description: req.description,
-    })?;
-    Ok((StatusCode::CREATED, Json(class_resp(&class))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let class = c.units_of_measure().create_class(stateset_core::CreateUnitClass {
+                name: req.name,
+                description: req.description,
+            })?;
+            Ok((StatusCode::CREATED, Json(class_resp(&class))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "units_of_measure_list_classes", path = "/api/v1/unit-classes", tag = "units_of_measure",
@@ -145,9 +148,12 @@ pub(crate) async fn list_classes(
     headers: HeaderMap,
 ) -> Result<Json<Vec<UnitClassResponse>>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let classes = c.units_of_measure().list_classes()?;
-    Ok(Json(classes.iter().map(class_resp).collect()))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let classes = c.units_of_measure().list_classes()?;
+            Ok(Json(classes.iter().map(class_resp).collect()))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "units_of_measure_create_uom", path = "/api/v1/units-of-measure", tag = "units_of_measure",
@@ -160,14 +166,17 @@ pub(crate) async fn create_uom(
     Json(req): Json<CreateUnitOfMeasureRequest>,
 ) -> Result<(StatusCode, Json<UnitOfMeasureResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let uom = c.units_of_measure().create_uom(stateset_core::CreateUnitOfMeasure {
-        unit_class_id: parse_id(&req.unit_class_id, "unit_class_id")?,
-        name: req.name,
-        abbreviation: req.abbreviation,
-        factor: parse_factor(&req.factor)?,
-    })?;
-    Ok((StatusCode::CREATED, Json(uom_resp(&uom))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let uom = c.units_of_measure().create_uom(stateset_core::CreateUnitOfMeasure {
+                unit_class_id: parse_id(&req.unit_class_id, "unit_class_id")?,
+                name: req.name,
+                abbreviation: req.abbreviation,
+                factor: parse_factor(&req.factor)?,
+            })?;
+            Ok((StatusCode::CREATED, Json(uom_resp(&uom))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "units_of_measure_list_uoms", path = "/api/v1/units-of-measure", tag = "units_of_measure",
@@ -180,17 +189,20 @@ pub(crate) async fn list_uoms(
     Query(params): Query<UomFilterParams>,
 ) -> Result<Json<Vec<UnitOfMeasureResponse>>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let class_id = match params.class_id.as_deref() {
-        Some(s) => Some(parse_id::<UnitClassId>(s, "class_id")?),
-        None => None,
-    };
-    let uoms = c.units_of_measure().list_uoms(stateset_core::UnitOfMeasureFilter {
-        class_id,
-        limit: Some(crate::dto::resolve_limit(params.limit)),
-        offset: params.offset,
-    })?;
-    Ok(Json(uoms.iter().map(uom_resp).collect()))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let class_id = match params.class_id.as_deref() {
+                Some(s) => Some(parse_id::<UnitClassId>(s, "class_id")?),
+                None => None,
+            };
+            let uoms = c.units_of_measure().list_uoms(stateset_core::UnitOfMeasureFilter {
+                class_id,
+                limit: Some(crate::dto::resolve_limit(params.limit)),
+                offset: params.offset,
+            })?;
+            Ok(Json(uoms.iter().map(uom_resp).collect()))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "units_of_measure_create_rule", path = "/api/v1/unit-conversion-rules", tag = "units_of_measure",
@@ -203,19 +215,23 @@ pub(crate) async fn create_rule(
     Json(req): Json<CreateConversionRuleRequest>,
 ) -> Result<(StatusCode, Json<ConversionRuleResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let product_id = match req.product_id.as_deref() {
-        Some(s) => Some(parse_id(s, "product_id")?),
-        None => None,
-    };
-    let rule = c.units_of_measure().create_rule(stateset_core::CreateUnitConversionRule {
-        rule_type: parse_id(&req.rule_type, "rule_type")?,
-        product_id,
-        from_uom_id: parse_id(&req.from_uom_id, "from_uom_id")?,
-        to_uom_id: parse_id(&req.to_uom_id, "to_uom_id")?,
-        factor: parse_factor(&req.factor)?,
-    })?;
-    Ok((StatusCode::CREATED, Json(rule_resp(&rule))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let product_id = match req.product_id.as_deref() {
+                Some(s) => Some(parse_id(s, "product_id")?),
+                None => None,
+            };
+            let rule =
+                c.units_of_measure().create_rule(stateset_core::CreateUnitConversionRule {
+                    rule_type: parse_id(&req.rule_type, "rule_type")?,
+                    product_id,
+                    from_uom_id: parse_id(&req.from_uom_id, "from_uom_id")?,
+                    to_uom_id: parse_id(&req.to_uom_id, "to_uom_id")?,
+                    factor: parse_factor(&req.factor)?,
+                })?;
+            Ok((StatusCode::CREATED, Json(rule_resp(&rule))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "units_of_measure_list_rules", path = "/api/v1/unit-conversion-rules", tag = "units_of_measure",
@@ -226,9 +242,12 @@ pub(crate) async fn list_rules(
     headers: HeaderMap,
 ) -> Result<Json<Vec<ConversionRuleResponse>>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let rules = c.units_of_measure().list_rules()?;
-    Ok(Json(rules.iter().map(rule_resp).collect()))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let rules = c.units_of_measure().list_rules()?;
+            Ok(Json(rules.iter().map(rule_resp).collect()))
+        })
+        .await
 }
 
 #[cfg(test)]

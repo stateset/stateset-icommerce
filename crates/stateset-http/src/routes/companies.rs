@@ -103,19 +103,22 @@ pub(crate) async fn create(
     Json(req): Json<CreateCompanyRequest>,
 ) -> Result<(StatusCode, Json<CompanyResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::CreateCompany {
-        name: req.name,
-        reference: req.reference,
-        email: req.email,
-        phone: req.phone,
-        currency: None,
-        payment_terms_days: req.payment_terms_days,
-        tags: Vec::new(),
-        metadata: serde_json::Value::Null,
-    };
-    let company = c.companies().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&company))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::CreateCompany {
+                name: req.name,
+                reference: req.reference,
+                email: req.email,
+                phone: req.phone,
+                currency: None,
+                payment_terms_days: req.payment_terms_days,
+                tags: Vec::new(),
+                metadata: serde_json::Value::Null,
+            };
+            let company = c.companies().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&company))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "companies_list", path = "/api/v1/companies", tag = "companies",
@@ -128,19 +131,28 @@ pub(crate) async fn list(
     Query(params): Query<CompanyFilterParams>,
 ) -> Result<Json<CompanyListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let total = c
-        .companies()
-        .list(stateset_core::CompanyFilter { search: params.search.clone(), ..Default::default() })?
-        .len();
-    let filter = stateset_core::CompanyFilter {
-        search: params.search,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..Default::default()
-    };
-    let companies = c.companies().list(filter)?;
-    Ok(Json(CompanyListResponse { companies: companies.iter().map(to_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let total = c
+                .companies()
+                .list(stateset_core::CompanyFilter {
+                    search: params.search.clone(),
+                    ..Default::default()
+                })?
+                .len();
+            let filter = stateset_core::CompanyFilter {
+                search: params.search,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..Default::default()
+            };
+            let companies = c.companies().list(filter)?;
+            Ok(Json(CompanyListResponse {
+                companies: companies.iter().map(to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "companies_get_one", path = "/api/v1/companies/{id}", tag = "companies",
@@ -153,12 +165,15 @@ pub(crate) async fn get_one(
     Path(id): Path<CompanyId>,
 ) -> Result<Json<CompanyResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let company = c
-        .companies()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Company {id} not found")))?;
-    Ok(Json(to_resp(&company)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let company = c
+                .companies()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Company {id} not found")))?;
+            Ok(Json(to_resp(&company)))
+        })
+        .await
 }
 
 #[utoipa::path(delete, operation_id = "companies_delete_one", path = "/api/v1/companies/{id}", tag = "companies",
@@ -171,9 +186,12 @@ pub(crate) async fn delete_one(
     Path(id): Path<CompanyId>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.companies().delete(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.companies().delete(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "companies_create_contact", path = "/api/v1/companies/{id}/contacts", tag = "companies",
@@ -188,17 +206,20 @@ pub(crate) async fn create_contact(
     Json(req): Json<CreateContactRequest>,
 ) -> Result<(StatusCode, Json<ContactResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::CreateContact {
-        first_name: req.first_name,
-        last_name: req.last_name,
-        email: req.email,
-        phone: req.phone,
-        title: req.title,
-        company_ids: vec![id],
-    };
-    let contact = c.companies().create_contact(input)?;
-    Ok((StatusCode::CREATED, Json(contact_resp(&contact))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::CreateContact {
+                first_name: req.first_name,
+                last_name: req.last_name,
+                email: req.email,
+                phone: req.phone,
+                title: req.title,
+                company_ids: vec![id],
+            };
+            let contact = c.companies().create_contact(input)?;
+            Ok((StatusCode::CREATED, Json(contact_resp(&contact))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "companies_list_contacts", path = "/api/v1/companies/{id}/contacts", tag = "companies",
@@ -211,9 +232,12 @@ pub(crate) async fn list_contacts(
     Path(id): Path<CompanyId>,
 ) -> Result<Json<Vec<ContactResponse>>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let contacts = c.companies().list_contacts(id)?;
-    Ok(Json(contacts.iter().map(contact_resp).collect()))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let contacts = c.companies().list_contacts(id)?;
+            Ok(Json(contacts.iter().map(contact_resp).collect()))
+        })
+        .await
 }
 
 #[cfg(test)]

@@ -92,22 +92,25 @@ pub(crate) async fn record(
     Json(req): Json<RecordActivityRequest>,
 ) -> Result<(StatusCode, Json<ActivityLogResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let actor_kind = match req.actor_kind.as_deref() {
-        Some(s) => parse_id(s, "actor_kind")?,
-        None => stateset_core::ActorKind::default(),
-    };
-    let input = stateset_core::RecordActivity {
-        subject_type: req.subject_type,
-        subject_id: parse_id::<Uuid>(&req.subject_id, "subject_id")?,
-        action: req.action,
-        summary: req.summary,
-        actor_kind,
-        actor: req.actor,
-        metadata: req.metadata,
-    };
-    let e = c.activity_logs().record(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&e))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let actor_kind = match req.actor_kind.as_deref() {
+                Some(s) => parse_id(s, "actor_kind")?,
+                None => stateset_core::ActorKind::default(),
+            };
+            let input = stateset_core::RecordActivity {
+                subject_type: req.subject_type,
+                subject_id: parse_id::<Uuid>(&req.subject_id, "subject_id")?,
+                action: req.action,
+                summary: req.summary,
+                actor_kind,
+                actor: req.actor,
+                metadata: req.metadata,
+            };
+            let e = c.activity_logs().record(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&e))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "activity_logs_list", path = "/api/v1/activity-logs", tag = "activity_logs",
@@ -120,25 +123,31 @@ pub(crate) async fn list(
     Query(params): Query<ActivityLogFilterParams>,
 ) -> Result<Json<ActivityLogListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let subject_id = match params.subject_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "subject_id")?),
-        None => None,
-    };
-    let base = stateset_core::ActivityLogFilter {
-        subject_type: params.subject_type.clone(),
-        subject_id,
-        action: params.action.clone(),
-        ..Default::default()
-    };
-    let total = c.activity_logs().list(base.clone())?.len();
-    let filter = stateset_core::ActivityLogFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    };
-    let entries = c.activity_logs().list(filter)?;
-    Ok(Json(ActivityLogListResponse { entries: entries.iter().map(to_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let subject_id = match params.subject_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "subject_id")?),
+                None => None,
+            };
+            let base = stateset_core::ActivityLogFilter {
+                subject_type: params.subject_type.clone(),
+                subject_id,
+                action: params.action.clone(),
+                ..Default::default()
+            };
+            let total = c.activity_logs().list(base.clone())?.len();
+            let filter = stateset_core::ActivityLogFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            };
+            let entries = c.activity_logs().list(filter)?;
+            Ok(Json(ActivityLogListResponse {
+                entries: entries.iter().map(to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "activity_logs_get_one", path = "/api/v1/activity-logs/{id}", tag = "activity_logs",
@@ -151,12 +160,15 @@ pub(crate) async fn get_one(
     Path(id): Path<ActivityLogId>,
 ) -> Result<Json<ActivityLogResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let e = c
-        .activity_logs()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Activity log entry {id} not found")))?;
-    Ok(Json(to_resp(&e)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let e = c
+                .activity_logs()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Activity log entry {id} not found")))?;
+            Ok(Json(to_resp(&e)))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "activity_logs_history", path = "/api/v1/activity-logs/{subject_type}/{subject_id}", tag = "activity_logs",
@@ -172,10 +184,13 @@ pub(crate) async fn history(
     Path((subject_type, subject_id)): Path<(String, String)>,
 ) -> Result<Json<Vec<ActivityLogResponse>>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let subject = parse_id::<Uuid>(&subject_id, "subject_id")?;
-    let entries = c.activity_logs().history_for_subject(&subject_type, subject)?;
-    Ok(Json(entries.iter().map(to_resp).collect()))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let subject = parse_id::<Uuid>(&subject_id, "subject_id")?;
+            let entries = c.activity_logs().history_for_subject(&subject_type, subject)?;
+            Ok(Json(entries.iter().map(to_resp).collect()))
+        })
+        .await
 }
 
 #[cfg(test)]

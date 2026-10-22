@@ -113,14 +113,18 @@ pub(crate) async fn pair(
     Json(req): Json<PairStationRequest>,
 ) -> Result<(StatusCode, Json<PairResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let result = c
-        .print_stations()
-        .pair(stateset_core::CreatePrintStation { name: req.name, printers: req.printers })?;
-    Ok((
-        StatusCode::CREATED,
-        Json(PairResponse { station: station_resp(&result.station), token: result.token }),
-    ))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let result = c.print_stations().pair(stateset_core::CreatePrintStation {
+                name: req.name,
+                printers: req.printers,
+            })?;
+            Ok((
+                StatusCode::CREATED,
+                Json(PairResponse { station: station_resp(&result.station), token: result.token }),
+            ))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "print_stations_list_stations", path = "/api/v1/print-stations", tag = "print_stations",
@@ -131,9 +135,12 @@ pub(crate) async fn list_stations(
     headers: HeaderMap,
 ) -> Result<Json<Vec<StationResponse>>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let stations = c.print_stations().list_stations()?;
-    Ok(Json(stations.iter().map(station_resp).collect()))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let stations = c.print_stations().list_stations()?;
+            Ok(Json(stations.iter().map(station_resp).collect()))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "print_stations_revoke", path = "/api/v1/print-stations/{id}/revoke", tag = "print_stations",
@@ -146,8 +153,11 @@ pub(crate) async fn revoke(
     Path(id): Path<PrintStationId>,
 ) -> Result<Json<StationResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(station_resp(&c.print_stations().revoke_station(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(station_resp(&c.print_stations().revoke_station(id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "print_stations_enqueue", path = "/api/v1/print-stations/{id}/jobs", tag = "print_stations",
@@ -162,18 +172,21 @@ pub(crate) async fn enqueue(
     Json(req): Json<EnqueueJobRequest>,
 ) -> Result<(StatusCode, Json<JobResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let payload_kind = match req.payload_kind.as_deref() {
-        Some(s) => parse_id(s, "payload_kind")?,
-        None => stateset_core::PrintPayloadKind::default(),
-    };
-    let input = stateset_core::EnqueuePrintJob {
-        printer_name: req.printer_name,
-        payload_kind,
-        payload: req.payload,
-    };
-    let job = c.print_stations().enqueue_job(id, input)?;
-    Ok((StatusCode::CREATED, Json(job_resp(&job))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let payload_kind = match req.payload_kind.as_deref() {
+                Some(s) => parse_id(s, "payload_kind")?,
+                None => stateset_core::PrintPayloadKind::default(),
+            };
+            let input = stateset_core::EnqueuePrintJob {
+                printer_name: req.printer_name,
+                payload_kind,
+                payload: req.payload,
+            };
+            let job = c.print_stations().enqueue_job(id, input)?;
+            Ok((StatusCode::CREATED, Json(job_resp(&job))))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "print_stations_next_job", path = "/api/v1/print-stations/{id}/jobs/next", tag = "print_stations",
@@ -187,11 +200,12 @@ pub(crate) async fn next_job(
 ) -> Result<axum::response::Response, HttpError> {
     use axum::response::IntoResponse;
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    match c.print_stations().next_job(id)? {
-        Some(job) => Ok((StatusCode::OK, Json(job_resp(&job))).into_response()),
-        None => Ok(StatusCode::NO_CONTENT.into_response()),
-    }
+    state
+        .run_blocking(tid.as_deref(), move |c| match c.print_stations().next_job(id)? {
+            Some(job) => Ok((StatusCode::OK, Json(job_resp(&job))).into_response()),
+            None => Ok(StatusCode::NO_CONTENT.into_response()),
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "print_stations_list_jobs", path = "/api/v1/print-stations/{id}/jobs", tag = "print_stations",
@@ -205,18 +219,21 @@ pub(crate) async fn list_jobs(
     Query(params): Query<JobFilterParams>,
 ) -> Result<Json<Vec<JobResponse>>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let filter = stateset_core::PrintJobFilter {
-        status,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-    };
-    let jobs = c.print_stations().list_jobs(id, filter)?;
-    Ok(Json(jobs.iter().map(job_resp).collect()))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let filter = stateset_core::PrintJobFilter {
+                status,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+            };
+            let jobs = c.print_stations().list_jobs(id, filter)?;
+            Ok(Json(jobs.iter().map(job_resp).collect()))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "print_stations_complete_job", path = "/api/v1/print-jobs/{job_id}/complete", tag = "print_stations",
@@ -231,8 +248,11 @@ pub(crate) async fn complete_job(
     Json(req): Json<CompleteJobRequest>,
 ) -> Result<Json<JobResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(job_resp(&c.print_stations().complete_job(job_id, req.success)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(job_resp(&c.print_stations().complete_job(job_id, req.success)?)))
+        })
+        .await
 }
 
 #[cfg(test)]

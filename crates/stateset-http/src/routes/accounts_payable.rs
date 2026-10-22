@@ -282,43 +282,46 @@ pub(crate) async fn create_bill(
     Json(req): Json<CreateApBillRequest>,
 ) -> Result<(StatusCode, Json<ApBillResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let purchase_order_id = match req.purchase_order_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "purchase_order_id")?),
-        None => None,
-    };
-    let mut items = Vec::with_capacity(req.items.len());
-    for i in req.items {
-        let tax_rate = match i.tax_rate.as_deref() {
-            Some(s) => Some(parse_decimal(s, "tax_rate")?),
-            None => None,
-        };
-        items.push(stateset_core::CreateBillItem {
-            description: i.description,
-            account_code: i.account_code,
-            quantity: parse_decimal(&i.quantity, "quantity")?,
-            unit_price: parse_decimal(&i.unit_price, "unit_price")?,
-            tax_rate,
-            po_line_id: match i.po_line_id.as_deref() {
-                Some(s) => Some(parse_id::<Uuid>(s, "po_line_id")?),
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let purchase_order_id = match req.purchase_order_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "purchase_order_id")?),
                 None => None,
-            },
-        });
-    }
-    let input = stateset_core::CreateBill {
-        bill_number: None,
-        supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
-        purchase_order_id,
-        bill_date: None,
-        due_date: parse_datetime(&req.due_date, "due_date")?,
-        payment_terms: req.payment_terms,
-        currency: None,
-        reference_number: req.reference_number,
-        memo: req.memo,
-        items,
-    };
-    let bill = c.accounts_payable().create_bill(input)?;
-    Ok((StatusCode::CREATED, Json(bill_resp(&bill))))
+            };
+            let mut items = Vec::with_capacity(req.items.len());
+            for i in req.items {
+                let tax_rate = match i.tax_rate.as_deref() {
+                    Some(s) => Some(parse_decimal(s, "tax_rate")?),
+                    None => None,
+                };
+                items.push(stateset_core::CreateBillItem {
+                    description: i.description,
+                    account_code: i.account_code,
+                    quantity: parse_decimal(&i.quantity, "quantity")?,
+                    unit_price: parse_decimal(&i.unit_price, "unit_price")?,
+                    tax_rate,
+                    po_line_id: match i.po_line_id.as_deref() {
+                        Some(s) => Some(parse_id::<Uuid>(s, "po_line_id")?),
+                        None => None,
+                    },
+                });
+            }
+            let input = stateset_core::CreateBill {
+                bill_number: None,
+                supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
+                purchase_order_id,
+                bill_date: None,
+                due_date: parse_datetime(&req.due_date, "due_date")?,
+                payment_terms: req.payment_terms,
+                currency: None,
+                reference_number: req.reference_number,
+                memo: req.memo,
+                items,
+            };
+            let bill = c.accounts_payable().create_bill(input)?;
+            Ok((StatusCode::CREATED, Json(bill_resp(&bill))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "ap_list_bills", path = "/api/v1/ap/bills", tag = "accounts_payable",
@@ -331,29 +334,32 @@ pub(crate) async fn list_bills(
     Query(params): Query<ApBillFilterParams>,
 ) -> Result<Json<ApBillListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let supplier_id = match params.supplier_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
-        None => None,
-    };
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let base = stateset_core::BillFilter {
-        supplier_id,
-        status,
-        overdue_only: params.overdue_only,
-        ..Default::default()
-    };
-    let total = c.accounts_payable().count_bills(base.clone())?;
-    let filter = stateset_core::BillFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    };
-    let bills = c.accounts_payable().list_bills(filter)?;
-    Ok(Json(ApBillListResponse { bills: bills.iter().map(bill_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let supplier_id = match params.supplier_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
+                None => None,
+            };
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let base = stateset_core::BillFilter {
+                supplier_id,
+                status,
+                overdue_only: params.overdue_only,
+                ..Default::default()
+            };
+            let total = c.accounts_payable().count_bills(base.clone())?;
+            let filter = stateset_core::BillFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            };
+            let bills = c.accounts_payable().list_bills(filter)?;
+            Ok(Json(ApBillListResponse { bills: bills.iter().map(bill_resp).collect(), total }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "ap_get_bill", path = "/api/v1/ap/bills/{id}", tag = "accounts_payable",
@@ -366,12 +372,15 @@ pub(crate) async fn get_bill(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ApBillResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let bill = c
-        .accounts_payable()
-        .get_bill(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Bill {id} not found")))?;
-    Ok(Json(bill_resp(&bill)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let bill = c
+                .accounts_payable()
+                .get_bill(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Bill {id} not found")))?;
+            Ok(Json(bill_resp(&bill)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "ap_approve_bill", path = "/api/v1/ap/bills/{id}/approve", tag = "accounts_payable",
@@ -384,8 +393,11 @@ pub(crate) async fn approve_bill(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ApBillResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(bill_resp(&c.accounts_payable().approve_bill(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(bill_resp(&c.accounts_payable().approve_bill(id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "ap_cancel_bill", path = "/api/v1/ap/bills/{id}/cancel", tag = "accounts_payable",
@@ -398,8 +410,11 @@ pub(crate) async fn cancel_bill(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ApBillResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(bill_resp(&c.accounts_payable().cancel_bill(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(bill_resp(&c.accounts_payable().cancel_bill(id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "ap_dispute_bill", path = "/api/v1/ap/bills/{id}/dispute", tag = "accounts_payable",
@@ -412,8 +427,11 @@ pub(crate) async fn dispute_bill(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ApBillResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(bill_resp(&c.accounts_payable().dispute_bill(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(bill_resp(&c.accounts_payable().dispute_bill(id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "ap_three_way_match_bill", path = "/api/v1/ap/bills/{id}/three-way-match", tag = "accounts_payable",
@@ -427,47 +445,50 @@ pub(crate) async fn three_way_match_bill(
     Query(params): Query<ThreeWayMatchParams>,
 ) -> Result<Json<ThreeWayMatchResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let tolerance = match params.tolerance_percent.as_deref() {
-        Some(s) => Some(parse_decimal(s, "tolerance_percent")?),
-        None => None,
-    };
-    let result = c.accounts_payable().three_way_match(id, tolerance)?;
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let tolerance = match params.tolerance_percent.as_deref() {
+                Some(s) => Some(parse_decimal(s, "tolerance_percent")?),
+                None => None,
+            };
+            let result = c.accounts_payable().three_way_match(id, tolerance)?;
 
-    let (match_status, variance_line_count) = match result.match_status {
-        stateset_core::MatchStatus::NotRequired => ("not_required", None),
-        stateset_core::MatchStatus::Pending => ("pending", None),
-        stateset_core::MatchStatus::Matched => ("matched", None),
-        stateset_core::MatchStatus::Variance { variance_line_count } => {
-            ("variance", Some(variance_line_count as u64))
-        }
-        _ => ("unknown", None),
-    };
+            let (match_status, variance_line_count) = match result.match_status {
+                stateset_core::MatchStatus::NotRequired => ("not_required", None),
+                stateset_core::MatchStatus::Pending => ("pending", None),
+                stateset_core::MatchStatus::Matched => ("matched", None),
+                stateset_core::MatchStatus::Variance { variance_line_count } => {
+                    ("variance", Some(variance_line_count as u64))
+                }
+                _ => ("unknown", None),
+            };
 
-    Ok(Json(ThreeWayMatchResponse {
-        bill_id: id.to_string(),
-        match_status: match_status.to_string(),
-        variance_line_count,
-        tolerance_percent: result.tolerance_percent.to_string(),
-        lines: result
-            .lines
-            .into_iter()
-            .map(|l| ThreeWayMatchLineResponse {
-                po_line_id: l.po_line_id.map(|id| id.to_string()),
-                bill_item_id: l.bill_item_id.to_string(),
-                description: l.description,
-                ordered_quantity: l.ordered_quantity.map(|d| d.to_string()),
-                ordered_unit_cost: l.ordered_unit_cost.map(|d| d.to_string()),
-                received_quantity: l.received_quantity.to_string(),
-                billed_quantity: l.billed_quantity.to_string(),
-                billed_unit_cost: l.billed_unit_cost.to_string(),
-                quantity_variance: l.quantity_variance.to_string(),
-                price_variance: l.price_variance.to_string(),
-                matched: l.matched,
-                issues: l.issues,
-            })
-            .collect(),
-    }))
+            Ok(Json(ThreeWayMatchResponse {
+                bill_id: id.to_string(),
+                match_status: match_status.to_string(),
+                variance_line_count,
+                tolerance_percent: result.tolerance_percent.to_string(),
+                lines: result
+                    .lines
+                    .into_iter()
+                    .map(|l| ThreeWayMatchLineResponse {
+                        po_line_id: l.po_line_id.map(|id| id.to_string()),
+                        bill_item_id: l.bill_item_id.to_string(),
+                        description: l.description,
+                        ordered_quantity: l.ordered_quantity.map(|d| d.to_string()),
+                        ordered_unit_cost: l.ordered_unit_cost.map(|d| d.to_string()),
+                        received_quantity: l.received_quantity.to_string(),
+                        billed_quantity: l.billed_quantity.to_string(),
+                        billed_unit_cost: l.billed_unit_cost.to_string(),
+                        quantity_variance: l.quantity_variance.to_string(),
+                        price_variance: l.price_variance.to_string(),
+                        matched: l.matched,
+                        issues: l.issues,
+                    })
+                    .collect(),
+            }))
+        })
+        .await
 }
 
 // ============================================================================
@@ -488,28 +509,31 @@ pub(crate) async fn create_payment(
     Json(req): Json<CreateApPaymentRequest>,
 ) -> Result<(StatusCode, Json<ApPaymentResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let mut allocations = Vec::with_capacity(req.allocations.len());
-    for a in req.allocations {
-        allocations.push(stateset_core::PaymentAllocationInput {
-            bill_id: parse_id::<Uuid>(&a.bill_id, "bill_id")?,
-            amount: parse_decimal(&a.amount, "allocation amount")?,
-        });
-    }
-    let input = stateset_core::CreateBillPayment {
-        supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
-        payment_date: None,
-        payment_method: parse_id(&req.payment_method, "payment_method")?,
-        amount: parse_decimal(&req.amount, "amount")?,
-        currency: None,
-        reference_number: req.reference_number,
-        bank_account: req.bank_account,
-        check_number: req.check_number,
-        memo: req.memo,
-        allocations,
-    };
-    let payment = c.accounts_payable().create_payment(input)?;
-    Ok((StatusCode::CREATED, Json(payment_resp(&payment))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let mut allocations = Vec::with_capacity(req.allocations.len());
+            for a in req.allocations {
+                allocations.push(stateset_core::PaymentAllocationInput {
+                    bill_id: parse_id::<Uuid>(&a.bill_id, "bill_id")?,
+                    amount: parse_decimal(&a.amount, "allocation amount")?,
+                });
+            }
+            let input = stateset_core::CreateBillPayment {
+                supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
+                payment_date: None,
+                payment_method: parse_id(&req.payment_method, "payment_method")?,
+                amount: parse_decimal(&req.amount, "amount")?,
+                currency: None,
+                reference_number: req.reference_number,
+                bank_account: req.bank_account,
+                check_number: req.check_number,
+                memo: req.memo,
+                allocations,
+            };
+            let payment = c.accounts_payable().create_payment(input)?;
+            Ok((StatusCode::CREATED, Json(payment_resp(&payment))))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "ap_void_payment", path = "/api/v1/ap/payments/{id}/void", tag = "accounts_payable",
@@ -522,8 +546,11 @@ pub(crate) async fn void_payment(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ApPaymentResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(payment_resp(&c.accounts_payable().void_payment(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(payment_resp(&c.accounts_payable().void_payment(id)?)))
+        })
+        .await
 }
 
 // ============================================================================
@@ -540,20 +567,23 @@ pub(crate) async fn create_payment_run(
     Json(req): Json<CreateApPaymentRunRequest>,
 ) -> Result<(StatusCode, Json<ApPaymentRunResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let mut bill_ids = Vec::with_capacity(req.bill_ids.len());
-    for id in &req.bill_ids {
-        bill_ids.push(parse_id::<Uuid>(id, "bill_id")?);
-    }
-    let input = stateset_core::CreatePaymentRun {
-        payment_date: parse_datetime(&req.payment_date, "payment_date")?,
-        payment_method: parse_id(&req.payment_method, "payment_method")?,
-        bill_ids,
-        notes: req.notes,
-        created_by: req.created_by,
-    };
-    let run = c.accounts_payable().create_payment_run(input)?;
-    Ok((StatusCode::CREATED, Json(run_resp(&run))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let mut bill_ids = Vec::with_capacity(req.bill_ids.len());
+            for id in &req.bill_ids {
+                bill_ids.push(parse_id::<Uuid>(id, "bill_id")?);
+            }
+            let input = stateset_core::CreatePaymentRun {
+                payment_date: parse_datetime(&req.payment_date, "payment_date")?,
+                payment_method: parse_id(&req.payment_method, "payment_method")?,
+                bill_ids,
+                notes: req.notes,
+                created_by: req.created_by,
+            };
+            let run = c.accounts_payable().create_payment_run(input)?;
+            Ok((StatusCode::CREATED, Json(run_resp(&run))))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "ap_approve_payment_run", path = "/api/v1/ap/payment-runs/{id}/approve", tag = "accounts_payable",
@@ -568,8 +598,11 @@ pub(crate) async fn approve_payment_run(
     Json(req): Json<ApprovePaymentRunRequest>,
 ) -> Result<Json<ApPaymentRunResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(run_resp(&c.accounts_payable().approve_payment_run(id, &req.approved_by)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(run_resp(&c.accounts_payable().approve_payment_run(id, &req.approved_by)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "ap_process_payment_run", path = "/api/v1/ap/payment-runs/{id}/process", tag = "accounts_payable",
@@ -582,8 +615,11 @@ pub(crate) async fn process_payment_run(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ApPaymentRunResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(run_resp(&c.accounts_payable().process_payment_run(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(run_resp(&c.accounts_payable().process_payment_run(id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "ap_cancel_payment_run", path = "/api/v1/ap/payment-runs/{id}/cancel", tag = "accounts_payable",
@@ -596,8 +632,11 @@ pub(crate) async fn cancel_payment_run(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ApPaymentRunResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(run_resp(&c.accounts_payable().cancel_payment_run(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(run_resp(&c.accounts_payable().cancel_payment_run(id)?)))
+        })
+        .await
 }
 
 // ============================================================================
@@ -612,16 +651,19 @@ pub(crate) async fn aging(
     headers: HeaderMap,
 ) -> Result<Json<ApAgingResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let a = c.accounts_payable().get_aging_summary()?;
-    Ok(Json(ApAgingResponse {
-        current: a.current.to_string(),
-        days_1_30: a.days_1_30.to_string(),
-        days_31_60: a.days_31_60.to_string(),
-        days_61_90: a.days_61_90.to_string(),
-        days_over_90: a.days_over_90.to_string(),
-        total: a.total.to_string(),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let a = c.accounts_payable().get_aging_summary()?;
+            Ok(Json(ApAgingResponse {
+                current: a.current.to_string(),
+                days_1_30: a.days_1_30.to_string(),
+                days_31_60: a.days_31_60.to_string(),
+                days_61_90: a.days_61_90.to_string(),
+                days_over_90: a.days_over_90.to_string(),
+                total: a.total.to_string(),
+            }))
+        })
+        .await
 }
 
 #[cfg(test)]
