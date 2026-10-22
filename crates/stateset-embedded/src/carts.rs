@@ -4,7 +4,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```rust,no_run
 //! use stateset_embedded::{Commerce, CreateCart, AddCartItem};
 //! use rust_decimal_macros::dec;
 //! use uuid::Uuid;

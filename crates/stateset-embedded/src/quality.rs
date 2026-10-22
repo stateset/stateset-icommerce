@@ -8,7 +8,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use stateset_embedded::{Commerce, CreateInspection, InspectionType};
 //! use uuid::Uuid;
 //!
@@ -60,7 +60,7 @@ impl Quality {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateInspection, InspectionType};
     /// use uuid::Uuid;
     ///
@@ -139,7 +139,7 @@ impl Quality {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateNonConformance, NonConformanceSource, Severity};
     /// use rust_decimal_macros::dec;
     ///
@@ -213,7 +213,7 @@ impl Quality {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateQualityHold, HoldType};
     /// use rust_decimal_macros::dec;
     ///
@@ -222,11 +222,15 @@ impl Quality {
     /// let hold = commerce.quality().create_hold(CreateQualityHold {
     ///     sku: "SKU-001".into(),
     ///     lot_number: Some("LOT-2025-001".into()),
-    ///     quantity_held: dec!(50),
+    ///     serial_number: None,
+    ///     location_id: None,
+    ///     quantity: dec!(50),
     ///     reason: "Pending quality inspection".into(),
     ///     hold_type: HoldType::QualityInspection,
-    ///     placed_by: Some("QA Team".into()),
-    ///     ..Default::default()
+    ///     ncr_id: None,
+    ///     inspection_id: None,
+    ///     placed_by: "QA Team".into(),
+    ///     expires_at: None,
     /// })?;
     ///
     /// println!("Hold placed on {} units", hold.quantity_held);
@@ -250,7 +254,7 @@ impl Quality {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, ReleaseQualityHold};
     /// use uuid::Uuid;
     ///
@@ -258,7 +262,7 @@ impl Quality {
     ///
     /// commerce.quality().release_hold(Uuid::new_v4(), ReleaseQualityHold {
     ///     released_by: "QA Manager".into(),
-    ///     notes: Some("Inspection passed".into()),
+    ///     release_notes: Some("Inspection passed".into()),
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```

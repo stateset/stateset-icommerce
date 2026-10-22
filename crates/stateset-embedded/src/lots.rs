@@ -8,7 +8,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use stateset_embedded::{Commerce, CreateLot};
 //! use chrono::{Utc, Duration};
 //! use rust_decimal_macros::dec;
@@ -19,9 +19,18 @@
 //! let lot = commerce.lots().create(CreateLot {
 //!     lot_number: Some("LOT-2025-001".into()),
 //!     sku: "RAW-MAT-001".into(),
-//!     quantity_produced: dec!(1000),
+//!     quantity: dec!(1000),
+//!     production_date: None,
 //!     expiration_date: Some(Utc::now() + Duration::days(365)),
-//!     ..Default::default()
+//!     best_before_date: None,
+//!     supplier_lot: None,
+//!     supplier_id: None,
+//!     work_order_id: None,
+//!     purchase_order_id: None,
+//!     cost_per_unit: None,
+//!     attributes: None,
+//!     notes: None,
+//!     initial_location_id: None,
 //! })?;
 //!
 //! println!("Created lot {}", lot.lot_number);
@@ -62,7 +71,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, CreateLot};
     /// use chrono::{Utc, Duration};
     /// use rust_decimal_macros::dec;
@@ -72,10 +81,18 @@ impl Lots {
     /// let lot = commerce.lots().create(CreateLot {
     ///     lot_number: Some("BATCH-001".into()),
     ///     sku: "PROD-001".into(),
-    ///     quantity_produced: dec!(500),
+    ///     quantity: dec!(500),
     ///     production_date: Some(Utc::now()),
     ///     expiration_date: Some(Utc::now() + Duration::days(180)),
-    ///     ..Default::default()
+    ///     best_before_date: None,
+    ///     supplier_lot: None,
+    ///     supplier_id: None,
+    ///     work_order_id: None,
+    ///     purchase_order_id: None,
+    ///     cost_per_unit: None,
+    ///     attributes: None,
+    ///     notes: None,
+    ///     initial_location_id: None,
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
@@ -97,7 +114,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, LotFilter, LotStatus};
     ///
     /// let commerce = Commerce::new(":memory:")?;
@@ -132,7 +149,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::Commerce;
     /// use uuid::Uuid;
     ///
@@ -158,7 +175,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, AdjustLot};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -168,10 +185,12 @@ impl Lots {
     /// // Remove 10 units due to damage
     /// commerce.lots().adjust(AdjustLot {
     ///     lot_id: Uuid::new_v4(),
-    ///     quantity: dec!(-10),
+    ///     quantity_change: dec!(-10),
     ///     reason: "Damaged in storage".into(),
+    ///     reference_type: None,
+    ///     reference_id: None,
+    ///     location_id: None,
     ///     performed_by: Some("warehouse_user".into()),
-    ///     ..Default::default()
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
@@ -183,7 +202,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, ConsumeLot};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -229,7 +248,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, SplitLot};
     /// use rust_decimal_macros::dec;
     /// use uuid::Uuid;
@@ -238,11 +257,10 @@ impl Lots {
     ///
     /// // Split 100 units into a new lot
     /// let new_lot = commerce.lots().split(SplitLot {
-    ///     source_lot_id: Uuid::new_v4(),
+    ///     lot_id: Uuid::new_v4(),
     ///     new_lot_number: Some("LOT-2025-001B".into()),
     ///     quantity: dec!(100),
     ///     reason: Some("Customer allocation".into()),
-    ///     ..Default::default()
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
@@ -263,7 +281,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::{Commerce, AddLotCertificate, CertificateType};
     /// use uuid::Uuid;
     ///
@@ -337,7 +355,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::Commerce;
     /// use uuid::Uuid;
     ///
@@ -365,7 +383,7 @@ impl Lots {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use stateset_embedded::Commerce;
     /// use uuid::Uuid;
     ///

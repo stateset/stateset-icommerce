@@ -7,9 +7,10 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
-//! use stateset_embedded::{Commerce, CommerceEvent};
-//! use tokio_stream::StreamExt;
+//! ```rust,no_run
+//! use futures::StreamExt;
+//! use rust_decimal_macros::dec;
+//! use stateset_embedded::{Commerce, CreateOrder, CreateOrderItem, CustomerId};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,7 +27,18 @@
 //!     });
 //!
 //!     // Events are emitted automatically when operations occur
-//!     commerce.orders().create(...)?;  // Emits OrderCreated event
+//!     // Emits an OrderCreated event
+//!     commerce.orders().create(CreateOrder {
+//!         customer_id: CustomerId::new(),
+//!         items: vec![CreateOrderItem {
+//!             sku: "SKU-001".into(),
+//!             name: "Widget".into(),
+//!             quantity: 1,
+//!             unit_price: dec!(19.99),
+//!             ..Default::default()
+//!         }],
+//!         ..Default::default()
+//!     })?;
 //!
 //!     Ok(())
 //! }
