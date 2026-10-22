@@ -454,7 +454,7 @@ impl PgPurchaseOrderRepository {
 
         let mut q = sqlx::query_as::<_, SupplierRow>(&query);
         if let Some(name) = filter.name {
-            q = q.bind(format!("%{name}%"));
+            q = q.bind(format!("%{}%", super::escape_like(&name)));
         }
         if let Some(country) = filter.country {
             q = q.bind(country);

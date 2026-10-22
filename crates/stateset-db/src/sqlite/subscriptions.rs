@@ -210,8 +210,8 @@ impl SqliteSubscriptionRepository {
             }
 
             if let Some(search) = &filter.search {
-                sql.push_str(" AND (name LIKE ? OR code LIKE ? OR description LIKE ?)");
-                let pattern = format!("%{search}%");
+                sql.push_str(" AND (name LIKE ? ESCAPE '\\' OR code LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')");
+                let pattern = format!("%{}%", super::escape_like(search));
                 params.push(Box::new(pattern.clone()));
                 params.push(Box::new(pattern.clone()));
                 params.push(Box::new(pattern));
@@ -930,8 +930,10 @@ impl SqliteSubscriptionRepository {
             }
 
             if let Some(search) = &filter.search {
-                sql.push_str(" AND (subscription_number LIKE ? OR plan_name LIKE ?)");
-                let pattern = format!("%{search}%");
+                sql.push_str(
+                    " AND (subscription_number LIKE ? ESCAPE '\\' OR plan_name LIKE ? ESCAPE '\\')",
+                );
+                let pattern = format!("%{}%", super::escape_like(search));
                 params.push(Box::new(pattern.clone()));
                 params.push(Box::new(pattern));
             }

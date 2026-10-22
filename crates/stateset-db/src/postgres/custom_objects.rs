@@ -281,9 +281,9 @@ impl PgCustomObjectRepository {
 
         if let Some(search) = filter.search.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
             qb.push(" WHERE handle ILIKE ");
-            qb.push_bind(format!("%{}%", search));
+            qb.push_bind(format!("%{}%", super::escape_like(search)));
             qb.push(" OR display_name ILIKE ");
-            qb.push_bind(format!("%{}%", search));
+            qb.push_bind(format!("%{}%", super::escape_like(search)));
         }
 
         qb.push(" ORDER BY handle ASC");

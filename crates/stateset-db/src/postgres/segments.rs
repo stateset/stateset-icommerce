@@ -178,7 +178,7 @@ impl PgSegmentRepository {
         if let Some(ref name) = filter.name {
             query.push_str(&format!(" AND name ILIKE ${param_idx}"));
             param_idx += 1;
-            binds.push(BindValue::Str(format!("%{name}%")));
+            binds.push(BindValue::Str(format!("%{}%", super::escape_like(name))));
         }
         let _ = param_idx;
 

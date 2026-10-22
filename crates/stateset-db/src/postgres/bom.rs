@@ -289,7 +289,7 @@ impl PgBomRepository {
             q = q.bind(status.to_string());
         }
         if let Some(search) = filter.search {
-            q = q.bind(format!("%{search}%"));
+            q = q.bind(format!("%{}%", super::escape_like(&search)));
         }
         let rows = q.bind(limit).bind(offset).fetch_all(&self.pool).await.map_err(map_db_error)?;
 
@@ -445,7 +445,7 @@ impl PgBomRepository {
             q = q.bind(status.to_string());
         }
         if let Some(search) = filter.search {
-            q = q.bind(format!("%{search}%"));
+            q = q.bind(format!("%{}%", super::escape_like(&search)));
         }
         let count: (i64,) = q.fetch_one(&self.pool).await.map_err(map_db_error)?;
 

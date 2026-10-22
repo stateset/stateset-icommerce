@@ -254,7 +254,7 @@ impl PgSearchConfigRepository {
             query = query.bind(is_active);
         }
         if let Some(ref name) = filter.name {
-            query = query.bind(format!("%{name}%"));
+            query = query.bind(format!("%{}%", super::escape_like(name)));
         }
         query = query.bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {

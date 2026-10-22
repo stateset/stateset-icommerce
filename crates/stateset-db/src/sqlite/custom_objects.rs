@@ -278,8 +278,8 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         if let Some(search) = filter.search.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-            sql.push_str(" WHERE handle LIKE ? OR display_name LIKE ?");
-            let pat = format!("%{search}%");
+            sql.push_str(" WHERE handle LIKE ? ESCAPE '\\' OR display_name LIKE ? ESCAPE '\\'");
+            let pat = format!("%{}%", super::escape_like(search));
             params.push(Box::new(pat.clone()));
             params.push(Box::new(pat));
         }

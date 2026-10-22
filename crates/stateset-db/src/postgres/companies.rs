@@ -76,22 +76,6 @@ struct PriceOverrideRow {
     updated_at: DateTime<Utc>,
 }
 
-/// Escape LIKE wildcard characters (%, _, \) in a search string so that
-/// user-supplied terms cannot act as pattern metacharacters.
-fn escape_like(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    for ch in input.chars() {
-        match ch {
-            '%' | '_' | '\\' => {
-                out.push('\\');
-                out.push(ch);
-            }
-            _ => out.push(ch),
-        }
-    }
-    out
-}
-
 impl PgCompanyRepository {
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -297,7 +281,7 @@ impl PgCompanyRepository {
             q = q.bind(status.to_string());
         }
         if let Some(ref search) = filter.search {
-            q = q.bind(format!("%{}%", escape_like(search)));
+            q = q.bind(format!("%{}%", super::escape_like(search)));
         }
         let rows = q.bind(limit).bind(offset).fetch_all(&self.pool).await.map_err(map_db_error)?;
         rows.into_iter().map(Self::row_to_company).collect()

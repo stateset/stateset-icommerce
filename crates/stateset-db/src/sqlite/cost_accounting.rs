@@ -509,8 +509,8 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         if let Some(ref sku) = filter.sku {
-            sql.push_str(" AND sku LIKE ?");
-            params.push(Box::new(format!("%{sku}%")));
+            sql.push_str(" AND sku LIKE ? ESCAPE '\\'");
+            params.push(Box::new(format!("%{}%", super::escape_like(sku))));
         }
         if let Some(ref method) = filter.cost_method {
             sql.push_str(" AND cost_method = ?");

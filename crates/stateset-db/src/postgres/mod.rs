@@ -1534,3 +1534,20 @@ mod tests {
         assert_eq!(backoff, 4);
     }
 }
+
+/// Escape LIKE wildcard characters (%, _, \) in a search string so that
+/// user-supplied terms cannot act as pattern metacharacters. Postgres `LIKE`
+/// and `ILIKE` use backslash as the default escape character.
+pub(crate) fn escape_like(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '%' | '_' | '\\' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}

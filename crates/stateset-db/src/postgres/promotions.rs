@@ -936,7 +936,7 @@ impl PgPromotionRepository {
             q = q.bind(trigger.to_string());
         }
         if let Some(search) = &filter.search {
-            let pattern = format!("%{}%", search);
+            let pattern = format!("%{}%", super::escape_like(search));
             q = q.bind(pattern);
         }
 
@@ -1125,7 +1125,7 @@ impl PgPromotionRepository {
             q = q.bind(status.to_string());
         }
         if let Some(search) = &filter.search {
-            q = q.bind(format!("%{}%", search.to_uppercase()));
+            q = q.bind(format!("%{}%", super::escape_like(&search.to_uppercase())));
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;

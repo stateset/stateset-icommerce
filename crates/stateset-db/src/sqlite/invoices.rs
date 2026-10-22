@@ -651,8 +651,8 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         if let Some(invoice_number) = &filter.invoice_number {
             // Case-insensitive substring match, mirroring Postgres `ILIKE '%..%'`
             // (SQLite `LIKE` is case-insensitive for ASCII by default).
-            sql.push_str(" AND invoice_number LIKE ?");
-            params_vec.push(Box::new(format!("%{invoice_number}%")));
+            sql.push_str(" AND invoice_number LIKE ? ESCAPE '\\'");
+            params_vec.push(Box::new(format!("%{}%", super::escape_like(invoice_number))));
         }
 
         sql.push_str(" ORDER BY invoice_date DESC");

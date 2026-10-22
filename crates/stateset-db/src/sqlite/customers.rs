@@ -675,8 +675,11 @@ impl CustomerRepository for SqliteCustomerRepository {
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
 
         if let Some(email) = &filter.email {
-            sql.push_str(" AND LOWER(email) LIKE ?");
-            params.push(Box::new(format!("%{}%", Customer::normalize_email(email))));
+            sql.push_str(" AND LOWER(email) LIKE ? ESCAPE '\\'");
+            params.push(Box::new(format!(
+                "%{}%",
+                super::escape_like(&Customer::normalize_email(email))
+            )));
         }
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");
@@ -1070,8 +1073,11 @@ impl CustomerRepository for SqliteCustomerRepository {
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
 
         if let Some(email) = &filter.email {
-            sql.push_str(" AND LOWER(email) LIKE ?");
-            params.push(Box::new(format!("%{}%", Customer::normalize_email(email))));
+            sql.push_str(" AND LOWER(email) LIKE ? ESCAPE '\\'");
+            params.push(Box::new(format!(
+                "%{}%",
+                super::escape_like(&Customer::normalize_email(email))
+            )));
         }
         if let Some(status) = &filter.status {
             sql.push_str(" AND status = ?");

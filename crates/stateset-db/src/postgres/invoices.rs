@@ -640,7 +640,7 @@ impl PgInvoiceRepository {
             query = query.bind(min_balance);
         }
         if let Some(invoice_number) = filter.invoice_number {
-            query = query.bind(format!("%{}%", invoice_number));
+            query = query.bind(format!("%{}%", super::escape_like(&invoice_number)));
         }
         query = query.bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
