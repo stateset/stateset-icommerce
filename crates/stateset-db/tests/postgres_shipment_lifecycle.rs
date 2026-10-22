@@ -1149,3 +1149,26 @@ async fn postgres_concurrent_versioned_packing_edits_have_one_winner() {
     assert!(matches!(stored.items.len(), 0 | 2));
     assert_eq!(event_count(&db, id).await, 3);
 }
+
+#[tokio::test]
+async fn postgres_count_applies_the_same_tracking_number_filter_as_list() {
+    let Some(db) = database().await else {
+        return;
+    };
+    let untracked = shipment(&db).await;
+    let tracking = format!("1Z-COUNT-{}", uuid::Uuid::new_v4().simple());
+    db.shipments()
+        .create_async(CreateShipment {
+            order_id: untracked.order_id,
+            recipient_name: "Ada".into(),
+            shipping_address: "1 Main".into(),
+            tracking_number: Some(tracking.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let filter =
+        stateset_core::ShipmentFilter { tracking_number: Some(tracking), ..Default::default() };
+    assert_eq!(db.shipments().list_async(filter.clone()).await.unwrap().len(), 1);
+    assert_eq!(db.shipments().count_async(filter).await.unwrap(), 1);
+}
