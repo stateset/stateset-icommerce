@@ -838,6 +838,7 @@ impl PgWarehouseRepository {
     }
 
     pub async fn list_locations_async(&self, filter: LocationFilter) -> Result<Vec<Location>> {
+        crate::rules::warehouse::reject_untracked_capacity_filter(&filter)?;
         let mut builder = QueryBuilder::<Postgres>::new("SELECT * FROM locations WHERE 1=1");
 
         if let Some(warehouse_id) = filter.warehouse_id {
@@ -968,6 +969,7 @@ impl PgWarehouseRepository {
     }
 
     pub async fn count_locations_async(&self, filter: LocationFilter) -> Result<u64> {
+        crate::rules::warehouse::reject_untracked_capacity_filter(&filter)?;
         let mut builder = QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM locations WHERE 1=1");
 
         if let Some(warehouse_id) = filter.warehouse_id {

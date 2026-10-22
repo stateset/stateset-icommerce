@@ -22,6 +22,60 @@ pub struct SqliteWarrantyRepository {
 }
 
 impl SqliteWarrantyRepository {
+    /// Append the `list`/`count` WHERE conditions for `filter` to `sql` and
+    /// their bind values to `params`. The single definition of the warranty
+    /// filter set, so the two cannot disagree. `expiring_within_days` keeps
+    /// active warranties whose end date falls after now and no later than that
+    /// many days ahead (RFC 3339 on both sides, so text order is time order).
+    fn push_warranty_filter(
+        filter: &WarrantyFilter,
+        sql: &mut String,
+        params: &mut Vec<Box<dyn rusqlite::ToSql>>,
+    ) {
+        if let Some(customer_id) = &filter.customer_id {
+            sql.push_str(" AND customer_id = ?");
+            params.push(Box::new(customer_id.to_string()));
+        }
+        if let Some(order_id) = &filter.order_id {
+            sql.push_str(" AND order_id = ?");
+            params.push(Box::new(order_id.to_string()));
+        }
+        if let Some(product_id) = &filter.product_id {
+            sql.push_str(" AND product_id = ?");
+            params.push(Box::new(product_id.to_string()));
+        }
+        if let Some(sku) = &filter.sku {
+            sql.push_str(" AND sku = ?");
+            params.push(Box::new(sku.clone()));
+        }
+        if let Some(serial_number) = &filter.serial_number {
+            sql.push_str(" AND serial_number = ?");
+            params.push(Box::new(serial_number.clone()));
+        }
+        if let Some(warranty_type) = &filter.warranty_type {
+            sql.push_str(" AND warranty_type = ?");
+            params.push(Box::new(warranty_type.to_string()));
+        }
+        if let Some(status) = &filter.status {
+            sql.push_str(" AND status = ?");
+            params.push(Box::new(status.to_string()));
+        }
+        if filter.active_only.unwrap_or(false) {
+            sql.push_str(
+                " AND status = 'active' AND (end_date IS NULL OR end_date > strftime('%Y-%m-%dT%H:%M:%f', 'now'))",
+            );
+        }
+        if let Some(days) = filter.expiring_within_days {
+            sql.push_str(
+                " AND status = 'active' AND end_date IS NOT NULL \
+                 AND end_date > strftime('%Y-%m-%dT%H:%M:%f', 'now') AND end_date <= ?",
+            );
+            params.push(Box::new(
+                crate::rules::warranties::expiry_horizon(chrono::Utc::now(), days).to_rfc3339(),
+            ));
+        }
+    }
+
     #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
@@ -611,39 +665,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         let mut sql = "SELECT * FROM warranties WHERE 1=1".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-        if let Some(customer_id) = &filter.customer_id {
-            sql.push_str(" AND customer_id = ?");
-            params_vec.push(Box::new(customer_id.to_string()));
-        }
-        if let Some(order_id) = &filter.order_id {
-            sql.push_str(" AND order_id = ?");
-            params_vec.push(Box::new(order_id.to_string()));
-        }
-        if let Some(product_id) = &filter.product_id {
-            sql.push_str(" AND product_id = ?");
-            params_vec.push(Box::new(product_id.to_string()));
-        }
-        if let Some(sku) = &filter.sku {
-            sql.push_str(" AND sku = ?");
-            params_vec.push(Box::new(sku.clone()));
-        }
-        if let Some(serial_number) = &filter.serial_number {
-            sql.push_str(" AND serial_number = ?");
-            params_vec.push(Box::new(serial_number.clone()));
-        }
-        if let Some(warranty_type) = &filter.warranty_type {
-            sql.push_str(" AND warranty_type = ?");
-            params_vec.push(Box::new(warranty_type.to_string()));
-        }
-        if let Some(status) = &filter.status {
-            sql.push_str(" AND status = ?");
-            params_vec.push(Box::new(status.to_string()));
-        }
-        if filter.active_only.unwrap_or(false) {
-            sql.push_str(
-                " AND status = 'active' AND (end_date IS NULL OR end_date > strftime('%Y-%m-%dT%H:%M:%f', 'now'))",
-            );
-        }
+        Self::push_warranty_filter(&filter, &mut sql, &mut params_vec);
 
         sql.push_str(" ORDER BY created_at DESC");
 
@@ -1132,39 +1154,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         let mut sql = "SELECT COUNT(*) FROM warranties WHERE 1=1".to_string();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-        if let Some(customer_id) = &filter.customer_id {
-            sql.push_str(" AND customer_id = ?");
-            params_vec.push(Box::new(customer_id.to_string()));
-        }
-        if let Some(order_id) = &filter.order_id {
-            sql.push_str(" AND order_id = ?");
-            params_vec.push(Box::new(order_id.to_string()));
-        }
-        if let Some(product_id) = &filter.product_id {
-            sql.push_str(" AND product_id = ?");
-            params_vec.push(Box::new(product_id.to_string()));
-        }
-        if let Some(sku) = &filter.sku {
-            sql.push_str(" AND sku = ?");
-            params_vec.push(Box::new(sku.clone()));
-        }
-        if let Some(serial_number) = &filter.serial_number {
-            sql.push_str(" AND serial_number = ?");
-            params_vec.push(Box::new(serial_number.clone()));
-        }
-        if let Some(warranty_type) = &filter.warranty_type {
-            sql.push_str(" AND warranty_type = ?");
-            params_vec.push(Box::new(warranty_type.to_string()));
-        }
-        if let Some(status) = &filter.status {
-            sql.push_str(" AND status = ?");
-            params_vec.push(Box::new(status.to_string()));
-        }
-        if filter.active_only.unwrap_or(false) {
-            sql.push_str(
-                " AND status = 'active' AND (end_date IS NULL OR end_date > strftime('%Y-%m-%dT%H:%M:%f', 'now'))",
-            );
-        }
+        Self::push_warranty_filter(&filter, &mut sql, &mut params_vec);
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(std::convert::AsRef::as_ref).collect();

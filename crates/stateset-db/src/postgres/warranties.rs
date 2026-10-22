@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
 use sqlx::postgres::PgPool;
+use sqlx::{Postgres, QueryBuilder};
 use stateset_core::{
     BatchResult, ClaimResolution, ClaimStatus, CommerceError, CreateWarranty, CreateWarrantyClaim,
     CustomerId, OrderId, OrderItemId, ProductId, Result, UpdateWarranty, UpdateWarrantyClaim,
@@ -620,84 +621,62 @@ impl PgWarrantyRepository {
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
+    /// Append the `list_async`/`count_async` WHERE conditions for `filter`.
+    /// The single definition of the warranty filter set, so the two cannot
+    /// disagree. `expiring_within_days` keeps active warranties whose end date
+    /// falls after now and no later than that many days ahead.
+    fn push_warranty_filter(builder: &mut QueryBuilder<'_, Postgres>, filter: &WarrantyFilter) {
+        if let Some(customer_id) = filter.customer_id {
+            builder.push(" AND customer_id = ").push_bind(customer_id.into_uuid());
+        }
+        if let Some(order_id) = filter.order_id {
+            builder.push(" AND order_id = ").push_bind(order_id.into_uuid());
+        }
+        if let Some(product_id) = filter.product_id {
+            builder.push(" AND product_id = ").push_bind(product_id.into_uuid());
+        }
+        if let Some(sku) = &filter.sku {
+            builder.push(" AND sku = ").push_bind(sku.clone());
+        }
+        if let Some(serial_number) = &filter.serial_number {
+            builder.push(" AND serial_number = ").push_bind(serial_number.clone());
+        }
+        if let Some(warranty_type) = &filter.warranty_type {
+            builder.push(" AND warranty_type = ").push_bind(warranty_type.to_string());
+        }
+        if let Some(status) = &filter.status {
+            builder.push(" AND status = ").push_bind(status.to_string());
+        }
+        if filter.active_only.unwrap_or(false) {
+            builder.push(" AND status = 'active' AND (end_date IS NULL OR end_date > NOW())");
+        }
+        if let Some(days) = filter.expiring_within_days {
+            builder
+                .push(
+                    " AND status = 'active' AND end_date IS NOT NULL \
+                     AND end_date > NOW() AND end_date <= ",
+                )
+                .push_bind(crate::rules::warranties::expiry_horizon(Utc::now(), days));
+        }
+    }
+
     /// List warranties (async)
     pub async fn list_async(&self, filter: WarrantyFilter) -> Result<Vec<Warranty>> {
         let limit = super::effective_limit(filter.limit);
-        let offset = filter.offset.unwrap_or(0) as i64;
+        let offset = i64::from(filter.offset.unwrap_or(0));
 
-        let mut query = String::from(
+        let mut builder = QueryBuilder::<Postgres>::new(
             "SELECT id, warranty_number, customer_id, order_id, order_item_id, product_id, sku,
              serial_number, status, warranty_type, provider, coverage_description, purchase_date,
              start_date, end_date, duration_months, max_coverage_amount, deductible, max_claims,
              claims_used, terms, notes, created_at, updated_at FROM warranties WHERE 1=1",
         );
-        let mut param_idx = 1;
+        Self::push_warranty_filter(&mut builder, &filter);
+        builder.push(" ORDER BY created_at DESC LIMIT ").push_bind(limit);
+        builder.push(" OFFSET ").push_bind(offset);
 
-        if filter.customer_id.is_some() {
-            query.push_str(&format!(" AND customer_id = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.order_id.is_some() {
-            query.push_str(&format!(" AND order_id = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.product_id.is_some() {
-            query.push_str(&format!(" AND product_id = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.sku.is_some() {
-            query.push_str(&format!(" AND sku = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.serial_number.is_some() {
-            query.push_str(&format!(" AND serial_number = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.warranty_type.is_some() {
-            query.push_str(&format!(" AND warranty_type = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.status.is_some() {
-            query.push_str(&format!(" AND status = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.active_only.unwrap_or(false) {
-            query.push_str(" AND status = 'active' AND (end_date IS NULL OR end_date > NOW())");
-        }
-
-        query.push_str(&format!(
-            " ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
-            param_idx,
-            param_idx + 1
-        ));
-
-        let mut q = sqlx::query_as::<_, WarrantyRow>(&query);
-
-        if let Some(customer_id) = filter.customer_id {
-            q = q.bind(customer_id.into_uuid());
-        }
-        if let Some(order_id) = filter.order_id {
-            q = q.bind(order_id.into_uuid());
-        }
-        if let Some(product_id) = filter.product_id {
-            q = q.bind(product_id.into_uuid());
-        }
-        if let Some(sku) = filter.sku {
-            q = q.bind(sku);
-        }
-        if let Some(serial_number) = filter.serial_number {
-            q = q.bind(serial_number);
-        }
-        if let Some(warranty_type) = filter.warranty_type {
-            q = q.bind(warranty_type.to_string());
-        }
-        if let Some(status) = filter.status {
-            q = q.bind(status.to_string());
-        }
-
-        q = q.bind(limit).bind(offset);
-
-        let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
+        let rows: Vec<WarrantyRow> =
+            builder.build_query_as().fetch_all(&self.pool).await.map_err(map_db_error)?;
         let mut warranties = Vec::with_capacity(rows.len());
         for row in rows {
             warranties.push(Self::row_to_warranty(row)?);
@@ -1203,66 +1182,12 @@ impl PgWarrantyRepository {
 
     /// Count warranties (async)
     pub async fn count_async(&self, filter: WarrantyFilter) -> Result<u64> {
-        let mut query = String::from("SELECT COUNT(*) FROM warranties WHERE 1=1");
-        let mut param_idx = 1;
-
-        if filter.customer_id.is_some() {
-            query.push_str(&format!(" AND customer_id = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.order_id.is_some() {
-            query.push_str(&format!(" AND order_id = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.product_id.is_some() {
-            query.push_str(&format!(" AND product_id = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.sku.is_some() {
-            query.push_str(&format!(" AND sku = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.serial_number.is_some() {
-            query.push_str(&format!(" AND serial_number = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.warranty_type.is_some() {
-            query.push_str(&format!(" AND warranty_type = ${}", param_idx));
-            param_idx += 1;
-        }
-        if filter.status.is_some() {
-            query.push_str(&format!(" AND status = ${}", param_idx));
-        }
-        if filter.active_only.unwrap_or(false) {
-            query.push_str(" AND status = 'active' AND (end_date IS NULL OR end_date > NOW())");
-        }
-
-        let mut q = sqlx::query_as::<_, (i64,)>(&query);
-
-        if let Some(customer_id) = filter.customer_id {
-            q = q.bind(customer_id.into_uuid());
-        }
-        if let Some(order_id) = filter.order_id {
-            q = q.bind(order_id.into_uuid());
-        }
-        if let Some(product_id) = filter.product_id {
-            q = q.bind(product_id.into_uuid());
-        }
-        if let Some(sku) = filter.sku {
-            q = q.bind(sku);
-        }
-        if let Some(serial_number) = filter.serial_number {
-            q = q.bind(serial_number);
-        }
-        if let Some(warranty_type) = filter.warranty_type {
-            q = q.bind(warranty_type.to_string());
-        }
-        if let Some(status) = filter.status {
-            q = q.bind(status.to_string());
-        }
-
-        let (count,) = q.fetch_one(&self.pool).await.map_err(map_db_error)?;
-        Ok(count as u64)
+        let mut builder =
+            QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM warranties WHERE 1=1");
+        Self::push_warranty_filter(&mut builder, &filter);
+        let (count,): (i64,) =
+            builder.build_query_as().fetch_one(&self.pool).await.map_err(map_db_error)?;
+        Ok(u64::try_from(count).unwrap_or(0))
     }
 
     /// Count claims (async)

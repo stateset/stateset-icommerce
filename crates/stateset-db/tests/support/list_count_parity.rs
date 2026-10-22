@@ -475,3 +475,104 @@ pub(crate) fn lot_parity(repo: &impl LotRepository, list_cap: Option<usize>) {
         Some(1),
     );
 }
+
+/// Warranties: `expiring_within_days` (active, ending after now and within the
+/// window) on `list` and `count`, which both ignored it. Warranties end in 5
+/// days, in 60 days, and yesterday; all share one tagged SKU.
+pub(crate) fn warranty_parity(
+    repo: &impl WarrantyRepository,
+    customers: &impl CustomerRepository,
+    list_cap: Option<usize>,
+) {
+    let tag = tag();
+    let customer = customers
+        .create(CreateCustomer {
+            email: format!("warranty-{}@example.com", tag.to_lowercase()),
+            first_name: "Parity".into(),
+            last_name: "Warranty".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let sku = format!("WTY-{tag}");
+    let now = chrono::Utc::now();
+    for days in [5, 60, -1] {
+        repo.create(CreateWarranty {
+            customer_id: customer.id,
+            sku: Some(sku.clone()),
+            start_date: Some(now - chrono::Duration::days(365)),
+            end_date: Some(now + chrono::Duration::days(days)),
+            ..Default::default()
+        })
+        .unwrap();
+    }
+
+    let check = |label: &str, filter: WarrantyFilter, expected: u64| {
+        let count = repo.count(filter.clone()).unwrap();
+        assert_parity(label, count, repo.list(filter).unwrap().len(), list_cap);
+        assert_eq!(count, expected, "{label}: expected count");
+    };
+    let pinned = || WarrantyFilter { sku: Some(sku.clone()), ..Default::default() };
+    check("sku", pinned(), 3);
+    check(
+        "expiring within 30 days",
+        WarrantyFilter { expiring_within_days: Some(30), ..pinned() },
+        1,
+    );
+    check(
+        "expiring within 90 days",
+        WarrantyFilter { expiring_within_days: Some(90), ..pinned() },
+        2,
+    );
+    check(
+        "expiring within 0 days",
+        WarrantyFilter { expiring_within_days: Some(0), ..pinned() },
+        0,
+    );
+    check(
+        "expiring within i32::MAX days",
+        WarrantyFilter { expiring_within_days: Some(i32::MAX), ..pinned() },
+        2,
+    );
+}
+
+/// Backorders: `expected_before` and `offset`, which `list_backorders`
+/// ignored on both backends (every page repeated the first).
+pub(crate) fn backorder_filters(repo: &impl BackorderRepository) {
+    let sku = format!("BO-{}", tag());
+    let now = chrono::Utc::now();
+    for days in [Some(3), Some(30), None] {
+        repo.create_backorder(CreateBackorder {
+            order_id: Uuid::new_v4(),
+            order_line_id: None,
+            customer_id: Uuid::new_v4(),
+            sku: sku.clone(),
+            quantity: Decimal::from(1),
+            priority: None,
+            expected_date: days.map(|d| now + chrono::Duration::days(d)),
+            promised_date: None,
+            source_location_id: None,
+            notes: None,
+        })
+        .unwrap();
+    }
+    let list = |filter: BackorderFilter| repo.list_backorders(filter).unwrap();
+    let pinned = || BackorderFilter { sku: Some(sku.clone()), ..Default::default() };
+
+    assert_eq!(list(pinned()).len(), 3);
+    let before_10d =
+        BackorderFilter { expected_before: Some(now + chrono::Duration::days(10)), ..pinned() };
+    assert_eq!(list(before_10d).len(), 1, "expected_before keeps dated backorders before it");
+
+    let first = list(BackorderFilter { limit: Some(2), ..pinned() });
+    let second = list(BackorderFilter { limit: Some(2), offset: Some(2), ..pinned() });
+    assert_eq!((first.len(), second.len()), (2, 1), "offset pages through the list");
+    assert!(first.iter().all(|a| second.iter().all(|b| a.id != b.id)), "pages do not overlap");
+}
+
+/// Locations: `has_capacity` cannot be answered (occupancy is not tracked), so
+/// list and count refuse it instead of ignoring it.
+pub(crate) fn location_capacity_refused(repo: &impl WarehouseRepository) {
+    let filter = LocationFilter { has_capacity: Some(true), ..Default::default() };
+    assert!(matches!(repo.list_locations(filter.clone()), Err(CommerceError::ValidationError(_))));
+    assert!(matches!(repo.count_locations(filter), Err(CommerceError::ValidationError(_))));
+}

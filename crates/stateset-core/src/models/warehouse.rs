@@ -213,6 +213,8 @@ pub struct LocationFilter {
     pub is_pickable: Option<bool>,
     pub is_receivable: Option<bool>,
     pub is_active: Option<bool>,
+    /// Not supported: location occupancy is not tracked, so listing with
+    /// this set returns a `ValidationError` rather than ignoring it.
     pub has_capacity: Option<bool>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,

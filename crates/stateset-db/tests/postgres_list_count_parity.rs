@@ -71,3 +71,30 @@ fn postgres_lot_count_matches_list() {
     };
     support::lot_parity(&db.lots(), LIST_CAP);
 }
+
+#[test]
+fn postgres_warranty_count_matches_list() {
+    let Some((_runtime, db)) = database() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    support::warranty_parity(&db.warranties(), &db.customers(), LIST_CAP);
+}
+
+#[test]
+fn postgres_backorder_filters_apply() {
+    let Some((_runtime, db)) = database() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    support::backorder_filters(&db.backorder());
+}
+
+#[test]
+fn postgres_location_capacity_filter_is_refused() {
+    let Some((_runtime, db)) = database() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    support::location_capacity_refused(&db.warehouse());
+}

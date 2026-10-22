@@ -43,3 +43,21 @@ fn sqlite_lot_count_matches_list() {
     // SQLite `list` returns at most 100 lots without a limit.
     support::lot_parity(&db.lots(), Some(100));
 }
+
+#[test]
+fn sqlite_warranty_count_matches_list() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    support::warranty_parity(&db.warranties(), &db.customers(), None);
+}
+
+#[test]
+fn sqlite_backorder_filters_apply() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    support::backorder_filters(&db.backorder());
+}
+
+#[test]
+fn sqlite_location_capacity_filter_is_refused() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    support::location_capacity_refused(&db.warehouse());
+}

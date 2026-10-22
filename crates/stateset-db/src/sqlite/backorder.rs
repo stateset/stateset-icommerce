@@ -681,13 +681,16 @@ impl BackorderRepository for SqliteBackorderRepository {
             sql.push_str(" AND priority = ?");
             params.push(Box::new(priority.to_string()));
         }
+        // Stored and bound as RFC 3339, so text order is time order.
+        if let Some(expected_before) = filter.expected_before {
+            sql.push_str(" AND expected_date IS NOT NULL AND expected_date < ?");
+            params.push(Box::new(expected_before.to_rfc3339()));
+        }
 
         // Order by priority (critical first) then by created_at
         sql.push_str(" ORDER BY CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END, created_at ASC");
 
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
-        }
+        crate::sqlite::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let param_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();

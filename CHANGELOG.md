@@ -8,6 +8,15 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Fixed
 
+- The last silently ignored repository filters are applied on both backends:
+  `WarrantyFilter.expiring_within_days` (active warranties ending after now
+  and within the window; `list` and `count` now share one filter builder),
+  `BackorderFilter.expected_before`, and backorder `offset`, which both
+  backends ignored so every page repeated the first. SQLite backorder lists
+  now use the same default page cap as Postgres.
+- `LocationFilter.has_capacity` is refused with a `ValidationError` instead
+  of being ignored: location occupancy (`current_weight_kg`,
+  `current_volume_m3`) is never maintained, so it cannot be answered.
 - Lot lists now apply every `LotFilter` field, and `count` applies the same
   filters as `list` on both backends. `list` ignored `work_order_id`,
   `purchase_order_id`, `expiring_before`, `expiring_after` and `location_id`;
