@@ -1336,6 +1336,11 @@ mod tests {
             .with_writer(SharedLogWriterFactory { buffer: Arc::clone(&buffer) })
             .finish();
         let _guard = tracing::subscriber::set_default(subscriber);
+        // Callsite interest is cached process-wide. A sibling test thread
+        // with no subscriber can hit the same `tracing::warn!` first and
+        // cache it as uninteresting, silently dropping this thread's event;
+        // re-evaluate interest now that the scoped subscriber is installed.
+        tracing::callsite::rebuild_interest_cache();
         f().await;
         String::from_utf8(buffer.lock().unwrap().clone()).unwrap()
     }
