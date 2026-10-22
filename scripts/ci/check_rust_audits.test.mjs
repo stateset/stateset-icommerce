@@ -58,7 +58,7 @@ case "$operation" in
     if [ "$subject" = "$COMPILED_EXCEPTION" ]; then
       printf 'rsa v0.9.10\\n'
     else
-      printf 'stateset-core v1.40.0\\n'
+      printf 'stateset-core v1.40.1\\n'
     fi
     ;;
   *) exit 64 ;;

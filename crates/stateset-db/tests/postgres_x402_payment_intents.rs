@@ -1,4 +1,8 @@
 #[cfg(feature = "postgres")]
+#[path = "support/isolated_pg.rs"]
+mod isolated_pg;
+
+#[cfg(feature = "postgres")]
 use stateset_core::{
     CommerceError, CreateX402PaymentIntent, SignX402PaymentIntent, X402_DEFAULT_SIGNATURE_SCHEME,
     X402Asset, X402IntentStatus, X402Network, X402PaymentIntentFilter, X402SignatureScheme,
@@ -218,15 +222,19 @@ async fn postgres_x402_settle_after_valid_until_is_refused_and_swept() {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping");
         return;
     };
-    let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
+    // A private database: neighbouring tests run the global expiry sweeper,
+    // which would expire this deliberately stale intent before the refusal
+    // is checked.
+    let isolated = isolated_pg::isolated_postgres(&url).await;
+    let db = &isolated.db;
     let repo = db.x402_payment_intents();
     let intent = repo.create_async(fresh_input()).await.expect("create");
-    force_status(&db, intent.id, X402IntentStatus::Signed).await;
+    force_status(db, intent.id, X402IntentStatus::Signed).await;
     let sequenced =
         repo.mark_sequenced_async(intent.id, 1, Uuid::new_v4()).await.expect("sequence");
     assert_eq!(sequenced.status, X402IntentStatus::Sequenced);
 
-    force_valid_until(&db, intent.id, chrono::Utc::now().timestamp() - 30).await;
+    force_valid_until(db, intent.id, chrono::Utc::now().timestamp() - 30).await;
 
     let err = repo.mark_settled_async(intent.id, "0xlate", 5).await.expect_err("expired");
     assert!(
@@ -243,6 +251,7 @@ async fn postgres_x402_settle_after_valid_until_is_refused_and_swept() {
     let _ = repo.expire_stale_intents_async().await.expect("sweep");
     let stored = repo.get_async(intent.id).await.expect("get").expect("exists");
     assert_eq!(stored.status, X402IntentStatus::Expired);
+    isolated.drop_database().await;
 }
 
 #[cfg(feature = "postgres")]

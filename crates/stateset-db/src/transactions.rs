@@ -9,7 +9,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 #[non_exhaustive]
 #[deprecated(
-    since = "1.40.0",
+    since = "1.40.1",
     note = "unused by both backends; repositories run their own transactions. Removed in 2.0"
 )]
 pub enum TransactionError {
@@ -31,7 +31,7 @@ pub enum TransactionError {
 
 /// Result type for transaction operations
 #[deprecated(
-    since = "1.40.0",
+    since = "1.40.1",
     note = "unused by both backends; repositories run their own transactions. Removed in 2.0"
 )]
 pub type TransactionResult<T> = Result<T, TransactionError>;
@@ -39,7 +39,7 @@ pub type TransactionResult<T> = Result<T, TransactionError>;
 /// Transaction lifecycle state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[deprecated(
-    since = "1.40.0",
+    since = "1.40.1",
     note = "unused by both backends; repositories run their own transactions. Removed in 2.0"
 )]
 pub enum TransactionState {
@@ -55,7 +55,7 @@ pub enum TransactionState {
 
 /// Trait for operations that can participate in transactions
 #[deprecated(
-    since = "1.40.0",
+    since = "1.40.1",
     note = "unused by both backends; repositories run their own transactions. Removed in 2.0"
 )]
 pub trait Transactional {
@@ -70,7 +70,7 @@ pub trait Transactional {
 
 /// Trait for repository-level transaction support
 #[deprecated(
-    since = "1.40.0",
+    since = "1.40.1",
     note = "unused by both backends; repositories run their own transactions. Removed in 2.0"
 )]
 pub trait TransactionalRepository {
@@ -85,7 +85,7 @@ pub trait TransactionalRepository {
 
 /// Handle for an active transaction
 #[deprecated(
-    since = "1.40.0",
+    since = "1.40.1",
     note = "unused by both backends; repositories run their own transactions. Removed in 2.0"
 )]
 pub struct TransactionHandle {
@@ -199,7 +199,7 @@ impl Default for TransactionHandle {
 /// to handle failures gracefully.
 #[derive(Debug)]
 #[deprecated(
-    since = "1.40.0",
+    since = "1.40.1",
     note = "unused by both backends; repositories run their own transactions. Removed in 2.0"
 )]
 pub struct Saga {
@@ -234,7 +234,7 @@ impl Default for Saga {
 /// Builder for transaction batches
 #[must_use]
 #[deprecated(
-    since = "1.40.0",
+    since = "1.40.1",
     note = "unused by both backends; repositories run their own transactions. Removed in 2.0"
 )]
 pub struct TransactionBuilder {
