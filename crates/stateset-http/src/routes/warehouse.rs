@@ -536,19 +536,22 @@ pub(crate) async fn create_warehouse(
     Json(req): Json<CreateWarehouseRequest>,
 ) -> Result<(StatusCode, Json<WarehouseResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let warehouse_type = match req.warehouse_type.as_deref() {
-        Some(s) => parse_id(s, "warehouse_type")?,
-        None => stateset_core::WarehouseType::default(),
-    };
-    let w = c.warehouse().create_warehouse(stateset_core::CreateWarehouse {
-        code: req.code,
-        name: req.name,
-        warehouse_type,
-        address: to_address(req.address),
-        timezone: req.timezone,
-    })?;
-    Ok((StatusCode::CREATED, Json(warehouse_resp(&w))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let warehouse_type = match req.warehouse_type.as_deref() {
+                Some(s) => parse_id(s, "warehouse_type")?,
+                None => stateset_core::WarehouseType::default(),
+            };
+            let w = c.warehouse().create_warehouse(stateset_core::CreateWarehouse {
+                code: req.code,
+                name: req.name,
+                warehouse_type,
+                address: to_address(req.address),
+                timezone: req.timezone,
+            })?;
+            Ok((StatusCode::CREATED, Json(warehouse_resp(&w))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "warehouse_list", path = "/api/v1/warehouses", tag = "warehouse",
@@ -561,27 +564,30 @@ pub(crate) async fn list_warehouses(
     Query(params): Query<WarehouseFilterParams>,
 ) -> Result<Json<WarehouseListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let warehouse_type = match params.warehouse_type.as_deref() {
-        Some(s) => Some(parse_id(s, "warehouse_type")?),
-        None => None,
-    };
-    let base = stateset_core::WarehouseFilter {
-        warehouse_type,
-        is_active: params.is_active,
-        limit: None,
-        offset: None,
-    };
-    let total = c.warehouse().count_warehouses(base.clone())?;
-    let warehouses = c.warehouse().list_warehouses(stateset_core::WarehouseFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    })?;
-    Ok(Json(WarehouseListResponse {
-        warehouses: warehouses.iter().map(warehouse_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let warehouse_type = match params.warehouse_type.as_deref() {
+                Some(s) => Some(parse_id(s, "warehouse_type")?),
+                None => None,
+            };
+            let base = stateset_core::WarehouseFilter {
+                warehouse_type,
+                is_active: params.is_active,
+                limit: None,
+                offset: None,
+            };
+            let total = c.warehouse().count_warehouses(base.clone())?;
+            let warehouses = c.warehouse().list_warehouses(stateset_core::WarehouseFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            })?;
+            Ok(Json(WarehouseListResponse {
+                warehouses: warehouses.iter().map(warehouse_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "warehouse_get_one", path = "/api/v1/warehouses/{id}", tag = "warehouse",
@@ -594,12 +600,15 @@ pub(crate) async fn get_warehouse(
     Path(id): Path<i32>,
 ) -> Result<Json<WarehouseResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let w = c
-        .warehouse()
-        .get_warehouse(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Warehouse {id} not found")))?;
-    Ok(Json(warehouse_resp(&w)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let w = c
+                .warehouse()
+                .get_warehouse(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Warehouse {id} not found")))?;
+            Ok(Json(warehouse_resp(&w)))
+        })
+        .await
 }
 
 #[utoipa::path(put, operation_id = "warehouse_update", path = "/api/v1/warehouses/{id}", tag = "warehouse",
@@ -614,22 +623,25 @@ pub(crate) async fn update_warehouse(
     Json(req): Json<UpdateWarehouseRequest>,
 ) -> Result<Json<WarehouseResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let warehouse_type = match req.warehouse_type.as_deref() {
-        Some(s) => Some(parse_id(s, "warehouse_type")?),
-        None => None,
-    };
-    let w = c.warehouse().update_warehouse(
-        id,
-        stateset_core::UpdateWarehouse {
-            name: req.name,
-            warehouse_type,
-            address: req.address.map(|a| to_address(Some(a))),
-            timezone: req.timezone,
-            is_active: req.is_active,
-        },
-    )?;
-    Ok(Json(warehouse_resp(&w)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let warehouse_type = match req.warehouse_type.as_deref() {
+                Some(s) => Some(parse_id(s, "warehouse_type")?),
+                None => None,
+            };
+            let w = c.warehouse().update_warehouse(
+                id,
+                stateset_core::UpdateWarehouse {
+                    name: req.name,
+                    warehouse_type,
+                    address: req.address.map(|a| to_address(Some(a))),
+                    timezone: req.timezone,
+                    is_active: req.is_active,
+                },
+            )?;
+            Ok(Json(warehouse_resp(&w)))
+        })
+        .await
 }
 
 #[utoipa::path(delete, operation_id = "warehouse_delete", path = "/api/v1/warehouses/{id}", tag = "warehouse",
@@ -642,9 +654,12 @@ pub(crate) async fn delete_warehouse(
     Path(id): Path<i32>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.warehouse().delete_warehouse(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.warehouse().delete_warehouse(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 // ============================================================================
@@ -661,26 +676,29 @@ pub(crate) async fn create_location(
     Json(req): Json<CreateLocationRequest>,
 ) -> Result<(StatusCode, Json<LocationResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let location_type = match req.location_type.as_deref() {
-        Some(s) => parse_id(s, "location_type")?,
-        None => stateset_core::LocationType::default(),
-    };
-    let l = c.warehouse().create_location(stateset_core::CreateLocation {
-        warehouse_id: req.warehouse_id,
-        code: req.code,
-        location_type,
-        zone: req.zone,
-        aisle: req.aisle,
-        rack: req.rack,
-        level: req.level,
-        bin: req.bin,
-        max_weight_kg: parse_opt_decimal(req.max_weight_kg.as_deref(), "max_weight_kg")?,
-        max_volume_m3: parse_opt_decimal(req.max_volume_m3.as_deref(), "max_volume_m3")?,
-        is_pickable: req.is_pickable,
-        is_receivable: req.is_receivable,
-    })?;
-    Ok((StatusCode::CREATED, Json(location_resp(&l))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let location_type = match req.location_type.as_deref() {
+                Some(s) => parse_id(s, "location_type")?,
+                None => stateset_core::LocationType::default(),
+            };
+            let l = c.warehouse().create_location(stateset_core::CreateLocation {
+                warehouse_id: req.warehouse_id,
+                code: req.code,
+                location_type,
+                zone: req.zone,
+                aisle: req.aisle,
+                rack: req.rack,
+                level: req.level,
+                bin: req.bin,
+                max_weight_kg: parse_opt_decimal(req.max_weight_kg.as_deref(), "max_weight_kg")?,
+                max_volume_m3: parse_opt_decimal(req.max_volume_m3.as_deref(), "max_volume_m3")?,
+                is_pickable: req.is_pickable,
+                is_receivable: req.is_receivable,
+            })?;
+            Ok((StatusCode::CREATED, Json(location_resp(&l))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "warehouse_location_list", path = "/api/v1/warehouse-locations", tag = "warehouse",
@@ -693,33 +711,36 @@ pub(crate) async fn list_locations(
     Query(params): Query<LocationFilterParams>,
 ) -> Result<Json<LocationListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let location_type = match params.location_type.as_deref() {
-        Some(s) => Some(parse_id(s, "location_type")?),
-        None => None,
-    };
-    let base = stateset_core::LocationFilter {
-        warehouse_id: params.warehouse_id,
-        location_type,
-        zone: params.zone.clone(),
-        aisle: params.aisle.clone(),
-        is_pickable: params.is_pickable,
-        is_receivable: params.is_receivable,
-        is_active: params.is_active,
-        has_capacity: None,
-        limit: None,
-        offset: None,
-    };
-    let total = c.warehouse().count_locations(base.clone())?;
-    let locations = c.warehouse().list_locations(stateset_core::LocationFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    })?;
-    Ok(Json(LocationListResponse {
-        locations: locations.iter().map(location_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let location_type = match params.location_type.as_deref() {
+                Some(s) => Some(parse_id(s, "location_type")?),
+                None => None,
+            };
+            let base = stateset_core::LocationFilter {
+                warehouse_id: params.warehouse_id,
+                location_type,
+                zone: params.zone.clone(),
+                aisle: params.aisle.clone(),
+                is_pickable: params.is_pickable,
+                is_receivable: params.is_receivable,
+                is_active: params.is_active,
+                has_capacity: None,
+                limit: None,
+                offset: None,
+            };
+            let total = c.warehouse().count_locations(base.clone())?;
+            let locations = c.warehouse().list_locations(stateset_core::LocationFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            })?;
+            Ok(Json(LocationListResponse {
+                locations: locations.iter().map(location_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "warehouse_location_get_one", path = "/api/v1/warehouse-locations/{id}", tag = "warehouse",
@@ -732,12 +753,15 @@ pub(crate) async fn get_location(
     Path(id): Path<i32>,
 ) -> Result<Json<LocationResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let l = c
-        .warehouse()
-        .get_location(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Location {id} not found")))?;
-    Ok(Json(location_resp(&l)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let l = c
+                .warehouse()
+                .get_location(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Location {id} not found")))?;
+            Ok(Json(location_resp(&l)))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "warehouse_location_inventory", path = "/api/v1/warehouse-locations/{id}/inventory", tag = "warehouse",
@@ -750,12 +774,15 @@ pub(crate) async fn get_location_inventory(
     Path(id): Path<i32>,
 ) -> Result<Json<LocationInventoryListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let inventory = c.warehouse().get_location_inventory(id)?;
-    Ok(Json(LocationInventoryListResponse {
-        total: inventory.len(),
-        inventory: inventory.iter().map(inventory_resp).collect(),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let inventory = c.warehouse().get_location_inventory(id)?;
+            Ok(Json(LocationInventoryListResponse {
+                total: inventory.len(),
+                inventory: inventory.iter().map(inventory_resp).collect(),
+            }))
+        })
+        .await
 }
 
 // ============================================================================
@@ -772,18 +799,21 @@ pub(crate) async fn adjust_inventory(
     Json(req): Json<AdjustInventoryRequest>,
 ) -> Result<Json<LocationInventoryResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let inv = c.warehouse().adjust_inventory(stateset_core::AdjustLocationInventory {
-        location_id: req.location_id,
-        sku: req.sku,
-        lot_id: parse_opt_uuid(req.lot_id.as_deref(), "lot_id")?,
-        quantity: parse_decimal(&req.quantity, "quantity")?,
-        reason: req.reason,
-        reference_type: req.reference_type,
-        reference_id: parse_opt_uuid(req.reference_id.as_deref(), "reference_id")?,
-        performed_by: req.performed_by,
-    })?;
-    Ok(Json(inventory_resp(&inv)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let inv = c.warehouse().adjust_inventory(stateset_core::AdjustLocationInventory {
+                location_id: req.location_id,
+                sku: req.sku,
+                lot_id: parse_opt_uuid(req.lot_id.as_deref(), "lot_id")?,
+                quantity: parse_decimal(&req.quantity, "quantity")?,
+                reason: req.reason,
+                reference_type: req.reference_type,
+                reference_id: parse_opt_uuid(req.reference_id.as_deref(), "reference_id")?,
+                performed_by: req.performed_by,
+            })?;
+            Ok(Json(inventory_resp(&inv)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "warehouse_inventory_move", path = "/api/v1/warehouse-inventory/move", tag = "warehouse",
@@ -796,17 +826,20 @@ pub(crate) async fn move_inventory(
     Json(req): Json<MoveInventoryRequest>,
 ) -> Result<Json<MovementResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let m = c.warehouse().move_inventory(stateset_core::MoveInventory {
-        from_location_id: req.from_location_id,
-        to_location_id: req.to_location_id,
-        sku: req.sku,
-        lot_id: parse_opt_uuid(req.lot_id.as_deref(), "lot_id")?,
-        quantity: parse_decimal(&req.quantity, "quantity")?,
-        reason: req.reason,
-        performed_by: req.performed_by,
-    })?;
-    Ok(Json(movement_resp(&m)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let m = c.warehouse().move_inventory(stateset_core::MoveInventory {
+                from_location_id: req.from_location_id,
+                to_location_id: req.to_location_id,
+                sku: req.sku,
+                lot_id: parse_opt_uuid(req.lot_id.as_deref(), "lot_id")?,
+                quantity: parse_decimal(&req.quantity, "quantity")?,
+                reason: req.reason,
+                performed_by: req.performed_by,
+            })?;
+            Ok(Json(movement_resp(&m)))
+        })
+        .await
 }
 
 // ============================================================================
@@ -861,26 +894,35 @@ pub(crate) async fn create_cycle_count(
     Json(req): Json<CreateCycleCountRequest>,
 ) -> Result<(StatusCode, Json<CycleCountResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let lines = req
-        .lines
-        .iter()
-        .map(|l| {
-            Ok(stateset_core::CreateCycleCountLine {
-                sku: l.sku.clone(),
-                lot_id: parse_opt_uuid(l.lot_id.as_deref(), "lot_id")?,
-                expected_quantity: parse_decimal(&l.expected_quantity, "expected_quantity")?,
-            })
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let lines = req
+                .lines
+                .iter()
+                .map(|l| {
+                    Ok(stateset_core::CreateCycleCountLine {
+                        sku: l.sku.clone(),
+                        lot_id: parse_opt_uuid(l.lot_id.as_deref(), "lot_id")?,
+                        expected_quantity: parse_decimal(
+                            &l.expected_quantity,
+                            "expected_quantity",
+                        )?,
+                    })
+                })
+                .collect::<Result<Vec<_>, HttpError>>()?;
+            let cc = c.warehouse().create_cycle_count(stateset_core::CreateCycleCount {
+                warehouse_id: req.warehouse_id,
+                location_id: req.location_id,
+                scheduled_date: parse_opt_datetime(
+                    req.scheduled_date.as_deref(),
+                    "scheduled_date",
+                )?,
+                counted_by: req.counted_by,
+                lines,
+            })?;
+            Ok((StatusCode::CREATED, Json(cycle_count_resp(&cc))))
         })
-        .collect::<Result<Vec<_>, HttpError>>()?;
-    let cc = c.warehouse().create_cycle_count(stateset_core::CreateCycleCount {
-        warehouse_id: req.warehouse_id,
-        location_id: req.location_id,
-        scheduled_date: parse_opt_datetime(req.scheduled_date.as_deref(), "scheduled_date")?,
-        counted_by: req.counted_by,
-        lines,
-    })?;
-    Ok((StatusCode::CREATED, Json(cycle_count_resp(&cc))))
+        .await
 }
 
 #[utoipa::path(get, operation_id = "cycle_count_list", path = "/api/v1/cycle-counts", tag = "warehouse",
@@ -893,38 +935,49 @@ pub(crate) async fn list_cycle_counts(
     Query(params): Query<CycleCountFilterParams>,
 ) -> Result<Json<CycleCountListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let after_cursor = match &params.after {
-        Some(cursor) => Some(
-            decode_cursor(cursor).ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
-        ),
-        None => None,
-    };
-    let limit = params.limit.unwrap_or(50).clamp(1, 200);
-    let mut cycle_counts = c.warehouse().list_cycle_counts(stateset_core::CycleCountFilter {
-        warehouse_id: params.warehouse_id,
-        location_id: params.location_id,
-        status,
-        limit: Some(overfetch_limit(limit)),
-        offset: if after_cursor.is_some() { Some(0) } else { Some(params.offset.unwrap_or(0)) },
-        after_cursor,
-    })?;
-    let has_more = finalize_page(&mut cycle_counts, limit);
-    let next_cursor = if has_more {
-        cycle_counts.last().map(|cc| encode_cursor(&cc.created_at.to_rfc3339(), &cc.id.to_string()))
-    } else {
-        None
-    };
-    Ok(Json(CycleCountListResponse {
-        total: cycle_counts.len(),
-        cycle_counts: cycle_counts.iter().map(cycle_count_resp).collect(),
-        next_cursor,
-        has_more,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let after_cursor = match &params.after {
+                Some(cursor) => Some(
+                    decode_cursor(cursor)
+                        .ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+                ),
+                None => None,
+            };
+            let limit = params.limit.unwrap_or(50).clamp(1, 200);
+            let mut cycle_counts =
+                c.warehouse().list_cycle_counts(stateset_core::CycleCountFilter {
+                    warehouse_id: params.warehouse_id,
+                    location_id: params.location_id,
+                    status,
+                    limit: Some(overfetch_limit(limit)),
+                    offset: if after_cursor.is_some() {
+                        Some(0)
+                    } else {
+                        Some(params.offset.unwrap_or(0))
+                    },
+                    after_cursor,
+                })?;
+            let has_more = finalize_page(&mut cycle_counts, limit);
+            let next_cursor = if has_more {
+                cycle_counts
+                    .last()
+                    .map(|cc| encode_cursor(&cc.created_at.to_rfc3339(), &cc.id.to_string()))
+            } else {
+                None
+            };
+            Ok(Json(CycleCountListResponse {
+                total: cycle_counts.len(),
+                cycle_counts: cycle_counts.iter().map(cycle_count_resp).collect(),
+                next_cursor,
+                has_more,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "cycle_count_get_one", path = "/api/v1/cycle-counts/{id}", tag = "warehouse",
@@ -937,13 +990,16 @@ pub(crate) async fn get_cycle_count(
     Path(id): Path<String>,
 ) -> Result<Json<CycleCountResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let id: Uuid = parse_id(&id, "cycle count id")?;
-    let cc = c
-        .warehouse()
-        .get_cycle_count(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Cycle count {id} not found")))?;
-    Ok(Json(cycle_count_resp(&cc)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let id: Uuid = parse_id(&id, "cycle count id")?;
+            let cc = c
+                .warehouse()
+                .get_cycle_count(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Cycle count {id} not found")))?;
+            Ok(Json(cycle_count_resp(&cc)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "cycle_count_start", path = "/api/v1/cycle-counts/{id}/start", tag = "warehouse",
@@ -956,10 +1012,13 @@ pub(crate) async fn start_cycle_count(
     Path(id): Path<String>,
 ) -> Result<Json<CycleCountResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let id: Uuid = parse_id(&id, "cycle count id")?;
-    let cc = c.warehouse().start_cycle_count(id)?;
-    Ok(Json(cycle_count_resp(&cc)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let id: Uuid = parse_id(&id, "cycle count id")?;
+            let cc = c.warehouse().start_cycle_count(id)?;
+            Ok(Json(cycle_count_resp(&cc)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "cycle_count_record_counts", path = "/api/v1/cycle-counts/{id}/counts", tag = "warehouse",
@@ -974,21 +1033,24 @@ pub(crate) async fn record_cycle_counts(
     Json(req): Json<RecordCycleCountRequest>,
 ) -> Result<Json<CycleCountResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let id: Uuid = parse_id(&id, "cycle count id")?;
-    let counts = req
-        .counts
-        .iter()
-        .map(|l| {
-            Ok(stateset_core::RecordCycleCountLine {
-                sku: l.sku.clone(),
-                lot_id: parse_opt_uuid(l.lot_id.as_deref(), "lot_id")?,
-                counted_quantity: parse_decimal(&l.counted_quantity, "counted_quantity")?,
-            })
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let id: Uuid = parse_id(&id, "cycle count id")?;
+            let counts = req
+                .counts
+                .iter()
+                .map(|l| {
+                    Ok(stateset_core::RecordCycleCountLine {
+                        sku: l.sku.clone(),
+                        lot_id: parse_opt_uuid(l.lot_id.as_deref(), "lot_id")?,
+                        counted_quantity: parse_decimal(&l.counted_quantity, "counted_quantity")?,
+                    })
+                })
+                .collect::<Result<Vec<_>, HttpError>>()?;
+            let cc = c.warehouse().record_cycle_counts(id, counts)?;
+            Ok(Json(cycle_count_resp(&cc)))
         })
-        .collect::<Result<Vec<_>, HttpError>>()?;
-    let cc = c.warehouse().record_cycle_counts(id, counts)?;
-    Ok(Json(cycle_count_resp(&cc)))
+        .await
 }
 
 #[utoipa::path(post, operation_id = "cycle_count_complete", path = "/api/v1/cycle-counts/{id}/complete", tag = "warehouse",
@@ -1001,10 +1063,13 @@ pub(crate) async fn complete_cycle_count(
     Path(id): Path<String>,
 ) -> Result<Json<CycleCountResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let id: Uuid = parse_id(&id, "cycle count id")?;
-    let cc = c.warehouse().complete_cycle_count(id)?;
-    Ok(Json(cycle_count_resp(&cc)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let id: Uuid = parse_id(&id, "cycle count id")?;
+            let cc = c.warehouse().complete_cycle_count(id)?;
+            Ok(Json(cycle_count_resp(&cc)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "cycle_count_cancel", path = "/api/v1/cycle-counts/{id}/cancel", tag = "warehouse",
@@ -1017,10 +1082,13 @@ pub(crate) async fn cancel_cycle_count(
     Path(id): Path<String>,
 ) -> Result<Json<CycleCountResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let id: Uuid = parse_id(&id, "cycle count id")?;
-    let cc = c.warehouse().cancel_cycle_count(id)?;
-    Ok(Json(cycle_count_resp(&cc)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let id: Uuid = parse_id(&id, "cycle count id")?;
+            let cc = c.warehouse().cancel_cycle_count(id)?;
+            Ok(Json(cycle_count_resp(&cc)))
+        })
+        .await
 }
 
 // ============================================================================
@@ -1081,23 +1149,26 @@ pub(crate) async fn create_bin(
     Json(req): Json<CreateBinRequest>,
 ) -> Result<(StatusCode, Json<BinResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let bin_type = match req.bin_type.as_deref() {
-        Some(s) => parse_id(s, "bin_type")?,
-        None => stateset_core::BinType::default(),
-    };
-    let b = c.warehouse().create_bin(stateset_core::CreateWarehouseBin {
-        warehouse_id: req.warehouse_id,
-        code: req.code,
-        zone: req.zone,
-        aisle: req.aisle,
-        rack: req.rack,
-        shelf: req.shelf,
-        position: req.position,
-        bin_type,
-        capacity: parse_opt_decimal(req.capacity.as_deref(), "capacity")?,
-    })?;
-    Ok((StatusCode::CREATED, Json(bin_resp(&b))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let bin_type = match req.bin_type.as_deref() {
+                Some(s) => parse_id(s, "bin_type")?,
+                None => stateset_core::BinType::default(),
+            };
+            let b = c.warehouse().create_bin(stateset_core::CreateWarehouseBin {
+                warehouse_id: req.warehouse_id,
+                code: req.code,
+                zone: req.zone,
+                aisle: req.aisle,
+                rack: req.rack,
+                shelf: req.shelf,
+                position: req.position,
+                bin_type,
+                capacity: parse_opt_decimal(req.capacity.as_deref(), "capacity")?,
+            })?;
+            Ok((StatusCode::CREATED, Json(bin_resp(&b))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "warehouse_bin_list", path = "/api/v1/warehouse-bins", tag = "warehouse",
@@ -1110,26 +1181,29 @@ pub(crate) async fn list_bins(
     Query(params): Query<BinFilterParams>,
 ) -> Result<Json<BinListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let bin_type = match params.bin_type.as_deref() {
-        Some(s) => Some(parse_id(s, "bin_type")?),
-        None => None,
-    };
-    let base = stateset_core::WarehouseBinFilter {
-        warehouse_id: params.warehouse_id,
-        bin_type,
-        zone: params.zone,
-        is_active: params.is_active,
-        limit: None,
-        offset: None,
-    };
-    let total = c.warehouse().count_bins(base.clone())?;
-    let bins = c.warehouse().list_bins(stateset_core::WarehouseBinFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    })?;
-    Ok(Json(BinListResponse { bins: bins.iter().map(bin_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let bin_type = match params.bin_type.as_deref() {
+                Some(s) => Some(parse_id(s, "bin_type")?),
+                None => None,
+            };
+            let base = stateset_core::WarehouseBinFilter {
+                warehouse_id: params.warehouse_id,
+                bin_type,
+                zone: params.zone,
+                is_active: params.is_active,
+                limit: None,
+                offset: None,
+            };
+            let total = c.warehouse().count_bins(base.clone())?;
+            let bins = c.warehouse().list_bins(stateset_core::WarehouseBinFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            })?;
+            Ok(Json(BinListResponse { bins: bins.iter().map(bin_resp).collect(), total }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "warehouse_bin_get_one", path = "/api/v1/warehouse-bins/{id}", tag = "warehouse",
@@ -1142,12 +1216,15 @@ pub(crate) async fn get_bin(
     Path(id): Path<i32>,
 ) -> Result<Json<BinResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let b = c
-        .warehouse()
-        .get_bin(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Bin {id} not found")))?;
-    Ok(Json(bin_resp(&b)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let b = c
+                .warehouse()
+                .get_bin(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Bin {id} not found")))?;
+            Ok(Json(bin_resp(&b)))
+        })
+        .await
 }
 
 #[utoipa::path(put, operation_id = "warehouse_bin_update", path = "/api/v1/warehouse-bins/{id}", tag = "warehouse",
@@ -1162,30 +1239,33 @@ pub(crate) async fn update_bin(
     Json(req): Json<UpdateBinRequest>,
 ) -> Result<Json<BinResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let bin_type = match req.bin_type.as_deref() {
-        Some(s) => Some(parse_id(s, "bin_type")?),
-        None => None,
-    };
-    let capacity = match req.capacity.as_deref() {
-        None => None,
-        Some("") => Some(None),
-        Some(s) => Some(Some(parse_decimal(s, "capacity")?)),
-    };
-    let b = c.warehouse().update_bin(
-        id,
-        stateset_core::UpdateWarehouseBin {
-            zone: req.zone,
-            aisle: req.aisle,
-            rack: req.rack,
-            shelf: req.shelf,
-            position: req.position,
-            bin_type,
-            is_active: req.is_active,
-            capacity,
-        },
-    )?;
-    Ok(Json(bin_resp(&b)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let bin_type = match req.bin_type.as_deref() {
+                Some(s) => Some(parse_id(s, "bin_type")?),
+                None => None,
+            };
+            let capacity = match req.capacity.as_deref() {
+                None => None,
+                Some("") => Some(None),
+                Some(s) => Some(Some(parse_decimal(s, "capacity")?)),
+            };
+            let b = c.warehouse().update_bin(
+                id,
+                stateset_core::UpdateWarehouseBin {
+                    zone: req.zone,
+                    aisle: req.aisle,
+                    rack: req.rack,
+                    shelf: req.shelf,
+                    position: req.position,
+                    bin_type,
+                    is_active: req.is_active,
+                    capacity,
+                },
+            )?;
+            Ok(Json(bin_resp(&b)))
+        })
+        .await
 }
 
 #[utoipa::path(delete, operation_id = "warehouse_bin_delete", path = "/api/v1/warehouse-bins/{id}", tag = "warehouse",
@@ -1198,9 +1278,12 @@ pub(crate) async fn delete_bin(
     Path(id): Path<i32>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.warehouse().delete_bin(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.warehouse().delete_bin(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "warehouse_bin_levels", path = "/api/v1/warehouse-bins/{id}/levels", tag = "warehouse",
@@ -1213,13 +1296,18 @@ pub(crate) async fn get_bin_levels(
     Path(id): Path<i32>,
 ) -> Result<Json<BinLevelListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.warehouse().get_bin(id)?.ok_or_else(|| HttpError::NotFound(format!("Bin {id} not found")))?;
-    let levels = c.warehouse().get_bin_levels(id)?;
-    Ok(Json(BinLevelListResponse {
-        total: levels.len(),
-        levels: levels.iter().map(bin_level_resp).collect(),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.warehouse()
+                .get_bin(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Bin {id} not found")))?;
+            let levels = c.warehouse().get_bin_levels(id)?;
+            Ok(Json(BinLevelListResponse {
+                total: levels.len(),
+                levels: levels.iter().map(bin_level_resp).collect(),
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "warehouse_bin_adjust", path = "/api/v1/warehouse-bins/adjust", tag = "warehouse",
@@ -1232,17 +1320,20 @@ pub(crate) async fn adjust_bin_level(
     Json(req): Json<AdjustBinLevelRequest>,
 ) -> Result<Json<BinLevelResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let level = c.warehouse().adjust_bin_level(stateset_core::AdjustBinLevel {
-        bin_id: req.bin_id,
-        sku: req.sku,
-        quantity: parse_decimal(&req.quantity, "quantity")?,
-        reason: req.reason,
-        reference_type: req.reference_type,
-        reference_id: req.reference_id,
-        performed_by: req.performed_by,
-    })?;
-    Ok(Json(bin_level_resp(&level)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let level = c.warehouse().adjust_bin_level(stateset_core::AdjustBinLevel {
+                bin_id: req.bin_id,
+                sku: req.sku,
+                quantity: parse_decimal(&req.quantity, "quantity")?,
+                reason: req.reason,
+                reference_type: req.reference_type,
+                reference_id: req.reference_id,
+                performed_by: req.performed_by,
+            })?;
+            Ok(Json(bin_level_resp(&level)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "warehouse_bin_move", path = "/api/v1/warehouse-bins/move", tag = "warehouse",
@@ -1255,16 +1346,19 @@ pub(crate) async fn move_between_bins(
     Json(req): Json<MoveBetweenBinsRequest>,
 ) -> Result<Json<BinMovementResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let m = c.warehouse().move_between_bins(stateset_core::MoveBetweenBins {
-        from_bin_id: req.from_bin_id,
-        to_bin_id: req.to_bin_id,
-        sku: req.sku,
-        quantity: parse_decimal(&req.quantity, "quantity")?,
-        reason: req.reason,
-        performed_by: req.performed_by,
-    })?;
-    Ok(Json(bin_movement_resp(&m)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let m = c.warehouse().move_between_bins(stateset_core::MoveBetweenBins {
+                from_bin_id: req.from_bin_id,
+                to_bin_id: req.to_bin_id,
+                sku: req.sku,
+                quantity: parse_decimal(&req.quantity, "quantity")?,
+                reason: req.reason,
+                performed_by: req.performed_by,
+            })?;
+            Ok(Json(bin_movement_resp(&m)))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "warehouse_bin_reconcile", path = "/api/v1/warehouse-bins/reconcile", tag = "warehouse",
@@ -1277,16 +1371,19 @@ pub(crate) async fn reconcile_bins(
     Query(params): Query<BinReconcileParams>,
 ) -> Result<Json<BinReconciliationResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let r = c.warehouse().reconcile_bins(params.warehouse_id, &params.sku)?;
-    Ok(Json(BinReconciliationResponse {
-        warehouse_id: r.warehouse_id,
-        sku: r.sku.clone(),
-        bin_on_hand: r.bin_on_hand.to_string(),
-        warehouse_on_hand: r.warehouse_on_hand.to_string(),
-        variance: r.variance.to_string(),
-        is_balanced: r.is_balanced(),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let r = c.warehouse().reconcile_bins(params.warehouse_id, &params.sku)?;
+            Ok(Json(BinReconciliationResponse {
+                warehouse_id: r.warehouse_id,
+                sku: r.sku.clone(),
+                bin_on_hand: r.bin_on_hand.to_string(),
+                warehouse_on_hand: r.warehouse_on_hand.to_string(),
+                variance: r.variance.to_string(),
+                is_balanced: r.is_balanced(),
+            }))
+        })
+        .await
 }
 
 #[cfg(test)]

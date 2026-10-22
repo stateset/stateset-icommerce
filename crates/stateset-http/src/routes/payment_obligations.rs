@@ -126,21 +126,24 @@ pub(crate) async fn create(
     Json(req): Json<CreatePaymentObligationRequest>,
 ) -> Result<(StatusCode, Json<PaymentObligationResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let purchase_order_id = match req.purchase_order_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "purchase_order_id")?),
-        None => None,
-    };
-    let input = stateset_core::CreatePaymentObligation {
-        supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
-        purchase_order_id,
-        amount: parse_decimal(&req.amount, "amount")?,
-        currency: None,
-        due_date: parse_date(&req.due_date)?,
-        notes: req.notes,
-    };
-    let o = c.payment_obligations().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&o))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let purchase_order_id = match req.purchase_order_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "purchase_order_id")?),
+                None => None,
+            };
+            let input = stateset_core::CreatePaymentObligation {
+                supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
+                purchase_order_id,
+                amount: parse_decimal(&req.amount, "amount")?,
+                currency: None,
+                due_date: parse_date(&req.due_date)?,
+                notes: req.notes,
+            };
+            let o = c.payment_obligations().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&o))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "payment_obligations_list", path = "/api/v1/payment-obligations", tag = "payment_obligations",
@@ -153,40 +156,43 @@ pub(crate) async fn list(
     Query(params): Query<PaymentObligationFilterParams>,
 ) -> Result<Json<PaymentObligationListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let supplier_id = match params.supplier_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
-        None => None,
-    };
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let due_before = match params.due_before.as_deref() {
-        Some(s) => Some(parse_date(s)?),
-        None => None,
-    };
-    let total = c
-        .payment_obligations()
-        .list(stateset_core::PaymentObligationFilter {
-            supplier_id,
-            status,
-            due_before,
-            ..Default::default()
-        })?
-        .len();
-    let filter = stateset_core::PaymentObligationFilter {
-        supplier_id,
-        status,
-        due_before,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-    };
-    let obligations = c.payment_obligations().list(filter)?;
-    Ok(Json(PaymentObligationListResponse {
-        payment_obligations: obligations.iter().map(to_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let supplier_id = match params.supplier_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
+                None => None,
+            };
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let due_before = match params.due_before.as_deref() {
+                Some(s) => Some(parse_date(s)?),
+                None => None,
+            };
+            let total = c
+                .payment_obligations()
+                .list(stateset_core::PaymentObligationFilter {
+                    supplier_id,
+                    status,
+                    due_before,
+                    ..Default::default()
+                })?
+                .len();
+            let filter = stateset_core::PaymentObligationFilter {
+                supplier_id,
+                status,
+                due_before,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+            };
+            let obligations = c.payment_obligations().list(filter)?;
+            Ok(Json(PaymentObligationListResponse {
+                payment_obligations: obligations.iter().map(to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "payment_obligations_dashboard", path = "/api/v1/payment-obligations/dashboard", tag = "payment_obligations",
@@ -197,15 +203,18 @@ pub(crate) async fn dashboard(
     headers: HeaderMap,
 ) -> Result<Json<DashboardResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let today = chrono::Utc::now().date_naive();
-    let d = c.payment_obligations().dashboard(today)?;
-    Ok(Json(DashboardResponse {
-        open_count: d.open_count,
-        total_outstanding: d.total_outstanding.to_string(),
-        overdue_count: d.overdue_count,
-        overdue_amount: d.overdue_amount.to_string(),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let today = chrono::Utc::now().date_naive();
+            let d = c.payment_obligations().dashboard(today)?;
+            Ok(Json(DashboardResponse {
+                open_count: d.open_count,
+                total_outstanding: d.total_outstanding.to_string(),
+                overdue_count: d.overdue_count,
+                overdue_amount: d.overdue_amount.to_string(),
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "payment_obligations_get_one", path = "/api/v1/payment-obligations/{id}", tag = "payment_obligations",
@@ -218,12 +227,15 @@ pub(crate) async fn get_one(
     Path(id): Path<PaymentObligationId>,
 ) -> Result<Json<PaymentObligationResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let o = c
-        .payment_obligations()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Payment obligation {id} not found")))?;
-    Ok(Json(to_resp(&o)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let o = c
+                .payment_obligations()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Payment obligation {id} not found")))?;
+            Ok(Json(to_resp(&o)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "payment_obligations_record_payment", path = "/api/v1/payment-obligations/{id}/payments", tag = "payment_obligations",
@@ -238,10 +250,14 @@ pub(crate) async fn record_payment(
     Json(req): Json<RecordPaymentRequest>,
 ) -> Result<Json<PaymentObligationResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(
-        &c.payment_obligations().record_payment(id, parse_decimal(&req.amount, "amount")?)?,
-    )))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(
+                &c.payment_obligations()
+                    .record_payment(id, parse_decimal(&req.amount, "amount")?)?,
+            )))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "payment_obligations_set_status", path = "/api/v1/payment-obligations/{id}/status", tag = "payment_obligations",
@@ -256,9 +272,12 @@ pub(crate) async fn set_status(
     Json(req): Json<SetStatusRequest>,
 ) -> Result<Json<PaymentObligationResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let status = parse_id(&req.status, "status")?;
-    Ok(Json(to_resp(&c.payment_obligations().set_status(id, status)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let status = parse_id(&req.status, "status")?;
+            Ok(Json(to_resp(&c.payment_obligations().set_status(id, status)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "payment_obligations_link_bill", path = "/api/v1/payment-obligations/{id}/bills", tag = "payment_obligations",
@@ -273,9 +292,12 @@ pub(crate) async fn link_bill(
     Json(req): Json<LinkBillRequest>,
 ) -> Result<Json<PaymentObligationResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let bill_id = parse_id::<Uuid>(&req.bill_id, "bill_id")?;
-    Ok(Json(to_resp(&c.payment_obligations().link_bill(id, bill_id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let bill_id = parse_id::<Uuid>(&req.bill_id, "bill_id")?;
+            Ok(Json(to_resp(&c.payment_obligations().link_bill(id, bill_id)?)))
+        })
+        .await
 }
 
 #[cfg(test)]

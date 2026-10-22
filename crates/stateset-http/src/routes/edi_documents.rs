@@ -106,20 +106,23 @@ pub(crate) async fn create(
     Json(req): Json<CreateEdiDocumentRequest>,
 ) -> Result<(StatusCode, Json<EdiDocumentResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let direction = match req.direction.as_deref() {
-        Some(s) => parse_id(s, "direction")?,
-        None => stateset_core::EdiDirection::default(),
-    };
-    let input = stateset_core::CreateEdiDocument {
-        document_type: req.document_type,
-        direction,
-        partner: req.partner,
-        reference: req.reference,
-        payload: req.payload,
-    };
-    let d = c.edi_documents().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&d))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let direction = match req.direction.as_deref() {
+                Some(s) => parse_id(s, "direction")?,
+                None => stateset_core::EdiDirection::default(),
+            };
+            let input = stateset_core::CreateEdiDocument {
+                document_type: req.document_type,
+                direction,
+                partner: req.partner,
+                reference: req.reference,
+                payload: req.payload,
+            };
+            let d = c.edi_documents().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&d))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "edi_documents_list", path = "/api/v1/edi-documents", tag = "edi_documents",
@@ -132,30 +135,36 @@ pub(crate) async fn list(
     Query(params): Query<EdiDocumentFilterParams>,
 ) -> Result<Json<EdiDocumentListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let direction = match params.direction.as_deref() {
-        Some(s) => Some(parse_id(s, "direction")?),
-        None => None,
-    };
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let base = stateset_core::EdiDocumentFilter {
-        document_type: params.document_type.clone(),
-        direction,
-        status,
-        partner: params.partner.clone(),
-        ..Default::default()
-    };
-    let total = c.edi_documents().list(base.clone())?.len();
-    let filter = stateset_core::EdiDocumentFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    };
-    let documents = c.edi_documents().list(filter)?;
-    Ok(Json(EdiDocumentListResponse { documents: documents.iter().map(to_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let direction = match params.direction.as_deref() {
+                Some(s) => Some(parse_id(s, "direction")?),
+                None => None,
+            };
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let base = stateset_core::EdiDocumentFilter {
+                document_type: params.document_type.clone(),
+                direction,
+                status,
+                partner: params.partner.clone(),
+                ..Default::default()
+            };
+            let total = c.edi_documents().list(base.clone())?.len();
+            let filter = stateset_core::EdiDocumentFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            };
+            let documents = c.edi_documents().list(filter)?;
+            Ok(Json(EdiDocumentListResponse {
+                documents: documents.iter().map(to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "edi_documents_summary", path = "/api/v1/edi-documents/summary", tag = "edi_documents",
@@ -166,16 +175,19 @@ pub(crate) async fn summary(
     headers: HeaderMap,
 ) -> Result<Json<EdiSummaryResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let s = c.edi_documents().summary()?;
-    let map = |v: Vec<stateset_core::EdiCount>| -> Vec<EdiCountResponse> {
-        v.into_iter().map(|c| EdiCountResponse { key: c.key, count: c.count }).collect()
-    };
-    Ok(Json(EdiSummaryResponse {
-        total: s.total,
-        by_status: map(s.by_status),
-        by_type: map(s.by_type),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let s = c.edi_documents().summary()?;
+            let map = |v: Vec<stateset_core::EdiCount>| -> Vec<EdiCountResponse> {
+                v.into_iter().map(|c| EdiCountResponse { key: c.key, count: c.count }).collect()
+            };
+            Ok(Json(EdiSummaryResponse {
+                total: s.total,
+                by_status: map(s.by_status),
+                by_type: map(s.by_type),
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "edi_documents_get_one", path = "/api/v1/edi-documents/{id}", tag = "edi_documents",
@@ -188,12 +200,15 @@ pub(crate) async fn get_one(
     Path(id): Path<EdiDocumentId>,
 ) -> Result<Json<EdiDocumentResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let d = c
-        .edi_documents()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("EDI document {id} not found")))?;
-    Ok(Json(to_resp(&d)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let d = c
+                .edi_documents()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("EDI document {id} not found")))?;
+            Ok(Json(to_resp(&d)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "edi_documents_set_status", path = "/api/v1/edi-documents/{id}/status", tag = "edi_documents",
@@ -208,9 +223,12 @@ pub(crate) async fn set_status(
     Json(req): Json<SetStatusRequest>,
 ) -> Result<Json<EdiDocumentResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let status = parse_id(&req.status, "status")?;
-    Ok(Json(to_resp(&c.edi_documents().set_status(id, status, req.error_message)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let status = parse_id(&req.status, "status")?;
+            Ok(Json(to_resp(&c.edi_documents().set_status(id, status, req.error_message)?)))
+        })
+        .await
 }
 
 #[cfg(test)]

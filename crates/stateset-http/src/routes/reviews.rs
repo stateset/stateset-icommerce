@@ -132,28 +132,30 @@ pub(crate) async fn create_review(
     Json(req): Json<CreateReviewRequest>,
 ) -> Result<(StatusCode, Json<ReviewResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            if req.rating < 1 || req.rating > 5 {
+                return Err(HttpError::BadRequest("Rating must be between 1 and 5".to_string()));
+            }
 
-    if req.rating < 1 || req.rating > 5 {
-        return Err(HttpError::BadRequest("Rating must be between 1 and 5".to_string()));
-    }
+            let review = commerce.reviews().create(stateset_core::CreateReview {
+                product_id: req
+                    .product_id
+                    .parse()
+                    .map_err(|e| HttpError::BadRequest(format!("Invalid product_id: {e}")))?,
+                customer_id: req
+                    .customer_id
+                    .parse()
+                    .map_err(|e| HttpError::BadRequest(format!("Invalid customer_id: {e}")))?,
+                rating: req.rating,
+                title: req.title,
+                body: req.body,
+                verified_purchase: req.verified_purchase.unwrap_or(false),
+            })?;
 
-    let review = commerce.reviews().create(stateset_core::CreateReview {
-        product_id: req
-            .product_id
-            .parse()
-            .map_err(|e| HttpError::BadRequest(format!("Invalid product_id: {e}")))?,
-        customer_id: req
-            .customer_id
-            .parse()
-            .map_err(|e| HttpError::BadRequest(format!("Invalid customer_id: {e}")))?,
-        rating: req.rating,
-        title: req.title,
-        body: req.body,
-        verified_purchase: req.verified_purchase.unwrap_or(false),
-    })?;
-
-    Ok((StatusCode::CREATED, Json(review_to_response(review))))
+            Ok((StatusCode::CREATED, Json(review_to_response(review))))
+        })
+        .await
 }
 
 /// `GET /api/v1/reviews/{id}`
@@ -174,12 +176,15 @@ pub(crate) async fn get_review(
     Path(id): Path<stateset_primitives::ReviewId>,
 ) -> Result<Json<ReviewResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let review = commerce
-        .reviews()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Review {id} not found")))?;
-    Ok(Json(review_to_response(review)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let review = commerce
+                .reviews()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Review {id} not found")))?;
+            Ok(Json(review_to_response(review)))
+        })
+        .await
 }
 
 /// `GET /api/v1/reviews`
@@ -200,58 +205,60 @@ pub(crate) async fn list_reviews(
     Query(params): Query<ReviewFilterParams>,
 ) -> Result<Json<ReviewListResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let limit = params.resolved_limit();
+            let offset = params.resolved_offset();
 
-    let limit = params.resolved_limit();
-    let offset = params.resolved_offset();
+            let product_id = params
+                .product_id
+                .map(|s| s.parse::<stateset_primitives::ProductId>())
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid product_id: {e}")))?;
 
-    let product_id = params
-        .product_id
-        .map(|s| s.parse::<stateset_primitives::ProductId>())
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid product_id: {e}")))?;
+            let status = params
+                .status
+                .map(|s| s.parse::<stateset_core::ReviewStatus>())
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
 
-    let status = params
-        .status
-        .map(|s| s.parse::<stateset_core::ReviewStatus>())
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
+            // Count total matching records (without pagination)
+            let count_filter = stateset_core::ReviewFilter {
+                product_id,
+                customer_id: None,
+                status,
+                min_rating: params.min_rating,
+                verified_only: None,
+                limit: None,
+                offset: None,
+            };
+            let total = commerce.reviews().list(count_filter)?.len();
 
-    // Count total matching records (without pagination)
-    let count_filter = stateset_core::ReviewFilter {
-        product_id,
-        customer_id: None,
-        status,
-        min_rating: params.min_rating,
-        verified_only: None,
-        limit: None,
-        offset: None,
-    };
-    let total = commerce.reviews().list(count_filter)?.len();
+            // Fetch the requested page
+            let filter = stateset_core::ReviewFilter {
+                product_id,
+                customer_id: None,
+                status,
+                min_rating: params.min_rating,
+                verified_only: None,
+                limit: Some(limit.saturating_add(1)),
+                offset: Some(offset),
+            };
+            let mut reviews = commerce.reviews().list(filter)?;
+            let has_more = reviews.len() > limit as usize;
+            if has_more {
+                reviews.truncate(limit as usize);
+            }
 
-    // Fetch the requested page
-    let filter = stateset_core::ReviewFilter {
-        product_id,
-        customer_id: None,
-        status,
-        min_rating: params.min_rating,
-        verified_only: None,
-        limit: Some(limit.saturating_add(1)),
-        offset: Some(offset),
-    };
-    let mut reviews = commerce.reviews().list(filter)?;
-    let has_more = reviews.len() > limit as usize;
-    if has_more {
-        reviews.truncate(limit as usize);
-    }
-
-    Ok(Json(ReviewListResponse {
-        reviews: reviews.into_iter().map(review_to_response).collect(),
-        total,
-        limit,
-        offset,
-        has_more,
-    }))
+            Ok(Json(ReviewListResponse {
+                reviews: reviews.into_iter().map(review_to_response).collect(),
+                total,
+                limit,
+                offset,
+                has_more,
+            }))
+        })
+        .await
 }
 
 /// `DELETE /api/v1/reviews/{id}`
@@ -272,9 +279,12 @@ pub(crate) async fn delete_review(
     Path(id): Path<stateset_primitives::ReviewId>,
 ) -> Result<StatusCode, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    commerce.reviews().delete(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            commerce.reviews().delete(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 // ============================================================================

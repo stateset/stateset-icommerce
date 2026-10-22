@@ -141,33 +141,36 @@ pub(crate) async fn create(
     Json(req): Json<CreateBackorderRequest>,
 ) -> Result<(StatusCode, Json<BackorderResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::CreateBackorder {
-        order_id: parse_id::<Uuid>(&req.order_id, "order_id")?,
-        order_line_id: req
-            .order_line_id
-            .as_deref()
-            .map(|s| parse_id::<Uuid>(s, "order_line_id"))
-            .transpose()?,
-        customer_id: parse_id::<Uuid>(&req.customer_id, "customer_id")?,
-        sku: req.sku,
-        quantity: parse_decimal(&req.quantity, "quantity")?,
-        priority: req.priority.as_deref().map(|s| parse_id(s, "priority")).transpose()?,
-        expected_date: req
-            .expected_date
-            .as_deref()
-            .map(|s| parse_datetime(s, "expected_date"))
-            .transpose()?,
-        promised_date: req
-            .promised_date
-            .as_deref()
-            .map(|s| parse_datetime(s, "promised_date"))
-            .transpose()?,
-        source_location_id: None,
-        notes: req.notes,
-    };
-    let backorder = c.backorder().create_backorder(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&backorder))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::CreateBackorder {
+                order_id: parse_id::<Uuid>(&req.order_id, "order_id")?,
+                order_line_id: req
+                    .order_line_id
+                    .as_deref()
+                    .map(|s| parse_id::<Uuid>(s, "order_line_id"))
+                    .transpose()?,
+                customer_id: parse_id::<Uuid>(&req.customer_id, "customer_id")?,
+                sku: req.sku,
+                quantity: parse_decimal(&req.quantity, "quantity")?,
+                priority: req.priority.as_deref().map(|s| parse_id(s, "priority")).transpose()?,
+                expected_date: req
+                    .expected_date
+                    .as_deref()
+                    .map(|s| parse_datetime(s, "expected_date"))
+                    .transpose()?,
+                promised_date: req
+                    .promised_date
+                    .as_deref()
+                    .map(|s| parse_datetime(s, "promised_date"))
+                    .transpose()?,
+                source_location_id: None,
+                notes: req.notes,
+            };
+            let backorder = c.backorder().create_backorder(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&backorder))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "backorders_list", path = "/api/v1/backorders", tag = "backorders",
@@ -180,31 +183,41 @@ pub(crate) async fn list(
     Query(params): Query<BackorderFilterParams>,
 ) -> Result<Json<BackorderListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let base = stateset_core::BackorderFilter {
-        order_id: params
-            .order_id
-            .as_deref()
-            .map(|s| parse_id::<Uuid>(s, "order_id"))
-            .transpose()?,
-        customer_id: params
-            .customer_id
-            .as_deref()
-            .map(|s| parse_id::<Uuid>(s, "customer_id"))
-            .transpose()?,
-        sku: params.sku.clone(),
-        status: params.status.as_deref().map(|s| parse_id(s, "status")).transpose()?,
-        priority: params.priority.as_deref().map(|s| parse_id(s, "priority")).transpose()?,
-        ..Default::default()
-    };
-    let total = c.backorder().list_backorders(base.clone())?.len();
-    let filter = stateset_core::BackorderFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    };
-    let backorders = c.backorder().list_backorders(filter)?;
-    Ok(Json(BackorderListResponse { backorders: backorders.iter().map(to_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let base = stateset_core::BackorderFilter {
+                order_id: params
+                    .order_id
+                    .as_deref()
+                    .map(|s| parse_id::<Uuid>(s, "order_id"))
+                    .transpose()?,
+                customer_id: params
+                    .customer_id
+                    .as_deref()
+                    .map(|s| parse_id::<Uuid>(s, "customer_id"))
+                    .transpose()?,
+                sku: params.sku.clone(),
+                status: params.status.as_deref().map(|s| parse_id(s, "status")).transpose()?,
+                priority: params
+                    .priority
+                    .as_deref()
+                    .map(|s| parse_id(s, "priority"))
+                    .transpose()?,
+                ..Default::default()
+            };
+            let total = c.backorder().list_backorders(base.clone())?.len();
+            let filter = stateset_core::BackorderFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            };
+            let backorders = c.backorder().list_backorders(filter)?;
+            Ok(Json(BackorderListResponse {
+                backorders: backorders.iter().map(to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "backorders_get_one", path = "/api/v1/backorders/{id}", tag = "backorders",
@@ -217,12 +230,15 @@ pub(crate) async fn get_one(
     Path(id): Path<Uuid>,
 ) -> Result<Json<BackorderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let backorder = c
-        .backorder()
-        .get_backorder(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Backorder {id} not found")))?;
-    Ok(Json(to_resp(&backorder)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let backorder = c
+                .backorder()
+                .get_backorder(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Backorder {id} not found")))?;
+            Ok(Json(to_resp(&backorder)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "backorders_fulfill", path = "/api/v1/backorders/{id}/fulfill", tag = "backorders",
@@ -237,24 +253,27 @@ pub(crate) async fn fulfill(
     Json(req): Json<FulfillBackorderRequest>,
 ) -> Result<Json<BackorderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let source_type = match req.source_type.as_deref() {
-        Some(s) => parse_id(s, "source_type")?,
-        None => stateset_core::FulfillmentSourceType::default(),
-    };
-    let input = stateset_core::FulfillBackorder {
-        backorder_id: id,
-        quantity: parse_decimal(&req.quantity, "quantity")?,
-        source_type,
-        source_id: req
-            .source_id
-            .as_deref()
-            .map(|s| parse_id::<Uuid>(s, "source_id"))
-            .transpose()?,
-        notes: req.notes,
-        fulfilled_by: req.fulfilled_by,
-    };
-    Ok(Json(to_resp(&c.backorder().fulfill_backorder(input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let source_type = match req.source_type.as_deref() {
+                Some(s) => parse_id(s, "source_type")?,
+                None => stateset_core::FulfillmentSourceType::default(),
+            };
+            let input = stateset_core::FulfillBackorder {
+                backorder_id: id,
+                quantity: parse_decimal(&req.quantity, "quantity")?,
+                source_type,
+                source_id: req
+                    .source_id
+                    .as_deref()
+                    .map(|s| parse_id::<Uuid>(s, "source_id"))
+                    .transpose()?,
+                notes: req.notes,
+                fulfilled_by: req.fulfilled_by,
+            };
+            Ok(Json(to_resp(&c.backorder().fulfill_backorder(input)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "backorders_cancel", path = "/api/v1/backorders/{id}/cancel", tag = "backorders",
@@ -267,8 +286,11 @@ pub(crate) async fn cancel(
     Path(id): Path<Uuid>,
 ) -> Result<Json<BackorderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.backorder().cancel_backorder(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(&c.backorder().cancel_backorder(id)?)))
+        })
+        .await
 }
 
 #[cfg(test)]

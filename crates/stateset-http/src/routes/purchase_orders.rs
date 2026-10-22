@@ -395,31 +395,37 @@ pub(crate) async fn create(
     Json(req): Json<CreatePurchaseOrderRequest>,
 ) -> Result<(StatusCode, Json<PurchaseOrderResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let mut items = Vec::with_capacity(req.items.len());
-    for i in req.items {
-        items.push(to_item_input(i)?);
-    }
-    let input = stateset_core::CreatePurchaseOrder {
-        supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
-        order_date: parse_opt_datetime(req.order_date.as_deref(), "order_date")?,
-        expected_date: parse_opt_datetime(req.expected_date.as_deref(), "expected_date")?,
-        ship_to_address: req.ship_to_address,
-        ship_to_city: req.ship_to_city,
-        ship_to_state: req.ship_to_state,
-        ship_to_postal_code: req.ship_to_postal_code,
-        ship_to_country: req.ship_to_country,
-        payment_terms: parse_opt_terms(req.payment_terms.as_deref())?,
-        currency: parse_opt_currency(req.currency.as_deref())?,
-        tax_amount: parse_opt_decimal(req.tax_amount.as_deref(), "tax_amount")?,
-        shipping_cost: parse_opt_decimal(req.shipping_cost.as_deref(), "shipping_cost")?,
-        discount_amount: parse_opt_decimal(req.discount_amount.as_deref(), "discount_amount")?,
-        notes: req.notes,
-        supplier_notes: req.supplier_notes,
-        items,
-    };
-    let po = c.purchase_orders().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&po))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let mut items = Vec::with_capacity(req.items.len());
+            for i in req.items {
+                items.push(to_item_input(i)?);
+            }
+            let input = stateset_core::CreatePurchaseOrder {
+                supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
+                order_date: parse_opt_datetime(req.order_date.as_deref(), "order_date")?,
+                expected_date: parse_opt_datetime(req.expected_date.as_deref(), "expected_date")?,
+                ship_to_address: req.ship_to_address,
+                ship_to_city: req.ship_to_city,
+                ship_to_state: req.ship_to_state,
+                ship_to_postal_code: req.ship_to_postal_code,
+                ship_to_country: req.ship_to_country,
+                payment_terms: parse_opt_terms(req.payment_terms.as_deref())?,
+                currency: parse_opt_currency(req.currency.as_deref())?,
+                tax_amount: parse_opt_decimal(req.tax_amount.as_deref(), "tax_amount")?,
+                shipping_cost: parse_opt_decimal(req.shipping_cost.as_deref(), "shipping_cost")?,
+                discount_amount: parse_opt_decimal(
+                    req.discount_amount.as_deref(),
+                    "discount_amount",
+                )?,
+                notes: req.notes,
+                supplier_notes: req.supplier_notes,
+                items,
+            };
+            let po = c.purchase_orders().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&po))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "purchase_orders_list", path = "/api/v1/purchase-orders", tag = "purchase_orders",
@@ -432,48 +438,58 @@ pub(crate) async fn list(
     Query(params): Query<PurchaseOrderFilterParams>,
 ) -> Result<Json<PurchaseOrderListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let supplier_id = match params.supplier_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
-        None => None,
-    };
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let after_cursor = match &params.after {
-        Some(cursor) => Some(
-            decode_cursor(cursor).ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
-        ),
-        None => None,
-    };
-    let total = c.purchase_orders().count(stateset_core::PurchaseOrderFilter {
-        supplier_id,
-        status,
-        ..Default::default()
-    })?;
-    let limit = params.limit.unwrap_or(50).clamp(1, 200);
-    let filter = stateset_core::PurchaseOrderFilter {
-        supplier_id,
-        status,
-        limit: Some(overfetch_limit(limit)),
-        offset: if after_cursor.is_some() { Some(0) } else { Some(params.offset.unwrap_or(0)) },
-        after_cursor,
-        ..Default::default()
-    };
-    let mut orders = c.purchase_orders().list(filter)?;
-    let has_more = finalize_page(&mut orders, limit);
-    let next_cursor = if has_more {
-        orders.last().map(|po| encode_cursor(&po.order_date.to_rfc3339(), &po.id.to_string()))
-    } else {
-        None
-    };
-    Ok(Json(PurchaseOrderListResponse {
-        purchase_orders: orders.iter().map(to_resp).collect(),
-        total,
-        next_cursor,
-        has_more,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let supplier_id = match params.supplier_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
+                None => None,
+            };
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let after_cursor = match &params.after {
+                Some(cursor) => Some(
+                    decode_cursor(cursor)
+                        .ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+                ),
+                None => None,
+            };
+            let total = c.purchase_orders().count(stateset_core::PurchaseOrderFilter {
+                supplier_id,
+                status,
+                ..Default::default()
+            })?;
+            let limit = params.limit.unwrap_or(50).clamp(1, 200);
+            let filter = stateset_core::PurchaseOrderFilter {
+                supplier_id,
+                status,
+                limit: Some(overfetch_limit(limit)),
+                offset: if after_cursor.is_some() {
+                    Some(0)
+                } else {
+                    Some(params.offset.unwrap_or(0))
+                },
+                after_cursor,
+                ..Default::default()
+            };
+            let mut orders = c.purchase_orders().list(filter)?;
+            let has_more = finalize_page(&mut orders, limit);
+            let next_cursor = if has_more {
+                orders
+                    .last()
+                    .map(|po| encode_cursor(&po.order_date.to_rfc3339(), &po.id.to_string()))
+            } else {
+                None
+            };
+            Ok(Json(PurchaseOrderListResponse {
+                purchase_orders: orders.iter().map(to_resp).collect(),
+                total,
+                next_cursor,
+                has_more,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "purchase_orders_get_one", path = "/api/v1/purchase-orders/{id}", tag = "purchase_orders",
@@ -486,12 +502,15 @@ pub(crate) async fn get_one(
     Path(id): Path<Uuid>,
 ) -> Result<Json<PurchaseOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let po = c
-        .purchase_orders()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Purchase order {id} not found")))?;
-    Ok(Json(to_resp(&po)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let po = c
+                .purchase_orders()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Purchase order {id} not found")))?;
+            Ok(Json(to_resp(&po)))
+        })
+        .await
 }
 
 #[utoipa::path(put, operation_id = "purchase_orders_update", path = "/api/v1/purchase-orders/{id}", tag = "purchase_orders",
@@ -506,23 +525,29 @@ pub(crate) async fn update(
     Json(req): Json<UpdatePurchaseOrderRequest>,
 ) -> Result<Json<PurchaseOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::UpdatePurchaseOrder {
-        expected_date: parse_opt_datetime(req.expected_date.as_deref(), "expected_date")?,
-        ship_to_address: req.ship_to_address,
-        ship_to_city: req.ship_to_city,
-        ship_to_state: req.ship_to_state,
-        ship_to_postal_code: req.ship_to_postal_code,
-        ship_to_country: req.ship_to_country,
-        payment_terms: parse_opt_terms(req.payment_terms.as_deref())?,
-        tax_amount: parse_opt_decimal(req.tax_amount.as_deref(), "tax_amount")?,
-        shipping_cost: parse_opt_decimal(req.shipping_cost.as_deref(), "shipping_cost")?,
-        discount_amount: parse_opt_decimal(req.discount_amount.as_deref(), "discount_amount")?,
-        notes: req.notes,
-        supplier_notes: req.supplier_notes,
-        supplier_reference: req.supplier_reference,
-    };
-    Ok(Json(to_resp(&c.purchase_orders().update(id, input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::UpdatePurchaseOrder {
+                expected_date: parse_opt_datetime(req.expected_date.as_deref(), "expected_date")?,
+                ship_to_address: req.ship_to_address,
+                ship_to_city: req.ship_to_city,
+                ship_to_state: req.ship_to_state,
+                ship_to_postal_code: req.ship_to_postal_code,
+                ship_to_country: req.ship_to_country,
+                payment_terms: parse_opt_terms(req.payment_terms.as_deref())?,
+                tax_amount: parse_opt_decimal(req.tax_amount.as_deref(), "tax_amount")?,
+                shipping_cost: parse_opt_decimal(req.shipping_cost.as_deref(), "shipping_cost")?,
+                discount_amount: parse_opt_decimal(
+                    req.discount_amount.as_deref(),
+                    "discount_amount",
+                )?,
+                notes: req.notes,
+                supplier_notes: req.supplier_notes,
+                supplier_reference: req.supplier_reference,
+            };
+            Ok(Json(to_resp(&c.purchase_orders().update(id, input)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "purchase_orders_submit", path = "/api/v1/purchase-orders/{id}/submit", tag = "purchase_orders",
@@ -535,8 +560,9 @@ pub(crate) async fn submit(
     Path(id): Path<Uuid>,
 ) -> Result<Json<PurchaseOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.purchase_orders().submit(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.purchase_orders().submit(id)?))))
+        .await
 }
 
 #[utoipa::path(post, operation_id = "purchase_orders_approve", path = "/api/v1/purchase-orders/{id}/approve", tag = "purchase_orders",
@@ -551,8 +577,11 @@ pub(crate) async fn approve(
     Json(req): Json<ApprovePurchaseOrderRequest>,
 ) -> Result<Json<PurchaseOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.purchase_orders().approve(id, &req.approved_by)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(&c.purchase_orders().approve(id, &req.approved_by)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "purchase_orders_send", path = "/api/v1/purchase-orders/{id}/send", tag = "purchase_orders",
@@ -565,8 +594,9 @@ pub(crate) async fn send(
     Path(id): Path<Uuid>,
 ) -> Result<Json<PurchaseOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.purchase_orders().send(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.purchase_orders().send(id)?))))
+        .await
 }
 
 #[utoipa::path(post, operation_id = "purchase_orders_acknowledge", path = "/api/v1/purchase-orders/{id}/acknowledge", tag = "purchase_orders",
@@ -581,8 +611,13 @@ pub(crate) async fn acknowledge(
     Json(req): Json<AcknowledgePurchaseOrderRequest>,
 ) -> Result<Json<PurchaseOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.purchase_orders().acknowledge(id, req.supplier_reference.as_deref())?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(
+                &c.purchase_orders().acknowledge(id, req.supplier_reference.as_deref())?,
+            )))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "purchase_orders_hold", path = "/api/v1/purchase-orders/{id}/hold", tag = "purchase_orders",
@@ -595,8 +630,9 @@ pub(crate) async fn hold(
     Path(id): Path<Uuid>,
 ) -> Result<Json<PurchaseOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.purchase_orders().hold(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.purchase_orders().hold(id)?))))
+        .await
 }
 
 #[utoipa::path(post, operation_id = "purchase_orders_complete", path = "/api/v1/purchase-orders/{id}/complete", tag = "purchase_orders",
@@ -609,8 +645,11 @@ pub(crate) async fn complete(
     Path(id): Path<Uuid>,
 ) -> Result<Json<PurchaseOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.purchase_orders().complete(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(&c.purchase_orders().complete(id)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "purchase_orders_cancel", path = "/api/v1/purchase-orders/{id}/cancel", tag = "purchase_orders",
@@ -623,8 +662,9 @@ pub(crate) async fn cancel(
     Path(id): Path<Uuid>,
 ) -> Result<Json<PurchaseOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.purchase_orders().cancel(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.purchase_orders().cancel(id)?))))
+        .await
 }
 
 #[utoipa::path(post, operation_id = "purchase_orders_receive", path = "/api/v1/purchase-orders/{id}/receive", tag = "purchase_orders",
@@ -639,17 +679,20 @@ pub(crate) async fn receive(
     Json(req): Json<ReceivePurchaseOrderRequest>,
 ) -> Result<Json<PurchaseOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let mut items = Vec::with_capacity(req.items.len());
-    for i in req.items {
-        items.push(stateset_core::ReceivePurchaseOrderItem {
-            item_id: parse_id::<Uuid>(&i.item_id, "item_id")?,
-            quantity_received: parse_decimal(&i.quantity_received, "quantity_received")?,
-            notes: i.notes,
-        });
-    }
-    let input = stateset_core::ReceivePurchaseOrderItems { items, notes: req.notes };
-    Ok(Json(to_resp(&c.purchase_orders().receive(id, input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let mut items = Vec::with_capacity(req.items.len());
+            for i in req.items {
+                items.push(stateset_core::ReceivePurchaseOrderItem {
+                    item_id: parse_id::<Uuid>(&i.item_id, "item_id")?,
+                    quantity_received: parse_decimal(&i.quantity_received, "quantity_received")?,
+                    notes: i.notes,
+                });
+            }
+            let input = stateset_core::ReceivePurchaseOrderItems { items, notes: req.notes };
+            Ok(Json(to_resp(&c.purchase_orders().receive(id, input)?)))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "purchase_orders_get_items", path = "/api/v1/purchase-orders/{id}/items", tag = "purchase_orders",
@@ -662,10 +705,16 @@ pub(crate) async fn get_items(
     Path(id): Path<Uuid>,
 ) -> Result<Json<PurchaseOrderItemsResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let items = c.purchase_orders().get_items(id)?;
-    let total = items.len();
-    Ok(Json(PurchaseOrderItemsResponse { items: items.iter().map(to_item_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let items = c.purchase_orders().get_items(id)?;
+            let total = items.len();
+            Ok(Json(PurchaseOrderItemsResponse {
+                items: items.iter().map(to_item_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 // === Supplier handlers ===
@@ -680,28 +729,31 @@ pub(crate) async fn create_supplier(
     Json(req): Json<CreateSupplierRequest>,
 ) -> Result<(StatusCode, Json<SupplierResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::CreateSupplier {
-        name: req.name,
-        supplier_code: req.supplier_code,
-        contact_name: req.contact_name,
-        email: req.email,
-        phone: req.phone,
-        website: req.website,
-        address: req.address,
-        city: req.city,
-        state: req.state,
-        postal_code: req.postal_code,
-        country: req.country,
-        tax_id: req.tax_id,
-        payment_terms: parse_opt_terms(req.payment_terms.as_deref())?,
-        currency: parse_opt_currency(req.currency.as_deref())?,
-        lead_time_days: req.lead_time_days,
-        minimum_order: parse_opt_decimal(req.minimum_order.as_deref(), "minimum_order")?,
-        notes: req.notes,
-    };
-    let s = c.purchase_orders().create_supplier(input)?;
-    Ok((StatusCode::CREATED, Json(to_supplier_resp(&s))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::CreateSupplier {
+                name: req.name,
+                supplier_code: req.supplier_code,
+                contact_name: req.contact_name,
+                email: req.email,
+                phone: req.phone,
+                website: req.website,
+                address: req.address,
+                city: req.city,
+                state: req.state,
+                postal_code: req.postal_code,
+                country: req.country,
+                tax_id: req.tax_id,
+                payment_terms: parse_opt_terms(req.payment_terms.as_deref())?,
+                currency: parse_opt_currency(req.currency.as_deref())?,
+                lead_time_days: req.lead_time_days,
+                minimum_order: parse_opt_decimal(req.minimum_order.as_deref(), "minimum_order")?,
+                notes: req.notes,
+            };
+            let s = c.purchase_orders().create_supplier(input)?;
+            Ok((StatusCode::CREATED, Json(to_supplier_resp(&s))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "purchase_orders_list_suppliers", path = "/api/v1/suppliers", tag = "purchase_orders",
@@ -714,25 +766,28 @@ pub(crate) async fn list_suppliers(
     Query(params): Query<SupplierFilterParams>,
 ) -> Result<Json<SupplierListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let total = c.purchase_orders().count_suppliers(stateset_core::SupplierFilter {
-        name: params.name.clone(),
-        country: params.country.clone(),
-        active_only: params.active_only,
-        ..Default::default()
-    })?;
-    let filter = stateset_core::SupplierFilter {
-        name: params.name,
-        country: params.country,
-        active_only: params.active_only,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-    };
-    let suppliers = c.purchase_orders().list_suppliers(filter)?;
-    Ok(Json(SupplierListResponse {
-        suppliers: suppliers.iter().map(to_supplier_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let total = c.purchase_orders().count_suppliers(stateset_core::SupplierFilter {
+                name: params.name.clone(),
+                country: params.country.clone(),
+                active_only: params.active_only,
+                ..Default::default()
+            })?;
+            let filter = stateset_core::SupplierFilter {
+                name: params.name,
+                country: params.country,
+                active_only: params.active_only,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+            };
+            let suppliers = c.purchase_orders().list_suppliers(filter)?;
+            Ok(Json(SupplierListResponse {
+                suppliers: suppliers.iter().map(to_supplier_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "purchase_orders_get_supplier", path = "/api/v1/suppliers/{id}", tag = "purchase_orders",
@@ -745,12 +800,15 @@ pub(crate) async fn get_supplier(
     Path(id): Path<Uuid>,
 ) -> Result<Json<SupplierResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let s = c
-        .purchase_orders()
-        .get_supplier(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Supplier {id} not found")))?;
-    Ok(Json(to_supplier_resp(&s)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let s = c
+                .purchase_orders()
+                .get_supplier(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Supplier {id} not found")))?;
+            Ok(Json(to_supplier_resp(&s)))
+        })
+        .await
 }
 
 #[utoipa::path(put, operation_id = "purchase_orders_update_supplier", path = "/api/v1/suppliers/{id}", tag = "purchase_orders",
@@ -765,27 +823,30 @@ pub(crate) async fn update_supplier(
     Json(req): Json<UpdateSupplierRequest>,
 ) -> Result<Json<SupplierResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::UpdateSupplier {
-        name: req.name,
-        contact_name: req.contact_name,
-        email: req.email,
-        phone: req.phone,
-        website: req.website,
-        address: req.address,
-        city: req.city,
-        state: req.state,
-        postal_code: req.postal_code,
-        country: req.country,
-        tax_id: req.tax_id,
-        payment_terms: parse_opt_terms(req.payment_terms.as_deref())?,
-        currency: parse_opt_currency(req.currency.as_deref())?,
-        lead_time_days: req.lead_time_days,
-        minimum_order: parse_opt_decimal(req.minimum_order.as_deref(), "minimum_order")?,
-        is_active: req.is_active,
-        notes: req.notes,
-    };
-    Ok(Json(to_supplier_resp(&c.purchase_orders().update_supplier(id, input)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::UpdateSupplier {
+                name: req.name,
+                contact_name: req.contact_name,
+                email: req.email,
+                phone: req.phone,
+                website: req.website,
+                address: req.address,
+                city: req.city,
+                state: req.state,
+                postal_code: req.postal_code,
+                country: req.country,
+                tax_id: req.tax_id,
+                payment_terms: parse_opt_terms(req.payment_terms.as_deref())?,
+                currency: parse_opt_currency(req.currency.as_deref())?,
+                lead_time_days: req.lead_time_days,
+                minimum_order: parse_opt_decimal(req.minimum_order.as_deref(), "minimum_order")?,
+                is_active: req.is_active,
+                notes: req.notes,
+            };
+            Ok(Json(to_supplier_resp(&c.purchase_orders().update_supplier(id, input)?)))
+        })
+        .await
 }
 
 #[utoipa::path(delete, operation_id = "purchase_orders_delete_supplier", path = "/api/v1/suppliers/{id}", tag = "purchase_orders",
@@ -798,9 +859,12 @@ pub(crate) async fn delete_supplier(
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.purchase_orders().delete_supplier(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.purchase_orders().delete_supplier(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[cfg(test)]

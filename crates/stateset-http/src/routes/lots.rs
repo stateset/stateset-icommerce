@@ -226,29 +226,32 @@ pub(crate) async fn create(
     Json(req): Json<CreateLotRequest>,
 ) -> Result<(StatusCode, Json<LotResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let supplier_id = match req.supplier_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
-        None => None,
-    };
-    let cost_per_unit = match req.cost_per_unit.as_deref() {
-        Some(s) => Some(parse_decimal(s, "cost_per_unit")?),
-        None => None,
-    };
-    let input = stateset_core::CreateLot {
-        lot_number: req.lot_number,
-        sku: req.sku,
-        quantity: parse_decimal(&req.quantity, "quantity")?,
-        production_date: opt_datetime(req.production_date.as_deref(), "production_date")?,
-        expiration_date: opt_datetime(req.expiration_date.as_deref(), "expiration_date")?,
-        supplier_lot: req.supplier_lot,
-        supplier_id,
-        cost_per_unit,
-        notes: req.notes,
-        ..Default::default()
-    };
-    let lot = c.lots().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&lot))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let supplier_id = match req.supplier_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
+                None => None,
+            };
+            let cost_per_unit = match req.cost_per_unit.as_deref() {
+                Some(s) => Some(parse_decimal(s, "cost_per_unit")?),
+                None => None,
+            };
+            let input = stateset_core::CreateLot {
+                lot_number: req.lot_number,
+                sku: req.sku,
+                quantity: parse_decimal(&req.quantity, "quantity")?,
+                production_date: opt_datetime(req.production_date.as_deref(), "production_date")?,
+                expiration_date: opt_datetime(req.expiration_date.as_deref(), "expiration_date")?,
+                supplier_lot: req.supplier_lot,
+                supplier_id,
+                cost_per_unit,
+                notes: req.notes,
+                ..Default::default()
+            };
+            let lot = c.lots().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&lot))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "lots_list", path = "/api/v1/lots", tag = "lots",
@@ -261,25 +264,28 @@ pub(crate) async fn list(
     Query(params): Query<LotFilterParams>,
 ) -> Result<Json<LotListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let base = stateset_core::LotFilter {
-        sku: params.sku,
-        lot_number: params.lot_number,
-        status,
-        ..Default::default()
-    };
-    let total = c.lots().count(base.clone())?;
-    let filter = stateset_core::LotFilter {
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..base
-    };
-    let lots = c.lots().list(filter)?;
-    Ok(Json(LotListResponse { lots: lots.iter().map(to_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let base = stateset_core::LotFilter {
+                sku: params.sku,
+                lot_number: params.lot_number,
+                status,
+                ..Default::default()
+            };
+            let total = c.lots().count(base.clone())?;
+            let filter = stateset_core::LotFilter {
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..base
+            };
+            let lots = c.lots().list(filter)?;
+            Ok(Json(LotListResponse { lots: lots.iter().map(to_resp).collect(), total }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "lots_expiring", path = "/api/v1/lots/expiring", tag = "lots",
@@ -292,10 +298,13 @@ pub(crate) async fn expiring(
     Query(params): Query<ExpiringLotParams>,
 ) -> Result<Json<LotListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let lots = c.lots().get_expiring_lots(params.days.unwrap_or(30))?;
-    let total = lots.len() as u64;
-    Ok(Json(LotListResponse { lots: lots.iter().map(to_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let lots = c.lots().get_expiring_lots(params.days.unwrap_or(30))?;
+            let total = lots.len() as u64;
+            Ok(Json(LotListResponse { lots: lots.iter().map(to_resp).collect(), total }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "lots_get_one", path = "/api/v1/lots/{id}", tag = "lots",
@@ -308,10 +317,15 @@ pub(crate) async fn get_one(
     Path(id): Path<Uuid>,
 ) -> Result<Json<LotResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let lot =
-        c.lots().get(id)?.ok_or_else(|| HttpError::NotFound(format!("Lot {id} not found")))?;
-    Ok(Json(to_resp(&lot)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let lot = c
+                .lots()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Lot {id} not found")))?;
+            Ok(Json(to_resp(&lot)))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "lots_genealogy", path = "/api/v1/lots/{id}/genealogy", tag = "lots",
@@ -324,16 +338,19 @@ pub(crate) async fn genealogy(
     Path(id): Path<Uuid>,
 ) -> Result<Json<LotGenealogyResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    // 404 rather than an empty graph for a lot that does not exist.
-    if c.lots().get(id)?.is_none() {
-        return Err(HttpError::NotFound(format!("Lot {id} not found")));
-    }
-    Ok(Json(LotGenealogyResponse {
-        lot_id: id.to_string(),
-        parents: c.lots().get_parents(id)?.iter().map(genealogy_resp).collect(),
-        children: c.lots().get_children(id)?.iter().map(genealogy_resp).collect(),
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            // 404 rather than an empty graph for a lot that does not exist.
+            if c.lots().get(id)?.is_none() {
+                return Err(HttpError::NotFound(format!("Lot {id} not found")));
+            }
+            Ok(Json(LotGenealogyResponse {
+                lot_id: id.to_string(),
+                parents: c.lots().get_parents(id)?.iter().map(genealogy_resp).collect(),
+                children: c.lots().get_children(id)?.iter().map(genealogy_resp).collect(),
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "lots_consume", path = "/api/v1/lots/{id}/consume", tag = "lots",
@@ -348,18 +365,21 @@ pub(crate) async fn consume(
     Json(req): Json<ConsumeLotRequest>,
 ) -> Result<Json<LotTransactionResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let (reference_type, reference_id) =
-        reference(req.reference_type, req.reference_id.as_deref())?;
-    let tx = c.lots().consume(stateset_core::ConsumeLot {
-        lot_id: id,
-        quantity: parse_decimal(&req.quantity, "quantity")?,
-        reference_type,
-        reference_id,
-        performed_by: req.performed_by,
-        ..Default::default()
-    })?;
-    Ok(Json(tx_resp(&tx)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let (reference_type, reference_id) =
+                reference(req.reference_type, req.reference_id.as_deref())?;
+            let tx = c.lots().consume(stateset_core::ConsumeLot {
+                lot_id: id,
+                quantity: parse_decimal(&req.quantity, "quantity")?,
+                reference_type,
+                reference_id,
+                performed_by: req.performed_by,
+                ..Default::default()
+            })?;
+            Ok(Json(tx_resp(&tx)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "lots_reserve", path = "/api/v1/lots/{id}/reserve", tag = "lots",
@@ -374,20 +394,23 @@ pub(crate) async fn reserve(
     Json(req): Json<ReserveLotRequest>,
 ) -> Result<(StatusCode, Json<LotReservationResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let (reference_type, reference_id) =
-        reference(req.reference_type, req.reference_id.as_deref())?;
-    let reservation_id = c.lots().reserve(stateset_core::ReserveLot {
-        lot_id: id,
-        quantity: parse_decimal(&req.quantity, "quantity")?,
-        reference_type,
-        reference_id,
-        expires_in_seconds: req.expires_in_seconds,
-    })?;
-    Ok((
-        StatusCode::CREATED,
-        Json(LotReservationResponse { reservation_id: reservation_id.to_string() }),
-    ))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let (reference_type, reference_id) =
+                reference(req.reference_type, req.reference_id.as_deref())?;
+            let reservation_id = c.lots().reserve(stateset_core::ReserveLot {
+                lot_id: id,
+                quantity: parse_decimal(&req.quantity, "quantity")?,
+                reference_type,
+                reference_id,
+                expires_in_seconds: req.expires_in_seconds,
+            })?;
+            Ok((
+                StatusCode::CREATED,
+                Json(LotReservationResponse { reservation_id: reservation_id.to_string() }),
+            ))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "lots_release_reservation",
@@ -401,9 +424,12 @@ pub(crate) async fn release_reservation(
     Path(reservation_id): Path<Uuid>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.lots().release_reservation(reservation_id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.lots().release_reservation(reservation_id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "lots_quarantine", path = "/api/v1/lots/{id}/quarantine", tag = "lots",
@@ -418,8 +444,11 @@ pub(crate) async fn quarantine(
     Json(req): Json<QuarantineLotRequest>,
 ) -> Result<Json<LotResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.lots().quarantine(id, &req.reason)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(&c.lots().quarantine(id, &req.reason)?)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "lots_release_quarantine",
@@ -433,8 +462,9 @@ pub(crate) async fn release_quarantine(
     Path(id): Path<Uuid>,
 ) -> Result<Json<LotResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.lots().release_quarantine(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.lots().release_quarantine(id)?))))
+        .await
 }
 
 #[cfg(test)]

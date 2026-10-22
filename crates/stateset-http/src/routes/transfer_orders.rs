@@ -116,29 +116,32 @@ pub(crate) async fn create(
     Json(req): Json<CreateTransferOrderRequest>,
 ) -> Result<(StatusCode, Json<TransferOrderResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let mut items = Vec::with_capacity(req.items.len());
-    for i in req.items {
-        items.push(stateset_core::CreateTransferOrderItem {
-            product_id: parse_id(&i.product_id, "product_id")?,
-            quantity: parse_decimal(&i.quantity)?,
-        });
-    }
-    let input = stateset_core::CreateTransferOrder {
-        source_warehouse_id: parse_id::<WarehouseId>(
-            &req.source_warehouse_id,
-            "source_warehouse_id",
-        )?,
-        destination_warehouse_id: parse_id::<WarehouseId>(
-            &req.destination_warehouse_id,
-            "destination_warehouse_id",
-        )?,
-        items,
-        expected_at: None,
-        notes: req.notes,
-    };
-    let t = c.transfer_orders().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&t))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let mut items = Vec::with_capacity(req.items.len());
+            for i in req.items {
+                items.push(stateset_core::CreateTransferOrderItem {
+                    product_id: parse_id(&i.product_id, "product_id")?,
+                    quantity: parse_decimal(&i.quantity)?,
+                });
+            }
+            let input = stateset_core::CreateTransferOrder {
+                source_warehouse_id: parse_id::<WarehouseId>(
+                    &req.source_warehouse_id,
+                    "source_warehouse_id",
+                )?,
+                destination_warehouse_id: parse_id::<WarehouseId>(
+                    &req.destination_warehouse_id,
+                    "destination_warehouse_id",
+                )?,
+                items,
+                expected_at: None,
+                notes: req.notes,
+            };
+            let t = c.transfer_orders().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&t))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "transfer_orders_list", path = "/api/v1/transfer-orders", tag = "transfer_orders",
@@ -151,26 +154,29 @@ pub(crate) async fn list(
     Query(params): Query<TransferOrderFilterParams>,
 ) -> Result<Json<TransferOrderListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let status = match params.status.as_deref() {
-        Some(s) => Some(parse_id(s, "status")?),
-        None => None,
-    };
-    let total = c
-        .transfer_orders()
-        .list(stateset_core::TransferOrderFilter { status, ..Default::default() })?
-        .len();
-    let filter = stateset_core::TransferOrderFilter {
-        status,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-        ..Default::default()
-    };
-    let orders = c.transfer_orders().list(filter)?;
-    Ok(Json(TransferOrderListResponse {
-        transfer_orders: orders.iter().map(to_resp).collect(),
-        total,
-    }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let status = match params.status.as_deref() {
+                Some(s) => Some(parse_id(s, "status")?),
+                None => None,
+            };
+            let total = c
+                .transfer_orders()
+                .list(stateset_core::TransferOrderFilter { status, ..Default::default() })?
+                .len();
+            let filter = stateset_core::TransferOrderFilter {
+                status,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+                ..Default::default()
+            };
+            let orders = c.transfer_orders().list(filter)?;
+            Ok(Json(TransferOrderListResponse {
+                transfer_orders: orders.iter().map(to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "transfer_orders_get_one", path = "/api/v1/transfer-orders/{id}", tag = "transfer_orders",
@@ -183,12 +189,15 @@ pub(crate) async fn get_one(
     Path(id): Path<TransferOrderId>,
 ) -> Result<Json<TransferOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let t = c
-        .transfer_orders()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Transfer order {id} not found")))?;
-    Ok(Json(to_resp(&t)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let t = c
+                .transfer_orders()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Transfer order {id} not found")))?;
+            Ok(Json(to_resp(&t)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "transfer_orders_ship", path = "/api/v1/transfer-orders/{id}/ship", tag = "transfer_orders",
@@ -201,8 +210,9 @@ pub(crate) async fn ship(
     Path(id): Path<TransferOrderId>,
 ) -> Result<Json<TransferOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.transfer_orders().ship(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.transfer_orders().ship(id)?))))
+        .await
 }
 
 #[utoipa::path(post, operation_id = "transfer_orders_receive", path = "/api/v1/transfer-orders/{id}/receive", tag = "transfer_orders",
@@ -217,10 +227,13 @@ pub(crate) async fn receive(
     Json(req): Json<ReceiveLineRequest>,
 ) -> Result<Json<TransferOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let item_id: TransferOrderItemId = parse_id(&req.item_id, "item_id")?;
-    let t = c.transfer_orders().receive_line(id, item_id, parse_decimal(&req.quantity)?)?;
-    Ok(Json(to_resp(&t)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let item_id: TransferOrderItemId = parse_id(&req.item_id, "item_id")?;
+            let t = c.transfer_orders().receive_line(id, item_id, parse_decimal(&req.quantity)?)?;
+            Ok(Json(to_resp(&t)))
+        })
+        .await
 }
 
 #[utoipa::path(post, operation_id = "transfer_orders_cancel", path = "/api/v1/transfer-orders/{id}/cancel", tag = "transfer_orders",
@@ -233,8 +246,9 @@ pub(crate) async fn cancel(
     Path(id): Path<TransferOrderId>,
 ) -> Result<Json<TransferOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    Ok(Json(to_resp(&c.transfer_orders().cancel(id)?)))
+    state
+        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.transfer_orders().cancel(id)?))))
+        .await
 }
 
 #[cfg(test)]

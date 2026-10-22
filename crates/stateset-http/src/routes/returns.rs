@@ -119,22 +119,25 @@ pub(crate) async fn set_item_disposition(
     Json(req): Json<SetReturnDispositionRequest>,
 ) -> Result<Json<ReturnItemResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let disposition = stateset_core::ReturnDisposition::from_str(&req.disposition)
-        .map_err(|e| HttpError::BadRequest(format!("Invalid disposition: {e}")))?;
-    let item = commerce.returns().set_item_disposition(
-        id,
-        item_id,
-        stateset_core::SetReturnDisposition {
-            disposition,
-            warehouse_id: req.warehouse_id,
-            bin_id: req.bin_id,
-            disposition_by: req.disposition_by,
-            lot_id: req.lot_id,
-            serial_ids: req.serial_ids,
-        },
-    )?;
-    Ok(Json(ReturnItemResponse::from(item)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let disposition = stateset_core::ReturnDisposition::from_str(&req.disposition)
+                .map_err(|e| HttpError::BadRequest(format!("Invalid disposition: {e}")))?;
+            let item = commerce.returns().set_item_disposition(
+                id,
+                item_id,
+                stateset_core::SetReturnDisposition {
+                    disposition,
+                    warehouse_id: req.warehouse_id,
+                    bin_id: req.bin_id,
+                    disposition_by: req.disposition_by,
+                    lot_id: req.lot_id,
+                    serial_ids: req.serial_ids,
+                },
+            )?;
+            Ok(Json(ReturnItemResponse::from(item)))
+        })
+        .await
 }
 
 /// `POST /api/v1/returns`
@@ -162,39 +165,41 @@ pub(crate) async fn create_return(
     Json(req): Json<CreateReturnRequest>,
 ) -> Result<(axum::http::StatusCode, Json<ReturnResponse>), HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let reason = ReturnReason::from_str(&req.reason)
+                .map_err(|e| HttpError::BadRequest(format!("Invalid reason: {e}")))?;
 
-    let reason = ReturnReason::from_str(&req.reason)
-        .map_err(|e| HttpError::BadRequest(format!("Invalid reason: {e}")))?;
+            let items: Vec<CreateReturnItem> = req
+                .items
+                .into_iter()
+                .map(|item| {
+                    let condition = item
+                        .condition
+                        .as_deref()
+                        .map(ItemCondition::from_str)
+                        .transpose()
+                        .map_err(|e| HttpError::BadRequest(format!("Invalid condition: {e}")));
+                    condition.map(|c| CreateReturnItem {
+                        order_item_id: OrderItemId::from_uuid(item.order_item_id),
+                        quantity: item.quantity,
+                        condition: c,
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
 
-    let items: Vec<CreateReturnItem> = req
-        .items
-        .into_iter()
-        .map(|item| {
-            let condition = item
-                .condition
-                .as_deref()
-                .map(ItemCondition::from_str)
-                .transpose()
-                .map_err(|e| HttpError::BadRequest(format!("Invalid condition: {e}")));
-            condition.map(|c| CreateReturnItem {
-                order_item_id: OrderItemId::from_uuid(item.order_item_id),
-                quantity: item.quantity,
-                condition: c,
-            })
+            let input = CreateReturn {
+                order_id: req.order_id,
+                reason,
+                reason_details: req.reason_details,
+                items,
+                notes: req.notes,
+                ..Default::default()
+            };
+            let ret = commerce.returns().create(input)?;
+            Ok((axum::http::StatusCode::CREATED, Json(ReturnResponse::from(ret))))
         })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let input = CreateReturn {
-        order_id: req.order_id,
-        reason,
-        reason_details: req.reason_details,
-        items,
-        notes: req.notes,
-        ..Default::default()
-    };
-    let ret = commerce.returns().create(input)?;
-    Ok((axum::http::StatusCode::CREATED, Json(ReturnResponse::from(ret))))
+        .await
 }
 
 /// `GET /api/v1/returns/:id`
@@ -215,12 +220,15 @@ pub(crate) async fn get_return(
     Path(id): Path<ReturnId>,
 ) -> Result<Json<ReturnResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let ret = commerce
-        .returns()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Return {id} not found")))?;
-    Ok(Json(ReturnResponse::from(ret)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let ret = commerce
+                .returns()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Return {id} not found")))?;
+            Ok(Json(ReturnResponse::from(ret)))
+        })
+        .await
 }
 
 /// `PATCH /api/v1/returns/:id/approve`
@@ -242,9 +250,12 @@ pub(crate) async fn approve_return(
     Path(id): Path<ReturnId>,
 ) -> Result<Json<ReturnResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let ret = commerce.returns().approve(id)?;
-    Ok(Json(ReturnResponse::from(ret)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let ret = commerce.returns().approve(id)?;
+            Ok(Json(ReturnResponse::from(ret)))
+        })
+        .await
 }
 
 /// Request body for `PATCH /api/v1/returns/{id}`.
@@ -343,10 +354,13 @@ pub(crate) async fn update_return(
     Json(req): Json<UpdateReturnRequest>,
 ) -> Result<Json<ReturnResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let input = UpdateReturn::try_from(req)?;
-    let ret = commerce.returns().update(id, input)?;
-    Ok(Json(ReturnResponse::from(ret)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let input = UpdateReturn::try_from(req)?;
+            let ret = commerce.returns().update(id, input)?;
+            Ok(Json(ReturnResponse::from(ret)))
+        })
+        .await
 }
 
 /// `PATCH /api/v1/returns/:id/reject`
@@ -376,10 +390,13 @@ pub(crate) async fn reject_return(
     body: Option<Json<RejectReturnRequest>>,
 ) -> Result<Json<ReturnResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let RejectReturnRequest { reason } = body.map(|Json(b)| b).unwrap_or_default();
-    let ret = commerce.returns().reject(id, &reason)?;
-    Ok(Json(ReturnResponse::from(ret)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let RejectReturnRequest { reason } = body.map(|Json(b)| b).unwrap_or_default();
+            let ret = commerce.returns().reject(id, &reason)?;
+            Ok(Json(ReturnResponse::from(ret)))
+        })
+        .await
 }
 
 /// `PATCH /api/v1/returns/:id/complete`
@@ -409,22 +426,25 @@ pub(crate) async fn complete_return(
     body: Option<Json<CompleteReturnRequest>>,
 ) -> Result<Json<ReturnResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
-    let CompleteReturnRequest { write_off_undispositioned } =
-        body.map(|Json(b)| b).unwrap_or_default();
-    let ret = if write_off_undispositioned {
-        commerce.returns().update(
-            id,
-            UpdateReturn {
-                status: Some(ReturnStatus::Completed),
-                write_off_undispositioned: true,
-                ..Default::default()
-            },
-        )?
-    } else {
-        commerce.returns().complete(id)?
-    };
-    Ok(Json(ReturnResponse::from(ret)))
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let CompleteReturnRequest { write_off_undispositioned } =
+                body.map(|Json(b)| b).unwrap_or_default();
+            let ret = if write_off_undispositioned {
+                commerce.returns().update(
+                    id,
+                    UpdateReturn {
+                        status: Some(ReturnStatus::Completed),
+                        write_off_undispositioned: true,
+                        ..Default::default()
+                    },
+                )?
+            } else {
+                commerce.returns().complete(id)?
+            };
+            Ok(Json(ReturnResponse::from(ret)))
+        })
+        .await
 }
 
 /// `GET /api/v1/returns`
@@ -445,94 +465,97 @@ pub(crate) async fn list_returns(
     Query(params): Query<ReturnFilterParams>,
 ) -> Result<Json<ReturnListResponse>, HttpError> {
     let tenant_id = tenant_id_from_headers(&headers);
-    let commerce = state.commerce_for_tenant(tenant_id.as_deref())?;
+    state
+        .run_blocking(tenant_id.as_deref(), move |commerce| {
+            let limit = params.resolved_limit();
+            let offset = params.resolved_offset();
 
-    let limit = params.resolved_limit();
-    let offset = params.resolved_offset();
+            // Parse filter parameters
+            let order_id = params
+                .order_id
+                .map(|s| s.parse::<OrderId>())
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid order_id: {e}")))?;
+            let customer_id = params
+                .customer_id
+                .map(|s| s.parse::<CustomerId>())
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid customer_id: {e}")))?;
+            let status = params
+                .status
+                .as_deref()
+                .map(ReturnStatus::from_str)
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
+            let reason = params
+                .reason
+                .as_deref()
+                .map(ReturnReason::from_str)
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid reason: {e}")))?;
+            let from_date = params
+                .from_date
+                .map(|s| s.parse())
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid from_date: {e}")))?;
+            let to_date = params
+                .to_date
+                .map(|s| s.parse())
+                .transpose()
+                .map_err(|e| HttpError::BadRequest(format!("Invalid to_date: {e}")))?;
 
-    // Parse filter parameters
-    let order_id = params
-        .order_id
-        .map(|s| s.parse::<OrderId>())
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid order_id: {e}")))?;
-    let customer_id = params
-        .customer_id
-        .map(|s| s.parse::<CustomerId>())
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid customer_id: {e}")))?;
-    let status = params
-        .status
-        .as_deref()
-        .map(ReturnStatus::from_str)
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid status: {e}")))?;
-    let reason = params
-        .reason
-        .as_deref()
-        .map(ReturnReason::from_str)
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid reason: {e}")))?;
-    let from_date = params
-        .from_date
-        .map(|s| s.parse())
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid from_date: {e}")))?;
-    let to_date = params
-        .to_date
-        .map(|s| s.parse())
-        .transpose()
-        .map_err(|e| HttpError::BadRequest(format!("Invalid to_date: {e}")))?;
+            // Decode cursor if provided
+            let after_cursor = match &params.after {
+                Some(cursor) => Some(
+                    decode_cursor(cursor)
+                        .ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
+                ),
+                None => None,
+            };
 
-    // Decode cursor if provided
-    let after_cursor = match &params.after {
-        Some(cursor) => Some(
-            decode_cursor(cursor).ok_or_else(|| HttpError::BadRequest("Invalid cursor".into()))?,
-        ),
-        None => None,
-    };
+            // Count total matching records (without pagination or cursor)
+            let count_filter = ReturnFilter {
+                order_id,
+                customer_id,
+                status,
+                reason,
+                from_date,
+                to_date,
+                limit: None,
+                offset: None,
+                after_cursor: None,
+            };
+            let total = commerce.returns().list(count_filter)?.len();
 
-    // Count total matching records (without pagination or cursor)
-    let count_filter = ReturnFilter {
-        order_id,
-        customer_id,
-        status,
-        reason,
-        from_date,
-        to_date,
-        limit: None,
-        offset: None,
-        after_cursor: None,
-    };
-    let total = commerce.returns().list(count_filter)?.len();
-
-    // Fetch the requested page
-    let filter = ReturnFilter {
-        order_id,
-        customer_id,
-        status,
-        reason,
-        from_date,
-        to_date,
-        limit: Some(overfetch_limit(limit)),
-        offset: if after_cursor.is_some() { Some(0) } else { Some(offset) },
-        after_cursor,
-    };
-    let mut returns = commerce.returns().list(filter)?;
-    let has_more = finalize_page(&mut returns, limit);
-    let next_cursor = if has_more {
-        returns.last().map(|r| encode_cursor(&r.created_at.to_rfc3339(), &r.id.to_string()))
-    } else {
-        None
-    };
-    Ok(Json(ReturnListResponse {
-        returns: returns.into_iter().map(ReturnResponse::from).collect(),
-        total,
-        limit,
-        offset,
-        next_cursor,
-        has_more,
-    }))
+            // Fetch the requested page
+            let filter = ReturnFilter {
+                order_id,
+                customer_id,
+                status,
+                reason,
+                from_date,
+                to_date,
+                limit: Some(overfetch_limit(limit)),
+                offset: if after_cursor.is_some() { Some(0) } else { Some(offset) },
+                after_cursor,
+            };
+            let mut returns = commerce.returns().list(filter)?;
+            let has_more = finalize_page(&mut returns, limit);
+            let next_cursor = if has_more {
+                returns.last().map(|r| encode_cursor(&r.created_at.to_rfc3339(), &r.id.to_string()))
+            } else {
+                None
+            };
+            Ok(Json(ReturnListResponse {
+                returns: returns.into_iter().map(ReturnResponse::from).collect(),
+                total,
+                limit,
+                offset,
+                next_cursor,
+                has_more,
+            }))
+        })
+        .await
 }
 
 #[cfg(test)]

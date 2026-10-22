@@ -92,18 +92,21 @@ pub(crate) async fn create(
     Json(req): Json<CreateSupplierSkuRequest>,
 ) -> Result<(StatusCode, Json<SupplierSkuResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let input = stateset_core::CreateSupplierSku {
-        product_id: parse_id::<ProductId>(&req.product_id, "product_id")?,
-        supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
-        sku: req.sku,
-        unit_cost: parse_decimal_opt(req.unit_cost.as_deref())?,
-        currency: None,
-        min_order_qty: parse_decimal_opt(req.min_order_qty.as_deref())?,
-        lead_time_days: req.lead_time_days,
-    };
-    let s = c.supplier_skus().create(input)?;
-    Ok((StatusCode::CREATED, Json(to_resp(&s))))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let input = stateset_core::CreateSupplierSku {
+                product_id: parse_id::<ProductId>(&req.product_id, "product_id")?,
+                supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
+                sku: req.sku,
+                unit_cost: parse_decimal_opt(req.unit_cost.as_deref())?,
+                currency: None,
+                min_order_qty: parse_decimal_opt(req.min_order_qty.as_deref())?,
+                lead_time_days: req.lead_time_days,
+            };
+            let s = c.supplier_skus().create(input)?;
+            Ok((StatusCode::CREATED, Json(to_resp(&s))))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "supplier_skus_list", path = "/api/v1/supplier-skus", tag = "supplier_skus",
@@ -116,27 +119,37 @@ pub(crate) async fn list(
     Query(params): Query<SupplierSkuFilterParams>,
 ) -> Result<Json<SupplierSkuListResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let supplier_id = match params.supplier_id.as_deref() {
-        Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
-        None => None,
-    };
-    let product_id = match params.product_id.as_deref() {
-        Some(s) => Some(parse_id::<ProductId>(s, "product_id")?),
-        None => None,
-    };
-    let total = c
-        .supplier_skus()
-        .list(stateset_core::SupplierSkuFilter { supplier_id, product_id, ..Default::default() })?
-        .len();
-    let filter = stateset_core::SupplierSkuFilter {
-        supplier_id,
-        product_id,
-        limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
-        offset: Some(params.offset.unwrap_or(0)),
-    };
-    let skus = c.supplier_skus().list(filter)?;
-    Ok(Json(SupplierSkuListResponse { supplier_skus: skus.iter().map(to_resp).collect(), total }))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let supplier_id = match params.supplier_id.as_deref() {
+                Some(s) => Some(parse_id::<Uuid>(s, "supplier_id")?),
+                None => None,
+            };
+            let product_id = match params.product_id.as_deref() {
+                Some(s) => Some(parse_id::<ProductId>(s, "product_id")?),
+                None => None,
+            };
+            let total = c
+                .supplier_skus()
+                .list(stateset_core::SupplierSkuFilter {
+                    supplier_id,
+                    product_id,
+                    ..Default::default()
+                })?
+                .len();
+            let filter = stateset_core::SupplierSkuFilter {
+                supplier_id,
+                product_id,
+                limit: Some(params.limit.unwrap_or(50).clamp(1, 200)),
+                offset: Some(params.offset.unwrap_or(0)),
+            };
+            let skus = c.supplier_skus().list(filter)?;
+            Ok(Json(SupplierSkuListResponse {
+                supplier_skus: skus.iter().map(to_resp).collect(),
+                total,
+            }))
+        })
+        .await
 }
 
 #[utoipa::path(get, operation_id = "supplier_skus_get_one", path = "/api/v1/supplier-skus/{id}", tag = "supplier_skus",
@@ -149,12 +162,15 @@ pub(crate) async fn get_one(
     Path(id): Path<SupplierSkuId>,
 ) -> Result<Json<SupplierSkuResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    let s = c
-        .supplier_skus()
-        .get(id)?
-        .ok_or_else(|| HttpError::NotFound(format!("Supplier SKU {id} not found")))?;
-    Ok(Json(to_resp(&s)))
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            let s = c
+                .supplier_skus()
+                .get(id)?
+                .ok_or_else(|| HttpError::NotFound(format!("Supplier SKU {id} not found")))?;
+            Ok(Json(to_resp(&s)))
+        })
+        .await
 }
 
 #[utoipa::path(delete, operation_id = "supplier_skus_delete_one", path = "/api/v1/supplier-skus/{id}", tag = "supplier_skus",
@@ -167,9 +183,12 @@ pub(crate) async fn delete_one(
     Path(id): Path<SupplierSkuId>,
 ) -> Result<StatusCode, HttpError> {
     let tid = tenant_id_from_headers(&headers);
-    let c = state.commerce_for_tenant(tid.as_deref())?;
-    c.supplier_skus().delete(id)?;
-    Ok(StatusCode::NO_CONTENT)
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            c.supplier_skus().delete(id)?;
+            Ok(StatusCode::NO_CONTENT)
+        })
+        .await
 }
 
 #[cfg(test)]
