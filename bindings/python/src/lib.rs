@@ -3242,7 +3242,7 @@ impl Payments {
             id.parse().map_err(|_| PyValueError::new_err("Invalid refund UUID"))?;
         let refund = commerce
             .payments()
-            .get_refund(uuid)
+            .get_refund(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get refund: {}", e)))?;
         convert_optional_output(refund)
     }
@@ -3273,7 +3273,7 @@ impl Payments {
             id.parse().map_err(|_| PyValueError::new_err("Invalid refund UUID"))?;
         let refund = commerce
             .payments()
-            .complete_refund(uuid)
+            .complete_refund(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to complete refund: {}", e)))?;
         convert_output(refund)
     }
@@ -3288,7 +3288,7 @@ impl Payments {
             id.parse().map_err(|_| PyValueError::new_err("Invalid refund UUID"))?;
         let refund = commerce
             .payments()
-            .fail_refund(uuid, &reason)
+            .fail_refund(uuid.into(), &reason)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to fail refund: {}", e)))?;
         convert_output(refund)
     }

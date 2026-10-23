@@ -98,7 +98,7 @@ async fn refund(db: &PostgresDatabase, payment_id: PaymentId, amount: Decimal) {
         })
         .await
         .expect("create refund");
-    db.payments().complete_refund_async(refund.id).await.expect("complete refund");
+    db.payments().complete_refund_async(refund.id.into_uuid()).await.expect("complete refund");
 }
 
 async fn chargeback_events(db: &PostgresDatabase, payment_id: PaymentId) -> Vec<serde_json::Value> {

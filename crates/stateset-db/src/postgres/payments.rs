@@ -18,6 +18,7 @@ use stateset_core::{
     PaymentTransactionStatus, Refund, RefundStatus, Result, UpdatePayment, Validate,
     generate_payment_number, generate_refund_number, validate_batch_size,
 };
+use stateset_core::{PaymentMethodId, RefundId};
 use uuid::Uuid;
 
 /// Payment statuses that hold (or are about to hold) a slice of the order's
@@ -758,7 +759,7 @@ impl PgPaymentRepository {
         })?;
 
         Ok(Refund {
-            id,
+            id: RefundId::from(id),
             refund_number,
             payment_id: PaymentId::from(payment_id),
             status,
@@ -811,7 +812,7 @@ impl PgPaymentRepository {
         };
 
         Ok(PaymentMethod {
-            id,
+            id: PaymentMethodId::from(id),
             customer_id: CustomerId::from(customer_id),
             method_type,
             is_default,
@@ -2241,20 +2242,20 @@ impl PaymentRepository for PgPaymentRepository {
         super::block_on(self.create_refund_async(input))
     }
 
-    fn get_refund(&self, id: Uuid) -> Result<Option<Refund>> {
-        super::block_on(self.get_refund_async(id))
+    fn get_refund(&self, id: RefundId) -> Result<Option<Refund>> {
+        super::block_on(self.get_refund_async(id.into_uuid()))
     }
 
     fn get_refunds(&self, payment_id: PaymentId) -> Result<Vec<Refund>> {
         super::block_on(self.get_refunds_async(payment_id.into_uuid()))
     }
 
-    fn complete_refund(&self, id: Uuid) -> Result<Refund> {
-        super::block_on(self.complete_refund_async(id))
+    fn complete_refund(&self, id: RefundId) -> Result<Refund> {
+        super::block_on(self.complete_refund_async(id.into_uuid()))
     }
 
-    fn fail_refund(&self, id: Uuid, reason: &str) -> Result<Refund> {
-        super::block_on(self.fail_refund_async(id, reason))
+    fn fail_refund(&self, id: RefundId, reason: &str) -> Result<Refund> {
+        super::block_on(self.fail_refund_async(id.into_uuid(), reason))
     }
 
     fn create_payment_method(&self, input: CreatePaymentMethod) -> Result<PaymentMethod> {
@@ -2265,12 +2266,18 @@ impl PaymentRepository for PgPaymentRepository {
         super::block_on(self.get_payment_methods_async(customer_id.into_uuid()))
     }
 
-    fn delete_payment_method(&self, id: Uuid) -> Result<()> {
-        super::block_on(self.delete_payment_method_async(id))
+    fn delete_payment_method(&self, id: PaymentMethodId) -> Result<()> {
+        super::block_on(self.delete_payment_method_async(id.into_uuid()))
     }
 
-    fn set_default_payment_method(&self, customer_id: CustomerId, method_id: Uuid) -> Result<()> {
-        super::block_on(self.set_default_payment_method_async(customer_id.into_uuid(), method_id))
+    fn set_default_payment_method(
+        &self,
+        customer_id: CustomerId,
+        method_id: PaymentMethodId,
+    ) -> Result<()> {
+        super::block_on(
+            self.set_default_payment_method_async(customer_id.into_uuid(), method_id.into_uuid()),
+        )
     }
 
     fn count(&self, filter: PaymentFilter) -> Result<u64> {

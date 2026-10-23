@@ -40,7 +40,8 @@ use rust_decimal::prelude::ToPrimitive;
 use stateset_core::PaymentTransactionStatus;
 use stateset_core::{
     CommerceError, CreatePayment, CreatePaymentMethod, CreateRefund, CustomerId, OrderId, Payment,
-    PaymentError, PaymentFilter, PaymentId, PaymentMethod, Refund, Result, UpdatePayment, Validate,
+    PaymentError, PaymentFilter, PaymentId, PaymentMethod, PaymentMethodId, Refund, RefundId,
+    Result, UpdatePayment, Validate,
 };
 use stateset_observability::Metrics;
 use std::sync::Arc;
@@ -392,7 +393,7 @@ impl Payments {
     }
 
     /// Get a refund by ID
-    pub fn get_refund(&self, id: Uuid) -> Result<Option<Refund>> {
+    pub fn get_refund(&self, id: RefundId) -> Result<Option<Refund>> {
         self.db.payments().get_refund(id)
     }
 
@@ -404,12 +405,12 @@ impl Payments {
     /// Complete a refund
     ///
     /// This marks the refund as processed and updates the payment's refunded amount.
-    pub fn complete_refund(&self, id: Uuid) -> Result<Refund> {
+    pub fn complete_refund(&self, id: RefundId) -> Result<Refund> {
         self.db.payments().complete_refund(id)
     }
 
     /// Mark a refund as failed
-    pub fn fail_refund(&self, id: Uuid, reason: &str) -> Result<Refund> {
+    pub fn fail_refund(&self, id: RefundId, reason: &str) -> Result<Refund> {
         self.db.payments().fail_refund(id, reason)
     }
 
@@ -445,7 +446,7 @@ impl Payments {
     }
 
     /// Delete a payment method
-    pub fn delete_payment_method(&self, id: Uuid) -> Result<()> {
+    pub fn delete_payment_method(&self, id: PaymentMethodId) -> Result<()> {
         self.db.payments().delete_payment_method(id)
     }
 
@@ -453,7 +454,7 @@ impl Payments {
     pub fn set_default_payment_method(
         &self,
         customer_id: CustomerId,
-        method_id: Uuid,
+        method_id: PaymentMethodId,
     ) -> Result<()> {
         self.db.payments().set_default_payment_method(customer_id, method_id)
     }

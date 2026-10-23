@@ -75,16 +75,16 @@ pub trait PaymentRepository: Send + Sync {
     fn create_refund(&self, input: CreateRefund) -> Result<Refund>;
 
     /// Get refund by ID
-    fn get_refund(&self, id: Uuid) -> Result<Option<Refund>>;
+    fn get_refund(&self, id: RefundId) -> Result<Option<Refund>>;
 
     /// Get refunds for a payment
     fn get_refunds(&self, payment_id: PaymentId) -> Result<Vec<Refund>>;
 
     /// Process refund (mark as completed)
-    fn complete_refund(&self, id: Uuid) -> Result<Refund>;
+    fn complete_refund(&self, id: RefundId) -> Result<Refund>;
 
     /// Fail refund
-    fn fail_refund(&self, id: Uuid, reason: &str) -> Result<Refund>;
+    fn fail_refund(&self, id: RefundId, reason: &str) -> Result<Refund>;
 
     // Payment method operations
     /// Create a payment method for a customer
@@ -94,10 +94,14 @@ pub trait PaymentRepository: Send + Sync {
     fn get_payment_methods(&self, customer_id: CustomerId) -> Result<Vec<PaymentMethod>>;
 
     /// Delete a payment method
-    fn delete_payment_method(&self, id: Uuid) -> Result<()>;
+    fn delete_payment_method(&self, id: PaymentMethodId) -> Result<()>;
 
     /// Set default payment method
-    fn set_default_payment_method(&self, customer_id: CustomerId, method_id: Uuid) -> Result<()>;
+    fn set_default_payment_method(
+        &self,
+        customer_id: CustomerId,
+        method_id: PaymentMethodId,
+    ) -> Result<()>;
 
     /// Count payments matching filter
     fn count(&self, filter: PaymentFilter) -> Result<u64>;

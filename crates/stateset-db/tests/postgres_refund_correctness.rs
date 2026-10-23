@@ -179,9 +179,11 @@ async fn postgres_refund_settlement_requires_transition_balance_and_fact_togethe
                  CREATE TRIGGER {name} BEFORE {operation} ON {table} FOR EACH ROW EXECUTE FUNCTION {name}();"
             )).execute(db.pool()).await.unwrap();
             let result = if complete {
-                db.payments().complete_refund_async(refund.id).await
+                db.payments().complete_refund_async(refund.id.into_uuid()).await
             } else {
-                db.payments().fail_refund_async(refund.id, "private processor reason").await
+                db.payments()
+                    .fail_refund_async(refund.id.into_uuid(), "private processor reason")
+                    .await
             };
             sqlx::raw_sql(&format!("DROP TRIGGER {name} ON {table}; DROP FUNCTION {name}();"))
                 .execute(db.pool())
@@ -189,7 +191,7 @@ async fn postgres_refund_settlement_requires_transition_balance_and_fact_togethe
                 .unwrap();
             assert!(result.is_err(), "complete={complete}, fault={fault}");
             assert_eq!(
-                serde_json::json!({ "payment": db.payments().get_async(payment.id.into_uuid()).await.unwrap(), "refund": db.payments().get_refund_async(refund.id).await.unwrap() }),
+                serde_json::json!({ "payment": db.payments().get_async(payment.id.into_uuid()).await.unwrap(), "refund": db.payments().get_refund_async(refund.id.into_uuid()).await.unwrap() }),
                 before
             );
             let count: i64 = sqlx::query_scalar(
@@ -202,15 +204,19 @@ async fn postgres_refund_settlement_requires_transition_balance_and_fact_togethe
             .unwrap();
             assert_eq!(count, 0);
             let settled = if complete {
-                db.payments().complete_refund_async(refund.id).await
+                db.payments().complete_refund_async(refund.id.into_uuid()).await
             } else {
-                db.payments().fail_refund_async(refund.id, "private processor reason").await
+                db.payments()
+                    .fail_refund_async(refund.id.into_uuid(), "private processor reason")
+                    .await
             }
             .unwrap();
             let replay = if complete {
-                db.payments().complete_refund_async(refund.id).await
+                db.payments().complete_refund_async(refund.id.into_uuid()).await
             } else {
-                db.payments().fail_refund_async(refund.id, "changed replay reason").await
+                db.payments()
+                    .fail_refund_async(refund.id.into_uuid(), "changed replay reason")
+                    .await
             }
             .unwrap();
             assert_eq!(settled.status.to_string(), status);
@@ -248,9 +254,9 @@ async fn postgres_refund_settlement_requires_transition_balance_and_fact_togethe
                 if complete { dec!(0.10) } else { dec!(0) }
             );
             let opposite = if complete {
-                db.payments().fail_refund_async(refund.id, "late failure").await
+                db.payments().fail_refund_async(refund.id.into_uuid(), "late failure").await
             } else {
-                db.payments().complete_refund_async(refund.id).await
+                db.payments().complete_refund_async(refund.id.into_uuid()).await
             };
             assert!(opposite.is_err());
         }
@@ -283,9 +289,9 @@ async fn postgres_competing_refund_completion_and_failure_emit_one_terminal_fact
         workers.push(tokio::spawn(async move {
             barrier.wait().await;
             if operation % 2 == 0 {
-                db.payments().complete_refund_async(refund.id).await
+                db.payments().complete_refund_async(refund.id.into_uuid()).await
             } else {
-                db.payments().fail_refund_async(refund.id, "processor refusal").await
+                db.payments().fail_refund_async(refund.id.into_uuid(), "processor refusal").await
             }
         }));
     }
@@ -295,7 +301,7 @@ async fn postgres_competing_refund_completion_and_failure_emit_one_terminal_fact
             other => panic!("unexpected settlement outcome: {other:?}"),
         }
     }
-    let settled = db.payments().get_refund_async(refund.id).await.unwrap().unwrap();
+    let settled = db.payments().get_refund_async(refund.id.into_uuid()).await.unwrap().unwrap();
     assert!(matches!(
         settled.status,
         stateset_core::RefundStatus::Completed | stateset_core::RefundStatus::Failed
@@ -337,16 +343,16 @@ async fn postgres_refund_terminal_replays_work_with_a_single_connection() {
             .await
             .unwrap();
         let settled = if complete {
-            repository.complete_refund_async(refund.id).await
+            repository.complete_refund_async(refund.id.into_uuid()).await
         } else {
-            repository.fail_refund_async(refund.id, "processor refusal").await
+            repository.fail_refund_async(refund.id.into_uuid(), "processor refusal").await
         }
         .unwrap();
         for _ in 0..3 {
             let replay = if complete {
-                repository.complete_refund_async(refund.id).await
+                repository.complete_refund_async(refund.id.into_uuid()).await
             } else {
-                repository.fail_refund_async(refund.id, "changed replay reason").await
+                repository.fail_refund_async(refund.id.into_uuid(), "changed replay reason").await
             }
             .unwrap();
             assert_eq!(
@@ -401,7 +407,7 @@ async fn postgres_refund_storage_failure_rolls_back_and_retry_applies_once() {
         refund.id,
     );
     sqlx::raw_sql(&setup).execute(db.pool()).await.unwrap();
-    let failed = db.payments().complete_refund_async(refund.id).await;
+    let failed = db.payments().complete_refund_async(refund.id.into_uuid()).await;
     // Remove the test-owned trigger before assertions, including on failure.
     sqlx::raw_sql(&format!("DROP TRIGGER {trigger} ON refunds; DROP FUNCTION {function}();"))
         .execute(db.pool())
@@ -421,8 +427,8 @@ async fn postgres_refund_storage_failure_rolls_back_and_retry_applies_once() {
             .await
             .unwrap();
     assert_eq!(balance, dec!(0));
-    db.payments().complete_refund_async(refund.id).await.unwrap();
-    db.payments().complete_refund_async(refund.id).await.unwrap();
+    db.payments().complete_refund_async(refund.id.into_uuid()).await.unwrap();
+    db.payments().complete_refund_async(refund.id.into_uuid()).await.unwrap();
     let balance: rust_decimal::Decimal =
         sqlx::query_scalar("SELECT amount_refunded FROM payments WHERE id=$1")
             .bind(payment.id.into_uuid())
@@ -575,13 +581,16 @@ async fn postgres_complete_refund_is_idempotent() {
         .await
         .expect("create refund");
 
-    db.payments().complete_refund_async(refund.id).await.expect("first completion");
+    db.payments().complete_refund_async(refund.id.into_uuid()).await.expect("first completion");
     let once =
         db.payments().get_async(payment.id.into_uuid()).await.expect("get").expect("present");
     assert_eq!(once.amount_refunded, dec!(50.00));
     assert_eq!(once.status, stateset_core::PaymentTransactionStatus::PartiallyRefunded);
 
-    db.payments().complete_refund_async(refund.id).await.expect("second completion is idempotent");
+    db.payments()
+        .complete_refund_async(refund.id.into_uuid())
+        .await
+        .expect("second completion is idempotent");
     let twice =
         db.payments().get_async(payment.id.into_uuid()).await.expect("get").expect("present");
     assert_eq!(
@@ -615,11 +624,14 @@ async fn postgres_complete_refund_rejects_failed_refund() {
         })
         .await
         .expect("create refund");
-    db.payments().fail_refund_async(refund.id, "processor declined").await.expect("fail refund");
+    db.payments()
+        .fail_refund_async(refund.id.into_uuid(), "processor declined")
+        .await
+        .expect("fail refund");
 
     let err = db
         .payments()
-        .complete_refund_async(refund.id)
+        .complete_refund_async(refund.id.into_uuid())
         .await
         .expect_err("a failed refund cannot be completed");
     assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");

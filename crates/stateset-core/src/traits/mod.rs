@@ -242,8 +242,8 @@ pub(crate) use stateset_primitives::{
 pub(crate) use stateset_primitives::{
     BackorderAllocationId, BackorderId, CartId, CreditId, CustomerId, FraudRuleId, FulfillmentId,
     GiftCardId, InvoiceId, LoyaltyAccountId, LoyaltyProgramId, OrderId, OrderItemId, PaymentId,
-    ProductId, PromotionId, PurchaseOrderId, ReturnId, ReviewId, RewardId, SearchConfigId,
-    SegmentId, ShipmentId, ShippingMethodId, ShippingZoneId, StoreCreditId, SubscriptionId,
-    WarrantyClaimId, WarrantyId, WishlistId,
+    PaymentMethodId, ProductId, PromotionId, PurchaseOrderId, RefundId, ReturnId, ReviewId,
+    RewardId, SearchConfigId, SegmentId, ShipmentId, ShippingMethodId, ShippingZoneId,
+    StoreCreditId, SubscriptionId, WarrantyClaimId, WarrantyId, WishlistId,
 };
 pub(crate) use uuid::Uuid;

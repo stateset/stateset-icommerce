@@ -7,7 +7,9 @@ use crate::validation::{Validate, ValidationBuilder, validate_money_scale};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_primitives::{CurrencyCode, CustomerId, OrderId, PaymentId};
+use stateset_primitives::{
+    CurrencyCode, CustomerId, OrderId, PaymentId, PaymentMethodId, RefundId,
+};
 use strum::{Display, EnumString};
 use uuid::Uuid;
 
@@ -655,7 +657,7 @@ pub struct PaymentFilter {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Refund {
     /// Unique refund ID
-    pub id: Uuid,
+    pub id: RefundId,
     /// Human-readable refund number
     pub refund_number: String,
     /// Associated payment ID
@@ -741,7 +743,7 @@ impl CreateRefund {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentMethod {
     /// Unique ID
-    pub id: Uuid,
+    pub id: PaymentMethodId,
     /// Customer ID
     pub customer_id: CustomerId,
     /// Payment method type

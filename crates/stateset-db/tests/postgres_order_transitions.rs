@@ -303,7 +303,7 @@ async fn postgres_allows_refund_with_paid_status() {
         .create_refund_async(CreateRefund { payment_id: payment.id, ..Default::default() })
         .await
         .expect("create refund");
-    db.payments().complete_refund_async(refund.id).await.expect("complete refund");
+    db.payments().complete_refund_async(refund.id.into_uuid()).await.expect("complete refund");
     let updated = db
         .orders()
         .update_async(
