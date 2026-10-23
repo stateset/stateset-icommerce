@@ -20,6 +20,7 @@ use stateset_core::{
     RefundStatus, Result, UpdatePayment, Validate, generate_payment_number, generate_refund_number,
     validate_batch_size,
 };
+use stateset_core::{PaymentMethodId, RefundId};
 use uuid::Uuid;
 
 /// Payment statuses that hold (or are about to hold) a slice of the order's
@@ -254,7 +255,7 @@ pub(crate) fn create_refund_in_tx(
                 },
             )
             .map_err(domain_err)?;
-            return Ok(existing.id);
+            return Ok(existing.id.into_uuid());
         }
     }
     let smuggle = |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
@@ -651,7 +652,7 @@ impl SqlitePaymentRepository {
 
     pub(crate) fn row_to_refund(row: &Row<'_>) -> rusqlite::Result<Refund> {
         Ok(Refund {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "refund", "id")?,
+            id: RefundId::from(parse_uuid_row(&row.get::<_, String>("id")?, "refund", "id")?),
             refund_number: row.get("refund_number")?,
             payment_id: PaymentId::from(parse_uuid_row(
                 &row.get::<_, String>("payment_id")?,
@@ -686,7 +687,11 @@ impl SqlitePaymentRepository {
 
     fn row_to_payment_method(row: &Row<'_>) -> rusqlite::Result<PaymentMethod> {
         Ok(PaymentMethod {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "payment_method", "id")?,
+            id: PaymentMethodId::from(parse_uuid_row(
+                &row.get::<_, String>("id")?,
+                "payment_method",
+                "id",
+            )?),
             customer_id: CustomerId::from(parse_uuid_row(
                 &row.get::<_, String>("customer_id")?,
                 "payment_method",
@@ -1307,13 +1312,13 @@ impl PaymentRepository for SqlitePaymentRepository {
             );
             append_kernel_event_tx(tx, &outbox_event)?;
 
-            Ok(id)
+            Ok(RefundId::from(id))
         })?;
 
         self.get_refund(resolved_id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn get_refund(&self, id: Uuid) -> Result<Option<Refund>> {
+    fn get_refund(&self, id: RefundId) -> Result<Option<Refund>> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut stmt = conn.prepare("SELECT * FROM refunds WHERE id = ?").map_err(map_db_error)?;
         let result = stmt.query_row([id.to_string()], Self::row_to_refund);
@@ -1339,7 +1344,7 @@ impl PaymentRepository for SqlitePaymentRepository {
         Ok(refunds)
     }
 
-    fn complete_refund(&self, id: Uuid) -> Result<Refund> {
+    fn complete_refund(&self, id: RefundId) -> Result<Refund> {
         let refund = self.get_refund(id)?.ok_or(CommerceError::NotFound)?;
         let now = chrono::Utc::now();
 
@@ -1457,7 +1462,7 @@ impl PaymentRepository for SqlitePaymentRepository {
         self.get_refund(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn fail_refund(&self, id: Uuid, reason: &str) -> Result<Refund> {
+    fn fail_refund(&self, id: RefundId, reason: &str) -> Result<Refund> {
         let now = chrono::Utc::now();
 
         // Serialize the status check, write and required fact with completion.
@@ -1573,14 +1578,18 @@ impl PaymentRepository for SqlitePaymentRepository {
         Ok(methods)
     }
 
-    fn delete_payment_method(&self, id: Uuid) -> Result<()> {
+    fn delete_payment_method(&self, id: PaymentMethodId) -> Result<()> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         conn.execute("DELETE FROM payment_methods WHERE id = ?", [id.to_string()])
             .map_err(map_db_error)?;
         Ok(())
     }
 
-    fn set_default_payment_method(&self, customer_id: CustomerId, method_id: Uuid) -> Result<()> {
+    fn set_default_payment_method(
+        &self,
+        customer_id: CustomerId,
+        method_id: PaymentMethodId,
+    ) -> Result<()> {
         with_immediate_transaction(&self.pool, |tx| {
             tx.execute(
                 "UPDATE payment_methods SET is_default = 0 WHERE customer_id = ?",

@@ -366,7 +366,7 @@ async fn postgres_open_captures_for_order_lists_only_outstanding_money() {
         })
         .await
         .expect("create full refund");
-    db.payments().complete_refund_async(refund.id).await.expect("complete refund");
+    db.payments().complete_refund_async(refund.id.into_uuid()).await.expect("complete refund");
     assert!(open_ids(&db, order_id).await.is_empty());
 
     let second = payment(&db, Some(order_id), dec!(40.00)).await;
@@ -384,7 +384,7 @@ async fn postgres_open_captures_for_order_lists_only_outstanding_money() {
         })
         .await
         .expect("partial refund");
-    db.payments().complete_refund_async(partial.id).await.expect("complete partial");
+    db.payments().complete_refund_async(partial.id.into_uuid()).await.expect("complete partial");
     let open = db.payments().open_captures_for_order_async(order_id).await.expect("open");
     assert_eq!(open.len(), 1);
     assert_eq!(open[0].id, third.id);
@@ -564,7 +564,7 @@ async fn postgres_cancelling_an_order_with_open_captures_is_refused_without_void
         })
         .await
         .expect("refund");
-    db.payments().complete_refund_async(refund.id).await.expect("complete refund");
+    db.payments().complete_refund_async(refund.id.into_uuid()).await.expect("complete refund");
     cancel_order(&db, order_id).await;
 }
 
@@ -619,7 +619,7 @@ async fn postgres_forced_cancel_voids_in_flight_payments_and_leaves_settled_ones
         })
         .await
         .expect("refund after cancel");
-    db.payments().complete_refund_async(refund.id).await.expect("complete refund");
+    db.payments().complete_refund_async(refund.id.into_uuid()).await.expect("complete refund");
     assert!(open_ids(&db, order_id).await.is_empty());
 }
 
@@ -774,7 +774,7 @@ async fn postgres_refunded_cannot_be_reached_through_update() {
         .create_refund_async(CreateRefund { payment_id: p.id, amount: None, ..Default::default() })
         .await
         .expect("refund");
-    db.payments().complete_refund_async(refund.id).await.expect("complete");
+    db.payments().complete_refund_async(refund.id.into_uuid()).await.expect("complete");
     let after = db.payments().get_async(pid).await.unwrap().unwrap();
     assert_eq!(after.status, PaymentTransactionStatus::Refunded);
     assert_eq!(after.amount_refunded, dec!(100.00));
@@ -907,7 +907,7 @@ async fn postgres_a_refunded_capture_no_longer_blocks_a_line_removal() {
         .create_refund_async(CreateRefund { payment_id: p.id, amount: None, ..Default::default() })
         .await
         .expect("full refund");
-    db.payments().complete_refund_async(refund.id).await.expect("complete refund");
+    db.payments().complete_refund_async(refund.id.into_uuid()).await.expect("complete refund");
 
     db.orders().remove_item_async(order_id, big).await.expect("fully refunded money holds nothing");
     assert_eq!(total_of(&db, order_id).await, dec!(40.00));

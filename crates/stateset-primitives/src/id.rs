@@ -545,6 +545,16 @@ define_id! {
     BackorderAllocationId
 }
 
+define_id! {
+    /// Strongly-typed refund identifier.
+    RefundId
+}
+
+define_id! {
+    /// Strongly-typed stored payment method identifier.
+    PaymentMethodId
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

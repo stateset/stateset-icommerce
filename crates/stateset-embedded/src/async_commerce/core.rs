@@ -1,6 +1,7 @@
 //! Core commerce accessors: orders, inventory, customers, products, custom objects, returns, shipments, payments.
 
 use super::*;
+use stateset_core::{PaymentMethodId, RefundId};
 
 /// Async order operations.
 pub struct AsyncOrders {
@@ -895,8 +896,8 @@ impl AsyncPayments {
     }
 
     /// Get refund by ID.
-    pub async fn get_refund(&self, id: Uuid) -> Result<Option<Refund>> {
-        self.db.payments().get_refund_async(id).await
+    pub async fn get_refund(&self, id: RefundId) -> Result<Option<Refund>> {
+        self.db.payments().get_refund_async(id.into_uuid()).await
     }
 
     /// Get refunds for a payment.
@@ -905,13 +906,13 @@ impl AsyncPayments {
     }
 
     /// Complete a refund.
-    pub async fn complete_refund(&self, id: Uuid) -> Result<Refund> {
-        self.db.payments().complete_refund_async(id).await
+    pub async fn complete_refund(&self, id: RefundId) -> Result<Refund> {
+        self.db.payments().complete_refund_async(id.into_uuid()).await
     }
 
     /// Fail a refund.
-    pub async fn fail_refund(&self, id: Uuid, reason: &str) -> Result<Refund> {
-        self.db.payments().fail_refund_async(id, reason).await
+    pub async fn fail_refund(&self, id: RefundId, reason: &str) -> Result<Refund> {
+        self.db.payments().fail_refund_async(id.into_uuid(), reason).await
     }
 
     /// Create a payment method.
@@ -925,17 +926,20 @@ impl AsyncPayments {
     }
 
     /// Delete a payment method.
-    pub async fn delete_payment_method(&self, id: Uuid) -> Result<()> {
-        self.db.payments().delete_payment_method_async(id).await
+    pub async fn delete_payment_method(&self, id: PaymentMethodId) -> Result<()> {
+        self.db.payments().delete_payment_method_async(id.into_uuid()).await
     }
 
     /// Set default payment method.
     pub async fn set_default_payment_method(
         &self,
         customer_id: Uuid,
-        method_id: Uuid,
+        method_id: PaymentMethodId,
     ) -> Result<()> {
-        self.db.payments().set_default_payment_method_async(customer_id, method_id).await
+        self.db
+            .payments()
+            .set_default_payment_method_async(customer_id, method_id.into_uuid())
+            .await
     }
 
     /// Count payments.

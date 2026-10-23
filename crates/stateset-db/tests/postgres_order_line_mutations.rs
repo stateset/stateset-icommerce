@@ -676,7 +676,7 @@ async fn postgres_delete_refuses_an_order_whose_payment_status_holds_money() {
         })
         .await
         .expect("create refund");
-    ctx.db.payments().complete_refund_async(refund.id).await.expect("complete refund");
+    ctx.db.payments().complete_refund_async(refund.id.into_uuid()).await.expect("complete refund");
     let cancelled = ctx
         .db
         .orders()

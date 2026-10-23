@@ -8,6 +8,11 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Breaking (2.0)
 
+- **Typed IDs for refunds and stored payment methods.** New `RefundId` and
+  `PaymentMethodId`; `PaymentRepository::{get_refund, complete_refund,
+  fail_refund, delete_payment_method, set_default_payment_method}` and the
+  embedded facade take them, and `Refund.id` / `PaymentMethod.id` carry
+  them. Serialization is unchanged.
 - **Typed IDs for warranty claims and backorders.** New
   `WarrantyClaimId`, `BackorderId` and `BackorderAllocationId` (in
   `stateset-primitives`, re-exported from `stateset-core` and
