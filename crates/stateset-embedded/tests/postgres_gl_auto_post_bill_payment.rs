@@ -116,10 +116,8 @@ async fn postgres_auto_post_bill_payment_posts_balanced_entry() {
         .await
         .expect("create bill payment");
 
-    let entry = gl
-        .auto_post_bill_payment(payment.id.into())
-        .await
-        .expect("auto_post_bill_payment must succeed");
+    let entry =
+        gl.auto_post_bill_payment(payment.id).await.expect("auto_post_bill_payment must succeed");
 
     assert_eq!(entry.total_debits, dec!(100.00), "AP debit should equal the payment amount");
     assert_eq!(entry.total_credits, dec!(100.00), "Cash credit should equal the payment amount");

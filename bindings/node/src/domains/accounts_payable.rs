@@ -391,7 +391,7 @@ impl AccountsPayable {
             bill_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid bill UUID"))?;
         let items = commerce
             .accounts_payable()
-            .get_bill_items(uuid)
+            .get_bill_items(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get bill items", e))?;
         convert_outputs(items)
     }
@@ -404,7 +404,7 @@ impl AccountsPayable {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let bill = commerce
             .accounts_payable()
-            .get_bill(uuid)
+            .get_bill(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get bill", e))?;
         convert_optional_output(bill)
     }
@@ -440,7 +440,7 @@ impl AccountsPayable {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let bill = commerce
             .accounts_payable()
-            .approve_bill(uuid)
+            .approve_bill(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to approve bill", e))?;
         convert_output(bill)
     }
@@ -453,7 +453,7 @@ impl AccountsPayable {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let bill = commerce
             .accounts_payable()
-            .cancel_bill(uuid)
+            .cancel_bill(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel bill", e))?;
         convert_output(bill)
     }
@@ -534,7 +534,7 @@ impl AccountsPayable {
             .transpose()?;
         let result = commerce
             .accounts_payable()
-            .three_way_match(uuid, tolerance)
+            .three_way_match(uuid.into(), tolerance)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to three-way match bill", e))?;
         Ok(result.into())
     }

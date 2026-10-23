@@ -43,7 +43,7 @@ async fn make_bill(commerce: &AsyncCommerce, supplier: uuid::Uuid, date: &str) -
         })
         .await
         .expect("create bill");
-    bill.id
+    bill.id.into()
 }
 
 #[tokio::test]
@@ -71,7 +71,7 @@ async fn postgres_ap_list_methods_filter_by_date() {
     let pay_supplier = uuid::Uuid::new_v4();
     for date in ["2026-01-15T00:00:00Z", "2026-03-15T00:00:00Z"] {
         let bill_id = make_bill(&commerce, pay_supplier, date).await;
-        ap.approve_bill(bill_id).await.expect("approve");
+        ap.approve_bill(bill_id.into()).await.expect("approve");
         ap.create_payment(CreateBillPayment {
             supplier_id: pay_supplier,
             payment_date: Some(dt(date)),
@@ -82,7 +82,7 @@ async fn postgres_ap_list_methods_filter_by_date() {
             bank_account: None,
             check_number: None,
             memo: None,
-            allocations: vec![PaymentAllocationInput { bill_id, amount: dec!(10) }],
+            allocations: vec![PaymentAllocationInput { bill_id: bill_id.into(), amount: dec!(10) }],
         })
         .await
         .expect("create payment");
@@ -100,10 +100,10 @@ async fn postgres_ap_list_methods_filter_by_date() {
     let run_supplier = uuid::Uuid::new_v4();
     for date in ["2020-01-15T00:00:00Z", "2020-03-15T00:00:00Z"] {
         let bill_id = make_bill(&commerce, run_supplier, date).await;
-        ap.approve_bill(bill_id).await.expect("approve");
+        ap.approve_bill(bill_id.into()).await.expect("approve");
         ap.create_payment_run(CreatePaymentRun {
             payment_date: dt(date),
-            bill_ids: vec![bill_id],
+            bill_ids: vec![bill_id.into()],
             ..Default::default()
         })
         .await

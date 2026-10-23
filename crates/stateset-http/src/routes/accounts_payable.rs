@@ -368,7 +368,7 @@ pub(crate) async fn get_bill(
         .run_blocking(tid.as_deref(), move |c| {
             let bill = c
                 .accounts_payable()
-                .get_bill(id)?
+                .get_bill(id.into())?
                 .ok_or_else(|| HttpError::NotFound(format!("Bill {id} not found")))?;
             Ok(Json(bill_resp(&bill)))
         })
@@ -387,7 +387,7 @@ pub(crate) async fn approve_bill(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            Ok(Json(bill_resp(&c.accounts_payable().approve_bill(id)?)))
+            Ok(Json(bill_resp(&c.accounts_payable().approve_bill(id.into())?)))
         })
         .await
 }
@@ -404,7 +404,7 @@ pub(crate) async fn cancel_bill(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            Ok(Json(bill_resp(&c.accounts_payable().cancel_bill(id)?)))
+            Ok(Json(bill_resp(&c.accounts_payable().cancel_bill(id.into())?)))
         })
         .await
 }
@@ -421,7 +421,7 @@ pub(crate) async fn dispute_bill(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            Ok(Json(bill_resp(&c.accounts_payable().dispute_bill(id)?)))
+            Ok(Json(bill_resp(&c.accounts_payable().dispute_bill(id.into())?)))
         })
         .await
 }
@@ -443,7 +443,7 @@ pub(crate) async fn three_way_match_bill(
                 Some(s) => Some(parse_decimal(s, "tolerance_percent")?),
                 None => None,
             };
-            let result = c.accounts_payable().three_way_match(id, tolerance)?;
+            let result = c.accounts_payable().three_way_match(id.into(), tolerance)?;
 
             let (match_status, variance_line_count) = match result.match_status {
                 stateset_core::MatchStatus::NotRequired => ("not_required", None),
@@ -506,7 +506,7 @@ pub(crate) async fn create_payment(
             let mut allocations = Vec::with_capacity(req.allocations.len());
             for a in req.allocations {
                 allocations.push(stateset_core::PaymentAllocationInput {
-                    bill_id: parse_id::<Uuid>(&a.bill_id, "bill_id")?,
+                    bill_id: parse_id::<stateset_core::BillId>(&a.bill_id, "bill_id")?,
                     amount: parse_decimal(&a.amount, "allocation amount")?,
                 });
             }
@@ -540,7 +540,7 @@ pub(crate) async fn void_payment(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            Ok(Json(payment_resp(&c.accounts_payable().void_payment(id)?)))
+            Ok(Json(payment_resp(&c.accounts_payable().void_payment(id.into())?)))
         })
         .await
 }
@@ -563,7 +563,7 @@ pub(crate) async fn create_payment_run(
         .run_blocking(tid.as_deref(), move |c| {
             let mut bill_ids = Vec::with_capacity(req.bill_ids.len());
             for id in &req.bill_ids {
-                bill_ids.push(parse_id::<Uuid>(id, "bill_id")?);
+                bill_ids.push(parse_id::<stateset_core::BillId>(id, "bill_id")?);
             }
             let input = stateset_core::CreatePaymentRun {
                 payment_date: parse_datetime(&req.payment_date, "payment_date")?,
@@ -592,7 +592,9 @@ pub(crate) async fn approve_payment_run(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            Ok(Json(run_resp(&c.accounts_payable().approve_payment_run(id, &req.approved_by)?)))
+            Ok(Json(run_resp(
+                &c.accounts_payable().approve_payment_run(id.into(), &req.approved_by)?,
+            )))
         })
         .await
 }
@@ -609,7 +611,7 @@ pub(crate) async fn process_payment_run(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            Ok(Json(run_resp(&c.accounts_payable().process_payment_run(id)?)))
+            Ok(Json(run_resp(&c.accounts_payable().process_payment_run(id.into())?)))
         })
         .await
 }
@@ -626,7 +628,7 @@ pub(crate) async fn cancel_payment_run(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            Ok(Json(run_resp(&c.accounts_payable().cancel_payment_run(id)?)))
+            Ok(Json(run_resp(&c.accounts_payable().cancel_payment_run(id.into())?)))
         })
         .await
 }

@@ -11,6 +11,7 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{OptionalExtension, params};
 use rust_decimal::{Decimal, RoundingStrategy};
+use stateset_core::{BillId, BillPaymentId, PaymentRunId};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -98,7 +99,7 @@ impl SqliteAccountsPayableRepository {
 
     fn row_to_bill(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bill> {
         Ok(Bill {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "bill", "id")?,
+            id: BillId::from(parse_uuid_row(&row.get::<_, String>("id")?, "bill", "id")?),
             bill_number: row.get("bill_number")?,
             supplier_id: parse_uuid_row(
                 &row.get::<_, String>("supplier_id")?,
@@ -169,7 +170,11 @@ impl SqliteAccountsPayableRepository {
     fn row_to_bill_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<BillItem> {
         Ok(BillItem {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "bill_item", "id")?,
-            bill_id: parse_uuid_row(&row.get::<_, String>("bill_id")?, "bill_item", "bill_id")?,
+            bill_id: BillId::from(parse_uuid_row(
+                &row.get::<_, String>("bill_id")?,
+                "bill_item",
+                "bill_id",
+            )?),
             line_number: row.get("line_number")?,
             description: row.get("description")?,
             account_code: row.get("account_code")?,
@@ -201,7 +206,11 @@ impl SqliteAccountsPayableRepository {
 
     fn row_to_payment(row: &rusqlite::Row<'_>) -> rusqlite::Result<BillPayment> {
         Ok(BillPayment {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "bill_payment", "id")?,
+            id: BillPaymentId::from(parse_uuid_row(
+                &row.get::<_, String>("id")?,
+                "bill_payment",
+                "id",
+            )?),
             payment_number: row.get("payment_number")?,
             supplier_id: parse_uuid_row(
                 &row.get::<_, String>("supplier_id")?,
@@ -240,7 +249,11 @@ impl SqliteAccountsPayableRepository {
 
     fn row_to_payment_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<PaymentRun> {
         Ok(PaymentRun {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "payment_run", "id")?,
+            id: PaymentRunId::from(parse_uuid_row(
+                &row.get::<_, String>("id")?,
+                "payment_run",
+                "id",
+            )?),
             run_number: row.get("run_number")?,
             status: parse_enum_row(&row.get::<_, String>("status")?, "payment_run", "status")?,
             payment_date: parse_datetime_row(
@@ -516,7 +529,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         })
     }
 
-    fn get_bill(&self, id: Uuid) -> Result<Option<Bill>> {
+    fn get_bill(&self, id: BillId) -> Result<Option<Bill>> {
         let conn = self.conn()?;
         let mut stmt =
             conn.prepare("SELECT * FROM ap_bills WHERE id = ?1").map_err(map_db_error)?;
@@ -542,7 +555,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         }
     }
 
-    fn update_bill(&self, id: Uuid, input: UpdateBill) -> Result<Bill> {
+    fn update_bill(&self, id: BillId, input: UpdateBill) -> Result<Bill> {
         let conn = self.conn()?;
         let existing = self.get_bill(id)?.ok_or(CommerceError::NotFound)?;
 
@@ -582,7 +595,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
     /// committed in between was erased along with the bill it had just
     /// approved. The existence probe runs only when the guard matched nothing,
     /// and only to tell "gone" from "not a draft any more".
-    fn delete_bill(&self, id: Uuid) -> Result<()> {
+    fn delete_bill(&self, id: BillId) -> Result<()> {
         let rows = {
             let conn = self.conn()?;
             conn.execute(
@@ -602,7 +615,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         Ok(())
     }
 
-    fn approve_bill(&self, id: Uuid) -> Result<Bill> {
+    fn approve_bill(&self, id: BillId) -> Result<Bill> {
         let conn = self.conn()?;
         // Status-guarded UPDATE: only a draft/pending bill can be approved, and
         // 0 matched rows is an error (previously a silent success that returned
@@ -623,7 +636,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to approve bill".into()))
     }
 
-    fn cancel_bill(&self, id: Uuid) -> Result<Bill> {
+    fn cancel_bill(&self, id: BillId) -> Result<Bill> {
         let conn = self.conn()?;
         // A bill with payments applied (paid/partially paid) or already
         // cancelled cannot be cancelled; void the payments first.
@@ -644,7 +657,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel bill".into()))
     }
 
-    fn dispute_bill(&self, id: Uuid) -> Result<Bill> {
+    fn dispute_bill(&self, id: BillId) -> Result<Bill> {
         let conn = self.conn()?;
         // Only an open (unpaid or partially paid) bill can be disputed — never a
         // cancelled or fully paid one.
@@ -665,7 +678,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to dispute bill".into()))
     }
 
-    fn get_bill_items(&self, bill_id: Uuid) -> Result<Vec<BillItem>> {
+    fn get_bill_items(&self, bill_id: BillId) -> Result<Vec<BillItem>> {
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare("SELECT * FROM ap_bill_items WHERE bill_id = ?1 ORDER BY line_number")
@@ -679,7 +692,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         Ok(items)
     }
 
-    fn add_bill_item(&self, bill_id: Uuid, item: CreateBillItem) -> Result<BillItem> {
+    fn add_bill_item(&self, bill_id: BillId, item: CreateBillItem) -> Result<BillItem> {
         let now = Utc::now().to_rfc3339();
         let id = Uuid::new_v4();
         // Item edits change the bill total, so only draft/pending bills may be
@@ -708,9 +721,9 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                 ))));
             }
 
-            Self::insert_bill_item_with_conn(tx, id, bill_id, &item, &now)?;
+            Self::insert_bill_item_with_conn(tx, id, bill_id.into_uuid(), &item, &now)?;
 
-            Self::recalculate_bill_with_conn(tx, bill_id).map_err(to_rusqlite)?;
+            Self::recalculate_bill_with_conn(tx, bill_id.into_uuid()).map_err(to_rusqlite)?;
 
             tx.query_row(
                 "SELECT * FROM ap_bill_items WHERE id = ?1",
@@ -807,7 +820,8 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                 ));
             }
             allocation_total += alloc.amount;
-            *allocation_by_bill.entry(alloc.bill_id).or_insert(Decimal::ZERO) += alloc.amount;
+            *allocation_by_bill.entry(alloc.bill_id.into_uuid()).or_insert(Decimal::ZERO) +=
+                alloc.amount;
         }
 
         if allocation_total != input.amount {
@@ -898,7 +912,8 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                     ],
                 )?;
 
-                Self::recalculate_bill_with_conn(tx, alloc.bill_id).map_err(to_rusqlite)?;
+                Self::recalculate_bill_with_conn(tx, alloc.bill_id.into_uuid())
+                    .map_err(to_rusqlite)?;
 
                 let bill = tx.query_row(
                     "SELECT * FROM ap_bills WHERE id = ?1",
@@ -922,11 +937,11 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             Ok(())
         })?;
 
-        self.get_payment(id)?
+        self.get_payment(BillPaymentId::from(id))?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to create payment".into()))
     }
 
-    fn get_payment(&self, id: Uuid) -> Result<Option<BillPayment>> {
+    fn get_payment(&self, id: BillPaymentId) -> Result<Option<BillPayment>> {
         let conn = self.conn()?;
         let mut stmt =
             conn.prepare("SELECT * FROM ap_payments WHERE id = ?1").map_err(map_db_error)?;
@@ -983,7 +998,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         Ok(payments)
     }
 
-    fn void_payment(&self, id: Uuid) -> Result<BillPayment> {
+    fn void_payment(&self, id: BillPaymentId) -> Result<BillPayment> {
         // Immediate (write-locked) transaction with a status guard so a
         // duplicate/concurrent void cannot reverse the same payment twice, and so
         // it serializes (with BUSY retry) against create_payment on the same bill.
@@ -1010,18 +1025,18 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                     values.push(PaymentAllocation {
                         id: parse_uuid(&row.get::<_, String>(0)?, "payment_allocation", "id")
                             .map_err(to_rusqlite)?,
-                        payment_id: parse_uuid(
-                            &row.get::<_, String>(1)?,
-                            "payment_allocation",
-                            "payment_id",
-                        )
-                        .map_err(to_rusqlite)?,
-                        bill_id: parse_uuid(
-                            &row.get::<_, String>(2)?,
-                            "payment_allocation",
-                            "bill_id",
-                        )
-                        .map_err(to_rusqlite)?,
+                        payment_id: BillPaymentId::from(
+                            parse_uuid(
+                                &row.get::<_, String>(1)?,
+                                "payment_allocation",
+                                "payment_id",
+                            )
+                            .map_err(to_rusqlite)?,
+                        ),
+                        bill_id: BillId::from(
+                            parse_uuid(&row.get::<_, String>(2)?, "payment_allocation", "bill_id")
+                                .map_err(to_rusqlite)?,
+                        ),
                         amount: parse_decimal_strict(
                             &row.get::<_, String>(3)?,
                             "payment_allocation",
@@ -1045,7 +1060,8 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             )?;
 
             for alloc in allocations {
-                Self::recalculate_bill_with_conn(tx, alloc.bill_id).map_err(to_rusqlite)?;
+                Self::recalculate_bill_with_conn(tx, alloc.bill_id.into_uuid())
+                    .map_err(to_rusqlite)?;
 
                 let bill = tx.query_row(
                     "SELECT * FROM ap_bills WHERE id = ?1",
@@ -1075,7 +1091,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to void payment".into()))
     }
 
-    fn clear_payment(&self, id: Uuid) -> Result<BillPayment> {
+    fn clear_payment(&self, id: BillPaymentId) -> Result<BillPayment> {
         let conn = self.conn()?;
         // Status-guarded UPDATE (same pattern as `void_payment`): only a payment
         // still in flight (pending/processed) can clear the bank — a voided,
@@ -1096,7 +1112,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to clear payment".into()))
     }
 
-    fn get_payment_allocations(&self, payment_id: Uuid) -> Result<Vec<PaymentAllocation>> {
+    fn get_payment_allocations(&self, payment_id: BillPaymentId) -> Result<Vec<PaymentAllocation>> {
         use crate::sqlite::parse_datetime;
         use crate::sqlite::parse_helpers::parse_decimal;
 
@@ -1116,8 +1132,12 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
 
             allocations.push(PaymentAllocation {
                 id: parse_uuid(&id_str, "payment_allocation", "id")?,
-                payment_id: parse_uuid(&payment_id_str, "payment_allocation", "payment_id")?,
-                bill_id: parse_uuid(&bill_id_str, "payment_allocation", "bill_id")?,
+                payment_id: BillPaymentId::from(parse_uuid(
+                    &payment_id_str,
+                    "payment_allocation",
+                    "payment_id",
+                )?),
+                bill_id: BillId::from(parse_uuid(&bill_id_str, "payment_allocation", "bill_id")?),
                 amount: parse_decimal(&amount_str, "payment_allocation", "amount")?,
                 created_at: parse_datetime(&created_at_str, "payment_allocation", "created_at")?,
             });
@@ -1125,7 +1145,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         Ok(allocations)
     }
 
-    fn get_payments_for_bill(&self, bill_id: Uuid) -> Result<Vec<BillPayment>> {
+    fn get_payments_for_bill(&self, bill_id: BillId) -> Result<Vec<BillPayment>> {
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare(
@@ -1252,11 +1272,11 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             Ok(())
         })?;
 
-        self.get_payment_run(id)?
+        self.get_payment_run(PaymentRunId::from(id))?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to create payment run".into()))
     }
 
-    fn get_payment_run(&self, id: Uuid) -> Result<Option<PaymentRun>> {
+    fn get_payment_run(&self, id: PaymentRunId) -> Result<Option<PaymentRun>> {
         let conn = self.conn()?;
         let mut stmt =
             conn.prepare("SELECT * FROM ap_payment_runs WHERE id = ?1").map_err(map_db_error)?;
@@ -1312,7 +1332,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         Ok(runs)
     }
 
-    fn approve_payment_run(&self, id: Uuid, approved_by: &str) -> Result<PaymentRun> {
+    fn approve_payment_run(&self, id: PaymentRunId, approved_by: &str) -> Result<PaymentRun> {
         let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
 
@@ -1333,7 +1353,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to approve run".into()))
     }
 
-    fn process_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
+    fn process_payment_run(&self, id: PaymentRunId) -> Result<PaymentRun> {
         // One immediate (write-locked) transaction for the whole disbursement:
         // the status claim (approved → completed), every payment + allocation
         // row, the bill updates, and the run totals commit atomically. A
@@ -1429,7 +1449,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                     ],
                 )?;
 
-                Self::recalculate_bill_with_conn(tx, bill.id).map_err(to_rusqlite)?;
+                Self::recalculate_bill_with_conn(tx, bill.id.into_uuid()).map_err(to_rusqlite)?;
 
                 let updated = tx.query_row(
                     "SELECT * FROM ap_bills WHERE id = ?1",
@@ -1475,7 +1495,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to process run".into()))
     }
 
-    fn cancel_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
+    fn cancel_payment_run(&self, id: PaymentRunId) -> Result<PaymentRun> {
         let conn = self.conn()?;
 
         // Status-guarded UPDATE (same pattern as `clear_payment`): only a run
@@ -1497,7 +1517,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel run".into()))
     }
 
-    fn get_payment_run_bills(&self, run_id: Uuid) -> Result<Vec<Bill>> {
+    fn get_payment_run_bills(&self, run_id: PaymentRunId) -> Result<Vec<Bill>> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(
             "SELECT b.* FROM ap_bills b JOIN ap_payment_run_bills rb ON b.id = rb.bill_id WHERE rb.run_id = ?1"
@@ -1632,7 +1652,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         Ok(result)
     }
 
-    fn get_bills_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Bill>> {
+    fn get_bills_batch(&self, ids: Vec<BillId>) -> Result<Vec<Bill>> {
         let mut bills = Vec::new();
         for id in ids {
             if let Some(bill) = self.get_bill(id)? {
@@ -2046,7 +2066,7 @@ mod tests {
     #[test]
     fn get_bill_unknown_returns_none() {
         let repo = fresh_repo();
-        assert!(repo.get_bill(Uuid::new_v4()).expect("ok").is_none());
+        assert!(repo.get_bill(BillId::new()).expect("ok").is_none());
     }
 
     /// `delete_bill` read the status through a second pooled connection and
@@ -2073,7 +2093,7 @@ mod tests {
         repo.delete_bill(bill.id).expect("delete draft bill");
         assert!(repo.get_bill(bill.id).expect("get bill").is_none());
 
-        let error = repo.delete_bill(Uuid::new_v4()).expect_err("a missing bill must not delete");
+        let error = repo.delete_bill(BillId::new()).expect_err("a missing bill must not delete");
         assert!(matches!(error, CommerceError::NotFound), "expected NotFound, got {error:?}");
     }
 }

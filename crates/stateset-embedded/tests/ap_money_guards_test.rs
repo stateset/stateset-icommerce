@@ -84,7 +84,7 @@ fn pay_bill(
             bank_account: None,
             check_number: None,
             memo: None,
-            allocations: vec![PaymentAllocationInput { bill_id, amount }],
+            allocations: vec![PaymentAllocationInput { bill_id: bill_id.into(), amount }],
         })
         .expect("create payment")
 }
@@ -95,7 +95,7 @@ fn clear_payment_succeeds_for_pending_payment() {
     let supplier = Uuid::new_v4();
     let bill = make_bill(&commerce, supplier, dec!(2), dec!(50));
     commerce.accounts_payable().approve_bill(bill.id).expect("approve");
-    let payment = pay_bill(&commerce, supplier, bill.id, dec!(100), None);
+    let payment = pay_bill(&commerce, supplier, bill.id.into(), dec!(100), None);
     assert_eq!(payment.status, PaymentStatusAP::Pending);
 
     let cleared = commerce.accounts_payable().clear_payment(payment.id).expect("clear");
@@ -108,7 +108,7 @@ fn clear_payment_rejects_voided_payment() {
     let supplier = Uuid::new_v4();
     let bill = make_bill(&commerce, supplier, dec!(2), dec!(50));
     commerce.accounts_payable().approve_bill(bill.id).expect("approve");
-    let payment = pay_bill(&commerce, supplier, bill.id, dec!(100), None);
+    let payment = pay_bill(&commerce, supplier, bill.id.into(), dec!(100), None);
 
     commerce.accounts_payable().void_payment(payment.id).expect("void");
 
@@ -129,7 +129,7 @@ fn cancel_bill_rejects_paid_bill() {
     let supplier = Uuid::new_v4();
     let bill = make_bill(&commerce, supplier, dec!(2), dec!(50));
     commerce.accounts_payable().approve_bill(bill.id).expect("approve");
-    pay_bill(&commerce, supplier, bill.id, dec!(100), None);
+    pay_bill(&commerce, supplier, bill.id.into(), dec!(100), None);
 
     let paid = commerce.accounts_payable().get_bill(bill.id).expect("get").expect("bill");
     assert_eq!(paid.status, BillStatus::Paid);
@@ -147,7 +147,7 @@ fn cancel_bill_rejects_partially_paid_bill() {
     let supplier = Uuid::new_v4();
     let bill = make_bill(&commerce, supplier, dec!(2), dec!(50));
     commerce.accounts_payable().approve_bill(bill.id).expect("approve");
-    pay_bill(&commerce, supplier, bill.id, dec!(40), None);
+    pay_bill(&commerce, supplier, bill.id.into(), dec!(40), None);
 
     let partial = commerce.accounts_payable().get_bill(bill.id).expect("get").expect("bill");
     assert_eq!(partial.status, BillStatus::PartiallyPaid);
@@ -183,7 +183,7 @@ fn dispute_bill_rejects_paid_bill() {
     let supplier = Uuid::new_v4();
     let bill = make_bill(&commerce, supplier, dec!(2), dec!(50));
     commerce.accounts_payable().approve_bill(bill.id).expect("approve");
-    pay_bill(&commerce, supplier, bill.id, dec!(100), None);
+    pay_bill(&commerce, supplier, bill.id.into(), dec!(100), None);
 
     let result = commerce.accounts_payable().dispute_bill(bill.id);
     assert!(result.is_err(), "disputing a paid bill must be rejected");
@@ -214,7 +214,7 @@ fn approve_bill_errors_on_cancelled_bill() {
 #[test]
 fn approve_bill_errors_on_missing_bill() {
     let commerce = commerce();
-    assert!(commerce.accounts_payable().approve_bill(Uuid::new_v4()).is_err());
+    assert!(commerce.accounts_payable().approve_bill(Uuid::new_v4().into()).is_err());
 }
 
 #[test]
@@ -227,11 +227,11 @@ fn count_payments_respects_date_filters() {
 
     let bill_a = make_bill(&commerce, supplier, dec!(1), dec!(10));
     commerce.accounts_payable().approve_bill(bill_a.id).expect("approve a");
-    pay_bill(&commerce, supplier, bill_a.id, dec!(10), Some(early));
+    pay_bill(&commerce, supplier, bill_a.id.into(), dec!(10), Some(early));
 
     let bill_b = make_bill(&commerce, supplier, dec!(1), dec!(20));
     commerce.accounts_payable().approve_bill(bill_b.id).expect("approve b");
-    pay_bill(&commerce, supplier, bill_b.id, dec!(20), Some(late));
+    pay_bill(&commerce, supplier, bill_b.id.into(), dec!(20), Some(late));
 
     let ap = commerce.accounts_payable();
 
@@ -287,7 +287,10 @@ fn approved_bill(commerce: &Commerce, supplier: Uuid, qty: Decimal, price: Decim
     commerce.accounts_payable().get_bill(bill.id).expect("get bill").expect("bill exists")
 }
 
-fn make_run(commerce: &Commerce, bill_ids: Vec<Uuid>) -> stateset_embedded::PaymentRun {
+fn make_run(
+    commerce: &Commerce,
+    bill_ids: Vec<stateset_core::BillId>,
+) -> stateset_embedded::PaymentRun {
     commerce
         .accounts_payable()
         .create_payment_run(CreatePaymentRun {
@@ -514,7 +517,7 @@ fn create_payment_run_rejects_empty_missing_and_unpayable_bills() {
     let missing = ap.create_payment_run(CreatePaymentRun {
         payment_date: Utc::now(),
         payment_method: PaymentMethodAP::Ach,
-        bill_ids: vec![Uuid::new_v4()],
+        bill_ids: vec![Uuid::new_v4().into()],
         notes: None,
         created_by: None,
     });
@@ -567,7 +570,7 @@ fn process_payment_run_skips_bill_paid_after_run_creation() {
     ap.approve_payment_run(run.id, "controller").expect("approve run");
 
     // bill_a is paid in full directly, between run approval and processing.
-    pay_bill(&commerce, supplier, bill_a.id, dec!(100), None);
+    pay_bill(&commerce, supplier, bill_a.id.into(), dec!(100), None);
 
     let processed = ap.process_payment_run(run.id).expect("process run");
     assert_eq!(processed.status, PaymentRunStatus::Completed);
@@ -608,7 +611,7 @@ fn add_bill_item_rejects_paid_bill() {
     let supplier = Uuid::new_v4();
     let bill = make_bill(&commerce, supplier, dec!(2), dec!(50)); // 100
     ap.approve_bill(bill.id).expect("approve");
-    pay_bill(&commerce, supplier, bill.id, dec!(100), None);
+    pay_bill(&commerce, supplier, bill.id.into(), dec!(100), None);
 
     let result = ap.add_bill_item(bill.id, widget_item(dec!(1), dec!(25)));
     assert!(result.is_err(), "adding an item to a paid bill must be rejected");
@@ -655,7 +658,7 @@ fn remove_bill_item_rejects_paid_bill() {
     let supplier = Uuid::new_v4();
     let bill = make_bill(&commerce, supplier, dec!(2), dec!(50)); // 100
     ap.approve_bill(bill.id).expect("approve");
-    pay_bill(&commerce, supplier, bill.id, dec!(100), None);
+    pay_bill(&commerce, supplier, bill.id.into(), dec!(100), None);
 
     let items = ap.get_bill_items(bill.id).expect("items");
     let result = ap.remove_bill_item(items[0].id);
@@ -709,7 +712,7 @@ fn get_bills_due_soon_includes_boundary_day_and_excludes_beyond() {
         make_bill_due(&commerce, supplier, dec!(1), dec!(20), Utc::now() + Duration::days(8));
 
     let due_soon = ap.get_bills_due_soon(7).expect("due soon");
-    let ids: Vec<Uuid> = due_soon.iter().map(|b| b.id).collect();
+    let ids: Vec<stateset_core::BillId> = due_soon.iter().map(|b| b.id).collect();
     assert!(
         ids.contains(&due_in_7.id),
         "a bill due exactly 7 days out must be inside the 7-day window"

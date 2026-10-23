@@ -110,34 +110,34 @@ pub trait AccountsPayableRepository: Send + Sync {
     fn create_bill(&self, input: CreateBill) -> Result<Bill>;
 
     /// Get bill by ID
-    fn get_bill(&self, id: Uuid) -> Result<Option<Bill>>;
+    fn get_bill(&self, id: BillId) -> Result<Option<Bill>>;
 
     /// Get bill by number
     fn get_bill_by_number(&self, number: &str) -> Result<Option<Bill>>;
 
     /// Update a bill
-    fn update_bill(&self, id: Uuid, input: UpdateBill) -> Result<Bill>;
+    fn update_bill(&self, id: BillId, input: UpdateBill) -> Result<Bill>;
 
     /// List bills with filter
     fn list_bills(&self, filter: BillFilter) -> Result<Vec<Bill>>;
 
     /// Delete a bill (only if draft)
-    fn delete_bill(&self, id: Uuid) -> Result<()>;
+    fn delete_bill(&self, id: BillId) -> Result<()>;
 
     /// Approve a bill
-    fn approve_bill(&self, id: Uuid) -> Result<Bill>;
+    fn approve_bill(&self, id: BillId) -> Result<Bill>;
 
     /// Cancel a bill
-    fn cancel_bill(&self, id: Uuid) -> Result<Bill>;
+    fn cancel_bill(&self, id: BillId) -> Result<Bill>;
 
     /// Mark bill as disputed
-    fn dispute_bill(&self, id: Uuid) -> Result<Bill>;
+    fn dispute_bill(&self, id: BillId) -> Result<Bill>;
 
     /// Get bill items
-    fn get_bill_items(&self, bill_id: Uuid) -> Result<Vec<BillItem>>;
+    fn get_bill_items(&self, bill_id: BillId) -> Result<Vec<BillItem>>;
 
     /// Add item to bill
-    fn add_bill_item(&self, bill_id: Uuid, item: CreateBillItem) -> Result<BillItem>;
+    fn add_bill_item(&self, bill_id: BillId, item: CreateBillItem) -> Result<BillItem>;
 
     /// Remove item from bill
     fn remove_bill_item(&self, item_id: Uuid) -> Result<()>;
@@ -156,7 +156,7 @@ pub trait AccountsPayableRepository: Send + Sync {
     fn create_payment(&self, input: CreateBillPayment) -> Result<BillPayment>;
 
     /// Get payment by ID
-    fn get_payment(&self, id: Uuid) -> Result<Option<BillPayment>>;
+    fn get_payment(&self, id: BillPaymentId) -> Result<Option<BillPayment>>;
 
     /// Get payment by number
     fn get_payment_by_number(&self, number: &str) -> Result<Option<BillPayment>>;
@@ -165,16 +165,16 @@ pub trait AccountsPayableRepository: Send + Sync {
     fn list_payments(&self, filter: BillPaymentFilter) -> Result<Vec<BillPayment>>;
 
     /// Void a payment
-    fn void_payment(&self, id: Uuid) -> Result<BillPayment>;
+    fn void_payment(&self, id: BillPaymentId) -> Result<BillPayment>;
 
     /// Mark payment as cleared
-    fn clear_payment(&self, id: Uuid) -> Result<BillPayment>;
+    fn clear_payment(&self, id: BillPaymentId) -> Result<BillPayment>;
 
     /// Get payment allocations
-    fn get_payment_allocations(&self, payment_id: Uuid) -> Result<Vec<PaymentAllocation>>;
+    fn get_payment_allocations(&self, payment_id: BillPaymentId) -> Result<Vec<PaymentAllocation>>;
 
     /// Get payments for bill
-    fn get_payments_for_bill(&self, bill_id: Uuid) -> Result<Vec<BillPayment>>;
+    fn get_payments_for_bill(&self, bill_id: BillId) -> Result<Vec<BillPayment>>;
 
     /// Count payments
     fn count_payments(&self, filter: BillPaymentFilter) -> Result<u64>;
@@ -184,22 +184,22 @@ pub trait AccountsPayableRepository: Send + Sync {
     fn create_payment_run(&self, input: CreatePaymentRun) -> Result<PaymentRun>;
 
     /// Get payment run by ID
-    fn get_payment_run(&self, id: Uuid) -> Result<Option<PaymentRun>>;
+    fn get_payment_run(&self, id: PaymentRunId) -> Result<Option<PaymentRun>>;
 
     /// List payment runs with filter
     fn list_payment_runs(&self, filter: PaymentRunFilter) -> Result<Vec<PaymentRun>>;
 
     /// Approve payment run
-    fn approve_payment_run(&self, id: Uuid, approved_by: &str) -> Result<PaymentRun>;
+    fn approve_payment_run(&self, id: PaymentRunId, approved_by: &str) -> Result<PaymentRun>;
 
     /// Process payment run
-    fn process_payment_run(&self, id: Uuid) -> Result<PaymentRun>;
+    fn process_payment_run(&self, id: PaymentRunId) -> Result<PaymentRun>;
 
     /// Cancel payment run
-    fn cancel_payment_run(&self, id: Uuid) -> Result<PaymentRun>;
+    fn cancel_payment_run(&self, id: PaymentRunId) -> Result<PaymentRun>;
 
     /// Get bills in payment run
-    fn get_payment_run_bills(&self, run_id: Uuid) -> Result<Vec<Bill>>;
+    fn get_payment_run_bills(&self, run_id: PaymentRunId) -> Result<Vec<Bill>>;
 
     // Analytics
     /// Get AP aging summary
@@ -216,7 +216,7 @@ pub trait AccountsPayableRepository: Send + Sync {
     fn create_bills_batch(&self, inputs: Vec<CreateBill>) -> Result<BatchResult<Bill>>;
 
     /// Get multiple bills by ID
-    fn get_bills_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Bill>>;
+    fn get_bills_batch(&self, ids: Vec<BillId>) -> Result<Vec<Bill>>;
 }
 
 /// Cost Accounting repository trait

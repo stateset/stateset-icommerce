@@ -85,7 +85,7 @@ fn sqlite_auto_post_bill_posts_balanced_entry() {
         .expect("create bill");
     assert_eq!(bill.total_amount, dec!(100.00), "bill total should foot to 100.00");
 
-    let entry = gl.auto_post_bill(bill.id).expect("auto_post_bill must succeed");
+    let entry = gl.auto_post_bill(bill.id.into_uuid()).expect("auto_post_bill must succeed");
 
     assert_eq!(entry.total_debits, dec!(100.00), "Inventory debit should equal the bill total");
     assert_eq!(entry.total_credits, dec!(100.00), "AP credit should equal the bill total");

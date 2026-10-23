@@ -4,6 +4,7 @@ use super::*;
 use stateset_core::InvoiceId;
 use stateset_core::PaymentId;
 use stateset_core::{BackorderAllocationId, BackorderId, OrderId};
+use stateset_core::{BillId, BillPaymentId, PaymentRunId};
 use stateset_core::{GlAccountId, GlPeriodId, JournalEntryId};
 
 /// Async accounts payable operations.
@@ -20,44 +21,44 @@ impl AsyncAccountsPayable {
         self.db.accounts_payable().create_bill_async(input).await
     }
 
-    pub async fn get_bill(&self, id: Uuid) -> Result<Option<Bill>> {
-        self.db.accounts_payable().get_bill_async(id).await
+    pub async fn get_bill(&self, id: BillId) -> Result<Option<Bill>> {
+        self.db.accounts_payable().get_bill_async(id.into_uuid()).await
     }
 
     pub async fn get_bill_by_number(&self, number: &str) -> Result<Option<Bill>> {
         self.db.accounts_payable().get_bill_by_number_async(number).await
     }
 
-    pub async fn update_bill(&self, id: Uuid, input: UpdateBill) -> Result<Bill> {
-        self.db.accounts_payable().update_bill_async(id, input).await
+    pub async fn update_bill(&self, id: BillId, input: UpdateBill) -> Result<Bill> {
+        self.db.accounts_payable().update_bill_async(id.into_uuid(), input).await
     }
 
     pub async fn list_bills(&self, filter: BillFilter) -> Result<Vec<Bill>> {
         self.db.accounts_payable().list_bills_async(filter).await
     }
 
-    pub async fn delete_bill(&self, id: Uuid) -> Result<()> {
-        self.db.accounts_payable().delete_bill_async(id).await
+    pub async fn delete_bill(&self, id: BillId) -> Result<()> {
+        self.db.accounts_payable().delete_bill_async(id.into_uuid()).await
     }
 
-    pub async fn approve_bill(&self, id: Uuid) -> Result<Bill> {
-        self.db.accounts_payable().approve_bill_async(id).await
+    pub async fn approve_bill(&self, id: BillId) -> Result<Bill> {
+        self.db.accounts_payable().approve_bill_async(id.into_uuid()).await
     }
 
-    pub async fn cancel_bill(&self, id: Uuid) -> Result<Bill> {
-        self.db.accounts_payable().cancel_bill_async(id).await
+    pub async fn cancel_bill(&self, id: BillId) -> Result<Bill> {
+        self.db.accounts_payable().cancel_bill_async(id.into_uuid()).await
     }
 
-    pub async fn dispute_bill(&self, id: Uuid) -> Result<Bill> {
-        self.db.accounts_payable().dispute_bill_async(id).await
+    pub async fn dispute_bill(&self, id: BillId) -> Result<Bill> {
+        self.db.accounts_payable().dispute_bill_async(id.into_uuid()).await
     }
 
-    pub async fn get_bill_items(&self, bill_id: Uuid) -> Result<Vec<BillItem>> {
-        self.db.accounts_payable().get_bill_items_async(bill_id).await
+    pub async fn get_bill_items(&self, bill_id: BillId) -> Result<Vec<BillItem>> {
+        self.db.accounts_payable().get_bill_items_async(bill_id.into_uuid()).await
     }
 
-    pub async fn add_bill_item(&self, bill_id: Uuid, item: CreateBillItem) -> Result<BillItem> {
-        self.db.accounts_payable().add_bill_item_async(bill_id, item).await
+    pub async fn add_bill_item(&self, bill_id: BillId, item: CreateBillItem) -> Result<BillItem> {
+        self.db.accounts_payable().add_bill_item_async(bill_id.into_uuid(), item).await
     }
 
     pub async fn remove_bill_item(&self, item_id: Uuid) -> Result<()> {
@@ -80,8 +81,8 @@ impl AsyncAccountsPayable {
         self.db.accounts_payable().create_payment_async(input).await
     }
 
-    pub async fn get_payment(&self, id: Uuid) -> Result<Option<BillPayment>> {
-        self.db.accounts_payable().get_payment_async(id).await
+    pub async fn get_payment(&self, id: BillPaymentId) -> Result<Option<BillPayment>> {
+        self.db.accounts_payable().get_payment_async(id.into_uuid()).await
     }
 
     pub async fn get_payment_by_number(&self, number: &str) -> Result<Option<BillPayment>> {
@@ -92,12 +93,12 @@ impl AsyncAccountsPayable {
         self.db.accounts_payable().list_payments_async(filter).await
     }
 
-    pub async fn void_payment(&self, id: Uuid) -> Result<BillPayment> {
-        self.db.accounts_payable().void_payment_async(id).await
+    pub async fn void_payment(&self, id: BillPaymentId) -> Result<BillPayment> {
+        self.db.accounts_payable().void_payment_async(id.into_uuid()).await
     }
 
-    pub async fn clear_payment(&self, id: Uuid) -> Result<BillPayment> {
-        self.db.accounts_payable().clear_payment_async(id).await
+    pub async fn clear_payment(&self, id: BillPaymentId) -> Result<BillPayment> {
+        self.db.accounts_payable().clear_payment_async(id.into_uuid()).await
     }
 
     pub async fn get_payment_allocations(
@@ -107,8 +108,8 @@ impl AsyncAccountsPayable {
         self.db.accounts_payable().get_payment_allocations_async(payment_id.into_uuid()).await
     }
 
-    pub async fn get_payments_for_bill(&self, bill_id: Uuid) -> Result<Vec<BillPayment>> {
-        self.db.accounts_payable().get_payments_for_bill_async(bill_id).await
+    pub async fn get_payments_for_bill(&self, bill_id: BillId) -> Result<Vec<BillPayment>> {
+        self.db.accounts_payable().get_payments_for_bill_async(bill_id.into_uuid()).await
     }
 
     pub async fn count_payments(&self, filter: BillPaymentFilter) -> Result<u64> {
@@ -119,28 +120,32 @@ impl AsyncAccountsPayable {
         self.db.accounts_payable().create_payment_run_async(input).await
     }
 
-    pub async fn get_payment_run(&self, id: Uuid) -> Result<Option<PaymentRun>> {
-        self.db.accounts_payable().get_payment_run_async(id).await
+    pub async fn get_payment_run(&self, id: PaymentRunId) -> Result<Option<PaymentRun>> {
+        self.db.accounts_payable().get_payment_run_async(id.into_uuid()).await
     }
 
     pub async fn list_payment_runs(&self, filter: PaymentRunFilter) -> Result<Vec<PaymentRun>> {
         self.db.accounts_payable().list_payment_runs_async(filter).await
     }
 
-    pub async fn approve_payment_run(&self, id: Uuid, approved_by: &str) -> Result<PaymentRun> {
-        self.db.accounts_payable().approve_payment_run_async(id, approved_by).await
+    pub async fn approve_payment_run(
+        &self,
+        id: PaymentRunId,
+        approved_by: &str,
+    ) -> Result<PaymentRun> {
+        self.db.accounts_payable().approve_payment_run_async(id.into_uuid(), approved_by).await
     }
 
-    pub async fn process_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
-        self.db.accounts_payable().process_payment_run_async(id).await
+    pub async fn process_payment_run(&self, id: PaymentRunId) -> Result<PaymentRun> {
+        self.db.accounts_payable().process_payment_run_async(id.into_uuid()).await
     }
 
-    pub async fn cancel_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
-        self.db.accounts_payable().cancel_payment_run_async(id).await
+    pub async fn cancel_payment_run(&self, id: PaymentRunId) -> Result<PaymentRun> {
+        self.db.accounts_payable().cancel_payment_run_async(id.into_uuid()).await
     }
 
-    pub async fn get_payment_run_bills(&self, run_id: Uuid) -> Result<Vec<Bill>> {
-        self.db.accounts_payable().get_payment_run_bills_async(run_id).await
+    pub async fn get_payment_run_bills(&self, run_id: PaymentRunId) -> Result<Vec<Bill>> {
+        self.db.accounts_payable().get_payment_run_bills_async(run_id.into_uuid()).await
     }
 
     pub async fn get_aging_summary(&self) -> Result<ApAgingSummary> {
@@ -162,8 +167,11 @@ impl AsyncAccountsPayable {
         self.db.accounts_payable().create_bills_batch_async(inputs).await
     }
 
-    pub async fn get_bills_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Bill>> {
-        self.db.accounts_payable().get_bills_batch_async(ids).await
+    pub async fn get_bills_batch(&self, ids: Vec<BillId>) -> Result<Vec<Bill>> {
+        self.db
+            .accounts_payable()
+            .get_bills_batch_async(ids.into_iter().map(BillId::into_uuid).collect())
+            .await
     }
 }
 
@@ -980,7 +988,7 @@ impl AsyncGeneralLedger {
         self.db.general_ledger().auto_post_bill_async(bill_id).await
     }
 
-    pub async fn auto_post_bill_payment(&self, payment_id: PaymentId) -> Result<JournalEntry> {
+    pub async fn auto_post_bill_payment(&self, payment_id: BillPaymentId) -> Result<JournalEntry> {
         self.db.general_ledger().auto_post_bill_payment_async(payment_id.into_uuid()).await
     }
 

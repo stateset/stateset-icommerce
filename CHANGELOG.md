@@ -8,6 +8,12 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Breaking (2.0)
 
+- **Typed accounts-payable IDs.** New `BillId`, `BillPaymentId` and
+  `PaymentRunId`. `AccountsPayableRepository`, both embedded facades and the
+  AP models (`Bill.id`, `BillPayment.id`, `PaymentRun.id`, every `bill_id`,
+  payment-allocation `payment_id`, `bill_ids`) use them. The GL facades'
+  `auto_post_bill_payment` now takes `BillPaymentId` (the async facade had
+  wrongly typed it as the customer-payment `PaymentId`).
 - **Typed general-ledger IDs.** New `GlAccountId`, `GlPeriodId` and
   `JournalEntryId`. `GeneralLedgerRepository` and both embedded facades take
   them wherever an account, period or journal entry is named; the GL models

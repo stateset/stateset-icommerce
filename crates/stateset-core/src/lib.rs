@@ -158,20 +158,21 @@ pub use services::*;
 // Re-export strongly-typed primitives so downstream crates can import from
 // `stateset_core` directly without depending on `stateset-primitives`.
 pub use stateset_primitives::{
-    ActivityLogId, AgentId, BackorderAllocationId, BackorderId, CartId, ChannelId,
-    CompanyAddressId, CompanyId, ContactId, CreditId, CurrencyCode, CustomerId, EdiDocumentId,
-    FixedAssetId, FraudRuleId, FulfillmentId, GiftCardId, GiftCardTransactionId, GlAccountId,
-    GlPeriodId, InboundShipmentId, InboundShipmentItemId, IntegrationFieldMappingId,
+    ActivityLogId, AgentId, BackorderAllocationId, BackorderId, BillId, BillPaymentId, CartId,
+    ChannelId, CompanyAddressId, CompanyId, ContactId, CreditId, CurrencyCode, CustomerId,
+    EdiDocumentId, FixedAssetId, FraudRuleId, FulfillmentId, GiftCardId, GiftCardTransactionId,
+    GlAccountId, GlPeriodId, InboundShipmentId, InboundShipmentItemId, IntegrationFieldMappingId,
     IntegrationMappingId, InventoryItemId, InvoiceId, JournalEntryId, LotId, LoyaltyAccountId,
     LoyaltyProgramId, LoyaltyTransactionId, Money, MoneyWire, MoneyWireError, OrderId, OrderItemId,
-    PaymentId, PaymentMethodId, PaymentObligationId, PrepaymentApplicationId, PrepaymentId,
-    PriceLevelId, PriceScheduleId, PrintJobId, PrintStationId, ProductId, ProductionBatchId,
-    PromotionId, PurchaseOrderId, PurgatoryLineItemId, PurgatoryOrderId, RefundId, ReturnId,
-    ReviewId, RewardId, SearchConfigId, SegmentId, ShipmentId, ShippingMethodId, ShippingZoneId,
-    Sku, StockSnapshotId, StockSnapshotLineId, StoreCreditId, StoreCreditTransactionId,
-    SubscriptionId, SupplierSkuId, TopologySnapshotId, TransferOrderId, TransferOrderItemId,
-    UnitClassId, UnitConversionRuleId, UnitOfMeasureId, VendorCreditApplicationId, VendorCreditId,
-    VendorReturnId, VendorReturnItemId, WarehouseId, WarrantyClaimId, WarrantyId, WishlistId,
+    PaymentId, PaymentMethodId, PaymentObligationId, PaymentRunId, PrepaymentApplicationId,
+    PrepaymentId, PriceLevelId, PriceScheduleId, PrintJobId, PrintStationId, ProductId,
+    ProductionBatchId, PromotionId, PurchaseOrderId, PurgatoryLineItemId, PurgatoryOrderId,
+    RefundId, ReturnId, ReviewId, RewardId, SearchConfigId, SegmentId, ShipmentId,
+    ShippingMethodId, ShippingZoneId, Sku, StockSnapshotId, StockSnapshotLineId, StoreCreditId,
+    StoreCreditTransactionId, SubscriptionId, SupplierSkuId, TopologySnapshotId, TransferOrderId,
+    TransferOrderItemId, UnitClassId, UnitConversionRuleId, UnitOfMeasureId,
+    VendorCreditApplicationId, VendorCreditId, VendorReturnId, VendorReturnItemId, WarehouseId,
+    WarrantyClaimId, WarrantyId, WishlistId,
 };
 
 /// Re-export common types for convenience
@@ -186,21 +187,22 @@ pub mod prelude {
 
     // Typed IDs and value types
     pub use stateset_primitives::{
-        ActivityLogId, AgentId, BackorderAllocationId, BackorderId, CartId, ChannelId,
-        CompanyAddressId, CompanyId, ContactId, CreditId, CurrencyCode, CustomerId, EdiDocumentId,
-        FixedAssetId, FraudRuleId, FulfillmentId, GiftCardId, GiftCardTransactionId, GlAccountId,
-        GlPeriodId, InboundShipmentId, InboundShipmentItemId, IntegrationFieldMappingId,
-        IntegrationMappingId, InventoryItemId, InvoiceId, JournalEntryId, LotId, LoyaltyAccountId,
-        LoyaltyProgramId, LoyaltyTransactionId, Money, MoneyWire, MoneyWireError, OrderId,
-        OrderItemId, PaymentId, PaymentMethodId, PaymentObligationId, PrepaymentApplicationId,
-        PrepaymentId, PriceLevelId, PriceScheduleId, PrintJobId, PrintStationId, ProductId,
-        ProductionBatchId, PromotionId, PurchaseOrderId, PurgatoryLineItemId, PurgatoryOrderId,
-        RefundId, ReturnId, ReviewId, RewardId, SearchConfigId, SegmentId, ShipmentId,
-        ShippingMethodId, ShippingZoneId, Sku, StockSnapshotId, StockSnapshotLineId, StoreCreditId,
-        StoreCreditTransactionId, SubscriptionId, SupplierSkuId, TopologySnapshotId,
-        TransferOrderId, TransferOrderItemId, UnitClassId, UnitConversionRuleId, UnitOfMeasureId,
-        VendorCreditApplicationId, VendorCreditId, VendorReturnId, VendorReturnItemId, WarehouseId,
-        WarrantyClaimId, WarrantyId, WishlistId,
+        ActivityLogId, AgentId, BackorderAllocationId, BackorderId, BillId, BillPaymentId, CartId,
+        ChannelId, CompanyAddressId, CompanyId, ContactId, CreditId, CurrencyCode, CustomerId,
+        EdiDocumentId, FixedAssetId, FraudRuleId, FulfillmentId, GiftCardId, GiftCardTransactionId,
+        GlAccountId, GlPeriodId, InboundShipmentId, InboundShipmentItemId,
+        IntegrationFieldMappingId, IntegrationMappingId, InventoryItemId, InvoiceId,
+        JournalEntryId, LotId, LoyaltyAccountId, LoyaltyProgramId, LoyaltyTransactionId, Money,
+        MoneyWire, MoneyWireError, OrderId, OrderItemId, PaymentId, PaymentMethodId,
+        PaymentObligationId, PaymentRunId, PrepaymentApplicationId, PrepaymentId, PriceLevelId,
+        PriceScheduleId, PrintJobId, PrintStationId, ProductId, ProductionBatchId, PromotionId,
+        PurchaseOrderId, PurgatoryLineItemId, PurgatoryOrderId, RefundId, ReturnId, ReviewId,
+        RewardId, SearchConfigId, SegmentId, ShipmentId, ShippingMethodId, ShippingZoneId, Sku,
+        StockSnapshotId, StockSnapshotLineId, StoreCreditId, StoreCreditTransactionId,
+        SubscriptionId, SupplierSkuId, TopologySnapshotId, TransferOrderId, TransferOrderItemId,
+        UnitClassId, UnitConversionRuleId, UnitOfMeasureId, VendorCreditApplicationId,
+        VendorCreditId, VendorReturnId, VendorReturnItemId, WarehouseId, WarrantyClaimId,
+        WarrantyId, WishlistId,
     };
 }
 

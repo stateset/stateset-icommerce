@@ -34,6 +34,7 @@
 
 use chrono::{Months, NaiveDate};
 use rust_decimal::Decimal;
+use stateset_core::BillPaymentId;
 use stateset_core::{
     AccountStatus, AccountSubType, AutoPostingConfig, BalanceSheet, BatchResult, CloseMonthOptions,
     CloseMonthReport, CloseMonthStepReport, CloseMonthStepStatus, CommerceError,
@@ -380,8 +381,8 @@ impl GeneralLedger {
     }
 
     /// Auto-post a bill payment (debit AP, credit Cash).
-    pub fn auto_post_bill_payment(&self, payment_id: Uuid) -> Result<JournalEntry> {
-        self.db.general_ledger().auto_post_bill_payment(payment_id)
+    pub fn auto_post_bill_payment(&self, payment_id: BillPaymentId) -> Result<JournalEntry> {
+        self.db.general_ledger().auto_post_bill_payment(payment_id.into())
     }
 
     /// Auto-post inventory cost (COGS on sale).

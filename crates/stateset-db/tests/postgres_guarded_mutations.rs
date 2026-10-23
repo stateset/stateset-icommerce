@@ -51,7 +51,7 @@ fn suffix() -> String {
 // accounts_payable::delete_bill_async — only a draft bill may be deleted
 // ---------------------------------------------------------------------------
 
-async fn draft_bill(db: &PostgresDatabase) -> Uuid {
+async fn draft_bill(db: &PostgresDatabase) -> stateset_core::BillId {
     db.accounts_payable()
         .create_bill_async(CreateBill {
             supplier_id: Uuid::new_v4(),
@@ -74,17 +74,21 @@ async fn draft_bill(db: &PostgresDatabase) -> Uuid {
 async fn postgres_deleting_an_approved_bill_is_refused() {
     let db = db_or_skip!();
     let bill_id = draft_bill(&db).await;
-    db.accounts_payable().approve_bill_async(bill_id).await.expect("approve bill");
+    db.accounts_payable().approve_bill_async(bill_id.into_uuid()).await.expect("approve bill");
 
     let error = db
         .accounts_payable()
-        .delete_bill_async(bill_id)
+        .delete_bill_async(bill_id.into_uuid())
         .await
         .expect_err("an approved bill must not be deletable");
     assert!(matches!(error, CommerceError::Conflict(_)), "expected Conflict, got {error:?}");
 
     assert!(
-        db.accounts_payable().get_bill_async(bill_id).await.expect("get bill").is_some(),
+        db.accounts_payable()
+            .get_bill_async(bill_id.into_uuid())
+            .await
+            .expect("get bill")
+            .is_some(),
         "the approved bill must survive the refused delete"
     );
 }
@@ -93,8 +97,14 @@ async fn postgres_deleting_an_approved_bill_is_refused() {
 async fn postgres_deleting_a_draft_bill_still_works() {
     let db = db_or_skip!();
     let bill_id = draft_bill(&db).await;
-    db.accounts_payable().delete_bill_async(bill_id).await.expect("delete draft bill");
-    assert!(db.accounts_payable().get_bill_async(bill_id).await.expect("get bill").is_none());
+    db.accounts_payable().delete_bill_async(bill_id.into_uuid()).await.expect("delete draft bill");
+    assert!(
+        db.accounts_payable()
+            .get_bill_async(bill_id.into_uuid())
+            .await
+            .expect("get bill")
+            .is_none()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -122,7 +132,7 @@ async fn postgres_approve_racing_delete_never_deletes_an_approved_bill() {
             let barrier = Arc::clone(&barrier);
             tokio::spawn(async move {
                 barrier.wait().await;
-                db.accounts_payable().approve_bill_async(bill_id).await
+                db.accounts_payable().approve_bill_async(bill_id.into_uuid()).await
             })
         };
         let delete = {
@@ -130,13 +140,14 @@ async fn postgres_approve_racing_delete_never_deletes_an_approved_bill() {
             let barrier = Arc::clone(&barrier);
             tokio::spawn(async move {
                 barrier.wait().await;
-                db.accounts_payable().delete_bill_async(bill_id).await
+                db.accounts_payable().delete_bill_async(bill_id.into_uuid()).await
             })
         };
         let approved = approve.await.expect("join approve").is_ok();
         let deleted = delete.await.expect("join delete").is_ok();
 
-        let survivor = db.accounts_payable().get_bill_async(bill_id).await.expect("get bill");
+        let survivor =
+            db.accounts_payable().get_bill_async(bill_id.into_uuid()).await.expect("get bill");
         assert!(
             !(approved && deleted),
             "round {round}: the bill was approved AND deleted — the approval was erased"

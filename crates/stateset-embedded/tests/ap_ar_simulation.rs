@@ -189,7 +189,11 @@ impl Sim {
     }
 
     fn get_bill(&self, id: Uuid) -> stateset_embedded::Bill {
-        self.commerce.accounts_payable().get_bill(id).expect("get bill").expect("bill exists")
+        self.commerce
+            .accounts_payable()
+            .get_bill(id.into())
+            .expect("get bill")
+            .expect("bill exists")
     }
 
     fn get_invoice(&self, id: Uuid) -> stateset_embedded::Invoice {
@@ -213,12 +217,12 @@ impl Sim {
                 ..Default::default()
             })
             .expect("create bill");
-        self.bills.push(bill.id);
+        self.bills.push(bill.id.into());
     }
 
     fn op_approve_bill(&mut self) {
         let Some(id) = self.pick_bill() else { return self.op_create_bill() };
-        let result = self.commerce.accounts_payable().approve_bill(id);
+        let result = self.commerce.accounts_payable().approve_bill(id.into());
         self.tolerate("approve_bill", result);
     }
 
@@ -245,7 +249,7 @@ impl Sim {
             bank_account: None,
             check_number: None,
             memo: None,
-            allocations: vec![PaymentAllocationInput { bill_id: id, amount }],
+            allocations: vec![PaymentAllocationInput { bill_id: id.into(), amount }],
         });
         self.tolerate("create_payment (AP)", result);
     }
@@ -253,13 +257,14 @@ impl Sim {
     fn op_add_bill_item(&mut self) {
         let Some(id) = self.pick_bill() else { return self.op_create_bill() };
         let item = self.random_item();
-        let result = self.commerce.accounts_payable().add_bill_item(id, item);
+        let result = self.commerce.accounts_payable().add_bill_item(id.into(), item);
         self.tolerate("add_bill_item", result);
     }
 
     fn op_remove_bill_item(&mut self) {
         let Some(id) = self.pick_bill() else { return self.op_create_bill() };
-        let items = self.commerce.accounts_payable().get_bill_items(id).expect("get bill items");
+        let items =
+            self.commerce.accounts_payable().get_bill_items(id.into()).expect("get bill items");
         if items.is_empty() {
             return;
         }
@@ -270,13 +275,13 @@ impl Sim {
 
     fn op_cancel_bill(&mut self) {
         let Some(id) = self.pick_bill() else { return self.op_create_bill() };
-        let result = self.commerce.accounts_payable().cancel_bill(id);
+        let result = self.commerce.accounts_payable().cancel_bill(id.into());
         self.tolerate("cancel_bill", result);
     }
 
     fn op_dispute_bill(&mut self) {
         let Some(id) = self.pick_bill() else { return self.op_create_bill() };
-        let result = self.commerce.accounts_payable().dispute_bill(id);
+        let result = self.commerce.accounts_payable().dispute_bill(id.into());
         self.tolerate("dispute_bill", result);
     }
 
