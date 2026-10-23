@@ -23,58 +23,9 @@ fn postgres_url() -> Option<String> {
     stateset_test_utils::postgres_url()
 }
 
-/// A freshly created, empty database, dropped when the value is dropped.
-struct FreshDatabase {
-    admin_url: String,
-    name: String,
-    url: String,
-}
-
-impl FreshDatabase {
-    async fn create(admin_url: &str) -> Self {
-        let name = format!("stateset_taxseed_{}", uuid::Uuid::new_v4().simple());
-        let mut conn = sqlx::PgConnection::connect(admin_url).await.expect("connect admin");
-        sqlx::raw_sql(&format!("CREATE DATABASE \"{name}\""))
-            .execute(&mut conn)
-            .await
-            .expect("create fresh database");
-        conn.close().await.ok();
-        let url = with_database(admin_url, &name);
-        Self { admin_url: admin_url.to_string(), name, url }
-    }
-}
-
-impl Drop for FreshDatabase {
-    fn drop(&mut self) {
-        let admin_url = self.admin_url.clone();
-        let name = self.name.clone();
-        // Drop from a separate runtime: the test's runtime is shutting down.
-        let _ = std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().ok()?;
-            rt.block_on(async {
-                let mut conn = sqlx::PgConnection::connect(&admin_url).await.ok()?;
-                sqlx::raw_sql(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
-                    .execute(&mut conn)
-                    .await
-                    .ok()
-            })
-        })
-        .join();
-    }
-}
-
-/// `url` with its database name replaced by `name`.
-fn with_database(url: &str, name: &str) -> String {
-    let (base, query) = url.split_once('?').map_or((url, None), |(b, q)| (b, Some(q)));
-    let scheme_end = base.find("://").map_or(0, |i| i + 3);
-    let path_start = base[scheme_end..].find('/').map_or(base.len(), |i| scheme_end + i);
-    let mut out = format!("{}/{name}", &base[..path_start]);
-    if let Some(query) = query {
-        out.push('?');
-        out.push_str(query);
-    }
-    out
-}
+#[path = "support/fresh_database.rs"]
+mod fresh_database;
+use fresh_database::FreshDatabase;
 
 async fn fresh_store() -> Option<(FreshDatabase, AsyncCommerce)> {
     let Some(url) = postgres_url() else {

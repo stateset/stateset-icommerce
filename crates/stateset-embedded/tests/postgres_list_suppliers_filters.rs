@@ -9,6 +9,10 @@
 
 #![cfg(feature = "postgres")]
 
+#[path = "support/fresh_database.rs"]
+mod fresh_database;
+
+use fresh_database::FreshDatabase;
 use stateset_core::{CreateSupplier, SupplierFilter};
 use stateset_embedded::AsyncCommerce;
 
@@ -48,7 +52,10 @@ async fn postgres_list_suppliers_honors_name_country_and_offset() {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping list_suppliers filter test");
         return;
     };
-    let commerce = AsyncCommerce::connect(&url).await.expect("connect + migrate");
+    // A private database: the assertions count every supplier, so rows other
+    // suites (or an earlier run) left behind must not be visible.
+    let fresh = FreshDatabase::create(&url).await;
+    let commerce = AsyncCommerce::connect(&fresh.url).await.expect("connect + migrate");
     let pos = commerce.purchase_orders();
 
     supplier(&commerce, "Acme Corp", "US").await;
