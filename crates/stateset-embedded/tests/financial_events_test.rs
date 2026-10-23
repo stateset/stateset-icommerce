@@ -75,7 +75,7 @@ async fn fixed_asset_lifecycle_emits_events() {
             acquisition_cost,
             ..
         } => {
-            assert_eq!(*asset_id, asset.id);
+            assert_eq!(*asset_id, asset.id.into_uuid());
             assert_eq!(*in_service_date, date(2026, 1, 1));
             assert_eq!(*acquisition_cost, dec!(1200));
         }
@@ -94,7 +94,7 @@ async fn fixed_asset_lifecycle_emits_events() {
             accumulated_depreciation,
             ..
         } => {
-            assert_eq!(*asset_id, asset.id);
+            assert_eq!(*asset_id, asset.id.into_uuid());
             assert_eq!(*periods, 2);
             assert_eq!(*amount, dec!(200));
             assert_eq!(*accumulated_depreciation, dec!(200));
@@ -107,7 +107,7 @@ async fn fixed_asset_lifecycle_emits_events() {
     assert_eq!(events.len(), 1);
     match &events[0] {
         CommerceEvent::FixedAssetDisposed { asset_id, proceeds, gain_loss, .. } => {
-            assert_eq!(*asset_id, asset.id);
+            assert_eq!(*asset_id, asset.id.into_uuid());
             assert_eq!(*proceeds, dec!(900));
             // Book value at disposal: 1200 - 200 = 1000; proceeds 900 => loss 100.
             assert_eq!(*gain_loss, dec!(-100));
@@ -128,7 +128,7 @@ async fn fixed_asset_write_off_emits_event() {
     assert_eq!(events.len(), 1);
     match &events[0] {
         CommerceEvent::FixedAssetWrittenOff { asset_id, write_off_date, loss, .. } => {
-            assert_eq!(*asset_id, asset.id);
+            assert_eq!(*asset_id, asset.id.into_uuid());
             assert_eq!(*write_off_date, date(2026, 2, 1));
             assert_eq!(*loss, dec!(1200));
         }

@@ -9,6 +9,7 @@ use chrono::{NaiveDate, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
+use stateset_core::FixedAssetId;
 use stateset_core::{
     AssetDisposal, CommerceError, CreateFixedAsset, CurrencyCode, DepreciationEntry,
     DepreciationEntryStatus, DepreciationMethod, DepreciationSchedule, FixedAsset,
@@ -64,7 +65,11 @@ impl SqliteFixedAssetRepository {
             None => None,
         };
         Ok(FixedAsset {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "fixed_asset", "id")?,
+            id: FixedAssetId::from(parse_uuid_row(
+                &row.get::<_, String>("id")?,
+                "fixed_asset",
+                "id",
+            )?),
             asset_number: row.get("asset_number")?,
             name: row.get("name")?,
             description: row.get("description")?,
@@ -284,7 +289,7 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
         })
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<FixedAsset>> {
+    fn get(&self, id: FixedAssetId) -> Result<Option<FixedAsset>> {
         let conn = self.conn()?;
         match Self::load_asset(&conn, &id.to_string()) {
             Ok(a) => Ok(Some(a)),
@@ -343,7 +348,7 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
             .map_err(map_db_error)
     }
 
-    fn update(&self, id: Uuid, input: UpdateFixedAsset) -> Result<FixedAsset> {
+    fn update(&self, id: FixedAssetId, input: UpdateFixedAsset) -> Result<FixedAsset> {
         input.validate()?;
         let id_str = id.to_string();
         let now = Utc::now().to_rfc3339();
@@ -386,13 +391,13 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
         })
     }
 
-    fn place_in_service(&self, id: Uuid, date: NaiveDate) -> Result<FixedAsset> {
-        self.transition(id, FixedAssetStatus::InService, date, None, None)
+    fn place_in_service(&self, id: FixedAssetId, date: NaiveDate) -> Result<FixedAsset> {
+        self.transition(id.into_uuid(), FixedAssetStatus::InService, date, None, None)
     }
 
     fn dispose(
         &self,
-        id: Uuid,
+        id: FixedAssetId,
         date: NaiveDate,
         proceeds: Decimal,
         notes: Option<String>,
@@ -400,14 +405,25 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
         if proceeds < Decimal::ZERO {
             return Err(CommerceError::ValidationError("proceeds must be non-negative".into()));
         }
-        self.transition(id, FixedAssetStatus::Disposed, date, Some(proceeds), notes)
+        self.transition(id.into_uuid(), FixedAssetStatus::Disposed, date, Some(proceeds), notes)
     }
 
-    fn write_off(&self, id: Uuid, date: NaiveDate, notes: Option<String>) -> Result<FixedAsset> {
-        self.transition(id, FixedAssetStatus::WrittenOff, date, Some(Decimal::ZERO), notes)
+    fn write_off(
+        &self,
+        id: FixedAssetId,
+        date: NaiveDate,
+        notes: Option<String>,
+    ) -> Result<FixedAsset> {
+        self.transition(
+            id.into_uuid(),
+            FixedAssetStatus::WrittenOff,
+            date,
+            Some(Decimal::ZERO),
+            notes,
+        )
     }
 
-    fn generate_schedule(&self, id: Uuid) -> Result<DepreciationSchedule> {
+    fn generate_schedule(&self, id: FixedAssetId) -> Result<DepreciationSchedule> {
         let id_str = id.to_string();
         with_immediate_transaction(&self.pool, |tx| {
             let asset = Self::load_asset(tx, &id_str)?;
@@ -461,7 +477,7 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
         })
     }
 
-    fn get_schedule(&self, id: Uuid) -> Result<Option<DepreciationSchedule>> {
+    fn get_schedule(&self, id: FixedAssetId) -> Result<Option<DepreciationSchedule>> {
         let conn = self.conn()?;
         let id_str = id.to_string();
         let asset = match Self::load_asset(&conn, &id_str) {
@@ -481,7 +497,7 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
         }))
     }
 
-    fn post_depreciation(&self, id: Uuid, periods: u32) -> Result<FixedAsset> {
+    fn post_depreciation(&self, id: FixedAssetId, periods: u32) -> Result<FixedAsset> {
         if periods == 0 {
             return Err(CommerceError::ValidationError("periods must be positive".into()));
         }
@@ -601,7 +617,7 @@ impl SqliteFixedAssetRepository {
                     ),
                 ],
                 source_document_type: Some("fixed_asset_depreciation".to_string()),
-                source_document_id: Some(asset.id),
+                source_document_id: Some(asset.id.into_uuid()),
                 auto_post: Some(true),
             },
             "system",
@@ -956,7 +972,7 @@ mod tests {
             assert_eq!(a.accumulated_depreciation, dec!(750));
             let entries = gl
                 .list_journal_entries(JournalEntryFilter {
-                    source_document_id: Some(a.id),
+                    source_document_id: Some(a.id.into_uuid()),
                     ..Default::default()
                 })
                 .expect("list entries");
@@ -989,7 +1005,7 @@ mod tests {
 
             let entries = gl
                 .list_journal_entries(JournalEntryFilter {
-                    source_document_id: Some(a.id),
+                    source_document_id: Some(a.id.into_uuid()),
                     ..Default::default()
                 })
                 .expect("list entries");
@@ -1040,7 +1056,7 @@ mod tests {
 
             let entries = gl
                 .list_journal_entries(JournalEntryFilter {
-                    source_document_id: Some(a.id),
+                    source_document_id: Some(a.id.into_uuid()),
                     ..Default::default()
                 })
                 .expect("list entries");
@@ -1060,7 +1076,7 @@ mod tests {
 
             let entries = gl
                 .list_journal_entries(JournalEntryFilter {
-                    source_document_id: Some(a.id),
+                    source_document_id: Some(a.id.into_uuid()),
                     ..Default::default()
                 })
                 .expect("list entries");
@@ -1074,7 +1090,7 @@ mod tests {
             repo.post_depreciation(a.id, 1).expect("post depreciation");
             let entries = gl
                 .list_journal_entries(JournalEntryFilter {
-                    source_document_id: Some(a.id),
+                    source_document_id: Some(a.id.into_uuid()),
                     ..Default::default()
                 })
                 .expect("list entries");

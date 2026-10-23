@@ -365,7 +365,7 @@ impl FixedAssets {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let asset = commerce
             .fixed_assets()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get fixed asset", e))?;
         Ok(asset.map(Into::into))
     }
@@ -440,7 +440,7 @@ impl FixedAssets {
         let asset = commerce
             .fixed_assets()
             .update(
-                uuid,
+                uuid.into(),
                 stateset_core::UpdateFixedAsset {
                     name: input.name,
                     description: input.description,
@@ -484,7 +484,7 @@ impl FixedAssets {
         let date = parse_iso_date(&date, "date")?;
         let asset = commerce
             .fixed_assets()
-            .place_in_service(uuid, date)
+            .place_in_service(uuid.into(), date)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to place asset in service", e))?;
         Ok(asset.into())
     }
@@ -510,7 +510,7 @@ impl FixedAssets {
             .unwrap_or_else(|| chrono::Utc::now().date_naive());
         let asset = commerce
             .fixed_assets()
-            .dispose(uuid, date, proceeds, notes)
+            .dispose(uuid.into(), date, proceeds, notes)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to dispose fixed asset", e))?;
         Ok(asset.into())
     }
@@ -534,7 +534,7 @@ impl FixedAssets {
             .unwrap_or_else(|| chrono::Utc::now().date_naive());
         let asset = commerce
             .fixed_assets()
-            .write_off(uuid, date, notes)
+            .write_off(uuid.into(), date, notes)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to write off fixed asset", e))?;
         Ok(asset.into())
     }
@@ -547,7 +547,7 @@ impl FixedAssets {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let schedule = commerce
             .fixed_assets()
-            .generate_schedule(uuid)
+            .generate_schedule(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to generate schedule", e))?;
         Ok(schedule.into())
     }
@@ -560,7 +560,7 @@ impl FixedAssets {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let schedule = commerce
             .fixed_assets()
-            .get_schedule(uuid)
+            .get_schedule(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get schedule", e))?;
         Ok(schedule.map(Into::into))
     }
@@ -573,7 +573,7 @@ impl FixedAssets {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let asset = commerce
             .fixed_assets()
-            .post_depreciation(uuid, periods)
+            .post_depreciation(uuid.into(), periods)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to post depreciation", e))?;
         Ok(asset.into())
     }

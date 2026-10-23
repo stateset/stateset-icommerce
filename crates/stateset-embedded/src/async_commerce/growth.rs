@@ -1,6 +1,7 @@
 //! Growth & asset accessors: gift cards, store credits, loyalty, fixed assets, revenue recognition.
 
 use super::*;
+use stateset_core::FixedAssetId;
 
 /// Async gift card operations (create, spend, refund, disable).
 pub struct AsyncGiftCards {
@@ -184,8 +185,8 @@ impl AsyncFixedAssets {
     }
 
     /// Get a fixed asset by ID.
-    pub async fn get(&self, id: Uuid) -> Result<Option<FixedAsset>> {
-        self.db.fixed_assets().get_async(id).await
+    pub async fn get(&self, id: FixedAssetId) -> Result<Option<FixedAsset>> {
+        self.db.fixed_assets().get_async(id.into_uuid()).await
     }
 
     /// List fixed assets with optional filtering.
@@ -194,49 +195,49 @@ impl AsyncFixedAssets {
     }
 
     /// Update a fixed asset (partial).
-    pub async fn update(&self, id: Uuid, input: UpdateFixedAsset) -> Result<FixedAsset> {
-        self.db.fixed_assets().update_async(id, input).await
+    pub async fn update(&self, id: FixedAssetId, input: UpdateFixedAsset) -> Result<FixedAsset> {
+        self.db.fixed_assets().update_async(id.into_uuid(), input).await
     }
 
     /// Place a draft asset in service.
-    pub async fn place_in_service(&self, id: Uuid, date: NaiveDate) -> Result<FixedAsset> {
-        self.db.fixed_assets().place_in_service_async(id, date).await
+    pub async fn place_in_service(&self, id: FixedAssetId, date: NaiveDate) -> Result<FixedAsset> {
+        self.db.fixed_assets().place_in_service_async(id.into_uuid(), date).await
     }
 
     /// Dispose of an asset for the given proceeds, recording gain/loss.
     pub async fn dispose(
         &self,
-        id: Uuid,
+        id: FixedAssetId,
         date: NaiveDate,
         proceeds: Decimal,
         notes: Option<String>,
     ) -> Result<FixedAsset> {
-        self.db.fixed_assets().dispose_async(id, date, proceeds, notes).await
+        self.db.fixed_assets().dispose_async(id.into_uuid(), date, proceeds, notes).await
     }
 
     /// Write off an asset (disposal with zero proceeds).
     pub async fn write_off(
         &self,
-        id: Uuid,
+        id: FixedAssetId,
         date: NaiveDate,
         notes: Option<String>,
     ) -> Result<FixedAsset> {
-        self.db.fixed_assets().write_off_async(id, date, notes).await
+        self.db.fixed_assets().write_off_async(id.into_uuid(), date, notes).await
     }
 
     /// Generate and persist the depreciation schedule for an asset.
-    pub async fn generate_schedule(&self, id: Uuid) -> Result<DepreciationSchedule> {
-        self.db.fixed_assets().generate_schedule_async(id).await
+    pub async fn generate_schedule(&self, id: FixedAssetId) -> Result<DepreciationSchedule> {
+        self.db.fixed_assets().generate_schedule_async(id.into_uuid()).await
     }
 
     /// Get the persisted depreciation schedule for an asset, if generated.
-    pub async fn get_schedule(&self, id: Uuid) -> Result<Option<DepreciationSchedule>> {
-        self.db.fixed_assets().get_schedule_async(id).await
+    pub async fn get_schedule(&self, id: FixedAssetId) -> Result<Option<DepreciationSchedule>> {
+        self.db.fixed_assets().get_schedule_async(id.into_uuid()).await
     }
 
     /// Post the next `periods` scheduled depreciation entries.
-    pub async fn post_depreciation(&self, id: Uuid, periods: u32) -> Result<FixedAsset> {
-        self.db.fixed_assets().post_depreciation_async(id, periods).await
+    pub async fn post_depreciation(&self, id: FixedAssetId, periods: u32) -> Result<FixedAsset> {
+        self.db.fixed_assets().post_depreciation_async(id.into_uuid(), periods).await
     }
 }
 

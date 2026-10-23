@@ -335,7 +335,7 @@ pub(crate) async fn get_one(
         .run_blocking(tid.as_deref(), move |c| {
             let a = c
                 .fixed_assets()
-                .get(id)?
+                .get(id.into())?
                 .ok_or_else(|| HttpError::NotFound(format!("Fixed asset {id} not found")))?;
             Ok(Json(to_resp(&a)))
         })
@@ -372,7 +372,7 @@ pub(crate) async fn update(
                 useful_life_months: req.useful_life_months,
                 ..Default::default()
             };
-            Ok(Json(to_resp(&c.fixed_assets().update(id, input)?)))
+            Ok(Json(to_resp(&c.fixed_assets().update(id.into(), input)?)))
         })
         .await
 }
@@ -392,7 +392,7 @@ pub(crate) async fn place_in_service(
     state
         .run_blocking(tid.as_deref(), move |c| {
             let date = parse_date(&req.date, "date")?;
-            Ok(Json(to_resp(&c.fixed_assets().place_in_service(id, date)?)))
+            Ok(Json(to_resp(&c.fixed_assets().place_in_service(id.into(), date)?)))
         })
         .await
 }
@@ -413,7 +413,7 @@ pub(crate) async fn dispose(
         .run_blocking(tid.as_deref(), move |c| {
             let date = parse_date(&req.date, "date")?;
             let proceeds = parse_decimal(&req.proceeds, "proceeds")?;
-            Ok(Json(to_resp(&c.fixed_assets().dispose(id, date, proceeds, req.notes)?)))
+            Ok(Json(to_resp(&c.fixed_assets().dispose(id.into(), date, proceeds, req.notes)?)))
         })
         .await
 }
@@ -433,7 +433,7 @@ pub(crate) async fn write_off(
     state
         .run_blocking(tid.as_deref(), move |c| {
             let date = parse_date(&req.date, "date")?;
-            Ok(Json(to_resp(&c.fixed_assets().write_off(id, date, req.notes)?)))
+            Ok(Json(to_resp(&c.fixed_assets().write_off(id.into(), date, req.notes)?)))
         })
         .await
 }
@@ -450,7 +450,7 @@ pub(crate) async fn generate_schedule(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            Ok(Json(schedule_resp(&c.fixed_assets().generate_schedule(id)?)))
+            Ok(Json(schedule_resp(&c.fixed_assets().generate_schedule(id.into())?)))
         })
         .await
 }
@@ -467,7 +467,7 @@ pub(crate) async fn get_schedule(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            let s = c.fixed_assets().get_schedule(id)?.ok_or_else(|| {
+            let s = c.fixed_assets().get_schedule(id.into())?.ok_or_else(|| {
                 HttpError::NotFound(format!("No schedule generated for asset {id}"))
             })?;
             Ok(Json(schedule_resp(&s)))
@@ -489,7 +489,9 @@ pub(crate) async fn post_depreciation(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            Ok(Json(to_resp(&c.fixed_assets().post_depreciation(id, req.periods.unwrap_or(1))?)))
+            Ok(Json(to_resp(
+                &c.fixed_assets().post_depreciation(id.into(), req.periods.unwrap_or(1))?,
+            )))
         })
         .await
 }

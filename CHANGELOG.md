@@ -8,6 +8,11 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Breaking (2.0)
 
+- **Typed fixed asset IDs.** New `FixedAssetId`. `FixedAssetRepository`
+  and both embedded facades take it; `FixedAsset.id` and the
+  depreciation schedule's `asset_id` carry it. GL account and location IDs
+  on assets stay `Uuid` until the general-ledger tranche, and commerce
+  events keep `asset_id: Uuid`.
 - **Invoices, purchase orders and warranties take typed IDs on both
   facades.** The repository traits already used `InvoiceId`,
   `PurchaseOrderId` and `WarrantyId`; the sync and async embedded facades

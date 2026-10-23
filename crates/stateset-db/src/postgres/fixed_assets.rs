@@ -5,6 +5,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
 use sqlx::postgres::PgPool;
+use stateset_core::FixedAssetId;
 use stateset_core::{
     AssetDisposal, CommerceError, CreateFixedAsset, CurrencyCode, DepreciationEntry,
     DepreciationEntryStatus, DepreciationMethod, DepreciationSchedule, FixedAsset,
@@ -83,7 +84,7 @@ impl PgFixedAssetRepository {
             None => None,
         };
         Ok(FixedAsset {
-            id: row.id,
+            id: FixedAssetId::from(row.id),
             asset_number: row.asset_number,
             name: row.name,
             description: row.description,
@@ -463,7 +464,7 @@ impl PgFixedAssetRepository {
         }
         tx.commit().await.map_err(map_db_error)?;
         Ok(DepreciationSchedule {
-            asset_id: id,
+            asset_id: FixedAssetId::from(id),
             method: asset.depreciation_method,
             total_depreciation: asset.depreciable_base(),
             entries,
@@ -480,7 +481,7 @@ impl PgFixedAssetRepository {
             return Ok(None);
         }
         Ok(Some(DepreciationSchedule {
-            asset_id: id,
+            asset_id: FixedAssetId::from(id),
             method: asset.depreciation_method,
             total_depreciation: entries.iter().map(|e| e.amount).sum(),
             entries,
@@ -622,7 +623,7 @@ impl PgFixedAssetRepository {
                     ),
                 ],
                 source_document_type: Some("fixed_asset_depreciation".to_string()),
-                source_document_id: Some(asset.id),
+                source_document_id: Some(asset.id.into_uuid()),
                 auto_post: Some(true),
             },
             "system",
@@ -665,45 +666,50 @@ impl FixedAssetRepository for PgFixedAssetRepository {
         super::block_on(self.create_async(input))
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<FixedAsset>> {
-        super::block_on(self.get_async(id))
+    fn get(&self, id: FixedAssetId) -> Result<Option<FixedAsset>> {
+        super::block_on(self.get_async(id.into_uuid()))
     }
 
     fn list(&self, filter: FixedAssetFilter) -> Result<Vec<FixedAsset>> {
         super::block_on(self.list_async(filter))
     }
 
-    fn update(&self, id: Uuid, input: UpdateFixedAsset) -> Result<FixedAsset> {
-        super::block_on(self.update_async(id, input))
+    fn update(&self, id: FixedAssetId, input: UpdateFixedAsset) -> Result<FixedAsset> {
+        super::block_on(self.update_async(id.into_uuid(), input))
     }
 
-    fn place_in_service(&self, id: Uuid, date: NaiveDate) -> Result<FixedAsset> {
-        super::block_on(self.place_in_service_async(id, date))
+    fn place_in_service(&self, id: FixedAssetId, date: NaiveDate) -> Result<FixedAsset> {
+        super::block_on(self.place_in_service_async(id.into_uuid(), date))
     }
 
     fn dispose(
         &self,
-        id: Uuid,
+        id: FixedAssetId,
         date: NaiveDate,
         proceeds: Decimal,
         notes: Option<String>,
     ) -> Result<FixedAsset> {
-        super::block_on(self.dispose_async(id, date, proceeds, notes))
+        super::block_on(self.dispose_async(id.into_uuid(), date, proceeds, notes))
     }
 
-    fn write_off(&self, id: Uuid, date: NaiveDate, notes: Option<String>) -> Result<FixedAsset> {
-        super::block_on(self.write_off_async(id, date, notes))
+    fn write_off(
+        &self,
+        id: FixedAssetId,
+        date: NaiveDate,
+        notes: Option<String>,
+    ) -> Result<FixedAsset> {
+        super::block_on(self.write_off_async(id.into_uuid(), date, notes))
     }
 
-    fn generate_schedule(&self, id: Uuid) -> Result<DepreciationSchedule> {
-        super::block_on(self.generate_schedule_async(id))
+    fn generate_schedule(&self, id: FixedAssetId) -> Result<DepreciationSchedule> {
+        super::block_on(self.generate_schedule_async(id.into_uuid()))
     }
 
-    fn get_schedule(&self, id: Uuid) -> Result<Option<DepreciationSchedule>> {
-        super::block_on(self.get_schedule_async(id))
+    fn get_schedule(&self, id: FixedAssetId) -> Result<Option<DepreciationSchedule>> {
+        super::block_on(self.get_schedule_async(id.into_uuid()))
     }
 
-    fn post_depreciation(&self, id: Uuid, periods: u32) -> Result<FixedAsset> {
-        super::block_on(self.post_depreciation_async(id, periods))
+    fn post_depreciation(&self, id: FixedAssetId, periods: u32) -> Result<FixedAsset> {
+        super::block_on(self.post_depreciation_async(id.into_uuid(), periods))
     }
 }
