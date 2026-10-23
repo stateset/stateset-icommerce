@@ -572,7 +572,7 @@
     }
   ],
   "cli": {
-    "binaryCount": 56,
+    "binaryCount": 57,
     "dependencyCount": 15,
     "optionalDependencyCount": 12,
     "topLevelSourceCounts": [
@@ -630,6 +630,10 @@
       },
       {
         "name": "memory",
+        "count": 6
+      },
+      {
+        "name": "tui",
         "count": 6
       },
       {

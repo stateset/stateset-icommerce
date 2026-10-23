@@ -13,6 +13,7 @@ function runCli(bin, args = []) {
 }
 
 const HELP_TARGETS = [
+  { bin: 'stateset-tui.js', label: 'stateset-tui' },
   { bin: 'stateset.js', label: 'stateset' },
   { bin: 'stateset-create.js', label: 'stateset-create' },
   { bin: 'stateset-orders.js', label: 'stateset-orders' },
@@ -28,6 +29,7 @@ const HELP_TARGETS = [
 ];
 
 const VERSION_TARGETS = [
+  { bin: 'stateset-tui.js', label: 'stateset-tui' },
   { bin: 'stateset.js', label: 'stateset' },
   { bin: 'stateset-create.js', label: 'stateset-create' },
   { bin: 'stateset-orders.js', label: 'stateset-orders' },

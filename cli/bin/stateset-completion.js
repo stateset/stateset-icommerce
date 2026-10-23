@@ -142,6 +142,9 @@ const _COMMANDS = {
     },
     options: ['--db', '--apply', '--json', '--format', '--output', '--yes', '--help'],
   },
+  'stateset-tui': {
+    options: ['--db', '--demo', '--snapshot', '--json', '--no-color', '--help', '--version'],
+  },
   'stateset-chat': {
     options: [
       '--db',
@@ -420,6 +423,11 @@ _stateset_complete() {
                 COMPREPLY=( $(compgen -W "${MAIN_BASH_FLAGS}" -- "\${cur}") )
             fi
             ;;
+        stateset-tui)
+            if [[ "\${cur}" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--db --demo --snapshot --json --no-color --help --version" -- "\${cur}") )
+            fi
+            ;;
         stateset-chat)
             if [[ "\${cur}" == -* ]]; then
                 COMPREPLY=( $(compgen -W "--db --apply --model --provider --think --stream --budget --stats --memory --no-memory --x402 --treasury --treasury-chain --treasury-token --treasury-agent --treasury-db --treasury-erc8004-registry --treasury-erc8004-db --verbose --yes --help" -- "\${cur}") )
@@ -590,6 +598,7 @@ complete -F _stateset_complete stateset
 complete -F _stateset_complete ss
 complete -F _stateset_complete stateset-direct
 complete -F _stateset_complete stateset-chat
+complete -F _stateset_complete stateset-tui
 complete -F _stateset_complete stateset-doctor
 complete -F _stateset_complete stateset-update
 complete -F _stateset_complete stateset-config

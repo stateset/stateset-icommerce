@@ -270,6 +270,7 @@ SPECIALIZED COMMANDS:
   stateset-setup           Guided first-time setup wizard
   stateset-update          Check/install CLI updates
   stateset-chat            Interactive multi-turn REPL
+  stateset-tui             Terminal workbench for commerce and simulations
   stateset-direct          Direct CLI (no AI, structured commands)
   stateset-pay             Native crypto payments
   stateset-autonomous      Autonomous business engine
