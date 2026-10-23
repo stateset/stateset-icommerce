@@ -21,12 +21,12 @@ def test_segment_full_lifecycle(commerce):
         name="VIP",
         description="High spenders",
         segment_type="dynamic",
-        rules=[SegmentRuleInput("total_spent", "gte", "1000")],
+        rules=[SegmentRuleInput("total_spent:USD", "gte", "1000")],
     )
     assert segment.name == "VIP"
     assert segment.segment_type == "dynamic"
     assert len(segment.rules) == 1
-    assert segment.rules[0].field == "total_spent"
+    assert segment.rules[0].field == "total_spent:USD"
     assert segment.rules[0].operator == "gte"
     assert segment.rules[0].value == "1000"
     assert segment.member_count == 0
@@ -35,10 +35,10 @@ def test_segment_full_lifecycle(commerce):
     # get + update round-trip the rules
     assert s.get(segment.id).rules[0].operator == "gte"
     updated = s.update(
-        segment.id, name="VIP Renamed", rules=[SegmentRuleInput("orders", "gt", "5")]
+        segment.id, name="VIP Renamed", rules=[SegmentRuleInput("order_count", "gt", "5")]
     )
     assert updated.name == "VIP Renamed"
-    assert updated.rules[0].field == "orders"
+    assert updated.rules[0].field == "order_count"
     assert updated.rules[0].operator == "gt"
 
     # list

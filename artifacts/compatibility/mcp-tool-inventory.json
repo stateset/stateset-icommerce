@@ -4508,7 +4508,7 @@
     },
     {
       "name": "evaluate_segment_membership",
-      "description": "Check whether a customer is a recorded member of a segment. Reads stored membership; rules are not re-evaluated.",
+      "description": "Check whether a customer is a member of a segment. Dynamic segments evaluate their rules against the customer now; static segments read the curated member list.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__evaluate_segment_membership",

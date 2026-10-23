@@ -20,12 +20,12 @@ test('Segments: full lifecycle', async (t) => {
       name: 'VIP',
       description: 'High spenders',
       segmentType: 'dynamic',
-      rules: [{ field: 'total_spent', operator: 'gte', value: '1000' }],
+      rules: [{ field: 'total_spent:USD', operator: 'gte', value: '1000' }],
     });
     assert.equal(segment.name, 'VIP');
     assert.equal(segment.segmentType, 'dynamic');
     assert.equal(segment.rules.length, 1);
-    assert.equal(segment.rules[0].field, 'total_spent');
+    assert.equal(segment.rules[0].field, 'total_spent:USD');
     assert.equal(segment.rules[0].operator, 'gte');
     assert.equal(segment.rules[0].value, '1000');
     assert.equal(segment.memberCount, 0);
@@ -49,10 +49,10 @@ test('Segments: full lifecycle', async (t) => {
 
     const updated = await commerce.segments.update(segment.id, {
       name: 'VIP Renamed',
-      rules: [{ field: 'orders', operator: 'gt', value: '5' }],
+      rules: [{ field: 'order_count', operator: 'gt', value: '5' }],
     });
     assert.equal(updated.name, 'VIP Renamed');
-    assert.equal(updated.rules[0].field, 'orders');
+    assert.equal(updated.rules[0].field, 'order_count');
     assert.equal(updated.rules[0].operator, 'gt');
   });
 
