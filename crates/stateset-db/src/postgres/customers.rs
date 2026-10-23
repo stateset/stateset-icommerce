@@ -123,7 +123,7 @@ pub struct PgCustomerRepository {
 }
 
 #[derive(FromRow)]
-struct CustomerRow {
+pub(crate) struct CustomerRow {
     id: Uuid,
     email: String,
     first_name: String,
@@ -199,7 +199,7 @@ impl PgCustomerRepository {
         Ok(())
     }
 
-    fn row_to_customer(row: CustomerRow) -> Result<Customer> {
+    pub(crate) fn row_to_customer(row: CustomerRow) -> Result<Customer> {
         let status: CustomerStatus = row.status.parse().map_err(|e| {
             CommerceError::DatabaseError(format!("Invalid customer.status '{}': {}", row.status, e))
         })?;

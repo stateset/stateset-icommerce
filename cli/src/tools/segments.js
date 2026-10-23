@@ -12,12 +12,29 @@ const conditionSchema = z.object({
   field: z
     .string()
     .min(1)
-    .describe('Field to evaluate (e.g., totalSpent, orderCount, lastOrderAt)'),
+    .describe(
+      'Customer field: email, first_name, last_name, phone, status, tags, accepts_marketing, ' +
+        'email_verified, order_count, total_spent:<CURRENCY> (e.g. total_spent:USD), ' +
+        'created_at or last_order_at',
+    ),
   operator: z
-    .enum(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in', 'contains', 'starts_with'])
+    .enum([
+      'eq',
+      'neq',
+      'gt',
+      'gte',
+      'lt',
+      'lte',
+      'between',
+      'in',
+      'not_in',
+      'contains',
+      'starts_with',
+      'ends_with',
+    ])
     .describe('Comparison operator'),
   value: z
-    .union([z.string(), z.number(), z.boolean(), z.array(z.string())])
+    .union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number()]))])
     .describe('Value to compare against'),
 });
 
@@ -29,9 +46,11 @@ const ENGINE_OPERATORS = new Set([
   'gte',
   'lt',
   'lte',
+  'between',
   'contains',
   'in',
   'starts_with',
+  'ends_with',
 ]);
 
 /** The engine caps a single `segments.list` page at 1000 rows (default 500). */
@@ -87,9 +106,13 @@ export const segmentTools = [
         .describe('Segment type (static: manual, dynamic: auto-evaluated)'),
       conditions: z
         .array(conditionSchema)
-        .min(1)
         .max(20)
-        .describe('Filter conditions for segment membership'),
+        .optional()
+        .default([])
+        .describe(
+          'Rules a customer must all match (dynamic segments only; required for dynamic, ' +
+            'not allowed for static)',
+        ),
       conditionLogic: z
         .enum(['all', 'any'])
         .optional()
@@ -102,13 +125,26 @@ export const segmentTools = [
         return applyRequired('Create segment', params);
       }
 
-      const mapped = toEngineRules(params.conditions, params.conditionLogic);
+      const segmentType = params.type || 'dynamic';
+      const conditions = params.conditions ?? [];
+      if (segmentType === 'dynamic' && conditions.length === 0) {
+        return { success: false, error: 'a dynamic segment needs at least one condition' };
+      }
+      if (segmentType === 'static' && conditions.length > 0) {
+        return {
+          success: false,
+          error:
+            'a static segment takes no conditions (add members explicitly); ' +
+            "use type 'dynamic' to select members by rule",
+        };
+      }
+      const mapped = toEngineRules(conditions, params.conditionLogic);
       if (mapped.error) return { success: false, error: mapped.error };
 
       const segment = await commerce.segments.create({
         name: params.name,
         description: params.description,
-        segmentType: params.type || 'dynamic',
+        segmentType,
         rules: mapped.rules,
       });
       return { success: true, message: 'Segment created', segment };
@@ -228,7 +264,7 @@ export const segmentTools = [
   {
     name: 'evaluate_segment_membership',
     description:
-      'Check whether a customer is a recorded member of a segment. Reads stored membership; rules are not re-evaluated.',
+      'Check whether a customer is a member of a segment. Dynamic segments evaluate their rules against the customer now; static segments read the curated member list.',
     inputSchema: {
       segmentId: z.string().min(1).describe('Segment ID'),
       customerId: z.string().min(1).describe('Customer ID to evaluate'),
@@ -243,7 +279,7 @@ export const segmentTools = [
         segmentId,
         customerId,
         isMember,
-        basis: 'stored_membership',
+        basis: 'engine_membership',
       };
     },
   },

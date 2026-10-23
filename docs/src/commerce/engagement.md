@@ -188,15 +188,35 @@ const summary = await toolkit.executeTool('get_review_summary', {
 
 ## Customer Segments
 
-Dynamic segments evaluate membership in real-time based on conditions.
+Dynamic segments have no stored member list: their members are the customers
+who match every condition at the moment membership is read (`list_members`,
+`count_members`, `is_member`), so they stay current as customers order.
+Static segments keep an explicit list you curate with `add_member` /
+`remove_member`; a dynamic segment refuses both.
+
+Conditions are checked when the segment is created or updated, so an unknown
+field or a malformed value is rejected up front. Supported fields:
+
+| Field | Operators |
+|---|---|
+| `email`, `first_name`, `last_name`, `phone`, `status` (case-insensitive) | `eq`, `neq`, `contains`, `starts_with`, `ends_with`, `in` |
+| `tags` | `contains` (has the tag), `in` (has any of them) |
+| `accepts_marketing`, `email_verified` | `eq`, `neq` |
+| `order_count` | `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `between`, `in` |
+| `total_spent:<CURRENCY>` (e.g. `total_spent:USD`) | as `order_count` |
+| `created_at`, `last_order_at` (RFC 3339) | `eq`, `gt`, `gte`, `lt`, `lte`, `between` |
+
+`order_count`, `total_spent:*` and `last_order_at` ignore cancelled and
+refunded orders. Spend is per currency and never summed across currencies.
 
 ```javascript
-// Create a segment with compound conditions
+// Create a segment with compound conditions (all must match)
 await toolkit.executeTool('create_segment', {
     name: 'High-Value Repeat Buyers',
+    type: 'dynamic',
     conditions: [
-        { field: 'orderCount', operator: 'gte', value: 5 },
-        { field: 'totalSpend', operator: 'gte', value: 500 },
+        { field: 'order_count', operator: 'gte', value: 5 },
+        { field: 'total_spent:USD', operator: 'gte', value: '500' },
         { field: 'email', operator: 'contains', value: '@example.com' },
     ],
     conditionLogic: 'all',
@@ -218,15 +238,17 @@ const membership = await toolkit.executeTool('evaluate_segment_membership', {
 
 ### Segment Operators
 
-| Operator | Description |
-|----------|-------------|
-| `eq`, `neq` | Exact match / not equal |
-| `gt`, `gte`, `lt`, `lte` | Numeric comparison |
-| `in`, `not_in` | Value in / not in list |
-| `contains` | String or array contains |
-| `starts_with` | String prefix match |
+| Operator | Value | Description |
+|----------|-------|-------------|
+| `eq`, `neq` | scalar | Equal / not equal |
+| `gt`, `gte`, `lt`, `lte` | scalar | Numeric or time comparison |
+| `between` | `[low, high]` | Inclusive range |
+| `in` | array | Equal to any listed value (for `tags`: has any of them) |
+| `contains`, `starts_with`, `ends_with` | text | Substring match (for `tags`: has the tag) |
 
-Compound conditions support `all` (AND) and `any` (OR) logic.
+All conditions must match (`conditionLogic: 'all'`); `any` is refused rather
+than silently treated as `all`. A customer with no value for a field (no
+phone, no orders yet for `last_order_at`) matches no condition on it.
 
 ## MCP Tools
 

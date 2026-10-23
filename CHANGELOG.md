@@ -6,6 +6,30 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- **Dynamic customer segments evaluate their rules.** A dynamic segment's
+  members are now the customers matching every rule when membership is read
+  (`list_members`, `count_members`, `is_member`, and `member_count` on `get`
+  / `list`), on both backends through one shared evaluator
+  (`stateset_core::SegmentMatcher`). Before, nothing evaluated the rules and
+  a dynamic segment always had zero members. Rule fields: `email`,
+  `first_name`, `last_name`, `phone`, `status`, `tags`, `accepts_marketing`,
+  `email_verified`, `order_count`, `total_spent:<CURRENCY>`, `created_at`,
+  `last_order_at`; order aggregates skip cancelled and refunded orders, and
+  spend is never summed across currencies.
+
+### Changed
+
+- Segment rules are validated on create and update: an unknown field, an
+  operator the field does not support, or an unparsable value is refused
+  with a `ValidationError` (they used to be stored and never evaluated).
+  A static segment no longer accepts rules, and `add_member` /
+  `remove_member` refuse dynamic segments. The CLI's `create_segment` now
+  requires conditions only for dynamic segments, accepts `between` and
+  `ends_with`, and `evaluate_segment_membership` reports
+  `basis: "engine_membership"`.
+
 ## [1.40.0] - 2026-10-22
 
 ### Security

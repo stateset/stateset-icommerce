@@ -320,7 +320,7 @@ describe('segments command', () => {
       segmentId: 'seg-1',
       customerId: 'c1',
       isMember: true,
-      basis: 'stored_membership',
+      basis: 'engine_membership',
     });
     assert.deepEqual(calls, [['segments.isMember', 'seg-1', 'c1']]);
   });

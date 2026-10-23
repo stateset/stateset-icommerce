@@ -93,7 +93,7 @@ impl SqliteCustomerRepository {
         self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))
     }
 
-    fn row_to_customer(row: &rusqlite::Row<'_>) -> rusqlite::Result<Customer> {
+    pub(crate) fn row_to_customer(row: &rusqlite::Row<'_>) -> rusqlite::Result<Customer> {
         let tags_json: String = row.get("tags")?;
         let metadata_json: Option<String> = row.get("metadata")?;
 

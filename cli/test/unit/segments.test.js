@@ -129,7 +129,6 @@ describe('create_segment', () => {
       params: {
         name: 'Loyal Buyers',
         type: 'static',
-        conditions: mockConditions,
         conditionLogic: 'all',
       },
       allowApply: true,
@@ -138,8 +137,28 @@ describe('create_segment', () => {
       name: 'Loyal Buyers',
       description: undefined,
       segmentType: 'static',
-      rules: mockRules,
+      rules: [],
     });
+  });
+
+  it('refuses conditions on a static segment and a dynamic segment without them', async () => {
+    const commerce = makeSegmentCommerce({
+      create: async () => assert.fail('must not reach the engine'),
+    });
+    const staticWithRules = await tool.handler({
+      commerce,
+      params: { name: 'S', type: 'static', conditions: mockConditions, conditionLogic: 'all' },
+      allowApply: true,
+    });
+    assert.equal(staticWithRules.success, false);
+    assert.match(staticWithRules.error, /static segment takes no conditions/);
+    const dynamicWithout = await tool.handler({
+      commerce,
+      params: { name: 'D', type: 'dynamic', conditions: [], conditionLogic: 'all' },
+      allowApply: true,
+    });
+    assert.equal(dynamicWithout.success, false);
+    assert.match(dynamicWithout.error, /needs at least one condition/);
   });
 
   it('JSON-encodes non-string rule values', async () => {
@@ -441,7 +460,7 @@ describe('evaluate_segment_membership', () => {
     assert.equal(result.segmentId, 'seg_001');
     assert.equal(result.customerId, 'cust_001');
     assert.equal(result.isMember, true);
-    assert.equal(result.basis, 'stored_membership');
+    assert.equal(result.basis, 'engine_membership');
   });
 
   it('calls isMember(segmentId, customerId)', async () => {
