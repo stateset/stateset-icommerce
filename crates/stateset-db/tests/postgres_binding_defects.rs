@@ -204,7 +204,7 @@ async fn postgres_serial_create_resolves_lot_number_and_follows_lot_quarantine()
         .expect("bulk");
     assert!(bulk.iter().all(|s| s.lot_id == Some(lot.id)), "bulk create must resolve too");
 
-    db.lots().quarantine_async(lot.id, "recall").await.expect("quarantine lot");
+    db.lots().quarantine_async(lot.id.into_uuid(), "recall").await.expect("quarantine lot");
     for id in std::iter::once(serial.id).chain(bulk.iter().map(|s| s.id)) {
         let after = db.serials().get_async(id).await.expect("get").expect("exists");
         assert_eq!(after.status, SerialStatus::Quarantined, "serial {id} did not follow its lot");

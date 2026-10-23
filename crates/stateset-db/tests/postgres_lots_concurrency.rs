@@ -15,6 +15,7 @@
 #![cfg(feature = "postgres")]
 
 use rust_decimal_macros::dec;
+use stateset_core::LotId;
 use stateset_core::{CommerceError, ConsumeLot, CreateLot};
 use stateset_db::PostgresDatabase;
 use std::sync::Arc;
@@ -107,7 +108,7 @@ async fn postgres_concurrent_consume_does_not_over_consume() {
         "exactly the available units should consume; got {successes} for {available} (over-consume if greater)"
     );
 
-    let lot = db.lots().get_async(lot.id).await.expect("get lot").expect("lot row");
+    let lot = db.lots().get_async(lot.id.into_uuid()).await.expect("get lot").expect("lot row");
     assert_eq!(
         lot.quantity_remaining,
         dec!(0),
@@ -149,7 +150,7 @@ async fn postgres_merge_refuses_quarantined_source_lot() {
         })
         .await
         .expect("create second lot");
-    db.lots().quarantine_async(quarantined.id, "qc fail").await.expect("quarantine");
+    db.lots().quarantine_async(quarantined.id.into_uuid(), "qc fail").await.expect("quarantine");
 
     let target = format!("MERGED-{}", Uuid::new_v4().simple());
     let err = db
@@ -169,8 +170,8 @@ async fn postgres_merge_refuses_quarantined_source_lot() {
         other => panic!("expected ValidationError, got {other:?}"),
     }
 
-    let a = db.lots().get_async(active.id).await.expect("ok").expect("found");
-    let q = db.lots().get_async(quarantined.id).await.expect("ok").expect("found");
+    let a = db.lots().get_async(active.id.into_uuid()).await.expect("ok").expect("found");
+    let q = db.lots().get_async(quarantined.id.into_uuid()).await.expect("ok").expect("found");
     assert_eq!(a.status, LotStatus::Active);
     assert_eq!(a.quantity_remaining, dec!(30));
     assert_eq!(q.status, LotStatus::Quarantine);
@@ -241,18 +242,18 @@ async fn postgres_confirm_reservation_refuses_quarantined_lot_until_released() {
     let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
     let lot = create_lot(&db, &format!("L1-{}", Uuid::new_v4().simple()), dec!(100), None).await;
     let res = reserve_units(&db, &lot, dec!(30), None).await;
-    let q = db.lots().quarantine_async(lot.id, "qc fail").await.expect("quarantine");
+    let q = db.lots().quarantine_async(lot.id.into_uuid(), "qc fail").await.expect("quarantine");
     assert_eq!(q.quantity_quarantined, dec!(70));
 
     let err = db.lots().confirm_reservation_async(res).await.expect_err("blocked stock");
     assert_validation_mentions(&err, &[&lot.lot_number, "quarantine"]);
-    let after = db.lots().get_async(lot.id).await.expect("ok").expect("found");
+    let after = db.lots().get_async(lot.id.into_uuid()).await.expect("ok").expect("found");
     assert_eq!(after.quantity_remaining, dec!(100));
     assert_eq!(after.quantity_reserved, dec!(30));
 
-    db.lots().release_quarantine_async(lot.id).await.expect("release");
+    db.lots().release_quarantine_async(lot.id.into_uuid()).await.expect("release");
     db.lots().confirm_reservation_async(res).await.expect("confirm after release");
-    let done = db.lots().get_async(lot.id).await.expect("ok").expect("found");
+    let done = db.lots().get_async(lot.id.into_uuid()).await.expect("ok").expect("found");
     assert_eq!(done.quantity_remaining, dec!(70));
     assert_eq!(done.quantity_reserved, dec!(0));
     assert_eq!(done.status, LotStatus::Active);
@@ -269,9 +270,9 @@ async fn postgres_release_reservation_under_quarantine_folds_into_quarantine() {
     let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
     let lot = create_lot(&db, &format!("L1R-{}", Uuid::new_v4().simple()), dec!(100), None).await;
     let res = reserve_units(&db, &lot, dec!(30), None).await;
-    db.lots().quarantine_async(lot.id, "qc").await.expect("quarantine");
+    db.lots().quarantine_async(lot.id.into_uuid(), "qc").await.expect("quarantine");
     db.lots().release_reservation_async(res).await.expect("release");
-    let after = db.lots().get_async(lot.id).await.expect("ok").expect("found");
+    let after = db.lots().get_async(lot.id.into_uuid()).await.expect("ok").expect("found");
     assert_eq!(after.quantity_reserved, dec!(0));
     assert_eq!(after.quantity_quarantined, dec!(100));
 }
@@ -289,14 +290,14 @@ async fn postgres_quarantine_and_release_are_state_guarded() {
 
     // Double quarantine keeps the count and writes one transaction.
     let lot = create_lot(&db, &sku, dec!(50), None).await;
-    db.lots().quarantine_async(lot.id, "first").await.expect("quarantine");
-    let err = db.lots().quarantine_async(lot.id, "again").await.expect_err("double");
+    db.lots().quarantine_async(lot.id.into_uuid(), "first").await.expect("quarantine");
+    let err = db.lots().quarantine_async(lot.id.into_uuid(), "again").await.expect_err("double");
     assert_validation_mentions(&err, &[&lot.lot_number, "quarantine"]);
-    let after = db.lots().get_async(lot.id).await.expect("ok").expect("found");
+    let after = db.lots().get_async(lot.id.into_uuid()).await.expect("ok").expect("found");
     assert_eq!(after.quantity_quarantined, dec!(50));
     let n = db
         .lots()
-        .get_transactions_async(lot.id, 50)
+        .get_transactions_async(lot.id.into_uuid(), 50)
         .await
         .expect("txns")
         .iter()
@@ -307,11 +308,14 @@ async fn postgres_quarantine_and_release_are_state_guarded() {
     // OnHold may be quarantined; terminal states may not.
     let held = create_lot(&db, &sku, dec!(5), None).await;
     db.lots()
-        .update_async(held.id, UpdateLot { status: Some(LotStatus::OnHold), ..Default::default() })
+        .update_async(
+            held.id.into_uuid(),
+            UpdateLot { status: Some(LotStatus::OnHold), ..Default::default() },
+        )
         .await
         .expect("hold");
     assert_eq!(
-        db.lots().quarantine_async(held.id, "escalate").await.expect("ok").status,
+        db.lots().quarantine_async(held.id.into_uuid(), "escalate").await.expect("ok").status,
         LotStatus::Quarantine
     );
     for status in
@@ -319,18 +323,29 @@ async fn postgres_quarantine_and_release_are_state_guarded() {
     {
         let l = create_lot(&db, &sku, dec!(5), None).await;
         db.lots()
-            .update_async(l.id, UpdateLot { status: Some(status), ..Default::default() })
+            .update_async(
+                l.id.into_uuid(),
+                UpdateLot { status: Some(status), ..Default::default() },
+            )
             .await
             .expect("set");
-        let err = db.lots().quarantine_async(l.id, "nope").await.expect_err("refuse");
+        let err = db.lots().quarantine_async(l.id.into_uuid(), "nope").await.expect_err("refuse");
         assert_validation_mentions(&err, &[&l.lot_number, &status.to_string()]);
         // …and none of them can be resurrected through release_quarantine.
-        let err = db.lots().release_quarantine_async(l.id).await.expect_err("no resurrection");
+        let err = db
+            .lots()
+            .release_quarantine_async(l.id.into_uuid())
+            .await
+            .expect_err("no resurrection");
         assert_validation_mentions(&err, &[&l.lot_number, &status.to_string()]);
-        assert_eq!(db.lots().get_async(l.id).await.unwrap().unwrap().status, status);
+        assert_eq!(db.lots().get_async(l.id.into_uuid()).await.unwrap().unwrap().status, status);
     }
     let active = create_lot(&db, &sku, dec!(5), None).await;
-    let err = db.lots().release_quarantine_async(active.id).await.expect_err("not quarantined");
+    let err = db
+        .lots()
+        .release_quarantine_async(active.id.into_uuid())
+        .await
+        .expect_err("not quarantined");
     assert_validation_mentions(&err, &[&active.lot_number, "active"]);
     assert!(matches!(
         db.lots().release_quarantine_async(Uuid::new_v4()).await.expect_err("unknown"),
@@ -355,7 +370,7 @@ async fn postgres_expiry_is_enforced_and_swept() {
     let res = reserve_units(&db, &lot, dec!(3), None).await;
     db.lots()
         .update_async(
-            lot.id,
+            lot.id.into_uuid(),
             UpdateLot {
                 expiration_date: Some(Utc::now() - Duration::days(1)),
                 ..Default::default()
@@ -390,20 +405,29 @@ async fn postgres_expiry_is_enforced_and_swept() {
     assert_validation_mentions(&err, &[&lot.lot_number, "expired"]);
     let err = db.lots().confirm_reservation_async(res).await.expect_err("confirm expired lot");
     assert_validation_mentions(&err, &[&lot.lot_number, "expired"]);
-    assert_eq!(db.lots().get_async(lot.id).await.unwrap().unwrap().quantity_remaining, dec!(10));
+    assert_eq!(
+        db.lots().get_async(lot.id.into_uuid()).await.unwrap().unwrap().quantity_remaining,
+        dec!(10)
+    );
 
     // Sweeper: our expired lot flips; a quarantined-but-expired lot does not.
     let quarantined = create_lot(&db, &sku, dec!(10), Some(Utc::now() - Duration::days(1))).await;
-    db.lots().quarantine_async(quarantined.id, "qc").await.expect("quarantine");
+    db.lots().quarantine_async(quarantined.id.into_uuid(), "qc").await.expect("quarantine");
     let future = create_lot(&db, &sku, dec!(10), Some(Utc::now() + Duration::days(30))).await;
     let flipped = db.lots().expire_lots_async(Utc::now()).await.expect("sweep");
     assert!(flipped >= 1, "at least our lot; other tests' lots may be swept too");
-    assert_eq!(db.lots().get_async(lot.id).await.unwrap().unwrap().status, LotStatus::Expired);
     assert_eq!(
-        db.lots().get_async(quarantined.id).await.unwrap().unwrap().status,
+        db.lots().get_async(lot.id.into_uuid()).await.unwrap().unwrap().status,
+        LotStatus::Expired
+    );
+    assert_eq!(
+        db.lots().get_async(quarantined.id.into_uuid()).await.unwrap().unwrap().status,
         LotStatus::Quarantine
     );
-    assert_eq!(db.lots().get_async(future.id).await.unwrap().unwrap().status, LotStatus::Active);
+    assert_eq!(
+        db.lots().get_async(future.id.into_uuid()).await.unwrap().unwrap().status,
+        LotStatus::Active
+    );
 }
 
 /// L4: FEFO picking order, excluding expired / blocked / fully reserved lots.
@@ -425,9 +449,9 @@ async fn postgres_available_lots_for_sku_is_fefo() {
         create_lot(&db, &sku, dec!(10), Some(Utc::now() + Duration::days(2))).await;
     reserve_units(&db, &fully_reserved, dec!(10), None).await;
     let quarantined = create_lot(&db, &sku, dec!(10), Some(Utc::now() + Duration::days(1))).await;
-    db.lots().quarantine_async(quarantined.id, "qc").await.expect("quarantine");
+    db.lots().quarantine_async(quarantined.id.into_uuid(), "qc").await.expect("quarantine");
 
-    let picked: Vec<Uuid> = db
+    let picked: Vec<LotId> = db
         .lots()
         .get_available_lots_for_sku_async(&sku)
         .await
@@ -453,7 +477,7 @@ async fn postgres_confirm_marks_consumed_and_refuses_expired_reservation() {
     let lot = create_lot(&db, &sku, dec!(10), None).await;
     let res = reserve_units(&db, &lot, dec!(10), None).await;
     db.lots().confirm_reservation_async(res).await.expect("confirm");
-    let after = db.lots().get_async(lot.id).await.unwrap().unwrap();
+    let after = db.lots().get_async(lot.id.into_uuid()).await.unwrap().unwrap();
     assert_eq!(after.quantity_remaining, dec!(0));
     assert_eq!(after.status, LotStatus::Consumed);
 
@@ -461,7 +485,7 @@ async fn postgres_confirm_marks_consumed_and_refuses_expired_reservation() {
     let res = reserve_units(&db, &lot, dec!(4), Some(-60)).await;
     let err = db.lots().confirm_reservation_async(res).await.expect_err("expired reservation");
     assert_validation_mentions(&err, &["expired", "released"]);
-    let done = db.lots().get_async(lot.id).await.unwrap().unwrap();
+    let done = db.lots().get_async(lot.id.into_uuid()).await.unwrap().unwrap();
     assert_eq!(done.quantity_reserved, dec!(0), "released lazily by confirm");
     assert_eq!(done.quantity_remaining, dec!(10));
     assert!(matches!(db.lots().release_reservation_async(res).await, Err(CommerceError::NotFound)));

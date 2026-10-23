@@ -2888,7 +2888,7 @@ pub extern "C" fn stateset_lot_get(handle: *mut CommerceHandle, id: *const c_cha
     };
 
     let result =
-        use_handle(handle, |commerce| commerce.lots().get(uuid).map_err(|e| e.to_string()));
+        use_handle(handle, |commerce| commerce.lots().get(uuid.into()).map_err(|e| e.to_string()));
 
     match result {
         Ok(Some(lot)) => to_json_cstr(&lot),
@@ -2949,7 +2949,7 @@ pub extern "C" fn stateset_lot_quarantine(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.lots().quarantine(uuid, &reason_str).map_err(|e| e.to_string())
+        commerce.lots().quarantine(uuid.into(), &reason_str).map_err(|e| e.to_string())
     });
 
     match result {

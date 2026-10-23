@@ -13,6 +13,7 @@ use chrono::{DateTime, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
+use stateset_core::LotId;
 use stateset_core::errors::BatchResult;
 use stateset_core::traits::LotRepository;
 use stateset_core::{
@@ -87,7 +88,7 @@ impl SqliteLotRepository {
         let attributes: serde_json::Value = parse_json_row(&attributes_str, "lot", "attributes")?;
 
         Ok(Lot {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "lot", "id")?,
+            id: LotId::from(parse_uuid_row(&row.get::<_, String>("id")?, "lot", "id")?),
             lot_number: row.get("lot_number")?,
             sku: row.get("sku")?,
             status: parse_enum_row(&row.get::<_, String>("status")?, "lot", "status")?,
@@ -165,7 +166,11 @@ impl SqliteLotRepository {
     fn row_to_transaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<LotTransaction> {
         Ok(LotTransaction {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "lot_transaction", "id")?,
-            lot_id: parse_uuid_row(&row.get::<_, String>("lot_id")?, "lot_transaction", "lot_id")?,
+            lot_id: LotId::from(parse_uuid_row(
+                &row.get::<_, String>("lot_id")?,
+                "lot_transaction",
+                "lot_id",
+            )?),
             transaction_type: parse_enum_row(
                 &row.get::<_, String>("transaction_type")?,
                 "lot_transaction",
@@ -197,7 +202,11 @@ impl SqliteLotRepository {
     fn row_to_certificate(row: &rusqlite::Row<'_>) -> rusqlite::Result<LotCertificate> {
         Ok(LotCertificate {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "lot_certificate", "id")?,
-            lot_id: parse_uuid_row(&row.get::<_, String>("lot_id")?, "lot_certificate", "lot_id")?,
+            lot_id: LotId::from(parse_uuid_row(
+                &row.get::<_, String>("lot_id")?,
+                "lot_certificate",
+                "lot_id",
+            )?),
             certificate_type: parse_enum_row(
                 &row.get::<_, String>("certificate_type")?,
                 "lot_certificate",
@@ -264,7 +273,7 @@ impl SqliteLotRepository {
 
         Ok(LotTransaction {
             id,
-            lot_id,
+            lot_id: LotId::from(lot_id),
             transaction_type,
             quantity,
             reference_type: reference_type.to_string(),
@@ -534,16 +543,16 @@ impl SqliteLotRepository {
         let rows = stmt
             .query_map([lot_id.to_string()], |row| {
                 Ok(LotGenealogyLink {
-                    child_lot_id: parse_uuid_row(
+                    child_lot_id: LotId::from(parse_uuid_row(
                         &row.get::<_, String>(0)?,
                         "lot_genealogy",
                         "child_lot_id",
-                    )?,
-                    parent_lot_id: parse_uuid_row(
+                    )?),
+                    parent_lot_id: LotId::from(parse_uuid_row(
                         &row.get::<_, String>(1)?,
                         "lot_genealogy",
                         "parent_lot_id",
-                    )?,
+                    )?),
                     parent_lot_number: row.get(2)?,
                     child_lot_number: row.get(3)?,
                     relationship: parse_enum_row(
@@ -582,12 +591,12 @@ impl SqliteLotRepository {
                 break;
             }
             for link in Self::genealogy_links_on(conn, current, true)? {
-                if !seen.insert(link.parent_lot_id) {
+                if !seen.insert(link.parent_lot_id.into_uuid()) {
                     continue;
                 }
-                if let Some(parent) = Self::load_lot_on(conn, link.parent_lot_id)? {
+                if let Some(parent) = Self::load_lot_on(conn, link.parent_lot_id.into_uuid())? {
                     ancestors.push(parent);
-                    queue.push_back(link.parent_lot_id);
+                    queue.push_back(link.parent_lot_id.into_uuid());
                 }
             }
         }
@@ -731,14 +740,16 @@ impl SqliteLotRepository {
         if quantity <= Decimal::ZERO || (on_hand_sign == 0 && allocated_sign == 0) {
             return Ok(());
         }
-        for (location_id, slice) in Self::inventory_slices_on(conn, lot.id, location, quantity)? {
+        for (location_id, slice) in
+            Self::inventory_slices_on(conn, lot.id.into_uuid(), location, quantity)?
+        {
             Self::apply_inventory_delta_on(
                 conn,
                 &lot.sku,
                 location_id,
                 slice * Decimal::from(on_hand_sign),
                 slice * Decimal::from(allocated_sign),
-                lot.id,
+                lot.id.into_uuid(),
                 reason,
                 now,
             )?;
@@ -787,17 +798,22 @@ impl SqliteLotRepository {
 
         Self::record_transaction(
             tx,
-            lot.id,
+            lot.id.into_uuid(),
             LotTransactionType::Quarantined,
             available,
             "quarantine",
-            lot.id,
+            lot.id.into_uuid(),
             None,
             None,
             Some(reason),
             None,
         )?;
-        SqliteSerialRepository::quarantine_for_lot_on(tx, lot.id, reason, &now.to_rfc3339())?;
+        SqliteSerialRepository::quarantine_for_lot_on(
+            tx,
+            lot.id.into_uuid(),
+            reason,
+            &now.to_rfc3339(),
+        )?;
         Self::sync_inventory_on(
             tx,
             lot,
@@ -836,17 +852,21 @@ impl SqliteLotRepository {
 
         Self::record_transaction(
             tx,
-            lot.id,
+            lot.id.into_uuid(),
             LotTransactionType::QuarantineReleased,
             quarantined,
             "quarantine_release",
-            lot.id,
+            lot.id.into_uuid(),
             None,
             None,
             Some("Released from quarantine"),
             None,
         )?;
-        SqliteSerialRepository::release_quarantine_for_lot_on(tx, lot.id, &now.to_rfc3339())?;
+        SqliteSerialRepository::release_quarantine_for_lot_on(
+            tx,
+            lot.id.into_uuid(),
+            &now.to_rfc3339(),
+        )?;
         Self::sync_inventory_on(
             tx,
             lot,
@@ -1086,7 +1106,7 @@ impl LotRepository for SqliteLotRepository {
         }
 
         let lot = Lot {
-            id,
+            id: LotId::from(id),
             lot_number,
             sku: input.sku,
             status: LotStatus::Active,
@@ -1124,7 +1144,7 @@ impl LotRepository for SqliteLotRepository {
         Ok(lot)
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Lot>> {
+    fn get(&self, id: LotId) -> Result<Option<Lot>> {
         let conn = self.conn()?;
         let result =
             conn.query_row("SELECT * FROM lots WHERE id = ?", [id.to_string()], Self::row_to_lot);
@@ -1159,7 +1179,7 @@ impl LotRepository for SqliteLotRepository {
     /// held: a `quarantine` that committed in between moved the lot's serials
     /// and inventory into quarantine and this update then wrote `recalled` (or
     /// `active`) straight over the quarantine status.
-    fn update(&self, id: Uuid, input: UpdateLot) -> Result<Lot> {
+    fn update(&self, id: LotId, input: UpdateLot) -> Result<Lot> {
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
@@ -1171,7 +1191,7 @@ impl LotRepository for SqliteLotRepository {
             // Status edits go through the state machine, and the transitions
             // that move stock (into / out of quarantine) must use the named
             // operations so serials and inventory follow the lot.
-            let lot = Self::load_lot_on(&tx, id)?.ok_or(CommerceError::NotFound)?;
+            let lot = Self::load_lot_on(&tx, id.into_uuid())?.ok_or(CommerceError::NotFound)?;
             if *status != lot.status {
                 ensure_transition(&lot, *status, "update")?;
                 if *status == LotStatus::Quarantine || lot.status == LotStatus::Quarantine {
@@ -1214,7 +1234,7 @@ impl LotRepository for SqliteLotRepository {
             params.iter().map(std::convert::AsRef::as_ref).collect();
         tx.execute(&sql, params_refs.as_slice()).map_err(map_db_error)?;
 
-        let updated = Self::load_lot_on(&tx, id)?.ok_or(CommerceError::NotFound)?;
+        let updated = Self::load_lot_on(&tx, id.into_uuid())?.ok_or(CommerceError::NotFound)?;
         tx.commit().map_err(map_db_error)?;
         Ok(updated)
     }
@@ -1274,7 +1294,7 @@ impl LotRepository for SqliteLotRepository {
     /// The history check and the delete run in one transaction: reading on the
     /// pool and then deleting would let a concurrent `consume` slip a
     /// transaction in between and lose it to the `ON DELETE CASCADE`.
-    fn delete(&self, id: Uuid) -> Result<()> {
+    fn delete(&self, id: LotId) -> Result<()> {
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let tx_count: i64 = tx
@@ -1335,11 +1355,11 @@ impl LotRepository for SqliteLotRepository {
         // Record transaction
         let transaction = Self::record_transaction(
             &tx,
-            input.lot_id,
+            input.lot_id.into_uuid(),
             LotTransactionType::Adjusted,
             input.quantity_change,
             input.reference_type.as_deref().unwrap_or("manual_adjustment"),
-            input.reference_id.unwrap_or(input.lot_id),
+            input.reference_id.unwrap_or(input.lot_id.into_uuid()),
             None,
             input.location_id,
             Some(&input.reason),
@@ -1411,7 +1431,7 @@ impl LotRepository for SqliteLotRepository {
         // Record transaction
         let transaction = Self::record_transaction(
             &tx,
-            input.lot_id,
+            input.lot_id.into_uuid(),
             LotTransactionType::Consumed,
             -input.quantity,
             &input.reference_type,
@@ -1448,11 +1468,12 @@ impl LotRepository for SqliteLotRepository {
         // Stale reservations on this lot are released first so their units
         // count as available for this caller (lazy expiry; the sweeper only
         // has to catch lots nobody touches).
-        if Self::load_lot_on(&tx, input.lot_id)?.is_none() {
+        if Self::load_lot_on(&tx, input.lot_id.into_uuid())?.is_none() {
             return Err(CommerceError::ValidationError("Lot not found".to_string()));
         }
-        Self::release_expired_reservations_for_lot_on(&tx, input.lot_id, now)?;
-        let lot = Self::load_lot_on(&tx, input.lot_id)?.ok_or(CommerceError::NotFound)?;
+        Self::release_expired_reservations_for_lot_on(&tx, input.lot_id.into_uuid(), now)?;
+        let lot =
+            Self::load_lot_on(&tx, input.lot_id.into_uuid())?.ok_or(CommerceError::NotFound)?;
 
         ensure_unexpired(&lot, now, "reserve")?;
         if !lot.can_reserve_at(input.quantity, now) {
@@ -1498,7 +1519,7 @@ impl LotRepository for SqliteLotRepository {
         // Record transaction
         Self::record_transaction(
             &tx,
-            input.lot_id,
+            input.lot_id.into_uuid(),
             LotTransactionType::Reserved,
             input.quantity,
             &input.reference_type,
@@ -1729,17 +1750,17 @@ impl LotRepository for SqliteLotRepository {
         // Record transaction
         let transaction = Self::record_transaction(
             &tx,
-            input.lot_id,
+            input.lot_id.into_uuid(),
             LotTransactionType::Transferred,
             input.quantity,
             "transfer",
-            input.lot_id,
+            input.lot_id.into_uuid(),
             Some(input.from_location_id),
             Some(input.to_location_id),
             input.reason.as_deref(),
             input.performed_by.as_deref(),
         )?;
-        if let Some(lot) = Self::load_lot_on(&tx, input.lot_id)? {
+        if let Some(lot) = Self::load_lot_on(&tx, input.lot_id.into_uuid())? {
             let reason = format!(
                 "Lot {} transferred {} -> {}",
                 lot.lot_number, input.from_location_id, input.to_location_id
@@ -1750,7 +1771,7 @@ impl LotRepository for SqliteLotRepository {
                 input.from_location_id,
                 -input.quantity,
                 Decimal::ZERO,
-                lot.id,
+                lot.id.into_uuid(),
                 &reason,
                 now,
             )?;
@@ -1760,7 +1781,7 @@ impl LotRepository for SqliteLotRepository {
                 input.to_location_id,
                 input.quantity,
                 Decimal::ZERO,
-                lot.id,
+                lot.id.into_uuid(),
                 &reason,
                 now,
             )?;
@@ -1862,11 +1883,11 @@ impl LotRepository for SqliteLotRepository {
         // `inventory_balances` stays put (nothing entered or left the
         // location). Without this the child is unplaced — invisible to
         // inventory forever — and the source over-reports.
-        Self::move_placements_on(&tx, input.lot_id, new_lot_id, input.quantity, now)?;
+        Self::move_placements_on(&tx, input.lot_id.into_uuid(), new_lot_id, input.quantity, now)?;
         Self::record_genealogy_on(
             &tx,
             new_lot_id,
-            input.lot_id,
+            input.lot_id.into_uuid(),
             LotRelationship::Split,
             input.quantity,
             now,
@@ -1875,7 +1896,7 @@ impl LotRepository for SqliteLotRepository {
         // Record transactions
         Self::record_transaction(
             &tx,
-            input.lot_id,
+            input.lot_id.into_uuid(),
             LotTransactionType::Split,
             -input.quantity,
             "lot_split",
@@ -1892,7 +1913,7 @@ impl LotRepository for SqliteLotRepository {
             LotTransactionType::Received,
             input.quantity,
             "lot_split",
-            input.lot_id,
+            input.lot_id.into_uuid(),
             None,
             None,
             Some(&format!("Split from lot {}", original.lot_number)),
@@ -1901,7 +1922,7 @@ impl LotRepository for SqliteLotRepository {
 
         tx.commit().map_err(map_db_error)?;
 
-        self.get(new_lot_id)?.ok_or(CommerceError::NotFound)
+        self.get(LotId::from(new_lot_id))?.ok_or(CommerceError::NotFound)
     }
 
     fn merge(&self, input: MergeLots) -> Result<Lot> {
@@ -1914,7 +1935,8 @@ impl LotRepository for SqliteLotRepository {
         // Get all source lots. Rows are read (and, on Postgres, locked) in a
         // canonical id order so two concurrent merges naming the same lots in
         // different orders cannot deadlock on each other.
-        let mut lock_order: Vec<Uuid> = input.source_lot_ids.clone();
+        let mut lock_order: Vec<Uuid> =
+            input.source_lot_ids.iter().map(|id| id.into_uuid()).collect();
         lock_order.sort_unstable();
 
         let mut total_quantity = Decimal::ZERO;
@@ -2043,7 +2065,7 @@ impl LotRepository for SqliteLotRepository {
             // lot/inventory invariant (they are `Consumed`) while the target
             // is unplaced, and consuming the merged lot would never decrement
             // a balance again.
-            Self::move_placements_on(&tx, source.id, new_lot_id, quantity, now)?;
+            Self::move_placements_on(&tx, source.id.into_uuid(), new_lot_id, quantity, now)?;
             // The source is fully consumed by the merge, so it keeps no
             // placement: `consume` decrements the lot but not its placement
             // rows, so a partially-consumed source would otherwise leave a
@@ -2056,7 +2078,7 @@ impl LotRepository for SqliteLotRepository {
             Self::record_genealogy_on(
                 &tx,
                 new_lot_id,
-                source.id,
+                source.id.into_uuid(),
                 LotRelationship::Merge,
                 quantity,
                 now,
@@ -2064,7 +2086,7 @@ impl LotRepository for SqliteLotRepository {
 
             Self::record_transaction(
                 &tx,
-                source.id,
+                source.id.into_uuid(),
                 LotTransactionType::Merged,
                 -quantity,
                 "lot_merge",
@@ -2083,7 +2105,7 @@ impl LotRepository for SqliteLotRepository {
             LotTransactionType::Received,
             total_quantity,
             "lot_merge",
-            input.source_lot_ids[0],
+            input.source_lot_ids[0].into_uuid(),
             None,
             None,
             Some("Created from merge"),
@@ -2092,15 +2114,15 @@ impl LotRepository for SqliteLotRepository {
 
         tx.commit().map_err(map_db_error)?;
 
-        self.get(new_lot_id)?.ok_or(CommerceError::NotFound)
+        self.get(LotId::from(new_lot_id))?.ok_or(CommerceError::NotFound)
     }
 
-    fn quarantine(&self, id: Uuid, reason: &str) -> Result<Lot> {
+    fn quarantine(&self, id: LotId, reason: &str) -> Result<Lot> {
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
 
-        let lot = Self::load_lot_on(&tx, id)?.ok_or(CommerceError::NotFound)?;
+        let lot = Self::load_lot_on(&tx, id.into_uuid())?.ok_or(CommerceError::NotFound)?;
 
         // Only Active / OnHold lots enter quarantine; a second quarantine
         // would otherwise zero the quarantined count, and terminal lots have
@@ -2115,12 +2137,12 @@ impl LotRepository for SqliteLotRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn release_quarantine(&self, id: Uuid) -> Result<Lot> {
+    fn release_quarantine(&self, id: LotId) -> Result<Lot> {
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
 
-        let lot = Self::load_lot_on(&tx, id)?.ok_or(CommerceError::NotFound)?;
+        let lot = Self::load_lot_on(&tx, id.into_uuid())?.ok_or(CommerceError::NotFound)?;
 
         // Only a quarantined lot can be released back to Active; anything else
         // (scrapped, recalled, consumed, expired…) must not be resurrected.
@@ -2139,7 +2161,7 @@ impl LotRepository for SqliteLotRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn get_transactions(&self, lot_id: Uuid, limit: u32) -> Result<Vec<LotTransaction>> {
+    fn get_transactions(&self, lot_id: LotId, limit: u32) -> Result<Vec<LotTransaction>> {
         let conn = self.conn()?;
 
         let mut stmt = conn
@@ -2160,7 +2182,7 @@ impl LotRepository for SqliteLotRepository {
         Ok(transactions)
     }
 
-    fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<Option<Decimal>> {
+    fn get_quantity_at_location(&self, lot_id: LotId, location_id: i32) -> Result<Option<Decimal>> {
         let conn = self.conn()?;
 
         let result = conn.query_row(
@@ -2176,7 +2198,7 @@ impl LotRepository for SqliteLotRepository {
         }
     }
 
-    fn get_lot_locations(&self, lot_id: Uuid) -> Result<Vec<LotLocation>> {
+    fn get_lot_locations(&self, lot_id: LotId) -> Result<Vec<LotLocation>> {
         let conn = self.conn()?;
 
         let mut stmt = conn
@@ -2186,7 +2208,11 @@ impl LotRepository for SqliteLotRepository {
         let locations = stmt
             .query_map([lot_id.to_string()], |row| {
                 Ok(LotLocation {
-                    lot_id: parse_uuid_row(&row.get::<_, String>(0)?, "lot_location", "lot_id")?,
+                    lot_id: LotId::from(parse_uuid_row(
+                        &row.get::<_, String>(0)?,
+                        "lot_location",
+                        "lot_id",
+                    )?),
                     location_id: row.get(1)?,
                     quantity: parse_decimal_row(
                         &row.get::<_, String>(2)?,
@@ -2207,14 +2233,14 @@ impl LotRepository for SqliteLotRepository {
         Ok(locations)
     }
 
-    fn get_lot_parents(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
+    fn get_lot_parents(&self, lot_id: LotId) -> Result<Vec<LotGenealogyLink>> {
         let conn = self.conn()?;
-        Self::genealogy_links_on(&conn, lot_id, true)
+        Self::genealogy_links_on(&conn, lot_id.into_uuid(), true)
     }
 
-    fn get_lot_children(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
+    fn get_lot_children(&self, lot_id: LotId) -> Result<Vec<LotGenealogyLink>> {
         let conn = self.conn()?;
-        Self::genealogy_links_on(&conn, lot_id, false)
+        Self::genealogy_links_on(&conn, lot_id.into_uuid(), false)
     }
 
     fn add_certificate(&self, input: AddLotCertificate) -> Result<LotCertificate> {
@@ -2256,7 +2282,7 @@ impl LotRepository for SqliteLotRepository {
         })
     }
 
-    fn get_certificates(&self, lot_id: Uuid) -> Result<Vec<LotCertificate>> {
+    fn get_certificates(&self, lot_id: LotId) -> Result<Vec<LotCertificate>> {
         let conn = self.conn()?;
 
         let mut stmt = conn
@@ -2405,7 +2431,7 @@ impl LotRepository for SqliteLotRepository {
     /// reached through `lot_genealogy` and that ancestor's receipt documents,
     /// so a merged or repeatedly-split lot resolves to all of its origins;
     /// downstream is its consumption / shipment transactions.
-    fn trace(&self, lot_id: Uuid) -> Result<TraceabilityResult> {
+    fn trace(&self, lot_id: LotId) -> Result<TraceabilityResult> {
         let lot = self.get(lot_id)?.ok_or(CommerceError::NotFound)?;
         let conn = self.conn()?;
 
@@ -2415,11 +2441,11 @@ impl LotRepository for SqliteLotRepository {
         // ancestor plus whatever receipt documents that ancestor carries.
         // `merge` only keeps the provenance columns its sources agreed on, so
         // this walk is the only way back to the rest.
-        let ancestors = Self::ancestor_lots_on(&conn, lot_id)?;
+        let ancestors = Self::ancestor_lots_on(&conn, lot_id.into_uuid())?;
         for ancestor in &ancestors {
             upstream.push(TraceNode {
                 node_type: TraceNodeType::Lot,
-                node_id: ancestor.id,
+                node_id: ancestor.id.into_uuid(),
                 reference_number: None,
                 lot_number: Some(ancestor.lot_number.clone()),
                 serial_number: None,
@@ -2550,7 +2576,7 @@ impl LotRepository for SqliteLotRepository {
         Ok(result)
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Lot>> {
+    fn get_batch(&self, ids: Vec<LotId>) -> Result<Vec<Lot>> {
         let mut lots = Vec::with_capacity(ids.len());
         for id in ids {
             if let Some(lot) = self.get(id)? {
@@ -3151,7 +3177,7 @@ mod tests {
         let l1 = make_lot(&repo, "SKU-GB", dec!(5));
         let l2 = make_lot(&repo, "SKU-GB", dec!(5));
         let stranger = Uuid::new_v4();
-        let fetched = repo.get_batch(vec![l1.id, l2.id, stranger]).expect("ok");
+        let fetched = repo.get_batch(vec![l1.id, l2.id, LotId::from(stranger)]).expect("ok");
         assert_eq!(fetched.len(), 2);
     }
 
@@ -3295,11 +3321,11 @@ mod tests {
             assert_eq!(after.status, status, "unchanged");
         }
         assert!(matches!(
-            repo.release_quarantine(Uuid::new_v4()).expect_err("unknown"),
+            repo.release_quarantine(LotId::new()).expect_err("unknown"),
             CommerceError::NotFound
         ));
         assert!(matches!(
-            repo.quarantine(Uuid::new_v4(), "x").expect_err("unknown"),
+            repo.quarantine(LotId::new(), "x").expect_err("unknown"),
             CommerceError::NotFound
         ));
     }
@@ -3433,7 +3459,7 @@ mod tests {
         let quarantined = mk(Some(Utc::now() + Duration::days(1)), dec!(10));
         repo.quarantine(quarantined.id, "qc").expect("quarantine");
 
-        let picked: Vec<Uuid> =
+        let picked: Vec<LotId> =
             repo.get_available_lots_for_sku("SKU-L4").expect("ok").iter().map(|l| l.id).collect();
         assert_eq!(
             picked,
@@ -3910,7 +3936,7 @@ mod tests {
     #[test]
     fn get_unknown_id_returns_none() {
         let repo = fresh_repo();
-        assert!(repo.get(Uuid::new_v4()).expect("ok").is_none());
+        assert!(repo.get(LotId::new()).expect("ok").is_none());
     }
 
     // ======================================================================
@@ -4048,7 +4074,7 @@ mod tests {
         let parents = repo.get_lot_parents(merged.id).expect("parents");
         assert_eq!(parents.len(), 2, "both sources recorded");
         assert!(parents.iter().all(|p| p.relationship == LotRelationship::Merge));
-        let by_id: std::collections::HashMap<Uuid, &stateset_core::LotGenealogyLink> =
+        let by_id: std::collections::HashMap<LotId, &stateset_core::LotGenealogyLink> =
             parents.iter().map(|p| (p.parent_lot_id, p)).collect();
         assert_eq!(by_id[&a.id].quantity, dec!(10));
         assert_eq!(by_id[&b.id].quantity, dec!(5));
@@ -4144,8 +4170,8 @@ mod tests {
             .filter(|n| n.node_type == TraceNodeType::Lot)
             .map(|n| n.node_id)
             .collect();
-        assert!(ancestors.contains(&child.id), "direct parent");
-        assert!(ancestors.contains(&root.id), "transitive ancestor");
+        assert!(ancestors.contains(&child.id.into_uuid()), "direct parent");
+        assert!(ancestors.contains(&root.id.into_uuid()), "transitive ancestor");
         assert!(
             trace
                 .upstream

@@ -1,6 +1,7 @@
 //! Traceability accessors: quality, lots, serials.
 
 use super::*;
+use stateset_core::LotId;
 
 /// Async quality operations.
 pub struct AsyncQuality {
@@ -163,24 +164,24 @@ impl AsyncLots {
         self.db.lots().create_async(input).await
     }
 
-    pub async fn get(&self, id: Uuid) -> Result<Option<Lot>> {
-        self.db.lots().get_async(id).await
+    pub async fn get(&self, id: LotId) -> Result<Option<Lot>> {
+        self.db.lots().get_async(id.into_uuid()).await
     }
 
     pub async fn get_by_number(&self, lot_number: &str) -> Result<Option<Lot>> {
         self.db.lots().get_by_number_async(lot_number).await
     }
 
-    pub async fn update(&self, id: Uuid, input: UpdateLot) -> Result<Lot> {
-        self.db.lots().update_async(id, input).await
+    pub async fn update(&self, id: LotId, input: UpdateLot) -> Result<Lot> {
+        self.db.lots().update_async(id.into_uuid(), input).await
     }
 
     pub async fn list(&self, filter: LotFilter) -> Result<Vec<Lot>> {
         self.db.lots().list_async(filter).await
     }
 
-    pub async fn delete(&self, id: Uuid) -> Result<()> {
-        self.db.lots().delete_async(id).await
+    pub async fn delete(&self, id: LotId) -> Result<()> {
+        self.db.lots().delete_async(id.into_uuid()).await
     }
 
     pub async fn adjust(&self, input: AdjustLot) -> Result<LotTransaction> {
@@ -215,28 +216,28 @@ impl AsyncLots {
         self.db.lots().merge_async(input).await
     }
 
-    pub async fn quarantine(&self, id: Uuid, reason: &str) -> Result<Lot> {
-        self.db.lots().quarantine_async(id, reason).await
+    pub async fn quarantine(&self, id: LotId, reason: &str) -> Result<Lot> {
+        self.db.lots().quarantine_async(id.into_uuid(), reason).await
     }
 
-    pub async fn release_quarantine(&self, id: Uuid) -> Result<Lot> {
-        self.db.lots().release_quarantine_async(id).await
+    pub async fn release_quarantine(&self, id: LotId) -> Result<Lot> {
+        self.db.lots().release_quarantine_async(id.into_uuid()).await
     }
 
-    pub async fn get_transactions(&self, lot_id: Uuid, limit: u32) -> Result<Vec<LotTransaction>> {
-        self.db.lots().get_transactions_async(lot_id, limit).await
+    pub async fn get_transactions(&self, lot_id: LotId, limit: u32) -> Result<Vec<LotTransaction>> {
+        self.db.lots().get_transactions_async(lot_id.into_uuid(), limit).await
     }
 
     pub async fn get_quantity_at_location(
         &self,
-        lot_id: Uuid,
+        lot_id: LotId,
         location_id: i32,
     ) -> Result<Option<Decimal>> {
-        self.db.lots().get_quantity_at_location_async(lot_id, location_id).await
+        self.db.lots().get_quantity_at_location_async(lot_id.into_uuid(), location_id).await
     }
 
-    pub async fn get_lot_locations(&self, lot_id: Uuid) -> Result<Vec<LotLocation>> {
-        self.db.lots().get_lot_locations_async(lot_id).await
+    pub async fn get_lot_locations(&self, lot_id: LotId) -> Result<Vec<LotLocation>> {
+        self.db.lots().get_lot_locations_async(lot_id.into_uuid()).await
     }
 
     /// The lots this lot was derived from: the parent of a `split`, or every
@@ -244,22 +245,22 @@ impl AsyncLots {
     ///
     /// A merged lot can only carry one supplier / work order / purchase order
     /// on its own row, so this is how you recover the rest.
-    pub async fn get_parents(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
-        self.db.lots().get_lot_parents_async(lot_id).await
+    pub async fn get_parents(&self, lot_id: LotId) -> Result<Vec<LotGenealogyLink>> {
+        self.db.lots().get_lot_parents_async(lot_id.into_uuid()).await
     }
 
     /// The lots derived from this lot: split children, and the merge target it
     /// was consumed into.
-    pub async fn get_children(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
-        self.db.lots().get_lot_children_async(lot_id).await
+    pub async fn get_children(&self, lot_id: LotId) -> Result<Vec<LotGenealogyLink>> {
+        self.db.lots().get_lot_children_async(lot_id.into_uuid()).await
     }
 
     pub async fn add_certificate(&self, input: AddLotCertificate) -> Result<LotCertificate> {
         self.db.lots().add_certificate_async(input).await
     }
 
-    pub async fn get_certificates(&self, lot_id: Uuid) -> Result<Vec<LotCertificate>> {
-        self.db.lots().get_certificates_async(lot_id).await
+    pub async fn get_certificates(&self, lot_id: LotId) -> Result<Vec<LotCertificate>> {
+        self.db.lots().get_certificates_async(lot_id.into_uuid()).await
     }
 
     pub async fn delete_certificate(&self, certificate_id: Uuid) -> Result<()> {
@@ -293,8 +294,8 @@ impl AsyncLots {
         self.db.lots().get_available_lots_for_sku_async(sku).await
     }
 
-    pub async fn trace(&self, lot_id: Uuid) -> Result<TraceabilityResult> {
-        self.db.lots().trace_async(lot_id).await
+    pub async fn trace(&self, lot_id: LotId) -> Result<TraceabilityResult> {
+        self.db.lots().trace_async(lot_id.into_uuid()).await
     }
 
     pub async fn count(&self, filter: LotFilter) -> Result<u64> {
@@ -305,8 +306,8 @@ impl AsyncLots {
         self.db.lots().create_batch_async(inputs).await
     }
 
-    pub async fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Lot>> {
-        self.db.lots().get_batch_async(ids).await
+    pub async fn get_batch(&self, ids: Vec<LotId>) -> Result<Vec<Lot>> {
+        self.db.lots().get_batch_async(ids.into_iter().map(LotId::into_uuid).collect()).await
     }
 }
 

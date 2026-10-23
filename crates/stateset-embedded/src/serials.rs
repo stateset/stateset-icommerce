@@ -26,8 +26,8 @@
 
 use chrono::{DateTime, Utc};
 use stateset_core::{
-    BatchResult, ChangeSerialStatus, CreateSerialNumber, CreateSerialNumbersBulk, MoveSerial,
-    ReserveSerialNumber, Result, SerialFilter, SerialHistory, SerialHistoryFilter,
+    BatchResult, ChangeSerialStatus, CreateSerialNumber, CreateSerialNumbersBulk, LotId,
+    MoveSerial, ReserveSerialNumber, Result, SerialFilter, SerialHistory, SerialHistoryFilter,
     SerialLookupResult, SerialNumber, SerialReservation, SerialValidation, TransferSerialOwnership,
     UpdateSerialNumber,
 };
@@ -207,13 +207,13 @@ impl Serials {
     /// Quarantine every `Available`/`Reserved` serial in a lot (open
     /// reservations are closed); serials in other statuses are untouched.
     /// Returns the number of serials quarantined.
-    pub fn quarantine_for_lot(&self, lot_id: Uuid, reason: &str) -> Result<u64> {
+    pub fn quarantine_for_lot(&self, lot_id: LotId, reason: &str) -> Result<u64> {
         self.db.serials().quarantine_for_lot(lot_id, reason)
     }
 
     /// Return every `Quarantined` serial in a lot to `Available`. Returns the
     /// number of serials released.
-    pub fn release_quarantine_for_lot(&self, lot_id: Uuid) -> Result<u64> {
+    pub fn release_quarantine_for_lot(&self, lot_id: LotId) -> Result<u64> {
         self.db.serials().release_quarantine_for_lot(lot_id)
     }
 
@@ -386,7 +386,7 @@ impl Serials {
     }
 
     /// Get serials for a lot.
-    pub fn get_for_lot(&self, lot_id: Uuid) -> Result<Vec<SerialNumber>> {
+    pub fn get_for_lot(&self, lot_id: LotId) -> Result<Vec<SerialNumber>> {
         self.db.serials().get_for_lot(lot_id)
     }
 

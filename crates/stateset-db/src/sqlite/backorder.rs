@@ -6,6 +6,7 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
+use stateset_core::LotId;
 use stateset_core::{
     AllocateBackorder, AllocationStatus, Backorder, BackorderAllocation, BackorderAllocationId,
     BackorderFilter, BackorderFulfillment, BackorderId, BackorderRepository, BackorderStatus,
@@ -203,7 +204,7 @@ fn allocate_in_tx(
         sku: sku.to_string(),
         quantity,
         location_id: Some(location_id),
-        lot_id,
+        lot_id: lot_id.map(LotId::from),
         status: AllocationStatus::Reserved,
         allocated_at: now,
         expires_at,
@@ -357,7 +358,8 @@ impl SqliteBackorderRepository {
                 row.get::<_, Option<String>>(5)?,
                 "backorder_allocation",
                 "lot_id",
-            )?,
+            )?
+            .map(LotId::from),
             status: parse_enum_row(&row.get::<_, String>(6)?, "backorder_allocation", "status")?,
             allocated_at: parse_datetime_row(
                 &row.get::<_, String>(7)?,
@@ -937,7 +939,7 @@ impl BackorderRepository for SqliteBackorderRepository {
                 &sku,
                 input.quantity,
                 location_id,
-                input.lot_id,
+                input.lot_id.map(LotId::into_uuid),
                 input.expires_at,
                 now,
             )

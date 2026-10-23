@@ -4490,7 +4490,7 @@ impl Lots {
 
         let lot = commerce
             .lots()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to get lot: {}", e)))?;
 
         Ok(lot.map(|l| l.lot_number))
@@ -4513,7 +4513,7 @@ impl Lots {
 
         commerce
             .lots()
-            .quarantine(uuid, &reason)
+            .quarantine(uuid.into(), &reason)
             .map_err(|e| PhpException::from_message(format!("Failed to quarantine: {}", e)))?;
 
         Ok(true)
@@ -4525,7 +4525,7 @@ impl Lots {
 
         commerce
             .lots()
-            .release_quarantine(uuid)
+            .release_quarantine(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to release: {}", e)))?;
 
         Ok(true)

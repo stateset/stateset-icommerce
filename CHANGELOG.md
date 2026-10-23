@@ -8,6 +8,15 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Breaking (2.0)
 
+- **Typed lot IDs.** New `LotId`. `LotRepository` takes it everywhere a
+  lot is named (`get`, `update`, `delete`, `quarantine`,
+  `release_quarantine`, `get_batch`, every `lot_id` parameter), as do
+  `SerialRepository::{get_for_lot, quarantine_for_lot,
+  release_quarantine_for_lot}` and the embedded facades. `Lot.id`, every
+  `lot_id` / `parent_lot_id` / `child_lot_id` / `source_lot_ids` field of
+  the lot models, and `lot_id` on serials and backorder allocations carry
+  it. Other domains' `lot_id` fields (returns, receiving, cycle counts,
+  warehouse, cost accounting) follow in their own tranches.
 - **Typed IDs for refunds and stored payment methods.** New `RefundId` and
   `PaymentMethodId`; `PaymentRepository::{get_refund, complete_refund,
   fail_refund, delete_payment_method, set_default_payment_method}` and the

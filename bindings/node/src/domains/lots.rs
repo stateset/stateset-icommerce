@@ -207,7 +207,7 @@ impl Lots {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let lot = commerce
             .lots()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get lot", e))?;
         convert_optional_output(lot)
     }
@@ -265,7 +265,7 @@ impl Lots {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let lot = commerce
             .lots()
-            .quarantine(uuid, &reason)
+            .quarantine(uuid.into(), &reason)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to quarantine lot", e))?;
         convert_output(lot)
     }
@@ -278,7 +278,7 @@ impl Lots {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let lot = commerce
             .lots()
-            .release_quarantine(uuid)
+            .release_quarantine(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to release lot", e))?;
         convert_output(lot)
     }

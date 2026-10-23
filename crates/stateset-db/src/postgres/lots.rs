@@ -9,6 +9,7 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
+use stateset_core::LotId;
 use stateset_core::{
     AddLotCertificate, AdjustLot, BatchResult, CertificateType, CommerceError, ConsumeLot,
     CreateLot, Lot, LotCertificate, LotFilter, LotGenealogyLink, LotLocation, LotRelationship,
@@ -159,7 +160,7 @@ impl PgLotRepository {
         })?;
 
         Ok(Lot {
-            id: row.id,
+            id: LotId::from(row.id),
             lot_number: row.lot_number,
             sku: row.sku,
             status,
@@ -192,7 +193,7 @@ impl PgLotRepository {
 
         Ok(LotTransaction {
             id: row.id,
-            lot_id: row.lot_id,
+            lot_id: LotId::from(row.lot_id),
             transaction_type,
             quantity: row.quantity,
             reference_type: row.reference_type,
@@ -215,7 +216,7 @@ impl PgLotRepository {
 
         Ok(LotCertificate {
             id: row.id,
-            lot_id: row.lot_id,
+            lot_id: LotId::from(row.lot_id),
             certificate_type,
             certificate_number: row.certificate_number,
             document_url: row.document_url,
@@ -229,7 +230,7 @@ impl PgLotRepository {
 
     const fn row_to_location(row: LotLocationRow) -> LotLocation {
         LotLocation {
-            lot_id: row.lot_id,
+            lot_id: LotId::from_uuid(row.lot_id),
             location_id: row.location_id,
             quantity: row.quantity,
             updated_at: row.updated_at,
@@ -277,7 +278,7 @@ impl PgLotRepository {
 
         Ok(LotTransaction {
             id,
-            lot_id,
+            lot_id: LotId::from(lot_id),
             transaction_type,
             quantity,
             reference_type: reference_type.to_string(),
@@ -508,8 +509,8 @@ impl PgLotRepository {
 
     fn row_to_genealogy(row: LotGenealogyRow) -> Result<LotGenealogyLink> {
         Ok(LotGenealogyLink {
-            child_lot_id: row.child_lot_id,
-            parent_lot_id: row.parent_lot_id,
+            child_lot_id: LotId::from(row.child_lot_id),
+            parent_lot_id: LotId::from(row.parent_lot_id),
             parent_lot_number: row.parent_lot_number,
             child_lot_number: row.child_lot_number,
             relationship: row.relationship.parse().map_err(|e| {
@@ -570,12 +571,12 @@ impl PgLotRepository {
                 break;
             }
             for link in self.genealogy_links_async(current, true).await? {
-                if !seen.insert(link.parent_lot_id) {
+                if !seen.insert(link.parent_lot_id.into_uuid()) {
                     continue;
                 }
-                if let Some(parent) = self.get_async(link.parent_lot_id).await? {
+                if let Some(parent) = self.get_async(link.parent_lot_id.into_uuid()).await? {
                     ancestors.push(parent);
-                    queue.push_back(link.parent_lot_id);
+                    queue.push_back(link.parent_lot_id.into_uuid());
                 }
             }
         }
@@ -719,7 +720,7 @@ impl PgLotRepository {
             return Ok(());
         }
         for (location_id, slice) in
-            Self::inventory_slices_on(tx, lot.id, location, quantity).await?
+            Self::inventory_slices_on(tx, lot.id.into_uuid(), location, quantity).await?
         {
             Self::apply_inventory_delta_on(
                 tx,
@@ -727,7 +728,7 @@ impl PgLotRepository {
                 location_id,
                 slice * Decimal::from(on_hand_sign),
                 slice * Decimal::from(allocated_sign),
-                lot.id,
+                lot.id.into_uuid(),
                 reason,
                 now,
             )
@@ -776,18 +777,18 @@ impl PgLotRepository {
 
         Self::record_transaction_tx(
             tx,
-            lot.id,
+            lot.id.into_uuid(),
             LotTransactionType::Quarantined,
             available,
             "quarantine",
-            lot.id,
+            lot.id.into_uuid(),
             None,
             None,
             Some(reason),
             None,
         )
         .await?;
-        PgSerialRepository::quarantine_for_lot_on(tx, lot.id, reason, now).await?;
+        PgSerialRepository::quarantine_for_lot_on(tx, lot.id.into_uuid(), reason, now).await?;
         Self::sync_inventory_on(
             tx,
             lot,
@@ -830,18 +831,18 @@ impl PgLotRepository {
 
         Self::record_transaction_tx(
             tx,
-            lot.id,
+            lot.id.into_uuid(),
             LotTransactionType::QuarantineReleased,
             quarantined,
             "quarantine_release",
-            lot.id,
+            lot.id.into_uuid(),
             None,
             None,
             Some("Released from quarantine"),
             None,
         )
         .await?;
-        PgSerialRepository::release_quarantine_for_lot_on(tx, lot.id, now).await?;
+        PgSerialRepository::release_quarantine_for_lot_on(tx, lot.id.into_uuid(), now).await?;
         Self::sync_inventory_on(
             tx,
             lot,
@@ -1060,7 +1061,7 @@ impl PgLotRepository {
         }
 
         let lot = Lot {
-            id,
+            id: LotId::from(id),
             lot_number,
             sku: input.sku,
             status: LotStatus::Active,
@@ -1286,11 +1287,11 @@ impl PgLotRepository {
 
         let transaction = Self::record_transaction_tx(
             &mut tx,
-            input.lot_id,
+            input.lot_id.into_uuid(),
             LotTransactionType::Adjusted,
             input.quantity_change,
             input.reference_type.as_deref().unwrap_or("manual_adjustment"),
-            input.reference_id.unwrap_or(input.lot_id),
+            input.reference_id.unwrap_or(input.lot_id.into_uuid()),
             None,
             input.location_id,
             Some(&input.reason),
@@ -1358,7 +1359,7 @@ impl PgLotRepository {
 
         let transaction = Self::record_transaction_tx(
             &mut tx,
-            input.lot_id,
+            input.lot_id.into_uuid(),
             LotTransactionType::Consumed,
             -input.quantity,
             &input.reference_type,
@@ -1398,11 +1399,14 @@ impl PgLotRepository {
         // Stale reservations on this lot are released first so their units
         // count as available for this caller (lazy expiry; the sweeper only
         // has to catch lots nobody touches).
-        if Self::load_lot_on(&mut tx, input.lot_id).await?.is_none() {
+        if Self::load_lot_on(&mut tx, input.lot_id.into_uuid()).await?.is_none() {
             return Err(CommerceError::ValidationError("Lot not found".to_string()));
         }
-        Self::release_expired_reservations_for_lot_on(&mut tx, input.lot_id, now).await?;
-        let lot = Self::load_lot_on(&mut tx, input.lot_id).await?.ok_or(CommerceError::NotFound)?;
+        Self::release_expired_reservations_for_lot_on(&mut tx, input.lot_id.into_uuid(), now)
+            .await?;
+        let lot = Self::load_lot_on(&mut tx, input.lot_id.into_uuid())
+            .await?
+            .ok_or(CommerceError::NotFound)?;
 
         ensure_unexpired(&lot, now, "reserve")?;
         if !lot.can_reserve_at(input.quantity, now) {
@@ -1445,7 +1449,7 @@ impl PgLotRepository {
 
         Self::record_transaction_tx(
             &mut tx,
-            input.lot_id,
+            input.lot_id.into_uuid(),
             LotTransactionType::Reserved,
             input.quantity,
             &input.reference_type,
@@ -1658,18 +1662,18 @@ impl PgLotRepository {
 
         let transaction = Self::record_transaction_tx(
             &mut tx,
-            input.lot_id,
+            input.lot_id.into_uuid(),
             LotTransactionType::Transferred,
             input.quantity,
             "transfer",
-            input.lot_id,
+            input.lot_id.into_uuid(),
             Some(input.from_location_id),
             Some(input.to_location_id),
             input.reason.as_deref(),
             input.performed_by.as_deref(),
         )
         .await?;
-        if let Some(lot) = Self::load_lot_on(&mut tx, input.lot_id).await? {
+        if let Some(lot) = Self::load_lot_on(&mut tx, input.lot_id.into_uuid()).await? {
             let reason = format!(
                 "Lot {} transferred {} -> {}",
                 lot.lot_number, input.from_location_id, input.to_location_id
@@ -1680,7 +1684,7 @@ impl PgLotRepository {
                 input.from_location_id,
                 -input.quantity,
                 Decimal::ZERO,
-                lot.id,
+                lot.id.into_uuid(),
                 &reason,
                 now,
             )
@@ -1691,7 +1695,7 @@ impl PgLotRepository {
                 input.to_location_id,
                 input.quantity,
                 Decimal::ZERO,
-                lot.id,
+                lot.id.into_uuid(),
                 &reason,
                 now,
             )
@@ -1786,11 +1790,18 @@ impl PgLotRepository {
         // `inventory_balances` stays put (nothing entered or left the
         // location). Without this the child is unplaced — invisible to
         // inventory forever — and the source over-reports.
-        Self::move_placements_on(&mut tx, input.lot_id, new_lot_id, input.quantity, now).await?;
+        Self::move_placements_on(
+            &mut tx,
+            input.lot_id.into_uuid(),
+            new_lot_id,
+            input.quantity,
+            now,
+        )
+        .await?;
         Self::record_genealogy_on(
             &mut tx,
             new_lot_id,
-            input.lot_id,
+            input.lot_id.into_uuid(),
             LotRelationship::Split,
             input.quantity,
             now,
@@ -1799,7 +1810,7 @@ impl PgLotRepository {
 
         Self::record_transaction_tx(
             &mut tx,
-            input.lot_id,
+            input.lot_id.into_uuid(),
             LotTransactionType::Split,
             -input.quantity,
             "lot_split",
@@ -1817,7 +1828,7 @@ impl PgLotRepository {
             LotTransactionType::Received,
             input.quantity,
             "lot_split",
-            input.lot_id,
+            input.lot_id.into_uuid(),
             None,
             None,
             Some(&format!("Split from lot {}", original.lot_number)),
@@ -1839,7 +1850,8 @@ impl PgLotRepository {
         // Sources are locked `FOR UPDATE` in a canonical id order so two
         // concurrent merges naming the same lots in different orders cannot
         // deadlock on each other.
-        let mut lock_order: Vec<Uuid> = input.source_lot_ids.clone();
+        let mut lock_order: Vec<Uuid> =
+            input.source_lot_ids.iter().map(|id| id.into_uuid()).collect();
         lock_order.sort_unstable();
 
         let mut total_quantity = Decimal::ZERO;
@@ -1961,7 +1973,8 @@ impl PgLotRepository {
             // lot/inventory invariant (they are `Consumed`) while the target
             // is unplaced, and consuming the merged lot would never decrement
             // a balance again.
-            Self::move_placements_on(&mut tx, source.id, new_lot_id, quantity, now).await?;
+            Self::move_placements_on(&mut tx, source.id.into_uuid(), new_lot_id, quantity, now)
+                .await?;
             // The source is fully consumed by the merge, so it keeps no
             // placement: `consume` decrements the lot but not its placement
             // rows, so a partially-consumed source would otherwise leave a
@@ -1974,7 +1987,7 @@ impl PgLotRepository {
             Self::record_genealogy_on(
                 &mut tx,
                 new_lot_id,
-                source.id,
+                source.id.into_uuid(),
                 LotRelationship::Merge,
                 quantity,
                 now,
@@ -1983,7 +1996,7 @@ impl PgLotRepository {
 
             Self::record_transaction_tx(
                 &mut tx,
-                source.id,
+                source.id.into_uuid(),
                 LotTransactionType::Merged,
                 -quantity,
                 "lot_merge",
@@ -2002,7 +2015,7 @@ impl PgLotRepository {
             LotTransactionType::Received,
             total_quantity,
             "lot_merge",
-            input.source_lot_ids[0],
+            input.source_lot_ids[0].into_uuid(),
             None,
             None,
             Some("Created from merge"),
@@ -2326,7 +2339,7 @@ impl PgLotRepository {
         for ancestor in &ancestors {
             upstream.push(TraceNode {
                 node_type: TraceNodeType::Lot,
-                node_id: ancestor.id,
+                node_id: ancestor.id.into_uuid(),
                 reference_number: None,
                 lot_number: Some(ancestor.lot_number.clone()),
                 serial_number: None,
@@ -2469,24 +2482,24 @@ impl LotRepository for PgLotRepository {
         block_on(self.create_async(input))
     }
 
-    fn get(&self, id: Uuid) -> Result<Option<Lot>> {
-        block_on(self.get_async(id))
+    fn get(&self, id: LotId) -> Result<Option<Lot>> {
+        block_on(self.get_async(id.into_uuid()))
     }
 
     fn get_by_number(&self, lot_number: &str) -> Result<Option<Lot>> {
         block_on(self.get_by_number_async(lot_number))
     }
 
-    fn update(&self, id: Uuid, input: UpdateLot) -> Result<Lot> {
-        block_on(self.update_async(id, input))
+    fn update(&self, id: LotId, input: UpdateLot) -> Result<Lot> {
+        block_on(self.update_async(id.into_uuid(), input))
     }
 
     fn list(&self, filter: LotFilter) -> Result<Vec<Lot>> {
         block_on(self.list_async(filter))
     }
 
-    fn delete(&self, id: Uuid) -> Result<()> {
-        block_on(self.delete_async(id))
+    fn delete(&self, id: LotId) -> Result<()> {
+        block_on(self.delete_async(id.into_uuid()))
     }
 
     fn adjust(&self, input: AdjustLot) -> Result<LotTransaction> {
@@ -2521,40 +2534,40 @@ impl LotRepository for PgLotRepository {
         block_on(self.merge_async(input))
     }
 
-    fn quarantine(&self, id: Uuid, reason: &str) -> Result<Lot> {
-        block_on(self.quarantine_async(id, reason))
+    fn quarantine(&self, id: LotId, reason: &str) -> Result<Lot> {
+        block_on(self.quarantine_async(id.into_uuid(), reason))
     }
 
-    fn release_quarantine(&self, id: Uuid) -> Result<Lot> {
-        block_on(self.release_quarantine_async(id))
+    fn release_quarantine(&self, id: LotId) -> Result<Lot> {
+        block_on(self.release_quarantine_async(id.into_uuid()))
     }
 
-    fn get_transactions(&self, lot_id: Uuid, limit: u32) -> Result<Vec<LotTransaction>> {
-        block_on(self.get_transactions_async(lot_id, limit))
+    fn get_transactions(&self, lot_id: LotId, limit: u32) -> Result<Vec<LotTransaction>> {
+        block_on(self.get_transactions_async(lot_id.into_uuid(), limit))
     }
 
-    fn get_quantity_at_location(&self, lot_id: Uuid, location_id: i32) -> Result<Option<Decimal>> {
-        block_on(self.get_quantity_at_location_async(lot_id, location_id))
+    fn get_quantity_at_location(&self, lot_id: LotId, location_id: i32) -> Result<Option<Decimal>> {
+        block_on(self.get_quantity_at_location_async(lot_id.into_uuid(), location_id))
     }
 
-    fn get_lot_locations(&self, lot_id: Uuid) -> Result<Vec<LotLocation>> {
-        block_on(self.get_lot_locations_async(lot_id))
+    fn get_lot_locations(&self, lot_id: LotId) -> Result<Vec<LotLocation>> {
+        block_on(self.get_lot_locations_async(lot_id.into_uuid()))
     }
 
-    fn get_lot_parents(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
-        block_on(self.get_lot_parents_async(lot_id))
+    fn get_lot_parents(&self, lot_id: LotId) -> Result<Vec<LotGenealogyLink>> {
+        block_on(self.get_lot_parents_async(lot_id.into_uuid()))
     }
 
-    fn get_lot_children(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
-        block_on(self.get_lot_children_async(lot_id))
+    fn get_lot_children(&self, lot_id: LotId) -> Result<Vec<LotGenealogyLink>> {
+        block_on(self.get_lot_children_async(lot_id.into_uuid()))
     }
 
     fn add_certificate(&self, input: AddLotCertificate) -> Result<LotCertificate> {
         block_on(self.add_certificate_async(input))
     }
 
-    fn get_certificates(&self, lot_id: Uuid) -> Result<Vec<LotCertificate>> {
-        block_on(self.get_certificates_async(lot_id))
+    fn get_certificates(&self, lot_id: LotId) -> Result<Vec<LotCertificate>> {
+        block_on(self.get_certificates_async(lot_id.into_uuid()))
     }
 
     fn delete_certificate(&self, certificate_id: Uuid) -> Result<()> {
@@ -2581,8 +2594,8 @@ impl LotRepository for PgLotRepository {
         block_on(self.get_available_lots_for_sku_async(sku))
     }
 
-    fn trace(&self, lot_id: Uuid) -> Result<TraceabilityResult> {
-        block_on(self.trace_async(lot_id))
+    fn trace(&self, lot_id: LotId) -> Result<TraceabilityResult> {
+        block_on(self.trace_async(lot_id.into_uuid()))
     }
 
     fn count(&self, filter: LotFilter) -> Result<u64> {
@@ -2593,7 +2606,7 @@ impl LotRepository for PgLotRepository {
         block_on(self.create_batch_async(inputs))
     }
 
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Lot>> {
-        block_on(self.get_batch_async(ids))
+    fn get_batch(&self, ids: Vec<LotId>) -> Result<Vec<Lot>> {
+        block_on(self.get_batch_async(ids.into_iter().map(LotId::into_uuid).collect()))
     }
 }

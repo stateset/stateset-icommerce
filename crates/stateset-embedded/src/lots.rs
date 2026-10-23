@@ -40,7 +40,7 @@
 use rust_decimal::Decimal;
 use stateset_core::{
     AddLotCertificate, AdjustLot, ConsumeLot, CreateLot, Lot, LotCertificate, LotFilter,
-    LotGenealogyLink, LotLocation, LotStatus, LotTransaction, MergeLots, ReserveLot, Result,
+    LotGenealogyLink, LotId, LotLocation, LotStatus, LotTransaction, MergeLots, ReserveLot, Result,
     SplitLot, TraceabilityResult, TransferLot, UpdateLot,
 };
 use stateset_db::Database;
@@ -101,7 +101,7 @@ impl Lots {
     }
 
     /// Get a lot by ID.
-    pub fn get(&self, id: Uuid) -> Result<Option<Lot>> {
+    pub fn get(&self, id: LotId) -> Result<Option<Lot>> {
         self.db.lots().get(id)
     }
 
@@ -132,12 +132,12 @@ impl Lots {
     }
 
     /// Update a lot.
-    pub fn update(&self, id: Uuid, input: UpdateLot) -> Result<Lot> {
+    pub fn update(&self, id: LotId, input: UpdateLot) -> Result<Lot> {
         self.db.lots().update(id, input)
     }
 
     /// Delete a lot (only if unused).
-    pub fn delete(&self, id: Uuid) -> Result<()> {
+    pub fn delete(&self, id: LotId) -> Result<()> {
         self.db.lots().delete(id)
     }
 
@@ -158,12 +158,12 @@ impl Lots {
     /// commerce.lots().quarantine(Uuid::new_v4(), "Quality issue detected")?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn quarantine(&self, id: Uuid, reason: &str) -> Result<Lot> {
+    pub fn quarantine(&self, id: LotId, reason: &str) -> Result<Lot> {
         self.db.lots().quarantine(id, reason)
     }
 
     /// Release a lot from quarantine.
-    pub fn release_quarantine(&self, id: Uuid) -> Result<Lot> {
+    pub fn release_quarantine(&self, id: LotId) -> Result<Lot> {
         self.db.lots().release_quarantine(id)
     }
 
@@ -301,7 +301,7 @@ impl Lots {
     }
 
     /// Get certificates for a lot.
-    pub fn get_certificates(&self, lot_id: Uuid) -> Result<Vec<LotCertificate>> {
+    pub fn get_certificates(&self, lot_id: LotId) -> Result<Vec<LotCertificate>> {
         self.db.lots().get_certificates(lot_id)
     }
 
@@ -315,7 +315,7 @@ impl Lots {
     // ========================================================================
 
     /// Get lot quantities by location.
-    pub fn get_locations(&self, lot_id: Uuid) -> Result<Vec<LotLocation>> {
+    pub fn get_locations(&self, lot_id: LotId) -> Result<Vec<LotLocation>> {
         self.db.lots().get_lot_locations(lot_id)
     }
 
@@ -325,7 +325,7 @@ impl Lots {
         lot_id: Uuid,
         location_id: i32,
     ) -> Result<Option<Decimal>> {
-        self.db.lots().get_quantity_at_location(lot_id, location_id)
+        self.db.lots().get_quantity_at_location(LotId::from(lot_id), location_id)
     }
 
     // ========================================================================
@@ -337,13 +337,13 @@ impl Lots {
     ///
     /// A merged lot can only carry one supplier / work order / purchase order
     /// on its own row, so this is how you recover the rest.
-    pub fn get_parents(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
+    pub fn get_parents(&self, lot_id: LotId) -> Result<Vec<LotGenealogyLink>> {
         self.db.lots().get_lot_parents(lot_id)
     }
 
     /// The lots derived from this lot: split children, and the merge target it
     /// was consumed into.
-    pub fn get_children(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>> {
+    pub fn get_children(&self, lot_id: LotId) -> Result<Vec<LotGenealogyLink>> {
         self.db.lots().get_lot_children(lot_id)
     }
 
@@ -371,7 +371,7 @@ impl Lots {
     /// }
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn get_transactions(&self, lot_id: Uuid, limit: u32) -> Result<Vec<LotTransaction>> {
+    pub fn get_transactions(&self, lot_id: LotId, limit: u32) -> Result<Vec<LotTransaction>> {
         self.db.lots().get_transactions(lot_id, limit)
     }
 
@@ -395,7 +395,7 @@ impl Lots {
     /// println!("Downstream destinations: {} nodes", trace.downstream.len());
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn trace(&self, lot_id: Uuid) -> Result<TraceabilityResult> {
+    pub fn trace(&self, lot_id: LotId) -> Result<TraceabilityResult> {
         self.db.lots().trace(lot_id)
     }
 
@@ -459,7 +459,7 @@ impl Lots {
     }
 
     /// Get multiple lots by ID.
-    pub fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Lot>> {
+    pub fn get_batch(&self, ids: Vec<LotId>) -> Result<Vec<Lot>> {
         self.db.lots().get_batch(ids)
     }
 

@@ -5,6 +5,7 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{OptionalExtension, Row, params};
 use stateset_core::CommerceError;
+use stateset_core::LotId;
 use stateset_core::{
     BatchResult, ChangeSerialStatus, CreateSerialNumber, CreateSerialNumbersBulk, LotRepository,
     MoveSerial, ReserveSerialNumber, SerialEventType, SerialFilter, SerialHistory,
@@ -128,7 +129,8 @@ impl SqliteSerialRepository {
                 row.get::<_, Option<String>>("lot_id")?,
                 "serial",
                 "lot_id",
-            )?,
+            )?
+            .map(LotId::from),
             lot_number: row.get("lot_number")?,
             current_location_id: row.get("current_location_id")?,
             current_owner_id: parse_uuid_opt_row(
@@ -542,7 +544,11 @@ impl SerialRepository for SqliteSerialRepository {
 
         {
             let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            let lot_id = resolve_lot_id(&conn, input.lot_id, input.lot_number.as_deref())?;
+            let lot_id = resolve_lot_id(
+                &conn,
+                input.lot_id.map(LotId::into_uuid),
+                input.lot_number.as_deref(),
+            )?;
             conn.execute(
                 "INSERT INTO serial_numbers (
                     id, serial, sku, status, lot_id, lot_number, current_location_id,
@@ -578,7 +584,8 @@ impl SerialRepository for SqliteSerialRepository {
 
         let mut serials = Vec::with_capacity(input.quantity as usize);
         let now = Utc::now().to_rfc3339();
-        let lot_id = resolve_lot_id(&tx, input.lot_id, input.lot_number.as_deref())?;
+        let lot_id =
+            resolve_lot_id(&tx, input.lot_id.map(LotId::into_uuid), input.lot_number.as_deref())?;
 
         for i in 0..input.quantity {
             let id = Uuid::new_v4();
@@ -629,7 +636,7 @@ impl SerialRepository for SqliteSerialRepository {
                 serial: serial_number,
                 sku: input.sku.clone(),
                 status: SerialStatus::Available,
-                lot_id,
+                lot_id: lot_id.map(LotId::from),
                 lot_number: input.lot_number.clone(),
                 current_location_id: input.location_id,
                 current_owner_id: None,
@@ -1536,18 +1543,20 @@ impl SerialRepository for SqliteSerialRepository {
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn quarantine_for_lot(&self, lot_id: Uuid, reason: &str) -> stateset_core::Result<u64> {
+    fn quarantine_for_lot(&self, lot_id: LotId, reason: &str) -> stateset_core::Result<u64> {
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
-        let count = Self::quarantine_for_lot_on(&tx, lot_id, reason, &Utc::now().to_rfc3339())?;
+        let count =
+            Self::quarantine_for_lot_on(&tx, lot_id.into_uuid(), reason, &Utc::now().to_rfc3339())?;
         tx.commit().map_err(map_db_error)?;
         Ok(count)
     }
 
-    fn release_quarantine_for_lot(&self, lot_id: Uuid) -> stateset_core::Result<u64> {
+    fn release_quarantine_for_lot(&self, lot_id: LotId) -> stateset_core::Result<u64> {
         let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
-        let count = Self::release_quarantine_for_lot_on(&tx, lot_id, &Utc::now().to_rfc3339())?;
+        let count =
+            Self::release_quarantine_for_lot_on(&tx, lot_id.into_uuid(), &Utc::now().to_rfc3339())?;
         tx.commit().map_err(map_db_error)?;
         Ok(count)
     }
@@ -1752,7 +1761,7 @@ impl SerialRepository for SqliteSerialRepository {
         Ok(serials)
     }
 
-    fn get_for_lot(&self, lot_id: Uuid) -> stateset_core::Result<Vec<SerialNumber>> {
+    fn get_for_lot(&self, lot_id: LotId) -> stateset_core::Result<Vec<SerialNumber>> {
         self.list(SerialFilter { lot_id: Some(lot_id), ..Default::default() })
     }
 
@@ -1886,7 +1895,7 @@ mod tests {
                 ..Default::default()
             })
             .expect("create lot");
-        (db.serials(), lot.id)
+        (db.serials(), lot.id.into_uuid())
     }
 
     fn make_serial(repo: &SqliteSerialRepository, sku: &str, serial: &str) -> SerialNumber {
@@ -2616,7 +2625,7 @@ mod tests {
                 .create(CreateSerialNumber {
                     serial: Some(serial.into()),
                     sku: "SKU-LOT".into(),
-                    lot_id: Some(lot_id),
+                    lot_id: Some(LotId::from(lot_id)),
                     ..Default::default()
                 })
                 .expect("create");
@@ -2629,7 +2638,9 @@ mod tests {
         let scrapped = with_lot("S-L-SC", SerialStatus::Scrapped);
         let other_lot = make_serial(&repo, "SKU-LOT", "S-L-OTHER");
 
-        let n = repo.quarantine_for_lot(lot_id, "supplier recall").expect("quarantine lot");
+        let n = repo
+            .quarantine_for_lot(LotId::from(lot_id), "supplier recall")
+            .expect("quarantine lot");
         assert_eq!(n, 2);
         for (id, expected) in [
             (available, SerialStatus::Quarantined),
@@ -2641,11 +2652,11 @@ mod tests {
             assert_eq!(repo.get(id).unwrap().unwrap().status, expected);
         }
 
-        let released = repo.release_quarantine_for_lot(lot_id).expect("release lot");
+        let released = repo.release_quarantine_for_lot(LotId::from(lot_id)).expect("release lot");
         assert_eq!(released, 2);
         assert_eq!(repo.get(available).unwrap().unwrap().status, SerialStatus::Available);
         assert_eq!(repo.get(reserved).unwrap().unwrap().status, SerialStatus::Available);
-        assert_eq!(repo.release_quarantine_for_lot(lot_id).expect("nothing left"), 0);
+        assert_eq!(repo.release_quarantine_for_lot(LotId::from(lot_id)).expect("nothing left"), 0);
     }
 
     #[test]
@@ -2655,12 +2666,12 @@ mod tests {
             .create(CreateSerialNumber {
                 serial: Some("S-LQ-1".into()),
                 sku: "SKU-LQ".into(),
-                lot_id: Some(lot_id),
+                lot_id: Some(LotId::from(lot_id)),
                 ..Default::default()
             })
             .expect("create");
         let res = repo.reserve(reserve_input(s.id)).expect("reserve");
-        assert_eq!(repo.quarantine_for_lot(lot_id, "hold").expect("quarantine"), 1);
+        assert_eq!(repo.quarantine_for_lot(LotId::from(lot_id), "hold").expect("quarantine"), 1);
         assert!(repo.get_reservation(res.id).unwrap().unwrap().released_at.is_some());
         assert!(repo.release_reservation(res.id).is_err());
     }

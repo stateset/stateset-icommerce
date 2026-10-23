@@ -1949,7 +1949,7 @@ mod tests {
         repo.create_inspection(CreateInspection {
             inspection_type: InspectionType::Incoming,
             reference_type: "lot".into(),
-            reference_id: lot.id,
+            reference_id: lot.id.into_uuid(),
             inspector_id: Some("qa".into()),
             scheduled_at: None,
             notes: None,

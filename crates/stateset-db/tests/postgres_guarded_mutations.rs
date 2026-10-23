@@ -517,6 +517,7 @@ async fn active_lot(db: &PostgresDatabase) -> Uuid {
         .await
         .expect("create lot")
         .id
+        .into_uuid()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

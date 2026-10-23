@@ -124,19 +124,19 @@ pub trait LotRepository: Send + Sync {
     fn create(&self, input: CreateLot) -> Result<Lot>;
 
     /// Get lot by ID
-    fn get(&self, id: Uuid) -> Result<Option<Lot>>;
+    fn get(&self, id: LotId) -> Result<Option<Lot>>;
 
     /// Get lot by lot number
     fn get_by_number(&self, lot_number: &str) -> Result<Option<Lot>>;
 
     /// Update a lot
-    fn update(&self, id: Uuid, input: UpdateLot) -> Result<Lot>;
+    fn update(&self, id: LotId, input: UpdateLot) -> Result<Lot>;
 
     /// List lots with filter
     fn list(&self, filter: LotFilter) -> Result<Vec<Lot>>;
 
     /// Delete a lot (only if no transactions)
-    fn delete(&self, id: Uuid) -> Result<()>;
+    fn delete(&self, id: LotId) -> Result<()>;
 
     /// Adjust lot quantity
     fn adjust(&self, input: AdjustLot) -> Result<LotTransaction>;
@@ -179,23 +179,23 @@ pub trait LotRepository: Send + Sync {
     fn merge(&self, input: MergeLots) -> Result<Lot>;
 
     /// Quarantine a lot
-    fn quarantine(&self, id: Uuid, reason: &str) -> Result<Lot>;
+    fn quarantine(&self, id: LotId, reason: &str) -> Result<Lot>;
 
     /// Release from quarantine
-    fn release_quarantine(&self, id: Uuid) -> Result<Lot>;
+    fn release_quarantine(&self, id: LotId) -> Result<Lot>;
 
     /// Get lot transactions
-    fn get_transactions(&self, lot_id: Uuid, limit: u32) -> Result<Vec<LotTransaction>>;
+    fn get_transactions(&self, lot_id: LotId, limit: u32) -> Result<Vec<LotTransaction>>;
 
     /// Get lot quantity at a location (None if no location record exists)
     fn get_quantity_at_location(
         &self,
-        lot_id: Uuid,
+        lot_id: LotId,
         location_id: i32,
     ) -> Result<Option<rust_decimal::Decimal>>;
 
     /// Get all locations for a lot
-    fn get_lot_locations(&self, lot_id: Uuid) -> Result<Vec<LotLocation>>;
+    fn get_lot_locations(&self, lot_id: LotId) -> Result<Vec<LotLocation>>;
 
     // Genealogy operations
     /// The lots this lot was derived from: the parent of a `split`, or every
@@ -204,18 +204,18 @@ pub trait LotRepository: Send + Sync {
     /// A merged lot has many parents and a single `lots` row cannot carry
     /// their provenance, so the linkage is stored separately; `trace` walks it
     /// transitively to reach the original receipts.
-    fn get_lot_parents(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>>;
+    fn get_lot_parents(&self, lot_id: LotId) -> Result<Vec<LotGenealogyLink>>;
 
     /// The lots derived from this lot: split children, and the merge target it
     /// was consumed into.
-    fn get_lot_children(&self, lot_id: Uuid) -> Result<Vec<LotGenealogyLink>>;
+    fn get_lot_children(&self, lot_id: LotId) -> Result<Vec<LotGenealogyLink>>;
 
     // Certificate operations
     /// Add certificate to lot
     fn add_certificate(&self, input: AddLotCertificate) -> Result<LotCertificate>;
 
     /// Get certificates for lot
-    fn get_certificates(&self, lot_id: Uuid) -> Result<Vec<LotCertificate>>;
+    fn get_certificates(&self, lot_id: LotId) -> Result<Vec<LotCertificate>>;
 
     /// Delete certificate
     fn delete_certificate(&self, certificate_id: Uuid) -> Result<()>;
@@ -251,7 +251,7 @@ pub trait LotRepository: Send + Sync {
     /// receipt documents, so a merged or repeatedly-split lot resolves to all
     /// of its origins. Downstream is the lot's consumption and shipment
     /// transactions.
-    fn trace(&self, lot_id: Uuid) -> Result<TraceabilityResult>;
+    fn trace(&self, lot_id: LotId) -> Result<TraceabilityResult>;
 
     /// Count lots
     fn count(&self, filter: LotFilter) -> Result<u64>;
@@ -261,7 +261,7 @@ pub trait LotRepository: Send + Sync {
     fn create_batch(&self, inputs: Vec<CreateLot>) -> Result<BatchResult<Lot>>;
 
     /// Get multiple lots by ID
-    fn get_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Lot>>;
+    fn get_batch(&self, ids: Vec<LotId>) -> Result<Vec<Lot>>;
 }
 
 // ============================================================================
@@ -351,11 +351,11 @@ pub trait SerialRepository: Send + Sync {
     /// Quarantine every `Available`/`Reserved` serial in a lot (open
     /// reservations are closed). Serials in other statuses are left alone.
     /// Returns the number of serials quarantined.
-    fn quarantine_for_lot(&self, lot_id: Uuid, reason: &str) -> Result<u64>;
+    fn quarantine_for_lot(&self, lot_id: LotId, reason: &str) -> Result<u64>;
 
     /// Return every `Quarantined` serial in a lot to `Available`. Returns the
     /// number of serials released.
-    fn release_quarantine_for_lot(&self, lot_id: Uuid) -> Result<u64>;
+    fn release_quarantine_for_lot(&self, lot_id: LotId) -> Result<u64>;
 
     /// Scrap serial
     fn scrap(&self, id: Uuid, reason: &str) -> Result<SerialNumber>;
@@ -379,7 +379,7 @@ pub trait SerialRepository: Send + Sync {
     fn get_available_for_sku(&self, sku: &str, limit: u32) -> Result<Vec<SerialNumber>>;
 
     /// Get serials for lot
-    fn get_for_lot(&self, lot_id: Uuid) -> Result<Vec<SerialNumber>>;
+    fn get_for_lot(&self, lot_id: LotId) -> Result<Vec<SerialNumber>>;
 
     /// Get serials for customer
     fn get_for_customer(&self, customer_id: Uuid) -> Result<Vec<SerialNumber>>;

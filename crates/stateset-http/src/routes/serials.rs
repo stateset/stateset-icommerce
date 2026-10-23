@@ -10,6 +10,7 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
+use stateset_core::LotId;
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
@@ -129,7 +130,7 @@ pub(crate) async fn create(
             let serial = c.serials().create(stateset_core::CreateSerialNumber {
                 serial: req.serial,
                 sku: req.sku,
-                lot_id,
+                lot_id: lot_id.map(LotId::from),
                 lot_number: req.lot_number,
                 notes: req.notes,
                 ..Default::default()

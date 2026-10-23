@@ -5,6 +5,7 @@
 use crate::errors::CommerceError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use stateset_primitives::LotId;
 use strum::{Display, EnumString};
 use uuid::Uuid;
 
@@ -19,7 +20,7 @@ pub struct SerialNumber {
     pub serial: String,
     pub sku: String,
     pub status: SerialStatus,
-    pub lot_id: Option<Uuid>,
+    pub lot_id: Option<LotId>,
     pub lot_number: Option<String>,
     pub current_location_id: Option<i32>,
     pub current_owner_id: Option<Uuid>,
@@ -311,7 +312,7 @@ pub struct SerialReservation {
 pub struct CreateSerialNumber {
     pub serial: Option<String>,
     pub sku: String,
-    pub lot_id: Option<Uuid>,
+    pub lot_id: Option<LotId>,
     pub lot_number: Option<String>,
     pub location_id: Option<i32>,
     pub manufactured_at: Option<DateTime<Utc>>,
@@ -325,7 +326,7 @@ pub struct CreateSerialNumbersBulk {
     pub sku: String,
     pub quantity: i32,
     pub prefix: Option<String>,
-    pub lot_id: Option<Uuid>,
+    pub lot_id: Option<LotId>,
     pub lot_number: Option<String>,
     pub location_id: Option<i32>,
     pub manufactured_at: Option<DateTime<Utc>>,
@@ -336,7 +337,7 @@ pub struct CreateSerialNumbersBulk {
 pub struct UpdateSerialNumber {
     pub status: Option<SerialStatus>,
     pub location_id: Option<i32>,
-    pub lot_id: Option<Uuid>,
+    pub lot_id: Option<LotId>,
     pub warranty_id: Option<Uuid>,
     pub notes: Option<String>,
     pub attributes: Option<serde_json::Value>,
@@ -441,7 +442,7 @@ pub struct SerialFilter {
     pub sku: Option<String>,
     pub status: Option<SerialStatus>,
     pub statuses: Option<Vec<SerialStatus>>,
-    pub lot_id: Option<Uuid>,
+    pub lot_id: Option<LotId>,
     pub lot_number: Option<String>,
     pub location_id: Option<i32>,
     pub owner_id: Option<Uuid>,
