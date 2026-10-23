@@ -2,6 +2,7 @@
 
 use super::*;
 use stateset_core::OrderId;
+use stateset_core::PurchaseOrderId;
 
 /// Async warehouse operations.
 pub struct AsyncWarehouse {
@@ -297,8 +298,12 @@ impl AsyncReceiving {
         self.db.receiving().count_put_aways_async(filter).await
     }
 
-    pub async fn create_receipt_from_po(&self, po_id: Uuid, warehouse_id: i32) -> Result<Receipt> {
-        self.db.receiving().create_receipt_from_po_async(po_id, warehouse_id).await
+    pub async fn create_receipt_from_po(
+        &self,
+        po_id: PurchaseOrderId,
+        warehouse_id: i32,
+    ) -> Result<Receipt> {
+        self.db.receiving().create_receipt_from_po_async(po_id.into_uuid(), warehouse_id).await
     }
 
     pub async fn create_receipts_batch(

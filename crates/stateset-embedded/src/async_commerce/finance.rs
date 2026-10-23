@@ -1,6 +1,7 @@
 //! Finance accessors: AP, cost accounting, credit, backorders, AR, general ledger.
 
 use super::*;
+use stateset_core::InvoiceId;
 use stateset_core::PaymentId;
 use stateset_core::{BackorderAllocationId, BackorderId, OrderId};
 
@@ -705,10 +706,13 @@ impl AsyncAccountsReceivable {
 
     pub async fn update_collection_status(
         &self,
-        invoice_id: Uuid,
+        invoice_id: InvoiceId,
         status: CollectionStatus,
     ) -> Result<()> {
-        self.db.accounts_receivable().update_collection_status_async(invoice_id, status).await
+        self.db
+            .accounts_receivable()
+            .update_collection_status_async(invoice_id.into_uuid(), status)
+            .await
     }
 
     pub async fn get_invoices_due_for_dunning(&self) -> Result<Vec<Invoice>> {
@@ -717,13 +721,13 @@ impl AsyncAccountsReceivable {
 
     pub async fn send_dunning_letter(
         &self,
-        invoice_id: Uuid,
+        invoice_id: InvoiceId,
         letter_type: DunningLetterType,
         sent_by: Option<&str>,
     ) -> Result<CollectionActivity> {
         self.db
             .accounts_receivable()
-            .send_dunning_letter_async(invoice_id, letter_type, sent_by)
+            .send_dunning_letter_async(invoice_id.into_uuid(), letter_type, sent_by)
             .await
     }
 
@@ -955,8 +959,8 @@ impl AsyncGeneralLedger {
         self.db.general_ledger().set_auto_posting_config_async(input).await
     }
 
-    pub async fn auto_post_invoice(&self, invoice_id: Uuid) -> Result<JournalEntry> {
-        self.db.general_ledger().auto_post_invoice_async(invoice_id).await
+    pub async fn auto_post_invoice(&self, invoice_id: InvoiceId) -> Result<JournalEntry> {
+        self.db.general_ledger().auto_post_invoice_async(invoice_id.into_uuid()).await
     }
 
     pub async fn auto_post_payment_received(&self, payment_id: PaymentId) -> Result<JournalEntry> {

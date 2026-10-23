@@ -2178,7 +2178,7 @@ impl Warranties {
 
         let warranty = commerce
             .warranties()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to get warranty: {}", e)))?;
 
         Ok(warranty.map(|w| w.into()))
@@ -2201,7 +2201,7 @@ impl Warranties {
 
         let warranties = commerce
             .warranties()
-            .for_customer(uuid)
+            .for_customer(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to get warranties: {}", e)))?;
 
         Ok(warranties.into_iter().map(|w| w.into()).collect())
@@ -2213,7 +2213,7 @@ impl Warranties {
 
         let valid = commerce
             .warranties()
-            .is_valid(uuid)
+            .is_valid(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to check warranty: {}", e)))?;
 
         Ok(valid)
@@ -2508,7 +2508,7 @@ impl PurchaseOrders {
 
         let po = commerce
             .purchase_orders()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to get PO: {}", e)))?;
 
         Ok(po.map(|p| p.into()))
@@ -2531,7 +2531,7 @@ impl PurchaseOrders {
 
         let po = commerce
             .purchase_orders()
-            .submit(uuid)
+            .submit(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to submit PO: {}", e)))?;
 
         Ok(po.into())
@@ -2543,7 +2543,7 @@ impl PurchaseOrders {
 
         let po = commerce
             .purchase_orders()
-            .approve(uuid, "system")
+            .approve(uuid.into(), "system")
             .map_err(|e| PhpException::from_message(format!("Failed to approve PO: {}", e)))?;
 
         Ok(po.into())
@@ -2555,7 +2555,7 @@ impl PurchaseOrders {
 
         let po = commerce
             .purchase_orders()
-            .cancel(uuid)
+            .cancel(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to cancel PO: {}", e)))?;
 
         Ok(po.into())
@@ -2567,7 +2567,7 @@ impl PurchaseOrders {
 
         let po = commerce
             .purchase_orders()
-            .complete(uuid)
+            .complete(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to complete PO: {}", e)))?;
 
         Ok(po.into())
@@ -2743,7 +2743,7 @@ impl Invoices {
 
         let invoice = commerce
             .invoices()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to get invoice: {}", e)))?;
 
         Ok(invoice.map(|i| i.into()))
@@ -2766,7 +2766,7 @@ impl Invoices {
 
         let invoices = commerce
             .invoices()
-            .for_customer(uuid)
+            .for_customer(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to get invoices: {}", e)))?;
 
         Ok(invoices.into_iter().map(|i| i.into()).collect())
@@ -2778,7 +2778,7 @@ impl Invoices {
 
         let invoice = commerce
             .invoices()
-            .send(uuid)
+            .send(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to send invoice: {}", e)))?;
 
         Ok(invoice.into())
@@ -2809,7 +2809,7 @@ impl Invoices {
 
         let invoice = commerce
             .invoices()
-            .void(uuid)
+            .void(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to void invoice: {}", e)))?;
 
         Ok(invoice.into())
@@ -2831,7 +2831,7 @@ impl Invoices {
 
         let balance = commerce
             .invoices()
-            .customer_balance(uuid)
+            .customer_balance(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to get balance: {}", e)))?;
 
         to_f64_result(balance, "customer balance")

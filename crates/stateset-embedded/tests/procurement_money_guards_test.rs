@@ -14,6 +14,7 @@
 
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use stateset_core::InvoiceId;
 use stateset_embedded::{
     ApplyCreditMemo, Commerce, CreateCreditMemo, CreateCustomer, CreateInvoice, CreateInvoiceItem,
     CreditMemoReason, InvoiceStatus, RecordInvoicePayment,
@@ -68,7 +69,7 @@ fn pay_with_id(amount: Decimal, payment_id: Uuid) -> RecordInvoicePayment {
 }
 
 fn get(commerce: &Commerce, invoice_id: Uuid) -> stateset_embedded::Invoice {
-    commerce.invoices().get(invoice_id).expect("get invoice").expect("invoice exists")
+    commerce.invoices().get(invoice_id.into()).expect("get invoice").expect("invoice exists")
 }
 
 // ============================================================================
@@ -83,7 +84,7 @@ fn record_payment_beyond_balance_due_is_rejected() {
 
     let err = commerce
         .invoices()
-        .record_payment(invoice_id, pay(dec!(200.00)))
+        .record_payment(invoice_id.into(), pay(dec!(200.00)))
         .expect_err("paying 200 on a 100 invoice must fail");
     match err {
         stateset_embedded::CommerceError::ValidationError(msg) => {
@@ -107,11 +108,14 @@ fn record_payment_one_cent_over_balance_due_is_rejected() {
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
 
-    commerce.invoices().record_payment(invoice_id, pay(dec!(60.00))).expect("partial payment");
+    commerce
+        .invoices()
+        .record_payment(invoice_id.into(), pay(dec!(60.00)))
+        .expect("partial payment");
 
     let err = commerce
         .invoices()
-        .record_payment(invoice_id, pay(dec!(40.01)))
+        .record_payment(invoice_id.into(), pay(dec!(40.01)))
         .expect_err("a payment one cent beyond the remaining balance must fail");
     assert!(
         matches!(err, stateset_embedded::CommerceError::ValidationError(_)),
@@ -129,12 +133,15 @@ fn record_payment_of_exact_remaining_balance_succeeds() {
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
 
-    commerce.invoices().record_payment(invoice_id, pay(dec!(60.00))).expect("partial payment");
+    commerce
+        .invoices()
+        .record_payment(invoice_id.into(), pay(dec!(60.00)))
+        .expect("partial payment");
 
     // Exact-to-the-penny payment of the remaining balance must still succeed.
     let paid = commerce
         .invoices()
-        .record_payment(invoice_id, pay(dec!(40.00)))
+        .record_payment(invoice_id.into(), pay(dec!(40.00)))
         .expect("exact-balance payment must succeed");
     assert_eq!(paid.amount_paid, dec!(100.00));
     assert_eq!(paid.balance_due, dec!(0));
@@ -148,11 +155,11 @@ fn record_payment_on_fully_paid_invoice_is_rejected() {
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
 
-    commerce.invoices().record_payment(invoice_id, pay(dec!(100.00))).expect("full payment");
+    commerce.invoices().record_payment(invoice_id.into(), pay(dec!(100.00))).expect("full payment");
 
     let err = commerce
         .invoices()
-        .record_payment(invoice_id, pay(dec!(0.01)))
+        .record_payment(invoice_id.into(), pay(dec!(0.01)))
         .expect_err("a payment on a fully paid invoice must fail");
     assert!(
         matches!(err, stateset_embedded::CommerceError::ValidationError(_)),
@@ -169,11 +176,11 @@ fn record_payment_on_voided_invoice_is_rejected() {
     let commerce = new_commerce();
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
-    commerce.invoices().void(invoice_id).expect("void invoice");
+    commerce.invoices().void(invoice_id.into()).expect("void invoice");
 
     let err = commerce
         .invoices()
-        .record_payment(invoice_id, pay(dec!(10.00)))
+        .record_payment(invoice_id.into(), pay(dec!(10.00)))
         .expect_err("a payment on a voided invoice must fail");
     match err {
         stateset_embedded::CommerceError::ValidationError(msg) => {
@@ -192,11 +199,11 @@ fn record_payment_on_written_off_invoice_is_rejected() {
     let commerce = new_commerce();
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
-    commerce.invoices().write_off(invoice_id).expect("write off invoice");
+    commerce.invoices().write_off(invoice_id.into()).expect("write off invoice");
 
     let err = commerce
         .invoices()
-        .record_payment(invoice_id, pay(dec!(10.00)))
+        .record_payment(invoice_id.into(), pay(dec!(10.00)))
         .expect_err("a payment on a written-off invoice must fail");
     match err {
         stateset_embedded::CommerceError::ValidationError(msg) => {
@@ -216,8 +223,8 @@ fn record_payment_still_rejects_nonpositive_amount() {
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
 
-    assert!(commerce.invoices().record_payment(invoice_id, pay(dec!(0))).is_err());
-    assert!(commerce.invoices().record_payment(invoice_id, pay(dec!(-5.00))).is_err());
+    assert!(commerce.invoices().record_payment(invoice_id.into(), pay(dec!(0))).is_err());
+    assert!(commerce.invoices().record_payment(invoice_id.into(), pay(dec!(-5.00))).is_err());
 }
 
 // ============================================================================
@@ -231,7 +238,7 @@ fn void_of_open_invoice_succeeds() {
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
 
     let voided =
-        commerce.invoices().void(invoice_id).expect("voiding an open invoice must succeed");
+        commerce.invoices().void(invoice_id.into()).expect("voiding an open invoice must succeed");
     assert_eq!(voided.status, InvoiceStatus::Voided);
     assert!(voided.voided_at.is_some(), "voiding must stamp voided_at");
 }
@@ -241,11 +248,14 @@ fn void_of_partially_paid_invoice_succeeds() {
     let commerce = new_commerce();
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
-    commerce.invoices().record_payment(invoice_id, pay(dec!(25.00))).expect("partial payment");
+    commerce
+        .invoices()
+        .record_payment(invoice_id.into(), pay(dec!(25.00)))
+        .expect("partial payment");
 
     let voided = commerce
         .invoices()
-        .void(invoice_id)
+        .void(invoice_id.into())
         .expect("voiding a partially paid invoice must succeed");
     assert_eq!(voided.status, InvoiceStatus::Voided);
 }
@@ -255,9 +265,10 @@ fn void_of_paid_invoice_is_rejected() {
     let commerce = new_commerce();
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
-    commerce.invoices().record_payment(invoice_id, pay(dec!(100.00))).expect("full payment");
+    commerce.invoices().record_payment(invoice_id.into(), pay(dec!(100.00))).expect("full payment");
 
-    let err = commerce.invoices().void(invoice_id).expect_err("voiding a paid invoice must fail");
+    let err =
+        commerce.invoices().void(invoice_id.into()).expect_err("voiding a paid invoice must fail");
     match err {
         stateset_embedded::CommerceError::Conflict(msg) => {
             assert!(msg.contains("paid"), "error must name the status: {msg}");
@@ -278,9 +289,10 @@ fn void_of_already_voided_invoice_is_rejected() {
     let commerce = new_commerce();
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
-    commerce.invoices().void(invoice_id).expect("void invoice");
+    commerce.invoices().void(invoice_id.into()).expect("void invoice");
 
-    let err = commerce.invoices().void(invoice_id).expect_err("re-voiding an invoice must fail");
+    let err =
+        commerce.invoices().void(invoice_id.into()).expect_err("re-voiding an invoice must fail");
     assert!(
         matches!(err, stateset_embedded::CommerceError::Conflict(_)),
         "expected Conflict, got: {err:?}"
@@ -292,10 +304,12 @@ fn void_of_written_off_invoice_is_rejected() {
     let commerce = new_commerce();
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
-    commerce.invoices().write_off(invoice_id).expect("write off invoice");
+    commerce.invoices().write_off(invoice_id.into()).expect("write off invoice");
 
-    let err =
-        commerce.invoices().void(invoice_id).expect_err("voiding a written-off invoice must fail");
+    let err = commerce
+        .invoices()
+        .void(invoice_id.into())
+        .expect_err("voiding a written-off invoice must fail");
     assert!(
         matches!(err, stateset_embedded::CommerceError::Conflict(_)),
         "expected Conflict, got: {err:?}"
@@ -306,7 +320,7 @@ fn void_of_written_off_invoice_is_rejected() {
 fn void_of_missing_invoice_is_not_found() {
     let commerce = new_commerce();
     let err =
-        commerce.invoices().void(Uuid::new_v4()).expect_err("voiding a missing invoice fails");
+        commerce.invoices().void(InvoiceId::new()).expect_err("voiding a missing invoice fails");
     assert!(
         matches!(err, stateset_embedded::CommerceError::NotFound),
         "expected NotFound, got: {err:?}"
@@ -319,7 +333,7 @@ fn write_off_of_open_invoice_succeeds() {
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
 
-    let written = commerce.invoices().write_off(invoice_id).expect("write-off must succeed");
+    let written = commerce.invoices().write_off(invoice_id.into()).expect("write-off must succeed");
     assert_eq!(written.status, InvoiceStatus::WrittenOff);
 }
 
@@ -328,11 +342,11 @@ fn write_off_of_paid_invoice_is_rejected() {
     let commerce = new_commerce();
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
-    commerce.invoices().record_payment(invoice_id, pay(dec!(100.00))).expect("full payment");
+    commerce.invoices().record_payment(invoice_id.into(), pay(dec!(100.00))).expect("full payment");
 
     let err = commerce
         .invoices()
-        .write_off(invoice_id)
+        .write_off(invoice_id.into())
         .expect_err("writing off a paid invoice must fail");
     match err {
         stateset_embedded::CommerceError::Conflict(msg) => {
@@ -348,11 +362,11 @@ fn write_off_of_voided_invoice_is_rejected() {
     let commerce = new_commerce();
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
-    commerce.invoices().void(invoice_id).expect("void invoice");
+    commerce.invoices().void(invoice_id.into()).expect("void invoice");
 
     let err = commerce
         .invoices()
-        .write_off(invoice_id)
+        .write_off(invoice_id.into())
         .expect_err("writing off a voided invoice must fail");
     assert!(
         matches!(err, stateset_embedded::CommerceError::Conflict(_)),
@@ -366,12 +380,14 @@ fn dispute_of_voided_invoice_is_rejected() {
     let commerce = new_commerce();
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
-    commerce.invoices().void(invoice_id).expect("void invoice");
+    commerce.invoices().void(invoice_id.into()).expect("void invoice");
 
     // Flipping a voided invoice back to `disputed` would resurrect its full
     // balance into AR aging (aging excludes paid/voided/written_off only).
-    let err =
-        commerce.invoices().dispute(invoice_id).expect_err("disputing a voided invoice must fail");
+    let err = commerce
+        .invoices()
+        .dispute(invoice_id.into())
+        .expect_err("disputing a voided invoice must fail");
     assert!(
         matches!(err, stateset_embedded::CommerceError::Conflict(_)),
         "expected Conflict, got: {err:?}"
@@ -385,7 +401,7 @@ fn dispute_of_open_invoice_succeeds() {
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
 
-    let disputed = commerce.invoices().dispute(invoice_id).expect("dispute must succeed");
+    let disputed = commerce.invoices().dispute(invoice_id.into()).expect("dispute must succeed");
     assert_eq!(disputed.status, InvoiceStatus::Disputed);
 }
 
@@ -394,9 +410,12 @@ fn send_of_voided_invoice_is_rejected() {
     let commerce = new_commerce();
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
-    commerce.invoices().void(invoice_id).expect("void invoice");
+    commerce.invoices().void(invoice_id.into()).expect("void invoice");
 
-    let err = commerce.invoices().send(invoice_id).expect_err("sending a voided invoice must fail");
+    let err = commerce
+        .invoices()
+        .send(invoice_id.into())
+        .expect_err("sending a voided invoice must fail");
     assert!(
         matches!(err, stateset_embedded::CommerceError::Conflict(_)),
         "expected Conflict, got: {err:?}"
@@ -409,10 +428,12 @@ fn send_of_paid_invoice_is_rejected() {
     let commerce = new_commerce();
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
-    commerce.invoices().record_payment(invoice_id, pay(dec!(100.00))).expect("full payment");
+    commerce.invoices().record_payment(invoice_id.into(), pay(dec!(100.00))).expect("full payment");
 
-    let err =
-        commerce.invoices().send(invoice_id).expect_err("re-sending a paid invoice must fail");
+    let err = commerce
+        .invoices()
+        .send(invoice_id.into())
+        .expect_err("re-sending a paid invoice must fail");
     assert!(
         matches!(err, stateset_embedded::CommerceError::Conflict(_)),
         "expected Conflict, got: {err:?}"
@@ -426,7 +447,8 @@ fn send_of_draft_invoice_still_succeeds() {
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
 
-    let sent = commerce.invoices().send(invoice_id).expect("sending a draft invoice must succeed");
+    let sent =
+        commerce.invoices().send(invoice_id.into()).expect("sending a draft invoice must succeed");
     assert_eq!(sent.status, InvoiceStatus::Sent);
     assert!(sent.sent_at.is_some());
 }
@@ -444,7 +466,7 @@ fn record_payment_with_same_payment_id_twice_counts_once() {
 
     let first = commerce
         .invoices()
-        .record_payment(invoice_id, pay_with_id(dec!(40.00), payment_id))
+        .record_payment(invoice_id.into(), pay_with_id(dec!(40.00), payment_id))
         .expect("first payment");
     assert_eq!(first.amount_paid, dec!(40.00));
     assert_eq!(first.balance_due, dec!(60.00));
@@ -452,7 +474,7 @@ fn record_payment_with_same_payment_id_twice_counts_once() {
     // A retry with the same payment id must return the invoice unchanged.
     let retry = commerce
         .invoices()
-        .record_payment(invoice_id, pay_with_id(dec!(40.00), payment_id))
+        .record_payment(invoice_id.into(), pay_with_id(dec!(40.00), payment_id))
         .expect("retry must succeed and be a no-op");
     assert_eq!(retry.amount_paid, dec!(40.00), "retry must not double-count");
     assert_eq!(retry.balance_due, dec!(60.00));
@@ -472,14 +494,14 @@ fn idempotent_retry_of_a_fully_paying_payment_returns_invoice_unchanged() {
 
     commerce
         .invoices()
-        .record_payment(invoice_id, pay_with_id(dec!(100.00), payment_id))
+        .record_payment(invoice_id.into(), pay_with_id(dec!(100.00), payment_id))
         .expect("full payment");
 
     // The invoice is now Paid, so the overpayment guard would reject a fresh
     // payment — but a retry of the SAME payment must still succeed as a no-op.
     let retry = commerce
         .invoices()
-        .record_payment(invoice_id, pay_with_id(dec!(100.00), payment_id))
+        .record_payment(invoice_id.into(), pay_with_id(dec!(100.00), payment_id))
         .expect("retry of an already-recorded payment must be a no-op, not an error");
     assert_eq!(retry.amount_paid, dec!(100.00));
     assert_eq!(retry.balance_due, dec!(0));
@@ -493,9 +515,11 @@ fn record_payment_without_payment_id_is_not_deduplicated() {
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
 
     // A NULL payment_id keeps today's behavior: two identical payments count twice.
-    commerce.invoices().record_payment(invoice_id, pay(dec!(30.00))).expect("first payment");
-    let second =
-        commerce.invoices().record_payment(invoice_id, pay(dec!(30.00))).expect("second payment");
+    commerce.invoices().record_payment(invoice_id.into(), pay(dec!(30.00))).expect("first payment");
+    let second = commerce
+        .invoices()
+        .record_payment(invoice_id.into(), pay(dec!(30.00)))
+        .expect("second payment");
     assert_eq!(second.amount_paid, dec!(60.00));
     assert_eq!(second.balance_due, dec!(40.00));
 }
@@ -512,11 +536,11 @@ fn same_payment_id_on_two_invoices_applies_to_each() {
     // two invoices must land on both.
     let a = commerce
         .invoices()
-        .record_payment(invoice_a, pay_with_id(dec!(40.00), payment_id))
+        .record_payment(invoice_a.into(), pay_with_id(dec!(40.00), payment_id))
         .expect("payment on invoice A");
     let b = commerce
         .invoices()
-        .record_payment(invoice_b, pay_with_id(dec!(60.00), payment_id))
+        .record_payment(invoice_b.into(), pay_with_id(dec!(60.00), payment_id))
         .expect("payment on invoice B");
     assert_eq!(a.amount_paid, dec!(40.00));
     assert_eq!(b.amount_paid, dec!(60.00));
@@ -524,7 +548,7 @@ fn same_payment_id_on_two_invoices_applies_to_each() {
     // ... but a retry on either invoice is still a no-op.
     let a_retry = commerce
         .invoices()
-        .record_payment(invoice_a, pay_with_id(dec!(40.00), payment_id))
+        .record_payment(invoice_a.into(), pay_with_id(dec!(40.00), payment_id))
         .expect("retry on invoice A");
     assert_eq!(a_retry.amount_paid, dec!(40.00));
 }
@@ -541,13 +565,13 @@ fn idempotency_record_is_not_written_when_the_payment_is_rejected() {
     assert!(
         commerce
             .invoices()
-            .record_payment(invoice_id, pay_with_id(dec!(150.00), payment_id))
+            .record_payment(invoice_id.into(), pay_with_id(dec!(150.00), payment_id))
             .is_err(),
         "overpayment must be rejected"
     );
     let ok = commerce
         .invoices()
-        .record_payment(invoice_id, pay_with_id(dec!(100.00), payment_id))
+        .record_payment(invoice_id.into(), pay_with_id(dec!(100.00), payment_id))
         .expect("a corrected payment with the same id must still be accepted");
     assert_eq!(ok.amount_paid, dec!(100.00));
     assert_eq!(ok.balance_due, dec!(0));
@@ -568,7 +592,7 @@ fn direct_payment_then_credit_memo_still_satisfies_the_invariant() {
     let payment_id = Uuid::new_v4();
     let after_payment = commerce
         .invoices()
-        .record_payment(invoice_id, pay_with_id(dec!(50.00), payment_id))
+        .record_payment(invoice_id.into(), pay_with_id(dec!(50.00), payment_id))
         .expect("record direct payment");
     assert_eq!(after_payment.amount_paid, dec!(50.00));
     assert_eq!(after_payment.balance_due, dec!(50.00));
@@ -602,7 +626,7 @@ fn direct_payment_then_credit_memo_still_satisfies_the_invariant() {
     // The overpayment guard must now bound against the RECALCULATED balance:
     // 50 would have been fine before the credit memo, but is too much now.
     assert!(
-        commerce.invoices().record_payment(invoice_id, pay(dec!(50.00))).is_err(),
+        commerce.invoices().record_payment(invoice_id.into(), pay(dec!(50.00))).is_err(),
         "the guard must use the post-recalculation balance"
     );
 
@@ -610,7 +634,7 @@ fn direct_payment_then_credit_memo_still_satisfies_the_invariant() {
     // keep the invariant: direct 50 + 40 = 90 direct, + 10 credit = 100.
     let settled = commerce
         .invoices()
-        .record_payment(invoice_id, pay(dec!(40.00)))
+        .record_payment(invoice_id.into(), pay(dec!(40.00)))
         .expect("exact remaining balance after the credit memo must be accepted");
     assert_eq!(settled.amount_paid, dec!(100.00));
     assert_eq!(settled.balance_due, dec!(0));
@@ -619,7 +643,7 @@ fn direct_payment_then_credit_memo_still_satisfies_the_invariant() {
     // And a retry of the original direct payment is still a no-op afterwards.
     let retry = commerce
         .invoices()
-        .record_payment(invoice_id, pay_with_id(dec!(50.00), payment_id))
+        .record_payment(invoice_id.into(), pay_with_id(dec!(50.00), payment_id))
         .expect("retry stays a no-op");
     assert_eq!(retry.amount_paid, dec!(100.00));
     assert_eq!(retry.balance_due, dec!(0));
@@ -631,7 +655,7 @@ fn credit_memo_after_a_guarded_full_payment_is_rejected_by_ar() {
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
 
-    commerce.invoices().record_payment(invoice_id, pay(dec!(100.00))).expect("full payment");
+    commerce.invoices().record_payment(invoice_id.into(), pay(dec!(100.00))).expect("full payment");
 
     let memo = commerce
         .accounts_receivable()

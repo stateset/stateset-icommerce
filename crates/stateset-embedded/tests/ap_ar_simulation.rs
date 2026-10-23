@@ -193,7 +193,7 @@ impl Sim {
     }
 
     fn get_invoice(&self, id: Uuid) -> stateset_embedded::Invoice {
-        self.commerce.invoices().get(id).expect("get invoice").expect("invoice exists")
+        self.commerce.invoices().get(id.into()).expect("get invoice").expect("invoice exists")
     }
 
     // ==================================================================
@@ -320,7 +320,7 @@ impl Sim {
         let result = self
             .commerce
             .invoices()
-            .record_payment(id, RecordInvoicePayment { amount, ..Default::default() });
+            .record_payment(id.into(), RecordInvoicePayment { amount, ..Default::default() });
         self.tolerate("record_payment (direct)", result);
         // NOTE: direct payments are deliberately NOT statement-visible (no
         // ar_payment_applications row), so they do not enter the shadow.

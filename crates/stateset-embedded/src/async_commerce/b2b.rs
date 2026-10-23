@@ -2,6 +2,7 @@
 
 use super::*;
 use stateset_core::OrderId;
+use stateset_core::{InvoiceId, PurchaseOrderId};
 
 /// Async purchase order operations.
 pub struct AsyncPurchaseOrders {
@@ -21,8 +22,8 @@ impl AsyncPurchaseOrders {
     }
 
     /// Get supplier by ID.
-    pub async fn get_supplier(&self, id: Uuid) -> Result<Option<Supplier>> {
-        self.db.purchase_orders().get_supplier_async(id).await
+    pub async fn get_supplier(&self, id: PurchaseOrderId) -> Result<Option<Supplier>> {
+        self.db.purchase_orders().get_supplier_async(id.into_uuid()).await
     }
 
     /// Get supplier by code.
@@ -31,8 +32,12 @@ impl AsyncPurchaseOrders {
     }
 
     /// Update a supplier.
-    pub async fn update_supplier(&self, id: Uuid, input: UpdateSupplier) -> Result<Supplier> {
-        self.db.purchase_orders().update_supplier_async(id, input).await
+    pub async fn update_supplier(
+        &self,
+        id: PurchaseOrderId,
+        input: UpdateSupplier,
+    ) -> Result<Supplier> {
+        self.db.purchase_orders().update_supplier_async(id.into_uuid(), input).await
     }
 
     /// List suppliers.
@@ -41,8 +46,8 @@ impl AsyncPurchaseOrders {
     }
 
     /// Delete a supplier.
-    pub async fn delete_supplier(&self, id: Uuid) -> Result<()> {
-        self.db.purchase_orders().delete_supplier_async(id).await
+    pub async fn delete_supplier(&self, id: PurchaseOrderId) -> Result<()> {
+        self.db.purchase_orders().delete_supplier_async(id.into_uuid()).await
     }
 
     // Purchase Order operations
@@ -53,8 +58,8 @@ impl AsyncPurchaseOrders {
     }
 
     /// Get purchase order by ID.
-    pub async fn get(&self, id: Uuid) -> Result<Option<PurchaseOrder>> {
-        self.db.purchase_orders().get_async(id).await
+    pub async fn get(&self, id: PurchaseOrderId) -> Result<Option<PurchaseOrder>> {
+        self.db.purchase_orders().get_async(id.into_uuid()).await
     }
 
     /// Get purchase order by PO number.
@@ -63,8 +68,12 @@ impl AsyncPurchaseOrders {
     }
 
     /// Update a purchase order.
-    pub async fn update(&self, id: Uuid, input: UpdatePurchaseOrder) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().update_async(id, input).await
+    pub async fn update(
+        &self,
+        id: PurchaseOrderId,
+        input: UpdatePurchaseOrder,
+    ) -> Result<PurchaseOrder> {
+        self.db.purchase_orders().update_async(id.into_uuid(), input).await
     }
 
     /// List purchase orders.
@@ -78,23 +87,23 @@ impl AsyncPurchaseOrders {
     }
 
     /// Delete a purchase order.
-    pub async fn delete(&self, id: Uuid) -> Result<()> {
-        self.db.purchase_orders().delete_async(id).await
+    pub async fn delete(&self, id: PurchaseOrderId) -> Result<()> {
+        self.db.purchase_orders().delete_async(id.into_uuid()).await
     }
 
     /// Submit for approval.
-    pub async fn submit(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().submit_for_approval_async(id).await
+    pub async fn submit(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
+        self.db.purchase_orders().submit_for_approval_async(id.into_uuid()).await
     }
 
     /// Approve purchase order.
-    pub async fn approve(&self, id: Uuid, approved_by: &str) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().approve_async(id, approved_by).await
+    pub async fn approve(&self, id: PurchaseOrderId, approved_by: &str) -> Result<PurchaseOrder> {
+        self.db.purchase_orders().approve_async(id.into_uuid(), approved_by).await
     }
 
     /// Send to supplier.
-    pub async fn send(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().send_async(id).await
+    pub async fn send(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
+        self.db.purchase_orders().send_async(id.into_uuid()).await
     }
 
     /// Mark as acknowledged by supplier.
@@ -107,13 +116,13 @@ impl AsyncPurchaseOrders {
     }
 
     /// Put on hold.
-    pub async fn hold(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().hold_async(id).await
+    pub async fn hold(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
+        self.db.purchase_orders().hold_async(id.into_uuid()).await
     }
 
     /// Cancel purchase order.
-    pub async fn cancel(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().cancel_async(id).await
+    pub async fn cancel(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
+        self.db.purchase_orders().cancel_async(id.into_uuid()).await
     }
 
     /// Receive items.
@@ -126,17 +135,17 @@ impl AsyncPurchaseOrders {
     }
 
     /// Complete purchase order.
-    pub async fn complete(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().complete_async(id).await
+    pub async fn complete(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
+        self.db.purchase_orders().complete_async(id.into_uuid()).await
     }
 
     /// Add item to purchase order.
     pub async fn add_item(
         &self,
-        po_id: Uuid,
+        po_id: PurchaseOrderId,
         item: CreatePurchaseOrderItem,
     ) -> Result<PurchaseOrderItem> {
-        self.db.purchase_orders().add_item_async(po_id, item).await
+        self.db.purchase_orders().add_item_async(po_id.into_uuid(), item).await
     }
 
     /// Update a PO item.
@@ -154,8 +163,8 @@ impl AsyncPurchaseOrders {
     }
 
     /// Get items for purchase order.
-    pub async fn get_items(&self, po_id: Uuid) -> Result<Vec<PurchaseOrderItem>> {
-        self.db.purchase_orders().get_items_async(po_id).await
+    pub async fn get_items(&self, po_id: PurchaseOrderId) -> Result<Vec<PurchaseOrderItem>> {
+        self.db.purchase_orders().get_items_async(po_id.into_uuid()).await
     }
 
     /// Count purchase orders.
@@ -189,8 +198,8 @@ impl AsyncInvoices {
     }
 
     /// Get invoice by ID.
-    pub async fn get(&self, id: Uuid) -> Result<Option<Invoice>> {
-        self.db.invoices().get_async(id).await
+    pub async fn get(&self, id: InvoiceId) -> Result<Option<Invoice>> {
+        self.db.invoices().get_async(id.into_uuid()).await
     }
 
     /// Get invoice by invoice number.
@@ -199,8 +208,8 @@ impl AsyncInvoices {
     }
 
     /// Update an invoice.
-    pub async fn update(&self, id: Uuid, input: UpdateInvoice) -> Result<Invoice> {
-        self.db.invoices().update_async(id, input).await
+    pub async fn update(&self, id: InvoiceId, input: UpdateInvoice) -> Result<Invoice> {
+        self.db.invoices().update_async(id.into_uuid(), input).await
     }
 
     /// List invoices.
@@ -219,43 +228,51 @@ impl AsyncInvoices {
     }
 
     /// Delete an invoice.
-    pub async fn delete(&self, id: Uuid) -> Result<()> {
-        self.db.invoices().delete_async(id).await
+    pub async fn delete(&self, id: InvoiceId) -> Result<()> {
+        self.db.invoices().delete_async(id.into_uuid()).await
     }
 
     /// Send invoice to customer.
-    pub async fn send(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().send_async(id).await
+    pub async fn send(&self, id: InvoiceId) -> Result<Invoice> {
+        self.db.invoices().send_async(id.into_uuid()).await
     }
 
     /// Mark invoice as viewed.
-    pub async fn mark_viewed(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().mark_viewed_async(id).await
+    pub async fn mark_viewed(&self, id: InvoiceId) -> Result<Invoice> {
+        self.db.invoices().mark_viewed_async(id.into_uuid()).await
     }
 
     /// Record a payment on the invoice.
-    pub async fn record_payment(&self, id: Uuid, payment: RecordInvoicePayment) -> Result<Invoice> {
-        self.db.invoices().record_payment_async(id, payment).await
+    pub async fn record_payment(
+        &self,
+        id: InvoiceId,
+        payment: RecordInvoicePayment,
+    ) -> Result<Invoice> {
+        self.db.invoices().record_payment_async(id.into_uuid(), payment).await
     }
 
     /// Void an invoice.
-    pub async fn void(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().void_async(id).await
+    pub async fn void(&self, id: InvoiceId) -> Result<Invoice> {
+        self.db.invoices().void_async(id.into_uuid()).await
     }
 
     /// Write off an invoice.
-    pub async fn write_off(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().write_off_async(id).await
+    pub async fn write_off(&self, id: InvoiceId) -> Result<Invoice> {
+        self.db.invoices().write_off_async(id.into_uuid()).await
     }
 
     /// Mark invoice as disputed.
-    pub async fn dispute(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().dispute_async(id).await
+    pub async fn dispute(&self, id: InvoiceId) -> Result<Invoice> {
+        self.db.invoices().dispute_async(id.into_uuid()).await
     }
 
     /// Add item to invoice.
-    pub async fn add_item(&self, invoice_id: Uuid, item: CreateInvoiceItem) -> Result<InvoiceItem> {
-        self.db.invoices().add_item_async(invoice_id, item).await
+    pub async fn add_item(
+        &self,
+        invoice_id: InvoiceId,
+        item: CreateInvoiceItem,
+    ) -> Result<InvoiceItem> {
+        self.db.invoices().add_item_async(invoice_id.into_uuid(), item).await
     }
 
     /// Update an invoice item.
@@ -269,13 +286,13 @@ impl AsyncInvoices {
     }
 
     /// Get items for invoice.
-    pub async fn get_items(&self, invoice_id: Uuid) -> Result<Vec<InvoiceItem>> {
-        self.db.invoices().get_items_async(invoice_id).await
+    pub async fn get_items(&self, invoice_id: InvoiceId) -> Result<Vec<InvoiceItem>> {
+        self.db.invoices().get_items_async(invoice_id.into_uuid()).await
     }
 
     /// Recalculate invoice totals.
-    pub async fn recalculate(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().recalculate_invoice_async(id).await
+    pub async fn recalculate(&self, id: InvoiceId) -> Result<Invoice> {
+        self.db.invoices().recalculate_invoice_async(id.into_uuid()).await
     }
 
     /// Get overdue invoices.

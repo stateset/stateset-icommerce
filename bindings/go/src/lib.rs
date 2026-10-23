@@ -1508,8 +1508,9 @@ pub extern "C" fn stateset_warranty_get(
         Err(_) => return ptr::null_mut(),
     };
 
-    let result =
-        use_handle(handle, |commerce| commerce.warranties().get(uuid).map_err(|e| e.to_string()));
+    let result = use_handle(handle, |commerce| {
+        commerce.warranties().get(uuid.into()).map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(Some(warranty)) => to_json_cstr(&warranty),
@@ -1717,7 +1718,7 @@ pub extern "C" fn stateset_supplier_get(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.purchase_orders().get_supplier(uuid).map_err(|e| e.to_string())
+        commerce.purchase_orders().get_supplier(uuid.into()).map_err(|e| e.to_string())
     });
 
     match result {
@@ -1798,7 +1799,7 @@ pub extern "C" fn stateset_purchase_order_get(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.purchase_orders().get(uuid).map_err(|e| e.to_string())
+        commerce.purchase_orders().get(uuid.into()).map_err(|e| e.to_string())
     });
 
     match result {
@@ -1839,7 +1840,7 @@ pub extern "C" fn stateset_purchase_order_submit(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.purchase_orders().submit(uuid).map_err(|e| e.to_string())
+        commerce.purchase_orders().submit(uuid.into()).map_err(|e| e.to_string())
     });
 
     match result {
@@ -1868,7 +1869,7 @@ pub extern "C" fn stateset_purchase_order_approve(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.purchase_orders().approve(uuid, &approved_by_str).map_err(|e| e.to_string())
+        commerce.purchase_orders().approve(uuid.into(), &approved_by_str).map_err(|e| e.to_string())
     });
 
     match result {
@@ -1895,7 +1896,7 @@ pub extern "C" fn stateset_purchase_order_send(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.purchase_orders().send(uuid).map_err(|e| e.to_string())
+        commerce.purchase_orders().send(uuid.into()).map_err(|e| e.to_string())
     });
 
     match result {
@@ -1922,7 +1923,7 @@ pub extern "C" fn stateset_purchase_order_cancel(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.purchase_orders().cancel(uuid).map_err(|e| e.to_string())
+        commerce.purchase_orders().cancel(uuid.into()).map_err(|e| e.to_string())
     });
 
     match result {
@@ -1995,8 +1996,9 @@ pub extern "C" fn stateset_invoice_get(
         Err(_) => return ptr::null_mut(),
     };
 
-    let result =
-        use_handle(handle, |commerce| commerce.invoices().get(uuid).map_err(|e| e.to_string()));
+    let result = use_handle(handle, |commerce| {
+        commerce.invoices().get(uuid.into()).map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(Some(invoice)) => to_json_cstr(&invoice),
@@ -2035,8 +2037,9 @@ pub extern "C" fn stateset_invoice_send(
         Err(_) => return ptr::null_mut(),
     };
 
-    let result =
-        use_handle(handle, |commerce| commerce.invoices().send(uuid).map_err(|e| e.to_string()));
+    let result = use_handle(handle, |commerce| {
+        commerce.invoices().send(uuid.into()).map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(invoice) => to_json_cstr(&invoice),
@@ -2061,8 +2064,9 @@ pub extern "C" fn stateset_invoice_void(
         Err(_) => return ptr::null_mut(),
     };
 
-    let result =
-        use_handle(handle, |commerce| commerce.invoices().void(uuid).map_err(|e| e.to_string()));
+    let result = use_handle(handle, |commerce| {
+        commerce.invoices().void(uuid.into()).map_err(|e| e.to_string())
+    });
 
     match result {
         Ok(invoice) => to_json_cstr(&invoice),
@@ -2095,7 +2099,7 @@ pub extern "C" fn stateset_invoice_record_payment(
         commerce
             .invoices()
             .record_payment(
-                uuid,
+                uuid.into(),
                 stateset_embedded::RecordInvoicePayment {
                     amount: amount_decimal,
                     payment_method: payment_method_str,

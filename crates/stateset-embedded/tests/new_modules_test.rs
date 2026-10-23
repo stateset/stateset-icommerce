@@ -881,14 +881,13 @@ fn test_warranty_status_transition_guards() {
         })
         .expect("Failed to create warranty");
 
-    let expired =
-        commerce.warranties().expire(warranty.id.into()).expect("Failed to expire warranty");
+    let expired = commerce.warranties().expire(warranty.id).expect("Failed to expire warranty");
     assert_eq!(expired.status, WarrantyStatus::Expired);
 
-    let result = commerce.warranties().void(warranty.id.into());
+    let result = commerce.warranties().void(warranty.id);
     assert!(result.is_err());
 
-    let result = commerce.warranties().transfer(warranty.id.into(), new_customer.id.into());
+    let result = commerce.warranties().transfer(warranty.id, new_customer.id.into());
     assert!(result.is_err());
 }
 
@@ -1066,14 +1065,14 @@ fn test_purchase_order_workflow() {
     assert_eq!(po.status, PurchaseOrderStatus::Draft);
     assert_eq!(po.items.len(), 1);
 
-    let submitted = commerce.purchase_orders().submit(po.id.into()).expect("Failed to submit PO");
+    let submitted = commerce.purchase_orders().submit(po.id).expect("Failed to submit PO");
     assert_eq!(submitted.status, PurchaseOrderStatus::PendingApproval);
 
     let approved =
-        commerce.purchase_orders().approve(po.id.into(), "tester").expect("Failed to approve PO");
+        commerce.purchase_orders().approve(po.id, "tester").expect("Failed to approve PO");
     assert_eq!(approved.status, PurchaseOrderStatus::Approved);
 
-    let sent = commerce.purchase_orders().send(po.id.into()).expect("Failed to send PO");
+    let sent = commerce.purchase_orders().send(po.id).expect("Failed to send PO");
     assert_eq!(sent.status, PurchaseOrderStatus::Sent);
 
     let fetched = commerce
@@ -1126,13 +1125,13 @@ fn test_invoice_send_and_payment() {
     assert_eq!(invoice.status, InvoiceStatus::Draft);
     assert_eq!(invoice.total, dec!(200.00));
 
-    let sent = commerce.invoices().send(invoice.id.into()).expect("Failed to send invoice");
+    let sent = commerce.invoices().send(invoice.id).expect("Failed to send invoice");
     assert_eq!(sent.status, InvoiceStatus::Sent);
 
     let paid = commerce
         .invoices()
         .record_payment(
-            invoice.id.into(),
+            invoice.id,
             RecordInvoicePayment {
                 amount: dec!(200.00),
                 payment_method: Some("card".into()),

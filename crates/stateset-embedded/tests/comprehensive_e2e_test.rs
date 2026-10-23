@@ -352,7 +352,7 @@ fn test_supply_chain_workflow() {
     let _item = commerce
         .purchase_orders()
         .add_item(
-            po_id.into(),
+            po_id,
             CreatePurchaseOrderItem {
                 sku: "SKU-001".into(),
                 name: "Widget".into(),
@@ -365,11 +365,11 @@ fn test_supply_chain_workflow() {
 
     // Submit first, then approve
     let purchase_order =
-        commerce.purchase_orders().submit(po_id.into()).expect("Failed to submit purchase order");
+        commerce.purchase_orders().submit(po_id).expect("Failed to submit purchase order");
 
     let purchase_order = commerce
         .purchase_orders()
-        .approve(purchase_order.id.into(), "admin")
+        .approve(purchase_order.id, "admin")
         .expect("Failed to approve purchase order");
 
     assert_eq!(purchase_order.status, PurchaseOrderStatus::Approved);

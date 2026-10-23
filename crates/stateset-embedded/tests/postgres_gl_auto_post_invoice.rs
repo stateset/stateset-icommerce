@@ -110,8 +110,7 @@ async fn postgres_auto_post_invoice_posts_balanced_entry() {
         .expect("create invoice");
     assert_eq!(invoice.total, dec!(100.00), "invoice total should foot to 100.00");
 
-    let entry =
-        gl.auto_post_invoice(invoice.id.into()).await.expect("auto_post_invoice must succeed");
+    let entry = gl.auto_post_invoice(invoice.id).await.expect("auto_post_invoice must succeed");
 
     assert_eq!(entry.total_debits, dec!(100.00), "AR debit should equal the invoice total");
     assert_eq!(entry.total_credits, dec!(100.00), "Sales credit should equal the invoice total");

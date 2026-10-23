@@ -494,7 +494,7 @@ pub(crate) async fn get_one(
         .run_blocking(tid.as_deref(), move |c| {
             let po = c
                 .purchase_orders()
-                .get(id)?
+                .get(id.into())?
                 .ok_or_else(|| HttpError::NotFound(format!("Purchase order {id} not found")))?;
             Ok(Json(to_resp(&po)))
         })
@@ -533,7 +533,7 @@ pub(crate) async fn update(
                 supplier_notes: req.supplier_notes,
                 supplier_reference: req.supplier_reference,
             };
-            Ok(Json(to_resp(&c.purchase_orders().update(id, input)?)))
+            Ok(Json(to_resp(&c.purchase_orders().update(id.into(), input)?)))
         })
         .await
 }
@@ -549,7 +549,9 @@ pub(crate) async fn submit(
 ) -> Result<Json<PurchaseOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
     state
-        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.purchase_orders().submit(id)?))))
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(&c.purchase_orders().submit(id.into())?)))
+        })
         .await
 }
 
@@ -567,7 +569,7 @@ pub(crate) async fn approve(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            Ok(Json(to_resp(&c.purchase_orders().approve(id, &req.approved_by)?)))
+            Ok(Json(to_resp(&c.purchase_orders().approve(id.into(), &req.approved_by)?)))
         })
         .await
 }
@@ -583,7 +585,9 @@ pub(crate) async fn send(
 ) -> Result<Json<PurchaseOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
     state
-        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.purchase_orders().send(id)?))))
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(&c.purchase_orders().send(id.into())?)))
+        })
         .await
 }
 
@@ -602,7 +606,7 @@ pub(crate) async fn acknowledge(
     state
         .run_blocking(tid.as_deref(), move |c| {
             Ok(Json(to_resp(
-                &c.purchase_orders().acknowledge(id, req.supplier_reference.as_deref())?,
+                &c.purchase_orders().acknowledge(id.into(), req.supplier_reference.as_deref())?,
             )))
         })
         .await
@@ -619,7 +623,9 @@ pub(crate) async fn hold(
 ) -> Result<Json<PurchaseOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
     state
-        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.purchase_orders().hold(id)?))))
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(&c.purchase_orders().hold(id.into())?)))
+        })
         .await
 }
 
@@ -635,7 +641,7 @@ pub(crate) async fn complete(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            Ok(Json(to_resp(&c.purchase_orders().complete(id)?)))
+            Ok(Json(to_resp(&c.purchase_orders().complete(id.into())?)))
         })
         .await
 }
@@ -651,7 +657,9 @@ pub(crate) async fn cancel(
 ) -> Result<Json<PurchaseOrderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
     state
-        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.purchase_orders().cancel(id)?))))
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(&c.purchase_orders().cancel(id.into())?)))
+        })
         .await
 }
 
@@ -678,7 +686,7 @@ pub(crate) async fn receive(
                 });
             }
             let input = stateset_core::ReceivePurchaseOrderItems { items, notes: req.notes };
-            Ok(Json(to_resp(&c.purchase_orders().receive(id, input)?)))
+            Ok(Json(to_resp(&c.purchase_orders().receive(id.into(), input)?)))
         })
         .await
 }
@@ -695,7 +703,7 @@ pub(crate) async fn get_items(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            let items = c.purchase_orders().get_items(id)?;
+            let items = c.purchase_orders().get_items(id.into())?;
             let total = items.len();
             Ok(Json(PurchaseOrderItemsResponse {
                 items: items.iter().map(to_item_resp).collect(),
@@ -792,7 +800,7 @@ pub(crate) async fn get_supplier(
         .run_blocking(tid.as_deref(), move |c| {
             let s = c
                 .purchase_orders()
-                .get_supplier(id)?
+                .get_supplier(id.into())?
                 .ok_or_else(|| HttpError::NotFound(format!("Supplier {id} not found")))?;
             Ok(Json(to_supplier_resp(&s)))
         })
@@ -832,7 +840,7 @@ pub(crate) async fn update_supplier(
                 is_active: req.is_active,
                 notes: req.notes,
             };
-            Ok(Json(to_supplier_resp(&c.purchase_orders().update_supplier(id, input)?)))
+            Ok(Json(to_supplier_resp(&c.purchase_orders().update_supplier(id.into(), input)?)))
         })
         .await
 }
@@ -849,7 +857,7 @@ pub(crate) async fn delete_supplier(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            c.purchase_orders().delete_supplier(id)?;
+            c.purchase_orders().delete_supplier(id.into())?;
             Ok(StatusCode::NO_CONTENT)
         })
         .await

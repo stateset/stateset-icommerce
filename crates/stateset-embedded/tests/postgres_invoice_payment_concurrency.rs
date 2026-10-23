@@ -71,7 +71,7 @@ async fn postgres_concurrent_invoice_payments_are_not_lost() {
             commerce
                 .invoices()
                 .record_payment(
-                    invoice_id,
+                    invoice_id.into(),
                     RecordInvoicePayment {
                         amount: dec!(10.00),
                         payment_id: None,
@@ -92,7 +92,7 @@ async fn postgres_concurrent_invoice_payments_are_not_lost() {
     }
     assert_eq!(successes, task_count, "every concurrent payment must succeed");
 
-    let fetched = commerce.invoices().get(invoice_id).await.expect("get").expect("found");
+    let fetched = commerce.invoices().get(invoice_id.into()).await.expect("get").expect("found");
     assert_eq!(fetched.amount_paid, dec!(100.00), "payments were lost under concurrency");
     assert_eq!(fetched.balance_due, dec!(0.00));
     assert_eq!(fetched.status, InvoiceStatus::Paid);

@@ -39,6 +39,7 @@
 //! ```
 
 use crate::Database;
+use stateset_core::PurchaseOrderId;
 use stateset_core::{
     CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier, PurchaseOrder,
     PurchaseOrderFilter, PurchaseOrderItem, ReceivePurchaseOrderItems, Result, Supplier,
@@ -89,8 +90,8 @@ impl PurchaseOrders {
     }
 
     /// Get a supplier by ID
-    pub fn get_supplier(&self, id: Uuid) -> Result<Option<Supplier>> {
-        self.db.purchase_orders().get_supplier(id)
+    pub fn get_supplier(&self, id: PurchaseOrderId) -> Result<Option<Supplier>> {
+        self.db.purchase_orders().get_supplier(id.into_uuid())
     }
 
     /// Get a supplier by code
@@ -99,8 +100,8 @@ impl PurchaseOrders {
     }
 
     /// Update a supplier
-    pub fn update_supplier(&self, id: Uuid, input: UpdateSupplier) -> Result<Supplier> {
-        self.db.purchase_orders().update_supplier(id, input)
+    pub fn update_supplier(&self, id: PurchaseOrderId, input: UpdateSupplier) -> Result<Supplier> {
+        self.db.purchase_orders().update_supplier(id.into_uuid(), input)
     }
 
     /// List suppliers with optional filtering
@@ -109,8 +110,8 @@ impl PurchaseOrders {
     }
 
     /// Delete (deactivate) a supplier
-    pub fn delete_supplier(&self, id: Uuid) -> Result<()> {
-        self.db.purchase_orders().delete_supplier(id)
+    pub fn delete_supplier(&self, id: PurchaseOrderId) -> Result<()> {
+        self.db.purchase_orders().delete_supplier(id.into_uuid())
     }
 
     // === Purchase Order Operations ===
@@ -155,8 +156,8 @@ impl PurchaseOrders {
     }
 
     /// Get a purchase order by ID
-    pub fn get(&self, id: Uuid) -> Result<Option<PurchaseOrder>> {
-        self.db.purchase_orders().get(id.into())
+    pub fn get(&self, id: PurchaseOrderId) -> Result<Option<PurchaseOrder>> {
+        self.db.purchase_orders().get(id)
     }
 
     /// Get a purchase order by PO number (e.g., "PO-20231215123456")
@@ -165,8 +166,8 @@ impl PurchaseOrders {
     }
 
     /// Update a purchase order
-    pub fn update(&self, id: Uuid, input: UpdatePurchaseOrder) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().update(id.into(), input)
+    pub fn update(&self, id: PurchaseOrderId, input: UpdatePurchaseOrder) -> Result<PurchaseOrder> {
+        self.db.purchase_orders().update(id, input)
     }
 
     /// List purchase orders with optional filtering
@@ -182,8 +183,8 @@ impl PurchaseOrders {
     // === Status Transitions ===
 
     /// Submit a draft PO for approval
-    pub fn submit(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().submit_for_approval(id.into())
+    pub fn submit(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
+        self.db.purchase_orders().submit_for_approval(id)
     }
 
     /// Approve a purchase order
@@ -192,13 +193,13 @@ impl PurchaseOrders {
     ///
     /// * `id` - Purchase order ID
     /// * `approved_by` - Name/ID of the approver
-    pub fn approve(&self, id: Uuid, approved_by: &str) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().approve(id.into(), approved_by)
+    pub fn approve(&self, id: PurchaseOrderId, approved_by: &str) -> Result<PurchaseOrder> {
+        self.db.purchase_orders().approve(id, approved_by)
     }
 
     /// Send a purchase order to the supplier
-    pub fn send(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().send(id.into())
+    pub fn send(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
+        self.db.purchase_orders().send(id)
     }
 
     /// Acknowledge supplier receipt of the PO
@@ -207,23 +208,27 @@ impl PurchaseOrders {
     ///
     /// * `id` - Purchase order ID
     /// * `supplier_reference` - Optional reference number from supplier
-    pub fn acknowledge(&self, id: Uuid, supplier_reference: Option<&str>) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().acknowledge(id.into(), supplier_reference)
+    pub fn acknowledge(
+        &self,
+        id: PurchaseOrderId,
+        supplier_reference: Option<&str>,
+    ) -> Result<PurchaseOrder> {
+        self.db.purchase_orders().acknowledge(id, supplier_reference)
     }
 
     /// Put a purchase order on hold
-    pub fn hold(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().hold(id.into())
+    pub fn hold(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
+        self.db.purchase_orders().hold(id)
     }
 
     /// Complete the purchase order (fully received)
-    pub fn complete(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().complete(id.into())
+    pub fn complete(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
+        self.db.purchase_orders().complete(id)
     }
 
     /// Cancel a purchase order
-    pub fn cancel(&self, id: Uuid) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().cancel(id.into())
+    pub fn cancel(&self, id: PurchaseOrderId) -> Result<PurchaseOrder> {
+        self.db.purchase_orders().cancel(id)
     }
 
     // === Line Item Operations ===
@@ -231,10 +236,10 @@ impl PurchaseOrders {
     /// Add an item to a purchase order
     pub fn add_item(
         &self,
-        po_id: Uuid,
+        po_id: PurchaseOrderId,
         item: CreatePurchaseOrderItem,
     ) -> Result<PurchaseOrderItem> {
-        self.db.purchase_orders().add_item(po_id.into(), item)
+        self.db.purchase_orders().add_item(po_id, item)
     }
 
     /// Update a line item
@@ -252,8 +257,8 @@ impl PurchaseOrders {
     }
 
     /// Get items for a purchase order
-    pub fn get_items(&self, po_id: Uuid) -> Result<Vec<PurchaseOrderItem>> {
-        self.db.purchase_orders().get_items(po_id.into())
+    pub fn get_items(&self, po_id: PurchaseOrderId) -> Result<Vec<PurchaseOrderItem>> {
+        self.db.purchase_orders().get_items(po_id)
     }
 
     /// Receive items from a purchase order
@@ -274,8 +279,12 @@ impl PurchaseOrders {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn receive(&self, po_id: Uuid, items: ReceivePurchaseOrderItems) -> Result<PurchaseOrder> {
-        self.db.purchase_orders().receive(po_id.into(), items)
+    pub fn receive(
+        &self,
+        po_id: PurchaseOrderId,
+        items: ReceivePurchaseOrderItems,
+    ) -> Result<PurchaseOrder> {
+        self.db.purchase_orders().receive(po_id, items)
     }
 
     /// Count purchase orders matching a filter

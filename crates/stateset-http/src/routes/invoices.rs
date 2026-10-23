@@ -51,7 +51,7 @@ pub(crate) async fn get_invoice(
         .run_blocking(tenant_id.as_deref(), move |commerce| {
             let invoice = commerce
                 .invoices()
-                .get(id)?
+                .get(id.into())?
                 .ok_or_else(|| HttpError::NotFound(format!("Invoice {id} not found")))?;
             Ok(Json(InvoiceResponse::from(invoice)))
         })
@@ -240,7 +240,7 @@ pub(crate) async fn send_invoice(
     let tenant_id = tenant_id_from_headers(&headers);
     state
         .run_blocking(tenant_id.as_deref(), move |commerce| {
-            let invoice = commerce.invoices().send(id)?;
+            let invoice = commerce.invoices().send(id.into())?;
             Ok(Json(InvoiceResponse::from(invoice)))
         })
         .await
@@ -275,7 +275,7 @@ pub(crate) async fn record_invoice_payment(
                 reference: req.reference,
                 notes: req.notes,
             };
-            let invoice = commerce.invoices().record_payment(id, input)?;
+            let invoice = commerce.invoices().record_payment(id.into(), input)?;
             Ok(Json(InvoiceResponse::from(invoice)))
         })
         .await

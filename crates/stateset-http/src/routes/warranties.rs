@@ -135,7 +135,7 @@ pub(crate) async fn get_warranty(
         .run_blocking(tid.as_deref(), move |c| {
             let w = c
                 .warranties()
-                .get(id)?
+                .get(id.into())?
                 .ok_or_else(|| HttpError::NotFound(format!("Warranty {id} not found")))?;
             Ok(Json(warranty_to_resp(&w)))
         })
