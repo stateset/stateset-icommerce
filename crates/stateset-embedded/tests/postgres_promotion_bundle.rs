@@ -48,7 +48,7 @@ async fn postgres_applies_bundle_discount() {
         })
         .await
         .expect("create promo");
-    commerce.promotions().activate(promo.id.into_uuid()).await.expect("activate");
+    commerce.promotions().activate(promo.id).await.expect("activate");
     commerce
         .promotions()
         .create_coupon(CreateCouponCode {

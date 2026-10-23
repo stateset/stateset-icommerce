@@ -8,6 +8,16 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Breaking (2.0)
 
+- **`AsyncCommerce` takes typed IDs.** The async facade took a raw `Uuid`
+  for every entity even where the sync facade and core already used typed
+  IDs. Its order, customer, product, return, shipment, payment,
+  subscription, cart, gift card and promotion methods now take `OrderId`,
+  `CustomerId`, `ProductId`, `ReturnId`, `ShipmentId`, `PaymentId`,
+  `SubscriptionId`, `CartId`, `GiftCardId` and `PromotionId`, and every
+  `customer_id` / `order_id` / `cart_id` / `payment_id` / `shipment_id` /
+  `subscription_id` / `return_id` / `product_id` parameter across the facade
+  does too. Invoices, purchase orders and warranties stay `Uuid` on both
+  facades until they get their own typed IDs.
 - **Typed lot IDs.** New `LotId`. `LotRepository` takes it everywhere a
   lot is named (`get`, `update`, `delete`, `quarantine`,
   `release_quarantine`, `get_batch`, every `lot_id` parameter), as do

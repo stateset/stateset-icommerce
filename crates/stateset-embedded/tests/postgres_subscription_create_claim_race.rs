@@ -78,7 +78,7 @@ async fn postgres_creating_a_subscription_survives_a_concurrent_biller() {
         })
         .await
         .expect("create plan");
-    commerce.subscriptions().activate_plan(plan.id).await.expect("activate plan");
+    commerce.subscriptions().activate_plan(plan.id.into()).await.expect("activate plan");
 
     // Billing workers sweeping the due set, holding each lease just long
     // enough to overlap another task's create, then handing every row back
@@ -102,7 +102,7 @@ async fn postgres_creating_a_subscription_survives_a_concurrent_biller() {
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(2)).await;
                 for sub in claimed {
-                    let _ = subs.release_billing_claim(sub.id.into_uuid(), &worker).await;
+                    let _ = subs.release_billing_claim(sub.id, &worker).await;
                 }
             }
         }));

@@ -56,7 +56,7 @@ async fn postgres_scoped_percentage_cannot_bleed_past_scoped_items() {
         })
         .await
         .expect("create promo");
-    commerce.promotions().activate(promo.id.into_uuid()).await.expect("activate");
+    commerce.promotions().activate(promo.id).await.expect("activate");
     commerce
         .promotions()
         .create_coupon(CreateCouponCode {
@@ -120,7 +120,7 @@ async fn postgres_honors_max_discount_amount() {
         })
         .await
         .expect("create promo");
-    commerce.promotions().activate(promo.id.into_uuid()).await.expect("activate");
+    commerce.promotions().activate(promo.id).await.expect("activate");
     commerce
         .promotions()
         .create_coupon(CreateCouponCode {
@@ -198,7 +198,7 @@ async fn postgres_tiered_picks_highest_applicable_tier_regardless_of_order() {
         })
         .await
         .expect("create promo");
-    commerce.promotions().activate(promo.id.into_uuid()).await.expect("activate");
+    commerce.promotions().activate(promo.id).await.expect("activate");
     commerce
         .promotions()
         .create_coupon(CreateCouponCode {

@@ -54,7 +54,7 @@ async fn welcome_coupon(commerce: &AsyncCommerce, sku: &str) -> String {
         })
         .await
         .expect("create welcome promotion");
-    commerce.promotions().activate(promotion.id.into_uuid()).await.expect("activate");
+    commerce.promotions().activate(promotion.id).await.expect("activate");
     commerce
         .promotions()
         .create_coupon(CreateCouponCode {
@@ -85,7 +85,7 @@ async fn automatic_welcome(commerce: &AsyncCommerce, sku: &str) -> PromotionId {
         })
         .await
         .expect("create automatic welcome");
-    commerce.promotions().activate(promotion.id.into_uuid()).await.expect("activate");
+    commerce.promotions().activate(promotion.id).await.expect("activate");
     promotion.id
 }
 
@@ -113,7 +113,7 @@ async fn ready_cart(commerce: &AsyncCommerce, customer_id: CustomerId, sku: &str
     commerce
         .carts()
         .add_item(
-            id,
+            id.into(),
             AddCartItem {
                 sku: sku.into(),
                 name: "Welcome widget".into(),
@@ -127,7 +127,7 @@ async fn ready_cart(commerce: &AsyncCommerce, customer_id: CustomerId, sku: &str
     commerce
         .carts()
         .set_shipping_address(
-            id,
+            id.into(),
             CartAddress {
                 first_name: "Ada".into(),
                 last_name: "Lovelace".into(),
@@ -144,7 +144,7 @@ async fn ready_cart(commerce: &AsyncCommerce, customer_id: CustomerId, sku: &str
     commerce
         .carts()
         .set_payment(
-            id,
+            id.into(),
             SetCartPayment {
                 payment_method: "credit_card".into(),
                 payment_token: Some("tok_test".into()),
@@ -158,7 +158,7 @@ async fn ready_cart(commerce: &AsyncCommerce, customer_id: CustomerId, sku: &str
 
 async fn place_prior_order(commerce: &AsyncCommerce, customer_id: CustomerId) {
     let cart = ready_cart(commerce, customer_id, &format!("PRIOR-{}", unique())).await;
-    commerce.carts().complete(cart).await.expect("prior order checks out");
+    commerce.carts().complete(cart.into()).await.expect("prior order checks out");
 }
 
 fn quote(customer_id: CustomerId, sku: &str, claims_first_order: bool) -> ApplyPromotionsRequest {
@@ -195,16 +195,13 @@ async fn postgres_new_customer_redeems_welcome_coupon_through_checkout() {
     let cart = ready_cart(&commerce, shopper, &sku).await;
 
     let discounted =
-        commerce.carts().apply_discount(cart, &code).await.expect("a first order qualifies");
+        commerce.carts().apply_discount(cart.into(), &code).await.expect("a first order qualifies");
     assert_eq!(discounted.discount_amount, dec!(10.00));
 
-    let result = commerce.carts().complete(cart).await.expect("welcome coupon survives checkout");
-    let order = commerce
-        .orders()
-        .get(result.order_id.into_uuid())
-        .await
-        .expect("get order")
-        .expect("order exists");
+    let result =
+        commerce.carts().complete(cart.into()).await.expect("welcome coupon survives checkout");
+    let order =
+        commerce.orders().get(result.order_id).await.expect("get order").expect("order exists");
     assert_eq!(order.discount_amount, dec!(10.00));
 }
 
@@ -223,7 +220,7 @@ async fn postgres_returning_customer_cannot_apply_welcome_coupon() {
     let cart = ready_cart(&commerce, shopper, &sku).await;
     commerce
         .carts()
-        .apply_discount(cart, &code)
+        .apply_discount(cart.into(), &code)
         .await
         .expect_err("a second order is not a first order");
 }
@@ -246,13 +243,9 @@ async fn postgres_automatic_welcome_follows_order_history_through_checkout() {
     // Checkout consumes the automatic promotion after inserting the order;
     // that order must not count as history, or usage is never recorded.
     let cart = ready_cart(&commerce, shopper, &sku).await;
-    commerce.carts().complete(cart).await.expect("first order checks out");
-    let promotion = commerce
-        .promotions()
-        .get(welcome.into_uuid())
-        .await
-        .expect("get promotion")
-        .expect("promotion exists");
+    commerce.carts().complete(cart.into()).await.expect("first order checks out");
+    let promotion =
+        commerce.promotions().get(welcome).await.expect("get promotion").expect("promotion exists");
     assert_eq!(promotion.usage_count, 1, "checkout recorded the automatic promotion's usage");
 
     let second =

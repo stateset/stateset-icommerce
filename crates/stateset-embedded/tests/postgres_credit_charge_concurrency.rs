@@ -8,6 +8,7 @@
 
 #![cfg(feature = "postgres")]
 
+use stateset_core::{CustomerId, OrderId};
 use std::sync::Arc;
 
 use rust_decimal::Decimal;
@@ -31,11 +32,11 @@ async fn postgres_concurrent_charges_cannot_exceed_credit_limit() {
 
     // credit_accounts.customer_id is UNIQUE with no customers FK, so a random id
     // is fine and keeps runs isolated.
-    let customer_id = uuid::Uuid::new_v4();
+    let customer_id = CustomerId::new();
     commerce
         .credit()
         .create_credit_account(CreateCreditAccount {
-            customer_id: customer_id.into(),
+            customer_id,
             credit_limit: dec!(100),
             currency: None,
             payment_terms: Some("NET30".into()),
@@ -54,7 +55,7 @@ async fn postgres_concurrent_charges_cannot_exceed_credit_limit() {
         let barrier = Arc::clone(&barrier);
         handles.push(tokio::spawn(async move {
             barrier.wait().await;
-            commerce.credit().charge_credit(customer_id, uuid::Uuid::new_v4(), dec!(20)).await
+            commerce.credit().charge_credit(customer_id, OrderId::new(), dec!(20)).await
         }));
     }
 
@@ -90,11 +91,11 @@ async fn postgres_concurrent_reservations_cannot_exceed_available_credit() {
         AsyncCommerce::connect(&url).await.expect("connect to postgres and run migrations"),
     );
 
-    let customer_id = uuid::Uuid::new_v4();
+    let customer_id = CustomerId::new();
     commerce
         .credit()
         .create_credit_account(CreateCreditAccount {
-            customer_id: customer_id.into(),
+            customer_id,
             credit_limit: dec!(100),
             currency: None,
             payment_terms: Some("NET30".into()),
@@ -113,7 +114,7 @@ async fn postgres_concurrent_reservations_cannot_exceed_available_credit() {
         let barrier = Arc::clone(&barrier);
         handles.push(tokio::spawn(async move {
             barrier.wait().await;
-            commerce.credit().reserve_credit(customer_id, uuid::Uuid::new_v4(), dec!(20)).await
+            commerce.credit().reserve_credit(customer_id, OrderId::new(), dec!(20)).await
         }));
     }
 

@@ -1,6 +1,7 @@
 //! Manufacturing accessors: warranties, BOMs, work orders.
 
 use super::*;
+use stateset_core::OrderId;
 use stateset_core::WarrantyClaimId;
 
 /// Async warranty operations.
@@ -44,13 +45,13 @@ impl AsyncWarranties {
     }
 
     /// Get warranties for a customer.
-    pub async fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Warranty>> {
-        self.db.warranties().for_customer_async(customer_id.into()).await
+    pub async fn for_customer(&self, customer_id: CustomerId) -> Result<Vec<Warranty>> {
+        self.db.warranties().for_customer_async(customer_id).await
     }
 
     /// Get warranties for an order.
-    pub async fn for_order(&self, order_id: Uuid) -> Result<Vec<Warranty>> {
-        self.db.warranties().for_order_async(order_id.into()).await
+    pub async fn for_order(&self, order_id: OrderId) -> Result<Vec<Warranty>> {
+        self.db.warranties().for_order_async(order_id).await
     }
 
     /// Void a warranty.

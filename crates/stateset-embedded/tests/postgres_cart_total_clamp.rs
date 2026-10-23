@@ -43,14 +43,11 @@ async fn postgres_grand_total_never_goes_negative_from_oversized_discount() {
 
     commerce
         .carts()
-        .update(
-            cart.id.into_uuid(),
-            UpdateCart { discount_amount: Some(dec!(100)), ..Default::default() },
-        )
+        .update(cart.id, UpdateCart { discount_amount: Some(dec!(100)), ..Default::default() })
         .await
         .expect("set oversized discount");
 
-    let recalculated = commerce.carts().recalculate(cart.id.into_uuid()).await.expect("recalc");
+    let recalculated = commerce.carts().recalculate(cart.id).await.expect("recalc");
     assert_eq!(recalculated.subtotal, dec!(25));
     assert_eq!(
         recalculated.grand_total,

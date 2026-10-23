@@ -1,6 +1,7 @@
 //! B2B accessors: purchase orders and invoices.
 
 use super::*;
+use stateset_core::OrderId;
 
 /// Async purchase order operations.
 pub struct AsyncPurchaseOrders {
@@ -208,13 +209,13 @@ impl AsyncInvoices {
     }
 
     /// Get invoices for a customer.
-    pub async fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Invoice>> {
-        self.db.invoices().for_customer_async(customer_id).await
+    pub async fn for_customer(&self, customer_id: CustomerId) -> Result<Vec<Invoice>> {
+        self.db.invoices().for_customer_async(customer_id.into_uuid()).await
     }
 
     /// Get invoices for an order.
-    pub async fn for_order(&self, order_id: Uuid) -> Result<Vec<Invoice>> {
-        self.db.invoices().for_order_async(order_id).await
+    pub async fn for_order(&self, order_id: OrderId) -> Result<Vec<Invoice>> {
+        self.db.invoices().for_order_async(order_id.into_uuid()).await
     }
 
     /// Delete an invoice.

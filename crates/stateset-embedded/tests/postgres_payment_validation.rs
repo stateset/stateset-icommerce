@@ -6,6 +6,8 @@
 #![cfg(feature = "postgres")]
 
 use rust_decimal_macros::dec;
+use stateset_core::CustomerId;
+use stateset_core::OrderId;
 use stateset_core::{
     CreateCreditAccount, CreateInvoice, CreateInvoiceItem, RecordInvoicePayment, RiskRating,
 };
@@ -72,11 +74,11 @@ async fn postgres_rejects_nonpositive_payment_amounts() {
     assert_eq!(fetched.amount_paid, dec!(0), "rejected payment must not touch amount_paid");
 
     // --- Credit payment ---
-    let credit_customer = uuid::Uuid::new_v4();
+    let credit_customer = CustomerId::new();
     commerce
         .credit()
         .create_credit_account(CreateCreditAccount {
-            customer_id: credit_customer.into(),
+            customer_id: credit_customer,
             credit_limit: dec!(100),
             currency: None,
             payment_terms: Some("NET30".into()),
@@ -87,7 +89,7 @@ async fn postgres_rejects_nonpositive_payment_amounts() {
         .expect("create credit account");
     commerce
         .credit()
-        .charge_credit(credit_customer, uuid::Uuid::new_v4(), dec!(50))
+        .charge_credit(credit_customer, OrderId::new(), dec!(50))
         .await
         .expect("charge 50");
     assert!(

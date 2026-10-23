@@ -52,7 +52,7 @@ async fn postgres_apply_fixed_amount_coupon_reduces_total() {
         })
         .await
         .expect("create promo");
-    commerce.promotions().activate(promo.id.into_uuid()).await.expect("activate");
+    commerce.promotions().activate(promo.id).await.expect("activate");
     commerce
         .promotions()
         .create_coupon(CreateCouponCode {
@@ -71,7 +71,7 @@ async fn postgres_apply_fixed_amount_coupon_reduces_total() {
     commerce
         .carts()
         .add_item(
-            cart.id.into(),
+            cart.id,
             AddCartItem {
                 sku: "ITEM-1".into(),
                 name: "Widget".into(),
@@ -84,7 +84,7 @@ async fn postgres_apply_fixed_amount_coupon_reduces_total() {
         .expect("add item");
 
     let updated =
-        commerce.carts().apply_discount(cart.id.into(), &code).await.expect("apply valid coupon");
+        commerce.carts().apply_discount(cart.id, &code).await.expect("apply valid coupon");
 
     assert_eq!(updated.discount_amount, dec!(15.00), "discount must be computed, not ignored");
     assert_eq!(updated.grand_total, dec!(65.00), "grand total must reflect the $15 discount");
@@ -116,7 +116,7 @@ async fn postgres_apply_percentage_coupon_reduces_total() {
         })
         .await
         .expect("create promo");
-    commerce.promotions().activate(promo.id.into_uuid()).await.expect("activate");
+    commerce.promotions().activate(promo.id).await.expect("activate");
     commerce
         .promotions()
         .create_coupon(CreateCouponCode {
@@ -135,7 +135,7 @@ async fn postgres_apply_percentage_coupon_reduces_total() {
     commerce
         .carts()
         .add_item(
-            cart.id.into(),
+            cart.id,
             AddCartItem {
                 sku: "ITEM-2".into(),
                 name: "Gadget".into(),
@@ -148,7 +148,7 @@ async fn postgres_apply_percentage_coupon_reduces_total() {
         .expect("add item");
 
     let updated =
-        commerce.carts().apply_discount(cart.id.into(), &code).await.expect("apply valid coupon");
+        commerce.carts().apply_discount(cart.id, &code).await.expect("apply valid coupon");
 
     // 25% of $100 = $25.
     assert_eq!(updated.discount_amount, dec!(25.00));
@@ -169,7 +169,7 @@ async fn postgres_apply_invalid_coupon_is_rejected() {
     commerce
         .carts()
         .add_item(
-            cart.id.into(),
+            cart.id,
             AddCartItem {
                 sku: "ITEM-3".into(),
                 name: "Thing".into(),
@@ -183,7 +183,7 @@ async fn postgres_apply_invalid_coupon_is_rejected() {
 
     let err = commerce
         .carts()
-        .apply_discount(cart.id.into(), "DOES-NOT-EXIST")
+        .apply_discount(cart.id, "DOES-NOT-EXIST")
         .await
         .expect_err("invalid coupon must be rejected");
     assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");

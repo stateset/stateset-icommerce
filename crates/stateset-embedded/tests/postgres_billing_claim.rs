@@ -70,8 +70,7 @@ async fn keep_mine(
         if mine.contains(&sub.id) {
             kept.push(sub);
         } else {
-            let _ =
-                commerce.subscriptions().release_billing_claim(sub.id.into_uuid(), worker_id).await;
+            let _ = commerce.subscriptions().release_billing_claim(sub.id, worker_id).await;
         }
     }
     kept
@@ -101,7 +100,7 @@ async fn plan(commerce: &AsyncCommerce, trial_days: i32) -> Uuid {
         })
         .await
         .expect("create plan");
-    commerce.subscriptions().activate_plan(plan.id).await.expect("activate plan");
+    commerce.subscriptions().activate_plan(plan.id.into()).await.expect("activate plan");
     plan.id
 }
 
@@ -133,12 +132,7 @@ async fn subscribe(commerce: &AsyncCommerce, plan_id: Uuid, start: DateTime<Utc>
 }
 
 async fn reload(commerce: &AsyncCommerce, sub: &Subscription) -> Subscription {
-    commerce
-        .subscriptions()
-        .get_subscription(sub.id.into_uuid())
-        .await
-        .expect("get")
-        .expect("exists")
+    commerce.subscriptions().get_subscription(sub.id).await.expect("get").expect("exists")
 }
 
 fn cycle(sub: &Subscription, n: i32, claimed_by: Option<&str>) -> CreateBillingCycle {
@@ -211,10 +205,7 @@ async fn postgres_concurrent_claims_are_disjoint_and_bill_each_subscription_once
                 // Settling the cycle already released the lease, so an
                 // explicit release is a no-op that reports it was not held.
                 assert!(
-                    !subs
-                        .release_billing_claim(sub.id.into_uuid(), &worker_id)
-                        .await
-                        .expect("release"),
+                    !subs.release_billing_claim(sub.id, &worker_id).await.expect("release"),
                     "paying the cycle should have released the lease already"
                 );
                 billed.push((sub.id, sub.billing_cycle_count + 2));
@@ -311,7 +302,7 @@ async fn postgres_leased_subscription_is_billable_only_by_the_holder_until_the_l
     assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
     subs.create_billing_cycle(cycle(&sub, 2, Some(&w1))).await.expect("holder bills");
 
-    assert!(!subs.release_billing_claim(sub.id.into_uuid(), &w2).await.expect("release"));
+    assert!(!subs.release_billing_claim(sub.id, &w2).await.expect("release"));
     // Not released, but dead after 60s: re-claimable and billable by w2.
     let later = now + Duration::seconds(61);
     let reclaimed = subs.claim_due_for_billing(1000, &w2, 60, later).await.expect("claim");
@@ -319,7 +310,7 @@ async fn postgres_leased_subscription_is_billable_only_by_the_holder_until_the_l
     assert_eq!(reclaimed.len(), 1, "dead lease re-claimed");
     assert_eq!(reclaimed[0].billing_lease_owner.as_deref(), Some(w2.as_str()));
     subs.create_billing_cycle(cycle(&sub, 3, Some(&w2))).await.expect("new holder bills");
-    assert!(subs.release_billing_claim(sub.id.into_uuid(), &w2).await.expect("release"));
+    assert!(subs.release_billing_claim(sub.id, &w2).await.expect("release"));
     assert_eq!(reload(&commerce, &sub).await.billing_lease_until, None);
     expire_all(&commerce, &[sub]).await;
 }
@@ -370,9 +361,9 @@ async fn postgres_trial_is_due_once_it_ends_and_first_cycle_activates() {
     .expect("first post-trial cycle");
     let activated = reload(&commerce, &elapsed).await;
     assert_eq!(activated.status, SubscriptionStatus::Active);
-    let events = subs.get_subscription_events(elapsed.id.into_uuid()).await.expect("events");
+    let events = subs.get_subscription_events(elapsed.id).await.expect("events");
     assert!(events.iter().any(|e| e.event_type == SubscriptionEventType::Activated), "{events:?}");
-    assert!(subs.release_billing_claim(elapsed.id.into_uuid(), &worker).await.expect("release"));
+    assert!(subs.release_billing_claim(elapsed.id, &worker).await.expect("release"));
     expire_all(&commerce, &[running, elapsed]).await;
 }
 
@@ -405,7 +396,7 @@ async fn postgres_pause_and_resume_carry_the_paid_remainder_forward() {
         .expect_err("double pause");
     assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
 
-    let resumed = subs.resume_subscription(sub.id.into_uuid()).await.expect("resume");
+    let resumed = subs.resume_subscription(sub.id).await.expect("resume");
     assert_eq!(resumed.status, SubscriptionStatus::Active);
     let remainder = paid_through - paused_at;
     let expected = resumed.current_period_start + remainder;
@@ -416,9 +407,9 @@ async fn postgres_pause_and_resume_carry_the_paid_remainder_forward() {
     );
     assert_eq!(resumed.current_period_end, next);
     assert_eq!(resumed.paused_at, None);
-    let err = subs.resume_subscription(sub.id.into_uuid()).await.expect_err("double resume");
+    let err = subs.resume_subscription(sub.id).await.expect_err("double resume");
     assert!(matches!(err, CommerceError::ValidationError(_)), "got {err:?}");
-    let events = subs.get_subscription_events(sub.id.into_uuid()).await.expect("events");
+    let events = subs.get_subscription_events(sub.id).await.expect("events");
     assert!(events.iter().any(|e| e.event_type == SubscriptionEventType::Paused));
     assert!(events.iter().any(|e| e.event_type == SubscriptionEventType::Resumed));
 }
@@ -443,7 +434,7 @@ async fn postgres_cancel_ends_at_the_paid_through_date_or_immediately() {
         subs.cancel_subscription(sub.id.into_uuid(), CancelSubscription::default()).await.err(),
         subs.pause_subscription(sub.id.into_uuid(), PauseSubscription::default()).await.err(),
         subs.skip_billing_cycle(sub.id.into_uuid(), SkipBillingCycle::default()).await.err(),
-        subs.resume_subscription(sub.id.into_uuid()).await.err(),
+        subs.resume_subscription(sub.id).await.err(),
     ] {
         assert!(matches!(err, Some(CommerceError::ValidationError(_))), "got {err:?}");
     }
@@ -478,7 +469,7 @@ async fn postgres_skip_moves_exactly_one_calendar_interval() {
     assert_eq!(skipped.next_billing_date, Some(expected));
     assert_eq!(skipped.current_period_end, expected);
     assert_eq!(skipped.status, SubscriptionStatus::Active);
-    let events = subs.get_subscription_events(sub.id.into_uuid()).await.expect("events");
+    let events = subs.get_subscription_events(sub.id).await.expect("events");
     assert!(events.iter().any(|e| e.event_type == SubscriptionEventType::Skipped));
 
     // A second skip moves one more interval from the NEW date (no double

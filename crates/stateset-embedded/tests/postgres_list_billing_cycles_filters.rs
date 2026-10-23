@@ -65,7 +65,7 @@ async fn postgres_list_billing_cycles_filters_by_date_and_orders_by_period_start
         })
         .await
         .expect("create plan");
-    subs.activate_plan(plan.id).await.expect("activate plan");
+    subs.activate_plan(plan.id.into()).await.expect("activate plan");
 
     // create_subscription seeds cycle 1 with period_start = now.
     let sub = subs

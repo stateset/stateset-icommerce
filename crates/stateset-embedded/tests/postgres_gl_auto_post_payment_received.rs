@@ -83,7 +83,7 @@ async fn postgres_auto_post_payment_received_posts_balanced_entry() {
         .expect("create payment");
 
     let entry = gl
-        .auto_post_payment_received(payment.id.into())
+        .auto_post_payment_received(payment.id)
         .await
         .expect("auto_post_payment_received must succeed");
 
