@@ -32,6 +32,35 @@ This document outlines the testing strategy for StateSet iCommerce, including th
 | **CLI line coverage** | **>= 75%** | Coverage workflow (`node --experimental-test-coverage`) | Parsed from Node coverage summary |
 | **Per-crate quality** | Feature/MSRV/lint/test must pass | Main CI matrix | clippy, feature checks, Postgres parity, sanitizers, CodeQL, docs build |
 
+## Nightly embedded-engine stress acceptance
+
+`Embedded Engine Nightly Stress` (`embedded-stress-nightly.yml`) runs daily at
+04:29 UTC and supports manual dispatch on `master`. It discovers the ignored
+cases in `crates/stateset-embedded/tests/stress_test.rs` before running all of
+them with locked dependencies. Acceptance requires at least the existing 12
+cases, every discovered case passing, and no skipped or filtered tests. Test
+cases run serially for consistent resource use; the concurrent-order and
+inventory-reservation cases still exercise their actual internal workers.
+Concurrent order writes must match the persisted order count; reservation
+allocations and mixed-workload inventory must match successful worker writes.
+The mixed workload uses a persisted customer so order creation exercises valid
+writes. No workload, assertion, or performance threshold is weakened.
+
+Commands, discovery output, results, and the tested commit are retained as
+30-day run artifacts. A separate job opens or updates one bot-owned tracking
+issue on failure and closes it only after a complete successful run for that
+commit. Build failures, timeouts, missing artifacts, and partial reruns count
+as incomplete acceptance. Artifacts are isolated by run attempt; rerun all
+jobs after an interrupted run to establish recovery. Only the reporting job
+has issue-write permission. Pull requests changing this workflow or runner
+exercise its behavioral contract tests; the actual stress workload runs on
+master's schedule or manual dispatch.
+
+The ignored `vector_search_test.rs` cases require `OPENAI_API_KEY` and an
+external embedding service. They are not part of this isolated engine job.
+Existing Rust coverage floors and coverage artifacts remain enforced by the
+main CI coverage job independently of this stress acceptance.
+
 ## Test Categories
 
 ### 1. Unit Tests
