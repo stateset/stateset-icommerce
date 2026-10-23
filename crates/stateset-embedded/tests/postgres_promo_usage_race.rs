@@ -66,7 +66,7 @@ async fn postgres_per_customer_usage_limit_is_race_safe() {
         })
         .await
         .expect("create promo");
-    commerce.promotions().activate(promo.id.into_uuid()).await.expect("activate");
+    commerce.promotions().activate(promo.id).await.expect("activate");
     let promo_id = promo.id.into_uuid();
 
     // Fire many concurrent redemptions for the SAME customer.
@@ -79,7 +79,7 @@ async fn postgres_per_customer_usage_limit_is_race_safe() {
         handles.push(tokio::spawn(async move {
             b.wait().await;
             c.promotions()
-                .record_usage(promo_id, None, Some(customer_id), None, None, dec!(5), "USD")
+                .record_usage(promo_id, None, Some(customer_id.into()), None, None, dec!(5), "USD")
                 .await
         }));
     }

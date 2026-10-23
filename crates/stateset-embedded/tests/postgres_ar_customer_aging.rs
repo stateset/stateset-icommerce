@@ -14,6 +14,7 @@
 
 use rust_decimal_macros::dec;
 use stateset_core::CreateCustomer;
+use stateset_core::CustomerId;
 use stateset_embedded::AsyncCommerce;
 
 fn postgres_url() -> Option<String> {
@@ -45,7 +46,7 @@ async fn postgres_customer_aging_is_zeros_for_existing_customer_without_invoices
 
     let aging = commerce
         .accounts_receivable()
-        .get_customer_aging(customer.id.into_uuid())
+        .get_customer_aging(customer.id)
         .await
         .expect("existing customer must not error")
         .expect("existing customer must return Some, even with no open invoices");
@@ -56,7 +57,7 @@ async fn postgres_customer_aging_is_zeros_for_existing_customer_without_invoices
     // A truly-unknown customer is still None (not an error).
     let missing = commerce
         .accounts_receivable()
-        .get_customer_aging(uuid::Uuid::new_v4())
+        .get_customer_aging(CustomerId::new())
         .await
         .expect("unknown customer is not an error");
     assert!(missing.is_none(), "unknown customer must be None");

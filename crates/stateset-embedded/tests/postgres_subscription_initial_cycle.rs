@@ -66,7 +66,7 @@ async fn postgres_create_subscription_seeds_an_initial_billing_cycle() {
         })
         .await
         .expect("create plan");
-    subs.activate_plan(plan.id).await.expect("activate plan");
+    subs.activate_plan(plan.id.into()).await.expect("activate plan");
 
     let sub = subs
         .create_subscription(CreateSubscription {
@@ -145,7 +145,7 @@ async fn postgres_skip_billing_cycle_marks_the_due_cycle_skipped_and_seeds_the_n
         })
         .await
         .expect("create plan");
-    subs.activate_plan(plan.id).await.expect("activate plan");
+    subs.activate_plan(plan.id.into()).await.expect("activate plan");
 
     let sub = subs
         .create_subscription(CreateSubscription {

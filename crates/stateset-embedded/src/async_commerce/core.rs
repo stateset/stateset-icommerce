@@ -1,6 +1,7 @@
 //! Core commerce accessors: orders, inventory, customers, products, custom objects, returns, shipments, payments.
 
 use super::*;
+use stateset_core::{OrderId, PaymentId, ProductId, ReturnId, ShipmentId};
 use stateset_core::{PaymentMethodId, RefundId};
 
 /// Async order operations.
@@ -56,8 +57,8 @@ impl AsyncOrders {
     }
 
     /// Get an order by ID.
-    pub async fn get(&self, id: Uuid) -> Result<Option<Order>> {
-        self.db.orders().get_async(id).await
+    pub async fn get(&self, id: OrderId) -> Result<Option<Order>> {
+        self.db.orders().get_async(id.into_uuid()).await
     }
 
     /// Get an order by order number.
@@ -66,11 +67,11 @@ impl AsyncOrders {
     }
 
     /// Update an order.
-    pub async fn update(&self, id: Uuid, input: UpdateOrder) -> Result<Order> {
+    pub async fn update(&self, id: OrderId, input: UpdateOrder) -> Result<Order> {
         #[cfg(feature = "events")]
-        let previous = self.db.orders().get_async(id).await?;
+        let previous = self.db.orders().get_async(id.into_uuid()).await?;
 
-        let updated = self.db.orders().update_async(id, input).await?;
+        let updated = self.db.orders().update_async(id.into_uuid(), input).await?;
 
         #[cfg(feature = "events")]
         if let Some(previous) = previous {
@@ -86,7 +87,7 @@ impl AsyncOrders {
     ///
     /// Moves the order status only; the payment status is derived from the
     /// order's payments and refunds (see the sync `Orders::update_status`).
-    pub async fn update_status(&self, id: Uuid, status: OrderStatus) -> Result<Order> {
+    pub async fn update_status(&self, id: OrderId, status: OrderStatus) -> Result<Order> {
         let mut tracking_number = None;
         if status == OrderStatus::Shipped {
             if let Some(order) = self.get(id).await? {
@@ -105,24 +106,24 @@ impl AsyncOrders {
     }
 
     /// List orders for a specific customer.
-    pub async fn list_for_customer(&self, customer_id: Uuid) -> Result<Vec<Order>> {
+    pub async fn list_for_customer(&self, customer_id: CustomerId) -> Result<Vec<Order>> {
         self.db
             .orders()
-            .list_async(OrderFilter { customer_id: Some(customer_id.into()), ..Default::default() })
+            .list_async(OrderFilter { customer_id: Some(customer_id), ..Default::default() })
             .await
     }
 
     /// Delete an order.
-    pub async fn delete(&self, id: Uuid) -> Result<()> {
-        self.db.orders().delete_async(id).await
+    pub async fn delete(&self, id: OrderId) -> Result<()> {
+        self.db.orders().delete_async(id.into_uuid()).await
     }
 
     /// Add an item to an order.
-    pub async fn add_item(&self, order_id: Uuid, item: CreateOrderItem) -> Result<OrderItem> {
-        let order_item = self.db.orders().add_item_async(order_id, item).await?;
+    pub async fn add_item(&self, order_id: OrderId, item: CreateOrderItem) -> Result<OrderItem> {
+        let order_item = self.db.orders().add_item_async(order_id.into_uuid(), item).await?;
         #[cfg(feature = "events")]
         self.emit(CommerceEvent::OrderItemAdded {
-            order_id: order_id.into(),
+            order_id,
             item_id: order_item.id,
             sku: order_item.sku.clone(),
             quantity: order_item.quantity,
@@ -132,11 +133,11 @@ impl AsyncOrders {
     }
 
     /// Remove an item from an order.
-    pub async fn remove_item(&self, order_id: Uuid, item_id: Uuid) -> Result<()> {
-        self.db.orders().remove_item_async(order_id, item_id).await?;
+    pub async fn remove_item(&self, order_id: OrderId, item_id: Uuid) -> Result<()> {
+        self.db.orders().remove_item_async(order_id.into_uuid(), item_id).await?;
         #[cfg(feature = "events")]
         self.emit(CommerceEvent::OrderItemRemoved {
-            order_id: order_id.into(),
+            order_id,
             item_id: item_id.into(),
             timestamp: chrono::Utc::now(),
         });
@@ -149,13 +150,13 @@ impl AsyncOrders {
     }
 
     /// Cancel an order.
-    pub async fn cancel(&self, id: Uuid) -> Result<Order> {
+    pub async fn cancel(&self, id: OrderId) -> Result<Order> {
         self.update_status(id, OrderStatus::Cancelled).await
     }
 
     /// Mark an order as shipped (every remaining unit on every line).
-    pub async fn ship(&self, id: Uuid, tracking_number: Option<&str>) -> Result<Order> {
-        self.ship_lines(id, tracking_number, None).await
+    pub async fn ship(&self, id: OrderId, tracking_number: Option<&str>) -> Result<Order> {
+        self.ship_lines(id.into_uuid(), tracking_number, None).await
     }
 
     /// Ship an order, optionally only some units of some lines.
@@ -167,14 +168,14 @@ impl AsyncOrders {
         tracking_number: Option<&str>,
         lines: Option<Vec<ShipmentLineInput>>,
     ) -> Result<Order> {
-        if let Some(order) = self.get(id).await? {
+        if let Some(order) = self.get(OrderId::from(id)).await? {
             match order.status {
                 OrderStatus::Pending => {
-                    self.update_status(id, OrderStatus::Confirmed).await?;
-                    self.update_status(id, OrderStatus::Processing).await?;
+                    self.update_status(OrderId::from(id), OrderStatus::Confirmed).await?;
+                    self.update_status(OrderId::from(id), OrderStatus::Processing).await?;
                 }
                 OrderStatus::Confirmed => {
-                    self.update_status(id, OrderStatus::Processing).await?;
+                    self.update_status(OrderId::from(id), OrderStatus::Processing).await?;
                 }
                 _ => {}
             }
@@ -184,7 +185,7 @@ impl AsyncOrders {
     }
 
     /// Mark an order as delivered.
-    pub async fn deliver(&self, id: Uuid) -> Result<Order> {
+    pub async fn deliver(&self, id: OrderId) -> Result<Order> {
         self.update_status(id, OrderStatus::Delivered).await
     }
 }
@@ -343,8 +344,8 @@ impl AsyncCustomers {
     }
 
     /// Get customer by ID.
-    pub async fn get(&self, id: Uuid) -> Result<Option<Customer>> {
-        self.db.customers().get_async(id.into()).await
+    pub async fn get(&self, id: CustomerId) -> Result<Option<Customer>> {
+        self.db.customers().get_async(id).await
     }
 
     /// Get customer by email.
@@ -353,8 +354,8 @@ impl AsyncCustomers {
     }
 
     /// Update a customer.
-    pub async fn update(&self, id: Uuid, input: UpdateCustomer) -> Result<Customer> {
-        self.db.customers().update_async(id.into(), input).await
+    pub async fn update(&self, id: CustomerId, input: UpdateCustomer) -> Result<Customer> {
+        self.db.customers().update_async(id, input).await
     }
 
     /// List customers.
@@ -363,13 +364,13 @@ impl AsyncCustomers {
     }
 
     /// Delete a customer.
-    pub async fn delete(&self, id: Uuid) -> Result<()> {
-        self.db.customers().delete_async(id.into()).await
+    pub async fn delete(&self, id: CustomerId) -> Result<()> {
+        self.db.customers().delete_async(id).await
     }
 
     /// Anonymise a customer (soft delete plus PII scrub).
-    pub async fn anonymize(&self, id: Uuid) -> Result<Customer> {
-        self.db.customers().anonymize_async(id.into()).await
+    pub async fn anonymize(&self, id: CustomerId) -> Result<Customer> {
+        self.db.customers().anonymize_async(id).await
     }
 
     /// Add an address to a customer.
@@ -378,8 +379,8 @@ impl AsyncCustomers {
     }
 
     /// Get addresses for a customer.
-    pub async fn get_addresses(&self, customer_id: Uuid) -> Result<Vec<CustomerAddress>> {
-        self.db.customers().get_addresses_async(customer_id.into()).await
+    pub async fn get_addresses(&self, customer_id: CustomerId) -> Result<Vec<CustomerAddress>> {
+        self.db.customers().get_addresses_async(customer_id).await
     }
 
     /// Count customers.
@@ -411,8 +412,8 @@ impl AsyncProducts {
     }
 
     /// Get product by ID.
-    pub async fn get(&self, id: Uuid) -> Result<Option<Product>> {
-        self.db.products().get_async(id.into()).await
+    pub async fn get(&self, id: ProductId) -> Result<Option<Product>> {
+        self.db.products().get_async(id).await
     }
 
     /// Get product by slug.
@@ -421,8 +422,8 @@ impl AsyncProducts {
     }
 
     /// Update a product.
-    pub async fn update(&self, id: Uuid, input: UpdateProduct) -> Result<Product> {
-        self.db.products().update_async(id.into(), input).await
+    pub async fn update(&self, id: ProductId, input: UpdateProduct) -> Result<Product> {
+        self.db.products().update_async(id, input).await
     }
 
     /// List products.
@@ -431,22 +432,22 @@ impl AsyncProducts {
     }
 
     /// Delete a product.
-    pub async fn delete(&self, id: Uuid) -> Result<()> {
-        self.db.products().delete_async(id.into()).await
+    pub async fn delete(&self, id: ProductId) -> Result<()> {
+        self.db.products().delete_async(id).await
     }
 
     /// Add a variant to a product.
     pub async fn add_variant(
         &self,
-        product_id: Uuid,
+        product_id: ProductId,
         variant: CreateProductVariant,
     ) -> Result<ProductVariant> {
-        self.db.products().add_variant_public_async(product_id.into(), variant).await
+        self.db.products().add_variant_public_async(product_id, variant).await
     }
 
     /// Get variant by ID.
-    pub async fn get_variant(&self, id: Uuid) -> Result<Option<ProductVariant>> {
-        self.db.products().get_variant_async(id).await
+    pub async fn get_variant(&self, id: ProductId) -> Result<Option<ProductVariant>> {
+        self.db.products().get_variant_async(id.into_uuid()).await
     }
 
     /// Get variant by SKU.
@@ -464,13 +465,13 @@ impl AsyncProducts {
     }
 
     /// Delete a variant.
-    pub async fn delete_variant(&self, id: Uuid) -> Result<()> {
-        self.db.products().delete_variant_async(id).await
+    pub async fn delete_variant(&self, id: ProductId) -> Result<()> {
+        self.db.products().delete_variant_async(id.into_uuid()).await
     }
 
     /// Get all variants for a product.
-    pub async fn get_variants(&self, product_id: Uuid) -> Result<Vec<ProductVariant>> {
-        self.db.products().get_variants_async(product_id.into()).await
+    pub async fn get_variants(&self, product_id: ProductId) -> Result<Vec<ProductVariant>> {
+        self.db.products().get_variants_async(product_id).await
     }
 
     /// Count products.
@@ -596,13 +597,13 @@ impl AsyncReturns {
     }
 
     /// Get return by ID.
-    pub async fn get(&self, id: Uuid) -> Result<Option<Return>> {
-        self.db.returns().get_async(id).await
+    pub async fn get(&self, id: ReturnId) -> Result<Option<Return>> {
+        self.db.returns().get_async(id.into_uuid()).await
     }
 
     /// Update a return.
-    pub async fn update(&self, id: Uuid, input: UpdateReturn) -> Result<Return> {
-        self.db.returns().update_async(id, input).await
+    pub async fn update(&self, id: ReturnId, input: UpdateReturn) -> Result<Return> {
+        self.db.returns().update_async(id.into_uuid(), input).await
     }
 
     /// List returns.
@@ -611,23 +612,23 @@ impl AsyncReturns {
     }
 
     /// Approve a return.
-    pub async fn approve(&self, id: Uuid) -> Result<Return> {
-        self.db.returns().approve_async(id).await
+    pub async fn approve(&self, id: ReturnId) -> Result<Return> {
+        self.db.returns().approve_async(id.into_uuid()).await
     }
 
     /// Reject a return.
-    pub async fn reject(&self, id: Uuid, reason: &str) -> Result<Return> {
-        self.db.returns().reject_async(id, reason).await
+    pub async fn reject(&self, id: ReturnId, reason: &str) -> Result<Return> {
+        self.db.returns().reject_async(id.into_uuid(), reason).await
     }
 
     /// Complete a return.
-    pub async fn complete(&self, id: Uuid) -> Result<Return> {
-        self.db.returns().complete_async(id).await
+    pub async fn complete(&self, id: ReturnId) -> Result<Return> {
+        self.db.returns().complete_async(id.into_uuid()).await
     }
 
     /// Cancel a return.
-    pub async fn cancel(&self, id: Uuid) -> Result<Return> {
-        self.db.returns().cancel_async(id).await
+    pub async fn cancel(&self, id: ReturnId) -> Result<Return> {
+        self.db.returns().cancel_async(id.into_uuid()).await
     }
 
     /// Count returns.
@@ -640,11 +641,11 @@ impl AsyncReturns {
     /// effect atomically. A second disposition on the same item is rejected.
     pub async fn set_item_disposition(
         &self,
-        return_id: Uuid,
+        return_id: ReturnId,
         item_id: Uuid,
         input: stateset_core::SetReturnDisposition,
     ) -> Result<stateset_core::ReturnItem> {
-        self.db.returns().set_item_disposition_async(return_id.into(), item_id, input).await
+        self.db.returns().set_item_disposition_async(return_id, item_id, input).await
     }
 }
 
@@ -671,8 +672,8 @@ impl AsyncShipments {
     }
 
     /// Get shipment by ID.
-    pub async fn get(&self, id: Uuid) -> Result<Option<Shipment>> {
-        self.db.shipments().get_async(id).await
+    pub async fn get(&self, id: ShipmentId) -> Result<Option<Shipment>> {
+        self.db.shipments().get_async(id.into_uuid()).await
     }
 
     /// Get shipment by shipment number.
@@ -686,8 +687,8 @@ impl AsyncShipments {
     }
 
     /// Update a shipment.
-    pub async fn update(&self, id: Uuid, input: UpdateShipment) -> Result<Shipment> {
-        self.db.shipments().update_async(id, input).await
+    pub async fn update(&self, id: ShipmentId, input: UpdateShipment) -> Result<Shipment> {
+        self.db.shipments().update_async(id.into_uuid(), input).await
     }
 
     /// List shipments.
@@ -696,69 +697,69 @@ impl AsyncShipments {
     }
 
     /// Get shipments for an order.
-    pub async fn for_order(&self, order_id: Uuid) -> Result<Vec<Shipment>> {
-        self.db.shipments().for_order_async(order_id).await
+    pub async fn for_order(&self, order_id: OrderId) -> Result<Vec<Shipment>> {
+        self.db.shipments().for_order_async(order_id.into_uuid()).await
     }
 
     /// Delete a shipment.
-    pub async fn delete(&self, id: Uuid) -> Result<()> {
-        self.db.shipments().delete_async(id).await
+    pub async fn delete(&self, id: ShipmentId) -> Result<()> {
+        self.db.shipments().delete_async(id.into_uuid()).await
     }
 
     /// Mark shipment as processing.
-    pub async fn mark_processing(&self, id: Uuid) -> Result<Shipment> {
-        self.db.shipments().mark_processing_async(id).await
+    pub async fn mark_processing(&self, id: ShipmentId) -> Result<Shipment> {
+        self.db.shipments().mark_processing_async(id.into_uuid()).await
     }
 
     /// Mark shipment as ready.
-    pub async fn mark_ready(&self, id: Uuid) -> Result<Shipment> {
-        self.db.shipments().mark_ready_async(id).await
+    pub async fn mark_ready(&self, id: ShipmentId) -> Result<Shipment> {
+        self.db.shipments().mark_ready_async(id.into_uuid()).await
     }
 
     /// Ship with optional tracking number.
-    pub async fn ship(&self, id: Uuid, tracking_number: Option<String>) -> Result<Shipment> {
-        self.db.shipments().ship_async(id, tracking_number).await
+    pub async fn ship(&self, id: ShipmentId, tracking_number: Option<String>) -> Result<Shipment> {
+        self.db.shipments().ship_async(id.into_uuid(), tracking_number).await
     }
 
     /// Mark shipment as in transit.
-    pub async fn mark_in_transit(&self, id: Uuid) -> Result<Shipment> {
-        self.db.shipments().mark_in_transit_async(id).await
+    pub async fn mark_in_transit(&self, id: ShipmentId) -> Result<Shipment> {
+        self.db.shipments().mark_in_transit_async(id.into_uuid()).await
     }
 
     /// Mark shipment as out for delivery.
-    pub async fn mark_out_for_delivery(&self, id: Uuid) -> Result<Shipment> {
-        self.db.shipments().mark_out_for_delivery_async(id).await
+    pub async fn mark_out_for_delivery(&self, id: ShipmentId) -> Result<Shipment> {
+        self.db.shipments().mark_out_for_delivery_async(id.into_uuid()).await
     }
 
     /// Mark shipment as delivered.
-    pub async fn mark_delivered(&self, id: Uuid) -> Result<Shipment> {
-        let shipment = self.db.shipments().mark_delivered_async(id).await?;
+    pub async fn mark_delivered(&self, id: ShipmentId) -> Result<Shipment> {
+        let shipment = self.db.shipments().mark_delivered_async(id.into_uuid()).await?;
         self.metrics.record_shipment_delivered(&shipment.id.to_string());
         Ok(shipment)
     }
 
     /// Mark shipment as failed.
-    pub async fn mark_failed(&self, id: Uuid) -> Result<Shipment> {
-        self.db.shipments().mark_failed_async(id).await
+    pub async fn mark_failed(&self, id: ShipmentId) -> Result<Shipment> {
+        self.db.shipments().mark_failed_async(id.into_uuid()).await
     }
 
     /// Put shipment on hold.
-    pub async fn hold(&self, id: Uuid) -> Result<Shipment> {
-        self.db.shipments().hold_async(id).await
+    pub async fn hold(&self, id: ShipmentId) -> Result<Shipment> {
+        self.db.shipments().hold_async(id.into_uuid()).await
     }
 
     /// Cancel shipment.
-    pub async fn cancel(&self, id: Uuid) -> Result<Shipment> {
-        self.db.shipments().cancel_async(id).await
+    pub async fn cancel(&self, id: ShipmentId) -> Result<Shipment> {
+        self.db.shipments().cancel_async(id.into_uuid()).await
     }
 
     /// Add item to shipment.
     pub async fn add_item(
         &self,
-        shipment_id: Uuid,
+        shipment_id: ShipmentId,
         item: CreateShipmentItem,
     ) -> Result<ShipmentItem> {
-        self.db.shipments().add_item_async(shipment_id, item).await
+        self.db.shipments().add_item_async(shipment_id.into_uuid(), item).await
     }
 
     /// Remove item from shipment.
@@ -769,11 +770,14 @@ impl AsyncShipments {
     /// Add an item with a transactionally checked parent version precondition.
     pub async fn add_item_with_version(
         &self,
-        shipment_id: Uuid,
+        shipment_id: ShipmentId,
         item: CreateShipmentItem,
         expected_version: Option<i32>,
     ) -> Result<ShipmentItem> {
-        self.db.shipments().add_item_with_version_async(shipment_id, item, expected_version).await
+        self.db
+            .shipments()
+            .add_item_with_version_async(shipment_id.into_uuid(), item, expected_version)
+            .await
     }
 
     /// Remove an item with a transactionally checked parent version precondition.
@@ -786,22 +790,22 @@ impl AsyncShipments {
     }
 
     /// Get items in shipment.
-    pub async fn get_items(&self, shipment_id: Uuid) -> Result<Vec<ShipmentItem>> {
-        self.db.shipments().get_items_async(shipment_id).await
+    pub async fn get_items(&self, shipment_id: ShipmentId) -> Result<Vec<ShipmentItem>> {
+        self.db.shipments().get_items_async(shipment_id.into_uuid()).await
     }
 
     /// Add tracking event.
     pub async fn add_event(
         &self,
-        shipment_id: Uuid,
+        shipment_id: ShipmentId,
         event: AddShipmentEvent,
     ) -> Result<ShipmentEvent> {
-        self.db.shipments().add_event_async(shipment_id, event).await
+        self.db.shipments().add_event_async(shipment_id.into_uuid(), event).await
     }
 
     /// Get tracking events.
-    pub async fn get_events(&self, shipment_id: Uuid) -> Result<Vec<ShipmentEvent>> {
-        self.db.shipments().get_events_async(shipment_id).await
+    pub async fn get_events(&self, shipment_id: ShipmentId) -> Result<Vec<ShipmentEvent>> {
+        self.db.shipments().get_events_async(shipment_id.into_uuid()).await
     }
 
     /// Count shipments.
@@ -831,8 +835,8 @@ impl AsyncPayments {
     }
 
     /// Get payment by ID.
-    pub async fn get(&self, id: Uuid) -> Result<Option<Payment>> {
-        self.db.payments().get_async(id).await
+    pub async fn get(&self, id: PaymentId) -> Result<Option<Payment>> {
+        self.db.payments().get_async(id.into_uuid()).await
     }
 
     /// Get payment by payment number.
@@ -846,8 +850,8 @@ impl AsyncPayments {
     }
 
     /// Update a payment.
-    pub async fn update(&self, id: Uuid, input: UpdatePayment) -> Result<Payment> {
-        self.db.payments().update_async(id, input).await
+    pub async fn update(&self, id: PaymentId, input: UpdatePayment) -> Result<Payment> {
+        self.db.payments().update_async(id.into_uuid(), input).await
     }
 
     /// List payments.
@@ -856,8 +860,8 @@ impl AsyncPayments {
     }
 
     /// Get payments for an order.
-    pub async fn for_order(&self, order_id: Uuid) -> Result<Vec<Payment>> {
-        self.db.payments().for_order_async(order_id).await
+    pub async fn for_order(&self, order_id: OrderId) -> Result<Vec<Payment>> {
+        self.db.payments().for_order_async(order_id.into_uuid()).await
     }
 
     /// Get payments for an invoice.
@@ -866,13 +870,13 @@ impl AsyncPayments {
     }
 
     /// Mark payment as processing.
-    pub async fn mark_processing(&self, id: Uuid) -> Result<Payment> {
-        self.db.payments().mark_processing_async(id).await
+    pub async fn mark_processing(&self, id: PaymentId) -> Result<Payment> {
+        self.db.payments().mark_processing_async(id.into_uuid()).await
     }
 
     /// Mark payment as completed.
-    pub async fn mark_completed(&self, id: Uuid) -> Result<Payment> {
-        let payment = self.db.payments().mark_completed_async(id).await?;
+    pub async fn mark_completed(&self, id: PaymentId) -> Result<Payment> {
+        let payment = self.db.payments().mark_completed_async(id.into_uuid()).await?;
         self.metrics.record_payment_completed(
             &payment.id.to_string(),
             payment.amount.to_f64().unwrap_or(0.0),
@@ -881,13 +885,18 @@ impl AsyncPayments {
     }
 
     /// Mark payment as failed.
-    pub async fn mark_failed(&self, id: Uuid, reason: &str, code: Option<&str>) -> Result<Payment> {
-        self.db.payments().mark_failed_async(id, reason, code).await
+    pub async fn mark_failed(
+        &self,
+        id: PaymentId,
+        reason: &str,
+        code: Option<&str>,
+    ) -> Result<Payment> {
+        self.db.payments().mark_failed_async(id.into_uuid(), reason, code).await
     }
 
     /// Cancel payment.
-    pub async fn cancel(&self, id: Uuid) -> Result<Payment> {
-        self.db.payments().cancel_async(id).await
+    pub async fn cancel(&self, id: PaymentId) -> Result<Payment> {
+        self.db.payments().cancel_async(id.into_uuid()).await
     }
 
     /// Create a refund.
@@ -901,8 +910,8 @@ impl AsyncPayments {
     }
 
     /// Get refunds for a payment.
-    pub async fn get_refunds(&self, payment_id: Uuid) -> Result<Vec<Refund>> {
-        self.db.payments().get_refunds_async(payment_id).await
+    pub async fn get_refunds(&self, payment_id: PaymentId) -> Result<Vec<Refund>> {
+        self.db.payments().get_refunds_async(payment_id.into_uuid()).await
     }
 
     /// Complete a refund.
@@ -921,8 +930,8 @@ impl AsyncPayments {
     }
 
     /// Get payment methods for a customer.
-    pub async fn get_payment_methods(&self, customer_id: Uuid) -> Result<Vec<PaymentMethod>> {
-        self.db.payments().get_payment_methods_async(customer_id).await
+    pub async fn get_payment_methods(&self, customer_id: CustomerId) -> Result<Vec<PaymentMethod>> {
+        self.db.payments().get_payment_methods_async(customer_id.into_uuid()).await
     }
 
     /// Delete a payment method.
@@ -933,12 +942,12 @@ impl AsyncPayments {
     /// Set default payment method.
     pub async fn set_default_payment_method(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         method_id: PaymentMethodId,
     ) -> Result<()> {
         self.db
             .payments()
-            .set_default_payment_method_async(customer_id, method_id.into_uuid())
+            .set_default_payment_method_async(customer_id.into_uuid(), method_id.into_uuid())
             .await
     }
 

@@ -44,7 +44,7 @@ mod pg {
     }
 
     async fn get(commerce: &AsyncCommerce, order: &Order) -> Order {
-        commerce.orders().get(order.id.into_uuid()).await.expect("get order").expect("order exists")
+        commerce.orders().get(order.id).await.expect("get order").expect("order exists")
     }
 
     async fn checkout(commerce: &AsyncCommerce) -> Order {
@@ -76,7 +76,7 @@ mod pg {
             commerce
                 .carts()
                 .add_item(
-                    cart.id.into_uuid(),
+                    cart.id,
                     AddCartItem {
                         sku: sku.clone(),
                         name: sku,
@@ -88,15 +88,11 @@ mod pg {
                 .await
                 .expect("add item");
         }
-        commerce
-            .carts()
-            .set_shipping_address(cart.id.into_uuid(), address())
-            .await
-            .expect("shipping address");
+        commerce.carts().set_shipping_address(cart.id, address()).await.expect("shipping address");
         commerce
             .carts()
             .set_payment(
-                cart.id.into_uuid(),
+                cart.id,
                 SetCartPayment {
                     payment_method: "credit_card".into(),
                     payment_token: Some("tok_test".into()),
@@ -105,13 +101,9 @@ mod pg {
             )
             .await
             .expect("set payment");
-        let result = commerce.carts().complete(cart.id.into_uuid()).await.expect("checkout");
-        let order = commerce
-            .orders()
-            .get(result.order_id.into_uuid())
-            .await
-            .expect("get order")
-            .expect("order exists");
+        let result = commerce.carts().complete(cart.id).await.expect("checkout");
+        let order =
+            commerce.orders().get(result.order_id).await.expect("get order").expect("order exists");
         assert_eq!(order.payment_status, PaymentStatus::Pending);
         assert_eq!(order.fulfillment_status, FulfillmentStatus::Unfulfilled);
         assert!(order.total_amount > Decimal::ZERO);
@@ -132,7 +124,7 @@ mod pg {
             .await
             .expect("create payment");
         let id = payment.id.into_uuid();
-        commerce.payments().mark_completed(id).await.expect("complete payment");
+        commerce.payments().mark_completed(id.into()).await.expect("complete payment");
         id
     }
 
@@ -160,8 +152,7 @@ mod pg {
         assert_eq!(paid.payment_status, PaymentStatus::Paid);
         assert!(paid.version > order.version, "the status write bumps the order version");
 
-        let shipped =
-            commerce.orders().ship(order.id.into_uuid(), Some("1Z999")).await.expect("ship");
+        let shipped = commerce.orders().ship(order.id, Some("1Z999")).await.expect("ship");
         assert_eq!(shipped.status, OrderStatus::Shipped);
         assert_eq!(shipped.fulfillment_status, FulfillmentStatus::Shipped);
         assert_eq!(shipped.payment_status, PaymentStatus::Paid);
@@ -174,7 +165,7 @@ mod pg {
         refund(&commerce, payment_id, order.total_amount - dec!(10.03)).await;
         assert_eq!(get(&commerce, &order).await.payment_status, PaymentStatus::Refunded);
 
-        let delivered = commerce.orders().deliver(order.id.into_uuid()).await.expect("deliver");
+        let delivered = commerce.orders().deliver(order.id).await.expect("deliver");
         assert_eq!(delivered.fulfillment_status, FulfillmentStatus::Delivered);
         assert_eq!(delivered.payment_status, PaymentStatus::Refunded);
     }
@@ -210,10 +201,10 @@ mod pg {
         let id = payment.id.into_uuid();
         assert_eq!(get(&commerce, &order).await.payment_status, PaymentStatus::Pending);
 
-        commerce.payments().mark_processing(id).await.expect("processing");
+        commerce.payments().mark_processing(id.into()).await.expect("processing");
         assert_eq!(get(&commerce, &order).await.payment_status, PaymentStatus::Authorized);
 
-        commerce.payments().mark_failed(id, "card declined", None).await.expect("fail");
+        commerce.payments().mark_failed(id.into(), "card declined", None).await.expect("fail");
         assert_eq!(get(&commerce, &order).await.payment_status, PaymentStatus::Failed);
 
         pay(&commerce, &order, order.total_amount).await;
@@ -238,7 +229,7 @@ mod pg {
         assert_eq!(partial.status, OrderStatus::PartiallyShipped);
         assert_eq!(partial.fulfillment_status, FulfillmentStatus::PartiallyFulfilled);
 
-        let rest = commerce.orders().ship(order.id.into_uuid(), None).await.expect("ship the rest");
+        let rest = commerce.orders().ship(order.id, None).await.expect("ship the rest");
         assert_eq!(rest.status, OrderStatus::Shipped);
         assert_eq!(rest.fulfillment_status, FulfillmentStatus::Shipped);
     }

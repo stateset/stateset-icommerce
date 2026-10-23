@@ -1,6 +1,7 @@
 //! Warehouse accessors: warehouses/locations, receiving, fulfillment.
 
 use super::*;
+use stateset_core::OrderId;
 
 /// Async warehouse operations.
 pub struct AsyncWarehouse {
@@ -399,8 +400,8 @@ impl AsyncFulfillment {
         self.db.fulfillment().cancel_pick_async(id).await
     }
 
-    pub async fn get_picks_for_order(&self, order_id: Uuid) -> Result<Vec<PickTask>> {
-        self.db.fulfillment().get_picks_for_order_async(order_id).await
+    pub async fn get_picks_for_order(&self, order_id: OrderId) -> Result<Vec<PickTask>> {
+        self.db.fulfillment().get_picks_for_order_async(order_id.into_uuid()).await
     }
 
     pub async fn get_picks_for_wave(&self, wave_id: Uuid) -> Result<Vec<PickTask>> {
@@ -497,18 +498,18 @@ impl AsyncFulfillment {
 
     pub async fn create_picks_for_order(
         &self,
-        order_id: Uuid,
+        order_id: OrderId,
         warehouse_id: i32,
     ) -> Result<Vec<PickTask>> {
-        self.db.fulfillment().create_picks_for_order_async(order_id, warehouse_id).await
+        self.db.fulfillment().create_picks_for_order_async(order_id.into_uuid(), warehouse_id).await
     }
 
-    pub async fn is_order_ready_to_pack(&self, order_id: Uuid) -> Result<bool> {
-        self.db.fulfillment().is_order_ready_to_pack_async(order_id).await
+    pub async fn is_order_ready_to_pack(&self, order_id: OrderId) -> Result<bool> {
+        self.db.fulfillment().is_order_ready_to_pack_async(order_id.into_uuid()).await
     }
 
-    pub async fn is_order_ready_to_ship(&self, order_id: Uuid) -> Result<bool> {
-        self.db.fulfillment().is_order_ready_to_ship_async(order_id).await
+    pub async fn is_order_ready_to_ship(&self, order_id: OrderId) -> Result<bool> {
+        self.db.fulfillment().is_order_ready_to_ship_async(order_id.into_uuid()).await
     }
 
     pub async fn create_waves_batch(&self, inputs: Vec<CreateWave>) -> Result<BatchResult<Wave>> {

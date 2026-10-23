@@ -49,9 +49,9 @@ async fn delivered_order(
         OrderStatus::Shipped,
         OrderStatus::Delivered,
     ] {
-        commerce.orders().update_status(order.id.into_uuid(), status).await.expect("advance");
+        commerce.orders().update_status(order.id, status).await.expect("advance");
     }
-    commerce.orders().get(order.id.into_uuid()).await.expect("get").expect("order")
+    commerce.orders().get(order.id).await.expect("get").expect("order")
 }
 
 #[tokio::test]

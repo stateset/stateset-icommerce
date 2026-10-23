@@ -1,6 +1,7 @@
 //! Finance accessors: AP, cost accounting, credit, backorders, AR, general ledger.
 
 use super::*;
+use stateset_core::PaymentId;
 use stateset_core::{BackorderAllocationId, BackorderId, OrderId};
 
 /// Async accounts payable operations.
@@ -99,9 +100,9 @@ impl AsyncAccountsPayable {
 
     pub async fn get_payment_allocations(
         &self,
-        payment_id: Uuid,
+        payment_id: PaymentId,
     ) -> Result<Vec<PaymentAllocation>> {
-        self.db.accounts_payable().get_payment_allocations_async(payment_id).await
+        self.db.accounts_payable().get_payment_allocations_async(payment_id.into_uuid()).await
     }
 
     pub async fn get_payments_for_bill(&self, bill_id: Uuid) -> Result<Vec<BillPayment>> {
@@ -352,9 +353,9 @@ impl AsyncCredit {
 
     pub async fn get_credit_account_by_customer(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
     ) -> Result<Option<CreditAccount>> {
-        self.db.credit().get_credit_account_by_customer_async(customer_id).await
+        self.db.credit().get_credit_account_by_customer_async(customer_id.into_uuid()).await
     }
 
     pub async fn update_credit_account(
@@ -374,57 +375,69 @@ impl AsyncCredit {
 
     pub async fn adjust_credit_limit(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         new_limit: Decimal,
         reason: &str,
     ) -> Result<CreditAccount> {
-        self.db.credit().adjust_credit_limit_async(customer_id, new_limit, reason).await
+        self.db.credit().adjust_credit_limit_async(customer_id.into_uuid(), new_limit, reason).await
     }
 
     pub async fn suspend_credit_account(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         reason: &str,
     ) -> Result<CreditAccount> {
-        self.db.credit().suspend_credit_account_async(customer_id, reason).await
+        self.db.credit().suspend_credit_account_async(customer_id.into_uuid(), reason).await
     }
 
-    pub async fn reactivate_credit_account(&self, customer_id: Uuid) -> Result<CreditAccount> {
-        self.db.credit().reactivate_credit_account_async(customer_id).await
+    pub async fn reactivate_credit_account(
+        &self,
+        customer_id: CustomerId,
+    ) -> Result<CreditAccount> {
+        self.db.credit().reactivate_credit_account_async(customer_id.into_uuid()).await
     }
 
     pub async fn check_credit(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         order_amount: Decimal,
     ) -> Result<CreditCheckResult> {
-        self.db.credit().check_credit_async(customer_id, order_amount).await
+        self.db.credit().check_credit_async(customer_id.into_uuid(), order_amount).await
     }
 
     pub async fn reserve_credit(
         &self,
-        customer_id: Uuid,
-        order_id: Uuid,
+        customer_id: CustomerId,
+        order_id: OrderId,
         amount: Decimal,
     ) -> Result<CreditAccount> {
-        self.db.credit().reserve_credit_async(customer_id, order_id, amount).await
+        self.db
+            .credit()
+            .reserve_credit_async(customer_id.into_uuid(), order_id.into_uuid(), amount)
+            .await
     }
 
     pub async fn release_credit_reservation(
         &self,
-        customer_id: Uuid,
-        order_id: Uuid,
+        customer_id: CustomerId,
+        order_id: OrderId,
     ) -> Result<CreditAccount> {
-        self.db.credit().release_credit_reservation_async(customer_id, order_id).await
+        self.db
+            .credit()
+            .release_credit_reservation_async(customer_id.into_uuid(), order_id.into_uuid())
+            .await
     }
 
     pub async fn charge_credit(
         &self,
-        customer_id: Uuid,
-        order_id: Uuid,
+        customer_id: CustomerId,
+        order_id: OrderId,
         amount: Decimal,
     ) -> Result<CreditAccount> {
-        self.db.credit().charge_credit_async(customer_id, order_id, amount).await
+        self.db
+            .credit()
+            .charge_credit_async(customer_id.into_uuid(), order_id.into_uuid(), amount)
+            .await
     }
 
     pub async fn place_hold(&self, input: PlaceCreditHold) -> Result<CreditHold> {
@@ -443,12 +456,12 @@ impl AsyncCredit {
         self.db.credit().release_hold_async(input).await
     }
 
-    pub async fn get_active_holds(&self, customer_id: Uuid) -> Result<Vec<CreditHold>> {
-        self.db.credit().get_active_holds_async(customer_id).await
+    pub async fn get_active_holds(&self, customer_id: CustomerId) -> Result<Vec<CreditHold>> {
+        self.db.credit().get_active_holds_async(customer_id.into_uuid()).await
     }
 
-    pub async fn get_holds_for_order(&self, order_id: Uuid) -> Result<Vec<CreditHold>> {
-        self.db.credit().get_holds_for_order_async(order_id).await
+    pub async fn get_holds_for_order(&self, order_id: OrderId) -> Result<Vec<CreditHold>> {
+        self.db.credit().get_holds_for_order_async(order_id.into_uuid()).await
     }
 
     pub async fn submit_application(
@@ -496,18 +509,18 @@ impl AsyncCredit {
 
     pub async fn apply_payment(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
         amount: Decimal,
         reference_id: Option<Uuid>,
     ) -> Result<CreditAccount> {
-        self.db.credit().apply_payment_async(customer_id, amount, reference_id).await
+        self.db.credit().apply_payment_async(customer_id.into_uuid(), amount, reference_id).await
     }
 
     pub async fn get_customer_summary(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
     ) -> Result<Option<CustomerCreditSummary>> {
-        self.db.credit().get_customer_summary_async(customer_id).await
+        self.db.credit().get_customer_summary_async(customer_id.into_uuid()).await
     }
 
     pub async fn get_aging_report(&self) -> Result<Vec<(Uuid, CreditAgingBucket)>> {
@@ -665,8 +678,11 @@ impl AsyncAccountsReceivable {
         self.db.accounts_receivable().get_aging_summary_async().await
     }
 
-    pub async fn get_customer_aging(&self, customer_id: Uuid) -> Result<Option<CustomerArAging>> {
-        self.db.accounts_receivable().get_customer_aging_async(customer_id).await
+    pub async fn get_customer_aging(
+        &self,
+        customer_id: CustomerId,
+    ) -> Result<Option<CustomerArAging>> {
+        self.db.accounts_receivable().get_customer_aging_async(customer_id.into_uuid()).await
     }
 
     pub async fn get_aging_report(&self, filter: ArAgingFilter) -> Result<Vec<CustomerArAging>> {
@@ -751,8 +767,8 @@ impl AsyncAccountsReceivable {
         self.db.accounts_receivable().void_credit_memo_async(id).await
     }
 
-    pub async fn get_unapplied_credits(&self, customer_id: Uuid) -> Result<Vec<CreditMemo>> {
-        self.db.accounts_receivable().get_unapplied_credits_async(customer_id).await
+    pub async fn get_unapplied_credits(&self, customer_id: CustomerId) -> Result<Vec<CreditMemo>> {
+        self.db.accounts_receivable().get_unapplied_credits_async(customer_id.into_uuid()).await
     }
 
     pub async fn apply_payment_to_invoices(
@@ -764,9 +780,9 @@ impl AsyncAccountsReceivable {
 
     pub async fn get_payment_applications(
         &self,
-        payment_id: Uuid,
+        payment_id: PaymentId,
     ) -> Result<Vec<ArPaymentApplication>> {
-        self.db.accounts_receivable().get_payment_applications_async(payment_id).await
+        self.db.accounts_receivable().get_payment_applications_async(payment_id.into_uuid()).await
     }
 
     pub async fn unapply_payment(&self, application_id: Uuid) -> Result<()> {
@@ -775,9 +791,9 @@ impl AsyncAccountsReceivable {
 
     pub async fn get_customer_summary(
         &self,
-        customer_id: Uuid,
+        customer_id: CustomerId,
     ) -> Result<Option<CustomerArSummary>> {
-        self.db.accounts_receivable().get_customer_summary_async(customer_id).await
+        self.db.accounts_receivable().get_customer_summary_async(customer_id.into_uuid()).await
     }
 
     pub async fn generate_statement(
@@ -795,8 +811,8 @@ impl AsyncAccountsReceivable {
         self.db.accounts_receivable().get_dso_async(days).await
     }
 
-    pub async fn get_average_days_to_pay(&self, customer_id: Uuid) -> Result<Option<i32>> {
-        self.db.accounts_receivable().get_average_days_to_pay_async(customer_id).await
+    pub async fn get_average_days_to_pay(&self, customer_id: CustomerId) -> Result<Option<i32>> {
+        self.db.accounts_receivable().get_average_days_to_pay_async(customer_id.into_uuid()).await
     }
 
     pub async fn get_customers_batch(&self, ids: Vec<Uuid>) -> Result<Vec<CustomerArSummary>> {
@@ -943,16 +959,16 @@ impl AsyncGeneralLedger {
         self.db.general_ledger().auto_post_invoice_async(invoice_id).await
     }
 
-    pub async fn auto_post_payment_received(&self, payment_id: Uuid) -> Result<JournalEntry> {
-        self.db.general_ledger().auto_post_payment_received_async(payment_id).await
+    pub async fn auto_post_payment_received(&self, payment_id: PaymentId) -> Result<JournalEntry> {
+        self.db.general_ledger().auto_post_payment_received_async(payment_id.into_uuid()).await
     }
 
     pub async fn auto_post_bill(&self, bill_id: Uuid) -> Result<JournalEntry> {
         self.db.general_ledger().auto_post_bill_async(bill_id).await
     }
 
-    pub async fn auto_post_bill_payment(&self, payment_id: Uuid) -> Result<JournalEntry> {
-        self.db.general_ledger().auto_post_bill_payment_async(payment_id).await
+    pub async fn auto_post_bill_payment(&self, payment_id: PaymentId) -> Result<JournalEntry> {
+        self.db.general_ledger().auto_post_bill_payment_async(payment_id.into_uuid()).await
     }
 
     pub async fn auto_post_inventory_cost(

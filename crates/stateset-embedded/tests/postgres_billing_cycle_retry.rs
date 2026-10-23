@@ -51,7 +51,7 @@ async fn postgres_failed_cycle_increments_retry_and_stamps_billed_at() {
         })
         .await
         .expect("create plan");
-    commerce.subscriptions().activate_plan(plan.id).await.expect("activate plan");
+    commerce.subscriptions().activate_plan(plan.id.into()).await.expect("activate plan");
     let sub = commerce
         .subscriptions()
         .create_subscription(CreateSubscription {

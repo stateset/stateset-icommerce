@@ -69,7 +69,7 @@ async fn subscribe(commerce: &AsyncCommerce, start: DateTime<Utc>) -> Subscripti
         })
         .await
         .expect("create plan");
-    subs.activate_plan(plan.id).await.expect("activate plan");
+    subs.activate_plan(plan.id.into()).await.expect("activate plan");
 
     subs.create_subscription(CreateSubscription {
         customer_id: customer.id,
@@ -106,7 +106,7 @@ async fn claim_mine(
         if sub.id == mine {
             kept.push(sub);
         } else {
-            let _ = subs.release_billing_claim(sub.id.into_uuid(), worker).await;
+            let _ = subs.release_billing_claim(sub.id, worker).await;
         }
     }
     kept
@@ -127,7 +127,7 @@ async fn expire(commerce: &AsyncCommerce, id: SubscriptionId) {
 async fn reload(commerce: &AsyncCommerce, id: stateset_core::SubscriptionId) -> Subscription {
     commerce
         .subscriptions()
-        .get_subscription(id.into_uuid())
+        .get_subscription(id)
         .await
         .expect("get subscription")
         .expect("subscription exists")
@@ -210,7 +210,7 @@ async fn postgres_release_billing_claim_by_a_non_holder_is_refused() {
 
     assert!(
         !subs
-            .release_billing_claim(sub.id.into_uuid(), "someone-else")
+            .release_billing_claim(sub.id, "someone-else")
             .await
             .expect("release by non-holder is not an error"),
         "a non-holder must not release the lease"
@@ -233,7 +233,7 @@ async fn postgres_release_billing_claim_by_a_non_holder_is_refused() {
     assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
 
     // The owner releases it, and then anyone may bill.
-    assert!(subs.release_billing_claim(sub.id.into_uuid(), &holder).await.expect("release"));
+    assert!(subs.release_billing_claim(sub.id, &holder).await.expect("release"));
     assert_eq!(reload(&commerce, sub.id).await.billing_lease_owner, None);
     subs.create_billing_cycle(CreateBillingCycle {
         subscription_id: sub.id,

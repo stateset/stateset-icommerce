@@ -62,7 +62,7 @@ async fn automatic_promo(
         })
         .await
         .expect("create automatic promo");
-    commerce.promotions().activate(promo.id.into_uuid()).await.expect("activate")
+    commerce.promotions().activate(promo.id).await.expect("activate")
 }
 
 async fn exclusive_coupon(
@@ -84,7 +84,7 @@ async fn exclusive_coupon(
         })
         .await
         .expect("create exclusive promo");
-    commerce.promotions().activate(promo.id.into_uuid()).await.expect("activate");
+    commerce.promotions().activate(promo.id).await.expect("activate");
     commerce
         .promotions()
         .create_coupon(CreateCouponCode {
@@ -183,15 +183,7 @@ async fn postgres_per_customer_limit_applies_to_automatic_promotions() {
     assert!(applies(&priced), "first use applies: {priced:?}");
     commerce
         .promotions()
-        .record_usage(
-            promo.id.into_uuid(),
-            None,
-            Some(customer.id.into_uuid()),
-            None,
-            None,
-            dec!(10.00),
-            "USD",
-        )
+        .record_usage(promo.id.into_uuid(), None, Some(customer.id), None, None, dec!(10.00), "USD")
         .await
         .expect("record usage");
 

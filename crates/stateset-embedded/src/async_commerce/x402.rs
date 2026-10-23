@@ -2,6 +2,7 @@
 
 use super::*;
 use stateset_core::CommerceError;
+use stateset_core::{CartId, OrderId};
 
 /// Async x402 and A2A operations.
 pub struct AsyncX402 {
@@ -139,13 +140,13 @@ impl AsyncX402 {
     }
 
     /// Get all payment intents for a cart.
-    pub async fn intents_for_cart(&self, cart_id: Uuid) -> Result<Vec<X402PaymentIntent>> {
-        self.db.x402_payment_intents().for_cart_async(cart_id).await
+    pub async fn intents_for_cart(&self, cart_id: CartId) -> Result<Vec<X402PaymentIntent>> {
+        self.db.x402_payment_intents().for_cart_async(cart_id.into_uuid()).await
     }
 
     /// Get all payment intents for an order.
-    pub async fn intents_for_order(&self, order_id: Uuid) -> Result<Vec<X402PaymentIntent>> {
-        self.db.x402_payment_intents().for_order_async(order_id).await
+    pub async fn intents_for_order(&self, order_id: OrderId) -> Result<Vec<X402PaymentIntent>> {
+        self.db.x402_payment_intents().for_order_async(order_id.into_uuid()).await
     }
 
     /// Get the next nonce for a payer address.
@@ -496,7 +497,7 @@ impl AsyncX402 {
     /// Create a payment intent for a cart.
     pub async fn create_cart_payment(
         &self,
-        cart_id: Uuid,
+        cart_id: CartId,
         payer_address: &str,
         payee_address: &str,
         amount: rust_decimal::Decimal,
@@ -509,14 +510,17 @@ impl AsyncX402 {
             amount: to_smallest_unit(amount, asset),
             asset,
             network,
-            cart_id: Some(cart_id),
+            cart_id: Some(cart_id.into_uuid()),
             ..Default::default()
         })
         .await
     }
 
     /// Get the active payment intent for a cart.
-    pub async fn active_intent_for_cart(&self, cart_id: Uuid) -> Result<Option<X402PaymentIntent>> {
+    pub async fn active_intent_for_cart(
+        &self,
+        cart_id: CartId,
+    ) -> Result<Option<X402PaymentIntent>> {
         let intents = self.intents_for_cart(cart_id).await?;
         Ok(intents.into_iter().find(|intent| {
             matches!(
@@ -616,9 +620,12 @@ impl AsyncX402 {
     pub async fn link_purchase_to_order(
         &self,
         purchase_id: Uuid,
-        order_id: Uuid,
+        order_id: OrderId,
     ) -> Result<A2APurchase> {
-        self.db.a2a_purchases().link_purchase_to_order_async(purchase_id, order_id).await
+        self.db
+            .a2a_purchases()
+            .link_purchase_to_order_async(purchase_id, order_id.into_uuid())
+            .await
     }
 
     /// Confirm delivery for an A2A purchase.

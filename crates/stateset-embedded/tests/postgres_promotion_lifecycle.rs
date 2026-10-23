@@ -56,7 +56,7 @@ fn line_item(sku: &str, quantity: i32, unit_price: Decimal) -> PromotionLineItem
 async fn coupon_promotion(commerce: &AsyncCommerce, input: CreatePromotion) -> (Promotion, String) {
     let code = input.code.clone().expect("caller supplies a code");
     let promo = commerce.promotions().create(input).await.expect("create promotion");
-    commerce.promotions().activate(promo.id.into_uuid()).await.expect("activate");
+    commerce.promotions().activate(promo.id).await.expect("activate");
     commerce
         .promotions()
         .create_coupon(CreateCouponCode {
@@ -161,7 +161,7 @@ async fn postgres_exclusive_promotion_blocks_stackable_by_priority() {
     commerce
         .promotions()
         .update(
-            exclusive.id.into_uuid(),
+            exclusive.id,
             stateset_core::UpdatePromotion { priority: Some(-1001), ..Default::default() },
         )
         .await
@@ -203,8 +203,7 @@ async fn postgres_buy_x_get_y_grants_one_free_item_per_full_set() {
         },
     )
     .await;
-    let reloaded =
-        commerce.promotions().get(promo.id.into_uuid()).await.expect("get").expect("exists");
+    let reloaded = commerce.promotions().get(promo.id).await.expect("get").expect("exists");
     assert_eq!(reloaded.buy_quantity, Some(2));
     assert_eq!(reloaded.get_quantity, Some(1));
     assert_eq!(reloaded.get_discount_percent, Some(Decimal::ONE));
@@ -373,8 +372,7 @@ async fn postgres_record_usage_rejects_unparsable_currency() {
         .await
         .expect_err("an unparsable currency must be refused");
     assert!(matches!(err, stateset_embedded::CommerceError::ValidationError(_)), "{err:?}");
-    let refreshed =
-        commerce.promotions().get(promo.id.into_uuid()).await.expect("get").expect("exists");
+    let refreshed = commerce.promotions().get(promo.id).await.expect("get").expect("exists");
     assert_eq!(refreshed.usage_count, 0, "nothing may be recorded");
 
     let usage = commerce

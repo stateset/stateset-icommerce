@@ -2,6 +2,7 @@
 
 use super::*;
 use stateset_core::LotId;
+use stateset_core::{OrderId, ReturnId, ShipmentId};
 
 /// Async quality operations.
 pub struct AsyncQuality {
@@ -399,18 +400,21 @@ impl AsyncSerials {
     pub async fn mark_sold(
         &self,
         id: Uuid,
-        customer_id: Uuid,
-        order_id: Option<Uuid>,
+        customer_id: CustomerId,
+        order_id: Option<OrderId>,
     ) -> Result<SerialNumber> {
-        self.db.serials().mark_sold_async(id, customer_id, order_id).await
+        self.db
+            .serials()
+            .mark_sold_async(id, customer_id.into_uuid(), order_id.map(OrderId::into_uuid))
+            .await
     }
 
-    pub async fn mark_shipped(&self, id: Uuid, shipment_id: Uuid) -> Result<SerialNumber> {
-        self.db.serials().mark_shipped_async(id, shipment_id).await
+    pub async fn mark_shipped(&self, id: Uuid, shipment_id: ShipmentId) -> Result<SerialNumber> {
+        self.db.serials().mark_shipped_async(id, shipment_id.into_uuid()).await
     }
 
-    pub async fn mark_returned(&self, id: Uuid, return_id: Uuid) -> Result<SerialNumber> {
-        self.db.serials().mark_returned_async(id, return_id).await
+    pub async fn mark_returned(&self, id: Uuid, return_id: ReturnId) -> Result<SerialNumber> {
+        self.db.serials().mark_returned_async(id, return_id.into_uuid()).await
     }
 
     pub async fn activate(&self, id: Uuid) -> Result<SerialNumber> {
@@ -453,8 +457,8 @@ impl AsyncSerials {
         self.db.serials().get_for_lot_async(lot_id).await
     }
 
-    pub async fn get_for_customer(&self, customer_id: Uuid) -> Result<Vec<SerialNumber>> {
-        self.db.serials().get_for_customer_async(customer_id).await
+    pub async fn get_for_customer(&self, customer_id: CustomerId) -> Result<Vec<SerialNumber>> {
+        self.db.serials().get_for_customer_async(customer_id.into_uuid()).await
     }
 
     pub async fn count(&self, filter: SerialFilter) -> Result<u64> {

@@ -1,6 +1,7 @@
 //! Storefront accessors: carts, analytics, currency, tax, promotions, subscriptions.
 
 use super::*;
+use stateset_core::{CartId, OrderId, PromotionId, SubscriptionId};
 
 /// Async cart operations.
 pub struct AsyncCarts {
@@ -21,8 +22,8 @@ impl AsyncCarts {
     }
 
     /// Get cart by ID.
-    pub async fn get(&self, id: Uuid) -> Result<Option<Cart>> {
-        self.db.carts().get_async(id).await
+    pub async fn get(&self, id: CartId) -> Result<Option<Cart>> {
+        self.db.carts().get_async(id.into_uuid()).await
     }
 
     /// Get cart by cart number.
@@ -31,8 +32,8 @@ impl AsyncCarts {
     }
 
     /// Update a cart.
-    pub async fn update(&self, id: Uuid, input: UpdateCart) -> Result<Cart> {
-        self.db.carts().update_async(id, input).await
+    pub async fn update(&self, id: CartId, input: UpdateCart) -> Result<Cart> {
+        self.db.carts().update_async(id.into_uuid(), input).await
     }
 
     /// List carts.
@@ -41,18 +42,18 @@ impl AsyncCarts {
     }
 
     /// Get carts for a customer.
-    pub async fn for_customer(&self, customer_id: Uuid) -> Result<Vec<Cart>> {
-        self.db.carts().for_customer_async(customer_id).await
+    pub async fn for_customer(&self, customer_id: CustomerId) -> Result<Vec<Cart>> {
+        self.db.carts().for_customer_async(customer_id.into_uuid()).await
     }
 
     /// Delete a cart.
-    pub async fn delete(&self, id: Uuid) -> Result<()> {
-        self.db.carts().delete_async(id).await
+    pub async fn delete(&self, id: CartId) -> Result<()> {
+        self.db.carts().delete_async(id.into_uuid()).await
     }
 
     /// Add item to cart.
-    pub async fn add_item(&self, cart_id: Uuid, item: AddCartItem) -> Result<CartItem> {
-        self.db.carts().add_item_async(cart_id, item).await
+    pub async fn add_item(&self, cart_id: CartId, item: AddCartItem) -> Result<CartItem> {
+        self.db.carts().add_item_async(cart_id.into_uuid(), item).await
     }
 
     /// Update a cart item.
@@ -66,66 +67,66 @@ impl AsyncCarts {
     }
 
     /// Get items for a cart.
-    pub async fn get_items(&self, cart_id: Uuid) -> Result<Vec<CartItem>> {
-        self.db.carts().get_items_async(cart_id).await
+    pub async fn get_items(&self, cart_id: CartId) -> Result<Vec<CartItem>> {
+        self.db.carts().get_items_async(cart_id.into_uuid()).await
     }
 
     /// Clear all items from cart.
-    pub async fn clear_items(&self, cart_id: Uuid) -> Result<()> {
-        self.db.carts().clear_items_async(cart_id).await
+    pub async fn clear_items(&self, cart_id: CartId) -> Result<()> {
+        self.db.carts().clear_items_async(cart_id.into_uuid()).await
     }
 
     /// Set shipping address.
-    pub async fn set_shipping_address(&self, id: Uuid, address: CartAddress) -> Result<Cart> {
-        self.db.carts().set_shipping_address_async(id, address).await
+    pub async fn set_shipping_address(&self, id: CartId, address: CartAddress) -> Result<Cart> {
+        self.db.carts().set_shipping_address_async(id.into_uuid(), address).await
     }
 
     /// Set billing address.
-    pub async fn set_billing_address(&self, id: Uuid, address: CartAddress) -> Result<Cart> {
-        self.db.carts().set_billing_address_async(id, address).await
+    pub async fn set_billing_address(&self, id: CartId, address: CartAddress) -> Result<Cart> {
+        self.db.carts().set_billing_address_async(id.into_uuid(), address).await
     }
 
     /// Set shipping method.
-    pub async fn set_shipping(&self, id: Uuid, shipping: SetCartShipping) -> Result<Cart> {
-        self.db.carts().set_shipping_async(id, shipping).await
+    pub async fn set_shipping(&self, id: CartId, shipping: SetCartShipping) -> Result<Cart> {
+        self.db.carts().set_shipping_async(id.into_uuid(), shipping).await
     }
 
     /// Get available shipping rates for cart.
-    pub async fn get_shipping_rates(&self, id: Uuid) -> Result<Vec<ShippingRate>> {
-        self.db.carts().get_shipping_rates_async(id).await
+    pub async fn get_shipping_rates(&self, id: CartId) -> Result<Vec<ShippingRate>> {
+        self.db.carts().get_shipping_rates_async(id.into_uuid()).await
     }
 
     /// Set payment method/token.
-    pub async fn set_payment(&self, id: Uuid, payment: SetCartPayment) -> Result<Cart> {
-        self.db.carts().set_payment_async(id, payment).await
+    pub async fn set_payment(&self, id: CartId, payment: SetCartPayment) -> Result<Cart> {
+        self.db.carts().set_payment_async(id.into_uuid(), payment).await
     }
 
     /// Apply coupon/discount code.
-    pub async fn apply_discount(&self, id: Uuid, coupon_code: &str) -> Result<Cart> {
-        self.db.carts().apply_discount_async(id, coupon_code).await
+    pub async fn apply_discount(&self, id: CartId, coupon_code: &str) -> Result<Cart> {
+        self.db.carts().apply_discount_async(id.into_uuid(), coupon_code).await
     }
 
     /// Remove discount.
-    pub async fn remove_discount(&self, id: Uuid) -> Result<Cart> {
-        self.db.carts().remove_discount_async(id).await
+    pub async fn remove_discount(&self, id: CartId) -> Result<Cart> {
+        self.db.carts().remove_discount_async(id.into_uuid()).await
     }
 
     /// Mark cart as ready for payment.
-    pub async fn mark_ready_for_payment(&self, id: Uuid) -> Result<Cart> {
-        self.db.carts().mark_ready_for_payment_async(id).await
+    pub async fn mark_ready_for_payment(&self, id: CartId) -> Result<Cart> {
+        self.db.carts().mark_ready_for_payment_async(id.into_uuid()).await
     }
 
     /// Begin checkout process.
-    pub async fn begin_checkout(&self, id: Uuid) -> Result<Cart> {
-        self.db.carts().begin_checkout_async(id).await
+    pub async fn begin_checkout(&self, id: CartId) -> Result<Cart> {
+        self.db.carts().begin_checkout_async(id.into_uuid()).await
     }
 
     /// Complete checkout (creates order). The minted order is `Confirmed`
     /// with payment left `Pending`; record the payment through the payments
     /// API, or use [`complete_settled_externally`](Self::complete_settled_externally)
     /// when settlement genuinely happened outside the engine.
-    pub async fn complete(&self, id: Uuid) -> Result<CheckoutResult> {
-        let result = self.db.carts().complete_async(id).await?;
+    pub async fn complete(&self, id: CartId) -> Result<CheckoutResult> {
+        let result = self.db.carts().complete_async(id.into_uuid()).await?;
         self.metrics.record_cart_checkout_completed(
             &result.cart_id.to_string(),
             &result.order_id.to_string(),
@@ -136,8 +137,8 @@ impl AsyncCarts {
     /// Complete checkout for a cart settled outside the engine (ACP, external
     /// PSP): explicit opt-in to mint a `Confirmed` + `Paid` order with no
     /// engine-side payment record.
-    pub async fn complete_settled_externally(&self, id: Uuid) -> Result<CheckoutResult> {
-        let result = self.db.carts().complete_settled_externally_async(id).await?;
+    pub async fn complete_settled_externally(&self, id: CartId) -> Result<CheckoutResult> {
+        let result = self.db.carts().complete_settled_externally_async(id.into_uuid()).await?;
         self.metrics.record_cart_checkout_completed(
             &result.cart_id.to_string(),
             &result.order_id.to_string(),
@@ -146,38 +147,38 @@ impl AsyncCarts {
     }
 
     /// Cancel a cart.
-    pub async fn cancel(&self, id: Uuid) -> Result<Cart> {
-        self.db.carts().cancel_async(id).await
+    pub async fn cancel(&self, id: CartId) -> Result<Cart> {
+        self.db.carts().cancel_async(id.into_uuid()).await
     }
 
     /// Mark cart as abandoned.
-    pub async fn abandon(&self, id: Uuid) -> Result<Cart> {
-        self.db.carts().abandon_async(id).await
+    pub async fn abandon(&self, id: CartId) -> Result<Cart> {
+        self.db.carts().abandon_async(id.into_uuid()).await
     }
 
     /// Expire a cart.
-    pub async fn expire(&self, id: Uuid) -> Result<Cart> {
-        self.db.carts().expire_async(id).await
+    pub async fn expire(&self, id: CartId) -> Result<Cart> {
+        self.db.carts().expire_async(id.into_uuid()).await
     }
 
     /// Reserve inventory for cart items.
-    pub async fn reserve_inventory(&self, id: Uuid) -> Result<Cart> {
-        self.db.carts().reserve_inventory_async(id).await
+    pub async fn reserve_inventory(&self, id: CartId) -> Result<Cart> {
+        self.db.carts().reserve_inventory_async(id.into_uuid()).await
     }
 
     /// Release inventory reservations.
-    pub async fn release_inventory(&self, id: Uuid) -> Result<Cart> {
-        self.db.carts().release_inventory_async(id).await
+    pub async fn release_inventory(&self, id: CartId) -> Result<Cart> {
+        self.db.carts().release_inventory_async(id.into_uuid()).await
     }
 
     /// Recalculate cart totals.
-    pub async fn recalculate(&self, id: Uuid) -> Result<Cart> {
-        self.db.carts().recalculate_async(id).await
+    pub async fn recalculate(&self, id: CartId) -> Result<Cart> {
+        self.db.carts().recalculate_async(id.into_uuid()).await
     }
 
     /// Set tax amount.
-    pub async fn set_tax(&self, id: Uuid, tax_amount: Decimal) -> Result<Cart> {
-        self.db.carts().set_tax_async(id, tax_amount).await
+    pub async fn set_tax(&self, id: CartId, tax_amount: Decimal) -> Result<Cart> {
+        self.db.carts().set_tax_async(id.into_uuid(), tax_amount).await
     }
 
     /// Get abandoned carts.
@@ -421,8 +422,11 @@ impl AsyncTax {
         self.db.tax().get_exemption_async(id).await
     }
 
-    pub async fn get_customer_exemptions(&self, customer_id: Uuid) -> Result<Vec<TaxExemption>> {
-        self.db.tax().get_customer_exemptions_async(customer_id).await
+    pub async fn get_customer_exemptions(
+        &self,
+        customer_id: CustomerId,
+    ) -> Result<Vec<TaxExemption>> {
+        self.db.tax().get_customer_exemptions_async(customer_id.into_uuid()).await
     }
 
     /// Mark an exemption certificate as verified, or revoke that
@@ -435,7 +439,11 @@ impl AsyncTax {
 
     /// Whether the customer has an exemption tax calculation would honour on
     /// `date` — active, verified and inside its validity window.
-    pub async fn customer_is_exempt_on(&self, customer_id: Uuid, date: NaiveDate) -> Result<bool> {
+    pub async fn customer_is_exempt_on(
+        &self,
+        customer_id: CustomerId,
+        date: NaiveDate,
+    ) -> Result<bool> {
         let exemptions = self.get_customer_exemptions(customer_id).await?;
         Ok(exemptions.iter().any(|e| e.is_effective_on(date)))
     }
@@ -458,15 +466,22 @@ impl AsyncTax {
     pub async fn save_calculation(
         &self,
         result: &TaxCalculationResult,
-        order_id: Option<Uuid>,
-        cart_id: Option<Uuid>,
-        customer_id: Option<Uuid>,
+        order_id: Option<OrderId>,
+        cart_id: Option<CartId>,
+        customer_id: Option<CustomerId>,
         address: &TaxAddress,
         currency: &str,
     ) -> Result<()> {
         self.db
             .tax()
-            .save_calculation_async(result, order_id, cart_id, customer_id, address, currency)
+            .save_calculation_async(
+                result,
+                order_id.map(OrderId::into_uuid),
+                cart_id.map(CartId::into_uuid),
+                customer_id.map(CustomerId::into_uuid),
+                address,
+                currency,
+            )
             .await
     }
 }
@@ -489,8 +504,8 @@ impl AsyncPromotions {
         self.db.promotions().create_async(input).await
     }
 
-    pub async fn get(&self, id: Uuid) -> Result<Option<Promotion>> {
-        self.db.promotions().get_async(id.into()).await
+    pub async fn get(&self, id: PromotionId) -> Result<Option<Promotion>> {
+        self.db.promotions().get_async(id).await
     }
 
     pub async fn get_by_code(&self, code: &str) -> Result<Option<Promotion>> {
@@ -501,28 +516,28 @@ impl AsyncPromotions {
         self.db.promotions().list_async(filter).await
     }
 
-    pub async fn update(&self, id: Uuid, input: UpdatePromotion) -> Result<Promotion> {
-        self.db.promotions().update_async(id, input).await
+    pub async fn update(&self, id: PromotionId, input: UpdatePromotion) -> Result<Promotion> {
+        self.db.promotions().update_async(id.into_uuid(), input).await
     }
 
-    pub async fn delete(&self, id: Uuid) -> Result<()> {
-        self.db.promotions().delete_async(id).await
+    pub async fn delete(&self, id: PromotionId) -> Result<()> {
+        self.db.promotions().delete_async(id.into_uuid()).await
     }
 
-    pub async fn activate(&self, id: Uuid) -> Result<Promotion> {
-        self.db.promotions().activate_async(id).await
+    pub async fn activate(&self, id: PromotionId) -> Result<Promotion> {
+        self.db.promotions().activate_async(id.into_uuid()).await
     }
 
-    pub async fn deactivate(&self, id: Uuid) -> Result<Promotion> {
-        self.db.promotions().deactivate_async(id).await
+    pub async fn deactivate(&self, id: PromotionId) -> Result<Promotion> {
+        self.db.promotions().deactivate_async(id.into_uuid()).await
     }
 
     pub async fn create_coupon(&self, input: CreateCouponCode) -> Result<CouponCode> {
         self.db.promotions().create_coupon_async(input).await
     }
 
-    pub async fn get_coupon(&self, id: Uuid) -> Result<Option<CouponCode>> {
-        self.db.promotions().get_coupon_async(id).await
+    pub async fn get_coupon(&self, id: PromotionId) -> Result<Option<CouponCode>> {
+        self.db.promotions().get_coupon_async(id.into_uuid()).await
     }
 
     pub async fn get_coupon_by_code(&self, code: &str) -> Result<Option<CouponCode>> {
@@ -554,9 +569,9 @@ impl AsyncPromotions {
         &self,
         promotion_id: Uuid,
         coupon_id: Option<Uuid>,
-        customer_id: Option<Uuid>,
-        order_id: Option<Uuid>,
-        cart_id: Option<Uuid>,
+        customer_id: Option<CustomerId>,
+        order_id: Option<OrderId>,
+        cart_id: Option<CartId>,
         discount_amount: Decimal,
         currency: &str,
     ) -> Result<PromotionUsage> {
@@ -565,9 +580,9 @@ impl AsyncPromotions {
             .record_usage_async(
                 promotion_id.into(),
                 coupon_id,
-                customer_id.map(Into::into),
-                order_id.map(Into::into),
-                cart_id.map(Into::into),
+                customer_id,
+                order_id,
+                cart_id,
                 discount_amount,
                 currency,
             )
@@ -594,8 +609,8 @@ impl AsyncSubscriptions {
         self.db.subscriptions().create_plan_async(input).await
     }
 
-    pub async fn get_plan(&self, id: Uuid) -> Result<Option<SubscriptionPlan>> {
-        self.db.subscriptions().get_plan_async(id).await
+    pub async fn get_plan(&self, id: SubscriptionId) -> Result<Option<SubscriptionPlan>> {
+        self.db.subscriptions().get_plan_async(id.into_uuid()).await
     }
 
     pub async fn get_plan_by_code(&self, code: &str) -> Result<Option<SubscriptionPlan>> {
@@ -617,12 +632,12 @@ impl AsyncSubscriptions {
         self.db.subscriptions().update_plan_async(id, input).await
     }
 
-    pub async fn activate_plan(&self, id: Uuid) -> Result<SubscriptionPlan> {
-        self.db.subscriptions().activate_plan_async(id).await
+    pub async fn activate_plan(&self, id: SubscriptionId) -> Result<SubscriptionPlan> {
+        self.db.subscriptions().activate_plan_async(id.into_uuid()).await
     }
 
-    pub async fn archive_plan(&self, id: Uuid) -> Result<SubscriptionPlan> {
-        self.db.subscriptions().archive_plan_async(id).await
+    pub async fn archive_plan(&self, id: SubscriptionId) -> Result<SubscriptionPlan> {
+        self.db.subscriptions().archive_plan_async(id.into_uuid()).await
     }
 
     pub async fn create_subscription(&self, input: CreateSubscription) -> Result<Subscription> {
@@ -631,8 +646,8 @@ impl AsyncSubscriptions {
         Ok(subscription)
     }
 
-    pub async fn get_subscription(&self, id: Uuid) -> Result<Option<Subscription>> {
-        self.db.subscriptions().get_subscription_async(id.into()).await
+    pub async fn get_subscription(&self, id: SubscriptionId) -> Result<Option<Subscription>> {
+        self.db.subscriptions().get_subscription_async(id).await
     }
 
     pub async fn get_subscription_by_number(&self, number: &str) -> Result<Option<Subscription>> {
@@ -670,16 +685,16 @@ impl AsyncSubscriptions {
         self.db.subscriptions().pause_subscription_async(id.into(), input).await
     }
 
-    pub async fn resume_subscription(&self, id: Uuid) -> Result<Subscription> {
-        self.db.subscriptions().resume_subscription_async(id.into()).await
+    pub async fn resume_subscription(&self, id: SubscriptionId) -> Result<Subscription> {
+        self.db.subscriptions().resume_subscription_async(id).await
     }
 
     pub async fn create_billing_cycle(&self, input: CreateBillingCycle) -> Result<BillingCycle> {
         self.db.subscriptions().create_billing_cycle_async(input).await
     }
 
-    pub async fn get_billing_cycle(&self, id: Uuid) -> Result<Option<BillingCycle>> {
-        self.db.subscriptions().get_billing_cycle_async(id).await
+    pub async fn get_billing_cycle(&self, id: SubscriptionId) -> Result<Option<BillingCycle>> {
+        self.db.subscriptions().get_billing_cycle_async(id.into_uuid()).await
     }
 
     pub async fn list_billing_cycles(
@@ -731,28 +746,28 @@ impl AsyncSubscriptions {
     }
 
     /// Release the billing lease `worker_id` holds on `id`.
-    pub async fn release_billing_claim(&self, id: Uuid, worker_id: &str) -> Result<bool> {
-        self.db.subscriptions().release_billing_claim_async(id.into(), worker_id).await
+    pub async fn release_billing_claim(&self, id: SubscriptionId, worker_id: &str) -> Result<bool> {
+        self.db.subscriptions().release_billing_claim_async(id, worker_id).await
     }
 
     pub async fn record_event(
         &self,
-        subscription_id: Uuid,
+        subscription_id: SubscriptionId,
         event_type: SubscriptionEventType,
         notes: Option<String>,
     ) -> Result<SubscriptionEvent> {
         let description = notes.unwrap_or_else(|| "Event".to_string());
         self.db
             .subscriptions()
-            .record_event_async(subscription_id.into(), event_type, &description, None, None)
+            .record_event_async(subscription_id, event_type, &description, None, None)
             .await
     }
 
     pub async fn get_subscription_events(
         &self,
-        subscription_id: Uuid,
+        subscription_id: SubscriptionId,
     ) -> Result<Vec<SubscriptionEvent>> {
-        self.db.subscriptions().get_subscription_events_async(subscription_id.into()).await
+        self.db.subscriptions().get_subscription_events_async(subscription_id).await
     }
 }
 
