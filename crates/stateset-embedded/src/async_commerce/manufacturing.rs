@@ -1,6 +1,7 @@
 //! Manufacturing accessors: warranties, BOMs, work orders.
 
 use super::*;
+use stateset_core::WarrantyClaimId;
 
 /// Async warranty operations.
 pub struct AsyncWarranties {
@@ -73,8 +74,8 @@ impl AsyncWarranties {
     }
 
     /// Get claim by ID.
-    pub async fn get_claim(&self, id: Uuid) -> Result<Option<WarrantyClaim>> {
-        self.db.warranties().get_claim_async(id).await
+    pub async fn get_claim(&self, id: WarrantyClaimId) -> Result<Option<WarrantyClaim>> {
+        self.db.warranties().get_claim_async(id.into_uuid()).await
     }
 
     /// Get claim by claim number.
@@ -85,10 +86,10 @@ impl AsyncWarranties {
     /// Update a claim.
     pub async fn update_claim(
         &self,
-        id: Uuid,
+        id: WarrantyClaimId,
         input: UpdateWarrantyClaim,
     ) -> Result<WarrantyClaim> {
-        self.db.warranties().update_claim_async(id, input).await
+        self.db.warranties().update_claim_async(id.into_uuid(), input).await
     }
 
     /// List claims.
@@ -102,27 +103,27 @@ impl AsyncWarranties {
     }
 
     /// Approve a claim.
-    pub async fn approve_claim(&self, id: Uuid) -> Result<WarrantyClaim> {
-        self.db.warranties().approve_claim_async(id).await
+    pub async fn approve_claim(&self, id: WarrantyClaimId) -> Result<WarrantyClaim> {
+        self.db.warranties().approve_claim_async(id.into_uuid()).await
     }
 
     /// Deny a claim.
-    pub async fn deny_claim(&self, id: Uuid, reason: &str) -> Result<WarrantyClaim> {
-        self.db.warranties().deny_claim_async(id, reason).await
+    pub async fn deny_claim(&self, id: WarrantyClaimId, reason: &str) -> Result<WarrantyClaim> {
+        self.db.warranties().deny_claim_async(id.into_uuid(), reason).await
     }
 
     /// Complete a claim.
     pub async fn complete_claim(
         &self,
-        id: Uuid,
+        id: WarrantyClaimId,
         resolution: ClaimResolution,
     ) -> Result<WarrantyClaim> {
-        self.db.warranties().complete_claim_async(id, resolution).await
+        self.db.warranties().complete_claim_async(id.into_uuid(), resolution).await
     }
 
     /// Cancel a claim.
-    pub async fn cancel_claim(&self, id: Uuid) -> Result<WarrantyClaim> {
-        self.db.warranties().cancel_claim_async(id).await
+    pub async fn cancel_claim(&self, id: WarrantyClaimId) -> Result<WarrantyClaim> {
+        self.db.warranties().cancel_claim_async(id.into_uuid()).await
     }
 
     /// Count warranties.

@@ -65,8 +65,8 @@ async fn postgres_fulfill_backorder_guards() {
         .expect("create order");
 
     let mk = || CreateBackorder {
-        order_id: order.id.into_uuid(),
-        customer_id: customer.id.into_uuid(),
+        order_id: order.id,
+        customer_id: customer.id,
         sku: "BO-GUARD".into(),
         quantity: dec!(10),
         priority: None,
@@ -76,7 +76,7 @@ async fn postgres_fulfill_backorder_guards() {
         source_location_id: None,
         notes: None,
     };
-    let fulfill = |id: uuid::Uuid, qty| FulfillBackorder {
+    let fulfill = |id: stateset_core::BackorderId, qty| FulfillBackorder {
         backorder_id: id,
         quantity: qty,
         source_type: FulfillmentSourceType::Inventory,
