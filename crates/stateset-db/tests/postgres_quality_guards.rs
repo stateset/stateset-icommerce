@@ -109,17 +109,17 @@ async fn postgres_failed_inspection_quarantines_lots() {
 
     // Header references the lot; item names it too.
     let lot = make_lot(&db, &sku).await;
-    let insp = inspection_for(&db, "lot", lot.id, &[&lot]).await;
+    let insp = inspection_for(&db, "lot", lot.id.into_uuid(), &[&lot]).await;
     db.quality().start_inspection_async(insp.id).await.expect("start");
     record(&db, insp.items[0].id, InspectionResult::Fail).await;
     let done = db.quality().complete_inspection_async(insp.id).await.expect("complete");
     assert_eq!(done.status, InspectionStatus::Failed);
-    let after = db.lots().get_async(lot.id).await.unwrap().unwrap();
+    let after = db.lots().get_async(lot.id.into_uuid()).await.unwrap().unwrap();
     assert_eq!(after.status, LotStatus::Quarantine);
     assert_eq!(after.quantity_quarantined, dec!(100));
     let q = db
         .lots()
-        .get_transactions_async(lot.id, 10)
+        .get_transactions_async(lot.id.into_uuid(), 10)
         .await
         .expect("txns")
         .into_iter()
@@ -138,16 +138,25 @@ async fn postgres_failed_inspection_quarantines_lots() {
     record(&db, good_item.unwrap().id, InspectionResult::Pass).await;
     let done = db.quality().complete_inspection_async(insp.id).await.expect("complete");
     assert_eq!(done.status, InspectionStatus::PartialPass);
-    assert_eq!(db.lots().get_async(bad.id).await.unwrap().unwrap().status, LotStatus::Quarantine);
-    assert_eq!(db.lots().get_async(good.id).await.unwrap().unwrap().status, LotStatus::Active);
+    assert_eq!(
+        db.lots().get_async(bad.id.into_uuid()).await.unwrap().unwrap().status,
+        LotStatus::Quarantine
+    );
+    assert_eq!(
+        db.lots().get_async(good.id.into_uuid()).await.unwrap().unwrap().status,
+        LotStatus::Active
+    );
 
     // Passed leaves the lot alone; already-quarantined lot is untouched.
     let fine = make_lot(&db, &sku).await;
-    let insp = inspection_for(&db, "lot", fine.id, &[&fine]).await;
+    let insp = inspection_for(&db, "lot", fine.id.into_uuid(), &[&fine]).await;
     db.quality().start_inspection_async(insp.id).await.expect("start");
     record(&db, insp.items[0].id, InspectionResult::Pass).await;
     db.quality().complete_inspection_async(insp.id).await.expect("complete");
-    assert_eq!(db.lots().get_async(fine.id).await.unwrap().unwrap().status, LotStatus::Active);
+    assert_eq!(
+        db.lots().get_async(fine.id.into_uuid()).await.unwrap().unwrap().status,
+        LotStatus::Active
+    );
 }
 
 #[tokio::test]

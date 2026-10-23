@@ -11250,7 +11250,8 @@ impl LotsApi {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
         let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
-        let lot = commerce.lots().get(uuid).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let lot =
+            commerce.lots().get(uuid.into()).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         convert_optional_output(lot)
     }
 
@@ -11286,7 +11287,7 @@ impl LotsApi {
         let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let lot = commerce
             .lots()
-            .quarantine(uuid, &reason)
+            .quarantine(uuid.into(), &reason)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         convert_output(lot)
     }

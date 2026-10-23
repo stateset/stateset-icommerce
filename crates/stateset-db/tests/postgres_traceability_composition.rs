@@ -22,6 +22,7 @@
 
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use stateset_core::LotId;
 use stateset_core::{
     AdjustLot, CommerceError, ConsumeLot, CreateInspection, CreateInspectionItem,
     CreateInventoryItem, CreateLot, CreateSerialNumber, InspectionResult, InspectionStatus,
@@ -92,7 +93,7 @@ async fn serial_status(db: &PostgresDatabase, id: Uuid) -> SerialStatus {
 async fn reserve_lot(db: &PostgresDatabase, lot_id: Uuid, qty: Decimal, ttl: Option<i64>) -> Uuid {
     db.lots()
         .reserve_async(ReserveLot {
-            lot_id,
+            lot_id: LotId::from(lot_id),
             quantity: qty,
             reference_type: "order".into(),
             reference_id: Uuid::new_v4(),
@@ -143,7 +144,13 @@ async fn assert_invariant(
         .expect("list");
     let mut expected = Decimal::ZERO;
     for lot in lots.iter().filter(|l| l.status == LotStatus::Active) {
-        if db.lots().get_quantity_at_location_async(lot.id, location).await.unwrap().is_some() {
+        if db
+            .lots()
+            .get_quantity_at_location_async(lot.id.into_uuid(), location)
+            .await
+            .unwrap()
+            .is_some()
+        {
             expected += lot.quantity_available();
         }
     }
@@ -174,14 +181,14 @@ async fn postgres_lot_quarantine_cascades_to_serials_and_release_restores() {
         .expect("reserve serial");
     db.serials().mark_shipped_async(shipped, Uuid::new_v4()).await.expect("ship");
 
-    db.lots().quarantine_async(lot.id, "recall").await.expect("quarantine");
+    db.lots().quarantine_async(lot.id.into_uuid(), "recall").await.expect("quarantine");
     assert_eq!(serial_status(&db, available).await, SerialStatus::Quarantined);
     assert_eq!(serial_status(&db, reserved).await, SerialStatus::Quarantined);
     assert_eq!(serial_status(&db, shipped).await, SerialStatus::Shipped);
     let res = db.serials().get_reservation_async(reservation.id).await.unwrap().unwrap();
     assert!(res.released_at.is_some(), "open reservation closed by the quarantine");
 
-    db.lots().release_quarantine_async(lot.id).await.expect("release");
+    db.lots().release_quarantine_async(lot.id.into_uuid()).await.expect("release");
     assert_eq!(serial_status(&db, available).await, SerialStatus::Available);
     assert_eq!(serial_status(&db, reserved).await, SerialStatus::Available);
     assert_eq!(serial_status(&db, shipped).await, SerialStatus::Shipped);
@@ -201,7 +208,7 @@ async fn postgres_failed_inspection_quarantines_serials_and_holds_inventory() {
         .create_inspection_async(CreateInspection {
             inspection_type: InspectionType::Incoming,
             reference_type: "lot".into(),
-            reference_id: lot.id,
+            reference_id: lot.id.into_uuid(),
             inspector_id: None,
             scheduled_at: None,
             notes: None,
@@ -230,11 +237,14 @@ async fn postgres_failed_inspection_quarantines_serials_and_holds_inventory() {
     let done = db.quality().complete_inspection_async(insp.id).await.expect("complete");
     assert_eq!(done.status, InspectionStatus::Failed);
 
-    assert_eq!(db.lots().get_async(lot.id).await.unwrap().unwrap().status, LotStatus::Quarantine);
+    assert_eq!(
+        db.lots().get_async(lot.id.into_uuid()).await.unwrap().unwrap().status,
+        LotStatus::Quarantine
+    );
     assert_eq!(serial_status(&db, serial).await, SerialStatus::Quarantined);
     assert_eq!(balance(&db, item, 1).await, (dec!(2), dec!(0)), "held, still on hand");
 
-    db.lots().release_quarantine_async(lot.id).await.expect("release");
+    db.lots().release_quarantine_async(lot.id.into_uuid()).await.expect("release");
     assert_eq!(serial_status(&db, serial).await, SerialStatus::Available);
     assert_eq!(balance(&db, item, 1).await, (dec!(2), dec!(2)));
 }
@@ -250,7 +260,7 @@ async fn postgres_lot_lifecycle_keeps_inventory_in_step() {
     assert_eq!(balance(&db, item, 1).await, (dec!(100), dec!(100)));
     assert_invariant(&db, &sku, item, 1, "create").await;
 
-    let res = reserve_lot(&db, lot.id, dec!(30), None).await;
+    let res = reserve_lot(&db, lot.id.into_uuid(), dec!(30), None).await;
     assert_eq!(balance(&db, item, 1).await.1, dec!(70));
     assert_invariant(&db, &sku, item, 1, "reserve").await;
 
@@ -289,13 +299,13 @@ async fn postgres_lot_lifecycle_keeps_inventory_in_step() {
     lots.release_reservation_async(res).await.expect("release");
     assert_invariant(&db, &sku, item, 1, "release").await;
 
-    let res2 = reserve_lot(&db, lot.id, dec!(20), None).await;
+    let res2 = reserve_lot(&db, lot.id.into_uuid(), dec!(20), None).await;
     lots.confirm_reservation_async(res2).await.expect("confirm");
     assert_eq!(balance(&db, item, 1).await.0, dec!(67));
     assert_invariant(&db, &sku, item, 1, "confirm").await;
 
-    let res3 = reserve_lot(&db, lot.id, dec!(7), None).await;
-    lots.quarantine_async(lot.id, "qa hold").await.expect("quarantine");
+    let res3 = reserve_lot(&db, lot.id.into_uuid(), dec!(7), None).await;
+    lots.quarantine_async(lot.id.into_uuid(), "qa hold").await.expect("quarantine");
     assert_eq!(balance(&db, item, 1).await, (dec!(67), dec!(0)));
     assert_invariant(&db, &sku, item, 1, "quarantine").await;
 
@@ -303,7 +313,7 @@ async fn postgres_lot_lifecycle_keeps_inventory_in_step() {
     assert_eq!(balance(&db, item, 1).await.1, dec!(0));
     assert_invariant(&db, &sku, item, 1, "release under quarantine").await;
 
-    lots.release_quarantine_async(lot.id).await.expect("release quarantine");
+    lots.release_quarantine_async(lot.id.into_uuid()).await.expect("release quarantine");
     assert_eq!(balance(&db, item, 1).await.1, dec!(67));
     assert_invariant(&db, &sku, item, 1, "release quarantine").await;
 
@@ -345,7 +355,7 @@ async fn postgres_lot_lifecycle_keeps_inventory_in_step() {
     assert_eq!(balance(&db, item, 2).await.0, dec!(4));
 
     lots.update_async(
-        other.id,
+        other.id.into_uuid(),
         UpdateLot {
             expiration_date: Some(chrono::Utc::now() - chrono::Duration::days(1)),
             ..Default::default()
@@ -369,7 +379,7 @@ async fn postgres_unlinked_lots_leave_inventory_alone() {
     let sku = sku("TC-FREE");
     let item = inventory_item(&db, &sku).await;
     let lot = make_lot(&db, &sku, dec!(50), None).await;
-    db.lots().quarantine_async(lot.id, "x").await.expect("quarantine");
+    db.lots().quarantine_async(lot.id.into_uuid(), "x").await.expect("quarantine");
     assert_eq!(balance(&db, item, 1).await, (dec!(0), dec!(0)));
 }
 
@@ -380,22 +390,28 @@ async fn postgres_expired_lot_reservations_are_released_lazily_and_by_the_sweepe
     let lot = make_lot(&db, &sku, dec!(10), Some(1)).await;
 
     // confirm of an expired reservation releases it on the spot.
-    let stale = reserve_lot(&db, lot.id, dec!(4), Some(-60)).await;
+    let stale = reserve_lot(&db, lot.id.into_uuid(), dec!(4), Some(-60)).await;
     let err = db.lots().confirm_reservation_async(stale).await.expect_err("expired");
     assert!(
         matches!(err, CommerceError::ValidationError(ref m) if m.contains("released")),
         "{err:?}"
     );
-    assert_eq!(db.lots().get_async(lot.id).await.unwrap().unwrap().quantity_reserved, dec!(0));
+    assert_eq!(
+        db.lots().get_async(lot.id.into_uuid()).await.unwrap().unwrap().quantity_reserved,
+        dec!(0)
+    );
     assert!(matches!(
         db.lots().release_reservation_async(stale).await,
         Err(CommerceError::NotFound)
     ));
 
     // reserve sweeps stale reservations on the lot first.
-    let stale2 = reserve_lot(&db, lot.id, dec!(8), Some(-1)).await;
-    reserve_lot(&db, lot.id, dec!(6), None).await;
-    assert_eq!(db.lots().get_async(lot.id).await.unwrap().unwrap().quantity_reserved, dec!(6));
+    let stale2 = reserve_lot(&db, lot.id.into_uuid(), dec!(8), Some(-1)).await;
+    reserve_lot(&db, lot.id.into_uuid(), dec!(6), None).await;
+    assert_eq!(
+        db.lots().get_async(lot.id.into_uuid()).await.unwrap().unwrap().quantity_reserved,
+        dec!(6)
+    );
     assert!(matches!(
         db.lots().release_reservation_async(stale2).await,
         Err(CommerceError::NotFound)
@@ -404,12 +420,15 @@ async fn postgres_expired_lot_reservations_are_released_lazily_and_by_the_sweepe
     // the global sweeper catches lots nobody touched (the live reservation is
     // taken first: reserving afterwards would sweep the stale one lazily).
     let other = make_lot(&db, &sku, dec!(10), Some(1)).await;
-    let live = reserve_lot(&db, other.id, dec!(2), None).await;
-    reserve_lot(&db, other.id, dec!(3), Some(-1)).await;
+    let live = reserve_lot(&db, other.id.into_uuid(), dec!(2), None).await;
+    reserve_lot(&db, other.id.into_uuid(), dec!(3), Some(-1)).await;
     assert!(
         db.lots().release_expired_reservations_async(chrono::Utc::now()).await.expect("sweep") >= 1
     );
-    assert_eq!(db.lots().get_async(other.id).await.unwrap().unwrap().quantity_reserved, dec!(2));
+    assert_eq!(
+        db.lots().get_async(other.id.into_uuid()).await.unwrap().unwrap().quantity_reserved,
+        dec!(2)
+    );
     db.lots().release_reservation_async(live).await.expect("live reservation survives the sweep");
 }
 
@@ -464,7 +483,10 @@ async fn postgres_failed_item_lot_number_is_scoped_to_the_items_sku() {
         db.quality().get_inspection_async(insp.id).await.unwrap().unwrap().status,
         InspectionStatus::InProgress
     );
-    assert_eq!(db.lots().get_async(other.id).await.unwrap().unwrap().status, LotStatus::Active);
+    assert_eq!(
+        db.lots().get_async(other.id.into_uuid()).await.unwrap().unwrap().status,
+        LotStatus::Active
+    );
 }
 
 #[tokio::test]
@@ -474,16 +496,19 @@ async fn postgres_update_refuses_quarantine_transitions() {
     let err = db
         .lots()
         .update_async(
-            lot.id,
+            lot.id.into_uuid(),
             UpdateLot { status: Some(LotStatus::Quarantine), ..Default::default() },
         )
         .await
         .expect_err("quarantine via update");
     assert!(matches!(err, CommerceError::ValidationError(ref m) if m.contains("use quarantine")));
-    db.lots().quarantine_async(lot.id, "x").await.expect("quarantine");
+    db.lots().quarantine_async(lot.id.into_uuid(), "x").await.expect("quarantine");
     let err = db
         .lots()
-        .update_async(lot.id, UpdateLot { status: Some(LotStatus::Active), ..Default::default() })
+        .update_async(
+            lot.id.into_uuid(),
+            UpdateLot { status: Some(LotStatus::Active), ..Default::default() },
+        )
         .await
         .expect_err("release via update");
     assert!(
@@ -551,8 +576,14 @@ async fn postgres_split_moves_placement_and_keeps_inventory_in_step() {
         .await
         .expect("split");
     assert_invariant(&db, &sku, item, 1, "split").await;
-    assert_eq!(lots.get_quantity_at_location_async(lot.id, 1).await.unwrap(), Some(dec!(70)));
-    assert_eq!(lots.get_quantity_at_location_async(child.id, 1).await.unwrap(), Some(dec!(30)));
+    assert_eq!(
+        lots.get_quantity_at_location_async(lot.id.into_uuid(), 1).await.unwrap(),
+        Some(dec!(70))
+    );
+    assert_eq!(
+        lots.get_quantity_at_location_async(child.id.into_uuid(), 1).await.unwrap(),
+        Some(dec!(30))
+    );
     assert_eq!(balance(&db, item, 1).await.0, dec!(100), "split moves nothing on hand");
 
     lots.consume_async(ConsumeLot {
@@ -593,9 +624,12 @@ async fn postgres_merge_moves_placements_and_keeps_inventory_in_step() {
         .expect("merge");
     assert_eq!(merged.quantity_remaining, dec!(100));
     assert_invariant(&db, &sku, item, 1, "merge").await;
-    assert_eq!(lots.get_quantity_at_location_async(merged.id, 1).await.unwrap(), Some(dec!(100)));
-    assert_eq!(lots.get_quantity_at_location_async(a.id, 1).await.unwrap(), None);
-    assert_eq!(lots.get_quantity_at_location_async(b.id, 1).await.unwrap(), None);
+    assert_eq!(
+        lots.get_quantity_at_location_async(merged.id.into_uuid(), 1).await.unwrap(),
+        Some(dec!(100))
+    );
+    assert_eq!(lots.get_quantity_at_location_async(a.id.into_uuid(), 1).await.unwrap(), None);
+    assert_eq!(lots.get_quantity_at_location_async(b.id.into_uuid(), 1).await.unwrap(), None);
     assert_eq!(balance(&db, item, 1).await.0, dec!(100), "merge moves nothing on hand");
 
     lots.consume_async(ConsumeLot {
@@ -655,19 +689,19 @@ async fn postgres_merge_records_genealogy_for_every_source() {
         .await
         .expect("merge");
 
-    let parents = lots.get_lot_parents_async(merged.id).await.expect("parents");
+    let parents = lots.get_lot_parents_async(merged.id.into_uuid()).await.expect("parents");
     assert_eq!(parents.len(), 2);
     assert!(parents.iter().all(|p| p.relationship == LotRelationship::Merge));
     assert!(parents.iter().any(|p| p.parent_lot_id == a.id && p.quantity == dec!(10)));
     assert!(parents.iter().any(|p| p.parent_lot_id == b.id && p.quantity == dec!(5)));
-    assert_eq!(lots.get_lot_children_async(a.id).await.expect("children").len(), 1);
+    assert_eq!(lots.get_lot_children_async(a.id.into_uuid()).await.expect("children").len(), 1);
 
     // Sources disagree on both documents, so neither is inherited onto the row.
     assert_eq!(merged.purchase_order_id, None);
     assert_eq!(merged.work_order_id, None);
     assert_eq!(merged.supplier_lot, None);
 
-    let trace = lots.trace_async(merged.id).await.expect("trace");
+    let trace = lots.trace_async(merged.id.into_uuid()).await.expect("trace");
     let lot_nodes: Vec<_> =
         trace.upstream.iter().filter(|n| n.node_type == TraceNodeType::Lot).collect();
     assert_eq!(lot_nodes.len(), 2, "one node per ancestor lot");
@@ -711,20 +745,20 @@ async fn postgres_split_genealogy_is_transitive() {
         .await
         .expect("split again");
 
-    let parents = lots.get_lot_parents_async(grandchild.id).await.expect("parents");
+    let parents = lots.get_lot_parents_async(grandchild.id.into_uuid()).await.expect("parents");
     assert_eq!(parents.len(), 1);
     assert_eq!(parents[0].parent_lot_id, child.id);
     assert_eq!(parents[0].relationship, LotRelationship::Split);
 
-    let trace = lots.trace_async(grandchild.id).await.expect("trace");
+    let trace = lots.trace_async(grandchild.id.into_uuid()).await.expect("trace");
     let ancestors: Vec<Uuid> = trace
         .upstream
         .iter()
         .filter(|n| n.node_type == TraceNodeType::Lot)
         .map(|n| n.node_id)
         .collect();
-    assert!(ancestors.contains(&child.id));
-    assert!(ancestors.contains(&root.id));
+    assert!(ancestors.contains(&child.id.into_uuid()));
+    assert!(ancestors.contains(&root.id.into_uuid()));
     assert!(
         trace
             .upstream

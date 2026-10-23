@@ -649,7 +649,7 @@ async fn disposition_transitions_serials_and_restores_lot() {
             ret.id,
             ret.items[0].id,
             SetReturnDisposition {
-                lot_id: Some(lot.id),
+                lot_id: Some(lot.id.into_uuid()),
                 serial_ids: serials.clone(),
                 ..disposition(ReturnDisposition::Restock, wh)
             },
@@ -657,13 +657,13 @@ async fn disposition_transitions_serials_and_restores_lot() {
         .await
         .expect("restock with serials and lot");
     assert_eq!(updated.serial_ids, serials);
-    assert_eq!(updated.lot_id, Some(lot.id));
+    assert_eq!(updated.lot_id, Some(lot.id.into_uuid()));
     for id in &serials {
         let serial = db.serials().get_async(*id).await.unwrap().unwrap();
         assert_eq!(serial.status, SerialStatus::Available);
         assert_eq!(serial.current_location_id, Some(wh));
     }
-    let lot_after = db.lots().get_async(lot.id).await.unwrap().unwrap();
+    let lot_after = db.lots().get_async(lot.id.into_uuid()).await.unwrap().unwrap();
     assert_eq!(lot_after.quantity_remaining, lot.quantity_remaining + dec!(2));
     let reloaded = db.returns().get_async(ret.id.into_uuid()).await.unwrap().unwrap();
     assert_eq!(reloaded.items[0].serial_ids, serials);

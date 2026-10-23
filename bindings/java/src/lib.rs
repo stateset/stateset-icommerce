@@ -3149,9 +3149,9 @@ pub extern "system" fn Java_com_stateset_embedded_Backorders_nativeCreate<'local
         commerce
             .backorder()
             .create_backorder(stateset_core::CreateBackorder {
-                order_id: order_uuid,
+                order_id: order_uuid.into(),
                 order_line_id: None,
-                customer_id: customer_uuid,
+                customer_id: customer_uuid.into(),
                 sku: sku_str,
                 quantity: qty,
                 priority: None,

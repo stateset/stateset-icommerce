@@ -879,12 +879,12 @@ fn restock_disposition_restores_lot_on_hand() {
             ret.id,
             ret.items[0].id,
             SetReturnDisposition {
-                lot_id: Some(lot.id),
+                lot_id: Some(lot.id.into_uuid()),
                 ..disposition(ReturnDisposition::Restock, wh)
             },
         )
         .expect("restock to lot");
-    assert_eq!(updated.lot_id, Some(lot.id));
+    assert_eq!(updated.lot_id, Some(lot.id.into_uuid()));
     let lot_after = db.lots().get(lot.id).unwrap().unwrap();
     assert_eq!(lot_after.quantity_remaining, lot.quantity_remaining + dec!(3));
     assert_eq!(lot_after.quantity_quarantined, lot.quantity_quarantined);
@@ -913,7 +913,7 @@ fn restock_disposition_restores_lot_on_hand() {
             ret.id,
             ret.items[0].id,
             SetReturnDisposition {
-                lot_id: Some(lot.id),
+                lot_id: Some(lot.id.into_uuid()),
                 ..disposition(ReturnDisposition::Quarantine, wh)
             },
         )
@@ -934,7 +934,7 @@ fn restock_disposition_restores_lot_on_hand() {
             ret.id,
             ret.items[0].id,
             SetReturnDisposition {
-                lot_id: Some(wrong.id),
+                lot_id: Some(wrong.id.into_uuid()),
                 ..disposition(ReturnDisposition::Restock, wh)
             },
         )

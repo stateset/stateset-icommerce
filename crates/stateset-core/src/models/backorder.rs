@@ -5,6 +5,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::LotId;
 use stateset_primitives::{BackorderAllocationId, BackorderId, CustomerId, OrderId, OrderItemId};
 use std::str::FromStr;
 use strum::{Display, EnumString};
@@ -66,7 +67,7 @@ pub struct BackorderAllocation {
     pub sku: String,
     pub quantity: Decimal,
     pub location_id: Option<i32>,
-    pub lot_id: Option<Uuid>,
+    pub lot_id: Option<LotId>,
     pub status: AllocationStatus,
     pub allocated_at: DateTime<Utc>,
     pub expires_at: Option<DateTime<Utc>>,
@@ -210,7 +211,7 @@ pub struct AllocateBackorder {
     pub backorder_id: BackorderId,
     pub quantity: Decimal,
     pub location_id: Option<i32>,
-    pub lot_id: Option<Uuid>,
+    pub lot_id: Option<LotId>,
     pub expires_at: Option<DateTime<Utc>>,
 }
 

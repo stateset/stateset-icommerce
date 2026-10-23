@@ -19,6 +19,7 @@
 
 use chrono::Utc;
 use sqlx::postgres::PgPoolOptions;
+use stateset_core::LotId;
 use stateset_core::{
     ChangeSerialStatus, CommerceError, CreateSerialNumber, ReserveSerialNumber, SerialStatus,
     UpdateSerialNumber,
@@ -36,7 +37,7 @@ async fn make_serial(db: &PostgresDatabase, sku: &str, lot_id: Option<Uuid>) -> 
         .create_async(CreateSerialNumber {
             serial: Some(format!("SN-{}", Uuid::new_v4().simple())),
             sku: sku.to_string(),
-            lot_id,
+            lot_id: lot_id.map(LotId::from),
             ..Default::default()
         })
         .await
@@ -340,14 +341,18 @@ async fn postgres_lot_quarantine_helpers() {
         .expect("create lot")
         .id;
 
-    let available = make_serial(&db, "SKU-LOTQ", Some(lot_id)).await;
-    let reserved = make_serial(&db, "SKU-LOTQ", Some(lot_id)).await;
+    let available = make_serial(&db, "SKU-LOTQ", Some(lot_id.into_uuid())).await;
+    let reserved = make_serial(&db, "SKU-LOTQ", Some(lot_id.into_uuid())).await;
     let res = db.serials().reserve_async(reserve_input(reserved)).await.expect("reserve");
-    let sold = make_serial(&db, "SKU-LOTQ", Some(lot_id)).await;
+    let sold = make_serial(&db, "SKU-LOTQ", Some(lot_id.into_uuid())).await;
     force_status(&pool, sold, SerialStatus::Sold).await;
     let other = make_serial(&db, "SKU-LOTQ", None).await;
 
-    let n = db.serials().quarantine_for_lot_async(lot_id, "supplier recall").await.expect("q");
+    let n = db
+        .serials()
+        .quarantine_for_lot_async(lot_id.into_uuid(), "supplier recall")
+        .await
+        .expect("q");
     assert_eq!(n, 2);
     assert_eq!(status_of(&db, available).await, SerialStatus::Quarantined);
     assert_eq!(status_of(&db, reserved).await, SerialStatus::Quarantined);
@@ -358,9 +363,13 @@ async fn postgres_lot_quarantine_helpers() {
     );
     assert!(db.serials().release_reservation_async(res.id).await.is_err());
 
-    let released = db.serials().release_quarantine_for_lot_async(lot_id).await.expect("release");
+    let released =
+        db.serials().release_quarantine_for_lot_async(lot_id.into_uuid()).await.expect("release");
     assert_eq!(released, 2);
     assert_eq!(status_of(&db, available).await, SerialStatus::Available);
     assert_eq!(status_of(&db, reserved).await, SerialStatus::Available);
-    assert_eq!(db.serials().release_quarantine_for_lot_async(lot_id).await.expect("none"), 0);
+    assert_eq!(
+        db.serials().release_quarantine_for_lot_async(lot_id.into_uuid()).await.expect("none"),
+        0
+    );
 }

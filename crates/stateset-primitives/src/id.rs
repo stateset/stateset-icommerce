@@ -555,6 +555,11 @@ define_id! {
     PaymentMethodId
 }
 
+define_id! {
+    /// Strongly-typed inventory lot identifier.
+    LotId
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

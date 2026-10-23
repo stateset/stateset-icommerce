@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
 use sqlx::postgres::PgPool;
+use stateset_core::LotId;
 use stateset_core::OrderItemId;
 use stateset_core::{
     AllocateBackorder, AllocationStatus, Backorder, BackorderAllocation, BackorderFilter,
@@ -381,7 +382,7 @@ impl PgBackorderRepository {
             sku: sku.to_string(),
             quantity,
             location_id: Some(location_id),
-            lot_id,
+            lot_id: lot_id.map(LotId::from),
             status: AllocationStatus::Reserved,
             allocated_at: now,
             expires_at,
@@ -542,7 +543,7 @@ impl PgBackorderRepository {
             sku,
             quantity,
             location_id,
-            lot_id,
+            lot_id: lot_id.map(LotId::from),
             status,
             allocated_at,
             expires_at,
@@ -924,7 +925,7 @@ impl PgBackorderRepository {
                 &sku,
                 input.quantity,
                 location_id,
-                input.lot_id,
+                input.lot_id.map(LotId::into_uuid),
                 input.expires_at,
                 now,
             )

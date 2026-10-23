@@ -11,6 +11,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use stateset_core::LotId;
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
@@ -313,7 +314,7 @@ pub(crate) async fn get_one(
         .run_blocking(tid.as_deref(), move |c| {
             let lot = c
                 .lots()
-                .get(id)?
+                .get(LotId::from(id))?
                 .ok_or_else(|| HttpError::NotFound(format!("Lot {id} not found")))?;
             Ok(Json(to_resp(&lot)))
         })
@@ -333,13 +334,23 @@ pub(crate) async fn genealogy(
     state
         .run_blocking(tid.as_deref(), move |c| {
             // 404 rather than an empty graph for a lot that does not exist.
-            if c.lots().get(id)?.is_none() {
+            if c.lots().get(LotId::from(id))?.is_none() {
                 return Err(HttpError::NotFound(format!("Lot {id} not found")));
             }
             Ok(Json(LotGenealogyResponse {
                 lot_id: id.to_string(),
-                parents: c.lots().get_parents(id)?.iter().map(genealogy_resp).collect(),
-                children: c.lots().get_children(id)?.iter().map(genealogy_resp).collect(),
+                parents: c
+                    .lots()
+                    .get_parents(LotId::from(id))?
+                    .iter()
+                    .map(genealogy_resp)
+                    .collect(),
+                children: c
+                    .lots()
+                    .get_children(LotId::from(id))?
+                    .iter()
+                    .map(genealogy_resp)
+                    .collect(),
             }))
         })
         .await
@@ -362,7 +373,7 @@ pub(crate) async fn consume(
             let (reference_type, reference_id) =
                 reference(req.reference_type, req.reference_id.as_deref())?;
             let tx = c.lots().consume(stateset_core::ConsumeLot {
-                lot_id: id,
+                lot_id: LotId::from(id),
                 quantity: parse_decimal(&req.quantity, "quantity")?,
                 reference_type,
                 reference_id,
@@ -391,7 +402,7 @@ pub(crate) async fn reserve(
             let (reference_type, reference_id) =
                 reference(req.reference_type, req.reference_id.as_deref())?;
             let reservation_id = c.lots().reserve(stateset_core::ReserveLot {
-                lot_id: id,
+                lot_id: LotId::from(id),
                 quantity: parse_decimal(&req.quantity, "quantity")?,
                 reference_type,
                 reference_id,
@@ -438,7 +449,7 @@ pub(crate) async fn quarantine(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            Ok(Json(to_resp(&c.lots().quarantine(id, &req.reason)?)))
+            Ok(Json(to_resp(&c.lots().quarantine(LotId::from(id), &req.reason)?)))
         })
         .await
 }
@@ -455,7 +466,9 @@ pub(crate) async fn release_quarantine(
 ) -> Result<Json<LotResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
     state
-        .run_blocking(tid.as_deref(), move |c| Ok(Json(to_resp(&c.lots().release_quarantine(id)?))))
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(&c.lots().release_quarantine(LotId::from(id))?)))
+        })
         .await
 }
 

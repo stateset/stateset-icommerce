@@ -755,6 +755,7 @@ pub use stateset_core::{
     Lot,
     LotCertificate,
     LotFilter,
+    LotId,
     LotLocation,
     LotStatus,
     LotTransaction,

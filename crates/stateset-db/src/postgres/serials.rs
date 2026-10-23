@@ -4,6 +4,7 @@ use super::{PgLotRepository, PgWarrantyRepository, block_on, map_db_error};
 use chrono::{DateTime, Utc};
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
+use stateset_core::LotId;
 use stateset_core::{
     BatchResult, ChangeSerialStatus, CommerceError, CreateSerialNumber, CreateSerialNumbersBulk,
     MoveSerial, ReserveSerialNumber, Result, SerialEventType, SerialFilter, SerialHistory,
@@ -115,7 +116,7 @@ impl PgSerialRepository {
             serial: row.serial,
             sku: row.sku,
             status,
-            lot_id: row.lot_id,
+            lot_id: row.lot_id.map(LotId::from),
             lot_number: row.lot_number,
             current_location_id: row.current_location_id,
             current_owner_id: row.current_owner_id,
@@ -338,7 +339,12 @@ impl PgSerialRepository {
         let now = Utc::now();
         let serial = input.serial.unwrap_or_else(|| Self::generate_serial(None));
         let attributes = input.attributes.unwrap_or(serde_json::Value::Null);
-        let lot_id = resolve_lot_id(&self.pool, input.lot_id, input.lot_number.as_deref()).await?;
+        let lot_id = resolve_lot_id(
+            &self.pool,
+            input.lot_id.map(LotId::into_uuid),
+            input.lot_number.as_deref(),
+        )
+        .await?;
 
         sqlx::query(
             r#"
@@ -373,7 +379,12 @@ impl PgSerialRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let mut serials = Vec::with_capacity(input.quantity as usize);
         let now = Utc::now();
-        let lot_id = resolve_lot_id(tx.as_mut(), input.lot_id, input.lot_number.as_deref()).await?;
+        let lot_id = resolve_lot_id(
+            tx.as_mut(),
+            input.lot_id.map(LotId::into_uuid),
+            input.lot_number.as_deref(),
+        )
+        .await?;
 
         for i in 0..input.quantity {
             let id = Uuid::new_v4();
@@ -408,7 +419,7 @@ impl PgSerialRepository {
                 serial: serial_number,
                 sku: input.sku.clone(),
                 status: SerialStatus::Available,
-                lot_id,
+                lot_id: lot_id.map(LotId::from),
                 lot_number: input.lot_number.clone(),
                 current_location_id: input.location_id,
                 current_owner_id: None,
@@ -1553,7 +1564,7 @@ impl PgSerialRepository {
         let lot = {
             let lot_repo = PgLotRepository::new(self.pool.clone());
             match (serial_number.lot_id, serial_number.lot_number.as_deref()) {
-                (Some(lot_id), lot_number) => match lot_repo.get_async(lot_id).await? {
+                (Some(lot_id), lot_number) => match lot_repo.get_async(lot_id.into_uuid()).await? {
                     Some(lot) => Some(lot),
                     None => match lot_number {
                         Some(number) => lot_repo.get_by_number_async(number).await?,
@@ -1904,12 +1915,12 @@ impl SerialRepository for PgSerialRepository {
         block_on(self.release_expired_reservations_async(now))
     }
 
-    fn quarantine_for_lot(&self, lot_id: Uuid, reason: &str) -> Result<u64> {
-        block_on(self.quarantine_for_lot_async(lot_id, reason))
+    fn quarantine_for_lot(&self, lot_id: LotId, reason: &str) -> Result<u64> {
+        block_on(self.quarantine_for_lot_async(lot_id.into_uuid(), reason))
     }
 
-    fn release_quarantine_for_lot(&self, lot_id: Uuid) -> Result<u64> {
-        block_on(self.release_quarantine_for_lot_async(lot_id))
+    fn release_quarantine_for_lot(&self, lot_id: LotId) -> Result<u64> {
+        block_on(self.release_quarantine_for_lot_async(lot_id.into_uuid()))
     }
 
     fn get_history(
@@ -1932,8 +1943,8 @@ impl SerialRepository for PgSerialRepository {
         block_on(self.get_available_for_sku_async(sku, limit))
     }
 
-    fn get_for_lot(&self, lot_id: Uuid) -> Result<Vec<SerialNumber>> {
-        block_on(self.get_for_lot_async(lot_id))
+    fn get_for_lot(&self, lot_id: LotId) -> Result<Vec<SerialNumber>> {
+        block_on(self.get_for_lot_async(lot_id.into_uuid()))
     }
 
     fn get_for_customer(&self, customer_id: Uuid) -> Result<Vec<SerialNumber>> {

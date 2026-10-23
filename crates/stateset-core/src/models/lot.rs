@@ -53,6 +53,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::LotId;
 use strum::{Display, EnumString};
 use uuid::Uuid;
 
@@ -63,7 +64,7 @@ use uuid::Uuid;
 /// A lot/batch of inventory items
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lot {
-    pub id: Uuid,
+    pub id: LotId,
     pub lot_number: String,
     pub sku: String,
     pub status: LotStatus,
@@ -171,7 +172,7 @@ impl std::str::FromStr for LotStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LotTransaction {
     pub id: Uuid,
-    pub lot_id: Uuid,
+    pub lot_id: LotId,
     pub transaction_type: LotTransactionType,
     pub quantity: Decimal,
     pub reference_type: String,
@@ -229,7 +230,7 @@ impl Default for LotTransactionType {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LotCertificate {
     pub id: Uuid,
-    pub lot_id: Uuid,
+    pub lot_id: LotId,
     pub certificate_type: CertificateType,
     pub certificate_number: Option<String>,
     pub document_url: Option<String>,
@@ -277,7 +278,7 @@ impl Default for CertificateType {
 /// Inventory of a lot at a specific location
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LotLocation {
-    pub lot_id: Uuid,
+    pub lot_id: LotId,
     pub location_id: i32,
     pub quantity: Decimal,
     pub updated_at: DateTime<Utc>,
@@ -313,9 +314,9 @@ pub enum LotRelationship {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LotGenealogyLink {
     /// The derived lot.
-    pub child_lot_id: Uuid,
+    pub child_lot_id: LotId,
     /// The lot the units came from.
-    pub parent_lot_id: Uuid,
+    pub parent_lot_id: LotId,
     /// The parent's human-readable lot number, resolved for convenience.
     pub parent_lot_number: String,
     /// The child's human-readable lot number, resolved for convenience.
@@ -485,7 +486,7 @@ pub struct UpdateLot {
 /// Input for adjusting lot quantity
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdjustLot {
-    pub lot_id: Uuid,
+    pub lot_id: LotId,
     pub quantity_change: Decimal,
     pub reason: String,
     pub reference_type: Option<String>,
@@ -497,7 +498,7 @@ pub struct AdjustLot {
 impl Default for AdjustLot {
     fn default() -> Self {
         Self {
-            lot_id: Uuid::nil(),
+            lot_id: LotId::nil(),
             quantity_change: Decimal::ZERO,
             reason: String::new(),
             reference_type: None,
@@ -511,7 +512,7 @@ impl Default for AdjustLot {
 /// Input for consuming from a lot
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsumeLot {
-    pub lot_id: Uuid,
+    pub lot_id: LotId,
     pub quantity: Decimal,
     pub reference_type: String,
     pub reference_id: Uuid,
@@ -522,7 +523,7 @@ pub struct ConsumeLot {
 impl Default for ConsumeLot {
     fn default() -> Self {
         Self {
-            lot_id: Uuid::nil(),
+            lot_id: LotId::nil(),
             quantity: Decimal::ZERO,
             reference_type: String::new(),
             reference_id: Uuid::nil(),
@@ -535,7 +536,7 @@ impl Default for ConsumeLot {
 /// Input for reserving from a lot
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReserveLot {
-    pub lot_id: Uuid,
+    pub lot_id: LotId,
     pub quantity: Decimal,
     pub reference_type: String,
     pub reference_id: Uuid,
@@ -545,7 +546,7 @@ pub struct ReserveLot {
 impl Default for ReserveLot {
     fn default() -> Self {
         Self {
-            lot_id: Uuid::nil(),
+            lot_id: LotId::nil(),
             quantity: Decimal::ZERO,
             reference_type: String::new(),
             reference_id: Uuid::nil(),
@@ -557,7 +558,7 @@ impl Default for ReserveLot {
 /// Input for transferring lot between locations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransferLot {
-    pub lot_id: Uuid,
+    pub lot_id: LotId,
     pub quantity: Decimal,
     pub from_location_id: i32,
     pub to_location_id: i32,
@@ -568,7 +569,7 @@ pub struct TransferLot {
 impl Default for TransferLot {
     fn default() -> Self {
         Self {
-            lot_id: Uuid::nil(),
+            lot_id: LotId::nil(),
             quantity: Decimal::ZERO,
             from_location_id: 0,
             to_location_id: 0,
@@ -581,7 +582,7 @@ impl Default for TransferLot {
 /// Input for splitting a lot
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SplitLot {
-    pub lot_id: Uuid,
+    pub lot_id: LotId,
     pub quantity: Decimal,
     pub new_lot_number: Option<String>,
     pub reason: Option<String>,
@@ -589,14 +590,14 @@ pub struct SplitLot {
 
 impl Default for SplitLot {
     fn default() -> Self {
-        Self { lot_id: Uuid::nil(), quantity: Decimal::ZERO, new_lot_number: None, reason: None }
+        Self { lot_id: LotId::nil(), quantity: Decimal::ZERO, new_lot_number: None, reason: None }
     }
 }
 
 /// Input for merging lots
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MergeLots {
-    pub source_lot_ids: Vec<Uuid>,
+    pub source_lot_ids: Vec<LotId>,
     pub target_lot_number: Option<String>,
     pub reason: Option<String>,
 }
@@ -621,7 +622,7 @@ pub struct LotFilter {
 /// Input for adding a certificate to a lot
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddLotCertificate {
-    pub lot_id: Uuid,
+    pub lot_id: LotId,
     pub certificate_type: CertificateType,
     pub certificate_number: Option<String>,
     pub document_url: Option<String>,
@@ -634,7 +635,7 @@ pub struct AddLotCertificate {
 impl Default for AddLotCertificate {
     fn default() -> Self {
         Self {
-            lot_id: Uuid::nil(),
+            lot_id: LotId::nil(),
             certificate_type: CertificateType::default(),
             certificate_number: None,
             document_url: None,
@@ -763,7 +764,7 @@ mod tests {
     fn create_test_lot() -> Lot {
         let now = Utc::now();
         Lot {
-            id: Uuid::new_v4(),
+            id: LotId::new(),
             lot_number: "LOT-001".to_string(),
             sku: "SKU-001".to_string(),
             status: LotStatus::Active,
@@ -1057,7 +1058,7 @@ mod tests {
         assert_eq!(create.quantity, Decimal::ZERO);
         assert!(create.sku.is_empty());
         let consume = ConsumeLot::default();
-        assert_eq!(consume.lot_id, Uuid::nil());
+        assert_eq!(consume.lot_id, LotId::nil());
         assert_eq!(consume.quantity, Decimal::ZERO);
     }
 }

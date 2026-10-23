@@ -53,7 +53,7 @@ pub(crate) fn ensure_transition(lot: &Lot, next: LotStatus, operation: &str) -> 
 /// Reject a `MergeLots` request whose source list is malformed before any row
 /// is touched: fewer than two lots, or the same lot listed twice (which would
 /// double-count its quantity on the merged lot).
-pub(crate) fn validate_merge_sources(source_lot_ids: &[Uuid]) -> Result<()> {
+pub(crate) fn validate_merge_sources(source_lot_ids: &[stateset_core::LotId]) -> Result<()> {
     if source_lot_ids.len() < 2 {
         return Err(CommerceError::ValidationError("Need at least 2 lots to merge".to_string()));
     }
