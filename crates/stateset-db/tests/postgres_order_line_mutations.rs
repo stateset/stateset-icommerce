@@ -607,35 +607,51 @@ async fn postgres_line_edits_write_kernel_outbox_events_in_the_same_transaction(
         .expect("add item");
     ctx.db.orders().remove_item_async(id, added.id.into_uuid()).await.expect("remove item");
 
-    let events = ctx.db.kernel_outbox().pending_async(1000).await.expect("pending");
+    // Read this order's pending events directly: a shared database can hold
+    // more pending rows than any page, so `pending_async(n)` may not reach them.
+    let events = pending_events_for(&ctx.db, &id.to_string()).await;
     let added_event = events
         .iter()
-        .find(|e| e.event_type == "orders.item_added.v1" && e.aggregate_id == id.to_string())
+        .find(|(event_type, _, _)| event_type == "orders.item_added.v1")
         .expect("orders.item_added.v1 event");
-    assert_eq!(added_event.aggregate_type, "order");
-    assert_eq!(added_event.payload["order_item_id"], added.id.to_string());
-    assert_eq!(added_event.payload["sku"], ctx.sku_b);
-    assert_eq!(added_event.payload["quantity"], 3);
-    assert_eq!(added_event.payload["total_amount"], "30.5000", "24.50 + 3 × 2.00");
+    assert_eq!(added_event.1, "order");
+    let payload = &added_event.2;
+    assert_eq!(payload["order_item_id"], added.id.to_string());
+    assert_eq!(payload["sku"], ctx.sku_b);
+    assert_eq!(payload["quantity"], 3);
+    assert_eq!(payload["total_amount"], "30.5000", "24.50 + 3 × 2.00");
     let removed_event = events
         .iter()
-        .find(|e| e.event_type == "orders.item_removed.v1" && e.aggregate_id == id.to_string())
+        .find(|(event_type, _, _)| event_type == "orders.item_removed.v1")
         .expect("orders.item_removed.v1 event");
-    assert_eq!(removed_event.payload["order_item_id"], added.id.to_string());
-    assert_eq!(removed_event.payload["total_amount"], "24.5000");
+    assert_eq!(removed_event.2["order_item_id"], added.id.to_string());
+    assert_eq!(removed_event.2["total_amount"], "24.5000");
 
     // A refused edit writes nothing.
     assert!(ctx.db.orders().remove_item_async(id, Uuid::new_v4()).await.is_err());
-    let removed_count = ctx
-        .db
-        .kernel_outbox()
-        .pending_async(1000)
+    let removed_count = pending_events_for(&ctx.db, &id.to_string())
         .await
-        .expect("pending")
         .iter()
-        .filter(|e| e.event_type == "orders.item_removed.v1" && e.aggregate_id == id.to_string())
+        .filter(|(event_type, _, _)| event_type == "orders.item_removed.v1")
         .count();
     assert_eq!(removed_count, 1);
+}
+
+/// `(event_type, aggregate_type, payload)` of the pending outbox events for
+/// one aggregate, oldest first.
+async fn pending_events_for(
+    db: &PostgresDatabase,
+    aggregate_id: &str,
+) -> Vec<(String, String, serde_json::Value)> {
+    sqlx::query_as(
+        "SELECT event_type, aggregate_type, payload FROM kernel_outbox
+         WHERE aggregate_id = $1 AND published_at IS NULL AND dead_lettered_at IS NULL
+         ORDER BY created_at, id",
+    )
+    .bind(aggregate_id)
+    .fetch_all(db.pool())
+    .await
+    .expect("pending outbox events")
 }
 
 #[tokio::test]
