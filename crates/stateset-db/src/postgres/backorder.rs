@@ -7,12 +7,15 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
 use sqlx::postgres::PgPool;
+use stateset_core::OrderItemId;
 use stateset_core::{
     AllocateBackorder, AllocationStatus, Backorder, BackorderAllocation, BackorderFilter,
     BackorderFulfillment, BackorderPriority, BackorderRepository, BackorderStatus,
     BackorderSummary, CommerceError, CreateBackorder, FulfillBackorder, FulfillmentSourceType,
     ReserveInventory, Result, SkuBackorderSummary, UpdateBackorder, generate_backorder_number,
 };
+use stateset_core::{BackorderAllocationId, BackorderId};
+use stateset_core::{CustomerId, OrderId};
 use uuid::Uuid;
 
 /// `reference_type` of the inventory reservation that backs an allocation
@@ -112,11 +115,11 @@ impl PgBackorderRepository {
         })?;
 
         Ok(Backorder {
-            id,
+            id: BackorderId::from(id),
             backorder_number,
-            order_id,
-            order_line_id,
-            customer_id,
+            order_id: OrderId::from(order_id),
+            order_line_id: order_line_id.map(OrderItemId::from),
+            customer_id: CustomerId::from(customer_id),
             sku,
             quantity_ordered,
             quantity_fulfilled,
@@ -373,8 +376,8 @@ impl PgBackorderRepository {
         .map_err(map_db_error)?;
 
         Ok(BackorderAllocation {
-            id,
-            backorder_id,
+            id: BackorderAllocationId::from(id),
+            backorder_id: BackorderId::from(backorder_id),
             sku: sku.to_string(),
             quantity,
             location_id: Some(location_id),
@@ -424,7 +427,7 @@ impl PgBackorderRepository {
         let reason = format!("Backorder {} fulfilment", input.backorder_id);
         let mut remaining = input.quantity;
         for (allocation_id, allocated, reservation_id) in
-            Self::open_allocations_in_tx(tx, input.backorder_id).await?
+            Self::open_allocations_in_tx(tx, input.backorder_id.into_uuid()).await?
         {
             if remaining <= Decimal::ZERO {
                 break;
@@ -502,7 +505,7 @@ impl PgBackorderRepository {
 
         Ok(BackorderFulfillment {
             id,
-            backorder_id,
+            backorder_id: BackorderId::from(backorder_id),
             quantity,
             source_type,
             source_id,
@@ -534,8 +537,8 @@ impl PgBackorderRepository {
         })?;
 
         Ok(BackorderAllocation {
-            id,
-            backorder_id,
+            id: BackorderAllocationId::from(id),
+            backorder_id: BackorderId::from(backorder_id),
             sku,
             quantity,
             location_id,
@@ -732,7 +735,7 @@ impl PgBackorderRepository {
 
     pub async fn get_backorders_for_order_async(&self, order_id: Uuid) -> Result<Vec<Backorder>> {
         self.list_backorders_async(BackorderFilter {
-            order_id: Some(order_id),
+            order_id: Some(OrderId::from(order_id)),
             ..Default::default()
         })
         .await
@@ -743,7 +746,7 @@ impl PgBackorderRepository {
         customer_id: Uuid,
     ) -> Result<Vec<Backorder>> {
         self.list_backorders_async(BackorderFilter {
-            customer_id: Some(customer_id),
+            customer_id: Some(CustomerId::from(customer_id)),
             ..Default::default()
         })
         .await
@@ -845,7 +848,9 @@ impl PgBackorderRepository {
 
         tx.commit().await.map_err(map_db_error)?;
 
-        self.get_backorder_async(input.backorder_id).await?.ok_or(CommerceError::NotFound)
+        self.get_backorder_async(input.backorder_id.into_uuid())
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_fulfillment_history_async(
@@ -901,7 +906,8 @@ impl PgBackorderRepository {
                 "Backorder is {status} and cannot be allocated"
             )));
         }
-        let already = Self::open_allocated_quantity_in_tx(&mut tx, input.backorder_id).await?;
+        let already =
+            Self::open_allocated_quantity_in_tx(&mut tx, input.backorder_id.into_uuid()).await?;
         if input.quantity + already > remaining {
             return Err(CommerceError::ValidationError(format!(
                 "Cannot allocate {} - only {} of the backorder remains unallocated",
@@ -914,7 +920,7 @@ impl PgBackorderRepository {
         let allocation = self
             .allocate_in_tx(
                 &mut tx,
-                input.backorder_id,
+                input.backorder_id.into_uuid(),
                 &sku,
                 input.quantity,
                 location_id,
@@ -976,8 +982,12 @@ impl PgBackorderRepository {
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
-        Self::settle_backorder_allocation_status_in_tx(&mut tx, allocation.backorder_id, now)
-            .await?;
+        Self::settle_backorder_allocation_status_in_tx(
+            &mut tx,
+            allocation.backorder_id.into_uuid(),
+            now,
+        )
+        .await?;
         let updated = Self::get_allocation_in_tx(&mut tx, allocation_id).await?;
         tx.commit().await.map_err(map_db_error)?;
         Ok(updated)
@@ -1020,7 +1030,7 @@ impl PgBackorderRepository {
                     .map_err(map_db_error)?;
                 Self::settle_backorder_allocation_status_in_tx(
                     &mut tx,
-                    allocation.backorder_id,
+                    allocation.backorder_id.into_uuid(),
                     now,
                 )
                 .await?;
@@ -1250,32 +1260,32 @@ impl BackorderRepository for PgBackorderRepository {
         super::block_on(self.create_backorder_async(input))
     }
 
-    fn get_backorder(&self, id: Uuid) -> Result<Option<Backorder>> {
-        super::block_on(self.get_backorder_async(id))
+    fn get_backorder(&self, id: BackorderId) -> Result<Option<Backorder>> {
+        super::block_on(self.get_backorder_async(id.into_uuid()))
     }
 
     fn get_backorder_by_number(&self, number: &str) -> Result<Option<Backorder>> {
         super::block_on(self.get_backorder_by_number_async(number))
     }
 
-    fn update_backorder(&self, id: Uuid, input: UpdateBackorder) -> Result<Backorder> {
-        super::block_on(self.update_backorder_async(id, input))
+    fn update_backorder(&self, id: BackorderId, input: UpdateBackorder) -> Result<Backorder> {
+        super::block_on(self.update_backorder_async(id.into_uuid(), input))
     }
 
     fn list_backorders(&self, filter: BackorderFilter) -> Result<Vec<Backorder>> {
         super::block_on(self.list_backorders_async(filter))
     }
 
-    fn cancel_backorder(&self, id: Uuid) -> Result<Backorder> {
-        super::block_on(self.cancel_backorder_async(id))
+    fn cancel_backorder(&self, id: BackorderId) -> Result<Backorder> {
+        super::block_on(self.cancel_backorder_async(id.into_uuid()))
     }
 
-    fn get_backorders_for_order(&self, order_id: Uuid) -> Result<Vec<Backorder>> {
-        super::block_on(self.get_backorders_for_order_async(order_id))
+    fn get_backorders_for_order(&self, order_id: OrderId) -> Result<Vec<Backorder>> {
+        super::block_on(self.get_backorders_for_order_async(order_id.into_uuid()))
     }
 
-    fn get_backorders_for_customer(&self, customer_id: Uuid) -> Result<Vec<Backorder>> {
-        super::block_on(self.get_backorders_for_customer_async(customer_id))
+    fn get_backorders_for_customer(&self, customer_id: CustomerId) -> Result<Vec<Backorder>> {
+        super::block_on(self.get_backorders_for_customer_async(customer_id.into_uuid()))
     }
 
     fn get_backorders_for_sku(&self, sku: &str) -> Result<Vec<Backorder>> {
@@ -1286,24 +1296,33 @@ impl BackorderRepository for PgBackorderRepository {
         super::block_on(self.fulfill_backorder_async(input))
     }
 
-    fn get_fulfillment_history(&self, backorder_id: Uuid) -> Result<Vec<BackorderFulfillment>> {
-        super::block_on(self.get_fulfillment_history_async(backorder_id))
+    fn get_fulfillment_history(
+        &self,
+        backorder_id: BackorderId,
+    ) -> Result<Vec<BackorderFulfillment>> {
+        super::block_on(self.get_fulfillment_history_async(backorder_id.into_uuid()))
     }
 
     fn allocate_backorder(&self, input: AllocateBackorder) -> Result<BackorderAllocation> {
         super::block_on(self.allocate_backorder_async(input))
     }
 
-    fn get_allocations(&self, backorder_id: Uuid) -> Result<Vec<BackorderAllocation>> {
-        super::block_on(self.get_allocations_async(backorder_id))
+    fn get_allocations(&self, backorder_id: BackorderId) -> Result<Vec<BackorderAllocation>> {
+        super::block_on(self.get_allocations_async(backorder_id.into_uuid()))
     }
 
-    fn release_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
-        super::block_on(self.release_allocation_async(allocation_id))
+    fn release_allocation(
+        &self,
+        allocation_id: BackorderAllocationId,
+    ) -> Result<BackorderAllocation> {
+        super::block_on(self.release_allocation_async(allocation_id.into_uuid()))
     }
 
-    fn confirm_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
-        super::block_on(self.confirm_allocation_async(allocation_id))
+    fn confirm_allocation(
+        &self,
+        allocation_id: BackorderAllocationId,
+    ) -> Result<BackorderAllocation> {
+        super::block_on(self.confirm_allocation_async(allocation_id.into_uuid()))
     }
 
     fn expire_allocations(&self) -> Result<u32> {

@@ -15,6 +15,7 @@ use stateset_core::{
     AdjustInventory, BackorderPriority, CommerceError, CreateBackorder, CreateInventoryItem,
     ReservationStatus, ReserveInventory,
 };
+use stateset_core::{CustomerId, OrderId};
 use stateset_db::PostgresDatabase;
 use stateset_db::postgres::{PgBackorderRepository, PgInventoryRepository};
 use uuid::Uuid;
@@ -245,9 +246,9 @@ async fn postgres_mixed_operations_plus_a_sweep_keep_both_identities() {
 
 async fn create_backorder(bo: &PgBackorderRepository, sku: &str, qty: Decimal) -> Uuid {
     bo.create_backorder_async(CreateBackorder {
-        order_id: Uuid::new_v4(),
+        order_id: OrderId::new(),
         order_line_id: None,
-        customer_id: Uuid::new_v4(),
+        customer_id: CustomerId::new(),
         sku: sku.to_string(),
         quantity: qty,
         priority: Some(BackorderPriority::Normal),
@@ -259,6 +260,7 @@ async fn create_backorder(bo: &PgBackorderRepository, sku: &str, qty: Decimal) -
     .await
     .expect("create backorder")
     .id
+    .into_uuid()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -362,9 +364,9 @@ async fn postgres_backorder_allocation_writes_are_retried_under_contention() {
         let id = allocation.id;
         tasks.push(tokio::spawn(async move {
             if i % 2 == 0 {
-                bo.release_allocation_async(id).await.map(|_| ())
+                bo.release_allocation_async(id.into_uuid()).await.map(|_| ())
             } else {
-                bo.confirm_allocation_async(id).await.map(|_| ())
+                bo.confirm_allocation_async(id.into_uuid()).await.map(|_| ())
             }
         }));
     }

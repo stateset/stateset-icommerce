@@ -12,11 +12,13 @@
 use chrono::{Duration, Utc};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use stateset_core::BackorderId;
 use stateset_core::{
     AdjustInventory, AllocateBackorder, AllocationStatus, BackorderStatus, CommerceError,
     CreateBackorder, CreateInventoryItem, FulfillBackorder, FulfillmentSourceType,
     ReservationStatus, ReserveInventory, TransactionType,
 };
+use stateset_core::{CustomerId, OrderId};
 use stateset_db::PostgresDatabase;
 use stateset_db::postgres::{PgBackorderRepository, PgInventoryRepository};
 use uuid::Uuid;
@@ -513,9 +515,9 @@ async fn postgres_check_constraint_rejects_negative_balances() {
 
 async fn create_backorder(bo: &PgBackorderRepository, sku: &str, qty: Decimal) -> Uuid {
     bo.create_backorder_async(CreateBackorder {
-        order_id: Uuid::new_v4(),
+        order_id: OrderId::new(),
         order_line_id: None,
-        customer_id: Uuid::new_v4(),
+        customer_id: CustomerId::new(),
         sku: sku.to_string(),
         quantity: qty,
         priority: None,
@@ -527,11 +529,12 @@ async fn create_backorder(bo: &PgBackorderRepository, sku: &str, qty: Decimal) -
     .await
     .expect("create backorder")
     .id
+    .into_uuid()
 }
 
 const fn allocate(backorder_id: Uuid, qty: Decimal) -> AllocateBackorder {
     AllocateBackorder {
-        backorder_id,
+        backorder_id: BackorderId::from_uuid(backorder_id),
         quantity: qty,
         location_id: None,
         lot_id: None,
@@ -545,7 +548,7 @@ const fn fulfil(
     source: FulfillmentSourceType,
 ) -> FulfillBackorder {
     FulfillBackorder {
-        backorder_id,
+        backorder_id: BackorderId::from_uuid(backorder_id),
         quantity: qty,
         source_type: source,
         source_id: None,
@@ -583,10 +586,10 @@ async fn postgres_backorder_allocation_reserves_stock_and_blocks_cart_reserve() 
     assert!(matches!(over, Err(CommerceError::ValidationError(_))), "got {over:?}");
     assert_allocation_invariant(&db, &[item_id]).await;
 
-    let released = bo.release_allocation_async(allocation.id).await.unwrap();
+    let released = bo.release_allocation_async(allocation.id.into_uuid()).await.unwrap();
     assert_eq!(released.status, AllocationStatus::Released);
     assert_eq!(
-        bo.release_allocation_async(allocation.id).await.unwrap().status,
+        bo.release_allocation_async(allocation.id.into_uuid()).await.unwrap().status,
         AllocationStatus::Released
     );
     assert_eq!(balance(&inv, &sku).await, (dec!(5), dec!(0), dec!(5)));
@@ -617,7 +620,7 @@ async fn postgres_backorder_fulfil_cancel_expire_and_auto_allocate_move_real_sto
     let backorder = create_backorder(&bo, &sku, dec!(6)).await;
     let allocation = bo.allocate_backorder_async(allocate(backorder, dec!(4))).await.unwrap();
     assert_eq!(
-        bo.confirm_allocation_async(allocation.id).await.unwrap().status,
+        bo.confirm_allocation_async(allocation.id.into_uuid()).await.unwrap().status,
         AllocationStatus::Confirmed
     );
     bo.fulfill_backorder_async(fulfil(backorder, dec!(3), FulfillmentSourceType::Inventory))

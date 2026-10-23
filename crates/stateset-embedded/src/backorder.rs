@@ -34,13 +34,12 @@
 //! ```
 
 use stateset_core::{
-    AllocateBackorder, Backorder, BackorderAllocation, BackorderFilter, BackorderFulfillment,
-    BackorderSummary, CreateBackorder, FulfillBackorder, Result, SkuBackorderSummary,
-    UpdateBackorder,
+    AllocateBackorder, Backorder, BackorderAllocation, BackorderAllocationId, BackorderFilter,
+    BackorderFulfillment, BackorderId, BackorderSummary, CreateBackorder, CustomerId,
+    FulfillBackorder, OrderId, Result, SkuBackorderSummary, UpdateBackorder,
 };
 use stateset_db::Database;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Backorder Management interface.
 pub struct Backorders {
@@ -93,7 +92,7 @@ impl Backorders {
     }
 
     /// Get a backorder by ID.
-    pub fn get_backorder(&self, id: Uuid) -> Result<Option<Backorder>> {
+    pub fn get_backorder(&self, id: BackorderId) -> Result<Option<Backorder>> {
         self.db.backorder().get_backorder(id)
     }
 
@@ -103,7 +102,7 @@ impl Backorders {
     }
 
     /// Update a backorder.
-    pub fn update_backorder(&self, id: Uuid, input: UpdateBackorder) -> Result<Backorder> {
+    pub fn update_backorder(&self, id: BackorderId, input: UpdateBackorder) -> Result<Backorder> {
         self.db.backorder().update_backorder(id, input)
     }
 
@@ -130,17 +129,17 @@ impl Backorders {
     }
 
     /// Cancel a backorder.
-    pub fn cancel_backorder(&self, id: Uuid) -> Result<Backorder> {
+    pub fn cancel_backorder(&self, id: BackorderId) -> Result<Backorder> {
         self.db.backorder().cancel_backorder(id)
     }
 
     /// Get all backorders for an order.
-    pub fn get_backorders_for_order(&self, order_id: Uuid) -> Result<Vec<Backorder>> {
+    pub fn get_backorders_for_order(&self, order_id: OrderId) -> Result<Vec<Backorder>> {
         self.db.backorder().get_backorders_for_order(order_id)
     }
 
     /// Get all backorders for a customer.
-    pub fn get_backorders_for_customer(&self, customer_id: Uuid) -> Result<Vec<Backorder>> {
+    pub fn get_backorders_for_customer(&self, customer_id: CustomerId) -> Result<Vec<Backorder>> {
         self.db.backorder().get_backorders_for_customer(customer_id)
     }
 
@@ -189,7 +188,10 @@ impl Backorders {
     }
 
     /// Get fulfillment history for a backorder.
-    pub fn get_fulfillment_history(&self, backorder_id: Uuid) -> Result<Vec<BackorderFulfillment>> {
+    pub fn get_fulfillment_history(
+        &self,
+        backorder_id: BackorderId,
+    ) -> Result<Vec<BackorderFulfillment>> {
         self.db.backorder().get_fulfillment_history(backorder_id)
     }
 
@@ -209,18 +211,24 @@ impl Backorders {
     }
 
     /// Get allocations for a backorder.
-    pub fn get_allocations(&self, backorder_id: Uuid) -> Result<Vec<BackorderAllocation>> {
+    pub fn get_allocations(&self, backorder_id: BackorderId) -> Result<Vec<BackorderAllocation>> {
         self.db.backorder().get_allocations(backorder_id)
     }
 
     /// Release an allocation, handing its reserved units back to available
     /// stock. Idempotent for an allocation that is no longer open.
-    pub fn release_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
+    pub fn release_allocation(
+        &self,
+        allocation_id: BackorderAllocationId,
+    ) -> Result<BackorderAllocation> {
         self.db.backorder().release_allocation(allocation_id)
     }
 
     /// Confirm an allocation.
-    pub fn confirm_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
+    pub fn confirm_allocation(
+        &self,
+        allocation_id: BackorderAllocationId,
+    ) -> Result<BackorderAllocation> {
         self.db.backorder().confirm_allocation(allocation_id)
     }
 

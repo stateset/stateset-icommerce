@@ -19,6 +19,7 @@
 
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use stateset_core::CustomerId;
 use stateset_core::{
     BackorderFilter, CommerceError, CreateBackorder, CreateCustomer, CreateLot, CreateOrder,
     CreateOrderItem, CreateSerialNumber, CreateSerialNumbersBulk, CreateWarehouse, CreateWave,
@@ -41,9 +42,9 @@ async fn connect() -> Option<PostgresDatabase> {
 
 fn backorder_input(sku: &str, quantity: Decimal) -> CreateBackorder {
     CreateBackorder {
-        order_id: Uuid::new_v4(),
+        order_id: OrderId::new(),
         order_line_id: None,
-        customer_id: Uuid::new_v4(),
+        customer_id: CustomerId::new(),
         sku: sku.to_string(),
         quantity,
         priority: None,
@@ -94,7 +95,7 @@ async fn postgres_backorder_summary_is_all_zero_on_empty_store_and_after_cancel(
     assert_eq!(open.pending_count, 1);
     assert_eq!(open.total_quantity, dec!(3));
 
-    db.backorder().cancel_backorder_async(bo.id).await.expect("cancel");
+    db.backorder().cancel_backorder_async(bo.id.into_uuid()).await.expect("cancel");
     let after = db.backorder().get_summary_async().await.expect("summary after cancel");
     assert_all_zero(&after);
 }

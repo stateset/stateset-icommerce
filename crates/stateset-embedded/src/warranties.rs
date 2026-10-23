@@ -37,7 +37,7 @@
 use crate::Database;
 use stateset_core::{
     ClaimResolution, CreateWarranty, CreateWarrantyClaim, Result, UpdateWarrantyClaim, Warranty,
-    WarrantyClaim, WarrantyClaimFilter, WarrantyFilter,
+    WarrantyClaim, WarrantyClaimFilter, WarrantyClaimId, WarrantyFilter,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -161,7 +161,7 @@ impl Warranties {
     }
 
     /// Get a warranty claim by ID
-    pub fn get_claim(&self, id: Uuid) -> Result<Option<WarrantyClaim>> {
+    pub fn get_claim(&self, id: WarrantyClaimId) -> Result<Option<WarrantyClaim>> {
         self.db.warranties().get_claim(id)
     }
 
@@ -171,7 +171,11 @@ impl Warranties {
     }
 
     /// Update a warranty claim
-    pub fn update_claim(&self, id: Uuid, input: UpdateWarrantyClaim) -> Result<WarrantyClaim> {
+    pub fn update_claim(
+        &self,
+        id: WarrantyClaimId,
+        input: UpdateWarrantyClaim,
+    ) -> Result<WarrantyClaim> {
         self.db.warranties().update_claim(id, input)
     }
 
@@ -186,12 +190,12 @@ impl Warranties {
     }
 
     /// Approve a warranty claim
-    pub fn approve_claim(&self, id: Uuid) -> Result<WarrantyClaim> {
+    pub fn approve_claim(&self, id: WarrantyClaimId) -> Result<WarrantyClaim> {
         self.db.warranties().approve_claim(id)
     }
 
     /// Deny a warranty claim
-    pub fn deny_claim(&self, id: Uuid, reason: &str) -> Result<WarrantyClaim> {
+    pub fn deny_claim(&self, id: WarrantyClaimId, reason: &str) -> Result<WarrantyClaim> {
         self.db.warranties().deny_claim(id, reason)
     }
 
@@ -211,12 +215,16 @@ impl Warranties {
     /// )?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn complete_claim(&self, id: Uuid, resolution: ClaimResolution) -> Result<WarrantyClaim> {
+    pub fn complete_claim(
+        &self,
+        id: WarrantyClaimId,
+        resolution: ClaimResolution,
+    ) -> Result<WarrantyClaim> {
         self.db.warranties().complete_claim(id, resolution)
     }
 
     /// Cancel a warranty claim
-    pub fn cancel_claim(&self, id: Uuid) -> Result<WarrantyClaim> {
+    pub fn cancel_claim(&self, id: WarrantyClaimId) -> Result<WarrantyClaim> {
         self.db.warranties().cancel_claim(id)
     }
 

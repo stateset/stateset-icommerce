@@ -8,6 +8,7 @@ use super::{
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{OptionalExtension, Row, params};
+use stateset_core::WarrantyClaimId;
 use stateset_core::{
     BatchResult, ClaimResolution, ClaimStatus, CommerceError, CreateWarranty, CreateWarrantyClaim,
     CustomerId, OrderId, OrderItemId, ProductId, Result, UpdateWarranty, UpdateWarrantyClaim,
@@ -64,7 +65,7 @@ impl SqliteWarrantyRepository {
     /// was deciding. Re-running the guard on the row as it stands now gives the
     /// same message the pre-check used to give, as a `Conflict`.
     fn claim_write_lost(&self, id: Uuid, guard: fn(&WarrantyClaim) -> Result<()>) -> CommerceError {
-        match self.get_claim(id) {
+        match self.get_claim(WarrantyClaimId::from(id)) {
             Ok(Some(claim)) => match guard(&claim) {
                 Err(err) => err,
                 Ok(()) => {
@@ -384,7 +385,11 @@ impl SqliteWarrantyRepository {
 
     fn row_to_claim(row: &Row<'_>) -> rusqlite::Result<WarrantyClaim> {
         Ok(WarrantyClaim {
-            id: parse_uuid_row(&row.get::<_, String>("id")?, "warranty_claim", "id")?,
+            id: WarrantyClaimId::from(parse_uuid_row(
+                &row.get::<_, String>("id")?,
+                "warranty_claim",
+                "id",
+            )?),
             claim_number: row.get("claim_number")?,
             warranty_id: WarrantyId::from(parse_uuid_row(
                 &row.get::<_, String>("warranty_id")?,
@@ -792,10 +797,10 @@ impl WarrantyRepository for SqliteWarrantyRepository {
             Ok(())
         })?;
 
-        self.get_claim(id)?.ok_or(CommerceError::NotFound)
+        self.get_claim(WarrantyClaimId::from(id))?.ok_or(CommerceError::NotFound)
     }
 
-    fn get_claim(&self, id: Uuid) -> Result<Option<WarrantyClaim>> {
+    fn get_claim(&self, id: WarrantyClaimId) -> Result<Option<WarrantyClaim>> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut stmt =
             conn.prepare("SELECT * FROM warranty_claims WHERE id = ?").map_err(map_db_error)?;
@@ -828,11 +833,15 @@ impl WarrantyRepository for SqliteWarrantyRepository {
     /// statements, two operators filling in different fields each wrote the
     /// other's column back as the `None` they had read, and whichever
     /// committed last silently reverted its neighbour's edit.
-    fn update_claim(&self, id: Uuid, input: UpdateWarrantyClaim) -> Result<WarrantyClaim> {
+    fn update_claim(
+        &self,
+        id: WarrantyClaimId,
+        input: UpdateWarrantyClaim,
+    ) -> Result<WarrantyClaim> {
         let now = chrono::Utc::now();
 
         with_immediate_transaction(&self.pool, |tx| {
-            let claim = Self::load_claim_tx(tx, id)?
+            let claim = Self::load_claim_tx(tx, id.into_uuid())?
                 .ok_or_else(|| Self::smuggle(CommerceError::NotFound))?;
 
             // Payout guards: amounts must be non-negative, and the combined
@@ -1002,7 +1011,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
     /// and written unconditionally, an approve that decided on a `submitted`
     /// snapshot could overwrite a deny or a cancel that had already committed,
     /// with both callers told they had won.
-    fn approve_claim(&self, id: Uuid) -> Result<WarrantyClaim> {
+    fn approve_claim(&self, id: WarrantyClaimId) -> Result<WarrantyClaim> {
         let now = chrono::Utc::now();
 
         let rows = {
@@ -1023,7 +1032,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         };
 
         if rows == 0 {
-            return Err(self.claim_write_lost(id, Self::ensure_claim_can_approve));
+            return Err(self.claim_write_lost(id.into_uuid(), Self::ensure_claim_can_approve));
         }
 
         self.get_claim(id)?.ok_or(CommerceError::NotFound)
@@ -1031,7 +1040,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
 
     /// Deny a claim. Same guarded write as `approve_claim`; the reason is
     /// caller input and is rejected before the statement runs.
-    fn deny_claim(&self, id: Uuid, reason: &str) -> Result<WarrantyClaim> {
+    fn deny_claim(&self, id: WarrantyClaimId, reason: &str) -> Result<WarrantyClaim> {
         if reason.trim().is_empty() {
             return Err(CommerceError::ValidationError("Denial reason is required".to_string()));
         }
@@ -1058,7 +1067,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         };
 
         if rows == 0 {
-            return Err(self.claim_write_lost(id, Self::ensure_claim_can_deny));
+            return Err(self.claim_write_lost(id.into_uuid(), Self::ensure_claim_can_deny));
         }
 
         self.get_claim(id)?.ok_or(CommerceError::NotFound)
@@ -1066,7 +1075,11 @@ impl WarrantyRepository for SqliteWarrantyRepository {
 
     /// Complete a claim. The resolution is caller input and is validated up
     /// front; the status the claim must be in is the UPDATE's `WHERE`.
-    fn complete_claim(&self, id: Uuid, resolution: ClaimResolution) -> Result<WarrantyClaim> {
+    fn complete_claim(
+        &self,
+        id: WarrantyClaimId,
+        resolution: ClaimResolution,
+    ) -> Result<WarrantyClaim> {
         Self::ensure_resolution_can_complete(resolution)?;
         let now = chrono::Utc::now();
 
@@ -1089,7 +1102,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         };
 
         if rows == 0 {
-            return Err(self.claim_write_lost(id, Self::ensure_claim_can_complete));
+            return Err(self.claim_write_lost(id.into_uuid(), Self::ensure_claim_can_complete));
         }
 
         self.get_claim(id)?.ok_or(CommerceError::NotFound)
@@ -1097,7 +1110,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
 
     /// Cancel a claim. Cancelling is legal from every live status, so the
     /// guard is the set of statuses that are not already terminal.
-    fn cancel_claim(&self, id: Uuid) -> Result<WarrantyClaim> {
+    fn cancel_claim(&self, id: WarrantyClaimId) -> Result<WarrantyClaim> {
         let now = chrono::Utc::now();
 
         let rows = {
@@ -1120,7 +1133,7 @@ impl WarrantyRepository for SqliteWarrantyRepository {
         };
 
         if rows == 0 {
-            return Err(self.claim_write_lost(id, Self::ensure_claim_can_cancel));
+            return Err(self.claim_write_lost(id.into_uuid(), Self::ensure_claim_can_cancel));
         }
 
         self.get_claim(id)?.ok_or(CommerceError::NotFound)
@@ -1839,6 +1852,6 @@ mod tests {
     #[test]
     fn get_unknown_claim_returns_none() {
         let repo = fresh_repo();
-        assert!(repo.get_claim(Uuid::new_v4()).expect("ok").is_none());
+        assert!(repo.get_claim(WarrantyClaimId::new()).expect("ok").is_none());
     }
 }

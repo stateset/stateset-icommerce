@@ -110,13 +110,17 @@ pub trait WarrantyRepository: Send + Sync {
     fn create_claim(&self, input: CreateWarrantyClaim) -> Result<WarrantyClaim>;
 
     /// Get claim by ID
-    fn get_claim(&self, id: Uuid) -> Result<Option<WarrantyClaim>>;
+    fn get_claim(&self, id: WarrantyClaimId) -> Result<Option<WarrantyClaim>>;
 
     /// Get claim by claim number
     fn get_claim_by_number(&self, claim_number: &str) -> Result<Option<WarrantyClaim>>;
 
     /// Update a claim
-    fn update_claim(&self, id: Uuid, input: UpdateWarrantyClaim) -> Result<WarrantyClaim>;
+    fn update_claim(
+        &self,
+        id: WarrantyClaimId,
+        input: UpdateWarrantyClaim,
+    ) -> Result<WarrantyClaim>;
 
     /// List claims with filter
     fn list_claims(&self, filter: WarrantyClaimFilter) -> Result<Vec<WarrantyClaim>>;
@@ -126,16 +130,20 @@ pub trait WarrantyRepository: Send + Sync {
 
     // Claim status transitions
     /// Approve a claim
-    fn approve_claim(&self, id: Uuid) -> Result<WarrantyClaim>;
+    fn approve_claim(&self, id: WarrantyClaimId) -> Result<WarrantyClaim>;
 
     /// Deny a claim
-    fn deny_claim(&self, id: Uuid, reason: &str) -> Result<WarrantyClaim>;
+    fn deny_claim(&self, id: WarrantyClaimId, reason: &str) -> Result<WarrantyClaim>;
 
     /// Complete a claim
-    fn complete_claim(&self, id: Uuid, resolution: ClaimResolution) -> Result<WarrantyClaim>;
+    fn complete_claim(
+        &self,
+        id: WarrantyClaimId,
+        resolution: ClaimResolution,
+    ) -> Result<WarrantyClaim>;
 
     /// Cancel a claim
-    fn cancel_claim(&self, id: Uuid) -> Result<WarrantyClaim>;
+    fn cancel_claim(&self, id: WarrantyClaimId) -> Result<WarrantyClaim>;
 
     /// Count warranties matching filter
     fn count(&self, filter: WarrantyFilter) -> Result<u64>;

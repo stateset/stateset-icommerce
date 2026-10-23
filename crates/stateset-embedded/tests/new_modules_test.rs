@@ -495,8 +495,8 @@ fn test_backorder_create_and_list() {
     let backorder = commerce
         .backorder()
         .create_backorder(CreateBackorder {
-            order_id: order.id.into(),
-            customer_id: customer.id.into(),
+            order_id: order.id,
+            customer_id: customer.id,
             sku: "BO-SKU-001".into(),
             quantity: dec!(50),
             priority: Some(BackorderPriority::High),
@@ -1266,8 +1266,8 @@ fn test_backorder_fulfill_guards() {
         commerce
             .backorder()
             .create_backorder(CreateBackorder {
-                order_id: order.id.into(),
-                customer_id: customer.id.into(),
+                order_id: order.id,
+                customer_id: customer.id,
                 sku: "BO-GUARD".into(),
                 quantity: dec!(10),
                 priority: None,
@@ -1279,7 +1279,7 @@ fn test_backorder_fulfill_guards() {
             })
             .expect("create backorder")
     };
-    let fulfill = |id: Uuid, qty| FulfillBackorder {
+    let fulfill = |id: stateset_core::BackorderId, qty| FulfillBackorder {
         backorder_id: id,
         quantity: qty,
         source_type: FulfillmentSourceType::Inventory,

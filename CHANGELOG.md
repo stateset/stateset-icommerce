@@ -6,6 +6,22 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Breaking (2.0)
+
+- **Typed IDs for warranty claims and backorders.** New
+  `WarrantyClaimId`, `BackorderId` and `BackorderAllocationId` (in
+  `stateset-primitives`, re-exported from `stateset-core` and
+  `stateset-embedded`). `WarrantyRepository`'s claim methods and every
+  `BackorderRepository` id parameter take them instead of `Uuid`, and the
+  models carry them: `WarrantyClaim.id`, `Backorder.{id, order_id,
+  order_line_id, customer_id}`, `BackorderAllocation.{id, backorder_id}`,
+  `BackorderFulfillment.backorder_id`, and the `CreateBackorder`,
+  `FulfillBackorder`, `AllocateBackorder` and `BackorderFilter` inputs.
+  Passing an order id where a backorder id belongs no longer compiles.
+  Migrate with `BackorderId::from(uuid)` / `.into_uuid()`; the JSON wire
+  format is unchanged (the ids serialize as the same UUID strings), so the
+  bindings and HTTP API keep their shapes.
+
 ## [1.40.0] - 2026-10-22
 
 ### Security

@@ -530,6 +530,21 @@ define_id! {
     StockSnapshotLineId
 }
 
+define_id! {
+    /// Strongly-typed warranty claim identifier.
+    WarrantyClaimId
+}
+
+define_id! {
+    /// Strongly-typed backorder identifier.
+    BackorderId
+}
+
+define_id! {
+    /// Strongly-typed backorder stock allocation identifier.
+    BackorderAllocationId
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

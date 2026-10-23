@@ -269,25 +269,25 @@ pub trait BackorderRepository: Send + Sync {
     fn create_backorder(&self, input: CreateBackorder) -> Result<Backorder>;
 
     /// Get backorder by ID
-    fn get_backorder(&self, id: Uuid) -> Result<Option<Backorder>>;
+    fn get_backorder(&self, id: BackorderId) -> Result<Option<Backorder>>;
 
     /// Get backorder by number
     fn get_backorder_by_number(&self, number: &str) -> Result<Option<Backorder>>;
 
     /// Update backorder
-    fn update_backorder(&self, id: Uuid, input: UpdateBackorder) -> Result<Backorder>;
+    fn update_backorder(&self, id: BackorderId, input: UpdateBackorder) -> Result<Backorder>;
 
     /// List backorders
     fn list_backorders(&self, filter: BackorderFilter) -> Result<Vec<Backorder>>;
 
     /// Cancel backorder
-    fn cancel_backorder(&self, id: Uuid) -> Result<Backorder>;
+    fn cancel_backorder(&self, id: BackorderId) -> Result<Backorder>;
 
     /// Get backorders for order
-    fn get_backorders_for_order(&self, order_id: Uuid) -> Result<Vec<Backorder>>;
+    fn get_backorders_for_order(&self, order_id: OrderId) -> Result<Vec<Backorder>>;
 
     /// Get backorders for customer
-    fn get_backorders_for_customer(&self, customer_id: Uuid) -> Result<Vec<Backorder>>;
+    fn get_backorders_for_customer(&self, customer_id: CustomerId) -> Result<Vec<Backorder>>;
 
     /// Get backorders for SKU
     fn get_backorders_for_sku(&self, sku: &str) -> Result<Vec<Backorder>>;
@@ -297,20 +297,29 @@ pub trait BackorderRepository: Send + Sync {
     fn fulfill_backorder(&self, input: FulfillBackorder) -> Result<Backorder>;
 
     /// Get fulfillment history for backorder
-    fn get_fulfillment_history(&self, backorder_id: Uuid) -> Result<Vec<BackorderFulfillment>>;
+    fn get_fulfillment_history(
+        &self,
+        backorder_id: BackorderId,
+    ) -> Result<Vec<BackorderFulfillment>>;
 
     // Allocation operations
     /// Allocate inventory to backorder
     fn allocate_backorder(&self, input: AllocateBackorder) -> Result<BackorderAllocation>;
 
     /// Get allocations for backorder
-    fn get_allocations(&self, backorder_id: Uuid) -> Result<Vec<BackorderAllocation>>;
+    fn get_allocations(&self, backorder_id: BackorderId) -> Result<Vec<BackorderAllocation>>;
 
     /// Release allocation
-    fn release_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation>;
+    fn release_allocation(
+        &self,
+        allocation_id: BackorderAllocationId,
+    ) -> Result<BackorderAllocation>;
 
     /// Confirm allocation
-    fn confirm_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation>;
+    fn confirm_allocation(
+        &self,
+        allocation_id: BackorderAllocationId,
+    ) -> Result<BackorderAllocation>;
 
     /// Expire old allocations
     fn expire_allocations(&self) -> Result<u32>;

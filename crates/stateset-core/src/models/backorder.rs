@@ -5,6 +5,7 @@
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use stateset_primitives::{BackorderAllocationId, BackorderId, CustomerId, OrderId, OrderItemId};
 use std::str::FromStr;
 use strum::{Display, EnumString};
 use uuid::Uuid;
@@ -16,11 +17,11 @@ use uuid::Uuid;
 /// A backorder record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Backorder {
-    pub id: Uuid,
+    pub id: BackorderId,
     pub backorder_number: String,
-    pub order_id: Uuid,
-    pub order_line_id: Option<Uuid>,
-    pub customer_id: Uuid,
+    pub order_id: OrderId,
+    pub order_line_id: Option<OrderItemId>,
+    pub customer_id: CustomerId,
     pub sku: String,
     pub quantity_ordered: Decimal,
     pub quantity_fulfilled: Decimal,
@@ -39,7 +40,7 @@ pub struct Backorder {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackorderFulfillment {
     pub id: Uuid,
-    pub backorder_id: Uuid,
+    pub backorder_id: BackorderId,
     pub quantity: Decimal,
     pub source_type: FulfillmentSourceType,
     pub source_id: Option<Uuid>,
@@ -60,8 +61,8 @@ pub struct BackorderFulfillment {
 /// allocation was wired to inventory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackorderAllocation {
-    pub id: Uuid,
-    pub backorder_id: Uuid,
+    pub id: BackorderAllocationId,
+    pub backorder_id: BackorderId,
     pub sku: String,
     pub quantity: Decimal,
     pub location_id: Option<i32>,
@@ -170,9 +171,9 @@ impl AllocationStatus {
 /// Input for creating a backorder.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateBackorder {
-    pub order_id: Uuid,
-    pub order_line_id: Option<Uuid>,
-    pub customer_id: Uuid,
+    pub order_id: OrderId,
+    pub order_line_id: Option<OrderItemId>,
+    pub customer_id: CustomerId,
     pub sku: String,
     pub quantity: Decimal,
     pub priority: Option<BackorderPriority>,
@@ -195,7 +196,7 @@ pub struct UpdateBackorder {
 /// Input for fulfilling a backorder.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FulfillBackorder {
-    pub backorder_id: Uuid,
+    pub backorder_id: BackorderId,
     pub quantity: Decimal,
     pub source_type: FulfillmentSourceType,
     pub source_id: Option<Uuid>,
@@ -206,7 +207,7 @@ pub struct FulfillBackorder {
 /// Input for allocating inventory to a backorder.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AllocateBackorder {
-    pub backorder_id: Uuid,
+    pub backorder_id: BackorderId,
     pub quantity: Decimal,
     pub location_id: Option<i32>,
     pub lot_id: Option<Uuid>,
@@ -220,8 +221,8 @@ pub struct AllocateBackorder {
 /// Filter for listing backorders.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BackorderFilter {
-    pub order_id: Option<Uuid>,
-    pub customer_id: Option<Uuid>,
+    pub order_id: Option<OrderId>,
+    pub customer_id: Option<CustomerId>,
     pub sku: Option<String>,
     pub status: Option<BackorderStatus>,
     pub priority: Option<BackorderPriority>,

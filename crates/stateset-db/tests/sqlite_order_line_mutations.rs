@@ -148,9 +148,9 @@ fn add_item_reserves_stock_and_backorders_shortfall() {
     let stock_b = db.inventory().get_stock(SKU_B).unwrap().unwrap();
     assert_eq!(stock_b.total_available, dec!(0), "added line consumed available stock");
 
-    let backorders = db.backorder().get_backorders_for_order(order.id.into_uuid()).unwrap();
+    let backorders = db.backorder().get_backorders_for_order(order.id).unwrap();
     assert_eq!(backorders.len(), 1, "shortfall on the added line is backordered");
-    assert_eq!(backorders[0].order_line_id, Some(added.id.into_uuid()));
+    assert_eq!(backorders[0].order_line_id, Some(added.id));
     assert_eq!(backorders[0].quantity_ordered, dec!(2));
 }
 
@@ -166,7 +166,7 @@ fn remove_item_releases_its_reservation_and_cancels_its_backorder() {
     assert_eq!(open_reserved_qty(&db, order.id), dec!(2), "only SKU_A's reservation remains");
     let stock_b = db.inventory().get_stock(SKU_B).unwrap().unwrap();
     assert_eq!(stock_b.total_available, dec!(10), "released stock is available again");
-    let backorders = db.backorder().get_backorders_for_order(order.id.into_uuid()).unwrap();
+    let backorders = db.backorder().get_backorders_for_order(order.id).unwrap();
     assert_eq!(backorders.len(), 1);
     assert_eq!(backorders[0].status, BackorderStatus::Cancelled, "line backorder cancelled");
 
@@ -259,7 +259,7 @@ fn update_batch_atomic_cancel_releases_reservations_like_update() {
     assert_eq!(updated[0].items.len(), 2, "batch result carries items");
 
     assert_eq!(open_reserved_qty(&db, order.id), dec!(0), "batch cancel released stock");
-    let backorders = db.backorder().get_backorders_for_order(order.id.into_uuid()).unwrap();
+    let backorders = db.backorder().get_backorders_for_order(order.id).unwrap();
     assert!(backorders.iter().all(|b| b.status == BackorderStatus::Cancelled));
     let stock_a = db.inventory().get_stock(SKU_A).unwrap().unwrap();
     assert_eq!(stock_a.total_available, dec!(10));
@@ -350,7 +350,7 @@ fn delete_releases_reservations_and_cancels_backorders() {
     assert_eq!(open_reserved_qty(&db, order.id), dec!(0), "reservations released");
     assert_eq!(db.inventory().get_stock(SKU_A).unwrap().unwrap().total_available, dec!(10));
     assert_eq!(db.inventory().get_stock(SKU_B).unwrap().unwrap().total_available, dec!(10));
-    let backorders = db.backorder().get_backorders_for_order(order.id.into_uuid()).unwrap();
+    let backorders = db.backorder().get_backorders_for_order(order.id).unwrap();
     assert!(
         backorders.iter().all(|b| b.status == BackorderStatus::Cancelled),
         "backorders cancelled: {backorders:?}"

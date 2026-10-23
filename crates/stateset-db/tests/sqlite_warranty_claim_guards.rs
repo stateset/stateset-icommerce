@@ -23,6 +23,7 @@
 #![cfg(feature = "sqlite")]
 
 use rust_decimal_macros::dec;
+use stateset_core::WarrantyClaimId;
 use stateset_core::{
     ClaimResolution, ClaimStatus, CommerceError, CreateCustomer, CreateWarranty,
     CreateWarrantyClaim, CustomerId, CustomerRepository, UpdateWarrantyClaim, Warranty,
@@ -143,7 +144,7 @@ fn sqlite_terminal_claims_reject_every_further_transition_with_a_conflict() {
     }
 
     // A claim that was never filed is still NotFound, not a conflict.
-    let err = db.warranties().approve_claim(uuid::Uuid::new_v4()).unwrap_err();
+    let err = db.warranties().approve_claim(WarrantyClaimId::new()).unwrap_err();
     assert!(matches!(err, CommerceError::NotFound), "got {err:?}");
 }
 

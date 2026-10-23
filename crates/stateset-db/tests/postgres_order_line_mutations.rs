@@ -181,7 +181,7 @@ async fn postgres_add_item_reserves_stock_and_backorders_shortfall() {
 
     let backorders = ctx.backorders(id).await;
     assert_eq!(backorders.len(), 1);
-    assert_eq!(backorders[0].order_line_id, Some(added.id.into_uuid()));
+    assert_eq!(backorders[0].order_line_id, Some(added.id));
     assert_eq!(backorders[0].quantity_ordered, dec!(2));
 }
 
