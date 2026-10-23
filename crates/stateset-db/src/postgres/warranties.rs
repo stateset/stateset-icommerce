@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
 use sqlx::postgres::PgPool;
+use stateset_core::WarrantyClaimId;
 use stateset_core::{
     BatchResult, ClaimResolution, ClaimStatus, CommerceError, CreateWarranty, CreateWarrantyClaim,
     CustomerId, OrderId, OrderItemId, ProductId, Result, UpdateWarranty, UpdateWarrantyClaim,
@@ -467,7 +468,7 @@ impl PgWarrantyRepository {
         })?;
 
         Ok(WarrantyClaim {
-            id,
+            id: WarrantyClaimId::from(id),
             claim_number,
             warranty_id: WarrantyId::from(warranty_id),
             customer_id: CustomerId::from(customer_id),
@@ -1635,16 +1636,20 @@ impl WarrantyRepository for PgWarrantyRepository {
         super::block_on(self.create_claim_async(input))
     }
 
-    fn get_claim(&self, id: Uuid) -> Result<Option<WarrantyClaim>> {
-        super::block_on(self.get_claim_async(id))
+    fn get_claim(&self, id: WarrantyClaimId) -> Result<Option<WarrantyClaim>> {
+        super::block_on(self.get_claim_async(id.into_uuid()))
     }
 
     fn get_claim_by_number(&self, claim_number: &str) -> Result<Option<WarrantyClaim>> {
         super::block_on(self.get_claim_by_number_async(claim_number))
     }
 
-    fn update_claim(&self, id: Uuid, input: UpdateWarrantyClaim) -> Result<WarrantyClaim> {
-        super::block_on(self.update_claim_async(id, input))
+    fn update_claim(
+        &self,
+        id: WarrantyClaimId,
+        input: UpdateWarrantyClaim,
+    ) -> Result<WarrantyClaim> {
+        super::block_on(self.update_claim_async(id.into_uuid(), input))
     }
 
     fn list_claims(&self, filter: WarrantyClaimFilter) -> Result<Vec<WarrantyClaim>> {
@@ -1655,20 +1660,24 @@ impl WarrantyRepository for PgWarrantyRepository {
         super::block_on(self.get_claims_async(warranty_id))
     }
 
-    fn approve_claim(&self, id: Uuid) -> Result<WarrantyClaim> {
-        super::block_on(self.approve_claim_async(id))
+    fn approve_claim(&self, id: WarrantyClaimId) -> Result<WarrantyClaim> {
+        super::block_on(self.approve_claim_async(id.into_uuid()))
     }
 
-    fn deny_claim(&self, id: Uuid, reason: &str) -> Result<WarrantyClaim> {
-        super::block_on(self.deny_claim_async(id, reason))
+    fn deny_claim(&self, id: WarrantyClaimId, reason: &str) -> Result<WarrantyClaim> {
+        super::block_on(self.deny_claim_async(id.into_uuid(), reason))
     }
 
-    fn complete_claim(&self, id: Uuid, resolution: ClaimResolution) -> Result<WarrantyClaim> {
-        super::block_on(self.complete_claim_async(id, resolution))
+    fn complete_claim(
+        &self,
+        id: WarrantyClaimId,
+        resolution: ClaimResolution,
+    ) -> Result<WarrantyClaim> {
+        super::block_on(self.complete_claim_async(id.into_uuid(), resolution))
     }
 
-    fn cancel_claim(&self, id: Uuid) -> Result<WarrantyClaim> {
-        super::block_on(self.cancel_claim_async(id))
+    fn cancel_claim(&self, id: WarrantyClaimId) -> Result<WarrantyClaim> {
+        super::block_on(self.cancel_claim_async(id.into_uuid()))
     }
 
     fn count(&self, filter: WarrantyFilter) -> Result<u64> {

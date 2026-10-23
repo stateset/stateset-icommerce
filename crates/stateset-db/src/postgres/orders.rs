@@ -878,9 +878,9 @@ impl PgOrderRepository {
         let remaining = requested - reserved;
         if remaining > Decimal::ZERO {
             let backorder_input = CreateBackorder {
-                order_id,
-                order_line_id: Some(item.id.into_uuid()),
-                customer_id,
+                order_id: OrderId::from(order_id),
+                order_line_id: Some(item.id),
+                customer_id: CustomerId::from(customer_id),
                 sku: item.sku.clone(),
                 quantity: remaining,
                 priority: None,

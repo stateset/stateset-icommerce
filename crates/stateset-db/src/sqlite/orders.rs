@@ -895,9 +895,9 @@ impl SqliteOrderRepository {
         let remaining = requested - reserved;
         if remaining > Decimal::ZERO {
             let backorder_input = CreateBackorder {
-                order_id: order_id.into_uuid(),
-                order_line_id: Some(item.id.into_uuid()),
-                customer_id: customer_id.into_uuid(),
+                order_id,
+                order_line_id: Some(item.id),
+                customer_id,
                 sku: item.sku.clone(),
                 quantity: remaining,
                 priority: None,

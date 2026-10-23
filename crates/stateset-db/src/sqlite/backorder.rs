@@ -7,10 +7,11 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use stateset_core::{
-    AllocateBackorder, AllocationStatus, Backorder, BackorderAllocation, BackorderFilter,
-    BackorderFulfillment, BackorderRepository, BackorderStatus, BackorderSummary, CommerceError,
-    CreateBackorder, FulfillBackorder, FulfillmentSourceType, ReserveInventory, Result,
-    SkuBackorderSummary, UpdateBackorder, generate_backorder_number,
+    AllocateBackorder, AllocationStatus, Backorder, BackorderAllocation, BackorderAllocationId,
+    BackorderFilter, BackorderFulfillment, BackorderId, BackorderRepository, BackorderStatus,
+    BackorderSummary, CommerceError, CreateBackorder, CustomerId, FulfillBackorder,
+    FulfillmentSourceType, OrderId, OrderItemId, ReserveInventory, Result, SkuBackorderSummary,
+    UpdateBackorder, generate_backorder_number,
 };
 use uuid::Uuid;
 
@@ -197,8 +198,8 @@ fn allocate_in_tx(
     )?;
 
     Ok(BackorderAllocation {
-        id,
-        backorder_id,
+        id: BackorderAllocationId::from(id),
+        backorder_id: BackorderId::from(backorder_id),
         sku: sku.to_string(),
         quantity,
         location_id: Some(location_id),
@@ -229,15 +230,24 @@ fn settle_backorder_allocation_status_in_tx(
 
 fn row_to_backorder_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Backorder> {
     Ok(Backorder {
-        id: parse_uuid_row(&row.get::<_, String>(0)?, "backorder", "id")?,
+        id: BackorderId::from(parse_uuid_row(&row.get::<_, String>(0)?, "backorder", "id")?),
         backorder_number: row.get(1)?,
-        order_id: parse_uuid_row(&row.get::<_, String>(2)?, "backorder", "order_id")?,
+        order_id: OrderId::from(parse_uuid_row(
+            &row.get::<_, String>(2)?,
+            "backorder",
+            "order_id",
+        )?),
         order_line_id: parse_uuid_opt_row(
             row.get::<_, Option<String>>(3)?,
             "backorder",
             "order_line_id",
-        )?,
-        customer_id: parse_uuid_row(&row.get::<_, String>(4)?, "backorder", "customer_id")?,
+        )?
+        .map(OrderItemId::from),
+        customer_id: CustomerId::from(parse_uuid_row(
+            &row.get::<_, String>(4)?,
+            "backorder",
+            "customer_id",
+        )?),
         sku: row.get(5)?,
         quantity_ordered: parse_decimal_row(
             &row.get::<_, String>(6)?,
@@ -294,11 +304,11 @@ impl SqliteBackorderRepository {
     ) -> rusqlite::Result<BackorderFulfillment> {
         Ok(BackorderFulfillment {
             id: parse_uuid_row(&row.get::<_, String>(0)?, "backorder_fulfillment", "id")?,
-            backorder_id: parse_uuid_row(
+            backorder_id: BackorderId::from(parse_uuid_row(
                 &row.get::<_, String>(1)?,
                 "backorder_fulfillment",
                 "backorder_id",
-            )?,
+            )?),
             quantity: parse_decimal_row(
                 &row.get::<_, String>(2)?,
                 "backorder_fulfillment",
@@ -326,12 +336,16 @@ impl SqliteBackorderRepository {
 
     fn row_to_allocation(&self, row: &rusqlite::Row<'_>) -> rusqlite::Result<BackorderAllocation> {
         Ok(BackorderAllocation {
-            id: parse_uuid_row(&row.get::<_, String>(0)?, "backorder_allocation", "id")?,
-            backorder_id: parse_uuid_row(
+            id: BackorderAllocationId::from(parse_uuid_row(
+                &row.get::<_, String>(0)?,
+                "backorder_allocation",
+                "id",
+            )?),
+            backorder_id: BackorderId::from(parse_uuid_row(
                 &row.get::<_, String>(1)?,
                 "backorder_allocation",
                 "backorder_id",
-            )?,
+            )?),
             sku: row.get(2)?,
             quantity: parse_decimal_row(
                 &row.get::<_, String>(3)?,
@@ -495,7 +509,7 @@ impl SqliteBackorderRepository {
     ) -> rusqlite::Result<()> {
         let reason = format!("Backorder {} fulfilment", input.backorder_id);
         let mut remaining = input.quantity;
-        for allocation in open_allocations_in_tx(tx, input.backorder_id)? {
+        for allocation in open_allocations_in_tx(tx, input.backorder_id.into_uuid())? {
             if remaining <= Decimal::ZERO {
                 break;
             }
@@ -584,10 +598,10 @@ impl BackorderRepository for SqliteBackorderRepository {
             ).map_err(map_db_error)?;
         }
 
-        self.get_backorder(id)?.ok_or(CommerceError::NotFound)
+        self.get_backorder(BackorderId::from(id))?.ok_or(CommerceError::NotFound)
     }
 
-    fn get_backorder(&self, id: Uuid) -> Result<Option<Backorder>> {
+    fn get_backorder(&self, id: BackorderId) -> Result<Option<Backorder>> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let result = conn.query_row(
             "SELECT id, backorder_number, order_id, order_line_id, customer_id, sku,
@@ -623,7 +637,7 @@ impl BackorderRepository for SqliteBackorderRepository {
         }
     }
 
-    fn update_backorder(&self, id: Uuid, input: UpdateBackorder) -> Result<Backorder> {
+    fn update_backorder(&self, id: BackorderId, input: UpdateBackorder) -> Result<Backorder> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let now = Utc::now();
 
@@ -703,7 +717,7 @@ impl BackorderRepository for SqliteBackorderRepository {
         Ok(backorders)
     }
 
-    fn cancel_backorder(&self, id: Uuid) -> Result<Backorder> {
+    fn cancel_backorder(&self, id: BackorderId) -> Result<Backorder> {
         // Status read, allocation release (inventory hand-back) and status
         // flip in one IMMEDIATE transaction. Idempotent for an already
         // cancelled backorder; a fulfilled one cannot be cancelled.
@@ -726,7 +740,7 @@ impl BackorderRepository for SqliteBackorderRepository {
                 _ => {}
             }
 
-            release_open_allocations_in_tx(tx, &[id])?;
+            release_open_allocations_in_tx(tx, &[id.into_uuid()])?;
             tx.execute(
                 "UPDATE backorders SET status = 'cancelled', updated_at = ? WHERE id = ?",
                 [now.to_rfc3339(), id.to_string()],
@@ -737,11 +751,11 @@ impl BackorderRepository for SqliteBackorderRepository {
         self.get_backorder(id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn get_backorders_for_order(&self, order_id: Uuid) -> Result<Vec<Backorder>> {
+    fn get_backorders_for_order(&self, order_id: OrderId) -> Result<Vec<Backorder>> {
         self.list_backorders(BackorderFilter { order_id: Some(order_id), ..Default::default() })
     }
 
-    fn get_backorders_for_customer(&self, customer_id: Uuid) -> Result<Vec<Backorder>> {
+    fn get_backorders_for_customer(&self, customer_id: CustomerId) -> Result<Vec<Backorder>> {
         self.list_backorders(BackorderFilter {
             customer_id: Some(customer_id),
             ..Default::default()
@@ -853,7 +867,10 @@ impl BackorderRepository for SqliteBackorderRepository {
         self.get_backorder(input.backorder_id)?.ok_or(CommerceError::NotFound)
     }
 
-    fn get_fulfillment_history(&self, backorder_id: Uuid) -> Result<Vec<BackorderFulfillment>> {
+    fn get_fulfillment_history(
+        &self,
+        backorder_id: BackorderId,
+    ) -> Result<Vec<BackorderFulfillment>> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut stmt = conn.prepare(
             "SELECT id, backorder_id, quantity, source_type, source_id, notes, fulfilled_at, fulfilled_by
@@ -904,7 +921,7 @@ impl BackorderRepository for SqliteBackorderRepository {
                 ))));
             }
             let remaining = parse_decimal_row(&remaining_str, "backorder", "quantity_remaining")?;
-            let already = open_allocated_quantity_in_tx(tx, input.backorder_id)?;
+            let already = open_allocated_quantity_in_tx(tx, input.backorder_id.into_uuid())?;
             if input.quantity + already > remaining {
                 return Err(to_sql_err(CommerceError::ValidationError(format!(
                     "Cannot allocate {} - only {} of the backorder remains unallocated",
@@ -916,7 +933,7 @@ impl BackorderRepository for SqliteBackorderRepository {
             let location_id = input.location_id.or(source_location_id).unwrap_or(1);
             allocate_in_tx(
                 tx,
-                input.backorder_id,
+                input.backorder_id.into_uuid(),
                 &sku,
                 input.quantity,
                 location_id,
@@ -927,7 +944,7 @@ impl BackorderRepository for SqliteBackorderRepository {
         })
     }
 
-    fn get_allocations(&self, backorder_id: Uuid) -> Result<Vec<BackorderAllocation>> {
+    fn get_allocations(&self, backorder_id: BackorderId) -> Result<Vec<BackorderAllocation>> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let mut stmt = conn
             .prepare(&format!(
@@ -947,10 +964,13 @@ impl BackorderRepository for SqliteBackorderRepository {
         Ok(allocations)
     }
 
-    fn release_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
+    fn release_allocation(
+        &self,
+        allocation_id: BackorderAllocationId,
+    ) -> Result<BackorderAllocation> {
         with_immediate_transaction(&self.pool, |tx| {
             let now = Utc::now();
-            let allocation = self.get_allocation_in_tx(tx, allocation_id)?;
+            let allocation = self.get_allocation_in_tx(tx, allocation_id.into_uuid())?;
             if !allocation.status.is_open() {
                 // Already released / expired / fulfilled: idempotent.
                 return Ok(allocation);
@@ -962,15 +982,18 @@ impl BackorderRepository for SqliteBackorderRepository {
                 "UPDATE backorder_allocations SET status = 'released' WHERE id = ?",
                 [allocation_id.to_string()],
             )?;
-            settle_backorder_allocation_status_in_tx(tx, allocation.backorder_id, now)?;
-            self.get_allocation_in_tx(tx, allocation_id)
+            settle_backorder_allocation_status_in_tx(tx, allocation.backorder_id.into_uuid(), now)?;
+            self.get_allocation_in_tx(tx, allocation_id.into_uuid())
         })
     }
 
-    fn confirm_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
+    fn confirm_allocation(
+        &self,
+        allocation_id: BackorderAllocationId,
+    ) -> Result<BackorderAllocation> {
         with_immediate_transaction(&self.pool, |tx| {
             let now = Utc::now();
-            let allocation = self.get_allocation_in_tx(tx, allocation_id)?;
+            let allocation = self.get_allocation_in_tx(tx, allocation_id.into_uuid())?;
             match allocation.status {
                 AllocationStatus::Confirmed => return Ok(allocation),
                 AllocationStatus::Reserved => {}
@@ -992,7 +1015,11 @@ impl BackorderRepository for SqliteBackorderRepository {
                             "UPDATE backorder_allocations SET status = 'expired' WHERE id = ?",
                             [allocation_id.to_string()],
                         )?;
-                        settle_backorder_allocation_status_in_tx(tx, allocation.backorder_id, now)?;
+                        settle_backorder_allocation_status_in_tx(
+                            tx,
+                            allocation.backorder_id.into_uuid(),
+                            now,
+                        )?;
                         return Err(to_sql_err(CommerceError::ReservationExpired(reservation_id)));
                     }
                 }
@@ -1001,7 +1028,7 @@ impl BackorderRepository for SqliteBackorderRepository {
                 "UPDATE backorder_allocations SET status = 'confirmed' WHERE id = ?",
                 [allocation_id.to_string()],
             )?;
-            self.get_allocation_in_tx(tx, allocation_id)
+            self.get_allocation_in_tx(tx, allocation_id.into_uuid())
         })
     }
 
@@ -1253,9 +1280,9 @@ mod tests {
 
     fn input(sku: &str, quantity: Decimal) -> CreateBackorder {
         CreateBackorder {
-            order_id: Uuid::new_v4(),
+            order_id: OrderId::new(),
             order_line_id: None,
-            customer_id: Uuid::new_v4(),
+            customer_id: CustomerId::new(),
             sku: sku.into(),
             quantity,
             priority: None,

@@ -298,7 +298,7 @@ fn test_concurrent_order_creation_same_inventory() {
 
         let backorders = commerce
             .backorder()
-            .get_backorders_for_order(order.id.into())
+            .get_backorders_for_order(order.id)
             .expect("Failed to load backorders");
         let backordered =
             backorders.iter().fold(Decimal::ZERO, |acc, b| acc + b.quantity_remaining);

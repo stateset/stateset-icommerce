@@ -328,7 +328,7 @@ impl Backorders {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let backorder = commerce
             .backorder()
-            .get_backorder(uuid)
+            .get_backorder(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get backorder", e))?;
         convert_optional_output(backorder)
     }
@@ -367,7 +367,7 @@ impl Backorders {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let backorder = commerce
             .backorder()
-            .cancel_backorder(uuid)
+            .cancel_backorder(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel backorder", e))?;
         convert_output(backorder)
     }

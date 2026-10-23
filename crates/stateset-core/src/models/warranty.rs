@@ -6,9 +6,10 @@ use crate::errors::{CommerceError, Result};
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use stateset_primitives::{CustomerId, OrderId, OrderItemId, ProductId, WarrantyId};
+use stateset_primitives::{
+    CustomerId, OrderId, OrderItemId, ProductId, WarrantyClaimId, WarrantyId,
+};
 use strum::{Display, EnumString};
-use uuid::Uuid;
 
 /// Warranty status
 #[derive(
@@ -320,7 +321,7 @@ pub struct WarrantyFilter {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WarrantyClaim {
     /// Unique claim ID
-    pub id: Uuid,
+    pub id: WarrantyClaimId,
     /// Human-readable claim number
     pub claim_number: String,
     /// Associated warranty ID

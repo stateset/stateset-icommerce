@@ -78,7 +78,12 @@ async fn claim(db: &PostgresDatabase, warranty: &Warranty) -> WarrantyClaim {
 }
 
 async fn status(db: &PostgresDatabase, claim: &WarrantyClaim) -> ClaimStatus {
-    db.warranties().get_claim_async(claim.id).await.expect("get").expect("exists").status
+    db.warranties()
+        .get_claim_async(claim.id.into_uuid())
+        .await
+        .expect("get")
+        .expect("exists")
+        .status
 }
 
 // ---------------------------------------------------------------------------
@@ -142,24 +147,30 @@ async fn postgres_terminal_claims_reject_every_further_transition_with_a_conflic
     let repo = db.warranties();
 
     let cancelled = claim(&db, &w).await;
-    repo.cancel_claim_async(cancelled.id).await.expect("cancel");
-    let err = repo.approve_claim_async(cancelled.id).await.expect_err("approve after cancel");
+    repo.cancel_claim_async(cancelled.id.into_uuid()).await.expect("cancel");
+    let err =
+        repo.approve_claim_async(cancelled.id.into_uuid()).await.expect_err("approve after cancel");
     assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
     assert_eq!(status(&db, &cancelled).await, ClaimStatus::Cancelled, "the cancel must stand");
 
     let approved = claim(&db, &w).await;
-    repo.approve_claim_async(approved.id).await.expect("approve");
-    let err = repo.deny_claim_async(approved.id, "too late").await.expect_err("deny after approve");
+    repo.approve_claim_async(approved.id.into_uuid()).await.expect("approve");
+    let err = repo
+        .deny_claim_async(approved.id.into_uuid(), "too late")
+        .await
+        .expect_err("deny after approve");
     assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
     assert_eq!(status(&db, &approved).await, ClaimStatus::Approved, "the approval must stand");
 
     let denied = claim(&db, &w).await;
-    repo.deny_claim_async(denied.id, "not covered").await.expect("deny");
+    repo.deny_claim_async(denied.id.into_uuid(), "not covered").await.expect("deny");
     for err in [
-        repo.approve_claim_async(denied.id).await.unwrap_err(),
-        repo.deny_claim_async(denied.id, "again").await.unwrap_err(),
-        repo.complete_claim_async(denied.id, ClaimResolution::Repair).await.unwrap_err(),
-        repo.cancel_claim_async(denied.id).await.unwrap_err(),
+        repo.approve_claim_async(denied.id.into_uuid()).await.unwrap_err(),
+        repo.deny_claim_async(denied.id.into_uuid(), "again").await.unwrap_err(),
+        repo.complete_claim_async(denied.id.into_uuid(), ClaimResolution::Repair)
+            .await
+            .unwrap_err(),
+        repo.cancel_claim_async(denied.id.into_uuid()).await.unwrap_err(),
     ] {
         assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
     }
@@ -170,13 +181,14 @@ async fn postgres_terminal_claims_reject_every_further_transition_with_a_conflic
 
     // A bad *request* stays a validation error.
     let ready = claim(&db, &w).await;
-    repo.approve_claim_async(ready.id).await.expect("approve");
+    repo.approve_claim_async(ready.id.into_uuid()).await.expect("approve");
     for bad in [ClaimResolution::None, ClaimResolution::Denied] {
-        let err = repo.complete_claim_async(ready.id, bad).await.expect_err("bad resolution");
+        let err =
+            repo.complete_claim_async(ready.id.into_uuid(), bad).await.expect_err("bad resolution");
         assert!(matches!(err, CommerceError::ValidationError(_)), "{bad}: got {err:?}");
     }
     let err = repo
-        .complete_claim_async(cancelled.id, ClaimResolution::Repair)
+        .complete_claim_async(cancelled.id.into_uuid(), ClaimResolution::Repair)
         .await
         .expect_err("completing a cancelled claim");
     assert!(matches!(err, CommerceError::Conflict(_)), "got {err:?}");
@@ -282,7 +294,7 @@ async fn postgres_concurrent_approve_and_deny_leave_exactly_one_winner() {
             let id = c.id;
             tokio::spawn(async move {
                 barrier.wait().await;
-                db.warranties().approve_claim_async(id).await
+                db.warranties().approve_claim_async(id.into_uuid()).await
             })
         };
         let denier = {
@@ -291,7 +303,7 @@ async fn postgres_concurrent_approve_and_deny_leave_exactly_one_winner() {
             let id = c.id;
             tokio::spawn(async move {
                 barrier.wait().await;
-                db.warranties().deny_claim_async(id, "duplicate filing").await
+                db.warranties().deny_claim_async(id.into_uuid(), "duplicate filing").await
             })
         };
 
@@ -331,7 +343,7 @@ async fn postgres_a_cancelled_claim_is_never_resurrected_by_a_concurrent_approve
             let id = c.id;
             tokio::spawn(async move {
                 barrier.wait().await;
-                db.warranties().approve_claim_async(id).await
+                db.warranties().approve_claim_async(id.into_uuid()).await
             })
         };
         let canceller = {
@@ -340,7 +352,7 @@ async fn postgres_a_cancelled_claim_is_never_resurrected_by_a_concurrent_approve
             let id = c.id;
             tokio::spawn(async move {
                 barrier.wait().await;
-                db.warranties().cancel_claim_async(id).await
+                db.warranties().cancel_claim_async(id.into_uuid()).await
             })
         };
 
@@ -381,7 +393,7 @@ async fn postgres_concurrent_partial_claim_updates_do_not_lose_fields() {
                 barrier.wait().await;
                 db.warranties()
                     .update_claim_async(
-                        id,
+                        id.into_uuid(),
                         UpdateWarrantyClaim {
                             internal_notes: Some("triaged by ops".into()),
                             ..Default::default()
@@ -398,7 +410,7 @@ async fn postgres_concurrent_partial_claim_updates_do_not_lose_fields() {
                 barrier.wait().await;
                 db.warranties()
                     .update_claim_async(
-                        id,
+                        id.into_uuid(),
                         UpdateWarrantyClaim {
                             repair_cost: Some(dec!(42.50)),
                             ..Default::default()
@@ -411,7 +423,8 @@ async fn postgres_concurrent_partial_claim_updates_do_not_lose_fields() {
         notes.await.expect("notes task").expect("notes update");
         money.await.expect("money task").expect("money update");
 
-        let after = db.warranties().get_claim_async(c.id).await.expect("get").expect("exists");
+        let after =
+            db.warranties().get_claim_async(c.id.into_uuid()).await.expect("get").expect("exists");
         assert_eq!(
             after.internal_notes.as_deref(),
             Some("triaged by ops"),

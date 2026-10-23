@@ -89,10 +89,7 @@ fn allow_backorder_reserves_available_and_backorders_remainder() {
 
     let backorders = db
         .backorder()
-        .list_backorders(BackorderFilter {
-            order_id: Some(order.id.into_uuid()),
-            ..Default::default()
-        })
+        .list_backorders(BackorderFilter { order_id: Some(order.id), ..Default::default() })
         .unwrap();
     assert_eq!(backorders.len(), 1, "the shortfall becomes a backorder");
     assert_eq!(backorders[0].quantity_ordered, dec!(3));
@@ -147,10 +144,7 @@ fn reject_if_insufficient_creates_order_when_fully_in_stock() {
 
     let backorders = db
         .backorder()
-        .list_backorders(BackorderFilter {
-            order_id: Some(order.id.into_uuid()),
-            ..Default::default()
-        })
+        .list_backorders(BackorderFilter { order_id: Some(order.id), ..Default::default() })
         .unwrap();
     assert!(backorders.is_empty(), "fully reserved orders never backorder");
 }

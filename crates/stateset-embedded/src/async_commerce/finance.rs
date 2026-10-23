@@ -1,6 +1,7 @@
 //! Finance accessors: AP, cost accounting, credit, backorders, AR, general ledger.
 
 use super::*;
+use stateset_core::{BackorderAllocationId, BackorderId, OrderId};
 
 /// Async accounts payable operations.
 pub struct AsyncAccountsPayable {
@@ -543,32 +544,39 @@ impl AsyncBackorder {
         self.db.backorder().create_backorder_async(input).await
     }
 
-    pub async fn get_backorder(&self, id: Uuid) -> Result<Option<Backorder>> {
-        self.db.backorder().get_backorder_async(id).await
+    pub async fn get_backorder(&self, id: BackorderId) -> Result<Option<Backorder>> {
+        self.db.backorder().get_backorder_async(id.into_uuid()).await
     }
 
     pub async fn get_backorder_by_number(&self, number: &str) -> Result<Option<Backorder>> {
         self.db.backorder().get_backorder_by_number_async(number).await
     }
 
-    pub async fn update_backorder(&self, id: Uuid, input: UpdateBackorder) -> Result<Backorder> {
-        self.db.backorder().update_backorder_async(id, input).await
+    pub async fn update_backorder(
+        &self,
+        id: BackorderId,
+        input: UpdateBackorder,
+    ) -> Result<Backorder> {
+        self.db.backorder().update_backorder_async(id.into_uuid(), input).await
     }
 
     pub async fn list_backorders(&self, filter: BackorderFilter) -> Result<Vec<Backorder>> {
         self.db.backorder().list_backorders_async(filter).await
     }
 
-    pub async fn cancel_backorder(&self, id: Uuid) -> Result<Backorder> {
-        self.db.backorder().cancel_backorder_async(id).await
+    pub async fn cancel_backorder(&self, id: BackorderId) -> Result<Backorder> {
+        self.db.backorder().cancel_backorder_async(id.into_uuid()).await
     }
 
-    pub async fn get_backorders_for_order(&self, order_id: Uuid) -> Result<Vec<Backorder>> {
-        self.db.backorder().get_backorders_for_order_async(order_id).await
+    pub async fn get_backorders_for_order(&self, order_id: OrderId) -> Result<Vec<Backorder>> {
+        self.db.backorder().get_backorders_for_order_async(order_id.into_uuid()).await
     }
 
-    pub async fn get_backorders_for_customer(&self, customer_id: Uuid) -> Result<Vec<Backorder>> {
-        self.db.backorder().get_backorders_for_customer_async(customer_id).await
+    pub async fn get_backorders_for_customer(
+        &self,
+        customer_id: CustomerId,
+    ) -> Result<Vec<Backorder>> {
+        self.db.backorder().get_backorders_for_customer_async(customer_id.into_uuid()).await
     }
 
     pub async fn get_backorders_for_sku(&self, sku: &str) -> Result<Vec<Backorder>> {
@@ -581,9 +589,9 @@ impl AsyncBackorder {
 
     pub async fn get_fulfillment_history(
         &self,
-        backorder_id: Uuid,
+        backorder_id: BackorderId,
     ) -> Result<Vec<BackorderFulfillment>> {
-        self.db.backorder().get_fulfillment_history_async(backorder_id).await
+        self.db.backorder().get_fulfillment_history_async(backorder_id.into_uuid()).await
     }
 
     pub async fn allocate_backorder(
@@ -593,16 +601,25 @@ impl AsyncBackorder {
         self.db.backorder().allocate_backorder_async(input).await
     }
 
-    pub async fn get_allocations(&self, backorder_id: Uuid) -> Result<Vec<BackorderAllocation>> {
-        self.db.backorder().get_allocations_async(backorder_id).await
+    pub async fn get_allocations(
+        &self,
+        backorder_id: BackorderId,
+    ) -> Result<Vec<BackorderAllocation>> {
+        self.db.backorder().get_allocations_async(backorder_id.into_uuid()).await
     }
 
-    pub async fn release_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
-        self.db.backorder().release_allocation_async(allocation_id).await
+    pub async fn release_allocation(
+        &self,
+        allocation_id: BackorderAllocationId,
+    ) -> Result<BackorderAllocation> {
+        self.db.backorder().release_allocation_async(allocation_id.into_uuid()).await
     }
 
-    pub async fn confirm_allocation(&self, allocation_id: Uuid) -> Result<BackorderAllocation> {
-        self.db.backorder().confirm_allocation_async(allocation_id).await
+    pub async fn confirm_allocation(
+        &self,
+        allocation_id: BackorderAllocationId,
+    ) -> Result<BackorderAllocation> {
+        self.db.backorder().confirm_allocation_async(allocation_id.into_uuid()).await
     }
 
     pub async fn expire_allocations(&self) -> Result<u32> {

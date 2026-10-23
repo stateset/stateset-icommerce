@@ -2249,7 +2249,7 @@ impl Warranties {
 
         let claim = commerce
             .warranties()
-            .approve_claim(uuid)
+            .approve_claim(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to approve claim: {}", e)))?;
 
         Ok(claim.into())
@@ -2262,7 +2262,7 @@ impl Warranties {
 
         let claim = commerce
             .warranties()
-            .deny_claim(uuid, &reason)
+            .deny_claim(uuid.into(), &reason)
             .map_err(|e| PhpException::from_message(format!("Failed to deny claim: {}", e)))?;
 
         Ok(claim.into())
@@ -5126,10 +5126,10 @@ impl Backorders {
         let backorder = commerce
             .backorder()
             .create_backorder(stateset_core::CreateBackorder {
-                order_id: ord_uuid,
+                order_id: ord_uuid.into(),
                 // The PHP surface does not carry a customer id for backorders;
                 // the order linkage is sufficient for the embedded API.
-                customer_id: stateset_core::CustomerId::nil().into_uuid(),
+                customer_id: stateset_core::CustomerId::nil(),
                 order_line_id: None,
                 sku,
                 quantity: Decimal::from(quantity),
@@ -5152,7 +5152,7 @@ impl Backorders {
 
         let backorder = commerce
             .backorder()
-            .get_backorder(uuid)
+            .get_backorder(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to get backorder: {}", e)))?;
 
         Ok(backorder.map(|b| b.backorder_number))
@@ -5173,7 +5173,7 @@ impl Backorders {
         let commerce = lock_commerce!(self.commerce);
         let uuid = parse_uuid!(id, "backorder");
 
-        commerce.backorder().cancel_backorder(uuid).map_err(|e| {
+        commerce.backorder().cancel_backorder(uuid.into()).map_err(|e| {
             PhpException::from_message(format!("Failed to cancel backorder: {}", e))
         })?;
 

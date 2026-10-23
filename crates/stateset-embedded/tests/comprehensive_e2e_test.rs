@@ -459,11 +459,11 @@ fn test_backorder_workflow() {
     let backorder = commerce
         .backorder()
         .create_backorder(CreateBackorder {
-            order_id: order.id.into(),
+            order_id: order.id,
             order_line_id: None,
             sku: "SKU-001".into(),
             quantity: dec!(2),
-            customer_id: customer_id.into(),
+            customer_id,
             priority: None,
             expected_date: None,
             promised_date: None,

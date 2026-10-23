@@ -480,11 +480,11 @@ fn test_backorder_allocation_and_fulfillment() {
     let backorder = commerce
         .backorder()
         .create_backorder(CreateBackorder {
-            order_id: order.id.into(),
+            order_id: order.id,
             order_line_id: None,
             sku: "SKU-001".into(),
             quantity: dec!(2),
-            customer_id,
+            customer_id: customer_id.into(),
             priority: None,
             expected_date: None,
             promised_date: None,

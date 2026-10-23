@@ -216,7 +216,7 @@ impl Warranties {
 
         let claim = commerce
             .warranties()
-            .approve_claim(uuid)
+            .approve_claim(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to approve claim", e))?;
 
         Ok(claim.into())
@@ -230,7 +230,7 @@ impl Warranties {
 
         let claim = commerce
             .warranties()
-            .deny_claim(uuid, &reason)
+            .deny_claim(uuid.into(), &reason)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to deny claim", e))?;
 
         Ok(claim.into())
@@ -265,7 +265,7 @@ impl Warranties {
 
         let claim = commerce
             .warranties()
-            .complete_claim(uuid, res)
+            .complete_claim(uuid.into(), res)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to complete claim", e))?;
 
         Ok(claim.into())

@@ -3776,7 +3776,7 @@ impl Warranties {
 
         let claim = commerce
             .warranties()
-            .approve_claim(uuid)
+            .approve_claim(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to approve claim: {}", e)))?;
 
         Ok(claim.into())
@@ -3793,7 +3793,7 @@ impl Warranties {
 
         let claim = commerce
             .warranties()
-            .deny_claim(uuid, &reason)
+            .deny_claim(uuid.into(), &reason)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to deny claim: {}", e)))?;
 
         Ok(claim.into())
@@ -3826,7 +3826,7 @@ impl Warranties {
 
         let claim = commerce
             .warranties()
-            .complete_claim(uuid, res)
+            .complete_claim(uuid.into(), res)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to complete claim: {}", e)))?;
 
         Ok(claim.into())
@@ -12896,7 +12896,7 @@ impl BackorderApi {
         let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let backorder = commerce
             .backorder()
-            .get_backorder(uuid)
+            .get_backorder(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         convert_optional_output(backorder)
     }
@@ -12922,7 +12922,7 @@ impl BackorderApi {
         let backorder = commerce
             .backorder()
             .fulfill_backorder(stateset_core::FulfillBackorder {
-                backorder_id: uuid,
+                backorder_id: uuid.into(),
                 quantity: decimal_from_f64(quantity, "quantity")?,
                 source_type: stateset_core::FulfillmentSourceType::Inventory,
                 source_id: None,
@@ -12941,7 +12941,7 @@ impl BackorderApi {
         let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let backorder = commerce
             .backorder()
-            .cancel_backorder(uuid)
+            .cancel_backorder(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         convert_output(backorder)
     }

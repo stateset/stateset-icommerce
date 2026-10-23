@@ -1585,7 +1585,7 @@ pub extern "C" fn stateset_warranty_approve_claim(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.warranties().approve_claim(claim_uuid).map_err(|e| e.to_string())
+        commerce.warranties().approve_claim(claim_uuid.into()).map_err(|e| e.to_string())
     });
 
     match result {
@@ -1614,7 +1614,7 @@ pub extern "C" fn stateset_warranty_deny_claim(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.warranties().deny_claim(claim_uuid, &reason_str).map_err(|e| e.to_string())
+        commerce.warranties().deny_claim(claim_uuid.into(), &reason_str).map_err(|e| e.to_string())
     });
 
     match result {
@@ -1654,7 +1654,7 @@ pub extern "C" fn stateset_warranty_complete_claim(
     let result = use_handle(handle, |commerce| {
         commerce
             .warranties()
-            .complete_claim(claim_uuid, claim_resolution)
+            .complete_claim(claim_uuid.into(), claim_resolution)
             .map_err(|e| e.to_string())
     });
 
@@ -4298,9 +4298,9 @@ pub extern "C" fn stateset_backorder_create(
         commerce
             .backorder()
             .create_backorder(stateset_embedded::CreateBackorder {
-                order_id: order_uuid,
+                order_id: order_uuid.into(),
                 order_line_id: None,
-                customer_id: customer_uuid,
+                customer_id: customer_uuid.into(),
                 sku: sku_str,
                 quantity: qty,
                 priority: None,
@@ -4336,7 +4336,7 @@ pub extern "C" fn stateset_backorder_get(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.backorder().get_backorder(uuid).map_err(|e| e.to_string())
+        commerce.backorder().get_backorder(uuid.into()).map_err(|e| e.to_string())
     });
 
     match result {
@@ -4382,7 +4382,7 @@ pub extern "C" fn stateset_backorder_fulfill(
         commerce
             .backorder()
             .fulfill_backorder(stateset_embedded::FulfillBackorder {
-                backorder_id: uuid,
+                backorder_id: uuid.into(),
                 quantity: qty,
                 source_type: stateset_embedded::FulfillmentSourceType::Inventory,
                 source_id: None,
@@ -4416,7 +4416,7 @@ pub extern "C" fn stateset_backorder_cancel(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.backorder().cancel_backorder(uuid).map_err(|e| e.to_string())
+        commerce.backorder().cancel_backorder(uuid.into()).map_err(|e| e.to_string())
     });
 
     match result {

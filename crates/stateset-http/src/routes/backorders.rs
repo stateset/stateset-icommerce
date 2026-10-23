@@ -10,6 +10,7 @@ use axum::{
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
+use stateset_core::{BackorderId, CustomerId, OrderId, OrderItemId};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
@@ -136,13 +137,13 @@ pub(crate) async fn create(
     state
         .run_blocking(tid.as_deref(), move |c| {
             let input = stateset_core::CreateBackorder {
-                order_id: parse_id::<Uuid>(&req.order_id, "order_id")?,
+                order_id: parse_id::<OrderId>(&req.order_id, "order_id")?,
                 order_line_id: req
                     .order_line_id
                     .as_deref()
-                    .map(|s| parse_id::<Uuid>(s, "order_line_id"))
+                    .map(|s| parse_id::<OrderItemId>(s, "order_line_id"))
                     .transpose()?,
-                customer_id: parse_id::<Uuid>(&req.customer_id, "customer_id")?,
+                customer_id: parse_id::<CustomerId>(&req.customer_id, "customer_id")?,
                 sku: req.sku,
                 quantity: parse_decimal(&req.quantity, "quantity")?,
                 priority: req.priority.as_deref().map(|s| parse_id(s, "priority")).transpose()?,
@@ -181,12 +182,12 @@ pub(crate) async fn list(
                 order_id: params
                     .order_id
                     .as_deref()
-                    .map(|s| parse_id::<Uuid>(s, "order_id"))
+                    .map(|s| parse_id::<OrderId>(s, "order_id"))
                     .transpose()?,
                 customer_id: params
                     .customer_id
                     .as_deref()
-                    .map(|s| parse_id::<Uuid>(s, "customer_id"))
+                    .map(|s| parse_id::<CustomerId>(s, "customer_id"))
                     .transpose()?,
                 sku: params.sku.clone(),
                 status: params.status.as_deref().map(|s| parse_id(s, "status")).transpose()?,
@@ -219,7 +220,7 @@ pub(crate) async fn list(
 pub(crate) async fn get_one(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    Path(id): Path<BackorderId>,
 ) -> Result<Json<BackorderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
     state
@@ -241,7 +242,7 @@ pub(crate) async fn get_one(
 pub(crate) async fn fulfill(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    Path(id): Path<BackorderId>,
     Json(req): Json<FulfillBackorderRequest>,
 ) -> Result<Json<BackorderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
@@ -275,7 +276,7 @@ pub(crate) async fn fulfill(
 pub(crate) async fn cancel(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    Path(id): Path<BackorderId>,
 ) -> Result<Json<BackorderResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
     state

@@ -8,11 +8,13 @@
 use chrono::{Duration, Utc};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use stateset_core::BackorderId;
 use stateset_core::{
     AdjustInventory, AllocateBackorder, AllocationStatus, BackorderRepository, BackorderStatus,
     CommerceError, CreateBackorder, CreateInventoryItem, FulfillBackorder, FulfillmentSourceType,
     InventoryRepository, ReservationStatus, ReserveInventory, TransactionType,
 };
+use stateset_core::{CustomerId, OrderId};
 use stateset_db::SqliteDatabase;
 use uuid::Uuid;
 
@@ -346,9 +348,9 @@ fn sqlite_balance_triggers_reject_negative_writes_but_leave_legacy_rows_editable
 fn create_backorder(db: &SqliteDatabase, sku: &str, qty: Decimal) -> stateset_core::Backorder {
     db.backorder()
         .create_backorder(CreateBackorder {
-            order_id: Uuid::new_v4(),
+            order_id: OrderId::new(),
             order_line_id: None,
-            customer_id: Uuid::new_v4(),
+            customer_id: CustomerId::new(),
             sku: sku.into(),
             quantity: qty,
             priority: None,
@@ -360,7 +362,7 @@ fn create_backorder(db: &SqliteDatabase, sku: &str, qty: Decimal) -> stateset_co
         .expect("create backorder")
 }
 
-const fn allocate(backorder_id: Uuid, qty: Decimal) -> AllocateBackorder {
+const fn allocate(backorder_id: BackorderId, qty: Decimal) -> AllocateBackorder {
     AllocateBackorder {
         backorder_id,
         quantity: qty,

@@ -1581,10 +1581,8 @@ fn test_order_creates_backorder_when_insufficient_stock() {
         })
         .expect("Failed to create order");
 
-    let backorders = commerce
-        .backorder()
-        .get_backorders_for_order(order.id.into())
-        .expect("Failed to load backorders");
+    let backorders =
+        commerce.backorder().get_backorders_for_order(order.id).expect("Failed to load backorders");
     assert_eq!(backorders.len(), 1);
     assert_eq!(backorders[0].status, BackorderStatus::Pending);
     assert_eq!(backorders[0].quantity_remaining, dec!(3));
@@ -1638,10 +1636,8 @@ fn test_cancel_releases_reservations_and_cancels_backorders() {
         .expect("Failed to load reservations");
     assert!(reservations.iter().all(|r| r.status == ReservationStatus::Released));
 
-    let backorders = commerce
-        .backorder()
-        .get_backorders_for_order(order.id.into())
-        .expect("Failed to load backorders");
+    let backorders =
+        commerce.backorder().get_backorders_for_order(order.id).expect("Failed to load backorders");
     assert!(backorders.iter().all(|bo| bo.status == BackorderStatus::Cancelled));
 }
 

@@ -12,6 +12,7 @@
 
 #![cfg(feature = "sqlite")]
 
+use stateset_core::{CustomerId, OrderId};
 use std::sync::{Arc, Barrier};
 
 use chrono::{Duration, Utc};
@@ -427,9 +428,9 @@ fn sqlite_auto_allocate_gives_stock_to_every_candidate_it_can() {
         ids.push(
             backorders
                 .create_backorder(CreateBackorder {
-                    order_id: Uuid::new_v4(),
+                    order_id: OrderId::new(),
                     order_line_id: None,
-                    customer_id: Uuid::new_v4(),
+                    customer_id: CustomerId::new(),
                     sku: "BO-SKU".into(),
                     quantity: Decimal::from(4),
                     priority: Some(priority),
