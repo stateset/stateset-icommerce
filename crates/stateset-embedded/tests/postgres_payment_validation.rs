@@ -62,15 +62,14 @@ async fn postgres_rejects_nonpositive_payment_amounts() {
         notes: None,
     };
     assert!(
-        commerce.invoices().record_payment(invoice.id.into_uuid(), pay(dec!(0))).await.is_err(),
+        commerce.invoices().record_payment(invoice.id, pay(dec!(0))).await.is_err(),
         "zero invoice payment must be rejected"
     );
     assert!(
-        commerce.invoices().record_payment(invoice.id.into_uuid(), pay(dec!(-10))).await.is_err(),
+        commerce.invoices().record_payment(invoice.id, pay(dec!(-10))).await.is_err(),
         "negative invoice payment must be rejected"
     );
-    let fetched =
-        commerce.invoices().get(invoice.id.into_uuid()).await.expect("get").expect("found");
+    let fetched = commerce.invoices().get(invoice.id).await.expect("get").expect("found");
     assert_eq!(fetched.amount_paid, dec!(0), "rejected payment must not touch amount_paid");
 
     // --- Credit payment ---

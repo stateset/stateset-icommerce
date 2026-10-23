@@ -1,6 +1,7 @@
 //! Core commerce accessors: orders, inventory, customers, products, custom objects, returns, shipments, payments.
 
 use super::*;
+use stateset_core::InvoiceId;
 use stateset_core::{OrderId, PaymentId, ProductId, ReturnId, ShipmentId};
 use stateset_core::{PaymentMethodId, RefundId};
 
@@ -865,8 +866,8 @@ impl AsyncPayments {
     }
 
     /// Get payments for an invoice.
-    pub async fn for_invoice(&self, invoice_id: Uuid) -> Result<Vec<Payment>> {
-        self.db.payments().for_invoice_async(invoice_id).await
+    pub async fn for_invoice(&self, invoice_id: InvoiceId) -> Result<Vec<Payment>> {
+        self.db.payments().for_invoice_async(invoice_id.into_uuid()).await
     }
 
     /// Mark payment as processing.

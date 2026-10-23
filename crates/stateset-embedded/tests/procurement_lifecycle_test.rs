@@ -76,9 +76,9 @@ fn make_draft_po(commerce: &Commerce, qty: Decimal) -> PurchaseOrder {
 /// domain state machine permits receipts.
 fn make_sent_po(commerce: &Commerce, qty: Decimal) -> PurchaseOrder {
     let po = make_draft_po(commerce, qty);
-    let po = commerce.purchase_orders().submit(po.id.into()).expect("submit");
-    let po = commerce.purchase_orders().approve(po.id.into(), "manager").expect("approve");
-    commerce.purchase_orders().send(po.id.into()).expect("send")
+    let po = commerce.purchase_orders().submit(po.id).expect("submit");
+    let po = commerce.purchase_orders().approve(po.id, "manager").expect("approve");
+    commerce.purchase_orders().send(po.id).expect("send")
 }
 
 fn receive(
@@ -87,7 +87,7 @@ fn receive(
     qty: Decimal,
 ) -> Result<PurchaseOrder, CommerceError> {
     commerce.purchase_orders().receive(
-        po.id.into(),
+        po.id,
         ReceivePurchaseOrderItems {
             items: vec![ReceivePurchaseOrderItem {
                 item_id: po.items[0].id,
@@ -159,7 +159,7 @@ fn receive_against_draft_po_is_rejected() {
     assert_conflict(&err, "draft");
 
     // Nothing moved: neither the line quantity nor the PO status.
-    let reloaded = commerce.purchase_orders().get(po.id.into()).expect("get").expect("po");
+    let reloaded = commerce.purchase_orders().get(po.id).expect("get").expect("po");
     assert_eq!(reloaded.status, PurchaseOrderStatus::Draft);
     assert_eq!(reloaded.items[0].quantity_received, Decimal::ZERO);
 }
@@ -168,7 +168,7 @@ fn receive_against_draft_po_is_rejected() {
 fn receive_against_pending_approval_po_is_rejected() {
     let commerce = commerce();
     let po = make_draft_po(&commerce, dec!(10));
-    let po = commerce.purchase_orders().submit(po.id.into()).expect("submit");
+    let po = commerce.purchase_orders().submit(po.id).expect("submit");
     assert_eq!(po.status, PurchaseOrderStatus::PendingApproval);
 
     let err = receive(&commerce, &po, dec!(1)).expect_err("unapproved PO must not accept receipts");
@@ -183,8 +183,8 @@ fn receive_against_approved_but_unsent_po_is_rejected() {
     // is NOT receivable.
     let commerce = commerce();
     let po = make_draft_po(&commerce, dec!(10));
-    let po = commerce.purchase_orders().submit(po.id.into()).expect("submit");
-    let po = commerce.purchase_orders().approve(po.id.into(), "manager").expect("approve");
+    let po = commerce.purchase_orders().submit(po.id).expect("submit");
+    let po = commerce.purchase_orders().approve(po.id, "manager").expect("approve");
     assert_eq!(po.status, PurchaseOrderStatus::Approved);
 
     let err = receive(&commerce, &po, dec!(1)).expect_err("unsent PO must not accept receipts");
@@ -195,13 +195,13 @@ fn receive_against_approved_but_unsent_po_is_rejected() {
 fn receive_against_cancelled_po_is_rejected() {
     let commerce = commerce();
     let po = make_draft_po(&commerce, dec!(10));
-    let po = commerce.purchase_orders().cancel(po.id.into()).expect("cancel");
+    let po = commerce.purchase_orders().cancel(po.id).expect("cancel");
     assert_eq!(po.status, PurchaseOrderStatus::Cancelled);
 
     let err = receive(&commerce, &po, dec!(1)).expect_err("cancelled PO must not accept receipts");
     assert_conflict(&err, "cancelled");
 
-    let reloaded = commerce.purchase_orders().get(po.id.into()).expect("get").expect("po");
+    let reloaded = commerce.purchase_orders().get(po.id).expect("get").expect("po");
     assert_eq!(reloaded.status, PurchaseOrderStatus::Cancelled);
     assert_eq!(reloaded.items[0].quantity_received, Decimal::ZERO);
 }
@@ -212,7 +212,7 @@ fn receive_against_completed_po_is_rejected() {
     let po = make_sent_po(&commerce, dec!(2));
     let po = receive(&commerce, &po, dec!(2)).expect("full receipt");
     assert_eq!(po.status, PurchaseOrderStatus::Received);
-    let po = commerce.purchase_orders().complete(po.id.into()).expect("complete");
+    let po = commerce.purchase_orders().complete(po.id).expect("complete");
 
     let err = receive(&commerce, &po, dec!(1)).expect_err("completed PO must not accept receipts");
     assert_conflict(&err, "completed");
@@ -238,10 +238,7 @@ fn receive_against_sent_po_succeeds_and_updates_quantities() {
 fn receive_against_acknowledged_po_succeeds() {
     let commerce = commerce();
     let po = make_sent_po(&commerce, dec!(5));
-    let po = commerce
-        .purchase_orders()
-        .acknowledge(po.id.into(), Some("SUP-REF-1"))
-        .expect("acknowledge");
+    let po = commerce.purchase_orders().acknowledge(po.id, Some("SUP-REF-1")).expect("acknowledge");
     assert_eq!(po.status, PurchaseOrderStatus::Acknowledged);
 
     let received = receive(&commerce, &po, dec!(5)).expect("receipt against acknowledged PO");
@@ -260,7 +257,7 @@ fn over_receipt_is_still_rejected() {
     receive(&commerce, &po, dec!(4)).expect("partial receipt");
     assert!(receive(&commerce, &po, dec!(7)).is_err(), "4 + 7 > 10 must be rejected");
 
-    let reloaded = commerce.purchase_orders().get(po.id.into()).expect("get").expect("po");
+    let reloaded = commerce.purchase_orders().get(po.id).expect("get").expect("po");
     assert_eq!(reloaded.items[0].quantity_received, dec!(4));
 }
 
@@ -272,12 +269,12 @@ fn over_receipt_is_still_rejected() {
 fn submit_requires_a_draft_po() {
     let commerce = commerce();
     let po = make_draft_po(&commerce, dec!(1));
-    let po = commerce.purchase_orders().submit(po.id.into()).expect("submit");
-    let po = commerce.purchase_orders().approve(po.id.into(), "manager").expect("approve");
+    let po = commerce.purchase_orders().submit(po.id).expect("submit");
+    let po = commerce.purchase_orders().approve(po.id, "manager").expect("approve");
 
     let err = commerce
         .purchase_orders()
-        .submit(po.id.into())
+        .submit(po.id)
         .expect_err("an approved PO cannot re-enter approval");
     assert_conflict(&err, "approved");
 }
@@ -289,11 +286,11 @@ fn approve_requires_a_pending_approval_po() {
 
     let err = commerce
         .purchase_orders()
-        .approve(po.id.into(), "manager")
+        .approve(po.id, "manager")
         .expect_err("a draft PO cannot be approved without submission");
     assert_conflict(&err, "draft");
 
-    let reloaded = commerce.purchase_orders().get(po.id.into()).expect("get").expect("po");
+    let reloaded = commerce.purchase_orders().get(po.id).expect("get").expect("po");
     assert_eq!(reloaded.status, PurchaseOrderStatus::Draft);
     assert!(reloaded.approved_by.is_none(), "a refused approval must not stamp approved_by");
 }
@@ -303,12 +300,11 @@ fn send_requires_an_approved_po() {
     let commerce = commerce();
     let po = make_draft_po(&commerce, dec!(1));
 
-    let err = commerce.purchase_orders().send(po.id.into()).expect_err("a draft PO cannot be sent");
+    let err = commerce.purchase_orders().send(po.id).expect_err("a draft PO cannot be sent");
     assert_conflict(&err, "draft");
 
-    let po = commerce.purchase_orders().cancel(po.id.into()).expect("cancel");
-    let err =
-        commerce.purchase_orders().send(po.id.into()).expect_err("a cancelled PO cannot be sent");
+    let po = commerce.purchase_orders().cancel(po.id).expect("cancel");
+    let err = commerce.purchase_orders().send(po.id).expect_err("a cancelled PO cannot be sent");
     assert_conflict(&err, "cancelled");
     assert_eq!(po.status, PurchaseOrderStatus::Cancelled);
 }
@@ -320,11 +316,11 @@ fn acknowledge_requires_a_sent_po() {
 
     let err = commerce
         .purchase_orders()
-        .acknowledge(po.id.into(), Some("REF"))
+        .acknowledge(po.id, Some("REF"))
         .expect_err("a draft PO cannot be acknowledged");
     assert_conflict(&err, "draft");
 
-    let reloaded = commerce.purchase_orders().get(po.id.into()).expect("get").expect("po");
+    let reloaded = commerce.purchase_orders().get(po.id).expect("get").expect("po");
     assert!(
         reloaded.supplier_reference.is_none(),
         "a refused acknowledgement must not stamp the supplier reference"
@@ -336,15 +332,12 @@ fn hold_and_release_follow_the_state_machine() {
     let commerce = commerce();
     let po = make_draft_po(&commerce, dec!(1));
 
-    let err = commerce
-        .purchase_orders()
-        .hold(po.id.into())
-        .expect_err("a draft PO cannot be put on hold");
+    let err = commerce.purchase_orders().hold(po.id).expect_err("a draft PO cannot be put on hold");
     assert_conflict(&err, "draft");
 
-    let po = commerce.purchase_orders().submit(po.id.into()).expect("submit");
-    let po = commerce.purchase_orders().approve(po.id.into(), "manager").expect("approve");
-    let po = commerce.purchase_orders().hold(po.id.into()).expect("hold");
+    let po = commerce.purchase_orders().submit(po.id).expect("submit");
+    let po = commerce.purchase_orders().approve(po.id, "manager").expect("approve");
+    let po = commerce.purchase_orders().hold(po.id).expect("hold");
     assert_eq!(po.status, PurchaseOrderStatus::OnHold);
 
     // on_hold releases back into the approved lane, and a held PO is not
@@ -352,7 +345,7 @@ fn hold_and_release_follow_the_state_machine() {
     let err = receive(&commerce, &po, dec!(1)).expect_err("a held PO must not accept receipts");
     assert_conflict(&err, "on_hold");
 
-    let po = commerce.purchase_orders().send(po.id.into()).expect("release from hold by sending");
+    let po = commerce.purchase_orders().send(po.id).expect("release from hold by sending");
     assert_eq!(po.status, PurchaseOrderStatus::Sent);
 }
 
@@ -365,13 +358,12 @@ fn cancel_is_refused_on_terminal_and_received_pos() {
 
     let err = commerce
         .purchase_orders()
-        .cancel(po.id.into())
+        .cancel(po.id)
         .expect_err("a fully received PO cannot be cancelled");
     assert_conflict(&err, "received");
 
-    let po = commerce.purchase_orders().complete(po.id.into()).expect("complete");
-    let err =
-        commerce.purchase_orders().cancel(po.id.into()).expect_err("a completed PO is terminal");
+    let po = commerce.purchase_orders().complete(po.id).expect("complete");
+    let err = commerce.purchase_orders().cancel(po.id).expect_err("a completed PO is terminal");
     assert_conflict(&err, "completed");
     assert_eq!(po.status, PurchaseOrderStatus::Completed);
 }
@@ -385,7 +377,7 @@ fn complete_requires_a_fully_received_po() {
 
     let err = commerce
         .purchase_orders()
-        .complete(po.id.into())
+        .complete(po.id)
         .expect_err("a partially received PO cannot be completed");
     assert_conflict(&err, "partially_received");
 }
@@ -396,22 +388,22 @@ fn transitions_on_a_missing_po_report_not_found() {
     let missing = Uuid::new_v4();
 
     assert!(matches!(
-        commerce.purchase_orders().submit(missing).expect_err("submit"),
+        commerce.purchase_orders().submit(missing.into()).expect_err("submit"),
         CommerceError::NotFound
     ));
     assert!(matches!(
-        commerce.purchase_orders().approve(missing, "manager").expect_err("approve"),
+        commerce.purchase_orders().approve(missing.into(), "manager").expect_err("approve"),
         CommerceError::NotFound
     ));
     assert!(matches!(
-        commerce.purchase_orders().cancel(missing).expect_err("cancel"),
+        commerce.purchase_orders().cancel(missing.into()).expect_err("cancel"),
         CommerceError::NotFound
     ));
     assert!(matches!(
         commerce
             .purchase_orders()
             .receive(
-                missing,
+                missing.into(),
                 ReceivePurchaseOrderItems {
                     items: vec![ReceivePurchaseOrderItem {
                         item_id: Uuid::new_v4(),

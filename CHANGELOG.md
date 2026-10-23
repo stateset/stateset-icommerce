@@ -8,6 +8,11 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Breaking (2.0)
 
+- **Invoices, purchase orders and warranties take typed IDs on both
+  facades.** The repository traits already used `InvoiceId`,
+  `PurchaseOrderId` and `WarrantyId`; the sync and async embedded facades
+  still took `Uuid`. Both now take the typed IDs (and every `invoice_id`,
+  `purchase_order_id`, `po_id` and `warranty_id` parameter does too).
 - **`AsyncCommerce` takes typed IDs.** The async facade took a raw `Uuid`
   for every entity even where the sync facade and core already used typed
   IDs. Its order, customer, product, return, shipment, payment,

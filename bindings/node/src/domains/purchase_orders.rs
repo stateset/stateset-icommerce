@@ -163,7 +163,7 @@ impl PurchaseOrders {
 
         let supplier = commerce
             .purchase_orders()
-            .get_supplier(uuid)
+            .get_supplier(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get supplier", e))?;
 
         Ok(supplier.map(|s| s.into()))
@@ -249,7 +249,7 @@ impl PurchaseOrders {
 
         let po = commerce
             .purchase_orders()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get PO", e))?;
 
         convert_optional_output(po)
@@ -281,7 +281,7 @@ impl PurchaseOrders {
 
         let po = commerce
             .purchase_orders()
-            .submit(uuid)
+            .submit(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to submit PO", e))?;
 
         convert_output(po)
@@ -295,7 +295,7 @@ impl PurchaseOrders {
 
         let po = commerce
             .purchase_orders()
-            .approve(uuid, &approved_by)
+            .approve(uuid.into(), &approved_by)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to approve PO", e))?;
 
         convert_output(po)
@@ -309,7 +309,7 @@ impl PurchaseOrders {
 
         let po = commerce
             .purchase_orders()
-            .send(uuid)
+            .send(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to send PO", e))?;
 
         convert_output(po)
@@ -323,7 +323,7 @@ impl PurchaseOrders {
 
         let po = commerce
             .purchase_orders()
-            .cancel(uuid)
+            .cancel(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel PO", e))?;
 
         convert_output(po)
@@ -337,7 +337,7 @@ impl PurchaseOrders {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid PO UUID"))?;
         let items = commerce
             .purchase_orders()
-            .get_items(id)
+            .get_items(id.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get PO items", e))?;
         Ok(items
             .into_iter()
@@ -383,7 +383,7 @@ impl PurchaseOrders {
         convert_output(
             commerce
                 .purchase_orders()
-                .receive(id, stateset_core::ReceivePurchaseOrderItems { items, notes: None })
+                .receive(id.into(), stateset_core::ReceivePurchaseOrderItems { items, notes: None })
                 .map_err(|e| wrap(ErrCode::Internal, "Failed to receive PO", e))?,
         )
     }

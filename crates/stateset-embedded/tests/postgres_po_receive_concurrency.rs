@@ -79,10 +79,9 @@ async fn postgres_receive_accumulates_concurrent_partial_receipts() {
     // so walk the PO through its real lifecycle before receiving. Without this
     // the concurrency assertion below would be measuring receipts against an
     // unapproved draft.
-    let po = commerce.purchase_orders().submit(po.id.into_uuid()).await.expect("submit po");
-    let po =
-        commerce.purchase_orders().approve(po.id.into_uuid(), "manager").await.expect("approve po");
-    let po = commerce.purchase_orders().send(po.id.into_uuid()).await.expect("send po");
+    let po = commerce.purchase_orders().submit(po.id).await.expect("submit po");
+    let po = commerce.purchase_orders().approve(po.id, "manager").await.expect("approve po");
+    let po = commerce.purchase_orders().send(po.id).await.expect("send po");
 
     let po_id = po.id.into_uuid();
     let item_id = po.items[0].id;
@@ -115,7 +114,7 @@ async fn postgres_receive_accumulates_concurrent_partial_receipts() {
         h.await.expect("join").expect("receive");
     }
 
-    let po = commerce.purchase_orders().get(po_id).await.expect("get").expect("po exists");
+    let po = commerce.purchase_orders().get(po_id.into()).await.expect("get").expect("po exists");
     assert_eq!(
         po.items[0].quantity_received,
         Decimal::from(n as u64) * dec!(2),

@@ -35,6 +35,7 @@
 //! ```
 
 use crate::Database;
+use stateset_core::WarrantyId;
 use stateset_core::{
     ClaimResolution, CreateWarranty, CreateWarrantyClaim, Result, UpdateWarrantyClaim, Warranty,
     WarrantyClaim, WarrantyClaimFilter, WarrantyClaimId, WarrantyFilter,
@@ -83,8 +84,8 @@ impl Warranties {
     }
 
     /// Get a warranty by ID
-    pub fn get(&self, id: Uuid) -> Result<Option<Warranty>> {
-        self.db.warranties().get(id.into())
+    pub fn get(&self, id: WarrantyId) -> Result<Option<Warranty>> {
+        self.db.warranties().get(id)
     }
 
     /// Get a warranty by warranty number (e.g., "WTY-20231215123456")
@@ -98,8 +99,8 @@ impl Warranties {
     }
 
     /// Update a warranty
-    pub fn update(&self, id: Uuid, input: stateset_core::UpdateWarranty) -> Result<Warranty> {
-        self.db.warranties().update(id.into(), input)
+    pub fn update(&self, id: WarrantyId, input: stateset_core::UpdateWarranty) -> Result<Warranty> {
+        self.db.warranties().update(id, input)
     }
 
     /// List warranties with optional filtering
@@ -118,22 +119,22 @@ impl Warranties {
     }
 
     /// Expire a warranty
-    pub fn expire(&self, id: Uuid) -> Result<Warranty> {
-        self.db.warranties().expire(id.into())
+    pub fn expire(&self, id: WarrantyId) -> Result<Warranty> {
+        self.db.warranties().expire(id)
     }
 
     /// Void a warranty (e.g., due to terms violation)
-    pub fn void(&self, id: Uuid) -> Result<Warranty> {
-        self.db.warranties().void(id.into())
+    pub fn void(&self, id: WarrantyId) -> Result<Warranty> {
+        self.db.warranties().void(id)
     }
 
     /// Transfer warranty to a new customer
-    pub fn transfer(&self, id: Uuid, new_customer_id: Uuid) -> Result<Warranty> {
-        self.db.warranties().transfer(id.into(), new_customer_id.into())
+    pub fn transfer(&self, id: WarrantyId, new_customer_id: Uuid) -> Result<Warranty> {
+        self.db.warranties().transfer(id, new_customer_id.into())
     }
 
     /// Check if a warranty is valid (active and not expired)
-    pub fn is_valid(&self, id: Uuid) -> Result<bool> {
+    pub fn is_valid(&self, id: WarrantyId) -> Result<bool> {
         if let Some(warranty) = self.get(id)? { Ok(warranty.is_valid()) } else { Ok(false) }
     }
 
@@ -180,8 +181,8 @@ impl Warranties {
     }
 
     /// Get all claims for a warranty
-    pub fn get_claims(&self, warranty_id: Uuid) -> Result<Vec<WarrantyClaim>> {
-        self.db.warranties().get_claims(warranty_id.into())
+    pub fn get_claims(&self, warranty_id: WarrantyId) -> Result<Vec<WarrantyClaim>> {
+        self.db.warranties().get_claims(warranty_id)
     }
 
     /// List claims with optional filtering

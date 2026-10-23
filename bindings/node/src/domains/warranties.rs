@@ -162,7 +162,7 @@ impl Warranties {
 
         let warranty = commerce
             .warranties()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get warranty", e))?;
 
         Ok(warranty.map(|w| w.into()))

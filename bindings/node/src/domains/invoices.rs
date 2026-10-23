@@ -168,7 +168,7 @@ impl Invoices {
 
         let invoice = commerce
             .invoices()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get invoice", e))?;
 
         convert_optional_output(invoice)
@@ -197,7 +197,7 @@ impl Invoices {
 
         let invoice = commerce
             .invoices()
-            .send(uuid)
+            .send(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to send invoice", e))?;
 
         convert_output(invoice)
@@ -211,7 +211,7 @@ impl Invoices {
 
         let invoice = commerce
             .invoices()
-            .void(uuid)
+            .void(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to void invoice", e))?;
 
         convert_output(invoice)
@@ -230,7 +230,7 @@ impl Invoices {
         let invoice = commerce
             .invoices()
             .record_payment(
-                uuid,
+                uuid.into(),
                 stateset_core::RecordInvoicePayment {
                     amount: money_input(
                         input.amount_exact.as_deref(),

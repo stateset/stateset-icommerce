@@ -39,6 +39,7 @@
 //! ```
 
 use crate::Database;
+use stateset_core::InvoiceId;
 use stateset_core::{
     CreateInvoice, CreateInvoiceItem, Invoice, InvoiceFilter, InvoiceItem, RecordInvoicePayment,
     Result, UpdateInvoice,
@@ -102,8 +103,8 @@ impl Invoices {
     }
 
     /// Get an invoice by ID
-    pub fn get(&self, id: Uuid) -> Result<Option<Invoice>> {
-        self.db.invoices().get(id.into())
+    pub fn get(&self, id: InvoiceId) -> Result<Option<Invoice>> {
+        self.db.invoices().get(id)
     }
 
     /// Get an invoice by invoice number (e.g., "INV-20231215123456")
@@ -112,8 +113,8 @@ impl Invoices {
     }
 
     /// Update an invoice
-    pub fn update(&self, id: Uuid, input: UpdateInvoice) -> Result<Invoice> {
-        self.db.invoices().update(id.into(), input)
+    pub fn update(&self, id: InvoiceId, input: UpdateInvoice) -> Result<Invoice> {
+        self.db.invoices().update(id, input)
     }
 
     /// List invoices with optional filtering
@@ -134,35 +135,35 @@ impl Invoices {
     // === Status Transitions ===
 
     /// Send an invoice to the customer
-    pub fn send(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().send(id.into())
+    pub fn send(&self, id: InvoiceId) -> Result<Invoice> {
+        self.db.invoices().send(id)
     }
 
     /// Mark invoice as viewed by customer
-    pub fn mark_viewed(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().mark_viewed(id.into())
+    pub fn mark_viewed(&self, id: InvoiceId) -> Result<Invoice> {
+        self.db.invoices().mark_viewed(id)
     }
 
     /// Void an invoice
-    pub fn void(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().void(id.into())
+    pub fn void(&self, id: InvoiceId) -> Result<Invoice> {
+        self.db.invoices().void(id)
     }
 
     /// Write off an uncollectible invoice
-    pub fn write_off(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().write_off(id.into())
+    pub fn write_off(&self, id: InvoiceId) -> Result<Invoice> {
+        self.db.invoices().write_off(id)
     }
 
     /// Mark invoice as disputed
-    pub fn dispute(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().dispute(id.into())
+    pub fn dispute(&self, id: InvoiceId) -> Result<Invoice> {
+        self.db.invoices().dispute(id)
     }
 
     // === Line Item Operations ===
 
     /// Add an item to an invoice
-    pub fn add_item(&self, invoice_id: Uuid, item: CreateInvoiceItem) -> Result<InvoiceItem> {
-        self.db.invoices().add_item(invoice_id.into(), item)
+    pub fn add_item(&self, invoice_id: InvoiceId, item: CreateInvoiceItem) -> Result<InvoiceItem> {
+        self.db.invoices().add_item(invoice_id, item)
     }
 
     /// Update a line item
@@ -176,8 +177,8 @@ impl Invoices {
     }
 
     /// Get items for an invoice
-    pub fn get_items(&self, invoice_id: Uuid) -> Result<Vec<InvoiceItem>> {
-        self.db.invoices().get_items(invoice_id.into())
+    pub fn get_items(&self, invoice_id: InvoiceId) -> Result<Vec<InvoiceItem>> {
+        self.db.invoices().get_items(invoice_id)
     }
 
     // === Payment Operations ===
@@ -211,8 +212,8 @@ impl Invoices {
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn record_payment(&self, id: Uuid, payment: RecordInvoicePayment) -> Result<Invoice> {
-        self.db.invoices().record_payment(id.into(), payment)
+    pub fn record_payment(&self, id: InvoiceId, payment: RecordInvoicePayment) -> Result<Invoice> {
+        self.db.invoices().record_payment(id, payment)
     }
 
     // === Queries ===
@@ -227,8 +228,8 @@ impl Invoices {
     /// Recalculate invoice totals
     ///
     /// Use this after modifying line items to update subtotal, tax, and total.
-    pub fn recalculate(&self, id: Uuid) -> Result<Invoice> {
-        self.db.invoices().recalculate(id.into())
+    pub fn recalculate(&self, id: InvoiceId) -> Result<Invoice> {
+        self.db.invoices().recalculate(id)
     }
 
     /// Count invoices matching a filter

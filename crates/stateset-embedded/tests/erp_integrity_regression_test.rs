@@ -92,15 +92,14 @@ fn purchase_order_receive_rejects_cross_order_item() {
         })
         .expect("create po 2");
 
-    let po_one = commerce.purchase_orders().submit(po_one.id.into()).expect("submit po 1");
-    let po_one =
-        commerce.purchase_orders().approve(po_one.id.into(), "tester").expect("approve po 1");
-    let po_one = commerce.purchase_orders().send(po_one.id.into()).expect("send po 1");
+    let po_one = commerce.purchase_orders().submit(po_one.id).expect("submit po 1");
+    let po_one = commerce.purchase_orders().approve(po_one.id, "tester").expect("approve po 1");
+    let po_one = commerce.purchase_orders().send(po_one.id).expect("send po 1");
 
     let err = commerce
         .purchase_orders()
         .receive(
-            po_one.id.into(),
+            po_one.id,
             ReceivePurchaseOrderItems {
                 items: vec![ReceivePurchaseOrderItem {
                     item_id: po_two.items[0].id,

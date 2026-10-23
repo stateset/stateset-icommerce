@@ -3715,7 +3715,7 @@ impl Warranties {
 
         let warranty = commerce
             .warranties()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get warranty: {}", e)))?;
 
         Ok(warranty.map(|w| w.into()))
@@ -3992,7 +3992,7 @@ impl PurchaseOrders {
 
         let supplier = commerce
             .purchase_orders()
-            .get_supplier(uuid)
+            .get_supplier(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get supplier: {}", e)))?;
 
         Ok(supplier.map(|s| s.into()))
@@ -4070,7 +4070,7 @@ impl PurchaseOrders {
 
         let po = commerce
             .purchase_orders()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get PO: {}", e)))?;
 
         convert_optional_output(po)
@@ -4142,7 +4142,7 @@ impl PurchaseOrders {
 
         let po = commerce
             .purchase_orders()
-            .submit(uuid)
+            .submit(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to submit PO: {}", e)))?;
 
         convert_output(po)
@@ -4159,7 +4159,7 @@ impl PurchaseOrders {
 
         let po = commerce
             .purchase_orders()
-            .approve(uuid, &approved_by)
+            .approve(uuid.into(), &approved_by)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to approve PO: {}", e)))?;
 
         convert_output(po)
@@ -4176,7 +4176,7 @@ impl PurchaseOrders {
 
         let po = commerce
             .purchase_orders()
-            .send(uuid)
+            .send(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to send PO: {}", e)))?;
 
         convert_output(po)
@@ -4193,7 +4193,7 @@ impl PurchaseOrders {
 
         let po = commerce
             .purchase_orders()
-            .cancel(uuid)
+            .cancel(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to cancel PO: {}", e)))?;
 
         convert_output(po)
@@ -4380,7 +4380,7 @@ impl Invoices {
 
         let invoice = commerce
             .invoices()
-            .get(uuid)
+            .get(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get invoice: {}", e)))?;
 
         convert_optional_output(invoice)
@@ -4412,7 +4412,7 @@ impl Invoices {
 
         let invoice = commerce
             .invoices()
-            .send(uuid)
+            .send(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to send invoice: {}", e)))?;
 
         convert_output(invoice)
@@ -4437,7 +4437,7 @@ impl Invoices {
         let invoice = commerce
             .invoices()
             .record_payment(
-                uuid,
+                uuid.into(),
                 stateset_core::RecordInvoicePayment {
                     amount: decimal_from_f64(amount, "amount")?,
                     payment_method,
@@ -4461,7 +4461,7 @@ impl Invoices {
 
         let invoice = commerce
             .invoices()
-            .void(uuid)
+            .void(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to void invoice: {}", e)))?;
 
         convert_output(invoice)

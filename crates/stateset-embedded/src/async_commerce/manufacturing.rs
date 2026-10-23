@@ -3,6 +3,7 @@
 use super::*;
 use stateset_core::OrderId;
 use stateset_core::WarrantyClaimId;
+use stateset_core::WarrantyId;
 
 /// Async warranty operations.
 pub struct AsyncWarranties {
@@ -20,8 +21,8 @@ impl AsyncWarranties {
     }
 
     /// Get warranty by ID.
-    pub async fn get(&self, id: Uuid) -> Result<Option<Warranty>> {
-        self.db.warranties().get_async(id.into()).await
+    pub async fn get(&self, id: WarrantyId) -> Result<Option<Warranty>> {
+        self.db.warranties().get_async(id).await
     }
 
     /// Get warranty by warranty number.
@@ -35,8 +36,8 @@ impl AsyncWarranties {
     }
 
     /// Update a warranty.
-    pub async fn update(&self, id: Uuid, input: UpdateWarranty) -> Result<Warranty> {
-        self.db.warranties().update_async(id.into(), input).await
+    pub async fn update(&self, id: WarrantyId, input: UpdateWarranty) -> Result<Warranty> {
+        self.db.warranties().update_async(id, input).await
     }
 
     /// List warranties.
@@ -55,18 +56,18 @@ impl AsyncWarranties {
     }
 
     /// Void a warranty.
-    pub async fn void(&self, id: Uuid) -> Result<Warranty> {
-        self.db.warranties().void_async(id.into()).await
+    pub async fn void(&self, id: WarrantyId) -> Result<Warranty> {
+        self.db.warranties().void_async(id).await
     }
 
     /// Expire a warranty.
-    pub async fn expire(&self, id: Uuid) -> Result<Warranty> {
-        self.db.warranties().expire_async(id.into()).await
+    pub async fn expire(&self, id: WarrantyId) -> Result<Warranty> {
+        self.db.warranties().expire_async(id).await
     }
 
     /// Transfer warranty to new owner.
-    pub async fn transfer(&self, id: Uuid, new_customer_id: Uuid) -> Result<Warranty> {
-        self.db.warranties().transfer_async(id.into(), new_customer_id.into()).await
+    pub async fn transfer(&self, id: WarrantyId, new_customer_id: Uuid) -> Result<Warranty> {
+        self.db.warranties().transfer_async(id, new_customer_id.into()).await
     }
 
     /// Create a warranty claim.
@@ -99,8 +100,8 @@ impl AsyncWarranties {
     }
 
     /// Get claims for a warranty.
-    pub async fn get_claims(&self, warranty_id: Uuid) -> Result<Vec<WarrantyClaim>> {
-        self.db.warranties().get_claims_async(warranty_id.into()).await
+    pub async fn get_claims(&self, warranty_id: WarrantyId) -> Result<Vec<WarrantyClaim>> {
+        self.db.warranties().get_claims_async(warranty_id).await
     }
 
     /// Approve a claim.

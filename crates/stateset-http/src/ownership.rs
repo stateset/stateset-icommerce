@@ -200,8 +200,8 @@ pub(crate) fn owner_of(
         OwnerKind::Review => commerce.reviews().get(id.into())?.map(|r| r.customer_id),
         OwnerKind::Wishlist => commerce.wishlists().get(id.into())?.map(|w| w.customer_id),
         OwnerKind::StoreCredit => commerce.store_credits().get(id.into())?.map(|s| s.customer_id),
-        OwnerKind::Invoice => commerce.invoices().get(id)?.map(|i| i.customer_id),
-        OwnerKind::Warranty => commerce.warranties().get(id)?.map(|w| w.customer_id),
+        OwnerKind::Invoice => commerce.invoices().get(id.into())?.map(|i| i.customer_id),
+        OwnerKind::Warranty => commerce.warranties().get(id.into())?.map(|w| w.customer_id),
         OwnerKind::LoyaltyAccount => {
             commerce.loyalty().get_account(id.into())?.map(|a| a.customer_id)
         }

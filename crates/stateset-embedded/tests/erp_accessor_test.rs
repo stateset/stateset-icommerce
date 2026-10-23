@@ -1437,7 +1437,7 @@ fn warranties_get_by_id_round_trips() {
 
     let fetched = commerce
         .warranties()
-        .get(warranty.id.into())
+        .get(warranty.id)
         .expect("get warranty failed")
         .expect("Warranty not found");
 
@@ -1591,8 +1591,7 @@ fn warranties_get_claims_for_warranty() {
         })
         .expect("Failed to create claim");
 
-    let claims =
-        commerce.warranties().get_claims(warranty.id.into()).expect("Failed to get claims");
+    let claims = commerce.warranties().get_claims(warranty.id).expect("Failed to get claims");
 
     assert!(!claims.is_empty(), "Expected at least one claim for the warranty");
     assert!(claims.iter().any(|c| c.id == claim.id));
@@ -1601,7 +1600,7 @@ fn warranties_get_claims_for_warranty() {
     let unknown_warranty_id = Uuid::new_v4();
     let no_claims = commerce
         .warranties()
-        .get_claims(unknown_warranty_id)
+        .get_claims(unknown_warranty_id.into())
         .expect("Failed to get claims for unknown warranty");
 
     assert!(no_claims.is_empty(), "Unknown warranty should have no claims");
@@ -1695,7 +1694,7 @@ fn warranties_update_preserves_customer_id() {
     let updated = commerce
         .warranties()
         .update(
-            warranty.id.into(),
+            warranty.id,
             UpdateWarranty {
                 coverage_description: Some("Updated coverage terms".into()),
                 ..Default::default()

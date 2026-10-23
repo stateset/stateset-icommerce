@@ -173,7 +173,7 @@ fn payment_application_to_voided_invoice_is_rejected() {
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
     let payment_id = create_payment(&commerce, customer_id, dec!(100.00));
 
-    commerce.invoices().void(invoice_id).expect("void invoice");
+    commerce.invoices().void(invoice_id.into()).expect("void invoice");
 
     let result = commerce.accounts_receivable().apply_payment_to_invoices(ApplyPaymentToInvoices {
         payment_id,
@@ -196,7 +196,7 @@ fn payment_application_to_written_off_invoice_is_rejected() {
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
     let payment_id = create_payment(&commerce, customer_id, dec!(100.00));
 
-    commerce.invoices().write_off(invoice_id).expect("write off invoice");
+    commerce.invoices().write_off(invoice_id.into()).expect("write off invoice");
 
     let result = commerce.accounts_receivable().apply_payment_to_invoices(ApplyPaymentToInvoices {
         payment_id,
@@ -226,7 +226,7 @@ fn credit_memo_application_to_voided_invoice_is_rejected() {
         })
         .expect("create credit memo");
 
-    commerce.invoices().void(invoice_id).expect("void invoice");
+    commerce.invoices().void(invoice_id.into()).expect("void invoice");
 
     let result = commerce.accounts_receivable().apply_credit_memo(ApplyCreditMemo {
         credit_memo_id: memo.id,
@@ -267,7 +267,7 @@ fn write_off_exceeding_balance_due_is_rejected() {
     );
 
     // The invoice must not have been flipped to written_off by the failed attempt.
-    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    let invoice = commerce.invoices().get(invoice_id.into()).expect("get").expect("invoice");
     assert_ne!(
         invoice.status,
         stateset_embedded::InvoiceStatus::WrittenOff,
@@ -315,7 +315,7 @@ fn write_off_of_full_balance_still_succeeds() {
         .expect("write-off of the full balance must succeed");
     assert_eq!(write_off.amount, dec!(300.00));
 
-    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    let invoice = commerce.invoices().get(invoice_id.into()).expect("get").expect("invoice");
     assert_eq!(invoice.status, stateset_embedded::InvoiceStatus::WrittenOff);
 }
 
@@ -324,7 +324,7 @@ fn write_off_of_voided_invoice_is_rejected() {
     let commerce = new_commerce();
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
-    commerce.invoices().void(invoice_id).expect("void invoice");
+    commerce.invoices().void(invoice_id.into()).expect("void invoice");
 
     let result = commerce.accounts_receivable().create_write_off(CreateWriteOff {
         invoice_id,
@@ -360,7 +360,7 @@ fn direct_payment_survives_credit_memo_application() {
     let invoice = commerce
         .invoices()
         .record_payment(
-            invoice_id,
+            invoice_id.into(),
             RecordInvoicePayment { amount: dec!(50.00), ..Default::default() },
         )
         .expect("record direct payment");
@@ -388,7 +388,7 @@ fn direct_payment_survives_credit_memo_application() {
         .expect("apply credit memo");
 
     // The $50 direct payment must NOT vanish: 50 direct + 10 credit = 60.
-    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    let invoice = commerce.invoices().get(invoice_id.into()).expect("get").expect("invoice");
     assert_eq!(invoice.amount_paid, dec!(60.00), "recalculation must preserve the direct payment");
     assert_eq!(invoice.balance_due, dec!(40.00));
     assert_eq!(invoice.status, stateset_embedded::InvoiceStatus::PartiallyPaid);
@@ -403,7 +403,7 @@ fn direct_payment_survives_credit_memo_application() {
         })
         .expect("apply payment");
 
-    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    let invoice = commerce.invoices().get(invoice_id.into()).expect("get").expect("invoice");
     assert_eq!(invoice.amount_paid, dec!(80.00), "50 direct + 10 credit + 20 applied");
     assert_eq!(invoice.balance_due, dec!(20.00));
 }
@@ -417,7 +417,7 @@ fn direct_payment_survives_apply_unapply_cycles() {
     commerce
         .invoices()
         .record_payment(
-            invoice_id,
+            invoice_id.into(),
             RecordInvoicePayment { amount: dec!(30.00), ..Default::default() },
         )
         .expect("record direct payment");
@@ -432,13 +432,13 @@ fn direct_payment_survives_apply_unapply_cycles() {
         .expect("apply payment");
     assert_eq!(apps.len(), 1);
 
-    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    let invoice = commerce.invoices().get(invoice_id.into()).expect("get").expect("invoice");
     assert_eq!(invoice.amount_paid, dec!(70.00), "30 direct + 40 applied");
     assert_eq!(invoice.balance_due, dec!(30.00));
 
     // Unapplying the $40 must leave the $30 direct payment intact.
     commerce.accounts_receivable().unapply_payment(apps[0].id).expect("unapply payment");
-    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    let invoice = commerce.invoices().get(invoice_id.into()).expect("get").expect("invoice");
     assert_eq!(invoice.amount_paid, dec!(30.00), "direct payment survives unapply");
     assert_eq!(invoice.balance_due, dec!(70.00));
 
@@ -450,7 +450,7 @@ fn direct_payment_survives_apply_unapply_cycles() {
             applications: vec![PaymentApplicationLine { invoice_id, amount: dec!(40.00) }],
         })
         .expect("re-apply payment");
-    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    let invoice = commerce.invoices().get(invoice_id.into()).expect("get").expect("invoice");
     assert_eq!(invoice.amount_paid, dec!(70.00));
     assert_eq!(invoice.balance_due, dec!(30.00));
 }
@@ -470,14 +470,14 @@ fn applications_only_invoice_still_recalculates_as_before() {
         })
         .expect("apply payment");
 
-    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    let invoice = commerce.invoices().get(invoice_id.into()).expect("get").expect("invoice");
     assert_eq!(invoice.amount_paid, dec!(60.00));
     assert_eq!(invoice.balance_due, dec!(40.00));
     assert_eq!(invoice.status, stateset_embedded::InvoiceStatus::PartiallyPaid);
 
     // With no direct payment, unapplying returns the invoice to zero paid.
     commerce.accounts_receivable().unapply_payment(apps[0].id).expect("unapply payment");
-    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    let invoice = commerce.invoices().get(invoice_id.into()).expect("get").expect("invoice");
     assert_eq!(invoice.amount_paid, dec!(0.00));
     assert_eq!(invoice.balance_due, dec!(100.00));
 }
@@ -536,14 +536,14 @@ fn unapply_payment_restores_invoice_amounts_and_status() {
         .expect("apply payment");
     assert_eq!(apps.len(), 1);
 
-    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    let invoice = commerce.invoices().get(invoice_id.into()).expect("get").expect("invoice");
     assert_eq!(invoice.amount_paid, dec!(40.00));
     assert_eq!(invoice.balance_due, dec!(60.00));
     assert_eq!(invoice.status, stateset_embedded::InvoiceStatus::PartiallyPaid);
 
     commerce.accounts_receivable().unapply_payment(apps[0].id).expect("unapply payment");
 
-    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    let invoice = commerce.invoices().get(invoice_id.into()).expect("get").expect("invoice");
     assert_eq!(invoice.amount_paid, dec!(0.00), "amount_paid restored after unapply");
     assert_eq!(invoice.balance_due, dec!(100.00), "balance_due restored after unapply");
     assert_ne!(
@@ -578,7 +578,7 @@ fn unapply_of_nonexistent_application_errors_and_changes_nothing() {
     );
 
     // The failed unapply must not have touched the invoice or the application.
-    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    let invoice = commerce.invoices().get(invoice_id.into()).expect("get").expect("invoice");
     assert_eq!(invoice.amount_paid, dec!(40.00));
     assert_eq!(invoice.balance_due, dec!(60.00));
     assert_eq!(invoice.status, stateset_embedded::InvoiceStatus::PartiallyPaid);
@@ -613,13 +613,13 @@ fn reverse_write_off_with_future_due_date_is_not_overdue() {
             approved_by: None,
         })
         .expect("write off");
-    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    let invoice = commerce.invoices().get(invoice_id.into()).expect("get").expect("invoice");
     assert_eq!(invoice.status, stateset_embedded::InvoiceStatus::WrittenOff);
 
     let reversed = commerce.accounts_receivable().reverse_write_off(wo.id).expect("reverse");
     assert!(reversed.reversed_at.is_some());
 
-    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    let invoice = commerce.invoices().get(invoice_id.into()).expect("get").expect("invoice");
     assert_ne!(
         invoice.status,
         stateset_embedded::InvoiceStatus::Overdue,
@@ -654,7 +654,7 @@ fn reverse_write_off_of_past_due_unpaid_invoice_restores_overdue() {
 
     commerce.accounts_receivable().reverse_write_off(wo.id).expect("reverse");
 
-    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    let invoice = commerce.invoices().get(invoice_id.into()).expect("get").expect("invoice");
     assert_eq!(
         invoice.status,
         stateset_embedded::InvoiceStatus::Overdue,
@@ -878,8 +878,8 @@ fn applying_a_payment_does_not_clear_a_dispute() {
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
 
-    commerce.invoices().send(invoice_id).expect("send");
-    commerce.invoices().dispute(invoice_id).expect("dispute");
+    commerce.invoices().send(invoice_id.into()).expect("send");
+    commerce.invoices().dispute(invoice_id.into()).expect("dispute");
 
     let payment_id = create_payment(&commerce, customer_id, dec!(30.00));
     commerce
@@ -890,7 +890,7 @@ fn applying_a_payment_does_not_clear_a_dispute() {
         })
         .expect("apply payment");
 
-    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    let invoice = commerce.invoices().get(invoice_id.into()).expect("get").expect("invoice");
     assert_eq!(invoice.amount_paid, dec!(30.00), "the payment must still be recorded");
     assert_eq!(invoice.balance_due, dec!(70.00));
     assert_eq!(
@@ -910,8 +910,8 @@ fn recalculation_preserves_a_flag_when_nothing_is_applied_but_still_clears_a_wri
     // keep the original status — so the round trip silently cleared the
     // operator's classification.
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
-    commerce.invoices().send(invoice_id).expect("send");
-    commerce.invoices().dispute(invoice_id).expect("dispute");
+    commerce.invoices().send(invoice_id.into()).expect("send");
+    commerce.invoices().dispute(invoice_id.into()).expect("dispute");
 
     let payment_id = create_payment(&commerce, customer_id, dec!(40.00));
     let applications = commerce
@@ -923,7 +923,7 @@ fn recalculation_preserves_a_flag_when_nothing_is_applied_but_still_clears_a_wri
         .expect("apply payment");
     commerce.accounts_receivable().unapply_payment(applications[0].id).expect("unapply payment");
 
-    let invoice = commerce.invoices().get(invoice_id).expect("get").expect("invoice");
+    let invoice = commerce.invoices().get(invoice_id.into()).expect("get").expect("invoice");
     assert_eq!(invoice.amount_paid, dec!(0.00));
     assert_eq!(invoice.balance_due, dec!(100.00));
     assert_eq!(
@@ -935,7 +935,7 @@ fn recalculation_preserves_a_flag_when_nothing_is_applied_but_still_clears_a_wri
     // A terminal status IS still reset by recalculation — reversing a
     // write-off depends on it to bring the invoice back to a live state.
     let other_id = create_invoice(&commerce, customer_id, dec!(50.00));
-    commerce.invoices().send(other_id).expect("send");
+    commerce.invoices().send(other_id.into()).expect("send");
     let write_off = commerce
         .accounts_receivable()
         .create_write_off(CreateWriteOff {
@@ -948,7 +948,7 @@ fn recalculation_preserves_a_flag_when_nothing_is_applied_but_still_clears_a_wri
         .expect("write off");
     commerce.accounts_receivable().reverse_write_off(write_off.id).expect("reverse write off");
 
-    let other = commerce.invoices().get(other_id).expect("get").expect("invoice");
+    let other = commerce.invoices().get(other_id.into()).expect("get").expect("invoice");
     assert_ne!(
         other.status,
         stateset_embedded::InvoiceStatus::WrittenOff,
