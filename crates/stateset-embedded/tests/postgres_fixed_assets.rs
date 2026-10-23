@@ -222,7 +222,7 @@ async fn postgres_fixed_asset_depreciation_auto_posts_journal_entry() {
     let entries = gl
         .list_journal_entries(JournalEntryFilter {
             source_document_type: Some("fixed_asset_depreciation".into()),
-            source_document_id: Some(asset.id),
+            source_document_id: Some(asset.id.into_uuid()),
             ..Default::default()
         })
         .await

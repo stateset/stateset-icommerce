@@ -292,7 +292,7 @@ impl Sim {
             .place_in_service(asset.id, date(2026, 1, 1))
             .expect("place in service");
         self.commerce.fixed_assets().generate_schedule(asset.id).expect("generate schedule");
-        (asset.id, 12)
+        (asset.id.into_uuid(), 12)
     }
 
     fn new_obligation(&mut self) -> (Uuid, u32) {
@@ -408,7 +408,7 @@ impl Sim {
             u32::try_from(self.rng.range(1, i64::from(self.asset.1.min(3)))).expect("u32");
         self.commerce
             .fixed_assets()
-            .post_depreciation(self.asset.0, periods)
+            .post_depreciation(self.asset.0.into(), periods)
             .expect("post depreciation");
         self.asset.1 -= periods;
     }

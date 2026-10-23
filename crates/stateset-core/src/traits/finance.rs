@@ -804,21 +804,21 @@ pub trait FixedAssetRepository: Send + Sync {
     fn create(&self, input: CreateFixedAsset) -> Result<FixedAsset>;
 
     /// Get a fixed asset by ID.
-    fn get(&self, id: uuid::Uuid) -> Result<Option<FixedAsset>>;
+    fn get(&self, id: FixedAssetId) -> Result<Option<FixedAsset>>;
 
     /// List fixed assets with filter.
     fn list(&self, filter: FixedAssetFilter) -> Result<Vec<FixedAsset>>;
 
     /// Update a fixed asset (partial). Terminal assets cannot be updated.
-    fn update(&self, id: uuid::Uuid, input: UpdateFixedAsset) -> Result<FixedAsset>;
+    fn update(&self, id: FixedAssetId, input: UpdateFixedAsset) -> Result<FixedAsset>;
 
     /// Place a draft asset in service on the given date.
-    fn place_in_service(&self, id: uuid::Uuid, date: chrono::NaiveDate) -> Result<FixedAsset>;
+    fn place_in_service(&self, id: FixedAssetId, date: chrono::NaiveDate) -> Result<FixedAsset>;
 
     /// Dispose of an asset for the given proceeds, recording gain/loss.
     fn dispose(
         &self,
-        id: uuid::Uuid,
+        id: FixedAssetId,
         date: chrono::NaiveDate,
         proceeds: rust_decimal::Decimal,
         notes: Option<String>,
@@ -827,21 +827,21 @@ pub trait FixedAssetRepository: Send + Sync {
     /// Write off an asset (disposal with zero proceeds).
     fn write_off(
         &self,
-        id: uuid::Uuid,
+        id: FixedAssetId,
         date: chrono::NaiveDate,
         notes: Option<String>,
     ) -> Result<FixedAsset>;
 
     /// Generate and persist the depreciation schedule for an asset,
     /// replacing any previously scheduled (unposted) entries.
-    fn generate_schedule(&self, id: uuid::Uuid) -> Result<DepreciationSchedule>;
+    fn generate_schedule(&self, id: FixedAssetId) -> Result<DepreciationSchedule>;
 
     /// Get the persisted depreciation schedule for an asset, if generated.
-    fn get_schedule(&self, id: uuid::Uuid) -> Result<Option<DepreciationSchedule>>;
+    fn get_schedule(&self, id: FixedAssetId) -> Result<Option<DepreciationSchedule>>;
 
     /// Post the next `periods` scheduled depreciation entries, advancing
     /// accumulated depreciation (and status when fully depreciated).
-    fn post_depreciation(&self, id: uuid::Uuid, periods: u32) -> Result<FixedAsset>;
+    fn post_depreciation(&self, id: FixedAssetId, periods: u32) -> Result<FixedAsset>;
 }
 
 /// Revenue recognition (ASC 606) repository trait.

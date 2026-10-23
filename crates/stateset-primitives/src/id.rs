@@ -560,6 +560,11 @@ define_id! {
     LotId
 }
 
+define_id! {
+    /// Strongly-typed fixed asset identifier.
+    FixedAssetId
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

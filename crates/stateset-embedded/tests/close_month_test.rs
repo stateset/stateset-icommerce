@@ -169,7 +169,7 @@ fn setup(commerce: &Commerce) -> (Uuid, Uuid, Uuid) {
     let obligation_id = contract.obligations[0].id;
     commerce.revenue_recognition().generate_schedule(obligation_id).expect("generate schedule");
 
-    (period.id, asset.id, obligation_id)
+    (period.id, asset.id.into_uuid(), obligation_id)
 }
 
 #[test]
@@ -194,7 +194,7 @@ fn close_month_posts_all_steps_and_closes_the_period() {
     assert_eq!(report.depreciation.entry_count, 12);
     assert_eq!(report.depreciation.total_amount, dec!(1200));
     assert!(report.depreciation.warnings.is_empty());
-    let asset = commerce.fixed_assets().get(asset_id).expect("get asset").expect("asset");
+    let asset = commerce.fixed_assets().get(asset_id.into()).expect("get asset").expect("asset");
     assert_eq!(asset.accumulated_depreciation, dec!(1200));
 
     // Step 2: all 3 revenue schedule entries recognized for $600.
@@ -252,10 +252,13 @@ fn close_month_dry_run_reports_candidates_without_writing() {
     assert_eq!(report.period_status, PeriodStatus::Open);
 
     // Nothing was written anywhere.
-    let asset = commerce.fixed_assets().get(asset_id).expect("get asset").expect("asset");
+    let asset = commerce.fixed_assets().get(asset_id.into()).expect("get asset").expect("asset");
     assert_eq!(asset.accumulated_depreciation, dec!(0));
-    let schedule =
-        commerce.fixed_assets().get_schedule(asset_id).expect("get schedule").expect("schedule");
+    let schedule = commerce
+        .fixed_assets()
+        .get_schedule(asset_id.into())
+        .expect("get schedule")
+        .expect("schedule");
     assert!(schedule.entries.iter().all(|e| e.status == DepreciationEntryStatus::Scheduled));
     let rev_schedule = commerce
         .revenue_recognition()
@@ -296,7 +299,7 @@ fn close_month_respects_skip_flags() {
     assert_eq!(report.period_close.status, CloseMonthStepStatus::Skipped);
     assert!(report.closing_entry.is_none());
     // Every step was skipped, so nothing was posted anywhere.
-    let asset = commerce.fixed_assets().get(asset_id).expect("get asset").expect("asset");
+    let asset = commerce.fixed_assets().get(asset_id.into()).expect("get asset").expect("asset");
     assert_eq!(asset.accumulated_depreciation, dec!(0));
     assert_eq!(report.period_status, PeriodStatus::Open);
 }

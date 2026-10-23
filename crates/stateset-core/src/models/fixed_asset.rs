@@ -10,6 +10,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_primitives::CurrencyCode;
+use stateset_primitives::FixedAssetId;
 use strum::{Display, EnumString};
 use uuid::Uuid;
 
@@ -130,7 +131,7 @@ pub enum DepreciationEntryStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FixedAsset {
     /// Unique identifier for this asset.
-    pub id: Uuid,
+    pub id: FixedAssetId,
     /// Human-readable asset reference number (e.g. `"FA-20240101-ABCD1234"`).
     pub asset_number: String,
     /// Asset name.
@@ -252,7 +253,7 @@ pub struct DepreciationEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DepreciationSchedule {
     /// Asset this schedule belongs to.
-    pub asset_id: Uuid,
+    pub asset_id: FixedAssetId,
     /// Method used to generate the schedule.
     pub method: DepreciationMethod,
     /// Per-period entries in order.
@@ -456,7 +457,7 @@ mod tests {
 
     fn asset() -> FixedAsset {
         FixedAsset {
-            id: Uuid::new_v4(),
+            id: FixedAssetId::new(),
             asset_number: "FA-1".into(),
             name: "Forklift".into(),
             description: None,
