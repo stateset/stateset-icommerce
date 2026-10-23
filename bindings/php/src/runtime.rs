@@ -4880,7 +4880,7 @@ impl AccountsPayable {
 
         let bill = commerce
             .accounts_payable()
-            .get_bill(uuid)
+            .get_bill(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to get bill: {}", e)))?;
 
         Ok(bill.map(|b| b.bill_number))

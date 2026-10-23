@@ -580,6 +580,21 @@ define_id! {
     JournalEntryId
 }
 
+define_id! {
+    /// Strongly-typed accounts-payable bill identifier.
+    BillId
+}
+
+define_id! {
+    /// Strongly-typed accounts-payable bill payment identifier.
+    BillPaymentId
+}
+
+define_id! {
+    /// Strongly-typed accounts-payable payment run identifier.
+    PaymentRunId
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

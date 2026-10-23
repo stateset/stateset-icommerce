@@ -226,7 +226,7 @@ fn receipt_item(po_line_id: Uuid, received: Decimal) -> ReceiptItem {
 fn bill_item(po_line_id: Option<Uuid>, qty: Decimal, unit_price: Decimal) -> BillItem {
     BillItem {
         id: Uuid::new_v4(),
-        bill_id: Uuid::new_v4(),
+        bill_id: stateset_core::BillId::new(),
         line_number: 1,
         description: "Widget".into(),
         account_code: None,

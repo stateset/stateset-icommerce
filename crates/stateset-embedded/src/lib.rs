@@ -444,11 +444,13 @@ pub use stateset_core::{
     BatchResult,
     Bill,
     BillFilter,
+    BillId,
     BillItem,
     // Manufacturing - BOM types
     BillOfMaterials,
     BillPayment,
     BillPaymentFilter,
+    BillPaymentId,
     BillStatus,
     // Subscription types
     BillingCycle,
@@ -800,6 +802,7 @@ pub use stateset_core::{
     PaymentMethodType,
     PaymentRun,
     PaymentRunFilter,
+    PaymentRunId,
     PaymentRunStatus,
     PaymentStatus,
     PaymentStatusAP,

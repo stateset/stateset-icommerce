@@ -240,11 +240,11 @@ pub(crate) use stateset_primitives::{
     VendorReturnId,
 };
 pub(crate) use stateset_primitives::{
-    BackorderAllocationId, BackorderId, CartId, CreditId, CustomerId, FixedAssetId, FraudRuleId,
-    FulfillmentId, GiftCardId, GlAccountId, GlPeriodId, InvoiceId, JournalEntryId, LotId,
-    LoyaltyAccountId, LoyaltyProgramId, OrderId, OrderItemId, PaymentId, PaymentMethodId,
-    ProductId, PromotionId, PurchaseOrderId, RefundId, ReturnId, ReviewId, RewardId,
-    SearchConfigId, SegmentId, ShipmentId, ShippingMethodId, ShippingZoneId, StoreCreditId,
-    SubscriptionId, WarrantyClaimId, WarrantyId, WishlistId,
+    BackorderAllocationId, BackorderId, BillId, BillPaymentId, CartId, CreditId, CustomerId,
+    FixedAssetId, FraudRuleId, FulfillmentId, GiftCardId, GlAccountId, GlPeriodId, InvoiceId,
+    JournalEntryId, LotId, LoyaltyAccountId, LoyaltyProgramId, OrderId, OrderItemId, PaymentId,
+    PaymentMethodId, PaymentRunId, ProductId, PromotionId, PurchaseOrderId, RefundId, ReturnId,
+    ReviewId, RewardId, SearchConfigId, SegmentId, ShipmentId, ShippingMethodId, ShippingZoneId,
+    StoreCreditId, SubscriptionId, WarrantyClaimId, WarrantyId, WishlistId,
 };
 pub(crate) use uuid::Uuid;

@@ -13,6 +13,7 @@ use stateset_core::{
     UpdateBill, generate_ap_payment_number, generate_bill_number, generate_payment_run_number,
     validate_batch_size,
 };
+use stateset_core::{BillId, BillPaymentId, PaymentRunId};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -142,7 +143,7 @@ impl PgAccountsPayableRepository {
         })?;
 
         Ok(Bill {
-            id,
+            id: BillId::from(id),
             bill_number,
             supplier_id,
             supplier_name,
@@ -169,7 +170,7 @@ impl PgAccountsPayableRepository {
     fn row_to_bill_item(row: BillItemRow) -> BillItem {
         BillItem {
             id: row.id,
-            bill_id: row.bill_id,
+            bill_id: BillId::from(row.bill_id),
             line_number: row.line_number,
             description: row.description,
             account_code: row.account_code,
@@ -212,7 +213,7 @@ impl PgAccountsPayableRepository {
         })?;
 
         Ok(BillPayment {
-            id,
+            id: BillPaymentId::from(id),
             payment_number,
             supplier_id,
             payment_date: from_date(payment_date),
@@ -232,8 +233,8 @@ impl PgAccountsPayableRepository {
     const fn row_to_payment_allocation(row: PaymentAllocationRow) -> PaymentAllocation {
         PaymentAllocation {
             id: row.id,
-            payment_id: row.payment_id,
-            bill_id: row.bill_id,
+            payment_id: BillPaymentId::from_uuid(row.payment_id),
+            bill_id: BillId::from_uuid(row.bill_id),
             amount: row.amount,
             created_at: row.created_at,
         }
@@ -268,7 +269,7 @@ impl PgAccountsPayableRepository {
         })?;
 
         Ok(PaymentRun {
-            id,
+            id: PaymentRunId::from(id),
             run_number,
             status,
             payment_date: from_date(payment_date),
@@ -825,7 +826,8 @@ impl PgAccountsPayableRepository {
                 ));
             }
             allocation_total += alloc.amount;
-            *allocations_by_bill.entry(alloc.bill_id).or_insert(Decimal::ZERO) += alloc.amount;
+            *allocations_by_bill.entry(alloc.bill_id.into_uuid()).or_insert(Decimal::ZERO) +=
+                alloc.amount;
         }
         if allocation_total != amount {
             return Err(CommerceError::ValidationError(
@@ -911,7 +913,7 @@ impl PgAccountsPayableRepository {
         }
 
         for alloc in &allocations {
-            Self::recalculate_bill_tx(&mut tx, alloc.bill_id).await?;
+            Self::recalculate_bill_tx(&mut tx, alloc.bill_id.into_uuid()).await?;
 
             let bill = sqlx::query_as::<_, BillRow>("SELECT * FROM ap_bills WHERE id = $1")
                 .bind(alloc.bill_id)
@@ -1664,44 +1666,44 @@ impl AccountsPayableRepository for PgAccountsPayableRepository {
         block_on(self.create_bill_async(input))
     }
 
-    fn get_bill(&self, id: Uuid) -> Result<Option<Bill>> {
-        block_on(self.get_bill_async(id))
+    fn get_bill(&self, id: BillId) -> Result<Option<Bill>> {
+        block_on(self.get_bill_async(id.into_uuid()))
     }
 
     fn get_bill_by_number(&self, number: &str) -> Result<Option<Bill>> {
         block_on(self.get_bill_by_number_async(number))
     }
 
-    fn update_bill(&self, id: Uuid, input: UpdateBill) -> Result<Bill> {
-        block_on(self.update_bill_async(id, input))
+    fn update_bill(&self, id: BillId, input: UpdateBill) -> Result<Bill> {
+        block_on(self.update_bill_async(id.into_uuid(), input))
     }
 
     fn list_bills(&self, filter: BillFilter) -> Result<Vec<Bill>> {
         block_on(self.list_bills_async(filter))
     }
 
-    fn delete_bill(&self, id: Uuid) -> Result<()> {
-        block_on(self.delete_bill_async(id))
+    fn delete_bill(&self, id: BillId) -> Result<()> {
+        block_on(self.delete_bill_async(id.into_uuid()))
     }
 
-    fn approve_bill(&self, id: Uuid) -> Result<Bill> {
-        block_on(self.approve_bill_async(id))
+    fn approve_bill(&self, id: BillId) -> Result<Bill> {
+        block_on(self.approve_bill_async(id.into_uuid()))
     }
 
-    fn cancel_bill(&self, id: Uuid) -> Result<Bill> {
-        block_on(self.cancel_bill_async(id))
+    fn cancel_bill(&self, id: BillId) -> Result<Bill> {
+        block_on(self.cancel_bill_async(id.into_uuid()))
     }
 
-    fn dispute_bill(&self, id: Uuid) -> Result<Bill> {
-        block_on(self.dispute_bill_async(id))
+    fn dispute_bill(&self, id: BillId) -> Result<Bill> {
+        block_on(self.dispute_bill_async(id.into_uuid()))
     }
 
-    fn get_bill_items(&self, bill_id: Uuid) -> Result<Vec<BillItem>> {
-        block_on(self.get_bill_items_async(bill_id))
+    fn get_bill_items(&self, bill_id: BillId) -> Result<Vec<BillItem>> {
+        block_on(self.get_bill_items_async(bill_id.into_uuid()))
     }
 
-    fn add_bill_item(&self, bill_id: Uuid, item: CreateBillItem) -> Result<BillItem> {
-        block_on(self.add_bill_item_async(bill_id, item))
+    fn add_bill_item(&self, bill_id: BillId, item: CreateBillItem) -> Result<BillItem> {
+        block_on(self.add_bill_item_async(bill_id.into_uuid(), item))
     }
 
     fn remove_bill_item(&self, item_id: Uuid) -> Result<()> {
@@ -1724,8 +1726,8 @@ impl AccountsPayableRepository for PgAccountsPayableRepository {
         block_on(self.create_payment_async(input))
     }
 
-    fn get_payment(&self, id: Uuid) -> Result<Option<BillPayment>> {
-        block_on(self.get_payment_async(id))
+    fn get_payment(&self, id: BillPaymentId) -> Result<Option<BillPayment>> {
+        block_on(self.get_payment_async(id.into_uuid()))
     }
 
     fn get_payment_by_number(&self, number: &str) -> Result<Option<BillPayment>> {
@@ -1736,20 +1738,20 @@ impl AccountsPayableRepository for PgAccountsPayableRepository {
         block_on(self.list_payments_async(filter))
     }
 
-    fn void_payment(&self, id: Uuid) -> Result<BillPayment> {
-        block_on(self.void_payment_async(id))
+    fn void_payment(&self, id: BillPaymentId) -> Result<BillPayment> {
+        block_on(self.void_payment_async(id.into_uuid()))
     }
 
-    fn clear_payment(&self, id: Uuid) -> Result<BillPayment> {
-        block_on(self.clear_payment_async(id))
+    fn clear_payment(&self, id: BillPaymentId) -> Result<BillPayment> {
+        block_on(self.clear_payment_async(id.into_uuid()))
     }
 
-    fn get_payment_allocations(&self, payment_id: Uuid) -> Result<Vec<PaymentAllocation>> {
-        block_on(self.get_payment_allocations_async(payment_id))
+    fn get_payment_allocations(&self, payment_id: BillPaymentId) -> Result<Vec<PaymentAllocation>> {
+        block_on(self.get_payment_allocations_async(payment_id.into_uuid()))
     }
 
-    fn get_payments_for_bill(&self, bill_id: Uuid) -> Result<Vec<BillPayment>> {
-        block_on(self.get_payments_for_bill_async(bill_id))
+    fn get_payments_for_bill(&self, bill_id: BillId) -> Result<Vec<BillPayment>> {
+        block_on(self.get_payments_for_bill_async(bill_id.into_uuid()))
     }
 
     fn count_payments(&self, filter: BillPaymentFilter) -> Result<u64> {
@@ -1760,28 +1762,28 @@ impl AccountsPayableRepository for PgAccountsPayableRepository {
         block_on(self.create_payment_run_async(input))
     }
 
-    fn get_payment_run(&self, id: Uuid) -> Result<Option<PaymentRun>> {
-        block_on(self.get_payment_run_async(id))
+    fn get_payment_run(&self, id: PaymentRunId) -> Result<Option<PaymentRun>> {
+        block_on(self.get_payment_run_async(id.into_uuid()))
     }
 
     fn list_payment_runs(&self, filter: PaymentRunFilter) -> Result<Vec<PaymentRun>> {
         block_on(self.list_payment_runs_async(filter))
     }
 
-    fn approve_payment_run(&self, id: Uuid, approved_by: &str) -> Result<PaymentRun> {
-        block_on(self.approve_payment_run_async(id, approved_by))
+    fn approve_payment_run(&self, id: PaymentRunId, approved_by: &str) -> Result<PaymentRun> {
+        block_on(self.approve_payment_run_async(id.into_uuid(), approved_by))
     }
 
-    fn process_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
-        block_on(self.process_payment_run_async(id))
+    fn process_payment_run(&self, id: PaymentRunId) -> Result<PaymentRun> {
+        block_on(self.process_payment_run_async(id.into_uuid()))
     }
 
-    fn cancel_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
-        block_on(self.cancel_payment_run_async(id))
+    fn cancel_payment_run(&self, id: PaymentRunId) -> Result<PaymentRun> {
+        block_on(self.cancel_payment_run_async(id.into_uuid()))
     }
 
-    fn get_payment_run_bills(&self, run_id: Uuid) -> Result<Vec<Bill>> {
-        block_on(self.get_payment_run_bills_async(run_id))
+    fn get_payment_run_bills(&self, run_id: PaymentRunId) -> Result<Vec<Bill>> {
+        block_on(self.get_payment_run_bills_async(run_id.into_uuid()))
     }
 
     fn get_aging_summary(&self) -> Result<ApAgingSummary> {
@@ -1800,8 +1802,8 @@ impl AccountsPayableRepository for PgAccountsPayableRepository {
         block_on(self.create_bills_batch_async(inputs))
     }
 
-    fn get_bills_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Bill>> {
-        block_on(self.get_bills_batch_async(ids))
+    fn get_bills_batch(&self, ids: Vec<BillId>) -> Result<Vec<Bill>> {
+        block_on(self.get_bills_batch_async(ids.into_iter().map(BillId::into_uuid).collect()))
     }
 }
 

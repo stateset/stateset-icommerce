@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_primitives::CurrencyCode;
+use stateset_primitives::{BillId, BillPaymentId, PaymentRunId};
 use std::str::FromStr;
 use strum::{Display, EnumString};
 use uuid::Uuid;
@@ -18,7 +19,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bill {
     /// Unique identifier for this bill.
-    pub id: Uuid,
+    pub id: BillId,
     /// System-generated or supplier-provided bill reference (e.g. `"BILL-20240101-ABC123"`).
     pub bill_number: String,
     /// Supplier who issued this bill.
@@ -65,7 +66,7 @@ pub struct Bill {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BillItem {
     pub id: Uuid,
-    pub bill_id: Uuid,
+    pub bill_id: BillId,
     pub line_number: i32,
     pub description: String,
     pub account_code: Option<String>,
@@ -82,7 +83,7 @@ pub struct BillItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BillPayment {
     /// Unique identifier for this payment.
-    pub id: Uuid,
+    pub id: BillPaymentId,
     /// System-generated payment reference (e.g. `"APMT-20240101-ABC123"`).
     pub payment_number: String,
     /// Supplier receiving the payment.
@@ -115,8 +116,8 @@ pub struct BillPayment {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentAllocation {
     pub id: Uuid,
-    pub payment_id: Uuid,
-    pub bill_id: Uuid,
+    pub payment_id: BillPaymentId,
+    pub bill_id: BillId,
     pub amount: Decimal,
     pub created_at: DateTime<Utc>,
 }
@@ -124,7 +125,7 @@ pub struct PaymentAllocation {
 /// A scheduled payment batch.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentRun {
-    pub id: Uuid,
+    pub id: PaymentRunId,
     pub run_number: String,
     pub status: PaymentRunStatus,
     pub payment_date: DateTime<Utc>,
@@ -368,7 +369,7 @@ mod tests {
         fn bill_item(po_line_id: Option<Uuid>, qty: Decimal, unit_price: Decimal) -> BillItem {
             BillItem {
                 id: Uuid::new_v4(),
-                bill_id: Uuid::new_v4(),
+                bill_id: BillId::new(),
                 line_number: 1,
                 description: "Widget".into(),
                 account_code: None,
@@ -612,7 +613,7 @@ pub struct CreateBillPayment {
 /// Payment allocation input.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentAllocationInput {
-    pub bill_id: Uuid,
+    pub bill_id: BillId,
     pub amount: Decimal,
 }
 
@@ -621,7 +622,7 @@ pub struct PaymentAllocationInput {
 pub struct CreatePaymentRun {
     pub payment_date: DateTime<Utc>,
     pub payment_method: PaymentMethodAP,
-    pub bill_ids: Vec<Uuid>,
+    pub bill_ids: Vec<BillId>,
     pub notes: Option<String>,
     pub created_by: Option<String>,
 }

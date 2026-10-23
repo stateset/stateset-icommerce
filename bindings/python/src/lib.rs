@@ -12076,7 +12076,7 @@ impl AccountsPayableApi {
         let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let bill = commerce
             .accounts_payable()
-            .get_bill(uuid)
+            .get_bill(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         convert_optional_output(bill)
     }
@@ -12101,7 +12101,7 @@ impl AccountsPayableApi {
         let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let bill = commerce
             .accounts_payable()
-            .approve_bill(uuid)
+            .approve_bill(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         convert_output(bill)
     }
@@ -12133,7 +12133,7 @@ impl AccountsPayableApi {
         let bill = commerce
             .accounts_payable()
             .pay_bill(
-                uuid,
+                uuid.into(),
                 stateset_core::PayBill {
                     amount: decimal_from_f64(amount, "amount")?,
                     payment_method: pm,
@@ -12190,9 +12190,10 @@ impl AccountsPayableApi {
                     .map_err(|_| PyValueError::new_err("Invalid tolerance_percent decimal"))
             })
             .transpose()?;
-        let result = commerce.accounts_payable().three_way_match(uuid, tolerance).map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to three-way match bill: {}", e))
-        })?;
+        let result =
+            commerce.accounts_payable().three_way_match(uuid.into(), tolerance).map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to three-way match bill: {}", e))
+            })?;
         Ok(result.into())
     }
 }

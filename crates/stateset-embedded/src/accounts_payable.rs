@@ -39,6 +39,7 @@ use stateset_core::{
     BillStatus, CreateBill, CreateBillItem, CreateBillPayment, CreatePaymentRun, PaymentAllocation,
     PaymentRun, PaymentRunFilter, Result, SupplierApSummary, UpdateBill,
 };
+use stateset_core::{BillId, BillPaymentId, PaymentRunId};
 use stateset_db::Database;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -125,7 +126,7 @@ impl AccountsPayable {
     }
 
     /// Get a bill by ID.
-    pub fn get_bill(&self, id: Uuid) -> Result<Option<Bill>> {
+    pub fn get_bill(&self, id: BillId) -> Result<Option<Bill>> {
         self.db.accounts_payable().get_bill(id)
     }
 
@@ -135,7 +136,7 @@ impl AccountsPayable {
     }
 
     /// Update a bill.
-    pub fn update_bill(&self, id: Uuid, input: UpdateBill) -> Result<Bill> {
+    pub fn update_bill(&self, id: BillId, input: UpdateBill) -> Result<Bill> {
         self.db.accounts_payable().update_bill(id, input)
     }
 
@@ -163,29 +164,29 @@ impl AccountsPayable {
     }
 
     /// Delete a bill (only if draft).
-    pub fn delete_bill(&self, id: Uuid) -> Result<()> {
+    pub fn delete_bill(&self, id: BillId) -> Result<()> {
         self.db.accounts_payable().delete_bill(id)
     }
 
     /// Approve a bill for payment.
     ///
     /// Transitions bill from draft/pending to approved status.
-    pub fn approve_bill(&self, id: Uuid) -> Result<Bill> {
+    pub fn approve_bill(&self, id: BillId) -> Result<Bill> {
         self.db.accounts_payable().approve_bill(id)
     }
 
     /// Cancel a bill.
-    pub fn cancel_bill(&self, id: Uuid) -> Result<Bill> {
+    pub fn cancel_bill(&self, id: BillId) -> Result<Bill> {
         self.db.accounts_payable().cancel_bill(id)
     }
 
     /// Mark a bill as disputed.
-    pub fn dispute_bill(&self, id: Uuid) -> Result<Bill> {
+    pub fn dispute_bill(&self, id: BillId) -> Result<Bill> {
         self.db.accounts_payable().dispute_bill(id)
     }
 
     /// Get all line items for a bill.
-    pub fn get_bill_items(&self, bill_id: Uuid) -> Result<Vec<BillItem>> {
+    pub fn get_bill_items(&self, bill_id: BillId) -> Result<Vec<BillItem>> {
         self.db.accounts_payable().get_bill_items(bill_id)
     }
 
@@ -196,7 +197,7 @@ impl AccountsPayable {
     /// [`CommerceError::Conflict`](crate::CommerceError::Conflict) naming the
     /// status, since item edits would change totals a payment may already
     /// depend on.
-    pub fn add_bill_item(&self, bill_id: Uuid, item: CreateBillItem) -> Result<BillItem> {
+    pub fn add_bill_item(&self, bill_id: BillId, item: CreateBillItem) -> Result<BillItem> {
         self.db.accounts_payable().add_bill_item(bill_id, item)
     }
 
@@ -277,7 +278,7 @@ impl AccountsPayable {
     /// ```
     pub fn three_way_match(
         &self,
-        bill_id: Uuid,
+        bill_id: BillId,
         tolerance_percent: Option<Decimal>,
     ) -> Result<stateset_core::ThreeWayMatchResult> {
         let bill = self
@@ -314,7 +315,7 @@ impl AccountsPayable {
         #[cfg(feature = "events")]
         if let stateset_core::MatchStatus::Variance { variance_line_count } = result.match_status {
             self.emit(CommerceEvent::ThreeWayMatchVarianceDetected {
-                bill_id,
+                bill_id: bill_id.into_uuid(),
                 purchase_order_id: po_id,
                 variance_line_count,
                 tolerance_percent: result.tolerance_percent,
@@ -367,7 +368,7 @@ impl AccountsPayable {
     }
 
     /// Get a payment by ID.
-    pub fn get_payment(&self, id: Uuid) -> Result<Option<BillPayment>> {
+    pub fn get_payment(&self, id: BillPaymentId) -> Result<Option<BillPayment>> {
         self.db.accounts_payable().get_payment(id)
     }
 
@@ -384,22 +385,25 @@ impl AccountsPayable {
     /// Void a payment.
     ///
     /// Reverses the effect of the payment on associated bills.
-    pub fn void_payment(&self, id: Uuid) -> Result<BillPayment> {
+    pub fn void_payment(&self, id: BillPaymentId) -> Result<BillPayment> {
         self.db.accounts_payable().void_payment(id)
     }
 
     /// Mark a payment as cleared (e.g., check cleared the bank).
-    pub fn clear_payment(&self, id: Uuid) -> Result<BillPayment> {
+    pub fn clear_payment(&self, id: BillPaymentId) -> Result<BillPayment> {
         self.db.accounts_payable().clear_payment(id)
     }
 
     /// Get allocations for a payment.
-    pub fn get_payment_allocations(&self, payment_id: Uuid) -> Result<Vec<PaymentAllocation>> {
+    pub fn get_payment_allocations(
+        &self,
+        payment_id: BillPaymentId,
+    ) -> Result<Vec<PaymentAllocation>> {
         self.db.accounts_payable().get_payment_allocations(payment_id)
     }
 
     /// Get all payments for a specific bill.
-    pub fn get_payments_for_bill(&self, bill_id: Uuid) -> Result<Vec<BillPayment>> {
+    pub fn get_payments_for_bill(&self, bill_id: BillId) -> Result<Vec<BillPayment>> {
         self.db.accounts_payable().get_payments_for_bill(bill_id)
     }
 
@@ -432,7 +436,7 @@ impl AccountsPayable {
     /// )?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
-    pub fn pay_bill(&self, bill_id: Uuid, input: stateset_core::PayBill) -> Result<Bill> {
+    pub fn pay_bill(&self, bill_id: BillId, input: stateset_core::PayBill) -> Result<Bill> {
         // Get the bill to find the supplier
         let bill = self
             .db
@@ -538,7 +542,7 @@ impl AccountsPayable {
     }
 
     /// Get a payment run by ID.
-    pub fn get_payment_run(&self, id: Uuid) -> Result<Option<PaymentRun>> {
+    pub fn get_payment_run(&self, id: PaymentRunId) -> Result<Option<PaymentRun>> {
         self.db.accounts_payable().get_payment_run(id)
     }
 
@@ -554,7 +558,7 @@ impl AccountsPayable {
     /// Approval is required before processing.
     ///
     /// [`CommerceError::Conflict`]: crate::CommerceError::Conflict
-    pub fn approve_payment_run(&self, id: Uuid, approved_by: &str) -> Result<PaymentRun> {
+    pub fn approve_payment_run(&self, id: PaymentRunId, approved_by: &str) -> Result<PaymentRun> {
         self.db.accounts_payable().approve_payment_run(id, approved_by)
     }
 
@@ -577,7 +581,7 @@ impl AccountsPayable {
     /// status change — leaving the run `Approved` and retry-safe.
     ///
     /// [`CommerceError::Conflict`]: crate::CommerceError::Conflict
-    pub fn process_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
+    pub fn process_payment_run(&self, id: PaymentRunId) -> Result<PaymentRun> {
         self.db.accounts_payable().process_payment_run(id)
     }
 
@@ -589,12 +593,12 @@ impl AccountsPayable {
     /// run frees its bills to be included in a new run.
     ///
     /// [`CommerceError::Conflict`]: crate::CommerceError::Conflict
-    pub fn cancel_payment_run(&self, id: Uuid) -> Result<PaymentRun> {
+    pub fn cancel_payment_run(&self, id: PaymentRunId) -> Result<PaymentRun> {
         self.db.accounts_payable().cancel_payment_run(id)
     }
 
     /// Get bills included in a payment run.
-    pub fn get_payment_run_bills(&self, run_id: Uuid) -> Result<Vec<Bill>> {
+    pub fn get_payment_run_bills(&self, run_id: PaymentRunId) -> Result<Vec<Bill>> {
         self.db.accounts_payable().get_payment_run_bills(run_id)
     }
 
@@ -647,7 +651,7 @@ impl AccountsPayable {
     }
 
     /// Get multiple bills by ID.
-    pub fn get_bills_batch(&self, ids: Vec<Uuid>) -> Result<Vec<Bill>> {
+    pub fn get_bills_batch(&self, ids: Vec<BillId>) -> Result<Vec<Bill>> {
         self.db.accounts_payable().get_bills_batch(ids)
     }
 }

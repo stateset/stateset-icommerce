@@ -3693,7 +3693,7 @@ pub extern "C" fn stateset_ap_get_bill(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.accounts_payable().get_bill(uuid).map_err(|e| e.to_string())
+        commerce.accounts_payable().get_bill(uuid.into()).map_err(|e| e.to_string())
     });
 
     match result {
@@ -3738,7 +3738,7 @@ pub extern "C" fn stateset_ap_approve_bill(
     // approved_by_str is not used in this implementation
     let _ = approved_by_str;
     let result = use_handle(handle, |commerce| {
-        commerce.accounts_payable().approve_bill(uuid).map_err(|e| e.to_string())
+        commerce.accounts_payable().approve_bill(uuid.into()).map_err(|e| e.to_string())
     });
 
     match result {
@@ -3781,7 +3781,7 @@ pub extern "C" fn stateset_ap_pay_bill(
         commerce
             .accounts_payable()
             .pay_bill(
-                uuid,
+                uuid.into(),
                 stateset_core::PayBill {
                     amount: amount_decimal,
                     payment_method,

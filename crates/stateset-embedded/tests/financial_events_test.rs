@@ -405,7 +405,7 @@ async fn three_way_match_variance_emits_event() {
             tolerance_percent,
             ..
         } => {
-            assert_eq!(*bill_id, bill.id);
+            assert_eq!(*bill_id, bill.id.into_uuid());
             assert_eq!(*purchase_order_id, po_id);
             assert_eq!(*variance_line_count, 1);
             assert_eq!(*tolerance_percent, dec!(5));

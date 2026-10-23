@@ -40,7 +40,7 @@ async fn make_approved_bill(commerce: &AsyncCommerce) -> uuid::Uuid {
         .await
         .expect("create bill");
     ap.approve_bill(bill.id).await.expect("approve bill");
-    bill.id
+    bill.id.into()
 }
 
 #[tokio::test]
@@ -65,7 +65,7 @@ async fn postgres_list_payment_runs_applies_status_and_pagination() {
         .create_payment_run(CreatePaymentRun {
             payment_date: run_date,
             payment_method: method,
-            bill_ids: vec![bill_a],
+            bill_ids: vec![bill_a.into()],
             ..Default::default()
         })
         .await
@@ -74,7 +74,7 @@ async fn postgres_list_payment_runs_applies_status_and_pagination() {
         .create_payment_run(CreatePaymentRun {
             payment_date: run_date,
             payment_method: method,
-            bill_ids: vec![bill_b],
+            bill_ids: vec![bill_b.into()],
             ..Default::default()
         })
         .await

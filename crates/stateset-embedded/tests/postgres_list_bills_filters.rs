@@ -49,7 +49,7 @@ async fn make_bill(
         })
         .await
         .expect("create bill");
-    bill.id
+    bill.id.into()
 }
 
 #[tokio::test]
@@ -76,14 +76,14 @@ async fn postgres_list_bills_honors_po_amount_and_offset_filters() {
         .await
         .expect("min_amount");
     assert_eq!(over.len(), 1);
-    assert_eq!(over[0].id, big);
+    assert_eq!(over[0].id, big.into());
 
     let by_po = ap
         .list_bills(BillFilter { purchase_order_id: Some(po), ..base.clone() })
         .await
         .expect("po");
     assert_eq!(by_po.len(), 1);
-    assert_eq!(by_po[0].id, with_po);
+    assert_eq!(by_po[0].id, with_po.into());
 
     let offset1 = ap.list_bills(BillFilter { offset: Some(1), ..base }).await.expect("offset");
     assert_eq!(offset1.len(), 2, "offset must skip rows");
