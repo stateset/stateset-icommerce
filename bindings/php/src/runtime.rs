@@ -5237,7 +5237,7 @@ impl GeneralLedger {
 
         let account = commerce
             .general_ledger()
-            .get_account(uuid)
+            .get_account(uuid.into())
             .map_err(|e| PhpException::from_message(format!("Failed to get account: {}", e)))?;
 
         Ok(account.map(|a| a.name))
@@ -5265,7 +5265,7 @@ impl GeneralLedger {
 
         let balance = commerce
             .general_ledger()
-            .get_account_balance(uuid, as_of)
+            .get_account_balance(uuid.into(), as_of)
             .map_err(|e| PhpException::from_message(format!("Failed to get balance: {}", e)))?;
 
         // The embedded API returns `None` when the account has no posted balance;

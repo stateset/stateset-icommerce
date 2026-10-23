@@ -6,6 +6,7 @@
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use proptest::prelude::*;
 use rust_decimal::Decimal;
+use stateset_core::GlAccountId;
 use stateset_core::{
     BalanceSide, BillItem, CurrencyCode, DepreciationMethod, MatchStatus, PurchaseOrderItem,
     ReceiptItem, ReceiptItemStatus, RecognitionMethod, RevaluationLine,
@@ -388,7 +389,7 @@ fn revaluation_line() -> impl Strategy<Value = RevaluationLine> {
         .prop_map(|(adj_cents, normal_balance)| {
             let adjustment = cents(adj_cents);
             RevaluationLine {
-                account_id: Uuid::new_v4(),
+                account_id: GlAccountId::new(),
                 account_number: "1015".into(),
                 account_name: "FX account".into(),
                 currency: CurrencyCode::EUR,
@@ -415,7 +416,7 @@ proptest! {
         lines in proptest::collection::vec(revaluation_line(), 0..12),
     ) {
         let fx_account = Uuid::new_v4();
-        let je_lines = build_revaluation_journal_lines(&lines, fx_account);
+        let je_lines = build_revaluation_journal_lines(&lines, GlAccountId::from(fx_account));
 
         let non_zero = lines.iter().filter(|l| !l.adjustment.is_zero()).count();
         if non_zero == 0 {
@@ -442,7 +443,7 @@ proptest! {
 
         // One line per adjusted account, plus the FX offset when the net is
         // non-zero.
-        let fx_lines = je_lines.iter().filter(|l| l.account_id == fx_account).count();
+        let fx_lines = je_lines.iter().filter(|l| l.account_id == GlAccountId::from(fx_account)).count();
         prop_assert!(fx_lines <= 1);
         prop_assert_eq!(je_lines.len(), non_zero + fx_lines);
     }

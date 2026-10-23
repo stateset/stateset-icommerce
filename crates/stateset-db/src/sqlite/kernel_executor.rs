@@ -3844,7 +3844,7 @@ impl SqliteKernelExecutor {
             }
             let mut entry = match SqliteGeneralLedgerRepository::load_journal_entry_with_conn(
                 tx,
-                command.payload.journal_entry_id,
+                command.payload.journal_entry_id.into_uuid(),
             ) {
                 Ok(entry) => entry,
                 Err(rusqlite::Error::QueryReturnedNoRows) => {
@@ -3906,7 +3906,7 @@ impl SqliteKernelExecutor {
             for line in &entry.lines {
                 SqliteGeneralLedgerRepository::update_account_balance_with_conn(
                     tx,
-                    line.account_id,
+                    line.account_id.into_uuid(),
                     line.debit_amount,
                     line.credit_amount,
                 )

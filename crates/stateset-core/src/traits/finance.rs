@@ -620,13 +620,13 @@ pub trait GeneralLedgerRepository: Send + Sync {
     fn create_account(&self, input: CreateGlAccount) -> Result<GlAccount>;
 
     /// Get account by ID
-    fn get_account(&self, id: Uuid) -> Result<Option<GlAccount>>;
+    fn get_account(&self, id: GlAccountId) -> Result<Option<GlAccount>>;
 
     /// Get account by account number
     fn get_account_by_number(&self, account_number: &str) -> Result<Option<GlAccount>>;
 
     /// Update account
-    fn update_account(&self, id: Uuid, input: UpdateGlAccount) -> Result<GlAccount>;
+    fn update_account(&self, id: GlAccountId, input: UpdateGlAccount) -> Result<GlAccount>;
 
     /// List accounts (Chart of Accounts)
     fn list_accounts(&self, filter: GlAccountFilter) -> Result<Vec<GlAccount>>;
@@ -635,7 +635,7 @@ pub trait GeneralLedgerRepository: Send + Sync {
     fn get_account_hierarchy(&self) -> Result<Vec<GlAccount>>;
 
     /// Delete account (only if no transactions)
-    fn delete_account(&self, id: Uuid) -> Result<()>;
+    fn delete_account(&self, id: GlAccountId) -> Result<()>;
 
     /// Initialize default Chart of Accounts
     fn initialize_chart_of_accounts(&self) -> Result<Vec<GlAccount>>;
@@ -645,7 +645,7 @@ pub trait GeneralLedgerRepository: Send + Sync {
     fn create_period(&self, input: CreateGlPeriod) -> Result<GlPeriod>;
 
     /// Get period by ID
-    fn get_period(&self, id: Uuid) -> Result<Option<GlPeriod>>;
+    fn get_period(&self, id: GlPeriodId) -> Result<Option<GlPeriod>>;
 
     /// Get current open period
     fn get_current_period(&self) -> Result<Option<GlPeriod>>;
@@ -657,23 +657,23 @@ pub trait GeneralLedgerRepository: Send + Sync {
     fn list_periods(&self, filter: GlPeriodFilter) -> Result<Vec<GlPeriod>>;
 
     /// Open a period
-    fn open_period(&self, id: Uuid) -> Result<GlPeriod>;
+    fn open_period(&self, id: GlPeriodId) -> Result<GlPeriod>;
 
     /// Close a period
-    fn close_period(&self, id: Uuid, closed_by: &str) -> Result<GlPeriod>;
+    fn close_period(&self, id: GlPeriodId, closed_by: &str) -> Result<GlPeriod>;
 
     /// Lock a period (prevents any changes)
-    fn lock_period(&self, id: Uuid, locked_by: &str) -> Result<GlPeriod>;
+    fn lock_period(&self, id: GlPeriodId, locked_by: &str) -> Result<GlPeriod>;
 
     /// Reopen a closed period (not locked)
-    fn reopen_period(&self, id: Uuid) -> Result<GlPeriod>;
+    fn reopen_period(&self, id: GlPeriodId) -> Result<GlPeriod>;
 
     // Journal Entries
     /// Create a journal entry
     fn create_journal_entry(&self, input: CreateJournalEntry) -> Result<JournalEntry>;
 
     /// Get journal entry by ID
-    fn get_journal_entry(&self, id: Uuid) -> Result<Option<JournalEntry>>;
+    fn get_journal_entry(&self, id: JournalEntryId) -> Result<Option<JournalEntry>>;
 
     /// Get journal entry by number
     fn get_journal_entry_by_number(&self, number: &str) -> Result<Option<JournalEntry>>;
@@ -682,16 +682,23 @@ pub trait GeneralLedgerRepository: Send + Sync {
     fn list_journal_entries(&self, filter: JournalEntryFilter) -> Result<Vec<JournalEntry>>;
 
     /// Post a journal entry (update account balances)
-    fn post_journal_entry(&self, id: Uuid, posted_by: &str) -> Result<JournalEntry>;
+    fn post_journal_entry(&self, id: JournalEntryId, posted_by: &str) -> Result<JournalEntry>;
 
     /// Void a journal entry
-    fn void_journal_entry(&self, id: Uuid) -> Result<JournalEntry>;
+    fn void_journal_entry(&self, id: JournalEntryId) -> Result<JournalEntry>;
 
     /// Reverse a journal entry (creates reversing entry)
-    fn reverse_journal_entry(&self, id: Uuid, reversal_date: NaiveDate) -> Result<JournalEntry>;
+    fn reverse_journal_entry(
+        &self,
+        id: JournalEntryId,
+        reversal_date: NaiveDate,
+    ) -> Result<JournalEntry>;
 
     /// Get journal entry lines
-    fn get_journal_entry_lines(&self, journal_entry_id: Uuid) -> Result<Vec<JournalEntryLine>>;
+    fn get_journal_entry_lines(
+        &self,
+        journal_entry_id: JournalEntryId,
+    ) -> Result<Vec<JournalEntryLine>>;
 
     // Auto-posting
     /// Get active auto-posting config
@@ -735,20 +742,20 @@ pub trait GeneralLedgerRepository: Send + Sync {
     /// Get account balance (None if account is not found)
     fn get_account_balance(
         &self,
-        account_id: Uuid,
+        account_id: GlAccountId,
         as_of_date: Option<NaiveDate>,
     ) -> Result<Option<rust_decimal::Decimal>>;
 
     /// Get account transaction history
     fn get_account_transactions(
         &self,
-        account_id: Uuid,
+        account_id: GlAccountId,
         filter: JournalEntryFilter,
     ) -> Result<Vec<JournalEntryLine>>;
 
     // Period close process
     /// Run period close (creates closing entries)
-    fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry>;
+    fn run_period_close(&self, period_id: GlPeriodId, closed_by: &str) -> Result<JournalEntry>;
 
     // FX revaluation
     /// Revalue foreign-currency account balances at the as-of exchange rate,
@@ -764,7 +771,7 @@ pub trait GeneralLedgerRepository: Send + Sync {
     // Batch operations
     fn create_accounts_batch(&self, inputs: Vec<CreateGlAccount>)
     -> Result<BatchResult<GlAccount>>;
-    fn get_accounts_batch(&self, ids: Vec<Uuid>) -> Result<Vec<GlAccount>>;
+    fn get_accounts_batch(&self, ids: Vec<GlAccountId>) -> Result<Vec<GlAccount>>;
 }
 
 /// Vendor credit repository trait.

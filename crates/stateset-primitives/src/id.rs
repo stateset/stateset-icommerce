@@ -565,6 +565,21 @@ define_id! {
     FixedAssetId
 }
 
+define_id! {
+    /// Strongly-typed general-ledger account identifier.
+    GlAccountId
+}
+
+define_id! {
+    /// Strongly-typed general-ledger period identifier.
+    GlPeriodId
+}
+
+define_id! {
+    /// Strongly-typed journal entry identifier.
+    JournalEntryId
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

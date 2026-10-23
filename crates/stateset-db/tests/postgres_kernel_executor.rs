@@ -1589,7 +1589,7 @@ async fn postgres_kernel_journal_post_rejects_closed_period_durably() {
         })
         .await
         .expect("create period");
-    gl.open_period_async(period.id).await.expect("open period");
+    gl.open_period_async(period.id.into_uuid()).await.expect("open period");
     let cash = gl
         .create_account_async(CreateGlAccount {
             account_number: format!("1000-closed-{suffix}"),
@@ -1633,7 +1633,7 @@ async fn postgres_kernel_journal_post_rejects_closed_period_durably() {
         })
         .await
         .expect("create journal");
-    gl.close_period_async(period.id, "tester").await.expect("close period");
+    gl.close_period_async(period.id.into_uuid(), "tester").await.expect("close period");
 
     let mut post = kernel_command(
         "ledger.post",
@@ -1650,10 +1650,14 @@ async fn postgres_kernel_journal_post_rejects_closed_period_durably() {
     assert_eq!(receipt.status, ExecutionStatus::Rejected);
     assert_eq!(receipt.error_code.as_deref(), Some("commerce.ledger.period_not_open"));
 
-    let entry =
-        gl.get_journal_entry_async(entry.id).await.expect("get entry").expect("entry exists");
+    let entry = gl
+        .get_journal_entry_async(entry.id.into_uuid())
+        .await
+        .expect("get entry")
+        .expect("entry exists");
     assert_eq!(entry.status, JournalEntryStatus::Draft, "rejected post must leave a draft");
-    let cash = gl.get_account_async(cash.id).await.expect("get cash").expect("cash exists");
+    let cash =
+        gl.get_account_async(cash.id.into_uuid()).await.expect("get cash").expect("cash exists");
     assert_eq!(cash.current_balance, dec!(0), "no balance may move on rejection");
 }
 
@@ -1685,7 +1689,7 @@ async fn postgres_kernel_ledger_and_x402_commands_preserve_exact_fact_parity() {
         })
         .await
         .expect("create period");
-    gl.open_period_async(period.id).await.expect("open period");
+    gl.open_period_async(period.id.into_uuid()).await.expect("open period");
     let cash = gl
         .create_account_async(CreateGlAccount {
             account_number: format!("1000-{suffix}"),

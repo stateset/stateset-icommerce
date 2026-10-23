@@ -2,6 +2,8 @@
 
 use rust_decimal_macros::dec;
 use sha2::{Digest, Sha256};
+use stateset_core::GlAccountId;
+use stateset_core::JournalEntryId;
 use stateset_core::{
     A2ADisputeResolutionType, AccountType, AddCartItem, BillingCycleFilter, BillingCycleStatus,
     BillingInterval, CartAddress, CartRepository, ChargeSubscription, CommandEnvelope,
@@ -1739,7 +1741,10 @@ fn post_journal_command(key: &str, journal_entry_id: Uuid) -> CommandEnvelope<Po
             delegated_by: Some("user-1".into()),
             capabilities: vec!["ledger.post".into()],
         },
-        PostJournalEntry { journal_entry_id, posted_by: "agent:finance-1".into() },
+        PostJournalEntry {
+            journal_entry_id: JournalEntryId::from(journal_entry_id),
+            posted_by: "agent:finance-1".into(),
+        },
     );
     command.store_id = Some("store-1".into());
     command.policy_version = Some("commerce-policy-1".into());
@@ -1791,7 +1796,7 @@ fn create_kernel_journal(
             auto_post: Some(false),
         })
         .expect("create journal entry");
-    (entry, cash.id, revenue.id)
+    (entry, cash.id.into_uuid(), revenue.id.into_uuid())
 }
 
 #[test]
@@ -1878,7 +1883,7 @@ fn kernel_return_transition_promotes_replays_and_rejects_stale_or_invalid_work()
 fn kernel_journal_post_previews_applies_and_replays_exactly_once() {
     let db = SqliteDatabase::in_memory().expect("create database");
     let (entry, cash_id, revenue_id) = create_kernel_journal(&db, "kernel-post");
-    let preview = post_journal_command("ledger-post-1", entry.id);
+    let preview = post_journal_command("ledger-post-1", entry.id.into_uuid());
     let previewed = db
         .kernel_executor(payment_policy())
         .execute_post_journal_entry(&preview)
@@ -1906,9 +1911,15 @@ fn kernel_journal_post_previews_applies_and_replays_exactly_once() {
     assert_eq!(replay.receipt_id, applied.receipt_id);
 
     let gl = db.general_ledger();
-    assert_eq!(gl.get_account(cash_id).expect("cash").expect("cash").current_balance, dec!(25));
     assert_eq!(
-        gl.get_account(revenue_id).expect("revenue").expect("revenue").current_balance,
+        gl.get_account(GlAccountId::from(cash_id)).expect("cash").expect("cash").current_balance,
+        dec!(25)
+    );
+    assert_eq!(
+        gl.get_account(GlAccountId::from(revenue_id))
+            .expect("revenue")
+            .expect("revenue")
+            .current_balance,
         dec!(25)
     );
     let event = db
@@ -1929,7 +1940,7 @@ fn kernel_journal_post_rejects_closed_period_durably() {
     let (entry, cash_id, revenue_id) = create_kernel_journal(&db, "kernel-closed");
     db.general_ledger().close_period(entry.period_id, "tester").expect("close period");
 
-    let mut command = post_journal_command("ledger-post-closed", entry.id);
+    let mut command = post_journal_command("ledger-post-closed", entry.id.into_uuid());
     command.mode = ExecutionMode::Apply;
     let receipt = db
         .kernel_executor(payment_policy())
@@ -1944,9 +1955,15 @@ fn kernel_journal_post_rejects_closed_period_durably() {
         JournalEntryStatus::Draft,
         "rejected post must leave the entry a draft"
     );
-    assert_eq!(gl.get_account(cash_id).expect("cash").expect("cash").current_balance, dec!(0));
     assert_eq!(
-        gl.get_account(revenue_id).expect("revenue").expect("revenue").current_balance,
+        gl.get_account(GlAccountId::from(cash_id)).expect("cash").expect("cash").current_balance,
+        dec!(0)
+    );
+    assert_eq!(
+        gl.get_account(GlAccountId::from(revenue_id))
+            .expect("revenue")
+            .expect("revenue")
+            .current_balance,
         dec!(0)
     );
 }
@@ -1955,7 +1972,7 @@ fn kernel_journal_post_rejects_closed_period_durably() {
 fn kernel_journal_post_rolls_back_balances_and_event_when_receipt_fails() {
     let db = SqliteDatabase::in_memory().expect("create database");
     let (entry, cash_id, revenue_id) = create_kernel_journal(&db, "kernel-rollback");
-    let mut command = post_journal_command("ledger-post-rollback", entry.id);
+    let mut command = post_journal_command("ledger-post-rollback", entry.id.into_uuid());
     command.mode = ExecutionMode::Apply;
     let conn = db.pool().get().expect("connection");
     conn.execute(
@@ -1984,9 +2001,15 @@ fn kernel_journal_post_rolls_back_balances_and_event_when_receipt_fails() {
         gl.get_journal_entry(entry.id).expect("journal").expect("journal").status,
         JournalEntryStatus::Draft
     );
-    assert_eq!(gl.get_account(cash_id).expect("cash").expect("cash").current_balance, dec!(0));
     assert_eq!(
-        gl.get_account(revenue_id).expect("revenue").expect("revenue").current_balance,
+        gl.get_account(GlAccountId::from(cash_id)).expect("cash").expect("cash").current_balance,
+        dec!(0)
+    );
+    assert_eq!(
+        gl.get_account(GlAccountId::from(revenue_id))
+            .expect("revenue")
+            .expect("revenue")
+            .current_balance,
         dec!(0)
     );
     let conn = db.pool().get().expect("connection");

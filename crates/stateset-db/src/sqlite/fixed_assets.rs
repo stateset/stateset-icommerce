@@ -10,6 +10,7 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
 use stateset_core::FixedAssetId;
+use stateset_core::GlAccountId;
 use stateset_core::{
     AssetDisposal, CommerceError, CreateFixedAsset, CurrencyCode, DepreciationEntry,
     DepreciationEntryStatus, DepreciationMethod, DepreciationSchedule, FixedAsset,
@@ -114,17 +115,20 @@ impl SqliteFixedAssetRepository {
                 row.get::<_, Option<String>>("asset_account_id")?,
                 "fixed_asset",
                 "asset_account_id",
-            )?,
+            )?
+            .map(GlAccountId::from),
             accumulated_depreciation_account_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("accumulated_depreciation_account_id")?,
                 "fixed_asset",
                 "accumulated_depreciation_account_id",
-            )?,
+            )?
+            .map(GlAccountId::from),
             depreciation_expense_account_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("depreciation_expense_account_id")?,
                 "fixed_asset",
                 "depreciation_expense_account_id",
-            )?,
+            )?
+            .map(GlAccountId::from),
             accumulated_depreciation: parse_decimal_row(
                 &row.get::<_, String>("accumulated_depreciation")?,
                 "fixed_asset",
@@ -585,12 +589,12 @@ impl SqliteFixedAssetRepository {
         }
         let expense_account_id = resolve_depreciation_account_with_conn(
             tx,
-            asset.depreciation_expense_account_id,
+            asset.depreciation_expense_account_id.map(GlAccountId::into_uuid),
             stateset_core::AccountSubType::DepreciationExpense,
         )?;
         let accumulated_account_id = resolve_depreciation_account_with_conn(
             tx,
-            asset.accumulated_depreciation_account_id,
+            asset.accumulated_depreciation_account_id.map(GlAccountId::into_uuid),
             stateset_core::AccountSubType::AccumulatedDepreciation,
         )?;
         let periods = if first_period == last_period {
@@ -606,12 +610,12 @@ impl SqliteFixedAssetRepository {
                 description: format!("Depreciation {} {periods}", asset.asset_number),
                 lines: vec![
                     stateset_core::CreateJournalEntryLine::debit(
-                        expense_account_id,
+                        GlAccountId::from(expense_account_id),
                         amount,
                         Some("Depreciation Expense".to_string()),
                     ),
                     stateset_core::CreateJournalEntryLine::credit(
-                        accumulated_account_id,
+                        GlAccountId::from(accumulated_account_id),
                         amount,
                         Some("Accumulated Depreciation".to_string()),
                     ),
@@ -888,6 +892,7 @@ mod tests {
             })
             .expect("create account")
             .id
+            .into_uuid()
         }
 
         fn setup_gl(gl: &SqliteGeneralLedgerRepository, auto_post_depreciation: bool) {
@@ -1019,9 +1024,9 @@ mod tests {
             assert_eq!(entry.lines.len(), 2);
             let debit = entry.lines.iter().find(|l| l.debit_amount > dec!(0)).expect("debit");
             let credit = entry.lines.iter().find(|l| l.credit_amount > dec!(0)).expect("credit");
-            assert_eq!(debit.account_id, expense_id);
+            assert_eq!(debit.account_id, GlAccountId::from(expense_id));
             assert_eq!(debit.debit_amount, dec!(750));
-            assert_eq!(credit.account_id, accum_id);
+            assert_eq!(credit.account_id, GlAccountId::from(accum_id));
             assert_eq!(credit.credit_amount, dec!(750));
         }
 
@@ -1045,8 +1050,8 @@ mod tests {
             );
 
             let mut input = create_input();
-            input.depreciation_expense_account_id = Some(expense_id);
-            input.accumulated_depreciation_account_id = Some(accum_id);
+            input.depreciation_expense_account_id = Some(GlAccountId::from(expense_id));
+            input.accumulated_depreciation_account_id = Some(GlAccountId::from(accum_id));
             let a = repo.create(input).expect("create");
             let a = repo
                 .place_in_service(a.id, NaiveDate::from_ymd_opt(2026, 1, 1).unwrap())
@@ -1061,7 +1066,8 @@ mod tests {
                 })
                 .expect("list entries");
             assert_eq!(entries.len(), 1);
-            let accounts: Vec<Uuid> = entries[0].lines.iter().map(|l| l.account_id).collect();
+            let accounts: Vec<Uuid> =
+                entries[0].lines.iter().map(|l| l.account_id.into_uuid()).collect();
             assert!(accounts.contains(&expense_id));
             assert!(accounts.contains(&accum_id));
         }

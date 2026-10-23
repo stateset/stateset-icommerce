@@ -439,7 +439,7 @@ async fn three_way_match_variance_emits_event() {
 
 /// Chart of accounts, FX gain/loss config, an EUR balance, and an open wide
 /// period — enough for `revalue` to post and `close_month` to run.
-fn setup_gl_with_fx(commerce: &Commerce) -> Uuid {
+fn setup_gl_with_fx(commerce: &Commerce) -> stateset_core::GlPeriodId {
     let gl = commerce.general_ledger();
     gl.initialize_chart_of_accounts().expect("init chart");
 
@@ -576,7 +576,7 @@ async fn fx_revaluation_and_month_end_close_emit_events() {
         } => {
             assert_eq!(*as_of_date, date(2026, 6, 30));
             assert_eq!(*total_unrealized_gain_loss, result.total_unrealized_gain_loss);
-            assert_eq!(*journal_entry_id, result.journal_entry.as_ref().map(|e| e.id));
+            assert_eq!(*journal_entry_id, result.journal_entry.as_ref().map(|e| e.id.into_uuid()));
         }
         other => panic!("expected FxRevaluationPosted, got {}", other.event_type()),
     }
@@ -596,7 +596,7 @@ async fn fx_revaluation_and_month_end_close_emit_events() {
         .expect("month_end_close_completed emitted");
     match close_event {
         CommerceEvent::MonthEndCloseCompleted { period_id: pid, period_name, .. } => {
-            assert_eq!(*pid, period_id);
+            assert_eq!(*pid, period_id.into_uuid());
             assert_eq!(period_name, "FY2026-wide");
         }
         other => panic!("expected MonthEndCloseCompleted, got {}", other.event_type()),

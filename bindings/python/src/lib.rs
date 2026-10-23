@@ -13132,7 +13132,7 @@ impl GeneralLedgerApi {
         let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let account = commerce
             .general_ledger()
-            .get_account(uuid)
+            .get_account(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         convert_optional_output(account)
     }
@@ -13169,7 +13169,7 @@ impl GeneralLedgerApi {
         let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let entry = commerce
             .general_ledger()
-            .get_journal_entry(uuid)
+            .get_journal_entry(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(entry.map(|e| e.into()))
     }
@@ -13182,7 +13182,7 @@ impl GeneralLedgerApi {
         let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let entry = commerce
             .general_ledger()
-            .post_journal_entry(uuid, &posted_by)
+            .post_journal_entry(uuid.into(), &posted_by)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(entry.into())
     }
@@ -13250,7 +13250,7 @@ impl GeneralLedgerApi {
         let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
         let period = commerce
             .general_ledger()
-            .open_period(uuid)
+            .open_period(uuid.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to open period: {}", e)))?;
         Ok(period.into())
     }
@@ -13320,7 +13320,7 @@ impl GeneralLedgerApi {
         let report = commerce
             .general_ledger()
             .close_month(
-                uuid,
+                uuid.into(),
                 stateset_core::CloseMonthOptions {
                     dry_run: dry_run.unwrap_or(false),
                     skip_depreciation: skip_depreciation.unwrap_or(false),
@@ -17408,15 +17408,18 @@ impl FixedAssets {
                     .map(|s| parse_iso_date_py(s, "in_service_date"))
                     .transpose()?,
                 location_id: parse_optional_uuid_py(location_id, "location_id")?,
-                asset_account_id: parse_optional_uuid_py(asset_account_id, "asset_account_id")?,
+                asset_account_id: parse_optional_uuid_py(asset_account_id, "asset_account_id")?
+                    .map(Into::into),
                 accumulated_depreciation_account_id: parse_optional_uuid_py(
                     accumulated_depreciation_account_id,
                     "accumulated_depreciation_account_id",
-                )?,
+                )?
+                .map(Into::into),
                 depreciation_expense_account_id: parse_optional_uuid_py(
                     depreciation_expense_account_id,
                     "depreciation_expense_account_id",
-                )?,
+                )?
+                .map(Into::into),
                 currency,
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create fixed asset: {}", e)))?;
@@ -17554,15 +17557,18 @@ impl FixedAssets {
                         .map(|s| parse_iso_date_py(s, "in_service_date"))
                         .transpose()?,
                     location_id: parse_optional_uuid_py(location_id, "location_id")?,
-                    asset_account_id: parse_optional_uuid_py(asset_account_id, "asset_account_id")?,
+                    asset_account_id: parse_optional_uuid_py(asset_account_id, "asset_account_id")?
+                        .map(Into::into),
                     accumulated_depreciation_account_id: parse_optional_uuid_py(
                         accumulated_depreciation_account_id,
                         "accumulated_depreciation_account_id",
-                    )?,
+                    )?
+                    .map(Into::into),
                     depreciation_expense_account_id: parse_optional_uuid_py(
                         depreciation_expense_account_id,
                         "depreciation_expense_account_id",
-                    )?,
+                    )?
+                    .map(Into::into),
                 },
             )
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to update fixed asset: {}", e)))?;

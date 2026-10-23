@@ -8,6 +8,14 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Breaking (2.0)
 
+- **Typed general-ledger IDs.** New `GlAccountId`, `GlPeriodId` and
+  `JournalEntryId`. `GeneralLedgerRepository` and both embedded facades take
+  them wherever an account, period or journal entry is named; the GL models
+  carry them (`GlAccount.id`, `parent_account_id`, every `*_account_id`,
+  `period_id`, `journal_entry_id`, `reversed_entry_id`,
+  `reversing_entry_id`), as do the fixed-asset GL account fields and
+  `CreateJournalEntryLine::{debit, credit}`. Commerce events and error
+  payloads keep `Uuid` until the typed-errors pass.
 - **Typed fixed asset IDs.** New `FixedAssetId`. `FixedAssetRepository`
   and both embedded facades take it; `FixedAsset.id` and the
   depreciation schedule's `asset_id` carry it. GL account and location IDs

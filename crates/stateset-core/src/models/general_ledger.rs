@@ -11,6 +11,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_primitives::CurrencyCode;
+use stateset_primitives::{GlAccountId, GlPeriodId, JournalEntryId};
 use std::fmt;
 use std::str::FromStr;
 use strum::{Display, EnumString};
@@ -385,7 +386,7 @@ impl FromStr for JournalEntryStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlAccount {
     /// Unique identifier for this account.
-    pub id: Uuid,
+    pub id: GlAccountId,
     /// Structured account code (e.g. `"1010"`).
     pub account_number: String,
     /// Human-readable account name.
@@ -397,7 +398,7 @@ pub struct GlAccount {
     /// Finer-grained classification within the account type.
     pub account_sub_type: Option<AccountSubType>,
     /// Parent account for hierarchy grouping; `None` if top-level.
-    pub parent_account_id: Option<Uuid>,
+    pub parent_account_id: Option<GlAccountId>,
     /// If `true`, this is a summary header; postings go to child accounts.
     pub is_header: bool,
     /// If `true`, journal entry lines may be posted directly to this account.
@@ -438,7 +439,7 @@ impl GlAccount {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlPeriod {
     /// Unique identifier for this period.
-    pub id: Uuid,
+    pub id: GlPeriodId,
     /// Display name, typically in `YYYY-MM` format.
     pub period_name: String,
     /// Fiscal year this period belongs to.
@@ -483,13 +484,13 @@ impl GlPeriod {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalEntry {
     /// Unique identifier for this journal entry.
-    pub id: Uuid,
+    pub id: JournalEntryId,
     /// Human-readable entry reference number (e.g. `"JE-20240101-ABCD1234"`).
     pub entry_number: String,
     /// Date the transaction occurred or is being recorded.
     pub entry_date: NaiveDate,
     /// Accounting period this entry belongs to.
-    pub period_id: Uuid,
+    pub period_id: GlPeriodId,
     /// Classification of the entry (standard, adjusting, closing, etc.).
     pub entry_type: JournalEntryType,
     /// System or process that created the entry.
@@ -513,9 +514,9 @@ pub struct JournalEntry {
     /// User who posted the entry.
     pub posted_by: Option<String>,
     /// Entry that this one reverses, if applicable.
-    pub reversed_entry_id: Option<Uuid>,
+    pub reversed_entry_id: Option<JournalEntryId>,
     /// Entry created to reverse this one, if applicable.
-    pub reversing_entry_id: Option<Uuid>,
+    pub reversing_entry_id: Option<JournalEntryId>,
     /// Individual debit/credit lines that make up this entry.
     pub lines: Vec<JournalEntryLine>,
     /// Timestamp of entry creation.
@@ -569,7 +570,7 @@ impl JournalEntry {
         for (index, line) in self.lines.iter().enumerate() {
             if !line.is_valid() {
                 return Err(crate::CommerceError::JournalLineNotSingleSided {
-                    entry_id: self.id,
+                    entry_id: self.id.into_uuid(),
                     line_number: if line.line_number > 0 {
                         line.line_number
                     } else {
@@ -586,7 +587,7 @@ impl JournalEntry {
             || calculated_debits != calculated_credits
         {
             return Err(crate::CommerceError::JournalEntryUnbalanced {
-                entry_id: self.id,
+                entry_id: self.id.into_uuid(),
                 total_debits: calculated_debits.to_string(),
                 total_credits: calculated_credits.to_string(),
             });
@@ -617,11 +618,11 @@ pub struct JournalEntryLine {
     /// Unique identifier for this line.
     pub id: Uuid,
     /// Parent journal entry.
-    pub journal_entry_id: Uuid,
+    pub journal_entry_id: JournalEntryId,
     /// Sequence number within the entry (1-based).
     pub line_number: i32,
     /// GL account being debited or credited.
-    pub account_id: Uuid,
+    pub account_id: GlAccountId,
     /// Denormalized account number for reporting convenience.
     pub account_number: Option<String>,
     /// Denormalized account name for reporting convenience.
@@ -662,18 +663,18 @@ impl JournalEntryLine {
 pub struct AutoPostingConfig {
     pub id: Uuid,
     pub config_name: String,
-    pub cash_account_id: Uuid,
-    pub accounts_receivable_account_id: Uuid,
-    pub inventory_account_id: Uuid,
-    pub accounts_payable_account_id: Uuid,
-    pub unearned_revenue_account_id: Option<Uuid>,
-    pub sales_revenue_account_id: Uuid,
-    pub shipping_revenue_account_id: Option<Uuid>,
-    pub cogs_account_id: Uuid,
-    pub bad_debt_expense_account_id: Option<Uuid>,
+    pub cash_account_id: GlAccountId,
+    pub accounts_receivable_account_id: GlAccountId,
+    pub inventory_account_id: GlAccountId,
+    pub accounts_payable_account_id: GlAccountId,
+    pub unearned_revenue_account_id: Option<GlAccountId>,
+    pub sales_revenue_account_id: GlAccountId,
+    pub shipping_revenue_account_id: Option<GlAccountId>,
+    pub cogs_account_id: GlAccountId,
+    pub bad_debt_expense_account_id: Option<GlAccountId>,
     /// Account receiving unrealized FX gains/losses posted by period-end revaluation.
     #[serde(default)]
-    pub fx_gain_loss_account_id: Option<Uuid>,
+    pub fx_gain_loss_account_id: Option<GlAccountId>,
     /// Auto-post a journal entry when fixed-asset depreciation is posted.
     #[serde(default)]
     pub auto_post_depreciation: bool,
@@ -689,8 +690,8 @@ pub struct AutoPostingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountBalance {
     pub id: Uuid,
-    pub account_id: Uuid,
-    pub period_id: Uuid,
+    pub account_id: GlAccountId,
+    pub period_id: GlPeriodId,
     pub opening_balance: Decimal,
     pub total_debits: Decimal,
     pub total_credits: Decimal,
@@ -706,7 +707,7 @@ pub struct AccountBalance {
 /// Trial Balance line
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrialBalanceLine {
-    pub account_id: Uuid,
+    pub account_id: GlAccountId,
     pub account_number: String,
     pub account_name: String,
     pub account_type: AccountType,
@@ -718,7 +719,7 @@ pub struct TrialBalanceLine {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrialBalance {
     pub as_of_date: NaiveDate,
-    pub period_id: Option<Uuid>,
+    pub period_id: Option<GlPeriodId>,
     pub total_debits: Decimal,
     pub total_credits: Decimal,
     pub is_balanced: bool,
@@ -736,7 +737,7 @@ impl TrialBalance {
 /// Balance Sheet line item
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceSheetLine {
-    pub account_id: Uuid,
+    pub account_id: GlAccountId,
     pub account_number: String,
     pub account_name: String,
     pub account_sub_type: Option<AccountSubType>,
@@ -768,7 +769,7 @@ impl BalanceSheet {
 /// Income Statement line item
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncomeStatementLine {
-    pub account_id: Uuid,
+    pub account_id: GlAccountId,
     pub account_number: String,
     pub account_name: String,
     pub account_sub_type: Option<AccountSubType>,
@@ -801,7 +802,7 @@ pub struct CreateGlAccount {
     pub description: Option<String>,
     pub account_type: AccountType,
     pub account_sub_type: Option<AccountSubType>,
-    pub parent_account_id: Option<Uuid>,
+    pub parent_account_id: Option<GlAccountId>,
     pub is_header: Option<bool>,
     pub is_posting: Option<bool>,
     pub currency: Option<CurrencyCode>,
@@ -812,7 +813,7 @@ pub struct CreateGlAccount {
 pub struct UpdateGlAccount {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub parent_account_id: Option<Uuid>,
+    pub parent_account_id: Option<GlAccountId>,
     pub status: Option<AccountStatus>,
 }
 
@@ -841,14 +842,14 @@ pub struct CreateJournalEntry {
 /// Kernel command payload for posting a balanced draft journal entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PostJournalEntry {
-    pub journal_entry_id: Uuid,
+    pub journal_entry_id: JournalEntryId,
     pub posted_by: String,
 }
 
 /// Input for a journal entry line
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateJournalEntryLine {
-    pub account_id: Uuid,
+    pub account_id: GlAccountId,
     pub description: Option<String>,
     pub debit_amount: Decimal,
     pub credit_amount: Decimal,
@@ -859,7 +860,11 @@ pub struct CreateJournalEntryLine {
 impl CreateJournalEntryLine {
     /// Create a debit line for an account
     #[must_use]
-    pub const fn debit(account_id: Uuid, amount: Decimal, description: Option<String>) -> Self {
+    pub const fn debit(
+        account_id: GlAccountId,
+        amount: Decimal,
+        description: Option<String>,
+    ) -> Self {
         Self {
             account_id,
             description,
@@ -872,7 +877,11 @@ impl CreateJournalEntryLine {
 
     /// Create a credit line for an account
     #[must_use]
-    pub const fn credit(account_id: Uuid, amount: Decimal, description: Option<String>) -> Self {
+    pub const fn credit(
+        account_id: GlAccountId,
+        amount: Decimal,
+        description: Option<String>,
+    ) -> Self {
         Self {
             account_id,
             description,
@@ -888,18 +897,18 @@ impl CreateJournalEntryLine {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAutoPostingConfig {
     pub config_name: String,
-    pub cash_account_id: Uuid,
-    pub accounts_receivable_account_id: Uuid,
-    pub inventory_account_id: Uuid,
-    pub accounts_payable_account_id: Uuid,
-    pub unearned_revenue_account_id: Option<Uuid>,
-    pub sales_revenue_account_id: Uuid,
-    pub shipping_revenue_account_id: Option<Uuid>,
-    pub cogs_account_id: Uuid,
-    pub bad_debt_expense_account_id: Option<Uuid>,
+    pub cash_account_id: GlAccountId,
+    pub accounts_receivable_account_id: GlAccountId,
+    pub inventory_account_id: GlAccountId,
+    pub accounts_payable_account_id: GlAccountId,
+    pub unearned_revenue_account_id: Option<GlAccountId>,
+    pub sales_revenue_account_id: GlAccountId,
+    pub shipping_revenue_account_id: Option<GlAccountId>,
+    pub cogs_account_id: GlAccountId,
+    pub bad_debt_expense_account_id: Option<GlAccountId>,
     /// Account receiving unrealized FX gains/losses posted by period-end revaluation.
     #[serde(default)]
-    pub fx_gain_loss_account_id: Option<Uuid>,
+    pub fx_gain_loss_account_id: Option<GlAccountId>,
     /// Auto-post a journal entry when fixed-asset depreciation is posted (default off).
     #[serde(default)]
     pub auto_post_depreciation: bool,
@@ -917,7 +926,7 @@ pub struct CreateAutoPostingConfig {
 pub struct GlAccountFilter {
     pub account_type: Option<AccountType>,
     pub account_sub_type: Option<AccountSubType>,
-    pub parent_account_id: Option<Uuid>,
+    pub parent_account_id: Option<GlAccountId>,
     pub status: Option<AccountStatus>,
     pub is_posting: Option<bool>,
     pub is_header: Option<bool>,
@@ -938,11 +947,11 @@ pub struct GlPeriodFilter {
 /// Filter for listing journal entries
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct JournalEntryFilter {
-    pub period_id: Option<Uuid>,
+    pub period_id: Option<GlPeriodId>,
     pub entry_type: Option<JournalEntryType>,
     pub source: Option<JournalEntrySource>,
     pub status: Option<JournalEntryStatus>,
-    pub account_id: Option<Uuid>,
+    pub account_id: Option<GlAccountId>,
     pub from_date: Option<NaiveDate>,
     pub to_date: Option<NaiveDate>,
     pub source_document_type: Option<String>,
@@ -967,7 +976,7 @@ pub const FX_REVALUATION_REFERENCE: &str = "fx_revaluation";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RevaluationLine {
     /// Account being revalued.
-    pub account_id: Uuid,
+    pub account_id: GlAccountId,
     /// Denormalized account number.
     pub account_number: String,
     /// Denormalized account name.
@@ -1053,7 +1062,7 @@ pub fn compute_revaluation_line(
 #[must_use]
 pub fn build_revaluation_journal_lines(
     lines: &[RevaluationLine],
-    fx_account_id: Uuid,
+    fx_account_id: GlAccountId,
 ) -> Vec<CreateJournalEntryLine> {
     let mut entry_lines = Vec::new();
     // Positive => the FX account must be credited (net gain).
@@ -1085,7 +1094,7 @@ pub fn build_revaluation_journal_lines(
             debit_amount,
             credit_amount,
             reference_type: Some(FX_REVALUATION_REFERENCE.to_string()),
-            reference_id: Some(line.account_id),
+            reference_id: Some(line.account_id.into_uuid()),
         });
     }
 
@@ -1287,9 +1296,9 @@ mod tests {
     fn line(debit: Decimal, credit: Decimal, line_number: i32) -> JournalEntryLine {
         JournalEntryLine {
             id: Uuid::new_v4(),
-            journal_entry_id: Uuid::nil(),
+            journal_entry_id: JournalEntryId::nil(),
             line_number,
-            account_id: Uuid::new_v4(),
+            account_id: GlAccountId::new(),
             account_number: None,
             account_name: None,
             description: None,
@@ -1305,10 +1314,10 @@ mod tests {
     fn draft_entry(lines: Vec<JournalEntryLine>) -> JournalEntry {
         let now = Utc::now();
         let mut entry = JournalEntry {
-            id: Uuid::new_v4(),
+            id: JournalEntryId::new(),
             entry_number: "JE-1".into(),
             entry_date: now.date_naive(),
-            period_id: Uuid::new_v4(),
+            period_id: GlPeriodId::new(),
             entry_type: JournalEntryType::Standard,
             source: JournalEntrySource::Manual,
             source_document_type: None,
@@ -1372,7 +1381,7 @@ mod tests {
             matches!(
                 &err,
                 crate::CommerceError::JournalEntryUnbalanced { entry_id, total_debits, total_credits }
-                    if *entry_id == entry.id && total_debits == "10" && total_credits == "4"
+                    if *entry_id == entry.id.into_uuid() && total_debits == "10" && total_credits == "4"
             ),
             "got {err:?}"
         );
@@ -1422,7 +1431,7 @@ mod tests {
     fn foreign_account(account_type: AccountType, carrying: Decimal) -> GlAccount {
         let now = Utc::now();
         GlAccount {
-            id: Uuid::new_v4(),
+            id: GlAccountId::new(),
             account_number: "1015".into(),
             name: "EUR Cash".into(),
             description: None,
@@ -1473,7 +1482,7 @@ mod tests {
         let line = compute_revaluation_line(&account, dec!(1000), dec!(1), 2);
         assert!(line.adjustment.is_zero());
         assert!(line.unrealized_gain_loss.is_zero());
-        assert!(build_revaluation_journal_lines(&[line], Uuid::new_v4()).is_empty());
+        assert!(build_revaluation_journal_lines(&[line], GlAccountId::new()).is_empty());
     }
 
     #[test]
@@ -1493,7 +1502,7 @@ mod tests {
             compute_revaluation_line(&asset, dec!(1000), dec!(1.10), 2), // +100 gain
             compute_revaluation_line(&liability, dec!(500), dec!(1.20), 2), // -100 loss
         ];
-        let je_lines = build_revaluation_journal_lines(&lines, fx_account);
+        let je_lines = build_revaluation_journal_lines(&lines, GlAccountId::from(fx_account));
 
         // Asset debit 100, liability credit 100 — nets to zero, so no FX line.
         assert_eq!(je_lines.len(), 2);
@@ -1524,7 +1533,7 @@ mod tests {
                             let account = if credit_normal { &liability } else { &asset };
                             let mut line =
                                 compute_revaluation_line(account, Decimal::ZERO, dec!(1), 2);
-                            line.account_id = Uuid::new_v4();
+                            line.account_id = GlAccountId::new();
                             line.adjustment = Decimal::new(raw, 2);
                             inputs.push(line);
 
@@ -1542,7 +1551,8 @@ mod tests {
                             expected.push((Decimal::new(-net, 2), Decimal::ZERO));
                         }
 
-                        let actual = build_revaluation_journal_lines(&inputs, fx_account);
+                        let actual =
+                            build_revaluation_journal_lines(&inputs, GlAccountId::from(fx_account));
                         let actual_amounts: Vec<_> = actual
                             .iter()
                             .map(|line| (line.debit_amount, line.credit_amount))
@@ -1560,7 +1570,10 @@ mod tests {
                         let credits: Decimal = actual.iter().map(|line| line.credit_amount).sum();
                         assert_eq!(debits, credits);
                         if net != 0 {
-                            assert_eq!(actual.last().expect("FX offset").account_id, fx_account);
+                            assert_eq!(
+                                actual.last().expect("FX offset").account_id,
+                                GlAccountId::from(fx_account)
+                            );
                         }
                     }
                 }
@@ -1573,11 +1586,11 @@ mod tests {
         let asset = foreign_account(AccountType::Asset, dec!(1000));
         let fx_account = Uuid::new_v4();
         let lines = vec![compute_revaluation_line(&asset, dec!(1000), dec!(1.10), 2)];
-        let je_lines = build_revaluation_journal_lines(&lines, fx_account);
+        let je_lines = build_revaluation_journal_lines(&lines, GlAccountId::from(fx_account));
 
         assert_eq!(je_lines.len(), 2);
         assert_eq!(je_lines[0].debit_amount, dec!(100.00));
-        assert_eq!(je_lines[1].account_id, fx_account);
+        assert_eq!(je_lines[1].account_id, GlAccountId::from(fx_account));
         assert_eq!(je_lines[1].credit_amount, dec!(100.00));
     }
 
@@ -1586,11 +1599,11 @@ mod tests {
         let liability = foreign_account(AccountType::Liability, dec!(500));
         let fx_account = Uuid::new_v4();
         let lines = vec![compute_revaluation_line(&liability, dec!(500), dec!(1.20), 2)];
-        let je_lines = build_revaluation_journal_lines(&lines, fx_account);
+        let je_lines = build_revaluation_journal_lines(&lines, GlAccountId::from(fx_account));
 
         assert_eq!(je_lines.len(), 2);
         assert_eq!(je_lines[0].credit_amount, dec!(100.00));
-        assert_eq!(je_lines[1].account_id, fx_account);
+        assert_eq!(je_lines[1].account_id, GlAccountId::from(fx_account));
         assert_eq!(je_lines[1].debit_amount, dec!(100.00));
     }
 }

@@ -15,6 +15,7 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use serde::Serialize;
 use serde_json::{Value, json};
+use stateset_core::JournalEntryId;
 use stateset_core::{
     A2ADisputeResolutionType, AccountType, ApprovalEvidence, ChargeSubscription, CommandEnvelope,
     CommerceError, CommitCheckout, ConfirmInventoryReservation, CreateA2AEscrow, CreateCustomer,
@@ -1029,7 +1030,7 @@ async fn postgres_preview_envelopes_are_durable_non_mutating_and_replayable_acro
         })
         .await
         .expect("create period");
-    gl.open_period_async(period.id).await.expect("open period");
+    gl.open_period_async(period.id.into_uuid()).await.expect("open period");
     let cash = gl
         .create_account_async(CreateGlAccount {
             account_number: format!("1000-preview-{suffix}"),
@@ -1081,8 +1082,11 @@ async fn postgres_preview_envelopes_are_durable_non_mutating_and_replayable_acro
             PostJournalEntry { journal_entry_id: entry.id, posted_by: "agent:round5".into() }
         )
     );
-    let stored_entry =
-        gl.get_journal_entry_async(entry.id).await.expect("get entry").expect("entry exists");
+    let stored_entry = gl
+        .get_journal_entry_async(entry.id.into_uuid())
+        .await
+        .expect("get entry")
+        .expect("entry exists");
     assert_eq!(stored_entry.status, JournalEntryStatus::Draft, "preview never posted the entry");
 
     let intent = db
@@ -1259,8 +1263,8 @@ macro_rules! for_every_op {
             execute_post_journal_entry,
             execute_post_journal_entry_async,
             "ledger.post",
-            PostJournalEntry { journal_entry_id: Uuid::new_v4(), posted_by: "u".into() },
-            PostJournalEntry { journal_entry_id: Uuid::new_v4(), posted_by: "u".into() }
+            PostJournalEntry { journal_entry_id: JournalEntryId::new(), posted_by: "u".into() },
+            PostJournalEntry { journal_entry_id: JournalEntryId::new(), posted_by: "u".into() }
         );
         $apply!(
             execute_settle_x402_intent,

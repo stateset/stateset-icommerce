@@ -10,7 +10,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_primitives::CurrencyCode;
-use stateset_primitives::FixedAssetId;
+use stateset_primitives::{FixedAssetId, GlAccountId};
 use strum::{Display, EnumString};
 use uuid::Uuid;
 
@@ -157,11 +157,11 @@ pub struct FixedAsset {
     /// Physical location reference (e.g. warehouse or site id).
     pub location_id: Option<Uuid>,
     /// GL asset account this asset is capitalized to.
-    pub asset_account_id: Option<Uuid>,
+    pub asset_account_id: Option<GlAccountId>,
     /// GL accumulated depreciation (contra-asset) account.
-    pub accumulated_depreciation_account_id: Option<Uuid>,
+    pub accumulated_depreciation_account_id: Option<GlAccountId>,
     /// GL depreciation expense account.
-    pub depreciation_expense_account_id: Option<Uuid>,
+    pub depreciation_expense_account_id: Option<GlAccountId>,
     /// Depreciation accumulated to date.
     pub accumulated_depreciation: Decimal,
     /// Currency of all monetary amounts on this asset.
@@ -339,9 +339,9 @@ pub struct CreateFixedAsset {
     pub depreciation_method: DepreciationMethod,
     pub in_service_date: Option<NaiveDate>,
     pub location_id: Option<Uuid>,
-    pub asset_account_id: Option<Uuid>,
-    pub accumulated_depreciation_account_id: Option<Uuid>,
-    pub depreciation_expense_account_id: Option<Uuid>,
+    pub asset_account_id: Option<GlAccountId>,
+    pub accumulated_depreciation_account_id: Option<GlAccountId>,
+    pub depreciation_expense_account_id: Option<GlAccountId>,
     pub currency: Option<CurrencyCode>,
 }
 
@@ -386,9 +386,9 @@ pub struct UpdateFixedAsset {
     pub useful_life_months: Option<u32>,
     pub in_service_date: Option<NaiveDate>,
     pub location_id: Option<Uuid>,
-    pub asset_account_id: Option<Uuid>,
-    pub accumulated_depreciation_account_id: Option<Uuid>,
-    pub depreciation_expense_account_id: Option<Uuid>,
+    pub asset_account_id: Option<GlAccountId>,
+    pub accumulated_depreciation_account_id: Option<GlAccountId>,
+    pub depreciation_expense_account_id: Option<GlAccountId>,
 }
 
 impl Validate for UpdateFixedAsset {

@@ -26,7 +26,7 @@ fn new_commerce() -> Commerce {
 /// Standard chart of accounts, auto-posting config, and a wide open period
 /// (GL auto-posting stamps entries with the source document's date, which
 /// must fall inside an open period).
-fn setup(commerce: &Commerce) -> Uuid {
+fn setup(commerce: &Commerce) -> stateset_core::GlPeriodId {
     let gl = commerce.general_ledger();
     gl.initialize_chart_of_accounts().expect("init chart");
     let by_number =
@@ -90,7 +90,7 @@ fn create_invoice(commerce: &Commerce) -> Uuid {
 }
 
 /// A posted $100 revenue entry (debit Cash, credit Sales Revenue).
-fn post_revenue_entry(commerce: &Commerce, entry_date: NaiveDate) -> Uuid {
+fn post_revenue_entry(commerce: &Commerce, entry_date: NaiveDate) -> stateset_core::JournalEntryId {
     let gl = commerce.general_ledger();
     let by_number =
         |n: &str| gl.get_account_by_number(n).expect("get account").expect("account exists").id;
@@ -113,7 +113,7 @@ fn post_revenue_entry(commerce: &Commerce, entry_date: NaiveDate) -> Uuid {
 #[test]
 fn auto_post_invoice_is_idempotent() {
     let commerce = new_commerce();
-    setup(&commerce);
+    let _ = setup(&commerce);
     let invoice_id = create_invoice(&commerce);
     let gl = commerce.general_ledger();
 
@@ -141,7 +141,7 @@ fn auto_post_invoice_concurrent_race_is_idempotent() {
     use std::thread;
 
     let commerce = Arc::new(new_commerce());
-    setup(&commerce);
+    let _ = setup(&commerce);
     let invoice_id = create_invoice(&commerce);
 
     let barrier = Arc::new(Barrier::new(2));
@@ -232,7 +232,7 @@ fn income_statement_excludes_closing_entries() {
     let period_id = setup(&commerce);
     let gl = commerce.general_ledger();
 
-    post_revenue_entry(&commerce, date(2026, 1, 15));
+    let _ = post_revenue_entry(&commerce, date(2026, 1, 15));
     gl.run_period_close(period_id, "tester").expect("run period close");
 
     let statement =
@@ -248,14 +248,14 @@ fn income_statement_excludes_closing_entries() {
 #[test]
 fn reports_respect_as_of_date() {
     let commerce = new_commerce();
-    setup(&commerce);
+    let _ = setup(&commerce);
     let gl = commerce.general_ledger();
     let by_number =
         |n: &str| gl.get_account_by_number(n).expect("get account").expect("account exists").id;
     let cash_id = by_number("1010");
 
-    post_revenue_entry(&commerce, date(2026, 1, 15)); // $100
-    post_revenue_entry(&commerce, date(2026, 2, 10)); // $100 more
+    let _ = post_revenue_entry(&commerce, date(2026, 1, 15)); // $100
+    let _ = post_revenue_entry(&commerce, date(2026, 2, 10)); // $100 more
 
     // Trial balance as of Jan 31 must exclude the February entry.
     let tb_jan = gl.get_trial_balance(date(2026, 1, 31)).expect("trial balance jan");
@@ -284,7 +284,7 @@ fn reports_respect_as_of_date() {
 #[test]
 fn reports_exclude_voided_and_draft_entries() {
     let commerce = new_commerce();
-    setup(&commerce);
+    let _ = setup(&commerce);
     let gl = commerce.general_ledger();
     let by_number =
         |n: &str| gl.get_account_by_number(n).expect("get account").expect("account exists").id;
@@ -319,7 +319,7 @@ fn run_period_close_twice_is_rejected() {
     let period_id = setup(&commerce);
     let gl = commerce.general_ledger();
 
-    post_revenue_entry(&commerce, date(2026, 1, 15));
+    let _ = post_revenue_entry(&commerce, date(2026, 1, 15));
     let closing = gl.run_period_close(period_id, "tester").expect("first close");
     assert_eq!(
         gl.get_period(period_id).expect("get period").expect("period").status,
@@ -343,12 +343,12 @@ fn reclose_period_encodes_the_adjustment_flow() {
     let period_id = setup(&commerce);
     let gl = commerce.general_ledger();
 
-    post_revenue_entry(&commerce, date(2026, 1, 15)); // $100
+    let _ = post_revenue_entry(&commerce, date(2026, 1, 15)); // $100
     gl.run_period_close(period_id, "tester").expect("first close");
 
     // Adjustments arrive late: reopen, post, and re-close in one call.
     gl.reopen_period(period_id).expect("reopen period");
-    post_revenue_entry(&commerce, date(2026, 1, 20)); // $100 more
+    let _ = post_revenue_entry(&commerce, date(2026, 1, 20)); // $100 more
     let closing = gl.reclose_period(period_id, "tester").expect("reclose");
 
     // The fresh closing entry sweeps the FULL adjusted activity ($200),
@@ -361,7 +361,7 @@ fn reclose_period_encodes_the_adjustment_flow() {
     let posted_closings = gl
         .list_journal_entries(JournalEntryFilter {
             source_document_type: Some("period_close".into()),
-            source_document_id: Some(period_id),
+            source_document_id: Some(period_id.into_uuid()),
             status: Some(JournalEntryStatus::Posted),
             ..Default::default()
         })
