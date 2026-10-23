@@ -355,7 +355,7 @@ describe('segmentTools — handler success paths (mocked commerce)', () => {
     assert.equal(result.segmentId, 'seg-001');
     assert.equal(result.customerId, 'cust-1');
     assert.equal(result.isMember, true);
-    assert.equal(result.basis, 'stored_membership');
+    assert.equal(result.basis, 'engine_membership');
     assert.deepStrictEqual(calls.at(-1), ['isMember', 'seg-001', 'cust-1']);
   });
 

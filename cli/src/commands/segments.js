@@ -77,7 +77,7 @@ export async function execute(action, args, { commerce, output, jsonOutput }) {
       return formatEvaluation(
         segmentId,
         customerId,
-        { isMember, basis: 'stored_membership' },
+        { isMember, basis: 'engine_membership' },
         { jsonOutput },
       );
     }

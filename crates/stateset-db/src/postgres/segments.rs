@@ -1,6 +1,8 @@
 //! PostgreSQL implementation of customer segment repository
 
+use super::customers::{CustomerRow, PgCustomerRepository};
 use super::map_db_error;
+use crate::rules::segments::{self as segment_rules, CustomerRecord};
 use chrono::{DateTime, Utc};
 use sqlx::FromRow;
 use sqlx::postgres::PgPool;
@@ -73,7 +75,66 @@ impl PgSegmentRepository {
 
     // ---- async helpers ----
 
+    /// Every customer (or just `customer_id`) with their order aggregates,
+    /// for evaluating dynamic segment rules.
+    async fn customer_records(&self, customer_id: Option<Uuid>) -> Result<Vec<CustomerRecord>> {
+        let customers: Vec<CustomerRow> = match customer_id {
+            Some(id) => sqlx::query_as("SELECT * FROM customers WHERE id = $1").bind(id),
+            None => sqlx::query_as("SELECT * FROM customers"),
+        }
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_db_error)?;
+        let mut records = customers
+            .into_iter()
+            .map(|row| {
+                let customer = PgCustomerRepository::row_to_customer(row)?;
+                Ok(CustomerRecord {
+                    id: customer.id,
+                    facts: stateset_core::CustomerFacts::from_customer(&customer),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let orders: Vec<(Uuid, String, String, rust_decimal::Decimal, DateTime<Utc>)> =
+            match customer_id {
+                Some(id) => sqlx::query_as(
+                    "SELECT customer_id, status, currency, total_amount, order_date FROM orders \
+                     WHERE customer_id = $1",
+                )
+                .bind(id),
+                None => sqlx::query_as(
+                    "SELECT customer_id, status, currency, total_amount, order_date FROM orders",
+                ),
+            }
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+        segment_rules::record_orders(
+            &mut records,
+            orders.into_iter().map(|(customer, status, currency, total, placed_at)| {
+                (CustomerId::from(customer), status, currency, total, placed_at)
+            }),
+        );
+        Ok(records)
+    }
+
+    /// Evaluate `member_count` for the dynamic segments in `segments`,
+    /// loading customer data once and only when one is dynamic.
+    async fn fill_dynamic_counts(&self, segments: &mut [Segment]) -> Result<()> {
+        if segment_rules::any_dynamic(segments) {
+            let records = self.customer_records(None).await?;
+            segment_rules::fill_dynamic_counts(segments, &records)?;
+        }
+        Ok(())
+    }
+
+    async fn require_segment(&self, id: Uuid) -> Result<Segment> {
+        segment_rules::require(self.get_stored_async(id).await?)
+    }
+
     async fn create_async(&self, input: CreateSegment) -> Result<Segment> {
+        segment_rules::validate_create(&input)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -99,6 +160,16 @@ impl PgSegmentRepository {
     }
 
     async fn get_async(&self, id: Uuid) -> Result<Option<Segment>> {
+        let Some(segment) = self.get_stored_async(id).await? else { return Ok(None) };
+        let mut segments = [segment];
+        self.fill_dynamic_counts(&mut segments).await?;
+        let [segment] = segments;
+        Ok(Some(segment))
+    }
+
+    /// The segment as stored (a dynamic segment's `member_count` is not
+    /// evaluated).
+    async fn get_stored_async(&self, id: Uuid) -> Result<Option<Segment>> {
         let row = sqlx::query_as::<_, SegmentRow>(
             "SELECT id, name, description, segment_type, rules, member_count, created_at, updated_at
              FROM segments WHERE id = $1",
@@ -115,6 +186,7 @@ impl PgSegmentRepository {
     }
 
     async fn update_async(&self, id: Uuid, input: UpdateSegment) -> Result<Segment> {
+        segment_rules::validate_update(self.require_segment(id).await?.segment_type, &input)?;
         let now = Utc::now();
 
         let mut param_idx = 2u32;
@@ -198,7 +270,10 @@ impl PgSegmentRepository {
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_db_error)?;
 
-        rows.into_iter().map(Self::row_to_segment).collect()
+        let mut segments =
+            rows.into_iter().map(Self::row_to_segment).collect::<Result<Vec<_>>>()?;
+        self.fill_dynamic_counts(&mut segments).await?;
+        Ok(segments)
     }
 
     async fn delete_async(&self, id: Uuid) -> Result<()> {
@@ -216,6 +291,7 @@ impl PgSegmentRepository {
         segment_id: Uuid,
         customer_id: Uuid,
     ) -> Result<SegmentMembership> {
+        segment_rules::refuse_manual_membership(&self.require_segment(segment_id).await?)?;
         let now = Utc::now();
 
         sqlx::query(
@@ -253,6 +329,7 @@ impl PgSegmentRepository {
     }
 
     async fn remove_member_async(&self, segment_id: Uuid, customer_id: Uuid) -> Result<()> {
+        segment_rules::refuse_manual_membership(&self.require_segment(segment_id).await?)?;
         let now = Utc::now();
 
         sqlx::query("DELETE FROM segment_memberships WHERE segment_id = $1 AND customer_id = $2")
@@ -280,6 +357,12 @@ impl PgSegmentRepository {
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<SegmentMembership>> {
+        let segment = self.require_segment(segment_id).await?;
+        if segment.is_dynamic() {
+            let records = self.customer_records(None).await?;
+            let limit = Some(u32::try_from(super::effective_limit(limit)).unwrap_or(u32::MAX));
+            return segment_rules::dynamic_members(&segment, records, limit, offset, Utc::now());
+        }
         let mut query = String::from(
             "SELECT segment_id, customer_id, joined_at FROM segment_memberships WHERE segment_id = $1 ORDER BY joined_at DESC",
         );
@@ -299,6 +382,11 @@ impl PgSegmentRepository {
     }
 
     async fn is_member_async(&self, segment_id: Uuid, customer_id: Uuid) -> Result<bool> {
+        let segment = self.require_segment(segment_id).await?;
+        if segment.is_dynamic() {
+            let records = self.customer_records(Some(customer_id)).await?;
+            return segment_rules::is_dynamic_member(&segment, &records);
+        }
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM segment_memberships WHERE segment_id = $1 AND customer_id = $2",
         )
@@ -312,6 +400,11 @@ impl PgSegmentRepository {
     }
 
     async fn count_members_async(&self, segment_id: Uuid) -> Result<u64> {
+        let segment = self.require_segment(segment_id).await?;
+        if segment.is_dynamic() {
+            let records = self.customer_records(None).await?;
+            return segment_rules::count_dynamic_members(&segment, &records);
+        }
         let count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM segment_memberships WHERE segment_id = $1")
                 .bind(segment_id)

@@ -790,7 +790,7 @@ Tier: **extended**
 | `get_segment` | extended | read | Get a segment by ID including its conditions and member count. |
 | `list_segments` | extended | read | List all customer segments. |
 | `update_segment` | extended | write | Update a segment name, description, or conditions. |
-| `evaluate_segment_membership` | extended | read | Check whether a customer is a recorded member of a segment. Reads stored membership; rules are not re-evaluated. |
+| `evaluate_segment_membership` | extended | read | Check whether a customer is a member of a segment. Dynamic segments evaluate their rules against the customer now; static segments read the curated member list. |
 
 ## shipping-zones
 

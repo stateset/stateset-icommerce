@@ -1,9 +1,10 @@
 //! SQLite implementation of customer segment repository
 
 use super::{
-    map_db_error, parse_datetime_row, parse_enum_row, parse_json_row, parse_uuid_row,
-    with_immediate_transaction,
+    SqliteCustomerRepository, map_db_error, parse_datetime_row, parse_decimal_row, parse_enum_row,
+    parse_json_row, parse_uuid_row, with_immediate_transaction,
 };
+use crate::rules::segments::{self as segment_rules, CustomerRecord};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -18,6 +19,89 @@ pub struct SqliteSegmentRepository {
 }
 
 impl SqliteSegmentRepository {
+    /// Every customer (or just `customer_id`) with their order aggregates,
+    /// for evaluating dynamic segment rules. Order totals are TEXT decimals,
+    /// parsed exactly.
+    fn customer_records(&self, customer_id: Option<CustomerId>) -> Result<Vec<CustomerRecord>> {
+        let conn = self.conn()?;
+        let (customers_sql, orders_sql) = if customer_id.is_some() {
+            (
+                "SELECT * FROM customers WHERE id = ?1",
+                "SELECT customer_id, status, currency, total_amount, order_date FROM orders \
+                 WHERE customer_id = ?1",
+            )
+        } else {
+            (
+                "SELECT * FROM customers",
+                "SELECT customer_id, status, currency, total_amount, order_date FROM orders",
+            )
+        };
+        let params: Vec<String> = customer_id.map(|id| id.to_string()).into_iter().collect();
+
+        let mut stmt = conn.prepare(customers_sql).map_err(map_db_error)?;
+        let mut records = stmt
+            .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                let customer = SqliteCustomerRepository::row_to_customer(row)?;
+                Ok(CustomerRecord {
+                    id: customer.id,
+                    facts: stateset_core::CustomerFacts::from_customer(&customer),
+                })
+            })
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+
+        let mut stmt = conn.prepare(orders_sql).map_err(map_db_error)?;
+        let orders = stmt
+            .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                Ok((
+                    CustomerId::from(parse_uuid_row(
+                        &row.get::<_, String>(0)?,
+                        "order",
+                        "customer_id",
+                    )?),
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    parse_decimal_row(&row.get::<_, String>(3)?, "order", "total_amount")?,
+                    parse_datetime_row(&row.get::<_, String>(4)?, "order", "order_date")?,
+                ))
+            })
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+        segment_rules::record_orders(&mut records, orders);
+        Ok(records)
+    }
+
+    /// The segment as stored (a dynamic segment's `member_count` is not
+    /// evaluated).
+    fn get_stored(&self, id: SegmentId) -> Result<Option<Segment>> {
+        let conn = self.conn()?;
+        match conn.query_row(
+            "SELECT * FROM segments WHERE id = ?",
+            [id.to_string()],
+            Self::row_to_segment,
+        ) {
+            Ok(s) => Ok(Some(s)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(map_db_error(e)),
+        }
+    }
+
+    fn require_segment(&self, id: SegmentId) -> Result<Segment> {
+        segment_rules::require(self.get_stored(id)?)
+    }
+
+    /// Evaluate `member_count` for the dynamic segments in `segments`,
+    /// loading customer data once and only when one is dynamic.
+    fn fill_dynamic_counts(&self, segments: &mut [Segment]) -> Result<()> {
+        if segment_rules::any_dynamic(segments) {
+            let records = self.customer_records(None)?;
+            segment_rules::fill_dynamic_counts(segments, &records)?;
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
@@ -80,6 +164,7 @@ impl SqliteSegmentRepository {
 
 impl SegmentRepository for SqliteSegmentRepository {
     fn create(&self, input: CreateSegment) -> Result<Segment> {
+        segment_rules::validate_create(&input)?;
         let id = SegmentId::new();
         let now = Utc::now();
         let id_str = id.to_string();
@@ -88,7 +173,7 @@ impl SegmentRepository for SqliteSegmentRepository {
         let rules_json = serde_json::to_string(&input.rules)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        with_immediate_transaction(&self.pool, |tx| {
+        let segment = with_immediate_transaction(&self.pool, |tx| {
             tx.execute(
                 "INSERT INTO segments (id, name, description, segment_type, rules, member_count, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
@@ -104,27 +189,27 @@ impl SegmentRepository for SqliteSegmentRepository {
             )?;
 
             tx.query_row("SELECT * FROM segments WHERE id = ?", [&id_str], Self::row_to_segment)
-        })
+        })?;
+        let mut segments = [segment];
+        self.fill_dynamic_counts(&mut segments)?;
+        let [segment] = segments;
+        Ok(segment)
     }
 
     fn get(&self, id: SegmentId) -> Result<Option<Segment>> {
-        let conn = self.conn()?;
-        match conn.query_row(
-            "SELECT * FROM segments WHERE id = ?",
-            [id.to_string()],
-            Self::row_to_segment,
-        ) {
-            Ok(s) => Ok(Some(s)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(map_db_error(e)),
-        }
+        let Some(segment) = self.get_stored(id)? else { return Ok(None) };
+        let mut segments = [segment];
+        self.fill_dynamic_counts(&mut segments)?;
+        let [segment] = segments;
+        Ok(Some(segment))
     }
 
     fn update(&self, id: SegmentId, input: UpdateSegment) -> Result<Segment> {
+        segment_rules::validate_update(self.require_segment(id)?.segment_type, &input)?;
         let id_str = id.to_string();
         let now_str = Utc::now().to_rfc3339();
 
-        with_immediate_transaction(&self.pool, |tx| {
+        let segment = with_immediate_transaction(&self.pool, |tx| {
             let mut sets = vec!["updated_at = ?".to_string()];
             let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(now_str.clone())];
 
@@ -154,7 +239,11 @@ impl SegmentRepository for SqliteSegmentRepository {
             tx.execute(&sql, param_refs.as_slice())?;
 
             tx.query_row("SELECT * FROM segments WHERE id = ?", [&id_str], Self::row_to_segment)
-        })
+        })?;
+        let mut segments = [segment];
+        self.fill_dynamic_counts(&mut segments)?;
+        let [segment] = segments;
+        Ok(segment)
     }
 
     fn list(&self, filter: SegmentFilter) -> Result<Vec<Segment>> {
@@ -183,6 +272,8 @@ impl SegmentRepository for SqliteSegmentRepository {
             .map_err(map_db_error)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(map_db_error)?;
+        let mut rows = rows;
+        self.fill_dynamic_counts(&mut rows)?;
         Ok(rows)
     }
 
@@ -200,6 +291,7 @@ impl SegmentRepository for SqliteSegmentRepository {
         segment_id: SegmentId,
         customer_id: CustomerId,
     ) -> Result<SegmentMembership> {
+        segment_rules::refuse_manual_membership(&self.require_segment(segment_id)?)?;
         let now = Utc::now();
         let now_str = now.to_rfc3339();
         let seg_str = segment_id.to_string();
@@ -226,6 +318,7 @@ impl SegmentRepository for SqliteSegmentRepository {
     }
 
     fn remove_member(&self, segment_id: SegmentId, customer_id: CustomerId) -> Result<()> {
+        segment_rules::refuse_manual_membership(&self.require_segment(segment_id)?)?;
         let seg_str = segment_id.to_string();
         let now_str = Utc::now().to_rfc3339();
 
@@ -250,6 +343,12 @@ impl SegmentRepository for SqliteSegmentRepository {
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<SegmentMembership>> {
+        let segment = self.require_segment(segment_id)?;
+        if segment.is_dynamic() {
+            let records = self.customer_records(None)?;
+            let limit = Some(super::effective_limit(limit));
+            return segment_rules::dynamic_members(&segment, records, limit, offset, Utc::now());
+        }
         let conn = self.conn()?;
         let mut sql =
             "SELECT * FROM segment_memberships WHERE segment_id = ? ORDER BY joined_at DESC"
@@ -267,6 +366,11 @@ impl SegmentRepository for SqliteSegmentRepository {
     }
 
     fn is_member(&self, segment_id: SegmentId, customer_id: CustomerId) -> Result<bool> {
+        let segment = self.require_segment(segment_id)?;
+        if segment.is_dynamic() {
+            let records = self.customer_records(Some(customer_id))?;
+            return segment_rules::is_dynamic_member(&segment, &records);
+        }
         let conn = self.conn()?;
         let count: i64 = conn
             .query_row(
@@ -279,6 +383,11 @@ impl SegmentRepository for SqliteSegmentRepository {
     }
 
     fn count_members(&self, segment_id: SegmentId) -> Result<u64> {
+        let segment = self.require_segment(segment_id)?;
+        if segment.is_dynamic() {
+            let records = self.customer_records(None)?;
+            return segment_rules::count_dynamic_members(&segment, &records);
+        }
         let conn = self.conn()?;
         let count: i64 = conn
             .query_row(
@@ -389,14 +498,14 @@ mod tests {
                 segment_type: SegmentType::Dynamic,
                 rules: vec![
                     SegmentRule {
-                        field: "lifetime_value".into(),
+                        field: "total_spent:USD".into(),
                         operator: SegmentOperator::Gte,
                         value: "1000".into(),
                     },
                     SegmentRule {
-                        field: "country".into(),
+                        field: "status".into(),
                         operator: SegmentOperator::Eq,
-                        value: "US".into(),
+                        value: "active".into(),
                     },
                 ],
             })
@@ -405,8 +514,8 @@ mod tests {
 
         let fetched = repo.get(created.id).expect("get").expect("found");
         assert_eq!(fetched.rules.len(), 2, "rules survive a re-read");
-        assert_eq!(fetched.rules[0].field, "lifetime_value");
+        assert_eq!(fetched.rules[0].field, "total_spent:USD");
         assert_eq!(fetched.rules[0].operator, SegmentOperator::Gte);
-        assert_eq!(fetched.rules[1].value, "US");
+        assert_eq!(fetched.rules[1].value, "active");
     }
 }
