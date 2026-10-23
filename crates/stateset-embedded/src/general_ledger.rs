@@ -43,6 +43,7 @@ use stateset_core::{
     JournalEntryLine, Result, RevaluationResult, RevenueContractFilter, RevenueContractStatus,
     RevenueEntryStatus, TrialBalance, UpdateGlAccount,
 };
+use stateset_core::{GlAccountId, GlPeriodId, JournalEntryId};
 use stateset_db::{Database, DatabaseCapability};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -114,7 +115,7 @@ impl GeneralLedger {
     }
 
     /// Get a GL account by ID.
-    pub fn get_account(&self, id: Uuid) -> Result<Option<GlAccount>> {
+    pub fn get_account(&self, id: GlAccountId) -> Result<Option<GlAccount>> {
         self.db.general_ledger().get_account(id)
     }
 
@@ -124,7 +125,7 @@ impl GeneralLedger {
     }
 
     /// Update a GL account.
-    pub fn update_account(&self, id: Uuid, input: UpdateGlAccount) -> Result<GlAccount> {
+    pub fn update_account(&self, id: GlAccountId, input: UpdateGlAccount) -> Result<GlAccount> {
         self.db.general_ledger().update_account(id, input)
     }
 
@@ -139,7 +140,7 @@ impl GeneralLedger {
     }
 
     /// Delete a GL account (only if no transactions).
-    pub fn delete_account(&self, id: Uuid) -> Result<()> {
+    pub fn delete_account(&self, id: GlAccountId) -> Result<()> {
         self.db.general_ledger().delete_account(id)
     }
 
@@ -191,7 +192,7 @@ impl GeneralLedger {
     }
 
     /// Get a period by ID.
-    pub fn get_period(&self, id: Uuid) -> Result<Option<GlPeriod>> {
+    pub fn get_period(&self, id: GlPeriodId) -> Result<Option<GlPeriod>> {
         self.db.general_ledger().get_period(id)
     }
 
@@ -211,22 +212,22 @@ impl GeneralLedger {
     }
 
     /// Open a period (transition from future to open).
-    pub fn open_period(&self, id: Uuid) -> Result<GlPeriod> {
+    pub fn open_period(&self, id: GlPeriodId) -> Result<GlPeriod> {
         self.db.general_ledger().open_period(id)
     }
 
     /// Close a period (no more postings allowed except adjustments).
-    pub fn close_period(&self, id: Uuid, closed_by: &str) -> Result<GlPeriod> {
+    pub fn close_period(&self, id: GlPeriodId, closed_by: &str) -> Result<GlPeriod> {
         self.db.general_ledger().close_period(id, closed_by)
     }
 
     /// Lock a period (permanently closed, no changes allowed).
-    pub fn lock_period(&self, id: Uuid, locked_by: &str) -> Result<GlPeriod> {
+    pub fn lock_period(&self, id: GlPeriodId, locked_by: &str) -> Result<GlPeriod> {
         self.db.general_ledger().lock_period(id, locked_by)
     }
 
     /// Reopen a closed period (for adjustments).
-    pub fn reopen_period(&self, id: Uuid) -> Result<GlPeriod> {
+    pub fn reopen_period(&self, id: GlPeriodId) -> Result<GlPeriod> {
         self.db.general_ledger().reopen_period(id)
     }
 
@@ -268,7 +269,7 @@ impl GeneralLedger {
     }
 
     /// Get a journal entry by ID.
-    pub fn get_journal_entry(&self, id: Uuid) -> Result<Option<JournalEntry>> {
+    pub fn get_journal_entry(&self, id: JournalEntryId) -> Result<Option<JournalEntry>> {
         self.db.general_ledger().get_journal_entry(id)
     }
 
@@ -283,26 +284,29 @@ impl GeneralLedger {
     }
 
     /// Post a journal entry (update account balances).
-    pub fn post_journal_entry(&self, id: Uuid, posted_by: &str) -> Result<JournalEntry> {
+    pub fn post_journal_entry(&self, id: JournalEntryId, posted_by: &str) -> Result<JournalEntry> {
         self.db.general_ledger().post_journal_entry(id, posted_by)
     }
 
     /// Void a posted journal entry.
-    pub fn void_journal_entry(&self, id: Uuid) -> Result<JournalEntry> {
+    pub fn void_journal_entry(&self, id: JournalEntryId) -> Result<JournalEntry> {
         self.db.general_ledger().void_journal_entry(id)
     }
 
     /// Reverse a journal entry (create an offsetting entry).
     pub fn reverse_journal_entry(
         &self,
-        id: Uuid,
+        id: JournalEntryId,
         reversal_date: NaiveDate,
     ) -> Result<JournalEntry> {
         self.db.general_ledger().reverse_journal_entry(id, reversal_date)
     }
 
     /// Get journal entry lines for an entry.
-    pub fn get_journal_entry_lines(&self, journal_entry_id: Uuid) -> Result<Vec<JournalEntryLine>> {
+    pub fn get_journal_entry_lines(
+        &self,
+        journal_entry_id: JournalEntryId,
+    ) -> Result<Vec<JournalEntryLine>> {
         self.db.general_ledger().get_journal_entry_lines(journal_entry_id)
     }
 
@@ -474,7 +478,7 @@ impl GeneralLedger {
     /// Get the current balance of an account.
     pub fn get_account_balance(
         &self,
-        account_id: Uuid,
+        account_id: GlAccountId,
         as_of_date: Option<NaiveDate>,
     ) -> Result<Option<Decimal>> {
         self.db.general_ledger().get_account_balance(account_id, as_of_date)
@@ -483,7 +487,7 @@ impl GeneralLedger {
     /// Get all transactions for an account.
     pub fn get_account_transactions(
         &self,
-        account_id: Uuid,
+        account_id: GlAccountId,
         filter: JournalEntryFilter,
     ) -> Result<Vec<JournalEntryLine>> {
         self.db.general_ledger().get_account_transactions(account_id, filter)
@@ -514,7 +518,7 @@ impl GeneralLedger {
                 as_of_date: result.as_of_date,
                 base_currency: result.base_currency,
                 total_unrealized_gain_loss: result.total_unrealized_gain_loss,
-                journal_entry_id: result.journal_entry.as_ref().map(|e| e.id),
+                journal_entry_id: result.journal_entry.as_ref().map(|e| e.id.into_uuid()),
                 timestamp: Utc::now(),
             });
         }
@@ -528,7 +532,7 @@ impl GeneralLedger {
     /// 2. Create closing entries to zero out revenue/expense accounts
     /// 3. Transfer net income to retained earnings
     /// 4. Close the period
-    pub fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
+    pub fn run_period_close(&self, period_id: GlPeriodId, closed_by: &str) -> Result<JournalEntry> {
         self.db.general_ledger().run_period_close(period_id, closed_by)
     }
 
@@ -540,10 +544,10 @@ impl GeneralLedger {
     /// correct choreography as one call: void the standing closing entry
     /// (or entries), then close the period again so the fresh closing entry
     /// reflects the adjusted activity. The period must be open.
-    pub fn reclose_period(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
+    pub fn reclose_period(&self, period_id: GlPeriodId, closed_by: &str) -> Result<JournalEntry> {
         let standing = self.list_journal_entries(stateset_core::JournalEntryFilter {
             source_document_type: Some("period_close".into()),
-            source_document_id: Some(period_id),
+            source_document_id: Some(period_id.into_uuid()),
             status: Some(stateset_core::JournalEntryStatus::Posted),
             ..Default::default()
         })?;
@@ -579,7 +583,7 @@ impl GeneralLedger {
     /// while posting abort the run before the final period close.
     pub fn close_month(
         &self,
-        period_id: Uuid,
+        period_id: GlPeriodId,
         options: CloseMonthOptions,
     ) -> Result<CloseMonthReport> {
         if options.fail_on_warnings && !options.dry_run {
@@ -685,7 +689,7 @@ impl GeneralLedger {
         };
 
         let report = CloseMonthReport {
-            period_id,
+            period_id: period_id.into_uuid(),
             period_name: period.period_name,
             dry_run: options.dry_run,
             depreciation,
@@ -703,7 +707,7 @@ impl GeneralLedger {
                 depreciation_total: report.depreciation.total_amount,
                 revenue_recognized_total: report.revenue_recognition.total_amount,
                 fx_unrealized_gain_loss: report.fx_revaluation.total_amount,
-                closing_entry_id: report.closing_entry.as_ref().map(|e| e.id),
+                closing_entry_id: report.closing_entry.as_ref().map(|e| e.id.into_uuid()),
                 timestamp: Utc::now(),
             });
         }
@@ -997,7 +1001,7 @@ impl GeneralLedger {
     }
 
     /// Get multiple accounts by IDs.
-    pub fn get_accounts_batch(&self, ids: Vec<Uuid>) -> Result<Vec<GlAccount>> {
+    pub fn get_accounts_batch(&self, ids: Vec<GlAccountId>) -> Result<Vec<GlAccount>> {
         self.db.general_ledger().get_accounts_batch(ids)
     }
 }

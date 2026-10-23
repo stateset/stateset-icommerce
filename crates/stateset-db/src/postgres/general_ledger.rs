@@ -18,6 +18,7 @@ use stateset_core::{
     PeriodStatus, Result, RevaluationResult, TrialBalance, TrialBalanceLine,
     create_default_chart_of_accounts, generate_journal_entry_number,
 };
+use stateset_core::{GlAccountId, GlPeriodId, JournalEntryId};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -172,13 +173,13 @@ impl PgGeneralLedgerRepository {
         })?;
 
         Ok(GlAccount {
-            id,
+            id: GlAccountId::from(id),
             account_number,
             name,
             description,
             account_type,
             account_sub_type,
-            parent_account_id,
+            parent_account_id: parent_account_id.map(GlAccountId::from),
             is_header,
             is_posting,
             normal_balance,
@@ -212,7 +213,7 @@ impl PgGeneralLedgerRepository {
         })?;
 
         Ok(GlPeriod {
-            id,
+            id: GlPeriodId::from(id),
             period_name,
             fiscal_year,
             period_number,
@@ -271,10 +272,10 @@ impl PgGeneralLedgerRepository {
         })?;
 
         Ok(JournalEntry {
-            id,
+            id: JournalEntryId::from(id),
             entry_number,
             entry_date,
-            period_id,
+            period_id: GlPeriodId::from(period_id),
             entry_type,
             source,
             source_document_type,
@@ -286,8 +287,8 @@ impl PgGeneralLedgerRepository {
             status,
             posted_at,
             posted_by,
-            reversed_entry_id,
-            reversing_entry_id,
+            reversed_entry_id: reversed_entry_id.map(JournalEntryId::from),
+            reversing_entry_id: reversing_entry_id.map(JournalEntryId::from),
             lines: Vec::new(),
             created_at,
             updated_at,
@@ -297,9 +298,9 @@ impl PgGeneralLedgerRepository {
     pub(crate) fn row_to_journal_entry_line(row: JournalEntryLineRow) -> JournalEntryLine {
         JournalEntryLine {
             id: row.id,
-            journal_entry_id: row.journal_entry_id,
+            journal_entry_id: JournalEntryId::from(row.journal_entry_id),
             line_number: row.line_number,
-            account_id: row.account_id,
+            account_id: GlAccountId::from(row.account_id),
             account_number: row.account_number,
             account_name: row.account_name,
             description: row.description,
@@ -316,16 +317,16 @@ impl PgGeneralLedgerRepository {
         AutoPostingConfig {
             id: row.id,
             config_name: row.config_name,
-            cash_account_id: row.cash_account_id,
-            accounts_receivable_account_id: row.accounts_receivable_account_id,
-            inventory_account_id: row.inventory_account_id,
-            accounts_payable_account_id: row.accounts_payable_account_id,
-            unearned_revenue_account_id: row.unearned_revenue_account_id,
-            sales_revenue_account_id: row.sales_revenue_account_id,
-            shipping_revenue_account_id: row.shipping_revenue_account_id,
-            cogs_account_id: row.cogs_account_id,
-            bad_debt_expense_account_id: row.bad_debt_expense_account_id,
-            fx_gain_loss_account_id: row.fx_gain_loss_account_id,
+            cash_account_id: GlAccountId::from(row.cash_account_id),
+            accounts_receivable_account_id: GlAccountId::from(row.accounts_receivable_account_id),
+            inventory_account_id: GlAccountId::from(row.inventory_account_id),
+            accounts_payable_account_id: GlAccountId::from(row.accounts_payable_account_id),
+            unearned_revenue_account_id: row.unearned_revenue_account_id.map(GlAccountId::from),
+            sales_revenue_account_id: GlAccountId::from(row.sales_revenue_account_id),
+            shipping_revenue_account_id: row.shipping_revenue_account_id.map(GlAccountId::from),
+            cogs_account_id: GlAccountId::from(row.cogs_account_id),
+            bad_debt_expense_account_id: row.bad_debt_expense_account_id.map(GlAccountId::from),
+            fx_gain_loss_account_id: row.fx_gain_loss_account_id.map(GlAccountId::from),
             auto_post_depreciation: row.auto_post_depreciation,
             auto_post_revenue_recognition: row.auto_post_revenue_recognition,
             is_active: row.is_active,
@@ -774,8 +775,10 @@ impl PgGeneralLedgerRepository {
 
         for (line_num, line) in input.lines.iter().enumerate() {
             let line_id = Uuid::new_v4();
-            let account =
-                self.get_account_async(line.account_id).await?.ok_or(CommerceError::NotFound)?;
+            let account = self
+                .get_account_async(line.account_id.into_uuid())
+                .await?
+                .ok_or(CommerceError::NotFound)?;
 
             sqlx::query(
                 "INSERT INTO gl_journal_entry_lines (id, journal_entry_id, line_number, account_id,
@@ -923,7 +926,7 @@ impl PgGeneralLedgerRepository {
         let mut entries = Vec::new();
         for row in rows {
             let mut entry = Self::row_to_journal_entry(row)?;
-            entry.lines = self.get_journal_entry_lines_async(entry.id).await?;
+            entry.lines = self.get_journal_entry_lines_async(entry.id.into_uuid()).await?;
             entries.push(entry);
         }
 
@@ -1165,7 +1168,7 @@ impl PgGeneralLedgerRepository {
 
             self.update_account_balance_tx(
                 tx,
-                line.account_id,
+                line.account_id.into_uuid(),
                 line.debit_amount,
                 line.credit_amount,
             )
@@ -1224,7 +1227,7 @@ impl PgGeneralLedgerRepository {
         // "no lines" keep the historical untyped message.
         entry.ensure_postable()?;
 
-        self.ensure_period_open_async(entry.period_id, "post").await?;
+        self.ensure_period_open_async(entry.period_id.into_uuid(), "post").await?;
 
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
@@ -1252,7 +1255,7 @@ impl PgGeneralLedgerRepository {
         for line in &entry.lines {
             self.update_account_balance_tx(
                 &mut tx,
-                line.account_id,
+                line.account_id.into_uuid(),
                 line.debit_amount,
                 line.credit_amount,
             )
@@ -1294,7 +1297,7 @@ impl PgGeneralLedgerRepository {
             ));
         }
 
-        self.ensure_period_open_async(entry.period_id, "void").await?;
+        self.ensure_period_open_async(entry.period_id.into_uuid(), "void").await?;
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
@@ -1319,7 +1322,7 @@ impl PgGeneralLedgerRepository {
         for line in &entry.lines {
             self.update_account_balance_tx(
                 &mut tx,
-                line.account_id,
+                line.account_id.into_uuid(),
                 line.credit_amount,
                 line.debit_amount,
             )
@@ -1437,7 +1440,7 @@ impl PgGeneralLedgerRepository {
                 description: format!("Reversal of {}", entry.entry_number),
                 lines: reversing_lines,
                 source_document_type: Some("reversal".to_string()),
-                source_document_id: Some(entry.id),
+                source_document_id: Some(entry.id.into_uuid()),
                 auto_post: Some(true),
             })
             .await
@@ -1470,7 +1473,9 @@ impl PgGeneralLedgerRepository {
             .await
             .map_err(map_db_error)?;
 
-        self.get_journal_entry_async(reversing_entry.id).await?.ok_or(CommerceError::NotFound)
+        self.get_journal_entry_async(reversing_entry.id.into_uuid())
+            .await?
+            .ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_journal_entry_lines_async(
@@ -1931,7 +1936,7 @@ impl PgGeneralLedgerRepository {
             })?;
 
             lines.push(TrialBalanceLine {
-                account_id: id,
+                account_id: GlAccountId::from(id),
                 account_number: number,
                 account_name: name,
                 account_type,
@@ -2015,7 +2020,7 @@ impl PgGeneralLedgerRepository {
                 _ => None,
             };
             let line = BalanceSheetLine {
-                account_id: id,
+                account_id: GlAccountId::from(id),
                 account_number: number,
                 account_name: name,
                 account_sub_type: sub_type,
@@ -2102,7 +2107,7 @@ impl PgGeneralLedgerRepository {
             }
 
             let line = IncomeStatementLine {
-                account_id: id,
+                account_id: GlAccountId::from(id),
                 account_number: number,
                 account_name: name,
                 account_sub_type: match sub_type {
@@ -2352,7 +2357,7 @@ impl PgGeneralLedgerRepository {
             .await?
             .and_then(|config| config.fx_gain_loss_account_id)
         {
-            return Ok(id);
+            return Ok(id.into_uuid());
         }
         for sub_type in [AccountSubType::OtherExpense, AccountSubType::OtherRevenue] {
             let fallback = self
@@ -2367,7 +2372,7 @@ impl PgGeneralLedgerRepository {
                 .into_iter()
                 .next();
             if let Some(account) = fallback {
-                return Ok(account.id);
+                return Ok(account.id.into_uuid());
             }
         }
         Err(CommerceError::ValidationError(
@@ -2464,7 +2469,10 @@ impl PgGeneralLedgerRepository {
 
         let journal_entry = if lines.iter().any(|l| !l.adjustment.is_zero()) {
             let fx_account_id = self.resolve_fx_gain_loss_account_async().await?;
-            let entry_lines = stateset_core::build_revaluation_journal_lines(&lines, fx_account_id);
+            let entry_lines = stateset_core::build_revaluation_journal_lines(
+                &lines,
+                GlAccountId::from(fx_account_id),
+            );
             Some(
                 self.create_journal_entry_async(CreateJournalEntry {
                     entry_date: as_of_date,
@@ -2522,16 +2530,20 @@ impl GeneralLedgerRepository for PgGeneralLedgerRepository {
         block_on(self.create_account_async(input))
     }
 
-    fn get_account(&self, id: Uuid) -> Result<Option<GlAccount>> {
-        block_on(self.get_account_async(id))
+    fn get_account(&self, id: GlAccountId) -> Result<Option<GlAccount>> {
+        block_on(self.get_account_async(id.into_uuid()))
     }
 
     fn get_account_by_number(&self, account_number: &str) -> Result<Option<GlAccount>> {
         block_on(self.get_account_by_number_async(account_number))
     }
 
-    fn update_account(&self, id: Uuid, input: stateset_core::UpdateGlAccount) -> Result<GlAccount> {
-        block_on(self.update_account_async(id, input))
+    fn update_account(
+        &self,
+        id: GlAccountId,
+        input: stateset_core::UpdateGlAccount,
+    ) -> Result<GlAccount> {
+        block_on(self.update_account_async(id.into_uuid(), input))
     }
 
     fn list_accounts(&self, filter: GlAccountFilter) -> Result<Vec<GlAccount>> {
@@ -2542,8 +2554,8 @@ impl GeneralLedgerRepository for PgGeneralLedgerRepository {
         block_on(self.get_account_hierarchy_async())
     }
 
-    fn delete_account(&self, id: Uuid) -> Result<()> {
-        block_on(self.delete_account_async(id))
+    fn delete_account(&self, id: GlAccountId) -> Result<()> {
+        block_on(self.delete_account_async(id.into_uuid()))
     }
 
     fn initialize_chart_of_accounts(&self) -> Result<Vec<GlAccount>> {
@@ -2554,8 +2566,8 @@ impl GeneralLedgerRepository for PgGeneralLedgerRepository {
         block_on(self.create_period_async(input))
     }
 
-    fn get_period(&self, id: Uuid) -> Result<Option<GlPeriod>> {
-        block_on(self.get_period_async(id))
+    fn get_period(&self, id: GlPeriodId) -> Result<Option<GlPeriod>> {
+        block_on(self.get_period_async(id.into_uuid()))
     }
 
     fn get_current_period(&self) -> Result<Option<GlPeriod>> {
@@ -2570,28 +2582,28 @@ impl GeneralLedgerRepository for PgGeneralLedgerRepository {
         block_on(self.list_periods_async(filter))
     }
 
-    fn open_period(&self, id: Uuid) -> Result<GlPeriod> {
-        block_on(self.open_period_async(id))
+    fn open_period(&self, id: GlPeriodId) -> Result<GlPeriod> {
+        block_on(self.open_period_async(id.into_uuid()))
     }
 
-    fn close_period(&self, id: Uuid, closed_by: &str) -> Result<GlPeriod> {
-        block_on(self.close_period_async(id, closed_by))
+    fn close_period(&self, id: GlPeriodId, closed_by: &str) -> Result<GlPeriod> {
+        block_on(self.close_period_async(id.into_uuid(), closed_by))
     }
 
-    fn lock_period(&self, id: Uuid, locked_by: &str) -> Result<GlPeriod> {
-        block_on(self.lock_period_async(id, locked_by))
+    fn lock_period(&self, id: GlPeriodId, locked_by: &str) -> Result<GlPeriod> {
+        block_on(self.lock_period_async(id.into_uuid(), locked_by))
     }
 
-    fn reopen_period(&self, id: Uuid) -> Result<GlPeriod> {
-        block_on(self.reopen_period_async(id))
+    fn reopen_period(&self, id: GlPeriodId) -> Result<GlPeriod> {
+        block_on(self.reopen_period_async(id.into_uuid()))
     }
 
     fn create_journal_entry(&self, input: CreateJournalEntry) -> Result<JournalEntry> {
         block_on(self.create_journal_entry_async(input))
     }
 
-    fn get_journal_entry(&self, id: Uuid) -> Result<Option<JournalEntry>> {
-        block_on(self.get_journal_entry_async(id))
+    fn get_journal_entry(&self, id: JournalEntryId) -> Result<Option<JournalEntry>> {
+        block_on(self.get_journal_entry_async(id.into_uuid()))
     }
 
     fn get_journal_entry_by_number(&self, number: &str) -> Result<Option<JournalEntry>> {
@@ -2602,20 +2614,27 @@ impl GeneralLedgerRepository for PgGeneralLedgerRepository {
         block_on(self.list_journal_entries_async(filter))
     }
 
-    fn post_journal_entry(&self, id: Uuid, posted_by: &str) -> Result<JournalEntry> {
-        block_on(self.post_journal_entry_async(id, posted_by))
+    fn post_journal_entry(&self, id: JournalEntryId, posted_by: &str) -> Result<JournalEntry> {
+        block_on(self.post_journal_entry_async(id.into_uuid(), posted_by))
     }
 
-    fn void_journal_entry(&self, id: Uuid) -> Result<JournalEntry> {
-        block_on(self.void_journal_entry_async(id))
+    fn void_journal_entry(&self, id: JournalEntryId) -> Result<JournalEntry> {
+        block_on(self.void_journal_entry_async(id.into_uuid()))
     }
 
-    fn reverse_journal_entry(&self, id: Uuid, reversal_date: NaiveDate) -> Result<JournalEntry> {
-        block_on(self.reverse_journal_entry_async(id, reversal_date))
+    fn reverse_journal_entry(
+        &self,
+        id: JournalEntryId,
+        reversal_date: NaiveDate,
+    ) -> Result<JournalEntry> {
+        block_on(self.reverse_journal_entry_async(id.into_uuid(), reversal_date))
     }
 
-    fn get_journal_entry_lines(&self, journal_entry_id: Uuid) -> Result<Vec<JournalEntryLine>> {
-        block_on(self.get_journal_entry_lines_async(journal_entry_id))
+    fn get_journal_entry_lines(
+        &self,
+        journal_entry_id: JournalEntryId,
+    ) -> Result<Vec<JournalEntryLine>> {
+        block_on(self.get_journal_entry_lines_async(journal_entry_id.into_uuid()))
     }
 
     fn get_auto_posting_config(&self) -> Result<Option<AutoPostingConfig>> {
@@ -2668,22 +2687,22 @@ impl GeneralLedgerRepository for PgGeneralLedgerRepository {
 
     fn get_account_balance(
         &self,
-        account_id: Uuid,
+        account_id: GlAccountId,
         as_of_date: Option<NaiveDate>,
     ) -> Result<Option<Decimal>> {
-        block_on(self.get_account_balance_async(account_id, as_of_date))
+        block_on(self.get_account_balance_async(account_id.into_uuid(), as_of_date))
     }
 
     fn get_account_transactions(
         &self,
-        account_id: Uuid,
+        account_id: GlAccountId,
         filter: JournalEntryFilter,
     ) -> Result<Vec<JournalEntryLine>> {
-        block_on(self.get_account_transactions_async(account_id, filter))
+        block_on(self.get_account_transactions_async(account_id.into_uuid(), filter))
     }
 
-    fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
-        block_on(self.run_period_close_async(period_id, closed_by))
+    fn run_period_close(&self, period_id: GlPeriodId, closed_by: &str) -> Result<JournalEntry> {
+        block_on(self.run_period_close_async(period_id.into_uuid(), closed_by))
     }
 
     fn revalue(
@@ -2701,7 +2720,9 @@ impl GeneralLedgerRepository for PgGeneralLedgerRepository {
         block_on(self.create_accounts_batch_async(inputs))
     }
 
-    fn get_accounts_batch(&self, ids: Vec<Uuid>) -> Result<Vec<GlAccount>> {
-        block_on(self.get_accounts_batch_async(ids))
+    fn get_accounts_batch(&self, ids: Vec<GlAccountId>) -> Result<Vec<GlAccount>> {
+        block_on(
+            self.get_accounts_batch_async(ids.into_iter().map(GlAccountId::into_uuid).collect()),
+        )
     }
 }

@@ -6,6 +6,7 @@ use rust_decimal::Decimal;
 use sqlx::FromRow;
 use sqlx::postgres::PgPool;
 use stateset_core::FixedAssetId;
+use stateset_core::GlAccountId;
 use stateset_core::{
     AssetDisposal, CommerceError, CreateFixedAsset, CurrencyCode, DepreciationEntry,
     DepreciationEntryStatus, DepreciationMethod, DepreciationSchedule, FixedAsset,
@@ -104,9 +105,13 @@ impl PgFixedAssetRepository {
             status: Self::parse_field::<FixedAssetStatus>(&row.status, "status")?,
             in_service_date: row.in_service_date,
             location_id: row.location_id,
-            asset_account_id: row.asset_account_id,
-            accumulated_depreciation_account_id: row.accumulated_depreciation_account_id,
-            depreciation_expense_account_id: row.depreciation_expense_account_id,
+            asset_account_id: row.asset_account_id.map(GlAccountId::from),
+            accumulated_depreciation_account_id: row
+                .accumulated_depreciation_account_id
+                .map(GlAccountId::from),
+            depreciation_expense_account_id: row
+                .depreciation_expense_account_id
+                .map(GlAccountId::from),
             accumulated_depreciation: row.accumulated_depreciation,
             currency: Self::parse_field::<CurrencyCode>(&row.currency, "currency")?,
             disposal,
@@ -588,13 +593,13 @@ impl PgFixedAssetRepository {
         }
         let expense_account_id = Self::resolve_depreciation_account_tx(
             tx,
-            asset.depreciation_expense_account_id,
+            asset.depreciation_expense_account_id.map(GlAccountId::into_uuid),
             stateset_core::AccountSubType::DepreciationExpense,
         )
         .await?;
         let accumulated_account_id = Self::resolve_depreciation_account_tx(
             tx,
-            asset.accumulated_depreciation_account_id,
+            asset.accumulated_depreciation_account_id.map(GlAccountId::into_uuid),
             stateset_core::AccountSubType::AccumulatedDepreciation,
         )
         .await?;
@@ -612,12 +617,12 @@ impl PgFixedAssetRepository {
                 description: format!("Depreciation {} {periods}", asset.asset_number),
                 lines: vec![
                     stateset_core::CreateJournalEntryLine::debit(
-                        expense_account_id,
+                        GlAccountId::from(expense_account_id),
                         amount,
                         Some("Depreciation Expense".to_string()),
                     ),
                     stateset_core::CreateJournalEntryLine::credit(
-                        accumulated_account_id,
+                        GlAccountId::from(accumulated_account_id),
                         amount,
                         Some("Accumulated Depreciation".to_string()),
                     ),

@@ -5,6 +5,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use sqlx::FromRow;
 use sqlx::postgres::PgPool;
+use stateset_core::GlAccountId;
 use stateset_core::{
     CommerceError, CreateRevenueContract, CurrencyCode, PerformanceObligation, RecognitionMethod,
     Result, RevenueContract, RevenueContractFilter, RevenueContractStatus, RevenueEntryStatus,
@@ -570,7 +571,7 @@ impl PgRevenueRecognitionRepository {
             return Ok(());
         }
         let deferred_account_id = match config.unearned_revenue_account_id {
-            Some(id) => id,
+            Some(id) => id.into_uuid(),
             None => sqlx::query_scalar::<_, Uuid>(
                 "SELECT id FROM gl_accounts
                  WHERE account_sub_type = 'unearned_revenue'
@@ -596,7 +597,7 @@ impl PgRevenueRecognitionRepository {
                 description: format!("Revenue recognition for obligation {obligation_id}"),
                 lines: vec![
                     stateset_core::CreateJournalEntryLine::debit(
-                        deferred_account_id,
+                        GlAccountId::from(deferred_account_id),
                         amount,
                         Some("Deferred Revenue".to_string()),
                     ),

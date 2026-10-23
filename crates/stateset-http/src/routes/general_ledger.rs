@@ -554,7 +554,7 @@ pub(crate) async fn create_account(
                 description: req.description,
                 account_type: parse_id(&req.account_type, "account_type")?,
                 account_sub_type,
-                parent_account_id,
+                parent_account_id: parent_account_id.map(Into::into),
                 is_header: req.is_header,
                 is_posting: req.is_posting,
                 currency,
@@ -620,7 +620,7 @@ pub(crate) async fn get_account(
         .run_blocking(tid.as_deref(), move |c| {
             let account = c
                 .general_ledger()
-                .get_account(id)?
+                .get_account(id.into())?
                 .ok_or_else(|| HttpError::NotFound(format!("GL account {id} not found")))?;
             Ok(Json(to_account_resp(&account)))
         })
@@ -650,7 +650,10 @@ pub(crate) async fn create_journal_entry(
             let mut lines = Vec::with_capacity(req.lines.len());
             for line in req.lines {
                 lines.push(stateset_core::CreateJournalEntryLine {
-                    account_id: parse_id::<Uuid>(&line.account_id, "account_id")?,
+                    account_id: parse_id::<stateset_core::GlAccountId>(
+                        &line.account_id,
+                        "account_id",
+                    )?,
                     description: line.description,
                     debit_amount: match line.debit_amount.as_deref() {
                         Some(s) => parse_decimal(s, "debit_amount")?,
@@ -716,10 +719,10 @@ pub(crate) async fn list_journal_entries(
                 None => None,
             };
             let base = stateset_core::JournalEntryFilter {
-                period_id,
+                period_id: period_id.map(Into::into),
                 status,
                 entry_type,
-                account_id,
+                account_id: account_id.map(Into::into),
                 from_date,
                 to_date,
                 ..Default::default()
@@ -753,7 +756,7 @@ pub(crate) async fn get_journal_entry(
         .run_blocking(tid.as_deref(), move |c| {
             let entry = c
                 .general_ledger()
-                .get_journal_entry(id)?
+                .get_journal_entry(id.into())?
                 .ok_or_else(|| HttpError::NotFound(format!("Journal entry {id} not found")))?;
             Ok(Json(to_entry_resp(&entry)))
         })
@@ -775,7 +778,7 @@ pub(crate) async fn post_journal_entry(
     state
         .run_blocking(tid.as_deref(), move |c| {
             let posted_by = actor_or_default(req.posted_by);
-            Ok(Json(to_entry_resp(&c.general_ledger().post_journal_entry(id, &posted_by)?)))
+            Ok(Json(to_entry_resp(&c.general_ledger().post_journal_entry(id.into(), &posted_by)?)))
         })
         .await
 }
@@ -792,7 +795,7 @@ pub(crate) async fn void_journal_entry(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            Ok(Json(to_entry_resp(&c.general_ledger().void_journal_entry(id)?)))
+            Ok(Json(to_entry_resp(&c.general_ledger().void_journal_entry(id.into())?)))
         })
         .await
 }
@@ -815,7 +818,9 @@ pub(crate) async fn reverse_journal_entry(
                 Some(s) => parse_date(s, "reversal_date")?,
                 None => chrono::Utc::now().date_naive(),
             };
-            Ok(Json(to_entry_resp(&c.general_ledger().reverse_journal_entry(id, reversal_date)?)))
+            Ok(Json(to_entry_resp(
+                &c.general_ledger().reverse_journal_entry(id.into(), reversal_date)?,
+            )))
         })
         .await
 }
@@ -910,7 +915,7 @@ pub(crate) async fn close_month(
                 fail_on_warnings: req.fail_on_warnings.unwrap_or(false),
                 closed_by: Some(actor_or_default(req.closed_by)),
             };
-            let report = c.general_ledger().close_month(period_id, options)?;
+            let report = c.general_ledger().close_month(period_id.into(), options)?;
             Ok(Json(CloseMonthResponse {
                 period_id: report.period_id.to_string(),
                 period_name: report.period_name.clone(),
@@ -1126,7 +1131,7 @@ pub(crate) async fn open_period(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            Ok(Json(to_period_resp(&c.general_ledger().open_period(id)?)))
+            Ok(Json(to_period_resp(&c.general_ledger().open_period(id.into())?)))
         })
         .await
 }
@@ -1146,7 +1151,7 @@ pub(crate) async fn close_period(
     state
         .run_blocking(tid.as_deref(), move |c| {
             let closed_by = actor_or_default(req.closed_by);
-            Ok(Json(to_period_resp(&c.general_ledger().close_period(id, &closed_by)?)))
+            Ok(Json(to_period_resp(&c.general_ledger().close_period(id.into(), &closed_by)?)))
         })
         .await
 }
@@ -1166,7 +1171,7 @@ pub(crate) async fn lock_period(
     state
         .run_blocking(tid.as_deref(), move |c| {
             let locked_by = actor_or_default(req.locked_by);
-            Ok(Json(to_period_resp(&c.general_ledger().lock_period(id, &locked_by)?)))
+            Ok(Json(to_period_resp(&c.general_ledger().lock_period(id.into(), &locked_by)?)))
         })
         .await
 }
@@ -1183,7 +1188,7 @@ pub(crate) async fn reopen_period(
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            Ok(Json(to_period_resp(&c.general_ledger().reopen_period(id)?)))
+            Ok(Json(to_period_resp(&c.general_ledger().reopen_period(id.into())?)))
         })
         .await
 }

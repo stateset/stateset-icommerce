@@ -9,6 +9,7 @@ use chrono::{NaiveDate, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rust_decimal::Decimal;
+use stateset_core::GlAccountId;
 use stateset_core::{
     CommerceError, CreateRevenueContract, CurrencyCode, PerformanceObligation, RecognitionMethod,
     Result, RevenueContract, RevenueContractFilter, RevenueContractStatus, RevenueEntryStatus,
@@ -567,7 +568,7 @@ impl SqliteRevenueRecognitionRepository {
             return Ok(());
         }
         let deferred_account_id = match config.unearned_revenue_account_id {
-            Some(id) => id,
+            Some(id) => id.into_uuid(),
             None => {
                 let fallback: Option<String> = match conn.query_row(
                     "SELECT id FROM gl_accounts
@@ -600,7 +601,7 @@ impl SqliteRevenueRecognitionRepository {
                 description: format!("Revenue recognition for obligation {obligation_id}"),
                 lines: vec![
                     stateset_core::CreateJournalEntryLine::debit(
-                        deferred_account_id,
+                        GlAccountId::from(deferred_account_id),
                         amount,
                         Some("Deferred Revenue".to_string()),
                     ),
@@ -1039,7 +1040,7 @@ mod tests {
                 auto_post_revenue_recognition,
             })
             .expect("set config");
-            unearned_id
+            unearned_id.into_uuid()
         }
 
         #[test]
@@ -1070,7 +1071,7 @@ mod tests {
             assert_eq!(entry.lines.len(), 2);
             let debit = entry.lines.iter().find(|l| l.debit_amount > dec!(0)).expect("debit");
             let credit = entry.lines.iter().find(|l| l.credit_amount > dec!(0)).expect("credit");
-            assert_eq!(debit.account_id, unearned_id);
+            assert_eq!(debit.account_id, GlAccountId::from(unearned_id));
             assert_eq!(debit.debit_amount, dec!(249.99));
             let sales_id =
                 gl.get_account_by_number("4010").expect("get").expect("sales account").id;

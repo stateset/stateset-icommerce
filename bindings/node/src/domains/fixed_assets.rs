@@ -343,15 +343,18 @@ impl FixedAssets {
                     .map(|s| parse_iso_date(s, "in_service_date"))
                     .transpose()?,
                 location_id: parse_optional_uuid(input.location_id, "location_id")?,
-                asset_account_id: parse_optional_uuid(input.asset_account_id, "asset_account_id")?,
+                asset_account_id: parse_optional_uuid(input.asset_account_id, "asset_account_id")?
+                    .map(Into::into),
                 accumulated_depreciation_account_id: parse_optional_uuid(
                     input.accumulated_depreciation_account_id,
                     "accumulated_depreciation_account_id",
-                )?,
+                )?
+                .map(Into::into),
                 depreciation_expense_account_id: parse_optional_uuid(
                     input.depreciation_expense_account_id,
                     "depreciation_expense_account_id",
-                )?,
+                )?
+                .map(Into::into),
                 currency,
             })
             .map_err(|e| wrap(ErrCode::Internal, "Failed to create fixed asset", e))?;
@@ -460,15 +463,18 @@ impl FixedAssets {
                     asset_account_id: parse_optional_uuid(
                         input.asset_account_id,
                         "asset_account_id",
-                    )?,
+                    )?
+                    .map(Into::into),
                     accumulated_depreciation_account_id: parse_optional_uuid(
                         input.accumulated_depreciation_account_id,
                         "accumulated_depreciation_account_id",
-                    )?,
+                    )?
+                    .map(Into::into),
                     depreciation_expense_account_id: parse_optional_uuid(
                         input.depreciation_expense_account_id,
                         "depreciation_expense_account_id",
-                    )?,
+                    )?
+                    .map(Into::into),
                 },
             )
             .map_err(|e| wrap(ErrCode::Internal, "Failed to update fixed asset", e))?;

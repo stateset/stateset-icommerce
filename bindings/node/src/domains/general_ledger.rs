@@ -397,7 +397,7 @@ impl GeneralLedger {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let account = commerce
             .general_ledger()
-            .get_account(uuid)
+            .get_account(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get account", e))?;
         convert_optional_output(account)
     }
@@ -450,7 +450,7 @@ impl GeneralLedger {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let entry = commerce
             .general_ledger()
-            .get_journal_entry(uuid)
+            .get_journal_entry(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get entry", e))?;
         Ok(entry.map(|e| e.into()))
     }
@@ -482,7 +482,7 @@ impl GeneralLedger {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let entry = commerce
             .general_ledger()
-            .post_journal_entry(uuid, &posted_by)
+            .post_journal_entry(uuid.into(), &posted_by)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to post entry", e))?;
         Ok(entry.into())
     }
@@ -495,7 +495,7 @@ impl GeneralLedger {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let entry = commerce
             .general_ledger()
-            .void_journal_entry(uuid)
+            .void_journal_entry(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to void entry", e))?;
         Ok(entry.into())
     }
@@ -616,7 +616,7 @@ impl GeneralLedger {
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let period = commerce
             .general_ledger()
-            .open_period(uuid)
+            .open_period(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to open period", e))?;
         Ok(period.into())
     }
@@ -668,7 +668,7 @@ impl GeneralLedger {
         let report = commerce
             .general_ledger()
             .close_month(
-                uuid,
+                uuid.into(),
                 stateset_core::CloseMonthOptions {
                     dry_run: options.dry_run.unwrap_or(false),
                     skip_depreciation: options.skip_depreciation.unwrap_or(false),

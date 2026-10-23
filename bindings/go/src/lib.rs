@@ -4593,7 +4593,7 @@ pub extern "C" fn stateset_gl_get_journal_entry(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.general_ledger().get_journal_entry(uuid).map_err(|e| e.to_string())
+        commerce.general_ledger().get_journal_entry(uuid.into()).map_err(|e| e.to_string())
     });
 
     match result {
@@ -4620,7 +4620,10 @@ pub extern "C" fn stateset_gl_post_journal_entry(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.general_ledger().post_journal_entry(uuid, "system").map_err(|e| e.to_string())
+        commerce
+            .general_ledger()
+            .post_journal_entry(uuid.into(), "system")
+            .map_err(|e| e.to_string())
     });
 
     match result {
@@ -4647,7 +4650,7 @@ pub extern "C" fn stateset_gl_get_account_balance(
     };
 
     let result = use_handle(handle, |commerce| {
-        commerce.general_ledger().get_account_balance(uuid, None).map_err(|e| e.to_string())
+        commerce.general_ledger().get_account_balance(uuid.into(), None).map_err(|e| e.to_string())
     });
 
     match result {

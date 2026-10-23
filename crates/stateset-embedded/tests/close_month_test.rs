@@ -25,7 +25,7 @@ fn sub_account(
     name: &str,
     account_type: AccountType,
     sub_type: AccountSubType,
-) -> Uuid {
+) -> stateset_core::GlAccountId {
     commerce
         .general_ledger()
         .create_account(CreateGlAccount {
@@ -47,18 +47,18 @@ fn sub_account(
 /// auto-post enabled), an open January 2026 period, one in-service asset with
 /// one depreciation period due, and one active revenue contract with one
 /// deferred entry due through period end.
-fn setup(commerce: &Commerce) -> (Uuid, Uuid, Uuid) {
+fn setup(commerce: &Commerce) -> (stateset_core::GlPeriodId, Uuid, Uuid) {
     let gl = commerce.general_ledger();
     gl.initialize_chart_of_accounts().expect("init chart");
 
-    sub_account(
+    let _ = sub_account(
         commerce,
         "5300",
         "Depreciation Expense",
         AccountType::Expense,
         AccountSubType::DepreciationExpense,
     );
-    sub_account(
+    let _ = sub_account(
         commerce,
         "1510",
         "Accumulated Depreciation",
@@ -186,7 +186,7 @@ fn close_month_posts_all_steps_and_closes_the_period() {
         .expect("close month");
 
     assert!(!report.dry_run);
-    assert_eq!(report.period_id, period_id);
+    assert_eq!(report.period_id, period_id.into_uuid());
     assert_eq!(report.period_name, "FY2026-wide");
 
     // Step 1: all 12 depreciation periods posted for $1200.
@@ -342,14 +342,14 @@ fn close_month_unknown_period_is_not_found() {
     let commerce = Commerce::new(":memory:").expect("commerce");
     let err = commerce
         .general_ledger()
-        .close_month(Uuid::new_v4(), CloseMonthOptions::default())
+        .close_month(Uuid::new_v4().into(), CloseMonthOptions::default())
         .expect_err("unknown period");
     assert!(matches!(err, stateset_core::CommerceError::NotFound));
 }
 
 /// An in-service asset with no generated schedule: the depreciation step
 /// reports one warning with a failed-item count of one.
-fn setup_with_unscheduled_asset(commerce: &Commerce) -> Uuid {
+fn setup_with_unscheduled_asset(commerce: &Commerce) -> stateset_core::GlPeriodId {
     let (period_id, _asset_id, _obligation_id) = setup(commerce);
     let asset = commerce
         .fixed_assets()

@@ -173,9 +173,9 @@ fn create_journal_entry_rejects_line_with_debit_and_credit() {
     let now = Utc::now();
     let line = JournalEntryLine {
         id: Uuid::new_v4(),
-        journal_entry_id: Uuid::new_v4(),
+        journal_entry_id: Uuid::new_v4().into(),
         line_number: 1,
-        account_id: Uuid::new_v4(),
+        account_id: Uuid::new_v4().into(),
         account_number: Some("1010".into()),
         account_name: Some("Cash".into()),
         description: Some("Invalid line".into()),
@@ -188,10 +188,10 @@ fn create_journal_entry_rejects_line_with_debit_and_credit() {
     };
 
     let entry = JournalEntry {
-        id: Uuid::new_v4(),
+        id: Uuid::new_v4().into(),
         entry_number: "JE-TEST-001".into(),
         entry_date: now.date_naive(),
-        period_id: Uuid::new_v4(),
+        period_id: Uuid::new_v4().into(),
         entry_type: JournalEntryType::Standard,
         source: JournalEntrySource::Manual,
         source_document_type: None,

@@ -21,6 +21,7 @@ use stateset_core::{
     TrialBalanceLine, UpdateGlAccount, create_default_chart_of_accounts,
     generate_journal_entry_number,
 };
+use stateset_core::{GlAccountId, GlPeriodId, JournalEntryId};
 use uuid::Uuid;
 
 /// Reduce a stored RFC3339 timestamp to its calendar date, erroring in
@@ -287,7 +288,7 @@ impl SqliteGeneralLedgerRepository {
             Err(e) => return Err(map_db_error(e)),
         };
         drop(conn);
-        self.get_journal_entry(parse_uuid(&id, "gl_journal_entry", "id")?)
+        self.get_journal_entry(JournalEntryId::from(parse_uuid(&id, "gl_journal_entry", "id")?))
     }
 
     /// Active auto-posting configuration, read on the caller's connection so
@@ -441,7 +442,7 @@ impl SqliteGeneralLedgerRepository {
             )?;
             Self::update_account_balance_with_conn(
                 conn,
-                line.account_id,
+                line.account_id.into_uuid(),
                 line.debit_amount,
                 line.credit_amount,
             )
@@ -537,7 +538,7 @@ impl SqliteGeneralLedgerRepository {
         if let Some(id) =
             self.get_auto_posting_config()?.and_then(|config| config.fx_gain_loss_account_id)
         {
-            return Ok(id);
+            return Ok(id.into_uuid());
         }
         for sub_type in [AccountSubType::OtherExpense, AccountSubType::OtherRevenue] {
             let fallback = self
@@ -551,7 +552,7 @@ impl SqliteGeneralLedgerRepository {
                 .into_iter()
                 .next();
             if let Some(account) = fallback {
-                return Ok(account.id);
+                return Ok(account.id.into_uuid());
             }
         }
         Err(stateset_core::CommerceError::ValidationError(
@@ -602,10 +603,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             .map_err(map_db_error)?;
         }
 
-        self.get_account(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        self.get_account(GlAccountId::from(id))?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
-    fn get_account(&self, id: Uuid) -> Result<Option<GlAccount>> {
+    fn get_account(&self, id: GlAccountId) -> Result<Option<GlAccount>> {
         let conn = self
             .pool
             .get()
@@ -645,7 +646,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         }
     }
 
-    fn update_account(&self, id: Uuid, input: UpdateGlAccount) -> Result<GlAccount> {
+    fn update_account(&self, id: GlAccountId, input: UpdateGlAccount) -> Result<GlAccount> {
         let conn = self
             .pool
             .get()
@@ -748,7 +749,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         self.list_accounts(GlAccountFilter::default())
     }
 
-    fn delete_account(&self, id: Uuid) -> Result<()> {
+    fn delete_account(&self, id: GlAccountId) -> Result<()> {
         let conn = self
             .pool
             .get()
@@ -819,10 +820,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         )
         .map_err(map_db_error)?;
 
-        self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        self.get_period(GlPeriodId::from(id))?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
-    fn get_period(&self, id: Uuid) -> Result<Option<GlPeriod>> {
+    fn get_period(&self, id: GlPeriodId) -> Result<Option<GlPeriod>> {
         let conn = self
             .pool
             .get()
@@ -921,7 +922,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         Ok(periods)
     }
 
-    fn open_period(&self, id: Uuid) -> Result<GlPeriod> {
+    fn open_period(&self, id: GlPeriodId) -> Result<GlPeriod> {
         let conn = self
             .pool
             .get()
@@ -936,7 +937,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
-    fn close_period(&self, id: Uuid, closed_by: &str) -> Result<GlPeriod> {
+    fn close_period(&self, id: GlPeriodId, closed_by: &str) -> Result<GlPeriod> {
         let conn = self
             .pool
             .get()
@@ -953,7 +954,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
-    fn lock_period(&self, id: Uuid, locked_by: &str) -> Result<GlPeriod> {
+    fn lock_period(&self, id: GlPeriodId, locked_by: &str) -> Result<GlPeriod> {
         let conn = self
             .pool
             .get()
@@ -970,7 +971,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
-    fn reopen_period(&self, id: Uuid) -> Result<GlPeriod> {
+    fn reopen_period(&self, id: GlPeriodId) -> Result<GlPeriod> {
         let conn = self
             .pool
             .get()
@@ -1105,13 +1106,14 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
         // Auto-post if requested
         if input.auto_post.unwrap_or(false) && is_balanced {
-            return self.post_journal_entry(id, "system");
+            return self.post_journal_entry(JournalEntryId::from(id), "system");
         }
 
-        self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        self.get_journal_entry(JournalEntryId::from(id))?
+            .ok_or(stateset_core::CommerceError::NotFound)
     }
 
-    fn get_journal_entry(&self, id: Uuid) -> Result<Option<JournalEntry>> {
+    fn get_journal_entry(&self, id: JournalEntryId) -> Result<Option<JournalEntry>> {
         let conn = self
             .pool
             .get()
@@ -1154,7 +1156,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         };
 
         let entry_id = parse_uuid(&id, "gl_journal_entry", "id")?;
-        self.get_journal_entry(entry_id)
+        self.get_journal_entry(JournalEntryId::from(entry_id))
     }
 
     fn list_journal_entries(&self, filter: JournalEntryFilter) -> Result<Vec<JournalEntry>> {
@@ -1243,13 +1245,13 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         Ok(entries)
     }
 
-    fn post_journal_entry(&self, id: Uuid, posted_by: &str) -> Result<JournalEntry> {
+    fn post_journal_entry(&self, id: JournalEntryId, posted_by: &str) -> Result<JournalEntry> {
         let now = Utc::now();
 
         with_immediate_transaction(&self.pool, |tx| {
             // Re-read inside the write transaction so a concurrent poster
             // cannot pass validation against stale state.
-            let entry = Self::load_journal_entry_with_conn(tx, id)?;
+            let entry = Self::load_journal_entry_with_conn(tx, id.into_uuid())?;
 
             // Reports which condition failed: `commerce.ledger.entry_unbalanced`
             // / `commerce.ledger.line_not_single_sided` are typed; "not a
@@ -1258,12 +1260,12 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(e)));
             }
 
-            Self::ensure_period_open_with_conn(tx, entry.period_id, "post")?;
+            Self::ensure_period_open_with_conn(tx, entry.period_id.into_uuid(), "post")?;
 
             for line in &entry.lines {
                 Self::update_account_balance_with_conn(
                     tx,
-                    line.account_id,
+                    line.account_id.into_uuid(),
                     line.debit_amount,
                     line.credit_amount,
                 )
@@ -1311,11 +1313,11 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
-    fn void_journal_entry(&self, id: Uuid) -> Result<JournalEntry> {
+    fn void_journal_entry(&self, id: JournalEntryId) -> Result<JournalEntry> {
         with_immediate_transaction(&self.pool, |tx| {
             // Re-read inside the write transaction so a concurrent voider
             // cannot pass validation against stale state.
-            let entry = Self::load_journal_entry_with_conn(tx, id)?;
+            let entry = Self::load_journal_entry_with_conn(tx, id.into_uuid())?;
 
             if !entry.can_void() {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -1325,13 +1327,13 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 )));
             }
 
-            Self::ensure_period_open_with_conn(tx, entry.period_id, "void")?;
+            Self::ensure_period_open_with_conn(tx, entry.period_id.into_uuid(), "void")?;
 
             // Reverse account balances
             for line in &entry.lines {
                 Self::update_account_balance_with_conn(
                     tx,
-                    line.account_id,
+                    line.account_id.into_uuid(),
                     line.credit_amount,
                     line.debit_amount,
                 )
@@ -1378,7 +1380,11 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
-    fn reverse_journal_entry(&self, id: Uuid, reversal_date: NaiveDate) -> Result<JournalEntry> {
+    fn reverse_journal_entry(
+        &self,
+        id: JournalEntryId,
+        reversal_date: NaiveDate,
+    ) -> Result<JournalEntry> {
         let entry = self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         let conn = self
@@ -1410,7 +1416,9 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 // lost). Resume it; an entry whose reversal exists stays a
                 // completed reversal and rejects a second one (repairing the
                 // cross-links first if a crash lost them).
-                if let Some(reversal) = self.existing_entry_for_source("reversal", id)? {
+                if let Some(reversal) =
+                    self.existing_entry_for_source("reversal", id.into_uuid())?
+                {
                     conn.execute(
                         "UPDATE gl_journal_entries SET reversing_entry_id = ?1
                          WHERE id = ?2 AND reversing_entry_id IS NULL",
@@ -1455,7 +1463,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             description: format!("Reversal of {}", entry.entry_number),
             lines: reversing_lines,
             source_document_type: Some("reversal".to_string()),
-            source_document_id: Some(entry.id),
+            source_document_id: Some(entry.id.into_uuid()),
             auto_post: Some(true),
         }) {
             Ok(reversing_entry) => reversing_entry,
@@ -1486,7 +1494,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         self.get_journal_entry(reversing_entry.id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
-    fn get_journal_entry_lines(&self, journal_entry_id: Uuid) -> Result<Vec<JournalEntryLine>> {
+    fn get_journal_entry_lines(
+        &self,
+        journal_entry_id: JournalEntryId,
+    ) -> Result<Vec<JournalEntryLine>> {
         let conn = self
             .pool
             .get()
@@ -2015,7 +2026,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             ) = row.map_err(map_db_error)?;
 
             let line = BalanceSheetLine {
-                account_id: id,
+                account_id: GlAccountId::from(id),
                 account_number: number,
                 account_name: name,
                 account_sub_type: sub_type,
@@ -2130,7 +2141,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             }
 
             let line = IncomeStatementLine {
-                account_id: id,
+                account_id: GlAccountId::from(id),
                 account_number: number,
                 account_name: name,
                 account_sub_type: sub_type,
@@ -2165,7 +2176,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
     fn get_account_balance(
         &self,
-        account_id: Uuid,
+        account_id: GlAccountId,
         as_of_date: Option<NaiveDate>,
     ) -> Result<Option<Decimal>> {
         let Some(account) = self.get_account(account_id)? else {
@@ -2203,7 +2214,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
     fn get_account_transactions(
         &self,
-        account_id: Uuid,
+        account_id: GlAccountId,
         filter: JournalEntryFilter,
     ) -> Result<Vec<JournalEntryLine>> {
         let conn = self
@@ -2254,7 +2265,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         Ok(lines)
     }
 
-    fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
+    fn run_period_close(&self, period_id: GlPeriodId, closed_by: &str) -> Result<JournalEntry> {
         let period = self.get_period(period_id)?.ok_or(stateset_core::CommerceError::NotFound)?;
 
         if period.status != PeriodStatus::Open {
@@ -2266,7 +2277,9 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         // The income statement excludes closing entries, so a re-close would
         // sweep the same revenue/expense again: while a closing entry stands
         // (not voided), the period cannot be closed a second time.
-        if let Some(existing) = self.existing_entry_for_source("period_close", period_id)? {
+        if let Some(existing) =
+            self.existing_entry_for_source("period_close", period_id.into_uuid())?
+        {
             return Err(stateset_core::CommerceError::ValidationError(format!(
                 "Period already has closing entry {}; void it before re-closing",
                 existing.entry_number
@@ -2365,7 +2378,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             description: format!("Closing entries for {}", period.period_name),
             lines,
             source_document_type: Some("period_close".to_string()),
-            source_document_id: Some(period_id),
+            source_document_id: Some(period_id.into_uuid()),
             auto_post: Some(true),
         })?;
 
@@ -2477,7 +2490,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
         let journal_entry = if lines.iter().any(|l| !l.adjustment.is_zero()) {
             let fx_account_id = self.resolve_fx_gain_loss_account()?;
-            let entry_lines = stateset_core::build_revaluation_journal_lines(&lines, fx_account_id);
+            let entry_lines = stateset_core::build_revaluation_journal_lines(
+                &lines,
+                GlAccountId::from(fx_account_id),
+            );
             Some(self.create_journal_entry(stateset_core::CreateJournalEntry {
                 entry_date: as_of_date,
                 entry_type: Some(JournalEntryType::Adjusting),
@@ -2520,7 +2536,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         Ok(result)
     }
 
-    fn get_accounts_batch(&self, ids: Vec<Uuid>) -> Result<Vec<GlAccount>> {
+    fn get_accounts_batch(&self, ids: Vec<GlAccountId>) -> Result<Vec<GlAccount>> {
         let mut accounts = Vec::new();
         for id in ids {
             if let Some(account) = self.get_account(id)? {
@@ -2705,7 +2721,7 @@ mod tests {
                     reference_id: None,
                 }],
                 source_document_type: None,
-                source_document_id: Some(revenue.id),
+                source_document_id: Some(revenue.id.into_uuid()),
                 auto_post: None,
             })
             .expect_err("err");
@@ -2746,7 +2762,7 @@ mod tests {
             matches!(
                 &err,
                 CommerceError::JournalEntryUnbalanced { entry_id, total_debits, total_credits }
-                    if *entry_id == entry.id && total_debits == "100" && total_credits == "50"
+                    if *entry_id == entry.id.into_uuid() && total_debits == "100" && total_credits == "50"
             ),
             "got {err:?}"
         );
@@ -2757,8 +2773,8 @@ mod tests {
         let reloaded = repo.get_journal_entry(entry.id).expect("ok").expect("found");
         assert_eq!(reloaded.status, JournalEntryStatus::Draft);
         assert!(reloaded.posted_at.is_none());
-        assert_eq!(account_balance(&repo, cash.id), dec!(0));
-        assert_eq!(account_balance(&repo, revenue.id), dec!(0));
+        assert_eq!(account_balance(&repo, cash.id.into_uuid()), dec!(0));
+        assert_eq!(account_balance(&repo, revenue.id.into_uuid()), dec!(0));
     }
 
     #[test]
@@ -3009,7 +3025,7 @@ mod tests {
     }
 
     fn account_balance(repo: &SqliteGeneralLedgerRepository, id: Uuid) -> rust_decimal::Decimal {
-        repo.get_account(id).expect("ok").expect("found").current_balance
+        repo.get_account(GlAccountId::from(id)).expect("ok").expect("found").current_balance
     }
 
     #[test]
@@ -3048,12 +3064,12 @@ mod tests {
 
         let mult = Decimal::from(successes as u64);
         assert_eq!(
-            account_balance(&repo, cash.id),
+            account_balance(&repo, cash.id.into_uuid()),
             dec!(100) * mult,
             "cash must reflect exactly the successful post"
         );
         assert_eq!(
-            account_balance(&repo, revenue.id),
+            account_balance(&repo, revenue.id.into_uuid()),
             dec!(100) * mult,
             "revenue must reflect exactly the successful post"
         );
@@ -3086,13 +3102,13 @@ mod tests {
             repo.get_journal_entry(entry.id).unwrap().unwrap().status,
             JournalEntryStatus::Draft
         );
-        assert_eq!(account_balance(&repo, cash.id), dec!(0));
-        assert_eq!(account_balance(&repo, revenue.id), dec!(0));
+        assert_eq!(account_balance(&repo, cash.id.into_uuid()), dec!(0));
+        assert_eq!(account_balance(&repo, revenue.id.into_uuid()), dec!(0));
         repo.pool.get().unwrap().execute_batch("DROP TRIGGER fail_post_event").unwrap();
         repo.post_journal_entry(entry.id, "operator").unwrap();
         assert!(repo.post_journal_entry(entry.id, "duplicate").is_err());
-        assert_eq!(account_balance(&repo, cash.id), dec!(0.30));
-        assert_eq!(account_balance(&repo, revenue.id), dec!(0.30));
+        assert_eq!(account_balance(&repo, cash.id.into_uuid()), dec!(0.30));
+        assert_eq!(account_balance(&repo, revenue.id.into_uuid()), dec!(0.30));
         let events: i64 = repo.pool.get().unwrap().query_row(
             "SELECT COUNT(*) FROM kernel_outbox WHERE aggregate_id = ? AND event_type = 'ledger.journal_entry_posted.v1'",
             [entry.id.to_string()], |row| row.get(0)).unwrap();
@@ -3108,7 +3124,7 @@ mod tests {
         let entry = make_balanced_entry(&repo, &cash, &revenue, dec!(40));
 
         repo.post_journal_entry(entry.id, "tester").expect("first post");
-        assert_eq!(account_balance(&repo, cash.id), dec!(40));
+        assert_eq!(account_balance(&repo, cash.id.into_uuid()), dec!(40));
 
         let err = repo.post_journal_entry(entry.id, "again").expect_err("second post must fail");
         assert!(
@@ -3116,8 +3132,8 @@ mod tests {
             "got {err:?}"
         );
 
-        assert_eq!(account_balance(&repo, cash.id), dec!(40));
-        assert_eq!(account_balance(&repo, revenue.id), dec!(40));
+        assert_eq!(account_balance(&repo, cash.id.into_uuid()), dec!(40));
+        assert_eq!(account_balance(&repo, revenue.id.into_uuid()), dec!(40));
     }
 
     #[test]
@@ -3131,7 +3147,7 @@ mod tests {
         repo.post_journal_entry(entry.id, "tester").expect("post");
         let voided = repo.void_journal_entry(entry.id).expect("first void");
         assert_eq!(voided.status, JournalEntryStatus::Voided);
-        assert_eq!(account_balance(&repo, cash.id), dec!(0));
+        assert_eq!(account_balance(&repo, cash.id.into_uuid()), dec!(0));
         let conn = repo.pool.get().expect("connection");
         let payload: String = conn
             .query_row(
@@ -3150,8 +3166,8 @@ mod tests {
             "got {err:?}"
         );
 
-        assert_eq!(account_balance(&repo, cash.id), dec!(0));
-        assert_eq!(account_balance(&repo, revenue.id), dec!(0));
+        assert_eq!(account_balance(&repo, cash.id.into_uuid()), dec!(0));
+        assert_eq!(account_balance(&repo, revenue.id.into_uuid()), dec!(0));
     }
 
     #[test]
@@ -3172,14 +3188,14 @@ mod tests {
         )
         .expect("simulate stranded claim");
         drop(conn);
-        assert_eq!(account_balance(&repo, cash.id), dec!(60));
+        assert_eq!(account_balance(&repo, cash.id.into_uuid()), dec!(60));
 
         // The retry must resume: create the reversing entry and net out.
         let reversal = repo
             .reverse_journal_entry(entry.id, NaiveDate::from_ymd_opt(2026, 1, 16).expect("date"))
             .expect("resume stranded reversal");
-        assert_eq!(account_balance(&repo, cash.id), dec!(0));
-        assert_eq!(account_balance(&repo, revenue.id), dec!(0));
+        assert_eq!(account_balance(&repo, cash.id.into_uuid()), dec!(0));
+        assert_eq!(account_balance(&repo, revenue.id.into_uuid()), dec!(0));
         let original = repo.get_journal_entry(entry.id).expect("get").expect("entry");
         assert_eq!(original.reversing_entry_id, Some(reversal.id));
         assert_eq!(reversal.reversed_entry_id, Some(entry.id));
@@ -3202,7 +3218,7 @@ mod tests {
         repo.post_journal_entry(entry.id, "tester").expect("post");
         repo.reverse_journal_entry(entry.id, NaiveDate::from_ymd_opt(2026, 1, 15).expect("date"))
             .expect("first reversal");
-        assert_eq!(account_balance(&repo, cash.id), dec!(0));
+        assert_eq!(account_balance(&repo, cash.id.into_uuid()), dec!(0));
 
         let err = repo
             .reverse_journal_entry(entry.id, NaiveDate::from_ymd_opt(2026, 1, 16).expect("date"))
@@ -3212,12 +3228,12 @@ mod tests {
             "got {err:?}"
         );
 
-        assert_eq!(account_balance(&repo, cash.id), dec!(0));
-        assert_eq!(account_balance(&repo, revenue.id), dec!(0));
+        assert_eq!(account_balance(&repo, cash.id.into_uuid()), dec!(0));
+        assert_eq!(account_balance(&repo, revenue.id.into_uuid()), dec!(0));
 
         let reversals = repo
             .list_journal_entries(JournalEntryFilter {
-                source_document_id: Some(entry.id),
+                source_document_id: Some(entry.id.into_uuid()),
                 ..Default::default()
             })
             .expect("list");
@@ -3313,7 +3329,7 @@ mod tests {
         assert!(je.lines.iter().any(|l| l.account_id == fx.id && l.credit_amount == dec!(100.00)));
 
         // Carrying value now reflects the as-of rate.
-        assert_eq!(account_balance(&repo, eur_cash.id), dec!(1100.00));
+        assert_eq!(account_balance(&repo, eur_cash.id.into_uuid()), dec!(1100.00));
 
         // Re-running at the same rate is a no-op (idempotent).
         let again = repo
@@ -3321,7 +3337,7 @@ mod tests {
             .expect("revalue again");
         assert!(again.journal_entry.is_none());
         assert_eq!(again.total_unrealized_gain_loss, dec!(0.00));
-        assert_eq!(account_balance(&repo, eur_cash.id), dec!(1100.00));
+        assert_eq!(account_balance(&repo, eur_cash.id.into_uuid()), dec!(1100.00));
     }
 
     #[test]
@@ -3361,7 +3377,7 @@ mod tests {
             je.lines.iter().any(|l| l.account_id == eur_cash.id && l.credit_amount == dec!(150.00))
         );
         assert!(je.lines.iter().any(|l| l.account_id == fx.id && l.debit_amount == dec!(150.00)));
-        assert_eq!(account_balance(&repo, eur_cash.id), dec!(850.00));
+        assert_eq!(account_balance(&repo, eur_cash.id.into_uuid()), dec!(850.00));
     }
 
     #[test]

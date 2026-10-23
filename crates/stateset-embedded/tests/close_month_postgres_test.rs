@@ -118,7 +118,7 @@ fn sub_account(
     name: &str,
     ty: AccountType,
     sub_type: AccountSubType,
-) -> uuid::Uuid {
+) -> stateset_core::GlAccountId {
     let gl = commerce.general_ledger();
     if let Some(existing) = gl.get_account_by_number(&number).expect("get account") {
         return existing.id;
@@ -141,20 +141,20 @@ fn sub_account(
 /// Full close fixture on a unique fiscal year: chart (idempotent), posting
 /// config, open wide period, one scheduled asset and one active contract.
 /// Returns `(period_id, tag)`.
-fn setup(commerce: &Commerce, fiscal_year: i32, label: &str) -> (uuid::Uuid, u32) {
+fn setup(commerce: &Commerce, fiscal_year: i32, label: &str) -> (stateset_core::GlPeriodId, u32) {
     let tag = TAG.fetch_add(1, Ordering::SeqCst);
     let gl = commerce.general_ledger();
     gl.initialize_chart_of_accounts().expect("init chart");
 
     let num = |base: u32| (base + tag).to_string();
-    sub_account(
+    let _ = sub_account(
         commerce,
         num(5390),
         "Depreciation Expense",
         AccountType::Expense,
         AccountSubType::DepreciationExpense,
     );
-    sub_account(
+    let _ = sub_account(
         commerce,
         num(1590),
         "Accumulated Depreciation",

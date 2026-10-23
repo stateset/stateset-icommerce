@@ -4,6 +4,7 @@ use super::*;
 use stateset_core::InvoiceId;
 use stateset_core::PaymentId;
 use stateset_core::{BackorderAllocationId, BackorderId, OrderId};
+use stateset_core::{GlAccountId, GlPeriodId, JournalEntryId};
 
 /// Async accounts payable operations.
 pub struct AsyncAccountsPayable {
@@ -842,16 +843,20 @@ impl AsyncGeneralLedger {
         self.db.general_ledger().create_account_async(input).await
     }
 
-    pub async fn get_account(&self, id: Uuid) -> Result<Option<GlAccount>> {
-        self.db.general_ledger().get_account_async(id).await
+    pub async fn get_account(&self, id: GlAccountId) -> Result<Option<GlAccount>> {
+        self.db.general_ledger().get_account_async(id.into_uuid()).await
     }
 
     pub async fn get_account_by_number(&self, account_number: &str) -> Result<Option<GlAccount>> {
         self.db.general_ledger().get_account_by_number_async(account_number).await
     }
 
-    pub async fn update_account(&self, id: Uuid, input: UpdateGlAccount) -> Result<GlAccount> {
-        self.db.general_ledger().update_account_async(id, input).await
+    pub async fn update_account(
+        &self,
+        id: GlAccountId,
+        input: UpdateGlAccount,
+    ) -> Result<GlAccount> {
+        self.db.general_ledger().update_account_async(id.into_uuid(), input).await
     }
 
     pub async fn list_accounts(&self, filter: GlAccountFilter) -> Result<Vec<GlAccount>> {
@@ -862,8 +867,8 @@ impl AsyncGeneralLedger {
         self.db.general_ledger().get_account_hierarchy_async().await
     }
 
-    pub async fn delete_account(&self, id: Uuid) -> Result<()> {
-        self.db.general_ledger().delete_account_async(id).await
+    pub async fn delete_account(&self, id: GlAccountId) -> Result<()> {
+        self.db.general_ledger().delete_account_async(id.into_uuid()).await
     }
 
     pub async fn initialize_chart_of_accounts(&self) -> Result<Vec<GlAccount>> {
@@ -874,8 +879,8 @@ impl AsyncGeneralLedger {
         self.db.general_ledger().create_period_async(input).await
     }
 
-    pub async fn get_period(&self, id: Uuid) -> Result<Option<GlPeriod>> {
-        self.db.general_ledger().get_period_async(id).await
+    pub async fn get_period(&self, id: GlPeriodId) -> Result<Option<GlPeriod>> {
+        self.db.general_ledger().get_period_async(id.into_uuid()).await
     }
 
     pub async fn get_current_period(&self) -> Result<Option<GlPeriod>> {
@@ -890,28 +895,28 @@ impl AsyncGeneralLedger {
         self.db.general_ledger().list_periods_async(filter).await
     }
 
-    pub async fn open_period(&self, id: Uuid) -> Result<GlPeriod> {
-        self.db.general_ledger().open_period_async(id).await
+    pub async fn open_period(&self, id: GlPeriodId) -> Result<GlPeriod> {
+        self.db.general_ledger().open_period_async(id.into_uuid()).await
     }
 
-    pub async fn close_period(&self, id: Uuid, closed_by: &str) -> Result<GlPeriod> {
-        self.db.general_ledger().close_period_async(id, closed_by).await
+    pub async fn close_period(&self, id: GlPeriodId, closed_by: &str) -> Result<GlPeriod> {
+        self.db.general_ledger().close_period_async(id.into_uuid(), closed_by).await
     }
 
-    pub async fn lock_period(&self, id: Uuid, locked_by: &str) -> Result<GlPeriod> {
-        self.db.general_ledger().lock_period_async(id, locked_by).await
+    pub async fn lock_period(&self, id: GlPeriodId, locked_by: &str) -> Result<GlPeriod> {
+        self.db.general_ledger().lock_period_async(id.into_uuid(), locked_by).await
     }
 
-    pub async fn reopen_period(&self, id: Uuid) -> Result<GlPeriod> {
-        self.db.general_ledger().reopen_period_async(id).await
+    pub async fn reopen_period(&self, id: GlPeriodId) -> Result<GlPeriod> {
+        self.db.general_ledger().reopen_period_async(id.into_uuid()).await
     }
 
     pub async fn create_journal_entry(&self, input: CreateJournalEntry) -> Result<JournalEntry> {
         self.db.general_ledger().create_journal_entry_async(input).await
     }
 
-    pub async fn get_journal_entry(&self, id: Uuid) -> Result<Option<JournalEntry>> {
-        self.db.general_ledger().get_journal_entry_async(id).await
+    pub async fn get_journal_entry(&self, id: JournalEntryId) -> Result<Option<JournalEntry>> {
+        self.db.general_ledger().get_journal_entry_async(id.into_uuid()).await
     }
 
     pub async fn get_journal_entry_by_number(&self, number: &str) -> Result<Option<JournalEntry>> {
@@ -925,27 +930,31 @@ impl AsyncGeneralLedger {
         self.db.general_ledger().list_journal_entries_async(filter).await
     }
 
-    pub async fn post_journal_entry(&self, id: Uuid, posted_by: &str) -> Result<JournalEntry> {
-        self.db.general_ledger().post_journal_entry_async(id, posted_by).await
+    pub async fn post_journal_entry(
+        &self,
+        id: JournalEntryId,
+        posted_by: &str,
+    ) -> Result<JournalEntry> {
+        self.db.general_ledger().post_journal_entry_async(id.into_uuid(), posted_by).await
     }
 
-    pub async fn void_journal_entry(&self, id: Uuid) -> Result<JournalEntry> {
-        self.db.general_ledger().void_journal_entry_async(id).await
+    pub async fn void_journal_entry(&self, id: JournalEntryId) -> Result<JournalEntry> {
+        self.db.general_ledger().void_journal_entry_async(id.into_uuid()).await
     }
 
     pub async fn reverse_journal_entry(
         &self,
-        id: Uuid,
+        id: JournalEntryId,
         reversal_date: NaiveDate,
     ) -> Result<JournalEntry> {
-        self.db.general_ledger().reverse_journal_entry_async(id, reversal_date).await
+        self.db.general_ledger().reverse_journal_entry_async(id.into_uuid(), reversal_date).await
     }
 
     pub async fn get_journal_entry_lines(
         &self,
-        journal_entry_id: Uuid,
+        journal_entry_id: JournalEntryId,
     ) -> Result<Vec<JournalEntryLine>> {
-        self.db.general_ledger().get_journal_entry_lines_async(journal_entry_id).await
+        self.db.general_ledger().get_journal_entry_lines_async(journal_entry_id.into_uuid()).await
     }
 
     pub async fn get_auto_posting_config(&self) -> Result<Option<AutoPostingConfig>> {
@@ -1004,32 +1013,43 @@ impl AsyncGeneralLedger {
 
     pub async fn get_account_balance(
         &self,
-        account_id: Uuid,
+        account_id: GlAccountId,
         as_of_date: Option<NaiveDate>,
     ) -> Result<Option<Decimal>> {
-        self.db.general_ledger().get_account_balance_async(account_id, as_of_date).await
+        self.db.general_ledger().get_account_balance_async(account_id.into_uuid(), as_of_date).await
     }
 
     pub async fn get_account_transactions(
         &self,
-        account_id: Uuid,
+        account_id: GlAccountId,
         filter: JournalEntryFilter,
     ) -> Result<Vec<JournalEntryLine>> {
-        self.db.general_ledger().get_account_transactions_async(account_id, filter).await
+        self.db
+            .general_ledger()
+            .get_account_transactions_async(account_id.into_uuid(), filter)
+            .await
     }
 
-    pub async fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
-        self.db.general_ledger().run_period_close_async(period_id, closed_by).await
+    pub async fn run_period_close(
+        &self,
+        period_id: GlPeriodId,
+        closed_by: &str,
+    ) -> Result<JournalEntry> {
+        self.db.general_ledger().run_period_close_async(period_id.into_uuid(), closed_by).await
     }
 
     /// Re-close a period that was reopened for adjustments: void the standing
     /// closing entry (or entries), then run the close again. The period must
     /// be open. Mirrors the sync facade.
-    pub async fn reclose_period(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
+    pub async fn reclose_period(
+        &self,
+        period_id: GlPeriodId,
+        closed_by: &str,
+    ) -> Result<JournalEntry> {
         let standing = self
             .list_journal_entries(stateset_core::JournalEntryFilter {
                 source_document_type: Some("period_close".into()),
-                source_document_id: Some(period_id),
+                source_document_id: Some(period_id.into_uuid()),
                 status: Some(stateset_core::JournalEntryStatus::Posted),
                 ..Default::default()
             })
@@ -1047,8 +1067,11 @@ impl AsyncGeneralLedger {
         self.db.general_ledger().create_accounts_batch_async(inputs).await
     }
 
-    pub async fn get_accounts_batch(&self, ids: Vec<Uuid>) -> Result<Vec<GlAccount>> {
-        self.db.general_ledger().get_accounts_batch_async(ids).await
+    pub async fn get_accounts_batch(&self, ids: Vec<GlAccountId>) -> Result<Vec<GlAccount>> {
+        self.db
+            .general_ledger()
+            .get_accounts_batch_async(ids.into_iter().map(GlAccountId::into_uuid).collect())
+            .await
     }
 }
 

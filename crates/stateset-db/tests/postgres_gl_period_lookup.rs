@@ -50,9 +50,9 @@ async fn postgres_get_period_for_date_prefers_open_when_overlapping() {
         .await
         .expect("create p2");
 
-    let p1 = gl.open_period_async(p1.id).await.expect("open p1");
-    let p2 = gl.open_period_async(p2.id).await.expect("open p2");
-    let _ = gl.close_period_async(p2.id, "tester").await.expect("close p2");
+    let p1 = gl.open_period_async(p1.id.into_uuid()).await.expect("open p1");
+    let p2 = gl.open_period_async(p2.id.into_uuid()).await.expect("open p2");
+    let _ = gl.close_period_async(p2.id.into_uuid(), "tester").await.expect("close p2");
 
     let date = NaiveDate::from_ymd_opt(fiscal_year, 7, 15).expect("date");
     let selected = gl.get_period_for_date_async(date).await.expect("lookup").expect("some");

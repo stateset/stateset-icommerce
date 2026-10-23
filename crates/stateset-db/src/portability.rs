@@ -84,6 +84,7 @@ use crate::Database;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use stateset_core::GlAccountId;
 use stateset_core::{CommerceError, Result};
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -811,7 +812,7 @@ fn import_gl_account(
         description: opt_str(record, "description"),
         account_type: field_as(record, "account_type")?,
         account_sub_type: field_as(record, "account_sub_type")?,
-        parent_account_id,
+        parent_account_id: parent_account_id.map(GlAccountId::from),
         is_header: record.get("is_header").and_then(Value::as_bool),
         is_posting: record.get("is_posting").and_then(Value::as_bool),
         currency: field_as(record, "currency")?,
@@ -1040,10 +1041,10 @@ fn import_journal_entry(
                 .map(|line| {
                     let raw_account = str_field(line, "account_id")?;
                     Ok(stateset_core::CreateJournalEntryLine {
-                        account_id: parse_uuid(
+                        account_id: GlAccountId::from(parse_uuid(
                             &remapped_id(remap, "gl_accounts", &raw_account),
                             "account_id",
-                        )?,
+                        )?),
                         description: opt_str(line, "description"),
                         debit_amount: field_as(line, "debit_amount")?,
                         credit_amount: field_as(line, "credit_amount")?,

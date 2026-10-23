@@ -4067,7 +4067,7 @@ impl PgKernelExecutor {
             ledger
                 .update_account_balance_tx(
                     &mut tx,
-                    line.account_id,
+                    line.account_id.into_uuid(),
                     line.debit_amount,
                     line.credit_amount,
                 )

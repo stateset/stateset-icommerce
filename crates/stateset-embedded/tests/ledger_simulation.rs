@@ -71,12 +71,12 @@ const AS_OF: NaiveDate = date(2030, 12, 31);
 struct Sim {
     commerce: Commerce,
     rng: Rng,
-    period_id: Uuid,
+    period_id: stateset_core::GlPeriodId,
     customer_id: stateset_core::CustomerId,
     /// Posting accounts eligible for random manual journal entries
     /// (balance-sheet accounts only, excluding the EUR cash account so the
     /// FX foreign balance stays controlled).
-    je_accounts: Vec<Uuid>,
+    je_accounts: Vec<stateset_core::GlAccountId>,
     /// Current fixed asset and how many depreciation periods remain.
     asset: (Uuid, u32),
     /// Current revenue obligation and the next month (1-12) to recognize.
@@ -109,13 +109,13 @@ impl Sim {
             .expect("create account")
             .id
         };
-        sub(
+        let _ = sub(
             "5300",
             "Depreciation Expense",
             AccountType::Expense,
             AccountSubType::DepreciationExpense,
         );
-        sub(
+        let _ = sub(
             "1510",
             "Accumulated Depreciation",
             AccountType::Asset,
@@ -232,7 +232,7 @@ impl Sim {
 
         // Manual-JE pool: active balance-sheet posting accounts, excluding
         // the EUR account (keeps foreign balance under the sim's control).
-        let je_accounts: Vec<Uuid> = gl
+        let je_accounts: Vec<stateset_core::GlAccountId> = gl
             .list_accounts(GlAccountFilter { is_posting: Some(true), ..Default::default() })
             .expect("list accounts")
             .into_iter()
