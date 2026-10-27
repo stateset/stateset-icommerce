@@ -30,7 +30,7 @@
     "react-dom": "^19",
     "viem": "2.56.0",
     "wagmi": "3.1.0",
-    "zod": "^3.25.76"
+    "zod": "^4.6.6"
   },
   "overrides": {
     "postcss-selector-parser": "^7.1.6"
