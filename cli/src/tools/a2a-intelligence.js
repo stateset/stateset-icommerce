@@ -28,7 +28,7 @@ export const a2aIntelligenceTools = [
           'sla_check',
         ])
         .describe('Type of action'),
-      payload: z.record(z.any()).describe('Action payload (params for the action)'),
+      payload: z.record(z.string(), z.any()).describe('Action payload (params for the action)'),
       executeAt: z.string().describe('ISO timestamp for when to execute'),
       repeatInterval: z
         .number()
@@ -122,7 +122,7 @@ export const a2aIntelligenceTools = [
         .describe('Outcome'),
       amount: z.number().optional().describe('Transaction amount'),
       responseTimeMs: z.number().optional().describe('Response time in ms'),
-      metadata: z.record(z.any()).optional().describe('Additional context'),
+      metadata: z.record(z.string(), z.any()).optional().describe('Additional context'),
     },
     permission: 'write',
     handler: async ({ commerce, params, agentConfig }) => {
@@ -230,7 +230,7 @@ export const a2aIntelligenceTools = [
             'pause_agent',
             'custom',
           ]),
-          params: z.record(z.any()).optional(),
+          params: z.record(z.string(), z.any()).optional(),
         })
         .describe('Action to take when rule matches'),
       priority: z.number().optional().default(50).describe('Priority (1-100, higher first)'),
@@ -308,7 +308,7 @@ export const a2aIntelligenceTools = [
     inputSchema: {
       targets: z.array(z.string().min(1)).min(1).max(50).describe('Target agent addresses'),
       taskType: z.string().min(1).describe('Task type (e.g., "quote_request", "status_check")'),
-      payload: z.record(z.any()).describe('Task payload sent to each target'),
+      payload: z.record(z.string(), z.any()).describe('Task payload sent to each target'),
       timeoutMs: z.number().optional().default(30000).describe('Timeout per target in ms'),
       joinStrategy: z
         .enum(['all', 'first', 'majority', 'best'])
@@ -346,7 +346,7 @@ export const a2aIntelligenceTools = [
     description: 'Submit a response to a fan-out coordination (as a target agent).',
     inputSchema: {
       coordinationId: z.string().min(1).describe('Coordination ID'),
-      response: z.record(z.any()).describe('Your response payload'),
+      response: z.record(z.string(), z.any()).describe('Your response payload'),
     },
     permission: 'write',
     handler: async ({ commerce, params, agentConfig }) => {

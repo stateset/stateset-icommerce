@@ -57,10 +57,30 @@ export function classifyOutcome(outcome) {
 /** Where tools that write files (backups, exports, snapshots) may write. */
 const OUTPUT_DIR = path.join(os.tmpdir(), 'mcp-smoke-output');
 
+/** A Zod 4 schema's checks, as their definitions (`{ check: 'min_length', minimum: 2 }`). */
+const checksOf = (def) => (def.checks ?? []).map((c) => c._zod.def);
+
+/**
+ * Values tried, in order, against a string's own regex checks when the
+ * key-based guess does not match them: decimals, dates, hashes, codes.
+ */
+const PATTERN_CANDIDATES = [
+  'smoke',
+  '10',
+  '10.00',
+  '2026-01-15',
+  'USD',
+  'USD/EUR',
+  '1234',
+  `0x${'a'.repeat(64)}`,
+  `0x${'a'.repeat(40)}`,
+];
+
 function sampleString(key, def) {
-  const checks = def.checks ?? [];
-  const has = (kind) => checks.some((c) => c.kind === kind);
-  const min = checks.find((c) => c.kind === 'min')?.value ?? 0;
+  const checks = checksOf(def);
+  const formats = new Set([def.format, ...checks.map((c) => c.format)].filter(Boolean));
+  const has = (format) => formats.has(format);
+  const min = Math.max(0, ...checks.filter((c) => c.check === 'min_length').map((c) => c.minimum));
   const k = key.toLowerCase();
   let value;
   if (/path|file|dir|destination|output|location/.test(k) && !/id$/.test(k))
@@ -71,73 +91,80 @@ function sampleString(key, def) {
   else if (has('datetime') || /date|_at$|at$|since|until|from|to$/.test(k))
     value = new Date('2026-01-15T00:00:00Z').toISOString();
   else if (/currency/.test(k)) value = 'USD';
-  else if (/country/.test(k)) value = 'US';
+  else if (/countr/.test(k)) value = 'US';
   else if (/state|region/.test(k)) value = 'CA';
   else if (/sku/.test(k)) value = 'SMOKE-SKU';
   else if (/amount|price|total|value/.test(k)) value = '10.00';
   else value = 'smoke';
   while (value.length < min) value += 'x';
-  return value;
+  const max = Math.min(...checks.filter((c) => c.check === 'max_length').map((c) => c.maximum));
+  value = value.slice(0, max);
+  const patterns = checks.filter((c) => c.format === 'regex').map((c) => c.pattern);
+  const fits = (candidate) => patterns.every((pattern) => pattern.test(candidate));
+  return fits(value) ? value : (PATTERN_CANDIDATES.find(fits) ?? value);
 }
 
+function sampleNumber(def) {
+  let v = 1;
+  for (const c of checksOf(def)) {
+    if (c.check === 'greater_than' && (v < c.value || (v === c.value && !c.inclusive)))
+      v = c.value + (c.inclusive ? 0 : 1);
+    if (c.check === 'less_than' && v > c.value) v = c.value;
+  }
+  return v;
+}
+
+/** The smallest value a Zod 4 schema accepts, guessed from its definition. */
 export function sample(schema, key = '') {
-  const def = schema?._def;
-  switch (def?.typeName) {
-    case 'ZodOptional':
-    case 'ZodNullable':
+  const def = schema?._zod?.def;
+  switch (def?.type) {
+    case 'optional':
+    case 'nullable':
+    case 'nonoptional':
+    case 'readonly':
+    case 'catch':
       return sample(def.innerType, key);
-    case 'ZodDefault':
-      return def.defaultValue();
-    case 'ZodEffects':
-      return sample(def.schema, key);
-    case 'ZodPipeline':
-      return sample(def.in, key);
-    case 'ZodBranded':
-    case 'ZodReadonly':
-    case 'ZodCatch':
-      return sample(def.innerType ?? def.type, key);
-    case 'ZodLazy':
+    case 'default':
+    case 'prefault':
+      return def.defaultValue;
+    case 'pipe':
+      // `z.preprocess(fn, schema)` pipes a transform into `schema`: sample the schema.
+      return sample(def.in._zod.def.type === 'transform' ? def.out : def.in, key);
+    case 'lazy':
       return sample(def.getter(), key);
-    case 'ZodString':
+    case 'string':
       return sampleString(key, def);
-    case 'ZodNumber': {
-      const min = def.checks?.find((c) => c.kind === 'min');
-      const max = def.checks?.find((c) => c.kind === 'max');
-      let v = 1;
-      if (min && v < min.value) v = min.value + (min.inclusive ? 0 : 1);
-      if (max && v > max.value) v = max.value;
-      return v;
-    }
-    case 'ZodBigInt':
+    case 'number':
+      return sampleNumber(def);
+    case 'bigint':
       return 1n;
-    case 'ZodBoolean':
+    case 'boolean':
       return false;
-    case 'ZodDate':
+    case 'date':
       return new Date('2026-01-15T00:00:00Z');
-    case 'ZodEnum':
+    case 'enum':
+      return Object.values(def.entries)[0];
+    case 'literal':
       return def.values[0];
-    case 'ZodNativeEnum':
-      return Object.values(def.values)[0];
-    case 'ZodLiteral':
-      return def.value;
-    case 'ZodArray': {
-      const min = def.minLength?.value ?? 0;
-      return Array.from({ length: Math.max(min, 1) }, () => sample(def.type, key));
-    }
-    case 'ZodTuple':
-      return def.items.map((item) => sample(item, key));
-    case 'ZodObject':
-      return sampleShape(def.shape());
-    case 'ZodRecord':
-    case 'ZodMap':
-      return {};
-    case 'ZodUnion':
-    case 'ZodDiscriminatedUnion':
-      return sample(
-        def.options instanceof Map ? [...def.options.values()][0] : def.options[0],
-        key,
+    case 'array': {
+      const min = Math.max(
+        1,
+        ...checksOf(def)
+          .filter((c) => c.check === 'min_length')
+          .map((c) => c.minimum),
       );
-    case 'ZodIntersection':
+      return Array.from({ length: min }, () => sample(def.element, key));
+    }
+    case 'tuple':
+      return def.items.map((item) => sample(item, key));
+    case 'object':
+      return sampleShape(def.shape);
+    case 'record':
+    case 'map':
+      return {};
+    case 'union':
+      return sample(def.options[0], key);
+    case 'intersection':
       return { ...sample(def.left, key), ...sample(def.right, key) };
     default:
       return 'smoke';
@@ -145,8 +172,7 @@ export function sample(schema, key = '') {
 }
 
 function isOptional(schema) {
-  const t = schema?._def?.typeName;
-  return t === 'ZodOptional' || t === 'ZodDefault' || schema?.isOptional?.() === true;
+  return schema?.isOptional?.() === true;
 }
 
 /** Required fields only: the smallest input the schema accepts. */
@@ -211,6 +237,10 @@ export async function runSmoke({
   const savedHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   process.env.HOME = home;
   process.env.USERPROFILE = home;
+  // Others keep project-local state under ./.stateset (agent keys): run from
+  // the sweep's own directory so it never lands in the checkout running it.
+  const savedCwd = process.cwd();
+  process.chdir(dir);
   // Every tier, so any tool can be swept regardless of the default profile.
   const server = createStatesetMcpServer({ dbPath, allowApply, toolProfile: 'all' });
   const rows = [];
@@ -235,6 +265,7 @@ export async function runSmoke({
       });
     }
   } finally {
+    process.chdir(savedCwd);
     for (const [key, value] of Object.entries(savedHome)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
