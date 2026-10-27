@@ -26,7 +26,7 @@ import {
   isInputRequiredResult,
 } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
+import { zodToInputJsonSchema } from './zod-json-schema.js';
 import { CLI_VERSION } from '../config.js';
 import { attachContractToResponse, normalizeToolError } from './tool-result-contract.js';
 
@@ -45,9 +45,13 @@ const EMPTY_SCHEMA = Object.freeze({});
 /** A Zod schema instance (as opposed to a raw shape) carries `_def`. */
 const isZodType = (value) => Boolean(value && typeof value === 'object' && value._def);
 
-/** An already-converted JSON Schema object, as a handful of tools declare. */
+/**
+ * An already-converted JSON Schema object, as a handful of tools declare. A
+ * Zod 4 object schema also has `type === 'object'`, so Zod types are excluded
+ * explicitly: treating one as JSON Schema would skip its validation entirely.
+ */
 const isJsonSchema = (value) =>
-  Boolean(value && typeof value === 'object' && value.type === 'object');
+  Boolean(value && typeof value === 'object' && !isZodType(value) && value.type === 'object');
 
 /**
  * Normalize the three `inputSchema` conventions our tool modules use — a Zod
@@ -66,12 +70,10 @@ function standardSchemaFor(inputSchema) {
     : isZodType(inputSchema)
       ? inputSchema
       : z.object(inputSchema);
-  // `$refStrategy: 'none'` inlines definitions: MCP clients expect a
-  // self-contained schema per tool, not one with cross-references.
+  // Reused sub-schemas are inlined: MCP clients expect a self-contained
+  // schema per tool, not one with cross-references.
   const converted = {
-    ...(zodSchema
-      ? zodToJsonSchema(zodSchema, { $refStrategy: 'none', target: 'jsonSchema7' })
-      : inputSchema),
+    ...(zodSchema ? zodToInputJsonSchema(zodSchema) : inputSchema),
   };
   delete converted.$schema;
 
@@ -83,7 +85,7 @@ function standardSchemaFor(inputSchema) {
     standardSchema = {
       '~standard': {
         version: 1,
-        vendor: 'stateset-zod3',
+        vendor: 'stateset-zod',
         jsonSchema: {
           input: () => converted,
           output: () => converted,

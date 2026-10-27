@@ -5,6 +5,41 @@
 
 import { z } from 'zod';
 
+/**
+ * Map a Zod 4 issue onto the fields this validator's messages read (the Zod 3
+ * issue shape): `received` from the reported input, `invalid_format` as
+ * `invalid_string` with its `validation`, `invalid_value` as `invalid_enum`
+ * with the allowed values in `expected`, and `origin` as `type` on size checks.
+ *
+ * @param {Record<string, any>} issue
+ * @returns {Record<string, any>}
+ */
+function normalizeIssue(issue) {
+  const out = { ...issue };
+  if (out.received === undefined && 'input' in out) {
+    out.received = out.code === 'invalid_type' ? describeReceived(out.input) : out.input;
+  }
+  if (out.code === 'invalid_format') {
+    out.code = 'invalid_string';
+    out.validation = out.format;
+  }
+  if (out.code === 'invalid_value' && Array.isArray(out.values)) {
+    out.code = 'invalid_enum';
+    out.expected = out.values;
+  }
+  if ((out.code === 'too_small' || out.code === 'too_big') && out.type === undefined) {
+    out.type = out.origin;
+  }
+  return out;
+}
+
+/** The Zod 3 style name of a value's type (`"number"`, `"array"`, `"null"`). */
+function describeReceived(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
 export class EnhancedValidator {
   constructor() {
     this.errorCache = new Map();
@@ -19,7 +54,9 @@ export class EnhancedValidator {
    */
   validate(schema, data, path = '') {
     try {
-      const result = schema.passthrough().safeParse(data);
+      // `reportInput` puts the offending value on each issue (Zod 4 dropped
+      // the old `received` field), so messages can say what was sent.
+      const result = schema.passthrough().safeParse(data, { reportInput: true });
 
       if (result.success) {
         return {
@@ -30,7 +67,7 @@ export class EnhancedValidator {
         };
       }
 
-      const errors = this.formatErrors(result.error.errors, path);
+      const errors = this.formatErrors(result.error.issues.map(normalizeIssue), path);
       const suggestions = this.generateSuggestions(errors, data);
 
       return {

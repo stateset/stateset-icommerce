@@ -20,8 +20,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { runSmoke } from '../../scripts/mcp-tool-smoke.mjs';
+import { runSmoke, sampleShape } from '../../scripts/mcp-tool-smoke.mjs';
 import { ALL_DOMAIN_TOOLS } from '../../src/tools/domain-registry.js';
+import { validateToolInput } from '../../src/tool-schema.js';
 import { validateToolResultContract } from '../../src/mcp/tool-result-contract.js';
 
 const backlog = JSON.parse(
@@ -64,6 +65,33 @@ describe('every MCP tool works or refuses cleanly on a fresh store', { skip: !ro
     );
     const stale = [...known.keys()].filter((tool) => !crashing.has(tool));
     assert.deepEqual(stale, [], 'these no longer crash; remove them from the backlog');
+  });
+});
+
+// Cross-field refinements the sampler cannot satisfy from a field's own type.
+const SAMPLER_EXEMPT = new Set([
+  'simulate_inventory_experiment', // target stock must exceed the reorder point
+  'simulate_inventory_plan',
+  'compare_inventory_plans',
+  'compare_commerce_scenarios', // compared scenario names must be unique
+]);
+
+describe('the smoke sampler', () => {
+  // A sample the tool's own schema rejects only tests validation: the sweep
+  // would pass without ever reaching the handler. The sampler reads Zod
+  // internals, so a Zod upgrade can break it silently -- this catches that.
+  it("builds input each tool's own schema accepts", () => {
+    const rejected = ALL_DOMAIN_TOOLS.filter((tool) => !SAMPLER_EXEMPT.has(tool.name))
+      .map((tool) => ({
+        tool: tool.name,
+        result: validateToolInput(tool.inputSchema, sampleShape(tool.inputSchema)),
+      }))
+      .filter(({ result }) => !result.success)
+      .map(
+        ({ tool, result }) =>
+          `${tool}: ${result.error.issues[0]?.path.join('.')}: ${result.error.issues[0]?.message}`,
+      );
+    assert.deepEqual(rejected, []);
   });
 });
 

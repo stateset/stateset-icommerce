@@ -1,4 +1,4 @@
-import { zodToJsonSchema } from 'zod-to-json-schema';
+import { zodToInputJsonSchema } from '../mcp/zod-json-schema.js';
 import {
   commerceActionSchema,
   commerceScenarioSchema,
@@ -9,8 +9,7 @@ import { SIMULATION_KERNEL_VERSION, SIMULATION_LIMITS } from './limits.js';
 
 // Derived schemas keep the discovery tool aligned with the execution surface.
 export function getSimulationKernelContract() {
-  const jsonSchema = (schema) =>
-    zodToJsonSchema(schema, { $refStrategy: 'none', target: 'jsonSchema7' });
+  const jsonSchema = (schema) => zodToInputJsonSchema(schema);
   return {
     success: true,
     specVersion: SIMULATION_KERNEL_VERSION,

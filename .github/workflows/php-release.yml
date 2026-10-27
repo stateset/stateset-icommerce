@@ -57,16 +57,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64
-          - os: ubuntu-latest
+          # Linux x86_64. Pinned to 24.04: ubuntu-latest moved to 26.04 (LLVM
+          # 20-22), where bindgen mixes one LLVM's libclang with another's
+          # builtin headers and the native build fails.
+          - os: ubuntu-24.04
             php: '8.1'
             target: x86_64-unknown-linux-gnu
             artifact: linux-x86_64-php81
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             php: '8.2'
             target: x86_64-unknown-linux-gnu
             artifact: linux-x86_64-php82
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             php: '8.3'
             target: x86_64-unknown-linux-gnu
             artifact: linux-x86_64-php83
