@@ -48,8 +48,8 @@ export const returnAnalyticsSchema = z.object({
   totalReturns: z.number(),
   returnRate: z.number(),
   refundTotal: z.number(),
-  returnsByReason: z.record(z.number()),
-  returnsByStatus: z.record(z.number()),
+  returnsByReason: z.record(z.string(), z.number()),
+  returnsByStatus: z.record(z.string(), z.number()),
 });
 
 export const customerAnalyticsSchema = z.object({
@@ -58,7 +58,7 @@ export const customerAnalyticsSchema = z.object({
   newCustomersThisMonth: z.number(),
   averageLifetimeValue: z.number(),
   retentionRate: z.number(),
-  customersBySegment: z.record(z.number()),
+  customersBySegment: z.record(z.string(), z.number()),
 });
 
 export const dashboardMetricsSchema = z.object({

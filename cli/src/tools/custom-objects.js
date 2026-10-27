@@ -257,7 +257,7 @@ export const customObjectTools = [
         .optional()
         .describe('Optional owner type (must be paired with ownerId)'),
       ownerId: z.string().optional().describe('Optional owner id (must be paired with ownerType)'),
-      values: z.record(z.any()).optional().describe('Record values as an object'),
+      values: z.record(z.string(), z.any()).optional().describe('Record values as an object'),
       valuesJson: z.string().optional().describe('Record values as a JSON string'),
     },
     permission: 'write',
@@ -297,7 +297,7 @@ export const customObjectTools = [
       handle: z.string().optional().describe('New handle'),
       ownerType: z.string().optional().describe('New owner type'),
       ownerId: z.string().optional().describe('New owner id'),
-      values: z.record(z.any()).optional().describe('New values as an object'),
+      values: z.record(z.string(), z.any()).optional().describe('New values as an object'),
       valuesJson: z.string().optional().describe('New values as a JSON string'),
     },
     permission: 'write',
