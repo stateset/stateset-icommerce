@@ -10,7 +10,7 @@ money: delegated identity, deny-by-default authority, exact budgets, idempotent
 commands, and cryptographically verifiable receipts.
 
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
 [![CI](https://github.com/stateset/stateset-icommerce/actions/workflows/ci.yml/badge.svg)](https://github.com/stateset/stateset-icommerce/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/stateset-sdk.svg?label=crates.io)](https://crates.io/crates/stateset-sdk)
 [![npm](https://img.shields.io/npm/v/@stateset/embedded.svg?label=npm)](https://www.npmjs.com/package/@stateset/embedded)
@@ -291,7 +291,7 @@ npm --prefix bindings/node run check
 ```
 
 The authoritative remote gate is CI on `master`. CI also verifies the workspace
-MSRV on Rust 1.85 and runs the binding and admin surfaces on the same pinned
+MSRV on Rust 1.88 and runs the binding and admin surfaces on the same pinned
 Node 20.20.0.
 
 Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) ·

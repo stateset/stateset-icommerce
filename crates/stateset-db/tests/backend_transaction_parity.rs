@@ -483,10 +483,10 @@ fn sql_tables(text: &str, keyword: &str, skip_after: Option<&str>) -> BTreeSet<S
         if !boundary_before || !boundary_after {
             continue;
         }
-        if let Some(previous) = skip_after {
-            if text[..start].trim_end().ends_with(previous) {
-                continue;
-            }
+        if let Some(previous) = skip_after
+            && text[..start].trim_end().ends_with(previous)
+        {
+            continue;
         }
         let table = text[after..].trim_start();
         let end = table

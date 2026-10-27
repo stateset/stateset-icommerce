@@ -169,17 +169,17 @@ impl Warranty {
             return false;
         }
 
-        if let Some(end_date) = self.end_date {
-            if now > end_date {
-                return false;
-            }
+        if let Some(end_date) = self.end_date
+            && now > end_date
+        {
+            return false;
         }
 
         // Check if max claims exceeded
-        if let Some(max) = self.max_claims {
-            if self.claims_used >= max {
-                return false;
-            }
+        if let Some(max) = self.max_claims
+            && self.claims_used >= max
+        {
+            return false;
         }
 
         true

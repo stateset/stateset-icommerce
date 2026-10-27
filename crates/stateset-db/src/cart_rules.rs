@@ -125,22 +125,22 @@ pub(crate) fn validate_update_cart_item_money(
 /// negative price or a negative line discount. Quantity 0 is NOT a silent
 /// remove: callers must use `remove_item`.
 pub(crate) fn validate_update_cart_item(input: &UpdateCartItem) -> Result<()> {
-    if let Some(quantity) = input.quantity {
-        if quantity < 1 {
-            return Err(CommerceError::ValidationError(format!(
-                "Item quantity must be positive, got {quantity}; remove the item instead"
-            )));
-        }
+    if let Some(quantity) = input.quantity
+        && quantity < 1
+    {
+        return Err(CommerceError::ValidationError(format!(
+            "Item quantity must be positive, got {quantity}; remove the item instead"
+        )));
     }
     if let Some(unit_price) = input.unit_price {
         validate_price(unit_price)?;
     }
-    if let Some(discount) = input.discount_amount {
-        if discount < Decimal::ZERO {
-            return Err(CommerceError::ValidationError(format!(
-                "Item discount must not be negative, got {discount}"
-            )));
-        }
+    if let Some(discount) = input.discount_amount
+        && discount < Decimal::ZERO
+    {
+        return Err(CommerceError::ValidationError(format!(
+            "Item discount must not be negative, got {discount}"
+        )));
     }
     Ok(())
 }

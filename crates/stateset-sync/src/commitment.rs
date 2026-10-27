@@ -275,22 +275,22 @@ pub fn verify_commitment_manifest_against_state(
 ) -> Result<VerifiedCommitmentManifest, ManifestVerificationError> {
     let verified = verify_commitment_manifest(manifest)?;
 
-    if let Some(expected_state_root) = state.remote_state_root.as_deref() {
-        if expected_state_root != verified.state_root {
-            return Err(ManifestVerificationError::StateRootMismatch {
-                commitment_id: verified.commitment_id,
-                expected: expected_state_root.to_owned(),
-                actual: verified.state_root,
-            });
-        }
+    if let Some(expected_state_root) = state.remote_state_root.as_deref()
+        && expected_state_root != verified.state_root
+    {
+        return Err(ManifestVerificationError::StateRootMismatch {
+            commitment_id: verified.commitment_id,
+            expected: expected_state_root.to_owned(),
+            actual: verified.state_root,
+        });
     }
-    if let Some(expected_commitment_id) = state.last_commitment_id.as_deref() {
-        if expected_commitment_id != verified.commitment_id {
-            return Err(ManifestVerificationError::CommitmentIdMismatch {
-                expected: expected_commitment_id.to_owned(),
-                actual: verified.commitment_id,
-            });
-        }
+    if let Some(expected_commitment_id) = state.last_commitment_id.as_deref()
+        && expected_commitment_id != verified.commitment_id
+    {
+        return Err(ManifestVerificationError::CommitmentIdMismatch {
+            expected: expected_commitment_id.to_owned(),
+            actual: verified.commitment_id,
+        });
     }
     if state.remote_head > 0 && state.remote_head != verified.remote_head {
         return Err(ManifestVerificationError::RemoteHeadMismatch {

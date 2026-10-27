@@ -205,14 +205,14 @@ pub fn try_evaluate_promotions(
         validate_base_discount(&promo.discount, context.order_total)?;
 
         // Check max uses
-        if let Some(max) = promo.max_uses {
-            if promo.current_uses >= max {
-                rejected.push(RejectedPromotion {
-                    code: promo.code.clone(),
-                    reason: RejectionReason::MaxUsesExceeded,
-                });
-                continue;
-            }
+        if let Some(max) = promo.max_uses
+            && promo.current_uses >= max
+        {
+            rejected.push(RejectedPromotion {
+                code: promo.code.clone(),
+                reason: RejectionReason::MaxUsesExceeded,
+            });
+            continue;
         }
 
         // Check rules

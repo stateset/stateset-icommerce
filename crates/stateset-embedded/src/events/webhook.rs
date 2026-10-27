@@ -613,10 +613,10 @@ async fn deliver_to_webhook(
             .header("X-Delivery-Attempt", (attempt + 1).to_string());
 
         // Add HMAC signature if secret is configured
-        if let Some(ref secret) = webhook.secret {
-            if let Some(signature) = compute_signature(secret, &body) {
-                request = request.header("X-Signature", signature);
-            }
+        if let Some(ref secret) = webhook.secret
+            && let Some(signature) = compute_signature(secret, &body)
+        {
+            request = request.header("X-Signature", signature);
         }
 
         // Add custom headers

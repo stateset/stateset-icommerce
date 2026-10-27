@@ -54,7 +54,7 @@ The system is organized into three major layers:
 ├─────────────────────────────────────────────────────────────────┤
 │                      Rust Core                                   │
 │  7 crates · 48 models · 27 ID types · VES crypto · SQLite/PG    │
-│  (Edition 2024, Rust 1.85+, ~50,000 LOC)                        │
+│  (Edition 2024, Rust 1.88+, ~50,000 LOC)                        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -101,7 +101,7 @@ This layering enforces a strict rule: **primitives depend on nothing internal**,
 
 ### 2.2 Build Configuration
 
-The workspace uses Edition 2024 with `rust-version = "1.85"`, placing it on the latest stable Rust. Build profiles are carefully tuned:
+The workspace uses Edition 2024 with `rust-version = "1.88"`, placing it on the latest stable Rust. Build profiles are carefully tuned:
 
 - **Dev**: `debug = "line-tables-only"`, `split-debuginfo = "unpacked"` — fast iteration with usable stack traces. Proptest and `rand_chacha` are compiled at `opt-level = 3` for tolerable fuzz speed.
 - **Release**: `opt-level = 3`, `lto = "thin"`, `strip = "symbols"`, `panic = "abort"`, `codegen-units = 16` — production-ready.
@@ -1067,7 +1067,7 @@ The theme respects `NO_COLOR` and `FORCE_COLOR` environment variables per the `n
 | `dependency-review` | GitHub dependency review for PRs |
 | `typos` | Spell checking across the codebase |
 | `shellcheck` | Lint shell scripts |
-| `msrv` | Verify minimum supported Rust version (1.85) |
+| `msrv` | Verify minimum supported Rust version (1.88) |
 
 ### 18.2 Code Quality Tools
 

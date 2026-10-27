@@ -235,10 +235,10 @@ pub fn is_disputed(score: Decimal) -> bool {
 pub fn score_distribution(scores: &[Decimal]) -> [u64; 5] {
     let mut dist = [0u64; 5];
     for &s in scores {
-        if let Some(idx) = s.to_u64() {
-            if (1..=5).contains(&idx) {
-                dist[(idx - 1) as usize] += 1;
-            }
+        if let Some(idx) = s.to_u64()
+            && (1..=5).contains(&idx)
+        {
+            dist[(idx - 1) as usize] += 1;
         }
     }
     dist

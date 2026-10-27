@@ -192,13 +192,13 @@ async fn postgres_async_order_create_emits_order_created_event() {
     // The async create must have emitted an OrderCreated event for this order.
     let mut saw_order_created = false;
     while let Some(event) = subscription.try_recv() {
-        if let CommerceEvent::OrderCreated { order_id, customer_id, item_count, .. } = event {
-            if order_id == order.id {
-                assert_eq!(customer_id, order.customer_id, "event customer_id must match order");
-                assert_eq!(item_count, order.items.len(), "event item_count must match order");
-                saw_order_created = true;
-                break;
-            }
+        if let CommerceEvent::OrderCreated { order_id, customer_id, item_count, .. } = event
+            && order_id == order.id
+        {
+            assert_eq!(customer_id, order.customer_id, "event customer_id must match order");
+            assert_eq!(item_count, order.items.len(), "event item_count must match order");
+            saw_order_created = true;
+            break;
         }
     }
     assert!(

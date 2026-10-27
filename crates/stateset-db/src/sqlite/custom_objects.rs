@@ -497,20 +497,20 @@ impl CustomObjectRepository for SqliteCustomObjectRepository {
             .ok_or(CommerceError::NotFound)?;
 
         let next_handle = input.handle.clone().or(current_handle.clone());
-        if let Some(h) = next_handle.as_deref() {
-            if current_handle.as_deref() != Some(h) {
-                let exists: i32 = tx
+        if let Some(h) = next_handle.as_deref()
+            && current_handle.as_deref() != Some(h)
+        {
+            let exists: i32 = tx
                     .query_row(
                         "SELECT COUNT(*) FROM custom_object_records WHERE type_id = ? AND handle = ? AND id != ?",
                         rusqlite::params![type_id_raw, h, id.to_string()],
                         |row| row.get(0),
                     )
                     .map_err(map_db_error)?;
-                if exists > 0 {
-                    return Err(CommerceError::Conflict(format!(
-                        "custom_object.handle already exists for type {type_handle}: {h}"
-                    )));
-                }
+            if exists > 0 {
+                return Err(CommerceError::Conflict(format!(
+                    "custom_object.handle already exists for type {type_handle}: {h}"
+                )));
             }
         }
 

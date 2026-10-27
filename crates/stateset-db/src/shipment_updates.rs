@@ -28,12 +28,12 @@ pub(crate) fn prepare_event(
                     "Shipment tracking {field} must not contain NUL characters"
                 )));
             }
-            if let Some(limit) = limit {
-                if value.chars().count() > limit {
-                    return Err(CommerceError::ValidationError(format!(
-                        "Shipment tracking {field} must not exceed {limit} characters"
-                    )));
-                }
+            if let Some(limit) = limit
+                && value.chars().count() > limit
+            {
+                return Err(CommerceError::ValidationError(format!(
+                    "Shipment tracking {field} must not exceed {limit} characters"
+                )));
             }
         }
     }
@@ -116,13 +116,14 @@ pub(crate) fn apply(
     now: DateTime<Utc>,
 ) -> Result<Vec<&'static str>> {
     check_version(shipment, input.expected_version)?;
-    if let Some(status) = input.status {
-        if status != shipment.status && !shipment.status.can_transition_to(status) {
-            return Err(CommerceError::ValidationError(format!(
-                "Invalid shipment status transition from {} to {}",
-                shipment.status, status
-            )));
-        }
+    if let Some(status) = input.status
+        && status != shipment.status
+        && !shipment.status.can_transition_to(status)
+    {
+        return Err(CommerceError::ValidationError(format!(
+            "Invalid shipment status transition from {} to {}",
+            shipment.status, status
+        )));
     }
     for (field, amount) in [("shipping_cost", input.shipping_cost), ("weight_kg", input.weight_kg)]
     {
@@ -202,14 +203,14 @@ pub(crate) fn fact(
 
 /// Check a caller's precondition while holding the parent mutation lock.
 pub(crate) fn check_version(shipment: &Shipment, expected_version: Option<i32>) -> Result<()> {
-    if let Some(expected_version) = expected_version {
-        if expected_version != shipment.version {
-            return Err(CommerceError::VersionConflict {
-                entity: "shipment".into(),
-                id: shipment.id.to_string(),
-                expected_version,
-            });
-        }
+    if let Some(expected_version) = expected_version
+        && expected_version != shipment.version
+    {
+        return Err(CommerceError::VersionConflict {
+            entity: "shipment".into(),
+            id: shipment.id.to_string(),
+            expected_version,
+        });
     }
     Ok(())
 }

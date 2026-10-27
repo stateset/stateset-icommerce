@@ -72,13 +72,13 @@ pub fn verify_settlement_receipt(
         });
     }
 
-    if let Some(settler) = settler_sig {
-        if !verify_ed25519(canonical.as_bytes(), &settler.sig, settler_pubkey_hex) {
-            return Err(Error::Icp {
-                code: "settlement.settler_signature_invalid".to_string(),
-                message: format!("settler signature verification failed (kid={})", settler.kid,),
-            });
-        }
+    if let Some(settler) = settler_sig
+        && !verify_ed25519(canonical.as_bytes(), &settler.sig, settler_pubkey_hex)
+    {
+        return Err(Error::Icp {
+            code: "settlement.settler_signature_invalid".to_string(),
+            message: format!("settler signature verification failed (kid={})", settler.kid,),
+        });
     }
 
     Ok(receipt.clone())

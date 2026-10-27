@@ -199,31 +199,31 @@ impl DiscoveryFilter {
         }
 
         // Network filter
-        if let Some(ref network) = self.network {
-            if !card.supports_network(network) {
-                return false;
-            }
+        if let Some(ref network) = self.network
+            && !card.supports_network(network)
+        {
+            return false;
         }
 
         // Asset filter
-        if let Some(ref asset) = self.asset {
-            if !card.supports_asset(asset) {
-                return false;
-            }
+        if let Some(ref asset) = self.asset
+            && !card.supports_asset(asset)
+        {
+            return false;
         }
 
         // Skill filter
-        if let Some(skill) = self.skill {
-            if !card.has_skill(skill) {
-                return false;
-            }
+        if let Some(skill) = self.skill
+            && !card.has_skill(skill)
+        {
+            return false;
         }
 
         // Trust tier filter
-        if let Some(min_tier) = self.min_trust_tier {
-            if !card.trust_tier.is_at_least(min_tier) {
-                return false;
-            }
+        if let Some(min_tier) = self.min_trust_tier
+            && !card.trust_tier.is_at_least(min_tier)
+        {
+            return false;
         }
 
         true

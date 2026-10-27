@@ -832,11 +832,11 @@ impl PaymentRepository for SqlitePaymentRepository {
         // SAME request; a different amount/order/currency/method under a
         // reused key is a `Conflict`, never silently answered with the first
         // payment (`Payment::check_idempotent_replay`).
-        if let Some(key) = input.idempotency_key.as_deref() {
-            if let Some(existing) = self.get_by_idempotency_key(key)? {
-                existing.check_idempotent_replay(&input)?;
-                return Ok(existing);
-            }
+        if let Some(key) = input.idempotency_key.as_deref()
+            && let Some(existing) = self.get_by_idempotency_key(key)?
+        {
+            existing.check_idempotent_replay(&input)?;
+            return Ok(existing);
         }
 
         let id = Uuid::new_v4();
@@ -917,11 +917,10 @@ impl PaymentRepository for SqlitePaymentRepository {
         // return the row the winner wrote.
         if let (Err(CommerceError::Conflict(_)), Some(key)) =
             (&inserted, input.idempotency_key.as_deref())
+            && let Some(existing) = self.get_by_idempotency_key(key)?
         {
-            if let Some(existing) = self.get_by_idempotency_key(key)? {
-                existing.check_idempotent_replay(&input)?;
-                return Ok(existing);
-            }
+            existing.check_idempotent_replay(&input)?;
+            return Ok(existing);
         }
         inserted?;
 
@@ -1004,16 +1003,17 @@ impl PaymentRepository for SqlitePaymentRepository {
             // (capacity, order status, currency). Today no legal edge does this
             // (every non-capturing status is terminal), so this is the guard
             // that keeps `update` honest if the state machine ever grows one.
-            if !is_capturing(current) && is_capturing(target) {
-                if let Some(order_id) = payment.order_id {
-                    check_order_capture_capacity_tx(
-                        tx,
-                        &order_id.to_string(),
-                        Some(&id.to_string()),
-                        payment.amount,
-                        payment.currency,
-                    )?;
-                }
+            if !is_capturing(current)
+                && is_capturing(target)
+                && let Some(order_id) = payment.order_id
+            {
+                check_order_capture_capacity_tx(
+                    tx,
+                    &order_id.to_string(),
+                    Some(&id.to_string()),
+                    payment.amount,
+                    payment.currency,
+                )?;
             }
 
             // A lost chargeback is recorded on the ledger after the status
@@ -1042,10 +1042,10 @@ impl PaymentRepository for SqlitePaymentRepository {
             if let Some(disputed) = &chargeback {
                 record_lost_chargeback_tx(tx, disputed, now)?;
             }
-            if current != target {
-                if let Some(order_id) = payment.order_id {
-                    sync_order_payment_status_tx(tx, &order_id.to_string(), now)?;
-                }
+            if current != target
+                && let Some(order_id) = payment.order_id
+            {
+                sync_order_payment_status_tx(tx, &order_id.to_string(), now)?;
             }
             Ok(())
         })?;
@@ -1177,11 +1177,11 @@ impl PaymentRepository for SqlitePaymentRepository {
     }
 
     fn create_refund(&self, input: CreateRefund) -> Result<Refund> {
-        if let Some(key) = input.idempotency_key.as_deref() {
-            if let Some(existing) = self.get_refund_by_idempotency_key(key)? {
-                crate::refund_replay::check_refund_replay(&existing, &input)?;
-                return Ok(existing);
-            }
+        if let Some(key) = input.idempotency_key.as_deref()
+            && let Some(existing) = self.get_refund_by_idempotency_key(key)?
+        {
+            crate::refund_replay::check_refund_replay(&existing, &input)?;
+            return Ok(existing);
         }
 
         let id = Uuid::new_v4();
@@ -1828,17 +1828,18 @@ impl PaymentRepository for SqlitePaymentRepository {
             ensure_not_refund_by_status_flip(current, target)?;
             // Same order guards as the single-row `update` when the write
             // re-acquires a slice of the order total.
-            if !is_capturing(current) && is_capturing(target) {
-                if let Some(order_id) = payment.order_id {
-                    check_order_capture_capacity_tx(
-                        &tx,
-                        &order_id.to_string(),
-                        Some(&id.to_string()),
-                        payment.amount,
-                        payment.currency,
-                    )
-                    .map_err(map_db_error)?;
-                }
+            if !is_capturing(current)
+                && is_capturing(target)
+                && let Some(order_id) = payment.order_id
+            {
+                check_order_capture_capacity_tx(
+                    &tx,
+                    &order_id.to_string(),
+                    Some(&id.to_string()),
+                    payment.amount,
+                    payment.currency,
+                )
+                .map_err(map_db_error)?;
             }
             let chargeback = current.is_lost_chargeback(target).then(|| payment.clone());
             let sql = format!(
@@ -1866,11 +1867,11 @@ impl PaymentRepository for SqlitePaymentRepository {
             if let Some(disputed) = &chargeback {
                 record_lost_chargeback_tx(&tx, disputed, now).map_err(map_db_error)?;
             }
-            if current != target {
-                if let Some(order_id) = payment.order_id {
-                    sync_order_payment_status_tx(&tx, &order_id.to_string(), now)
-                        .map_err(map_db_error)?;
-                }
+            if current != target
+                && let Some(order_id) = payment.order_id
+            {
+                sync_order_payment_status_tx(&tx, &order_id.to_string(), now)
+                    .map_err(map_db_error)?;
             }
 
             // Fetch the updated payment

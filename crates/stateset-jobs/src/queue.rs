@@ -99,14 +99,14 @@ impl JobQueue {
         for key in keys {
             let mut should_remove_bucket = false;
             let mut found = false;
-            if let Some(jobs) = self.jobs.get_mut(&key) {
-                if let Some(idx) = jobs.iter().position(|job| job.id == job_id) {
-                    let mut job = jobs.remove(idx);
-                    let _ = job.mark_cancelled();
-                    self.count = self.count.saturating_sub(1);
-                    should_remove_bucket = jobs.is_empty();
-                    found = true;
-                }
+            if let Some(jobs) = self.jobs.get_mut(&key)
+                && let Some(idx) = jobs.iter().position(|job| job.id == job_id)
+            {
+                let mut job = jobs.remove(idx);
+                let _ = job.mark_cancelled();
+                self.count = self.count.saturating_sub(1);
+                should_remove_bucket = jobs.is_empty();
+                found = true;
             }
             if should_remove_bucket {
                 self.jobs.remove(&key);

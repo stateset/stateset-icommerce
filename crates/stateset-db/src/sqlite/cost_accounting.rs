@@ -697,10 +697,8 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
 
         sql.push_str(" ORDER BY layer_date ASC");
 
-        if !has_remaining {
-            if let Some(limit) = filter.limit {
-                sql.push_str(&format!(" LIMIT {limit}"));
-            }
+        if !has_remaining && let Some(limit) = filter.limit {
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
         let param_refs: Vec<&dyn rusqlite::ToSql> =

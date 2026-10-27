@@ -232,10 +232,10 @@ impl AgentValidationRepository for PgAgentValidationRepository {
             builder.push_bind(&registry);
             builder.push(" AND agent_id = ").push_bind(&agent);
 
-            if let Some(validators) = validator_addresses {
-                if !validators.is_empty() {
-                    builder.push(" AND validator_address = ANY(").push_bind(validators).push(")");
-                }
+            if let Some(validators) = validator_addresses
+                && !validators.is_empty()
+            {
+                builder.push(" AND validator_address = ANY(").push_bind(validators).push(")");
             }
 
             if let Some(tag_val) = tag {

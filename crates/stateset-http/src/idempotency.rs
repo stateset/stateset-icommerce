@@ -236,7 +236,7 @@ impl IdempotencyLayer {
             // Cancelled waiters can leave weak entries behind. Sweep stale
             // entries periodically without scanning all active keys on every
             // request during a concurrency spike.
-            if registry.len() >= 1024 && registry.len() % 512 == 0 {
+            if registry.len() >= 1024 && registry.len().is_multiple_of(512) {
                 registry.retain(|_, lock| lock.strong_count() > 0);
             }
             if let Some(existing) = registry.get(key).and_then(Weak::upgrade) {
@@ -439,9 +439,9 @@ async fn durable_put(
     let Some(commerce) = layer.durable.clone() else {
         return Ok(());
     };
-    let sweep_cutoff =
-        ((layer.write_count.fetch_add(1, Ordering::Relaxed) + 1) % SWEEP_EVERY_N_WRITES == 0)
-            .then(|| layer.expiry_cutoff(Utc::now()));
+    let sweep_cutoff = (layer.write_count.fetch_add(1, Ordering::Relaxed) + 1)
+        .is_multiple_of(SWEEP_EVERY_N_WRITES)
+        .then(|| layer.expiry_cutoff(Utc::now()));
     tokio::task::spawn_blocking(move || {
         let db = commerce.database();
         let repo =
@@ -449,10 +449,10 @@ async fn durable_put(
         if !repo.complete(&record).map_err(|e| e.to_string())? {
             return Err("idempotency reservation was not completed".into());
         }
-        if let Some(cutoff) = sweep_cutoff {
-            if let Err(error) = repo.purge_expired(cutoff) {
-                tracing::warn!(%error, "idempotency expiry sweep failed");
-            }
+        if let Some(cutoff) = sweep_cutoff
+            && let Err(error) = repo.purge_expired(cutoff)
+        {
+            tracing::warn!(%error, "idempotency expiry sweep failed");
         }
         Ok(())
     })

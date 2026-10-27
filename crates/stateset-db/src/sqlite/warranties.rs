@@ -876,12 +876,12 @@ impl WarrantyRepository for SqliteWarrantyRepository {
                     }
                 }
                 ClaimStatus::Denied => {
-                    if let Some(res) = input.resolution {
-                        if res != ClaimResolution::Denied {
-                            return Err(Self::smuggle(CommerceError::ValidationError(
-                                "Denied claims must use denied resolution".to_string(),
-                            )));
-                        }
+                    if let Some(res) = input.resolution
+                        && res != ClaimResolution::Denied
+                    {
+                        return Err(Self::smuggle(CommerceError::ValidationError(
+                            "Denied claims must use denied resolution".to_string(),
+                        )));
                     }
                     resolution = ClaimResolution::Denied;
                     if denial_reason.as_deref().is_none_or(|value| value.trim().is_empty()) {

@@ -134,15 +134,15 @@ impl TrustTier {
             if average_score < reqs.min_avg_score {
                 continue;
             }
-            if let Some(max_disputes) = reqs.max_unresolved_disputes {
-                if unresolved_disputes > max_disputes {
-                    continue;
-                }
+            if let Some(max_disputes) = reqs.max_unresolved_disputes
+                && unresolved_disputes > max_disputes
+            {
+                continue;
             }
-            if let Some(max_rate) = reqs.max_dispute_rate {
-                if dispute_rate >= max_rate {
-                    continue;
-                }
+            if let Some(max_rate) = reqs.max_dispute_rate
+                && dispute_rate >= max_rate
+            {
+                continue;
             }
             return tier;
         }

@@ -131,10 +131,10 @@ impl PgAgentReputationRepository {
         if let Some(agent_id) = filter.agent_id {
             builder.push(" AND agent_id = ").push_bind(agent_id);
         }
-        if let Some(clients) = filter.client_addresses {
-            if !clients.is_empty() {
-                builder.push(" AND client_address = ANY(").push_bind(clients).push(")");
-            }
+        if let Some(clients) = filter.client_addresses
+            && !clients.is_empty()
+        {
+            builder.push(" AND client_address = ANY(").push_bind(clients).push(")");
         }
         if let Some(tag1) = filter.tag1 {
             builder.push(" AND tag1 = ").push_bind(tag1);
@@ -444,10 +444,10 @@ impl AgentReputationRepository for PgAgentReputationRepository {
             builder.push(" AND client_address = ").push_bind(&client);
             builder.push(" AND feedback_index = ").push_bind(feedback_index as i64);
 
-            if let Some(responders) = responders {
-                if !responders.is_empty() {
-                    builder.push(" AND responder_address = ANY(").push_bind(responders).push(")");
-                }
+            if let Some(responders) = responders
+                && !responders.is_empty()
+            {
+                builder.push(" AND responder_address = ANY(").push_bind(responders).push(")");
             }
 
             let count: (i64,) =

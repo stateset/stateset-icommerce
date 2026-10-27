@@ -139,15 +139,15 @@ impl Products {
                 });
             }
 
-            if let Some(previous) = previous {
-                if previous.status != updated.status {
-                    self.emit(CommerceEvent::ProductStatusChanged {
-                        product_id: updated.id,
-                        from_status: previous.status.to_string(),
-                        to_status: updated.status.to_string(),
-                        timestamp: updated.updated_at,
-                    });
-                }
+            if let Some(previous) = previous
+                && previous.status != updated.status
+            {
+                self.emit(CommerceEvent::ProductStatusChanged {
+                    product_id: updated.id,
+                    from_status: previous.status.to_string(),
+                    to_status: updated.status.to_string(),
+                    timestamp: updated.updated_at,
+                });
             }
         }
 

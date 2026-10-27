@@ -37,12 +37,11 @@ fn to_snake_case(s: &str) -> String {
 fn extract_option_inner(ty: &Type) -> Option<&Type> {
     if let Type::Path(type_path) = ty {
         let segment = type_path.path.segments.last()?;
-        if segment.ident == "Option" {
-            if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                if let Some(GenericArgument::Type(inner)) = args.args.first() {
-                    return Some(inner);
-                }
-            }
+        if segment.ident == "Option"
+            && let PathArguments::AngleBracketed(args) = &segment.arguments
+            && let Some(GenericArgument::Type(inner)) = args.args.first()
+        {
+            return Some(inner);
         }
     }
     None
@@ -52,12 +51,11 @@ fn extract_option_inner(ty: &Type) -> Option<&Type> {
 fn extract_vec_inner(ty: &Type) -> Option<&Type> {
     if let Type::Path(type_path) = ty {
         let segment = type_path.path.segments.last()?;
-        if segment.ident == "Vec" {
-            if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                if let Some(GenericArgument::Type(inner)) = args.args.first() {
-                    return Some(inner);
-                }
-            }
+        if segment.ident == "Vec"
+            && let PathArguments::AngleBracketed(args) = &segment.arguments
+            && let Some(GenericArgument::Type(inner)) = args.args.first()
+        {
+            return Some(inner);
         }
     }
     None
@@ -203,10 +201,10 @@ fn rename_field(name: &str, rule: Option<&str>) -> String {
                     result.push(ch);
                 }
             }
-            if rule == Some("camelCase") {
-                if let Some(first) = result.get_mut(..1) {
-                    first.make_ascii_lowercase();
-                }
+            if rule == Some("camelCase")
+                && let Some(first) = result.get_mut(..1)
+            {
+                first.make_ascii_lowercase();
             }
             result
         }

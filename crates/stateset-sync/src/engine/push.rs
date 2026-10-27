@@ -223,13 +223,13 @@ impl SyncEngine {
             }
         }
 
-        if let Some(acknowledged_head) = result.acknowledged_head() {
-            if acknowledged_head > result.remote_head {
-                return Err(SyncError::Transport(format!(
-                    "push acknowledgement head exceeded remote head (ack_head={}, remote_head={})",
-                    acknowledged_head, result.remote_head
-                )));
-            }
+        if let Some(acknowledged_head) = result.acknowledged_head()
+            && acknowledged_head > result.remote_head
+        {
+            return Err(SyncError::Transport(format!(
+                "push acknowledgement head exceeded remote head (ack_head={}, remote_head={})",
+                acknowledged_head, result.remote_head
+            )));
         }
 
         Ok(())

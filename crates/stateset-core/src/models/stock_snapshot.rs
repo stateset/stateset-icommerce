@@ -81,7 +81,7 @@ pub struct CaptureStockSnapshot {
 impl CaptureStockSnapshot {
     /// Number of distinct SKUs in the capture.
     #[must_use]
-    pub fn total_skus(&self) -> u64 {
+    pub const fn total_skus(&self) -> u64 {
         self.lines.len() as u64
     }
 

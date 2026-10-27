@@ -248,12 +248,12 @@ impl SqlitePromotionRepository {
             params.push(Box::new(trigger.to_string()));
         }
 
-        if let Some(is_active) = filter.is_active {
-            if is_active {
-                // Use SQLite datetime() to normalize stored values. We store RFC3339 in most write paths,
-                // while some rows may use SQLite's default `datetime('now')` format.
-                sql.push_str(" AND status = 'active' AND datetime(starts_at) <= datetime('now') AND (ends_at IS NULL OR datetime(ends_at) >= datetime('now'))");
-            }
+        if let Some(is_active) = filter.is_active
+            && is_active
+        {
+            // Use SQLite datetime() to normalize stored values. We store RFC3339 in most write paths,
+            // while some rows may use SQLite's default `datetime('now')` format.
+            sql.push_str(" AND status = 'active' AND datetime(starts_at) <= datetime('now') AND (ends_at IS NULL OR datetime(ends_at) >= datetime('now'))");
         }
 
         if let Some(search) = &filter.search {
@@ -770,16 +770,14 @@ impl SqlitePromotionRepository {
             }
             if let (Some(limit), Some(customer_id)) =
                 (coupon.per_customer_limit, request.customer_id)
-            {
-                if Self::coupon_customer_usage_count_with_conn(conn, coupon.id, customer_id)?
+                && Self::coupon_customer_usage_count_with_conn(conn, coupon.id, customer_id)?
                     >= i64::from(limit)
-                {
-                    reject(
-                        "Per-customer coupon usage limit reached",
-                        RejectionReason::UsageLimitReached,
-                    );
-                    continue;
-                }
+            {
+                reject(
+                    "Per-customer coupon usage limit reached",
+                    RejectionReason::UsageLimitReached,
+                );
+                continue;
             }
             let promos = Self::load_promotions_with_conn(
                 conn,
@@ -1295,23 +1293,21 @@ impl SqlitePromotionRepository {
         validate_coupon_redemption(&coupon, &promotion, &request, now)?;
 
         if let Some(customer_id) = cart.customer_id {
-            if let Some(limit) = coupon.per_customer_limit {
-                if Self::coupon_customer_usage_count_with_conn(conn, coupon.id, customer_id)?
+            if let Some(limit) = coupon.per_customer_limit
+                && Self::coupon_customer_usage_count_with_conn(conn, coupon.id, customer_id)?
                     >= i64::from(limit)
-                {
-                    return Err(CommerceError::ValidationError(
-                        "Per-customer coupon usage limit reached".into(),
-                    ));
-                }
+            {
+                return Err(CommerceError::ValidationError(
+                    "Per-customer coupon usage limit reached".into(),
+                ));
             }
-            if let Some(limit) = promotion.per_customer_limit {
-                if Self::customer_usage_count_with_conn(conn, promotion.id, customer_id)?
+            if let Some(limit) = promotion.per_customer_limit
+                && Self::customer_usage_count_with_conn(conn, promotion.id, customer_id)?
                     >= i64::from(limit)
-                {
-                    return Err(CommerceError::ValidationError(
-                        "Per-customer usage limit reached".into(),
-                    ));
-                }
+            {
+                return Err(CommerceError::ValidationError(
+                    "Per-customer usage limit reached".into(),
+                ));
             }
         }
 

@@ -215,13 +215,13 @@ pub(crate) async fn apply_bin_delta_pg(
             available: (on_hand - allocated).to_string(),
         });
     }
-    if let Some(capacity) = bin.capacity {
-        if new_on_hand > capacity {
-            return Err(CommerceError::ValidationError(format!(
-                "Bin {} capacity {} exceeded: {} on hand after adjustment",
-                bin.code, capacity, new_on_hand
-            )));
-        }
+    if let Some(capacity) = bin.capacity
+        && new_on_hand > capacity
+    {
+        return Err(CommerceError::ValidationError(format!(
+            "Bin {} capacity {} exceeded: {} on hand after adjustment",
+            bin.code, capacity, new_on_hand
+        )));
     }
     sqlx::query(
         "INSERT INTO inventory_bin_levels (bin_id, sku, quantity_on_hand, quantity_allocated, updated_at)
@@ -496,10 +496,10 @@ impl PgBinRepository {
         id: i32,
         input: UpdateWarehouseBin,
     ) -> Result<WarehouseBin> {
-        if let Some(Some(c)) = input.capacity {
-            if c <= Decimal::ZERO {
-                return Err(CommerceError::ValidationError("Bin capacity must be positive".into()));
-            }
+        if let Some(Some(c)) = input.capacity
+            && c <= Decimal::ZERO
+        {
+            return Err(CommerceError::ValidationError("Bin capacity must be positive".into()));
         }
         let mut builder = QueryBuilder::<Postgres>::new("UPDATE warehouse_bins SET updated_at = ");
         builder.push_bind(Utc::now());

@@ -1018,19 +1018,19 @@ impl PgInventoryRepository {
             return Ok(());
         }
 
-        if let Some(expires_at) = res.expires_at {
-            if expires_at < now {
-                Self::expire_reservation_in_tx(
-                    tx,
-                    reservation_id,
-                    res.item_id,
-                    res.location_id,
-                    res.quantity,
-                    now,
-                )
-                .await?;
-                return Ok(());
-            }
+        if let Some(expires_at) = res.expires_at
+            && expires_at < now
+        {
+            Self::expire_reservation_in_tx(
+                tx,
+                reservation_id,
+                res.item_id,
+                res.location_id,
+                res.quantity,
+                now,
+            )
+            .await?;
+            return Ok(());
         }
 
         let new_version = Self::release_allocated_units_in_tx(
@@ -1102,19 +1102,19 @@ impl PgInventoryRepository {
             return Ok(ReservationConfirmOutcome::Confirmed);
         }
 
-        if let Some(expires_at) = res.expires_at {
-            if expires_at < now {
-                Self::expire_reservation_in_tx(
-                    tx,
-                    reservation_id,
-                    res.item_id,
-                    res.location_id,
-                    res.quantity,
-                    now,
-                )
-                .await?;
-                return Ok(ReservationConfirmOutcome::Expired);
-            }
+        if let Some(expires_at) = res.expires_at
+            && expires_at < now
+        {
+            Self::expire_reservation_in_tx(
+                tx,
+                reservation_id,
+                res.item_id,
+                res.location_id,
+                res.quantity,
+                now,
+            )
+            .await?;
+            return Ok(ReservationConfirmOutcome::Expired);
         }
 
         sqlx::query("UPDATE inventory_reservations SET status = 'confirmed' WHERE id = $1")
@@ -1250,19 +1250,19 @@ impl PgInventoryRepository {
         if !status.holds_stock() || status == ReservationStatus::Confirmed {
             return Ok(ReservationConfirmOutcome::Confirmed);
         }
-        if let Some(expires_at) = res.expires_at {
-            if expires_at < now {
-                Self::expire_reservation_in_tx(
-                    tx,
-                    reservation_id,
-                    res.item_id,
-                    res.location_id,
-                    res.quantity,
-                    now,
-                )
-                .await?;
-                return Ok(ReservationConfirmOutcome::Expired);
-            }
+        if let Some(expires_at) = res.expires_at
+            && expires_at < now
+        {
+            Self::expire_reservation_in_tx(
+                tx,
+                reservation_id,
+                res.item_id,
+                res.location_id,
+                res.quantity,
+                now,
+            )
+            .await?;
+            return Ok(ReservationConfirmOutcome::Expired);
         }
         if quantity <= Decimal::ZERO {
             return Ok(ReservationConfirmOutcome::Confirmed);
@@ -1348,19 +1348,19 @@ impl PgInventoryRepository {
             return Ok(false);
         }
 
-        if let Some(expires_at) = res.expires_at {
-            if expires_at < now {
-                Self::expire_reservation_in_tx(
-                    tx,
-                    reservation_id,
-                    res.item_id,
-                    res.location_id,
-                    res.quantity,
-                    now,
-                )
-                .await?;
-                return Ok(true);
-            }
+        if let Some(expires_at) = res.expires_at
+            && expires_at < now
+        {
+            Self::expire_reservation_in_tx(
+                tx,
+                reservation_id,
+                res.item_id,
+                res.location_id,
+                res.quantity,
+                now,
+            )
+            .await?;
+            return Ok(true);
         }
 
         Ok(false)

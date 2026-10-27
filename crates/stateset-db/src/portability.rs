@@ -626,13 +626,13 @@ fn import_product(
     // Carrying the exported status across is the difference between restoring
     // a catalogue and silently unpublishing it.
     let status: Option<stateset_core::ProductStatus> = field_as(record, "status")?;
-    if let Some(status) = status {
-        if status != created.status {
-            db.products().update(
-                created.id,
-                stateset_core::UpdateProduct { status: Some(status), ..Default::default() },
-            )?;
-        }
+    if let Some(status) = status
+        && status != created.status
+    {
+        db.products().update(
+            created.id,
+            stateset_core::UpdateProduct { status: Some(status), ..Default::default() },
+        )?;
     }
     remap.record("products", &old_id, created.id.to_string());
     Ok(Outcome::Created)
@@ -734,16 +734,16 @@ fn import_supplier(
 ) -> Result<Outcome> {
     let old_id = str_field(record, "id")?;
     let code = opt_str(record, "supplier_code");
-    if let Some(code) = code.as_deref() {
-        if let Some(existing) = db.purchase_orders().get_supplier_by_code(code)? {
-            if policy == ConflictPolicy::Fail {
-                return Err(CommerceError::ValidationError(format!(
-                    "supplier with code '{code}' already exists"
-                )));
-            }
-            remap.record("suppliers", &old_id, existing.id.to_string());
-            return Ok(Outcome::Skipped);
+    if let Some(code) = code.as_deref()
+        && let Some(existing) = db.purchase_orders().get_supplier_by_code(code)?
+    {
+        if policy == ConflictPolicy::Fail {
+            return Err(CommerceError::ValidationError(format!(
+                "supplier with code '{code}' already exists"
+            )));
         }
+        remap.record("suppliers", &old_id, existing.id.to_string());
+        return Ok(Outcome::Skipped);
     }
     let input = stateset_core::CreateSupplier {
         name: str_field(record, "name")?,

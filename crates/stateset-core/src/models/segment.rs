@@ -142,7 +142,7 @@ impl Segment {
 
     /// Whether this segment has any rules defined
     #[must_use]
-    pub fn has_rules(&self) -> bool {
+    pub const fn has_rules(&self) -> bool {
         !self.rules.is_empty()
     }
 }

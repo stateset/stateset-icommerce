@@ -670,20 +670,20 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         let mut matched: Vec<Invoice> = Vec::new();
         for row in rows {
             let invoice = row.map_err(map_db_error)?;
-            if let Some(min_total) = filter.min_total {
-                if invoice.total < min_total {
-                    continue;
-                }
+            if let Some(min_total) = filter.min_total
+                && invoice.total < min_total
+            {
+                continue;
             }
-            if let Some(max_total) = filter.max_total {
-                if invoice.total > max_total {
-                    continue;
-                }
+            if let Some(max_total) = filter.max_total
+                && invoice.total > max_total
+            {
+                continue;
             }
-            if let Some(min_balance) = filter.min_balance {
-                if invoice.balance_due < min_balance {
-                    continue;
-                }
+            if let Some(min_balance) = filter.min_balance
+                && invoice.balance_due < min_balance
+            {
+                continue;
             }
             matched.push(invoice);
         }

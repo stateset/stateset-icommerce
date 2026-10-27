@@ -84,10 +84,9 @@ impl Client {
         let v = parse_value(&text)?;
         if let Some(hex) =
             v.get("merchant_pubkey").and_then(|p| p.get("raw_hex")).and_then(Value::as_str)
+            && let Ok(mut cache) = self.merchant_pubkey_cache.write()
         {
-            if let Ok(mut cache) = self.merchant_pubkey_cache.write() {
-                *cache = Some(hex.to_string());
-            }
+            *cache = Some(hex.to_string());
         }
         Ok(v)
     }
@@ -517,14 +516,12 @@ fn map_ureq(err: ureq::Error) -> Error {
     match err {
         ureq::Error::Status(_, resp) => {
             let body = resp.into_string().unwrap_or_default();
-            if let Ok(v) = serde_json::from_str::<Value>(&body) {
-                if v.get("type").and_then(Value::as_str) == Some("icp.error") {
-                    let code =
-                        v.get("code").and_then(Value::as_str).unwrap_or("unknown").to_string();
-                    let message =
-                        v.get("message").and_then(Value::as_str).unwrap_or("").to_string();
-                    return Error::Icp { code, message };
-                }
+            if let Ok(v) = serde_json::from_str::<Value>(&body)
+                && v.get("type").and_then(Value::as_str) == Some("icp.error")
+            {
+                let code = v.get("code").and_then(Value::as_str).unwrap_or("unknown").to_string();
+                let message = v.get("message").and_then(Value::as_str).unwrap_or("").to_string();
+                return Error::Icp { code, message };
             }
             Error::Network(format!("http error: {body}"))
         }

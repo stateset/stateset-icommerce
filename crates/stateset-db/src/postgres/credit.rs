@@ -1276,37 +1276,37 @@ impl PgCreditRepository {
 
         // If approved, create or re-limit the credit account in the same
         // transaction as the decision.
-        if input.status == CreditApplicationStatus::Approved {
-            if let Some(limit) = input.approved_limit {
-                let existing: Option<Uuid> =
-                    sqlx::query_scalar("SELECT id FROM credit_accounts WHERE customer_id = $1")
-                        .bind(customer_id)
-                        .fetch_optional(tx.as_mut())
-                        .await
-                        .map_err(map_db_error)?;
+        if input.status == CreditApplicationStatus::Approved
+            && let Some(limit) = input.approved_limit
+        {
+            let existing: Option<Uuid> =
+                sqlx::query_scalar("SELECT id FROM credit_accounts WHERE customer_id = $1")
+                    .bind(customer_id)
+                    .fetch_optional(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
 
-                if existing.is_some() {
-                    Self::adjust_credit_limit_tx(
-                        &mut tx,
-                        customer_id,
-                        limit,
-                        "Credit application approved",
-                        now,
-                    )
-                    .await?;
-                } else {
-                    Self::create_credit_account_tx(
-                        &mut tx,
-                        Uuid::new_v4(),
-                        &CreateCreditAccount {
-                            customer_id: customer_id.into(),
-                            credit_limit: limit,
-                            ..Default::default()
-                        },
-                        now,
-                    )
-                    .await?;
-                }
+            if existing.is_some() {
+                Self::adjust_credit_limit_tx(
+                    &mut tx,
+                    customer_id,
+                    limit,
+                    "Credit application approved",
+                    now,
+                )
+                .await?;
+            } else {
+                Self::create_credit_account_tx(
+                    &mut tx,
+                    Uuid::new_v4(),
+                    &CreateCreditAccount {
+                        customer_id: customer_id.into(),
+                        credit_limit: limit,
+                        ..Default::default()
+                    },
+                    now,
+                )
+                .await?;
             }
         }
 

@@ -680,10 +680,10 @@ impl CreditRepository for SqliteCreditRepository {
         // NB: when filtering `over_limit`, the SQL `LIMIT` is intentionally
         // omitted here and re-applied in Rust *after* the exact comparison, so
         // the row cap counts only matching accounts.
-        if filter.over_limit != Some(true) {
-            if let Some(limit) = filter.limit {
-                sql.push_str(&format!(" LIMIT {limit}"));
-            }
+        if filter.over_limit != Some(true)
+            && let Some(limit) = filter.limit
+        {
+            sql.push_str(&format!(" LIMIT {limit}"));
         }
 
         let param_refs: Vec<&dyn rusqlite::ToSql> =
@@ -1348,40 +1348,40 @@ impl CreditRepository for SqliteCreditRepository {
 
             // If approved, create or re-limit the credit account in the same
             // transaction as the decision.
-            if input.status == CreditApplicationStatus::Approved {
-                if let Some(limit) = input.approved_limit {
-                    let exists: Option<String> = tx
-                        .query_row(
-                            "SELECT id FROM credit_accounts WHERE customer_id = ?",
-                            [customer_id.to_string()],
-                            |row| row.get(0),
-                        )
-                        .map(Some)
-                        .or_else(|e| match e {
-                            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-                            other => Err(other),
-                        })?;
+            if input.status == CreditApplicationStatus::Approved
+                && let Some(limit) = input.approved_limit
+            {
+                let exists: Option<String> = tx
+                    .query_row(
+                        "SELECT id FROM credit_accounts WHERE customer_id = ?",
+                        [customer_id.to_string()],
+                        |row| row.get(0),
+                    )
+                    .map(Some)
+                    .or_else(|e| match e {
+                        rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                        other => Err(other),
+                    })?;
 
-                    if exists.is_some() {
-                        Self::adjust_credit_limit_with_conn(
-                            tx,
+                if exists.is_some() {
+                    Self::adjust_credit_limit_with_conn(
+                        tx,
+                        customer_id,
+                        limit,
+                        "Credit application approved",
+                        &now,
+                    )?;
+                } else {
+                    Self::create_credit_account_with_conn(
+                        tx,
+                        CreditId::new(),
+                        &CreateCreditAccount {
                             customer_id,
-                            limit,
-                            "Credit application approved",
-                            &now,
-                        )?;
-                    } else {
-                        Self::create_credit_account_with_conn(
-                            tx,
-                            CreditId::new(),
-                            &CreateCreditAccount {
-                                customer_id,
-                                credit_limit: limit,
-                                ..Default::default()
-                            },
-                            &now,
-                        )?;
-                    }
+                            credit_limit: limit,
+                            ..Default::default()
+                        },
+                        &now,
+                    )?;
                 }
             }
 

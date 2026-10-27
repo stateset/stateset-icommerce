@@ -529,10 +529,10 @@ impl NotificationService {
     /// Resolve the recipient email for an event.
     fn resolve_recipient(&self, event: &CommerceEvent) -> Option<String> {
         // First try the custom resolver
-        if let Some(ref resolver) = self.recipient_resolver {
-            if let Some(email) = resolver(event) {
-                return Some(email);
-            }
+        if let Some(ref resolver) = self.recipient_resolver
+            && let Some(email) = resolver(event)
+        {
+            return Some(email);
         }
 
         // Fall back to extracting email directly from event data

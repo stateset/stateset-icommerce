@@ -389,15 +389,15 @@ impl SqliteAccountsPayableRepository {
         let mut matched = Vec::new();
         while let Some(row) = rows.next().map_err(map_db_error)? {
             let bill = Self::row_to_bill(row).map_err(map_db_error)?;
-            if let Some(min) = filter.min_amount {
-                if bill.total_amount < min {
-                    continue;
-                }
+            if let Some(min) = filter.min_amount
+                && bill.total_amount < min
+            {
+                continue;
             }
-            if let Some(max) = filter.max_amount {
-                if bill.total_amount > max {
-                    continue;
-                }
+            if let Some(max) = filter.max_amount
+                && bill.total_amount > max
+            {
+                continue;
             }
             matched.push(bill);
         }

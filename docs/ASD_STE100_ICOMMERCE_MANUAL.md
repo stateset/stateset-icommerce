@@ -136,7 +136,7 @@ Identity and policy never come from model arguments.
 
 ### 5.1 System requirements
 
-- A computer with Rust 1.85 or a newer version (for Rust use).
+- A computer with Rust 1.88 or a newer version (for Rust use).
 - Node.js with npm (for CLI, MCP server, or storefront use).
 - Python with pip (for Python use).
 - Disk space for the store database file.

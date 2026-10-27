@@ -58,7 +58,7 @@ impl BillOfMaterials {
 
     /// Calculate total component count
     #[must_use]
-    pub fn total_component_count(&self) -> usize {
+    pub const fn total_component_count(&self) -> usize {
         self.components.len()
     }
 
@@ -246,10 +246,10 @@ impl WorkOrder {
     /// Check if work order is overdue
     #[must_use]
     pub fn is_overdue(&self) -> bool {
-        if let Some(scheduled_end) = self.scheduled_end {
-            if !matches!(self.status, WorkOrderStatus::Completed | WorkOrderStatus::Cancelled) {
-                return Utc::now() > scheduled_end;
-            }
+        if let Some(scheduled_end) = self.scheduled_end
+            && !matches!(self.status, WorkOrderStatus::Completed | WorkOrderStatus::Cancelled)
+        {
+            return Utc::now() > scheduled_end;
         }
         false
     }

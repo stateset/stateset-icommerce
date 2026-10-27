@@ -52,17 +52,16 @@ pub fn check_compliance(
 
     // Response time check
     if let (Some(required), Some(actual_val)) = (sla.response_time_ms, actual.avg_response_time_ms)
+        && actual_val > required
     {
-        if actual_val > required {
-            let severity = determine_severity(SlaMetricType::ResponseTimeMs, actual_val, required);
-            violations.push(SlaViolation {
-                metric: SlaMetricType::ResponseTimeMs,
-                actual: actual_val,
-                required,
-                severity,
-                penalty_amount: compute_penalty_amount(avg_transaction_value, sla.penalty_percent),
-            });
-        }
+        let severity = determine_severity(SlaMetricType::ResponseTimeMs, actual_val, required);
+        violations.push(SlaViolation {
+            metric: SlaMetricType::ResponseTimeMs,
+            actual: actual_val,
+            required,
+            severity,
+            penalty_amount: compute_penalty_amount(avg_transaction_value, sla.penalty_percent),
+        });
     }
 
     // Uptime check (convert success_rate 0-1 to percentage 0-100)
@@ -82,31 +81,31 @@ pub fn check_compliance(
     }
 
     // Quality check
-    if let (Some(required), Some(actual_val)) = (sla.quality_min_score, actual.avg_quality_score) {
-        if actual_val < required {
-            let severity = determine_severity(SlaMetricType::QualityMinScore, actual_val, required);
-            violations.push(SlaViolation {
-                metric: SlaMetricType::QualityMinScore,
-                actual: actual_val,
-                required,
-                severity,
-                penalty_amount: compute_penalty_amount(avg_transaction_value, sla.penalty_percent),
-            });
-        }
+    if let (Some(required), Some(actual_val)) = (sla.quality_min_score, actual.avg_quality_score)
+        && actual_val < required
+    {
+        let severity = determine_severity(SlaMetricType::QualityMinScore, actual_val, required);
+        violations.push(SlaViolation {
+            metric: SlaMetricType::QualityMinScore,
+            actual: actual_val,
+            required,
+            severity,
+            penalty_amount: compute_penalty_amount(avg_transaction_value, sla.penalty_percent),
+        });
     }
 
     // Throughput check
-    if let (Some(required), Some(actual_val)) = (sla.throughput_rps, actual.throughput_rps) {
-        if actual_val < required {
-            let severity = determine_severity(SlaMetricType::ThroughputRps, actual_val, required);
-            violations.push(SlaViolation {
-                metric: SlaMetricType::ThroughputRps,
-                actual: actual_val,
-                required,
-                severity,
-                penalty_amount: compute_penalty_amount(avg_transaction_value, sla.penalty_percent),
-            });
-        }
+    if let (Some(required), Some(actual_val)) = (sla.throughput_rps, actual.throughput_rps)
+        && actual_val < required
+    {
+        let severity = determine_severity(SlaMetricType::ThroughputRps, actual_val, required);
+        violations.push(SlaViolation {
+            metric: SlaMetricType::ThroughputRps,
+            actual: actual_val,
+            required,
+            severity,
+            penalty_amount: compute_penalty_amount(avg_transaction_value, sla.penalty_percent),
+        });
     }
 
     let total_penalty = violations.iter().map(|v| v.penalty_amount).sum();

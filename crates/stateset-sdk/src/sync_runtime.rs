@@ -400,7 +400,7 @@ impl SyncRuntime {
 
     /// Return the number of retained push confirmations available for inspection.
     #[must_use]
-    pub fn confirmation_count(&self) -> usize {
+    pub const fn confirmation_count(&self) -> usize {
         self.engine.confirmation_count()
     }
 
@@ -524,7 +524,7 @@ impl SyncRuntime {
 
     /// Return the number of dead-lettered events retained by the runtime.
     #[must_use]
-    pub fn dead_letter_count(&self) -> usize {
+    pub const fn dead_letter_count(&self) -> usize {
         self.engine.dead_letter_count()
     }
 

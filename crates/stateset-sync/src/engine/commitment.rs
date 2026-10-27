@@ -230,11 +230,11 @@ impl SyncEngine {
     ) -> Result<CommandAttestation, AttestationError> {
         let receipts = self.kernel_receipts_for_command(&proof.command_id);
         let mut attestation = verify_command_inclusion_proof(&proof, &receipts, &self.state)?;
-        if let Some(commitment_id) = proof.commitment_id.as_deref() {
-            if let Some(manifest) = self.verified_commitment_manifest(commitment_id) {
-                attestation.manifest_signer_id = Some(manifest.signer_id.clone());
-                attestation.manifest_verified_at = Some(manifest.verified_at);
-            }
+        if let Some(commitment_id) = proof.commitment_id.as_deref()
+            && let Some(manifest) = self.verified_commitment_manifest(commitment_id)
+        {
+            attestation.manifest_signer_id = Some(manifest.signer_id.clone());
+            attestation.manifest_verified_at = Some(manifest.verified_at);
         }
 
         let previous = self.attestations.clone();

@@ -716,10 +716,10 @@ impl PgProductRepository {
 
         builder.push(" ORDER BY name ASC, id ASC");
         builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
-        if filter.after_cursor.is_none() {
-            if let Some(offset) = filter.offset {
-                builder.push(" OFFSET ").push_bind(i64::from(offset));
-            }
+        if filter.after_cursor.is_none()
+            && let Some(offset) = filter.offset
+        {
+            builder.push(" OFFSET ").push_bind(i64::from(offset));
         }
 
         let rows = builder

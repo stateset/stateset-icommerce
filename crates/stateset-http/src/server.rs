@@ -293,10 +293,10 @@ impl ServerBuilder {
             if !seen_tokens.insert(binding.token.clone()) {
                 return Some("duplicate API bearer tokens are not allowed".to_string());
             }
-            if let Some(bound_actor_id) = binding.bound_actor_id.as_deref() {
-                if !middleware::is_valid_actor_id(bound_actor_id) {
-                    return Some("bound actor ID is invalid".to_string());
-                }
+            if let Some(bound_actor_id) = binding.bound_actor_id.as_deref()
+                && !middleware::is_valid_actor_id(bound_actor_id)
+            {
+                return Some("bound actor ID is invalid".to_string());
             }
         }
         if self.authz_config.is_some()
