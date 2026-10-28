@@ -306,7 +306,7 @@ Security: [SECURITY.md](SECURITY.md)
   payments, security, policy, adapters, operations, and the API reference.
   Build it locally with `mdbook serve docs`.
 - **[Tool catalog](cli/docs/TOOLS.md)** — generated, authoritative list of the
-  MCP/CLI tool surface (987 domain tools across 89 domains today).
+  MCP/CLI tool surface (988 domain tools across 89 domains today).
 - **[API reference per binding](docs/src/api/)** — Rust, Node, Python, Go,
   Java, Kotlin, Swift, .NET, Ruby, PHP, WASM.
 - **[Examples](examples/README.md)** — runnable end-to-end programs.

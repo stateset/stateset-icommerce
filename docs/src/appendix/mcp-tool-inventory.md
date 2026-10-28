@@ -13,11 +13,11 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Metric | Value |
 | --- | --- |
-| Total tools | 1020 |
+| Total tools | 1021 |
 | MCP servers | 3 |
 | Policy domains | 91 |
 | Read tools | 496 |
-| Write tools | 402 |
+| Write tools | 403 |
 | Delete tools | 20 |
 | Admin tools | 102 |
 | Unknown permission | 0 |
@@ -26,7 +26,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | MCP server | Tools | Source |
 | --- | --- | --- |
-| stateset-commerce | 1002 | `cli/src/mcp-server.js` |
+| stateset-commerce | 1003 | `cli/src/mcp-server.js` |
 | stateset-scaffold | 13 | `cli/src/scaffold-server.js` |
 | stateset-x402 | 5 | `cli/src/x402-mcp-server.js` |
 
@@ -80,7 +80,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | lots | 11 |
 | loyalty | 8 |
 | maintenance | 5 |
-| manufacturing | 11 |
+| manufacturing | 12 |
 | orders | 6 |
 | payment-obligations | 7 |
 | payments | 19 |
@@ -133,7 +133,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | admin | 102 |
 | delete | 20 |
 | read | 496 |
-| write | 402 |
+| write | 403 |
 
 ## Tool Registry
 
@@ -467,6 +467,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `compliance_summary` | `stateset-commerce` | `compliance` | `read` |
 | `configure_stripe_webhooks` | `stateset-commerce` | `import` | `write` |
 | `configure_woocommerce_webhooks` | `stateset-commerce` | `import` | `write` |
+| `configure_work_order_stock` | `stateset-commerce` | `manufacturing` | `write` |
 | `confirm_backorder_allocation` | `stateset-commerce` | `backorders` | `write` |
 | `confirm_reservation` | `stateset-commerce` | `inventory` | `write` |
 | `convert_currency` | `stateset-commerce` | `currency` | `read` |

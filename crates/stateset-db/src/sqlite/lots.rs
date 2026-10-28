@@ -52,7 +52,6 @@ fn ensure_consumable(lot: &Lot, now: chrono::DateTime<Utc>, operation: &str) -> 
     Ok(())
 }
 
-
 impl SqliteLotRepository {
     /// Hop budget for [`Self::ancestor_lots_on`]: deep enough for any real
     /// split/merge history, small enough that a corrupt table cannot turn a

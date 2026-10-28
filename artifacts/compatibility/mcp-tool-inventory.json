@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 1020,
+  "totalTools": 1021,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 1002
+      "count": 1003
     },
     {
       "name": "stateset-scaffold",
@@ -207,7 +207,7 @@
     },
     {
       "name": "manufacturing",
-      "count": 11
+      "count": 12
     },
     {
       "name": "orders",
@@ -401,14 +401,14 @@
     },
     {
       "name": "write",
-      "count": 402
+      "count": 403
     }
   ],
   "permissionCounts": {
     "admin": 102,
     "delete": 20,
     "read": 496,
-    "write": 402
+    "write": 403
   },
   "tools": [
     {
@@ -3361,6 +3361,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__configure_woocommerce_webhooks",
       "policyDomain": "import",
+      "permission": "write"
+    },
+    {
+      "name": "configure_work_order_stock",
+      "description": "Set the component source and finished-goods destination of a planned work order, such as one created before stock routing was required.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__configure_work_order_stock",
+      "policyDomain": "manufacturing",
       "permission": "write"
     },
     {

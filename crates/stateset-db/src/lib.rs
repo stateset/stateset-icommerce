@@ -46,9 +46,9 @@ mod asset_accounting;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod bom_cost;
 mod bom_integrity;
-mod credit_exposure;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod cart_rules;
+mod credit_exposure;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod customer_facts;
 pub mod error_helpers;

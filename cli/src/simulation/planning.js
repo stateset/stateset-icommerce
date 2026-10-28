@@ -49,7 +49,7 @@ export async function executeInventoryPlan(input, database) {
     });
     const location = await commerce.warehouse.createLocation({
       warehouseId: warehouse.id,
-      code: 'RECEIVING',
+      locationType: 'receiving',
       isReceivable: true,
     });
     const supplier = await commerce.purchaseOrders.createSupplier({
@@ -69,6 +69,13 @@ export async function executeInventoryPlan(input, database) {
       });
       await commerce.products.activate(product.id);
       const variant = await commerce.products.getVariantBySku(item.sku);
+      // Cost the opening stock at the plan's unit cost: the engine refuses to
+      // issue on-hand units that no cost layer covers.
+      await commerce.costAccounting.setItemCost({
+        sku: item.sku,
+        costMethod: 'average',
+        standardCost: item.unitCost,
+      });
       await commerce.inventory.createItem({
         sku: item.sku,
         name: 'Planning stock',

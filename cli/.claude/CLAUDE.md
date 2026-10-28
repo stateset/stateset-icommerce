@@ -5,7 +5,7 @@ An AI-powered command-line interface for commerce operations using the Claude Ag
 ## Overview
 
 This CLI provides natural language access to commerce operations across
-**89 tool domains (987 domain MCP tools, plus 15 runtime tools)** — the count moves with the registry, so
+**89 tool domains (988 domain MCP tools, plus 15 runtime tools)** — the count moves with the registry, so
 [docs/TOOLS.md](../docs/TOOLS.md) is the authority; it is generated from
 `src/tools/domain-registry.js` by `npm run docs:tools`. Major areas:
 - **Core commerce** - Customers, orders, products, inventory, returns, shipments
@@ -92,7 +92,7 @@ stateset --apply "create a cart for alice@example.com"
 
 ## MCP Servers (Tools)
 
-The engine exposes **987 domain tools across 89 domains** as of this writing. The sections
+The engine exposes **988 domain tools across 89 domains** as of this writing. The sections
 below highlight the major domains with representative tools only — the complete,
 generated catalog lives in [docs/TOOLS.md](../docs/TOOLS.md), which is the
 authoritative count (regenerate with `npm run docs:tools`; do not edit by hand).

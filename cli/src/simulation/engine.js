@@ -76,7 +76,7 @@ export async function executeCommerceScenario(input, database) {
     });
     const location = await commerce.warehouse.createLocation({
       warehouseId: warehouse.id,
-      code: 'RECEIVING',
+      locationType: 'receiving',
       isReceivable: true,
     });
     const customer = await commerce.customers.create({

@@ -128,7 +128,6 @@ fn ensure_consumable(lot: &Lot, now: DateTime<Utc>, operation: &str) -> Result<(
     Ok(())
 }
 
-
 impl PgLotRepository {
     /// Hop budget for [`Self::ancestor_lots_async`]: deep enough for any real
     /// split/merge history, small enough that a corrupt table cannot turn a

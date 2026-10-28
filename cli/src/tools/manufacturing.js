@@ -290,6 +290,44 @@ export const manufacturingTools = [
   },
 
   {
+    name: 'configure_work_order_stock',
+    description:
+      'Set the component source and finished-goods destination of a planned work order, such as one created before stock routing was required.',
+    inputSchema: {
+      workOrderId: z.string().min(1).describe('Planned work order ID'),
+      stock: z
+        .object({
+          sourceLocationId: z.number().int().positive(),
+          outputLocationId: z.number().int().positive(),
+          outputSku: z.string().min(1),
+        })
+        .describe('Explicit component source and finished-goods destination'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      const { workOrderId, stock } = params;
+      if (!allowApply) {
+        return {
+          success: false,
+          error: 'Configure work order stock operation not allowed. The --apply flag must be set.',
+          wouldConfigure: { workOrderId, stock },
+        };
+      }
+
+      const wo = await commerce.workOrders.configureStock(workOrderId, stock);
+      return {
+        success: true,
+        message: 'Work order stock routing configured',
+        workOrder: {
+          id: wo.id,
+          workOrderNumber: wo.workOrderNumber,
+          status: wo.status,
+        },
+      };
+    },
+  },
+
+  {
     name: 'start_work_order',
     description: 'Start a work order (begin production).',
     inputSchema: {

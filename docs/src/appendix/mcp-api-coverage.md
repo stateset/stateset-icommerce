@@ -15,13 +15,13 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | Metric | Value |
 | --- | --- |
 | Domain tool modules | 89 |
-| Domain tools | 987 |
+| Domain tools | 988 |
 | Commerce getters | 68 |
 | Mapped getters | 68 |
 | Audited classes | 32 |
 | Audited methods | 461 |
-| Mapped audited methods | 421 |
-| Fully covered | no |
+| Mapped audited methods | 461 |
+| Fully covered | yes |
 
 ## Commerce Getter Coverage
 
@@ -33,7 +33,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `analytics` | `analytics` | 14 |
 | `backorder` | `backorders` | 20 |
 | `backorders` | `backorders` | 20 |
-| `bom` | `manufacturing` | 11 |
+| `bom` | `manufacturing` | 12 |
 | `carts` | `carts` | 30 |
 | `channels` | `channels` | 8 |
 | `companies` | `companies` | 9 |
@@ -93,15 +93,15 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `warehouse` | `warehouse` | 9 |
 | `warranties` | `warranties` | 7 |
 | `wishlists` | `wishlists` | 6 |
-| `workOrders` | `manufacturing` | 11 |
+| `workOrders` | `manufacturing` | 12 |
 | `x402` | `x402` | 14 |
 
 ## Audited Class Coverage
 
 | Class | Methods | Mapped | Uncovered | Stale mappings | Invalid tool refs |
 | --- | --- | --- | --- | --- | --- |
-| `AccountsPayable` | 24 | 13 | 11 | 0 | 0 |
-| `AccountsReceivable` | 15 | 8 | 7 | 0 | 0 |
+| `AccountsPayable` | 24 | 24 | 0 | 0 | 0 |
+| `AccountsReceivable` | 15 | 15 | 0 | 0 | 0 |
 | `Analytics` | 14 | 14 | 0 | 0 | 0 |
 | `Backorders` | 21 | 21 | 0 | 0 | 0 |
 | `Bom` | 7 | 7 | 0 | 0 | 0 |
@@ -112,17 +112,17 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `Customers` | 13 | 13 | 0 | 0 | 0 |
 | `CustomObjects` | 12 | 12 | 0 | 0 | 0 |
 | `Fulfillment` | 14 | 14 | 0 | 0 | 0 |
-| `GeneralLedger` | 27 | 18 | 9 | 0 | 0 |
+| `GeneralLedger` | 27 | 27 | 0 | 0 | 0 |
 | `Inventory` | 7 | 7 | 0 | 0 | 0 |
-| `Invoices` | 9 | 8 | 1 | 0 | 0 |
+| `Invoices` | 9 | 9 | 0 | 0 | 0 |
 | `Lots` | 12 | 12 | 0 | 0 | 0 |
 | `Orders` | 10 | 10 | 0 | 0 | 0 |
-| `Payments` | 16 | 14 | 2 | 0 | 0 |
+| `Payments` | 16 | 16 | 0 | 0 | 0 |
 | `Products` | 16 | 16 | 0 | 0 | 0 |
 | `Promotions` | 20 | 20 | 0 | 0 | 0 |
 | `PurchaseOrders` | 13 | 13 | 0 | 0 | 0 |
 | `Quality` | 17 | 17 | 0 | 0 | 0 |
-| `Receiving` | 18 | 10 | 8 | 0 | 0 |
+| `Receiving` | 18 | 18 | 0 | 0 | 0 |
 | `Returns` | 13 | 13 | 0 | 0 | 0 |
 | `Serials` | 9 | 9 | 0 | 0 | 0 |
 | `Shipments` | 10 | 10 | 0 | 0 | 0 |
@@ -130,7 +130,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `Tax` | 18 | 18 | 0 | 0 | 0 |
 | `Warehouse` | 10 | 10 | 0 | 0 | 0 |
 | `Warranties` | 8 | 8 | 0 | 0 | 0 |
-| `WorkOrders` | 9 | 7 | 2 | 0 | 0 |
+| `WorkOrders` | 9 | 9 | 0 | 0 | 0 |
 | `X402` | 17 | 17 | 0 | 0 | 0 |
 
 ## Uncovered Commerce Getters
@@ -143,46 +143,7 @@ None.
 
 ## Uncovered Audited Methods
 
-- `AccountsPayable.approvePaymentRun`
-- `AccountsPayable.cancelPaymentRun`
-- `AccountsPayable.createPayment`
-- `AccountsPayable.createPaymentRun`
-- `AccountsPayable.disputeBill`
-- `AccountsPayable.getPayment`
-- `AccountsPayable.getPaymentRun`
-- `AccountsPayable.listPaymentRuns`
-- `AccountsPayable.processPaymentRun`
-- `AccountsPayable.resolveBillDispute`
-- `AccountsPayable.voidPayment`
-- `AccountsReceivable.applyCreditMemo`
-- `AccountsReceivable.applyPaymentToInvoices`
-- `AccountsReceivable.createWriteOff`
-- `AccountsReceivable.getPaymentApplications`
-- `AccountsReceivable.listWriteOffs`
-- `AccountsReceivable.reverseWriteOff`
-- `AccountsReceivable.unapplyPayment`
-- `GeneralLedger.closePeriod`
-- `GeneralLedger.createJournalEntry`
-- `GeneralLedger.getAutoPostingConfig`
-- `GeneralLedger.getPeriod`
-- `GeneralLedger.lockPeriod`
-- `GeneralLedger.reclosePeriod`
-- `GeneralLedger.reopenPeriod`
-- `GeneralLedger.reverseJournalEntry`
-- `GeneralLedger.setAutoPostingConfig`
-- `Invoices.supportsPaymentIdempotency`
-- `Payments.supportsPaymentIdempotency`
-- `Payments.supportsRefundIdempotency`
-- `Receiving.assignPutAway`
-- `Receiving.cancelPutAway`
-- `Receiving.completePutAway`
-- `Receiving.createPutAway`
-- `Receiving.getPutAway`
-- `Receiving.listPutAways`
-- `Receiving.receiveItems`
-- `Receiving.startPutAway`
-- `WorkOrders.completeExact`
-- `WorkOrders.configureStock`
+None.
 
 ## Stale Audited Method Mappings
 

@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:67bcce5dd72428b233b6d78af389b00d76ca1f422e36aa5239652bc437536264",
+  "digest": "sha256:13d876cb6e264b18070ab2a10331476b7e989986492e2620895538a1258c34c7",
   "counts": {
-    "total": 1002,
+    "total": 1003,
     "readOnly": 487,
-    "mutations": 515,
+    "mutations": 516,
     "governed": 36,
     "governedComposite": 1,
-    "blocked": 478
+    "blocked": 479
   },
   "entries": [
     {
@@ -2301,6 +2301,13 @@
     },
     {
       "name": "configure_woocommerce_webhooks",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "configure_work_order_stock",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",

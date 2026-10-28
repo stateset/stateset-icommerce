@@ -1065,7 +1065,8 @@ mod tests {
         let create = policy_for("POST", "/api/v1/ap/bills").expect("create bill");
         assert_eq!(create.action, ActionClass::Create);
         // A credit check is a read, not a credit movement.
-        let check = policy_for("POST", "/api/v1/credit/customers/{customer_id}/check").expect("check");
+        let check =
+            policy_for("POST", "/api/v1/credit/customers/{customer_id}/check").expect("check");
         assert_eq!(check.action, ActionClass::Read);
     }
 

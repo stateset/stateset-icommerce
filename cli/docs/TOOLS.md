@@ -5,23 +5,23 @@
 
 Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/tool-tiers.js` (tiers).
 
-**987 tools** across **89 domains**, plus 15 agentic runtime tools.
+**988 tools** across **89 domains**, plus 15 agentic runtime tools.
 
 ## Stability tiers
 
 | Tier | Tools | Meaning |
 | --- | ---: | --- |
 | core | 209 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
-| extended | 529 | Real, specialised domains (finance, manufacturing, WMS, B2B, engagement). Opt in with `--profile` or `--domains`. |
+| extended | 530 | Real, specialised domains (finance, manufacturing, WMS, B2B, engagement). Opt in with `--profile` or `--domains`. |
 | experimental | 264 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete. Only `--profile all`, a curated profile naming the domain, or `--domains`. |
 
 ## Profiles
 
 | Profile | Tools | Domains |
 | --- | ---: | --- |
-| all | 1002 | every domain |
+| all | 1003 | every domain |
 | core (default) | 209 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain, simulations |
-| operations | 213 | inventory, simulations, manufacturing, shipments, suppliers, warranties, warehouse, receiving, fulfillment, quality, lots, serials, cycle-counts, transfer-orders, production-batches, supplier-skus, inbound-shipments, backorders, vendor-returns |
+| operations | 214 | inventory, simulations, manufacturing, shipments, suppliers, warranties, warehouse, receiving, fulfillment, quality, lots, serials, cycle-counts, transfer-orders, production-batches, supplier-skus, inbound-shipments, backorders, vendor-returns |
 | finance | 161 | payments, invoices, treasury, accounts-payable, accounts-receivable, cost-accounting, credit, general-ledger, fixed-assets, revenue-recognition, prepayments, vendor-credits, payment-obligations |
 | agents | 257 | simulations, agent-runtime, agent-cards, agent-receipt, a2a, a2a-platform, a2a-automation, a2a-observability, a2a-intelligence, x402, stablecoin, erc8004, treasury, payment-obligations, proofs, audit, policies |
 
@@ -45,7 +45,7 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | [promotions](#promotions) | core | 17 |
 | [subscriptions](#subscriptions) | extended | 17 |
 | [sync](#sync) | experimental | 20 |
-| [manufacturing](#manufacturing) | extended | 11 |
+| [manufacturing](#manufacturing) | extended | 12 |
 | [payments](#payments) | core | 19 |
 | [stablecoin](#stablecoin) | experimental | 4 |
 | [treasury](#treasury) | experimental | 6 |
@@ -429,6 +429,7 @@ Tier: **extended**
 | `list_work_orders` | extended | read | List manufacturing work orders (production runs), optionally filtered by product, BOM, status, priority, assignee or work center. |
 | `get_work_order` | extended | read | Get a work order by ID with full details. |
 | `create_work_order` | extended | write | Create a manufacturing work order to produce a quantity of product. |
+| `configure_work_order_stock` | extended | write | Set the component source and finished-goods destination of a planned work order, such as one created before stock routing was required. |
 | `start_work_order` | extended | write | Start a work order (begin production). |
 | `complete_work_order` | extended | write | Complete a work order with the quantity produced. |
 | `cancel_work_order` | extended | delete | Cancel a work order. |

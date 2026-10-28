@@ -1553,7 +1553,8 @@ mod tests {
         let debits: Decimal = je_lines.iter().map(|l| l.debit_amount).sum();
         let credits: Decimal = je_lines.iter().map(|l| l.credit_amount).sum();
         assert_eq!(debits, credits);
-        assert!(je_lines.iter().all(|l| l.reference_type.as_deref() == Some("fx_revaluation")));
+        // Account adjustments name the currency they revalue.
+        assert!(je_lines.iter().all(|l| l.reference_type.as_deref() == Some("fx_revaluation/EUR")));
     }
 
     #[test]
