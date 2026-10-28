@@ -3740,6 +3740,7 @@ dependencies = [
  "rusqlite",
  "rust_decimal",
  "rust_decimal_macros",
+ "scheduled-thread-pool",
  "serde",
  "serde_jcs",
  "serde_json",
