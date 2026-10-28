@@ -126,6 +126,11 @@ existing stores before upgrading; see
   unsound `AsyncFd` constructors), in the workspace and the standalone PHP,
   Ruby and fuzz lockfiles.
 - `undici` 6.29.1, `body-parser` and `ip-address` (npm audit).
+- The MCP SDK v2 packages behind `stateset-mcp-http` move to
+  `@modelcontextprotocol/node` 2.1.2 and `server`/`core` 2.4.0.
+  `@modelcontextprotocol/node` 2.0.0 is affected by GHSA-f897-62hf-6gxq
+  (high: HTTP server transports and handlers did not limit request body
+  size or JSON-RPC batch length).
 
 ### Changed
 
