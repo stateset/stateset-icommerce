@@ -3979,22 +3979,13 @@ impl PgKernelExecutor {
             return Ok(receipt);
         }
         let source: Option<(Uuid,Option<String>,Option<Uuid>)> = sqlx::query_as("SELECT period_id,source_document_type,source_document_id FROM gl_journal_entries WHERE id = $1").bind(command.payload.journal_entry_id).fetch_optional(tx.as_mut()).await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        // Validate (and lock) the source before the period and the entry: every
+        // posting path takes source, then period, then entry. The refusal is
+        // reported after the entry checks, in the same order as SQLite.
+        let mut source_error = None;
         if let Some((period_id, kind, source_id)) = source {
-            if let Err(error) =
-                super::ledger_source::validate(&mut tx, kind.as_deref(), source_id).await
-            {
-                let mut receipt = rejected_receipt(
-                    command,
-                    Some(policy.clone()),
-                    "commerce.ledger.source_not_postable",
-                    &error.to_string(),
-                    RetryDisposition::Never,
-                    "journal_entry",
-                );
-                append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
-                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-                return Ok(receipt);
-            }
+            source_error =
+                super::ledger_source::validate(&mut tx, kind.as_deref(), source_id).await.err();
             sqlx::query("SELECT id FROM gl_periods WHERE id = $1 FOR SHARE")
                 .bind(period_id)
                 .execute(tx.as_mut())
@@ -4043,6 +4034,19 @@ impl PgKernelExecutor {
                 command,
                 Some(policy),
                 code,
+                &error.to_string(),
+                RetryDisposition::Never,
+                "journal_entry",
+            );
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            return Ok(receipt);
+        }
+        if let Some(error) = source_error {
+            let mut receipt = rejected_receipt(
+                command,
+                Some(policy.clone()),
+                "commerce.ledger.source_not_postable",
                 &error.to_string(),
                 RetryDisposition::Never,
                 "journal_entry",

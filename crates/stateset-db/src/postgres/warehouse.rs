@@ -963,6 +963,29 @@ impl PgWarehouseRepository {
     ) -> Result<LocationInventory> {
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        if input.quantity < Decimal::ZERO {
+            // Clients match on these refusals; keep their wording. The row
+            // lock makes the check hold until the posting below.
+            let on_hand: Option<Decimal> = sqlx::query_scalar(
+                "SELECT quantity_on_hand FROM location_inventory WHERE location_id = $1 AND sku = $2 AND lot_id = $3 FOR UPDATE",
+            )
+            .bind(input.location_id)
+            .bind(&input.sku)
+            .bind(Self::lot_key(input.lot_id))
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+            let Some(on_hand) = on_hand else {
+                return Err(CommerceError::ValidationError(
+                    "Cannot create negative inventory".into(),
+                ));
+            };
+            if on_hand + input.quantity < Decimal::ZERO {
+                return Err(CommerceError::ValidationError(
+                    "Adjustment would result in negative inventory".into(),
+                ));
+            }
+        }
         super::stock_move::post(
             &mut tx,
             &crate::stock_move::StockMove {

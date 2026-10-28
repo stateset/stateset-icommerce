@@ -65,6 +65,7 @@ export const TOOL_PERMISSIONS = {
   assign_put_away: 'write',
   create_put_away: 'write',
   receive_receipt_items: 'write',
+  get_gl_posting_config: 'read',
   set_gl_posting_config: 'admin',
   resolve_bill_dispute: 'admin',
   dispute_bill: 'admin',
@@ -276,6 +277,7 @@ export const TOOL_PERMISSIONS = {
   list_work_orders: 'read',
   get_work_order: 'read',
   create_work_order: 'write',
+  configure_work_order_stock: 'write',
   start_work_order: 'write',
   complete_work_order: 'write',
   cancel_work_order: 'delete',
@@ -1188,6 +1190,7 @@ export const TOOL_PERMISSIONS = {
   create_transfer_order: 'write',
   ship_transfer_order: 'write',
   receive_transfer_order_line: 'write',
+  complete_transfer_order_receiving: 'write',
   cancel_transfer_order: 'write',
   // units-of-measure.js
   list_unit_classes: 'read',

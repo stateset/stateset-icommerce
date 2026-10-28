@@ -499,6 +499,8 @@ fn ar_create_write_off_and_list() {
             ..Default::default()
         })
         .expect("Failed to create invoice for write-off");
+    // Only an issued invoice can be written off.
+    let invoice = commerce.invoices().send(invoice.id.into()).expect("Failed to issue invoice");
 
     let write_off = commerce
         .accounts_receivable()

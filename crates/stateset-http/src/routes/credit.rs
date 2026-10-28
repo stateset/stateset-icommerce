@@ -51,7 +51,7 @@ fn json(value: impl Serialize) -> Result<Json<Value>, HttpError> {
         .map_err(|error| CommerceError::DatabaseError(error.to_string()).into())
 }
 
-#[utoipa::path(post,operation_id="customer_credit_create",path="/api/v1/credit/accounts",tag="credit",request_body=CreditAccountRequest,responses((status=200,body=Value),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
+#[utoipa::path(post,operation_id="customer_credit_create",path="/api/v1/credit/accounts",tag="credit",request_body=CreditAccountRequest,responses((status=200,body=Object),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
 pub(crate) async fn create(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -73,7 +73,7 @@ pub(crate) async fn create(
         .await
 }
 
-#[utoipa::path(get,operation_id="customer_credit_get_account",path="/api/v1/credit/customers/{customer_id}",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),responses((status=200,body=Value),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
+#[utoipa::path(get,operation_id="customer_credit_get_account",path="/api/v1/credit/customers/{customer_id}",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),responses((status=200,body=Object),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
 pub(crate) async fn get_account(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -93,7 +93,7 @@ pub(crate) async fn get_account(
         .await
 }
 
-#[utoipa::path(post,operation_id="customer_credit_check",path="/api/v1/credit/customers/{customer_id}/check",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),request_body=CreditAmountRequest,responses((status=200,body=Value),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
+#[utoipa::path(post,operation_id="customer_credit_check",path="/api/v1/credit/customers/{customer_id}/check",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),request_body=CreditAmountRequest,responses((status=200,body=Object),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
 pub(crate) async fn check(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -108,7 +108,7 @@ pub(crate) async fn check(
         .await
 }
 
-#[utoipa::path(post,operation_id="customer_credit_reserve",path="/api/v1/credit/customers/{customer_id}/reserve",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),request_body=CreditAmountRequest,responses((status=200,body=Value),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
+#[utoipa::path(post,operation_id="customer_credit_reserve",path="/api/v1/credit/customers/{customer_id}/reserve",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),request_body=CreditAmountRequest,responses((status=200,body=Object),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
 pub(crate) async fn reserve(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -129,7 +129,7 @@ pub(crate) async fn reserve(
         .await
 }
 
-#[utoipa::path(post,operation_id="customer_credit_charge",path="/api/v1/credit/customers/{customer_id}/charge",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),request_body=CreditAmountRequest,responses((status=200,body=Value),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
+#[utoipa::path(post,operation_id="customer_credit_charge",path="/api/v1/credit/customers/{customer_id}/charge",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),request_body=CreditAmountRequest,responses((status=200,body=Object),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
 pub(crate) async fn charge(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -150,7 +150,7 @@ pub(crate) async fn charge(
         .await
 }
 
-#[utoipa::path(post,operation_id="customer_credit_release_reservation",path="/api/v1/credit/customers/{customer_id}/release-reservation",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),request_body=CreditAmountRequest,responses((status=200,body=Value),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
+#[utoipa::path(post,operation_id="customer_credit_release_reservation",path="/api/v1/credit/customers/{customer_id}/release-reservation",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),request_body=CreditAmountRequest,responses((status=200,body=Object),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
 pub(crate) async fn release_reservation(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -171,7 +171,7 @@ pub(crate) async fn release_reservation(
         .await
 }
 
-#[utoipa::path(post,operation_id="customer_credit_payment",path="/api/v1/credit/customers/{customer_id}/payments",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),request_body=CreditAmountRequest,responses((status=200,body=Value),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
+#[utoipa::path(post,operation_id="customer_credit_payment",path="/api/v1/credit/customers/{customer_id}/payments",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),request_body=CreditAmountRequest,responses((status=200,body=Object),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
 pub(crate) async fn payment(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -190,7 +190,7 @@ pub(crate) async fn payment(
         .await
 }
 
-#[utoipa::path(post,operation_id="customer_credit_suspend",path="/api/v1/credit/customers/{customer_id}/suspend",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),request_body=CreditReasonRequest,responses((status=200,body=Value),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
+#[utoipa::path(post,operation_id="customer_credit_suspend",path="/api/v1/credit/customers/{customer_id}/suspend",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),request_body=CreditReasonRequest,responses((status=200,body=Object),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
 pub(crate) async fn suspend(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -205,7 +205,7 @@ pub(crate) async fn suspend(
         .await
 }
 
-#[utoipa::path(post,operation_id="customer_credit_reactivate",path="/api/v1/credit/customers/{customer_id}/reactivate",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),responses((status=200,body=Value),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
+#[utoipa::path(post,operation_id="customer_credit_reactivate",path="/api/v1/credit/customers/{customer_id}/reactivate",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),responses((status=200,body=Object),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
 pub(crate) async fn reactivate(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -219,7 +219,7 @@ pub(crate) async fn reactivate(
         .await
 }
 
-#[utoipa::path(get,operation_id="customer_credit_holds",path="/api/v1/credit/customers/{customer_id}/holds",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),responses((status=200,body=Value),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
+#[utoipa::path(get,operation_id="customer_credit_holds",path="/api/v1/credit/customers/{customer_id}/holds",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),responses((status=200,body=Vec<Object>),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
 pub(crate) async fn holds(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -231,7 +231,7 @@ pub(crate) async fn holds(
         .await
 }
 
-#[utoipa::path(post,operation_id="customer_credit_place_hold",path="/api/v1/credit/customers/{customer_id}/holds",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),request_body=CreditHoldRequest,responses((status=200,body=Value),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
+#[utoipa::path(post,operation_id="customer_credit_place_hold",path="/api/v1/credit/customers/{customer_id}/holds",tag="credit",params(("customer_id"=String,Path,description="Customer ID")),request_body=CreditHoldRequest,responses((status=200,body=Object),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
 pub(crate) async fn place_hold(
     State(state): State<AppState>,
     actor: crate::middleware::FinanceActor,
@@ -254,7 +254,7 @@ pub(crate) async fn place_hold(
         .await
 }
 
-#[utoipa::path(post,operation_id="customer_credit_release_hold",path="/api/v1/credit/holds/{id}/release",tag="credit",params(("id"=String,Path,description="Hold ID")),request_body=CreditReleaseRequest,responses((status=200,body=Value),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
+#[utoipa::path(post,operation_id="customer_credit_release_hold",path="/api/v1/credit/holds/{id}/release",tag="credit",params(("id"=String,Path,description="Hold ID")),request_body=CreditReleaseRequest,responses((status=200,body=Object),(status=400,body=ErrorBody),(status=409,body=ErrorBody)))]
 pub(crate) async fn release_hold(
     State(state): State<AppState>,
     actor: crate::middleware::FinanceActor,

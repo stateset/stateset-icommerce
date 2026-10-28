@@ -417,7 +417,8 @@ fn ar_test_invoice(
             ..Default::default()
         })
         .expect("create invoice");
-    invoice.id.into()
+    // Payments apply only to issued invoices.
+    db.invoices().send(invoice.id).expect("issue invoice").id.into()
 }
 
 fn ar_test_payment(
@@ -425,7 +426,8 @@ fn ar_test_payment(
     customer_id: CustomerId,
     amount: rust_decimal::Decimal,
 ) -> uuid::Uuid {
-    db.payments()
+    let payment = db
+        .payments()
         .create(CreatePayment {
             order_id: None,
             invoice_id: None,
@@ -434,13 +436,13 @@ fn ar_test_payment(
             amount,
             ..Default::default()
         })
-        .expect("create payment")
-        .id
-        .into()
+        .expect("create payment");
+    // Only captured funds can be applied to invoices.
+    db.payments().mark_completed(payment.id).expect("complete payment").id.into()
 }
 
 /// A payment that pays an invoice off in full drives its status from
-/// `draft` straight to `paid` in one recalculation, so the transition must
+/// `sent` straight to `paid` in one recalculation, so the transition must
 /// speak: this is the one thing `recalculate_invoice_with_conn` may emit,
 /// and the only test that exercises it disappeared when the function moved
 /// from a blanket `SAFE_EXCEPTIONS` entry to a conditional emission.
@@ -476,7 +478,7 @@ fn paying_off_an_invoice_emits_exactly_one_status_changed_fact() {
         fact(&db, "invoice.status_changed", &invoice_id.to_string())
             .expect("the transition must emit a fact");
     assert_eq!(aggregate_type, "invoice");
-    assert_eq!(payload["previous_status"].as_str(), Some("draft"));
+    assert_eq!(payload["previous_status"].as_str(), Some("sent"));
     assert_eq!(payload["status"].as_str(), Some("paid"));
 }
 

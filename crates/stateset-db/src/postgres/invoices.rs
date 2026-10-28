@@ -977,6 +977,14 @@ impl PgInvoiceRepository {
 
     pub async fn write_off_async(&self, id: Uuid) -> Result<Invoice> {
         let invoice = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
+        // The direct write-off keeps its contract: a closed invoice is a conflict
+        // that names its status. The receivables write-off does the rest.
+        if !crate::rules::invoices::open_for_write_off(invoice.status) {
+            return Err(CommerceError::Conflict(format!(
+                "Cannot write off invoice {} with status {}",
+                invoice.id, invoice.status
+            )));
+        }
         let input = stateset_core::CreateWriteOff {
             invoice_id: invoice.id.into(),
             amount: invoice.balance_due,

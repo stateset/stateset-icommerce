@@ -56,7 +56,8 @@ fn create_invoice(
             ..Default::default()
         })
         .expect("Failed to create invoice");
-    invoice.id.into()
+    // Payments are recorded only against issued invoices.
+    commerce.invoices().send(invoice.id.into()).expect("issue invoice").id.into()
 }
 
 fn pay(amount: Decimal) -> RecordInvoicePayment {
@@ -236,18 +237,24 @@ fn void_of_open_invoice_succeeds() {
     assert!(voided.voided_at.is_some(), "voiding must stamp voided_at");
 }
 
+/// Money received against an invoice is reversed with a credit memo or a
+/// refund, never by voiding: a void would orphan the settlement.
 #[test]
-fn void_of_partially_paid_invoice_succeeds() {
+fn void_of_partially_paid_invoice_is_rejected() {
     let commerce = new_commerce();
     let customer_id = create_test_customer(&commerce);
     let invoice_id = create_invoice(&commerce, customer_id, dec!(100.00));
     commerce.invoices().record_payment(invoice_id, pay(dec!(25.00))).expect("partial payment");
 
-    let voided = commerce
+    let err = commerce
         .invoices()
         .void(invoice_id)
-        .expect("voiding a partially paid invoice must succeed");
-    assert_eq!(voided.status, InvoiceStatus::Voided);
+        .expect_err("voiding a partially paid invoice must fail");
+    assert!(
+        matches!(err, stateset_embedded::CommerceError::Conflict(ref m) if m.contains("settlements")),
+        "expected a Conflict asking to reverse settlements, got: {err:?}"
+    );
+    assert_eq!(get(&commerce, invoice_id).status, InvoiceStatus::PartiallyPaid);
 }
 
 #[test]
@@ -355,8 +362,8 @@ fn write_off_of_voided_invoice_is_rejected() {
         .write_off(invoice_id)
         .expect_err("writing off a voided invoice must fail");
     assert!(
-        matches!(err, stateset_embedded::CommerceError::Conflict(_)),
-        "expected Conflict, got: {err:?}"
+        matches!(err, stateset_embedded::CommerceError::Conflict(ref m) if m.contains("voided")),
+        "expected a Conflict naming the status, got: {err:?}"
     );
     assert_eq!(get(&commerce, invoice_id).status, InvoiceStatus::Voided);
 }

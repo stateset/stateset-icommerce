@@ -52,6 +52,8 @@ async fn postgres_rejects_nonpositive_payment_amounts() {
         })
         .await
         .expect("create invoice");
+    // Payments are recorded only against issued invoices.
+    let invoice = commerce.invoices().send(invoice.id.into_uuid()).await.expect("issue invoice");
     let pay = |amount| RecordInvoicePayment {
         amount,
         payment_id: None,
@@ -70,6 +72,14 @@ async fn postgres_rejects_nonpositive_payment_amounts() {
     let fetched =
         commerce.invoices().get(invoice.id.into_uuid()).await.expect("get").expect("found");
     assert_eq!(fetched.amount_paid, dec!(0), "rejected payment must not touch amount_paid");
+    // Control: a valid payment goes through, so the refusals above were about
+    // the amount and not the invoice's status.
+    let paid = commerce
+        .invoices()
+        .record_payment(invoice.id.into_uuid(), pay(dec!(10)))
+        .await
+        .expect("valid invoice payment");
+    assert_eq!(paid.amount_paid, dec!(10));
 
     // --- Credit payment ---
     let credit_customer = uuid::Uuid::new_v4();

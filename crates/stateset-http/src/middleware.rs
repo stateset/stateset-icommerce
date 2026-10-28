@@ -1377,7 +1377,8 @@ mod tests {
     }
 
     /// A role with plain write access can no longer void a journal entry: the
-    /// verb used to fall through the classifier to `Create`.
+    /// verb used to fall through the classifier to `Create`. Creating, voiding
+    /// and posting journal entries are `manage_finance`, which needs Admin.
     #[tokio::test]
     async fn authz_denies_money_moving_verbs_to_write_only_role() {
         let router = Router::new()
@@ -1386,8 +1387,10 @@ mod tests {
         let engine = AuthzEngineBuilder::new()
             .add_role(RoleBuilder::new("clerk").default_level(PermissionLevel::Write).build())
             .add_role(Role::operator())
+            .add_role(Role::admin())
             .assign_role("clerk-1", "clerk")
             .assign_role("op-1", "operator")
+            .assign_role("admin-1", "admin")
             .build();
         let app = apply_middleware(
             router,
@@ -1407,9 +1410,11 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
         let response =
             app.clone().oneshot(call("clerk-1", "/api/v1/gl/journal-entries")).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK, "plain writes stay allowed");
-        let response = app.oneshot(call("op-1", void)).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK, "operators may void");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "journal entries can post");
+        let response = app.clone().oneshot(call("op-1", void)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "operators may not void");
+        let response = app.oneshot(call("admin-1", void)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "admins may void");
     }
 
     #[tokio::test]

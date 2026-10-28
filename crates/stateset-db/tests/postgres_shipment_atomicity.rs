@@ -756,6 +756,23 @@ async fn line_owned_fractional_splits_preserve_same_sku_sibling() {
         .execute(tx.as_mut())
         .await
         .unwrap();
+    // The physical slice splits with its reservation.
+    sqlx::query(
+        "INSERT INTO inventory_reservation_stock (reservation_id,location_id,lot_id,quantity)
+        SELECT $1,location_id,lot_id,$2 FROM inventory_reservation_stock WHERE reservation_id = $3",
+    )
+    .bind(child)
+    .bind(Decimal::from(target.quantity) - micro)
+    .bind(source)
+    .execute(tx.as_mut())
+    .await
+    .unwrap();
+    sqlx::query("UPDATE inventory_reservation_stock SET quantity = $1 WHERE reservation_id = $2")
+        .bind(micro)
+        .bind(source)
+        .execute(tx.as_mut())
+        .await
+        .unwrap();
     tx.commit().await.unwrap();
     let mut command = support::command(&order, false);
     command.mode = ExecutionMode::Apply;

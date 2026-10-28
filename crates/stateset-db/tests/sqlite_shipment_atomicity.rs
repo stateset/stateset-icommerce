@@ -180,6 +180,22 @@ fn line_owned_fractional_splits_preserve_same_sku_sibling() {
         rusqlite::params![micro.to_string(), source.to_string()],
     )
     .unwrap();
+    // The physical slice splits with its reservation.
+    tx.execute(
+        "INSERT INTO inventory_reservation_stock (reservation_id,location_id,lot_id,quantity)
+        SELECT ?,location_id,lot_id,? FROM inventory_reservation_stock WHERE reservation_id = ?",
+        rusqlite::params![
+            child.to_string(),
+            (Decimal::from(target.quantity) - micro).to_string(),
+            source.to_string()
+        ],
+    )
+    .unwrap();
+    tx.execute(
+        "UPDATE inventory_reservation_stock SET quantity = ? WHERE reservation_id = ?",
+        rusqlite::params![micro.to_string(), source.to_string()],
+    )
+    .unwrap();
     tx.commit().unwrap();
     drop(conn);
     let mut command = support::command(&order, false);

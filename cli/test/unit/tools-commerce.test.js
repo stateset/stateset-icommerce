@@ -1825,9 +1825,9 @@ describe('Invoice Tools', () => {
       assertError(result, '--apply');
     });
 
-    it('has delete permission', () => {
+    it('has admin permission (settlements need an approver)', () => {
       const tool = invoiceTools.find((t) => t.name === 'void_invoice');
-      assert.strictEqual(tool.permission, 'delete');
+      assert.strictEqual(tool.permission, 'admin');
     });
   });
 
@@ -1844,9 +1844,9 @@ describe('Invoice Tools', () => {
       assertError(result, '--apply');
     });
 
-    it('has write permission', () => {
+    it('has admin permission (settlements need an approver)', () => {
       const tool = invoiceTools.find((t) => t.name === 'record_invoice_payment');
-      assert.strictEqual(tool.permission, 'write');
+      assert.strictEqual(tool.permission, 'admin');
     });
   });
 

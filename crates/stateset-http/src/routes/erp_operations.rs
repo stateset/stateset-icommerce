@@ -98,7 +98,7 @@ pub fn router() -> Router<AppState> {
         .route("/gl/accounts/{id}/balance", get(account_balance))
         .route("/gl/periods/{id}/reclose", post(reclose_period))
 }
-#[utoipa::path(post,operation_id="erp_receipt_from_po",path="/api/v1/receipts/from-po",tag="erp_operations",request_body=ReceiptFromPoRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="erp_receipt_from_po",path="/api/v1/receipts/from-po",tag="erp_operations",request_body=ReceiptFromPoRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn receipt_from_po(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -115,7 +115,7 @@ pub(crate) async fn receipt_from_po(
         .await
 }
 
-#[utoipa::path(post,operation_id="erp_assign_put_away",path="/api/v1/put-aways/{id}/assign",tag="erp_operations",params(("id"=String,Path,description="Record ID")), request_body=AssignPutAwayRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="erp_assign_put_away",path="/api/v1/put-aways/{id}/assign",tag="erp_operations",params(("id"=String,Path,description="Record ID")), request_body=AssignPutAwayRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn assign_put_away(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -130,7 +130,7 @@ pub(crate) async fn assign_put_away(
         .await
 }
 
-#[utoipa::path(post,operation_id="erp_start_put_away",path="/api/v1/put-aways/{id}/start",tag="erp_operations",params(("id"=String,Path,description="Record ID")), responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="erp_start_put_away",path="/api/v1/put-aways/{id}/start",tag="erp_operations",params(("id"=String,Path,description="Record ID")), responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn start_put_away(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -140,7 +140,7 @@ pub(crate) async fn start_put_away(
     state.run_blocking(tenant.as_deref(), move |c| json(c.receiving().start_put_away(id)?)).await
 }
 
-#[utoipa::path(post,operation_id="erp_cancel_put_away",path="/api/v1/put-aways/{id}/cancel",tag="erp_operations",params(("id"=String,Path,description="Record ID")), responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="erp_cancel_put_away",path="/api/v1/put-aways/{id}/cancel",tag="erp_operations",params(("id"=String,Path,description="Record ID")), responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn cancel_put_away(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -150,7 +150,7 @@ pub(crate) async fn cancel_put_away(
     state.run_blocking(tenant.as_deref(), move |c| json(c.receiving().cancel_put_away(id)?)).await
 }
 
-#[utoipa::path(post,operation_id="erp_allocate_backorder",path="/api/v1/backorders/{id}/allocations",tag="erp_operations",params(("id"=String,Path,description="Record ID")), request_body=AllocateBackorderRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="erp_allocate_backorder",path="/api/v1/backorders/{id}/allocations",tag="erp_operations",params(("id"=String,Path,description="Record ID")), request_body=AllocateBackorderRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn allocate_backorder(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -171,7 +171,7 @@ pub(crate) async fn allocate_backorder(
         .await
 }
 
-#[utoipa::path(get,operation_id="erp_backorder_allocations",path="/api/v1/backorders/{id}/allocations",tag="erp_operations",params(("id"=String,Path,description="Record ID")), responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(get,operation_id="erp_backorder_allocations",path="/api/v1/backorders/{id}/allocations",tag="erp_operations",params(("id"=String,Path,description="Record ID")), responses((status=200,body=Vec<Object>),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn backorder_allocations(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -181,7 +181,7 @@ pub(crate) async fn backorder_allocations(
     state.run_blocking(tenant.as_deref(), move |c| json(c.backorder().get_allocations(id)?)).await
 }
 
-#[utoipa::path(post,operation_id="erp_release_allocation",path="/api/v1/backorders/allocations/{id}/release",tag="erp_operations",params(("id"=String,Path,description="Record ID")), responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="erp_release_allocation",path="/api/v1/backorders/allocations/{id}/release",tag="erp_operations",params(("id"=String,Path,description="Record ID")), responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn release_allocation(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -193,7 +193,7 @@ pub(crate) async fn release_allocation(
         .await
 }
 
-#[utoipa::path(post,operation_id="erp_confirm_allocation",path="/api/v1/backorders/allocations/{id}/confirm",tag="erp_operations",params(("id"=String,Path,description="Record ID")), responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="erp_confirm_allocation",path="/api/v1/backorders/allocations/{id}/confirm",tag="erp_operations",params(("id"=String,Path,description="Record ID")), responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn confirm_allocation(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -205,7 +205,7 @@ pub(crate) async fn confirm_allocation(
         .await
 }
 
-#[utoipa::path(post,operation_id="erp_transfer_lot",path="/api/v1/lots/{id}/transfer",tag="erp_operations",params(("id"=String,Path,description="Record ID")), request_body=LotTransferRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="erp_transfer_lot",path="/api/v1/lots/{id}/transfer",tag="erp_operations",params(("id"=String,Path,description="Record ID")), request_body=LotTransferRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn transfer_lot(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -228,7 +228,7 @@ pub(crate) async fn transfer_lot(
         .await
 }
 
-#[utoipa::path(post,operation_id="erp_adjust_lot",path="/api/v1/lots/{id}/adjust",tag="erp_operations",params(("id"=String,Path,description="Record ID")), request_body=LotAdjustmentRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="erp_adjust_lot",path="/api/v1/lots/{id}/adjust",tag="erp_operations",params(("id"=String,Path,description="Record ID")), request_body=LotAdjustmentRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn adjust_lot(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -252,7 +252,7 @@ pub(crate) async fn adjust_lot(
         .await
 }
 
-#[utoipa::path(post,operation_id="erp_split_lot",path="/api/v1/lots/{id}/split",tag="erp_operations",params(("id"=String,Path,description="Record ID")), request_body=LotSplitRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="erp_split_lot",path="/api/v1/lots/{id}/split",tag="erp_operations",params(("id"=String,Path,description="Record ID")), request_body=LotSplitRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn split_lot(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -272,7 +272,7 @@ pub(crate) async fn split_lot(
         .await
 }
 
-#[utoipa::path(post,operation_id="erp_add_material",path="/api/v1/work-orders/{id}/materials",tag="erp_operations",params(("id"=String,Path,description="Record ID")), request_body=WorkOrderMaterialRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="erp_add_material",path="/api/v1/work-orders/{id}/materials",tag="erp_operations",params(("id"=String,Path,description="Record ID")), request_body=WorkOrderMaterialRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn add_material(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -295,7 +295,7 @@ pub(crate) async fn add_material(
         .await
 }
 
-#[utoipa::path(get,operation_id="erp_list_materials",path="/api/v1/work-orders/{id}/materials",tag="erp_operations",params(("id"=String,Path,description="Record ID")), responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(get,operation_id="erp_list_materials",path="/api/v1/work-orders/{id}/materials",tag="erp_operations",params(("id"=String,Path,description="Record ID")), responses((status=200,body=Vec<Object>),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn list_materials(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -305,7 +305,7 @@ pub(crate) async fn list_materials(
     state.run_blocking(tenant.as_deref(), move |c| json(c.work_orders().get_materials(id)?)).await
 }
 
-#[utoipa::path(post,operation_id="erp_consume_material",path="/api/v1/work-orders/materials/{id}/consume",tag="erp_operations",params(("id"=String,Path,description="Record ID")), request_body=ConsumeMaterialRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="erp_consume_material",path="/api/v1/work-orders/materials/{id}/consume",tag="erp_operations",params(("id"=String,Path,description="Record ID")), request_body=ConsumeMaterialRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn consume_material(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -320,7 +320,7 @@ pub(crate) async fn consume_material(
         .await
 }
 
-#[utoipa::path(get,operation_id="erp_account_balance",path="/api/v1/gl/accounts/{id}/balance",tag="erp_operations",params(AccountBalanceQuery, ("id"=String,Path,description="Account ID")), responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(get,operation_id="erp_account_balance",path="/api/v1/gl/accounts/{id}/balance",tag="erp_operations",params(AccountBalanceQuery, ("id"=String,Path,description="Account ID")), responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn account_balance(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -339,7 +339,7 @@ pub(crate) async fn account_balance(
         .await
 }
 
-#[utoipa::path(post,operation_id="erp_reclose_period",path="/api/v1/gl/periods/{id}/reclose",tag="erp_operations",params(("id"=String,Path,description="Record ID")), responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="erp_reclose_period",path="/api/v1/gl/periods/{id}/reclose",tag="erp_operations",params(("id"=String,Path,description="Record ID")), responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn reclose_period(
     State(state): State<AppState>,
     headers: HeaderMap,

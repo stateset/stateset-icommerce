@@ -23,7 +23,10 @@ pub(super) fn ensure_warehouse(tx: &Connection, warehouse: i32, now: &str) -> Db
             )
             .optional()?
             .ok_or_else(|| invalid("Unknown stock warehouse"))?;
-        tx.execute("INSERT INTO warehouses (id, code, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4) ON CONFLICT(id) DO NOTHING", rusqlite::params![warehouse, format!("__inventory_{warehouse}"), identity, now])?;
+        // A well-formed empty address: warehouse reads require every field.
+        let address = serde_json::to_string(&stateset_core::WarehouseAddress::default())
+            .map_err(|e| invalid(&e.to_string()))?;
+        tx.execute("INSERT INTO warehouses (id, code, name, address_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5) ON CONFLICT(id) DO NOTHING", rusqlite::params![warehouse, format!("__inventory_{warehouse}"), identity, address, now])?;
     }
     let (code, name) = tx.query_row(
         "SELECT code, name FROM warehouses WHERE id = ?1",

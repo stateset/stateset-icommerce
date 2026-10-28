@@ -380,6 +380,8 @@ impl Sim {
             .invoices()
             .create(CreateInvoice { customer_id: self.customer_id, items, ..Default::default() })
             .expect("create invoice");
+        // Only issued invoices post to the ledger.
+        let invoice = self.commerce.invoices().send(invoice.id.into()).expect("issue invoice");
         let entry = self
             .commerce
             .general_ledger()

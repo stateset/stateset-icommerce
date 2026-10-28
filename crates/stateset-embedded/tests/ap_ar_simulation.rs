@@ -31,7 +31,7 @@ use stateset_embedded::{
     CreateBillItem, CreateBillPayment, CreateCreditMemo, CreateCustomer, CreateInvoice,
     CreateInvoiceItem, CreatePayment, CreateWriteOff, CreditMemoReason, CustomerId,
     GenerateStatementRequest, InvoiceStatus, PaymentAllocationInput, PaymentApplicationLine,
-    PaymentMethodAP, RecordInvoicePayment, WriteOffReason,
+    PaymentMethodAP, RecordInvoicePayment, WriteOffFilter, WriteOffReason,
 };
 use uuid::Uuid;
 
@@ -476,11 +476,25 @@ impl Sim {
 
         for &(invoice_id, _) in &self.invoices {
             let inv = self.get_invoice(invoice_id);
+            // A partial write-off reduces the collectible balance on its own.
+            let written_off: Decimal = self
+                .commerce
+                .accounts_receivable()
+                .list_write_offs(WriteOffFilter {
+                    invoice_id: Some(invoice_id),
+                    include_reversed: Some(false),
+                    ..Default::default()
+                })
+                .expect("list write-offs")
+                .iter()
+                .filter(|w| w.reversed_at.is_none())
+                .map(|w| w.amount)
+                .sum();
             assert_eq!(
                 inv.balance_due,
-                inv.total - inv.amount_paid,
-                "{context}: invoice {invoice_id} balance_due != total - paid \
-                 (total {}, paid {}, balance {}, status {:?})",
+                inv.total - inv.amount_paid - written_off,
+                "{context}: invoice {invoice_id} balance_due != total - paid - written off \
+                 (total {}, paid {}, written off {written_off}, balance {}, status {:?})",
                 inv.total,
                 inv.amount_paid,
                 inv.balance_due,

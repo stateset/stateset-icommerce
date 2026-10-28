@@ -76,7 +76,7 @@ fn create_invoice(commerce: &Commerce) -> Uuid {
         })
         .expect("create customer")
         .id;
-    commerce
+    let invoice = commerce
         .invoices()
         .create(CreateInvoice {
             customer_id,
@@ -88,9 +88,9 @@ fn create_invoice(commerce: &Commerce) -> Uuid {
             }],
             ..Default::default()
         })
-        .expect("create invoice")
-        .id
-        .into()
+        .expect("create invoice");
+    // Only issued invoices post to the ledger.
+    commerce.invoices().send(invoice.id.into()).expect("issue invoice").id.into()
 }
 
 /// A posted $100 revenue entry (debit Cash, credit Sales Revenue).

@@ -653,6 +653,10 @@ impl PostgresDatabase {
             include_str!("migrations/129_bill_approval_match.sql"),
         ));
         migrations.push(("130_finance_actors", include_str!("migrations/130_finance_actors.sql")));
+        migrations.push((
+            "131_stock_exact_quantity",
+            include_str!("migrations/131_stock_exact_quantity.sql"),
+        ));
         migrations
     }
 

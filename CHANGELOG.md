@@ -6,6 +6,92 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+The ERP fix plan: 59 corrections so that documents move stock, the ledger
+posts the right accounts, payables and receivables settle their balances,
+and finance writes carry an authenticated identity. Back up and reconcile
+existing stores before upgrading; see
+[docs/src/guides/erp-upgrade.md](docs/src/guides/erp-upgrade.md).
+
+### Breaking changes
+
+- **Finance amounts are decimal strings** in the Node binding and the
+  finance MCP tools (`"125.50"`, not `125.5`), including invoice quantities,
+  finance rates and cost values. MCP refuses numeric money.
+- **Admin is required to approve, settle or post.** HTTP routes for bill and
+  payment-run approval and processing, AP payments and voids, AR settlements
+  and write-offs, journal posting, voids, reversals and period control,
+  posting settings, asset postings, prepayments, vendor credits, payment
+  obligations, credit and cost accounting use a new `manage_finance` action
+  class (Admin level). That includes 42 routes 1.40.1 allowed at operator
+  level, such as voiding and reversing journal entries, month-end close and
+  voiding AP payments. Customer principals are refused it. Request-body
+  `approved_by`, `posted_by`, `closed_by` and `locked_by` no longer set audit
+  identity; the authenticated actor does. Bills and payment runs record
+  their maker and refuse self-approval. The matching MCP tools need the
+  `admin` permission.
+- **ERP HTTP writes need an `Idempotency-Key`.** Missing keys return 428 and
+  conflicting reuse returns 422.
+- **Purchase-order receiving needs warehouse and receiving-location IDs.**
+  Work orders need source and output stock routing before they start
+  (`configure_work_order_stock` routes existing ones). Picked stock stays on
+  hand in a staging location until it ships.
+- **Stricter documents.** Invoices and PO lines are editable only in draft
+  or pending. Payments, write-offs and ledger postings need an issued
+  invoice. A payment applies only if it is captured, from the same customer
+  and in the invoice's currency. Published BOMs need a new revision, two
+  BOMs of one product can't share a revision, and GL periods may not
+  overlap. Invalid lifecycle transitions return conflicts.
+- **Stock and cost custody.** Stock that arrived without a cost can't be
+  issued once its SKU has a cost, and a lot must hold physical stock to be
+  split, merged or transferred. Reconcile opening stock and placements
+  before enabling writes.
+- **Error classes.** Applying a missing payment returns `NotFound`; applying
+  to a closed or voided invoice returns `Conflict`; a deleted stock location
+  returns `NotFound`.
+
+### Fixed
+
+- Stock follows the documents on both databases: transfer orders, work
+  orders, vendor returns, PO receipts, backorders and cycle counts post
+  through one transactional stock ledger. Cycle counts compare against
+  stored stock, put-aways check the receipt line, quarantined lots and
+  quality holds block picking, and the first Postgres put-away of a SKU no
+  longer loses a concurrent one.
+- Correct books: invoices post net sales, sales tax and shipping
+  separately; contract invoices credit unearned revenue; receipts post to
+  goods received not invoiced instead of cost of goods sold; reversed
+  entries stay in every report; depreciation is dated at each period end;
+  every posting keeps one currency with its historical rate; period close is
+  atomic and serialized against posting; inventory is valued by each SKU's
+  cost method.
+- Payables and receivables: prepayments and vendor credits settle the bill
+  they apply to; payment application is locked and validated; a partial
+  write-off writes off only its amount; bills with payments can't be
+  cancelled; customer credit limits are enforced; statements reconcile.
+- Postgres stock ledgers (physical, bin, lot, receiving, picking and cost
+  quantities) store exact quantities, like balances and reservations already
+  did (migration 131). Fractional quantities had been rounded to four
+  decimals and drifted between ledgers.
+- Stock posting no longer creates placeholder warehouses with an empty
+  address, which broke warehouse reads and data export.
+- The sequencer client sends agent key registrations as camelCase, the
+  sequencer's DTO.
+
+### Added
+
+- HTTP routes for cost accounting, customer credit, posting settings, period
+  reclose, account balances, receipts from purchase orders, put-away
+  assign, start and cancel, backorder allocation, lot transfer, adjust and
+  split, and work-order materials.
+- MCP tools to receive and put away goods, create and reverse journal
+  entries, close, lock, reopen and reclose periods, read and set posting
+  settings, run AP payment runs, apply AR payments and write-offs, and route
+  work orders. The finance and operations profiles are smoke-gated.
+- Admin screens to approve and pay bills, apply AR payments and credits,
+  write off and reverse, edit posting settings, and manage BOMs, production
+  batches and item costs.
+- Migrations: SQLite 102–123, Postgres 108–131.
+
 ## [1.40.1] - 2026-10-27
 
 ### Security

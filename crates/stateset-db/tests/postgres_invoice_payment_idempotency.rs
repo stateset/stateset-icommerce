@@ -39,6 +39,8 @@ async fn postgres_invoice_payment_replay_and_conflict() {
         })
         .await
         .unwrap();
+    // Payments are recorded only against issued invoices.
+    let invoice = db.invoices().send_async(invoice.id.into_uuid()).await.unwrap();
     let payment = RecordInvoicePayment {
         amount: dec!(40),
         payment_id: Some(Uuid::new_v4()),

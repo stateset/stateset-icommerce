@@ -1189,6 +1189,29 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     fn adjust_inventory(&self, input: AdjustLocationInventory) -> Result<LocationInventory> {
         with_immediate_transaction(&self.pool, |tx| {
             let now = Utc::now().to_rfc3339();
+            if input.quantity < Decimal::ZERO {
+                // Clients match on these refusals; keep their wording.
+                let on_hand: Option<String> = tx
+                    .query_row(
+                        "SELECT quantity_on_hand FROM location_inventory WHERE location_id = ?1 AND sku = ?2 AND lot_id = ?3",
+                        params![input.location_id, input.sku, location_lot_key(input.lot_id)],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                let Some(on_hand) = on_hand else {
+                    return Err(Self::smuggle(CommerceError::ValidationError(
+                        "Cannot create negative inventory".into(),
+                    )));
+                };
+                let on_hand =
+                    parse_decimal_strict(&on_hand, "location_inventory", "quantity_on_hand")
+                        .map_err(Self::smuggle)?;
+                if on_hand + input.quantity < Decimal::ZERO {
+                    return Err(Self::smuggle(CommerceError::ValidationError(
+                        "Adjustment would result in negative inventory".into(),
+                    )));
+                }
+            }
             super::stock_move::post(
                 tx,
                 &crate::stock_move::StockMove {

@@ -16,8 +16,22 @@ fn add(a: Decimal, b: Decimal) -> Result<Decimal> {
 }
 
 pub(super) async fn warehouse_of(conn: &mut PgConnection, location: i32) -> Result<i32> {
-    sqlx::query_scalar("SELECT l.warehouse_id FROM locations l JOIN warehouses w ON w.id = l.warehouse_id WHERE l.id = $1 AND l.is_active AND w.is_active FOR SHARE OF l, w")
-        .bind(location).fetch_optional(conn).await.map_err(map_db_error)?.ok_or_else(|| invalid("Stock location and its warehouse must be active"))
+    let active = sqlx::query_scalar("SELECT l.warehouse_id FROM locations l JOIN warehouses w ON w.id = l.warehouse_id WHERE l.id = $1 AND l.is_active AND w.is_active FOR SHARE OF l, w")
+        .bind(location).fetch_optional(&mut *conn).await.map_err(map_db_error)?;
+    if let Some(warehouse) = active {
+        return Ok(warehouse);
+    }
+    // A deleted location is missing, not inactive.
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM locations WHERE id = $1)")
+        .bind(location)
+        .fetch_one(conn)
+        .await
+        .map_err(map_db_error)?;
+    Err(if exists {
+        invalid("Stock location and its warehouse must be active")
+    } else {
+        CommerceError::NotFound
+    })
 }
 
 pub(super) async fn bin_for_location(

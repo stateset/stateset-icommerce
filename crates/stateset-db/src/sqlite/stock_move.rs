@@ -19,7 +19,20 @@ fn decimal(value: &str) -> DbResult<Decimal> {
 }
 
 pub(super) fn warehouse_of(conn: &Connection, location: i32) -> DbResult<i32> {
-    conn.query_row("SELECT l.warehouse_id FROM locations l JOIN warehouses w ON w.id = l.warehouse_id WHERE l.id = ?1 AND l.is_active = 1 AND w.is_active = 1", [location], |r| r.get(0)).optional()?.ok_or_else(|| invalid("Stock location and its warehouse must be active"))
+    let active = conn.query_row("SELECT l.warehouse_id FROM locations l JOIN warehouses w ON w.id = l.warehouse_id WHERE l.id = ?1 AND l.is_active = 1 AND w.is_active = 1", [location], |r| r.get(0)).optional()?;
+    if let Some(warehouse) = active {
+        return Ok(warehouse);
+    }
+    // A deleted location is missing, not inactive.
+    let exists: bool =
+        conn.query_row("SELECT EXISTS (SELECT 1 FROM locations WHERE id = ?1)", [location], |r| {
+            r.get(0)
+        })?;
+    Err(if exists {
+        invalid("Stock location and its warehouse must be active")
+    } else {
+        smuggle(CommerceError::NotFound)
+    })
 }
 
 /// Materialize a bin view from the location's existing ledger, without adding

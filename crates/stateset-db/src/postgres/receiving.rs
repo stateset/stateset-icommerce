@@ -1109,9 +1109,8 @@ impl PgReceivingRepository {
         let id = Uuid::new_v4();
         let item_id = input.receipt_item_id;
 
-        let lot_id =
-            Self::receipt_lot_pg(tx.as_mut(), input.receipt_id, item_id, &input.sku, input.lot_id)
-                .await?;
+        // Ownership first, as on SQLite: the lot lookup below is scoped to the
+        // receipt and would report a foreign line as missing.
         let (owner, received): (Uuid, Decimal) = sqlx::query_as(
             "SELECT receipt_id, received_quantity FROM receipt_items WHERE id = $1 FOR UPDATE",
         )
@@ -1126,6 +1125,9 @@ impl PgReceivingRepository {
                 input.receipt_id
             )));
         }
+        let lot_id =
+            Self::receipt_lot_pg(tx.as_mut(), input.receipt_id, item_id, &input.sku, input.lot_id)
+                .await?;
 
         let (planned,): (Decimal,) = sqlx::query_as(
             "SELECT COALESCE(SUM(quantity), 0) FROM put_aways

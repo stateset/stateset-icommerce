@@ -8,7 +8,8 @@ use stateset_db::SqliteDatabase;
 use uuid::Uuid;
 
 fn invoice(db: &SqliteDatabase) -> stateset_core::Invoice {
-    db.invoices()
+    let invoice = db
+        .invoices()
         .create(CreateInvoice {
             customer_id: CustomerId::new(),
             items: vec![CreateInvoiceItem {
@@ -19,7 +20,9 @@ fn invoice(db: &SqliteDatabase) -> stateset_core::Invoice {
             }],
             ..Default::default()
         })
-        .unwrap()
+        .unwrap();
+    // Payments are recorded only against issued invoices.
+    db.invoices().send(invoice.id).unwrap()
 }
 
 #[test]

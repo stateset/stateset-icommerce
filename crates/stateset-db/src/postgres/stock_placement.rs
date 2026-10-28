@@ -32,7 +32,10 @@ pub(super) async fn ensure_warehouse(
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
-        sqlx::query("INSERT INTO warehouses (id, code, name, created_at, updated_at) VALUES ($1, $2, $3, $4, $4) ON CONFLICT(id) DO NOTHING").bind(warehouse).bind(format!("__inventory_{warehouse}")).bind(identity).bind(now).execute(tx.as_mut()).await.map_err(map_db_error)?;
+        // A well-formed empty address: warehouse reads require every field.
+        let address = serde_json::to_value(stateset_core::WarehouseAddress::default())
+            .map_err(|e| invalid(&e.to_string()))?;
+        sqlx::query("INSERT INTO warehouses (id, code, name, address_json, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $5) ON CONFLICT(id) DO NOTHING").bind(warehouse).bind(format!("__inventory_{warehouse}")).bind(identity).bind(sqlx::types::Json(address)).bind(now).execute(tx.as_mut()).await.map_err(map_db_error)?;
         sqlx::query("SELECT setval(pg_get_serial_sequence('warehouses', 'id'), GREATEST((SELECT COALESCE(MAX(id), 1) FROM warehouses), (SELECT last_value FROM warehouses_id_seq)))").execute(tx.as_mut()).await.map_err(map_db_error)?;
     }
     let (code, name) =

@@ -79,9 +79,10 @@ pub(super) fn apply_payment(
         )?;
         if !matches!(status.as_str(), "sent" | "viewed" | "partially_paid" | "overdue" | "disputed")
         {
-            return Err(conflict(
-                "Invoice must be issued and open to receive a payment application",
-            ));
+            return Err(conflict(&format!(
+                "Invoice {} is {status}; it must be issued and open to receive a payment application",
+                app.invoice_id
+            )));
         }
         if owner != customer {
             return Err(invalid("Payment and invoice must belong to the same customer"));

@@ -56,9 +56,10 @@ pub(super) async fn apply_payment(
         let (owner, status, denomination, due) = sqlx::query_as::<_, (Uuid, String, String, Decimal)>("SELECT customer_id,status,currency,balance_due FROM invoices WHERE id=$1 FOR UPDATE").bind(app.invoice_id).fetch_one(tx.as_mut()).await.map_err(map_db_error)?;
         if !matches!(status.as_str(), "sent" | "viewed" | "partially_paid" | "overdue" | "disputed")
         {
-            return Err(conflict(
-                "Invoice must be issued and open to receive a payment application",
-            ));
+            return Err(conflict(&format!(
+                "Invoice {} is {status}; it must be issued and open to receive a payment application",
+                app.invoice_id
+            )));
         }
         if owner != customer {
             return Err(invalid("Payment and invoice must belong to the same customer"));

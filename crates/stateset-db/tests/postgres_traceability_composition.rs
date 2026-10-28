@@ -322,7 +322,8 @@ async fn postgres_lot_lifecycle_keeps_inventory_in_step() {
         .await
         .expect_err("unregistered location");
     assert!(
-        matches!(err, CommerceError::ValidationError(ref m) if m.contains("not an inventory location"))
+        matches!(err, CommerceError::ValidationError(ref m) if m.contains("Unknown stock warehouse")),
+        "got {err:?}"
     );
     sqlx::query(
         "INSERT INTO inventory_locations (id, name, code) VALUES (2, 'Two', 'TWO')
@@ -618,6 +619,8 @@ async fn postgres_merge_moves_placements_and_keeps_inventory_in_step() {
 async fn postgres_merge_records_genealogy_for_every_source() {
     let db = db_or_skip!();
     let sku = sku("TC-GEN");
+    // Lots own physical stock, so merge and split need placed source lots.
+    inventory_item(&db, &sku).await;
     let lots = db.lots();
     let po = Uuid::new_v4();
     let wo = Uuid::new_v4();
@@ -626,6 +629,7 @@ async fn postgres_merge_records_genealogy_for_every_source() {
             sku: sku.clone(),
             lot_number: Some(format!("TC-{}", Uuid::new_v4().simple())),
             quantity: dec!(10),
+            initial_location_id: Some(1),
             supplier_lot: Some("SUP-A".into()),
             purchase_order_id: Some(po),
             ..Default::default()
@@ -637,6 +641,7 @@ async fn postgres_merge_records_genealogy_for_every_source() {
             sku: sku.clone(),
             lot_number: Some(format!("TC-{}", Uuid::new_v4().simple())),
             quantity: dec!(5),
+            initial_location_id: Some(1),
             supplier_lot: Some("SUP-B".into()),
             work_order_id: Some(wo),
             ..Default::default()
@@ -690,6 +695,7 @@ async fn postgres_merge_records_genealogy_for_every_source() {
 async fn postgres_split_genealogy_is_transitive() {
     let db = db_or_skip!();
     let sku = sku("TC-GEN3");
+    inventory_item(&db, &sku).await;
     let lots = db.lots();
     let po = Uuid::new_v4();
     let root = lots
@@ -697,6 +703,7 @@ async fn postgres_split_genealogy_is_transitive() {
             sku: sku.clone(),
             lot_number: Some(format!("TC-{}", Uuid::new_v4().simple())),
             quantity: dec!(100),
+            initial_location_id: Some(1),
             purchase_order_id: Some(po),
             ..Default::default()
         })

@@ -130,7 +130,7 @@ pub fn router() -> Router<AppState> {
         .route("/cost-accounting/total-value", get(total_value))
         .route("/cost-accounting/close-check", get(close_check))
 }
-#[utoipa::path(post,operation_id="cost_set_cost",path="/api/v1/cost-accounting/items",tag="cost_accounting",request_body=SetCostRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="cost_set_cost",path="/api/v1/cost-accounting/items",tag="cost_accounting",request_body=SetCostRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn set_cost(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -152,7 +152,7 @@ pub(crate) async fn set_cost(
         .await
 }
 
-#[utoipa::path(get,operation_id="cost_list_items",path="/api/v1/cost-accounting/items",tag="cost_accounting",params(("sku"=Option<String>,Query,description="sku"),("cost_method"=Option<String>,Query,description="cost method"),("limit"=Option<u32>,Query,description="Maximum 200 records"),("offset"=Option<u32>,Query,description="offset")),responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(get,operation_id="cost_list_items",path="/api/v1/cost-accounting/items",tag="cost_accounting",params(("sku"=Option<String>,Query,description="sku"),("cost_method"=Option<String>,Query,description="cost method"),("limit"=Option<u32>,Query,description="Maximum 200 records"),("offset"=Option<u32>,Query,description="offset")),responses((status=200,body=Vec<Object>),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn list_items(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -167,7 +167,7 @@ pub(crate) async fn list_items(
         .await
 }
 
-#[utoipa::path(get,operation_id="cost_list_layers",path="/api/v1/cost-accounting/layers",tag="cost_accounting",params(("sku"=Option<String>,Query,description="sku"),("source_type"=Option<String>,Query,description="source type"),("has_remaining"=Option<bool>,Query,description="has remaining"),("from_date"=Option<String>,Query,description="RFC3339 timestamp"),("to_date"=Option<String>,Query,description="RFC3339 timestamp"),("limit"=Option<u32>,Query,description="Maximum 200 records"),("offset"=Option<u32>,Query,description="offset")),responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(get,operation_id="cost_list_layers",path="/api/v1/cost-accounting/layers",tag="cost_accounting",params(("sku"=Option<String>,Query,description="sku"),("source_type"=Option<String>,Query,description="source type"),("has_remaining"=Option<bool>,Query,description="has remaining"),("from_date"=Option<String>,Query,description="RFC3339 timestamp"),("to_date"=Option<String>,Query,description="RFC3339 timestamp"),("limit"=Option<u32>,Query,description="Maximum 200 records"),("offset"=Option<u32>,Query,description="offset")),responses((status=200,body=Vec<Object>),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn list_layers(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -182,7 +182,7 @@ pub(crate) async fn list_layers(
         .await
 }
 
-#[utoipa::path(get,operation_id="cost_list_transactions",path="/api/v1/cost-accounting/transactions",tag="cost_accounting",params(("sku"=Option<String>,Query,description="sku"),("transaction_type"=Option<String>,Query,description="transaction type"),("from_date"=Option<String>,Query,description="RFC3339 timestamp"),("to_date"=Option<String>,Query,description="RFC3339 timestamp"),("limit"=Option<u32>,Query,description="Maximum 200 records"),("offset"=Option<u32>,Query,description="offset")),responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(get,operation_id="cost_list_transactions",path="/api/v1/cost-accounting/transactions",tag="cost_accounting",params(("sku"=Option<String>,Query,description="sku"),("transaction_type"=Option<String>,Query,description="transaction type"),("from_date"=Option<String>,Query,description="RFC3339 timestamp"),("to_date"=Option<String>,Query,description="RFC3339 timestamp"),("limit"=Option<u32>,Query,description="Maximum 200 records"),("offset"=Option<u32>,Query,description="offset")),responses((status=200,body=Vec<Object>),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn list_transactions(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -197,7 +197,7 @@ pub(crate) async fn list_transactions(
         .await
 }
 
-#[utoipa::path(get,operation_id="cost_list_adjustments",path="/api/v1/cost-accounting/adjustments",tag="cost_accounting",params(("sku"=Option<String>,Query,description="sku"),("status"=Option<String>,Query,description="status"),("adjustment_type"=Option<String>,Query,description="adjustment type"),("from_date"=Option<String>,Query,description="RFC3339 timestamp"),("to_date"=Option<String>,Query,description="RFC3339 timestamp"),("limit"=Option<u32>,Query,description="Maximum 200 records"),("offset"=Option<u32>,Query,description="offset")),responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(get,operation_id="cost_list_adjustments",path="/api/v1/cost-accounting/adjustments",tag="cost_accounting",params(("sku"=Option<String>,Query,description="sku"),("status"=Option<String>,Query,description="status"),("adjustment_type"=Option<String>,Query,description="adjustment type"),("from_date"=Option<String>,Query,description="RFC3339 timestamp"),("to_date"=Option<String>,Query,description="RFC3339 timestamp"),("limit"=Option<u32>,Query,description="Maximum 200 records"),("offset"=Option<u32>,Query,description="offset")),responses((status=200,body=Vec<Object>),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn list_adjustments(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -212,7 +212,7 @@ pub(crate) async fn list_adjustments(
         .await
 }
 
-#[utoipa::path(get,operation_id="cost_list_variances",path="/api/v1/cost-accounting/variances",tag="cost_accounting",params(("sku"=Option<String>,Query,description="sku"),("variance_type"=Option<String>,Query,description="variance type"),("from_date"=Option<String>,Query,description="RFC3339 timestamp"),("to_date"=Option<String>,Query,description="RFC3339 timestamp"),("limit"=Option<u32>,Query,description="Maximum 200 records"),("offset"=Option<u32>,Query,description="offset")),responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(get,operation_id="cost_list_variances",path="/api/v1/cost-accounting/variances",tag="cost_accounting",params(("sku"=Option<String>,Query,description="sku"),("variance_type"=Option<String>,Query,description="variance type"),("from_date"=Option<String>,Query,description="RFC3339 timestamp"),("to_date"=Option<String>,Query,description="RFC3339 timestamp"),("limit"=Option<u32>,Query,description="Maximum 200 records"),("offset"=Option<u32>,Query,description="offset")),responses((status=200,body=Vec<Object>),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn list_variances(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -227,7 +227,7 @@ pub(crate) async fn list_variances(
         .await
 }
 
-#[utoipa::path(get,operation_id="cost_get_cost",path="/api/v1/cost-accounting/items/{sku}",tag="cost_accounting",params(("sku"=String,Path,description="Cost record")), responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(get,operation_id="cost_get_cost",path="/api/v1/cost-accounting/items/{sku}",tag="cost_accounting",params(("sku"=String,Path,description="Cost record")), responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn get_cost(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -241,7 +241,7 @@ pub(crate) async fn get_cost(
         .await
 }
 
-#[utoipa::path(post,operation_id="cost_average_cost",path="/api/v1/cost-accounting/items/{sku}/average",tag="cost_accounting",params(("sku"=String,Path,description="Cost record")), request_body=AverageCostRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="cost_average_cost",path="/api/v1/cost-accounting/items/{sku}/average",tag="cost_accounting",params(("sku"=String,Path,description="Cost record")), request_body=AverageCostRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn average_cost(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -260,7 +260,7 @@ pub(crate) async fn average_cost(
         .await
 }
 
-#[utoipa::path(post,operation_id="cost_last_cost",path="/api/v1/cost-accounting/items/{sku}/last",tag="cost_accounting",params(("sku"=String,Path,description="Cost record")), request_body=LastCostRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="cost_last_cost",path="/api/v1/cost-accounting/items/{sku}/last",tag="cost_accounting",params(("sku"=String,Path,description="Cost record")), request_body=LastCostRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn last_cost(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -275,7 +275,7 @@ pub(crate) async fn last_cost(
         .await
 }
 
-#[utoipa::path(post,operation_id="cost_create_layer",path="/api/v1/cost-accounting/layers",tag="cost_accounting",request_body=CostLayerRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="cost_create_layer",path="/api/v1/cost-accounting/layers",tag="cost_accounting",request_body=CostLayerRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn create_layer(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -297,7 +297,7 @@ pub(crate) async fn create_layer(
         .await
 }
 
-#[utoipa::path(get,operation_id="cost_get_layer",path="/api/v1/cost-accounting/layers/{id}",tag="cost_accounting",params(("id"=String,Path,description="Cost record")), responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(get,operation_id="cost_get_layer",path="/api/v1/cost-accounting/layers/{id}",tag="cost_accounting",params(("id"=String,Path,description="Cost record")), responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn get_layer(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -311,7 +311,7 @@ pub(crate) async fn get_layer(
         .await
 }
 
-#[utoipa::path(post,operation_id="cost_issue_fifo",path="/api/v1/cost-accounting/layers/issue-fifo",tag="cost_accounting",request_body=IssueLayersRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="cost_issue_fifo",path="/api/v1/cost-accounting/layers/issue-fifo",tag="cost_accounting",request_body=IssueLayersRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn issue_fifo(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -331,7 +331,7 @@ pub(crate) async fn issue_fifo(
         .await
 }
 
-#[utoipa::path(post,operation_id="cost_issue_lifo",path="/api/v1/cost-accounting/layers/issue-lifo",tag="cost_accounting",request_body=IssueLayersRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="cost_issue_lifo",path="/api/v1/cost-accounting/layers/issue-lifo",tag="cost_accounting",request_body=IssueLayersRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn issue_lifo(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -351,7 +351,7 @@ pub(crate) async fn issue_lifo(
         .await
 }
 
-#[utoipa::path(post,operation_id="cost_create_adjustment",path="/api/v1/cost-accounting/adjustments",tag="cost_accounting",request_body=CostAdjustmentRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="cost_create_adjustment",path="/api/v1/cost-accounting/adjustments",tag="cost_accounting",request_body=CostAdjustmentRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn create_adjustment(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -372,7 +372,7 @@ pub(crate) async fn create_adjustment(
         .await
 }
 
-#[utoipa::path(get,operation_id="cost_get_adjustment",path="/api/v1/cost-accounting/adjustments/{id}",tag="cost_accounting",params(("id"=String,Path,description="Cost record")), responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(get,operation_id="cost_get_adjustment",path="/api/v1/cost-accounting/adjustments/{id}",tag="cost_accounting",params(("id"=String,Path,description="Cost record")), responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn get_adjustment(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -386,7 +386,7 @@ pub(crate) async fn get_adjustment(
         .await
 }
 
-#[utoipa::path(post,operation_id="cost_approve_adjustment",path="/api/v1/cost-accounting/adjustments/{id}/approve",tag="cost_accounting",params(("id"=String,Path,description="Cost record")), responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="cost_approve_adjustment",path="/api/v1/cost-accounting/adjustments/{id}/approve",tag="cost_accounting",params(("id"=String,Path,description="Cost record")), responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn approve_adjustment(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -401,7 +401,7 @@ pub(crate) async fn approve_adjustment(
         .await
 }
 
-#[utoipa::path(post,operation_id="cost_apply_adjustment",path="/api/v1/cost-accounting/adjustments/{id}/apply",tag="cost_accounting",params(("id"=String,Path,description="Cost record")), responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="cost_apply_adjustment",path="/api/v1/cost-accounting/adjustments/{id}/apply",tag="cost_accounting",params(("id"=String,Path,description="Cost record")), responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn apply_adjustment(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -413,7 +413,7 @@ pub(crate) async fn apply_adjustment(
         .await
 }
 
-#[utoipa::path(post,operation_id="cost_reject_adjustment",path="/api/v1/cost-accounting/adjustments/{id}/reject",tag="cost_accounting",params(("id"=String,Path,description="Cost record")), responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="cost_reject_adjustment",path="/api/v1/cost-accounting/adjustments/{id}/reject",tag="cost_accounting",params(("id"=String,Path,description="Cost record")), responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn reject_adjustment(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -425,7 +425,7 @@ pub(crate) async fn reject_adjustment(
         .await
 }
 
-#[utoipa::path(post,operation_id="cost_record_variance",path="/api/v1/cost-accounting/variances",tag="cost_accounting",request_body=CostVarianceRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="cost_record_variance",path="/api/v1/cost-accounting/variances",tag="cost_accounting",request_body=CostVarianceRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn record_variance(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -448,7 +448,7 @@ pub(crate) async fn record_variance(
         .await
 }
 
-#[utoipa::path(post,operation_id="cost_record_transaction",path="/api/v1/cost-accounting/transactions",tag="cost_accounting",request_body=CostTransactionRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="cost_record_transaction",path="/api/v1/cost-accounting/transactions",tag="cost_accounting",request_body=CostTransactionRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn record_transaction(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -471,7 +471,7 @@ pub(crate) async fn record_transaction(
         .await
 }
 
-#[utoipa::path(post,operation_id="cost_calculate_rollup",path="/api/v1/cost-accounting/items/{sku}/rollup",tag="cost_accounting",params(("sku"=String,Path,description="Cost record")), request_body=CostRollupRequest, responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(post,operation_id="cost_calculate_rollup",path="/api/v1/cost-accounting/items/{sku}/rollup",tag="cost_accounting",params(("sku"=String,Path,description="Cost record")), request_body=CostRollupRequest, responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn calculate_rollup(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -486,7 +486,7 @@ pub(crate) async fn calculate_rollup(
         .await
 }
 
-#[utoipa::path(get,operation_id="cost_get_rollup",path="/api/v1/cost-accounting/items/{sku}/rollup",tag="cost_accounting",params(("sku"=String,Path,description="Cost record")), responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(get,operation_id="cost_get_rollup",path="/api/v1/cost-accounting/items/{sku}/rollup",tag="cost_accounting",params(("sku"=String,Path,description="Cost record")), responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn get_rollup(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -500,7 +500,7 @@ pub(crate) async fn get_rollup(
         .await
 }
 
-#[utoipa::path(get,operation_id="cost_cost_summary",path="/api/v1/cost-accounting/items/{sku}/summary",tag="cost_accounting",params(("sku"=String,Path,description="Cost record")), responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(get,operation_id="cost_cost_summary",path="/api/v1/cost-accounting/items/{sku}/summary",tag="cost_accounting",params(("sku"=String,Path,description="Cost record")), responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn cost_summary(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -514,7 +514,7 @@ pub(crate) async fn cost_summary(
         .await
 }
 
-#[utoipa::path(get,operation_id="cost_layers_remaining",path="/api/v1/cost-accounting/items/{sku}/remaining",tag="cost_accounting",params(("sku"=String,Path,description="Cost record")), responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(get,operation_id="cost_layers_remaining",path="/api/v1/cost-accounting/items/{sku}/remaining",tag="cost_accounting",params(("sku"=String,Path,description="Cost record")), responses((status=200,body=String),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn layers_remaining(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -528,7 +528,7 @@ pub(crate) async fn layers_remaining(
         .await
 }
 
-#[utoipa::path(get,operation_id="cost_valuation",path="/api/v1/cost-accounting/valuation",tag="cost_accounting",params(ValuationQuery),responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(get,operation_id="cost_valuation",path="/api/v1/cost-accounting/valuation",tag="cost_accounting",params(ValuationQuery),responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn valuation(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -544,7 +544,7 @@ pub(crate) async fn valuation(
         .await
 }
 
-#[utoipa::path(get,operation_id="cost_total_value",path="/api/v1/cost-accounting/total-value",tag="cost_accounting",responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(get,operation_id="cost_total_value",path="/api/v1/cost-accounting/total-value",tag="cost_accounting",responses((status=200,body=String),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn total_value(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -557,7 +557,7 @@ pub(crate) async fn total_value(
         .await
 }
 
-#[utoipa::path(get,operation_id="cost_close_check",path="/api/v1/cost-accounting/close-check",tag="cost_accounting",responses((status=200,body=Value),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
+#[utoipa::path(get,operation_id="cost_close_check",path="/api/v1/cost-accounting/close-check",tag="cost_accounting",responses((status=200,body=Object),(status=400,body=crate::error::ErrorBody),(status=409,body=crate::error::ErrorBody)))]
 pub(crate) async fn close_check(
     State(state): State<AppState>,
     headers: HeaderMap,

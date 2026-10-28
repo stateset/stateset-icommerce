@@ -845,6 +845,8 @@ use crate::state::AppState;
         (name = "transfer_orders", description = "Inter-warehouse transfer orders"),
         (name = "units_of_measure", description = "Unit of measure definitions"),
         (name = "credit", description = "Customer credit accounts, checks, holds and settlements"),
+        (name = "cost_accounting", description = "Item costs, cost layers, adjustments, variances and inventory valuation"),
+        (name = "erp_operations", description = "Receipts from purchase orders, put-away tasks, backorder allocations, lot moves, work-order materials and period reclose"),
         (name = "vendor_credits", description = "Vendor credit management"),
         (name = "vendor_returns", description = "Return-to-vendor processing"),
         (name = "purchase_orders", description = "Supplier procurement: purchase order lifecycle (draft → approval → send → acknowledge → receive → complete) and supplier management"),

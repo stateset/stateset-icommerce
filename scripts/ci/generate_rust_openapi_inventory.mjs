@@ -27,6 +27,8 @@ function runOpenapiExporter() {
   const run = spawnSync('cargo', ['run', '-q', '-p', 'stateset-http', '--example', 'export_openapi'], {
     cwd: rootDir,
     encoding: 'utf8',
+    // The spec outgrew spawnSync's 1 MiB default buffer, which kills the child.
+    maxBuffer: 64 * 1024 * 1024,
   });
 
   if (run.status !== 0) {

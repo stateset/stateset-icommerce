@@ -156,8 +156,8 @@ fn payment_application_for_nonexistent_payment_is_rejected() {
     });
     let err = result.expect_err("applying a nonexistent payment must fail");
     assert!(
-        matches!(err, stateset_embedded::CommerceError::ValidationError(_)),
-        "expected ValidationError, got: {err:?}"
+        matches!(err, stateset_embedded::CommerceError::NotFound),
+        "expected NotFound, got: {err:?}"
     );
 }
 
@@ -180,11 +180,11 @@ fn payment_application_to_voided_invoice_is_rejected() {
     });
     let err = result.expect_err("applying a payment to a voided invoice must fail");
     match err {
-        stateset_embedded::CommerceError::ValidationError(msg) => {
+        stateset_embedded::CommerceError::Conflict(msg) => {
             assert!(msg.contains("voided"), "error must name the status: {msg}");
             assert!(msg.contains(&invoice_id.to_string()), "error must name the invoice: {msg}");
         }
-        other => panic!("expected ValidationError, got: {other:?}"),
+        other => panic!("expected Conflict, got: {other:?}"),
     }
 }
 
@@ -203,8 +203,8 @@ fn payment_application_to_written_off_invoice_is_rejected() {
     });
     let err = result.expect_err("applying a payment to a written-off invoice must fail");
     assert!(
-        matches!(err, stateset_embedded::CommerceError::ValidationError(_)),
-        "expected ValidationError, got: {err:?}"
+        matches!(err, stateset_embedded::CommerceError::Conflict(_)),
+        "expected Conflict, got: {err:?}"
     );
 }
 

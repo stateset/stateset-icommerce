@@ -329,10 +329,12 @@ async fn postgres_lot_quarantine_helpers() {
     };
     let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
     let pool = raw_pool(&url).await;
+    // A lot's serials share its SKU; reservation refuses a mismatched lot.
+    let sku = format!("SKU-LOTQ-{}", Uuid::new_v4().simple());
     let lot_id = db
         .lots()
         .create_async(stateset_core::CreateLot {
-            sku: format!("LOT-{}", Uuid::new_v4().simple()),
+            sku: sku.clone(),
             quantity: rust_decimal::Decimal::from(10),
             ..Default::default()
         })
@@ -340,12 +342,12 @@ async fn postgres_lot_quarantine_helpers() {
         .expect("create lot")
         .id;
 
-    let available = make_serial(&db, "SKU-LOTQ", Some(lot_id)).await;
-    let reserved = make_serial(&db, "SKU-LOTQ", Some(lot_id)).await;
+    let available = make_serial(&db, &sku, Some(lot_id)).await;
+    let reserved = make_serial(&db, &sku, Some(lot_id)).await;
     let res = db.serials().reserve_async(reserve_input(reserved)).await.expect("reserve");
-    let sold = make_serial(&db, "SKU-LOTQ", Some(lot_id)).await;
+    let sold = make_serial(&db, &sku, Some(lot_id)).await;
     force_status(&pool, sold, SerialStatus::Sold).await;
-    let other = make_serial(&db, "SKU-LOTQ", None).await;
+    let other = make_serial(&db, &sku, None).await;
 
     let n = db.serials().quarantine_for_lot_async(lot_id, "supplier recall").await.expect("q");
     assert_eq!(n, 2);

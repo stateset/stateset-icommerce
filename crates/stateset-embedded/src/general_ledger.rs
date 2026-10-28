@@ -260,6 +260,7 @@ impl GeneralLedger {
     ///     entry_type: None,
     ///     source_document_type: None,
     ///     source_document_id: None,
+    ///     fx: None, // amounts in the store's base currency
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
@@ -351,6 +352,10 @@ impl GeneralLedger {
     ///     cogs_account_id: cogs_id,
     ///     unearned_revenue_account_id: None,
     ///     shipping_revenue_account_id: None,
+    ///     sales_tax_payable_account_id: None,
+    ///     goods_received_not_invoiced_account_id: None,
+    ///     inventory_adjustment_account_id: None,
+    ///     work_in_progress_account_id: None,
     ///     bad_debt_expense_account_id: None,
     ///     fx_gain_loss_account_id: None,
     ///     auto_post_depreciation: false,

@@ -253,6 +253,8 @@ pub(crate) fn lifecycle(db: &dyn Database) {
         .create(CreateBom {
             product_id: input.product_id,
             name: "Draft".into(),
+            // The product's active BOM already holds the default revision.
+            revision: Some("DRAFT".into()),
             ..Default::default()
         })
         .unwrap();

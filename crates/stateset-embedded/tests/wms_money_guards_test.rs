@@ -40,7 +40,6 @@ use stateset_embedded::{
 };
 use std::sync::{Arc, Barrier};
 use std::thread;
-use uuid::Uuid;
 
 // ============================================================================
 // Fixtures
@@ -838,7 +837,17 @@ fn lot_scoped_adjustments_are_independent_rows() {
     let commerce = commerce();
     let wh = make_warehouse(&commerce, "WH-LOT");
     let loc = make_location(&commerce, wh.id, "L-LOT");
-    let lot = Uuid::new_v4();
+    // Lot-scoped stock needs a real lot; its six units arrive with the
+    // lot-scoped adjustment below.
+    let lot = commerce
+        .lots()
+        .create(stateset_core::CreateLot {
+            sku: "LOT-SKU".into(),
+            quantity: dec!(6),
+            ..Default::default()
+        })
+        .expect("create lot")
+        .id;
 
     commerce.warehouse().adjust_inventory(adjustment(loc.id, "LOT-SKU", dec!(4))).expect("no lot");
     commerce
