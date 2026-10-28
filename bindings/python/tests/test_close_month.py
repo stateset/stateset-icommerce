@@ -136,8 +136,13 @@ def test_fail_on_warnings_refuses_before_writing():
 
     # Second asset, in service but with no generated schedule: the
     # depreciation step warns instead of failing.
+    # With ledger posting configured, acquisition posts too, so the asset
+    # needs the same accounts as the scheduled one.
     unscheduled = commerce.fixed_assets.create(
         name="Unscheduled lathe",
+        asset_account_id=asset.asset_account_id,
+        accumulated_depreciation_account_id=asset.accumulated_depreciation_account_id,
+        depreciation_expense_account_id=asset.depreciation_expense_account_id,
         category="machinery",
         acquisition_date="2020-01-01",
         acquisition_cost="600.00",

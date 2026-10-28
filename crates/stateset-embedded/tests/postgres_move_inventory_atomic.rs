@@ -50,6 +50,17 @@ async fn postgres_move_inventory_rolls_back_on_destination_failure() {
         .expect("create location");
 
     let sku = format!("SKU-{}", &unique[..8]);
+    // The shared database may have ledger posting on, which needs costed stock.
+    commerce
+        .cost_accounting()
+        .set_item_cost(stateset_core::SetItemCost {
+            sku: sku.clone(),
+            cost_method: Some(stateset_core::CostMethod::Average),
+            standard_cost: Some(rust_decimal::Decimal::ONE),
+            ..Default::default()
+        })
+        .await
+        .expect("cost the SKU");
     commerce
         .warehouse()
         .adjust_inventory(AdjustLocationInventory {

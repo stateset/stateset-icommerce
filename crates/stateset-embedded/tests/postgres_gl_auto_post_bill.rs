@@ -122,4 +122,5 @@ async fn postgres_auto_post_bill_posts_balanced_entry() {
     assert_eq!(entry.total_debits, dec!(100.00), "GRNI debit should equal the bill total");
     assert_eq!(entry.total_credits, dec!(100.00), "AP credit should equal the bill total");
     assert_eq!(entry.entry_date, bill_date.date_naive(), "entry date should be the bill date");
+    common::deactivate_posting(commerce.database().pool()).await;
 }

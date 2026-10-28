@@ -117,6 +117,16 @@ pub(crate) async fn postgres_input(
             })
             .await
             .unwrap();
+        // The shared database may have ledger posting on, which needs costed stock.
+        db.cost_accounting()
+            .set_item_cost_async(stateset_core::SetItemCost {
+                sku: sku.clone(),
+                cost_method: Some(stateset_core::CostMethod::Average),
+                standard_cost: Some(rust_decimal::Decimal::ONE),
+                ..Default::default()
+            })
+            .await
+            .expect("cost the SKU");
         db.warehouse()
             .adjust_inventory_async(AdjustLocationInventory {
                 location_id: locations[0],

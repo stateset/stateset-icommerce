@@ -58,6 +58,17 @@ async fn postgres_stock_snapshots_smoke() {
 
     let label = format!("pg-snap-{}", uuid::Uuid::new_v4().simple());
     let sku = format!("SNAP-{}", uuid::Uuid::new_v4());
+    // The shared database may have ledger posting on, which needs costed stock.
+    commerce
+        .cost_accounting()
+        .set_item_cost(stateset_core::SetItemCost {
+            sku: sku.clone(),
+            cost_method: Some(stateset_core::CostMethod::Average),
+            standard_cost: Some(rust_decimal::Decimal::ONE),
+            ..Default::default()
+        })
+        .await
+        .expect("cost the SKU");
     stateset_db::postgres::PgInventoryRepository::new(commerce.database().pool().clone())
         .create_item_async(stateset_core::CreateInventoryItem {
             sku: sku.clone(),
@@ -445,6 +456,16 @@ async fn postgres_vendor_returns_smoke() {
         })
         .await
         .unwrap();
+    // The shared database may have ledger posting on, which needs costed stock.
+    db.cost_accounting()
+        .set_item_cost_async(stateset_core::SetItemCost {
+            sku: sku.clone(),
+            cost_method: Some(stateset_core::CostMethod::Average),
+            standard_cost: Some(rust_decimal::Decimal::ONE),
+            ..Default::default()
+        })
+        .await
+        .expect("cost the SKU");
     db.warehouse()
         .adjust_inventory_async(stateset_core::AdjustLocationInventory {
             location_id: location.id,
@@ -498,10 +519,11 @@ async fn postgres_vendor_returns_smoke() {
 async fn postgres_vendor_credits_smoke() {
     let commerce = require_pg!("vendor credit");
     let store = commerce.database().vendor_credits();
+    let (supplier, bill) = supplier_with_bill(commerce.database(), dec!(1000)).await;
 
     let created = store
         .create_async(CreateVendorCredit {
-            supplier_id: uuid::Uuid::new_v4(),
+            supplier_id: supplier,
             vendor_return_id: None,
             amount: dec!(100),
             currency: None,
@@ -517,7 +539,7 @@ async fn postgres_vendor_credits_smoke() {
             created.id,
             ApplyVendorCredit {
                 target_type: VendorCreditTargetType::Bill,
-                target_id: uuid::Uuid::new_v4(),
+                target_id: bill,
                 amount: dec!(40),
             },
         )
@@ -532,7 +554,7 @@ async fn postgres_vendor_credits_smoke() {
                 created.id,
                 ApplyVendorCredit {
                     target_type: VendorCreditTargetType::Bill,
-                    target_id: uuid::Uuid::new_v4(),
+                    target_id: bill,
                     amount: dec!(1000),
                 },
             )
@@ -767,6 +789,41 @@ async fn postgres_price_levels_smoke() {
     assert!(store.get_async(created.id).await.expect("get after delete").is_none());
 }
 
+/// A supplier with an approved bill: prepayments and vendor credits settle real
+/// bills from the same supplier.
+async fn supplier_with_bill(
+    db: &stateset_db::PostgresDatabase,
+    amount: rust_decimal::Decimal,
+) -> (uuid::Uuid, uuid::Uuid) {
+    let supplier = db
+        .purchase_orders()
+        .create_supplier_async(stateset_core::CreateSupplier {
+            name: format!("Settlement supplier {}", uuid::Uuid::new_v4()),
+            ..Default::default()
+        })
+        .await
+        .expect("create supplier")
+        .id;
+    let bill = db
+        .accounts_payable()
+        .create_bill_async(stateset_core::CreateBill {
+            supplier_id: supplier,
+            due_date: chrono::Utc::now(),
+            items: vec![stateset_core::CreateBillItem {
+                description: "Settlement".into(),
+                quantity: dec!(1),
+                unit_price: amount,
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .await
+        .expect("create bill")
+        .id;
+    db.accounts_payable().approve_bill_async(bill).await.expect("approve bill");
+    (supplier, bill)
+}
+
 #[tokio::test]
 async fn postgres_prepayments_smoke() {
     use stateset_core::{
@@ -775,10 +832,11 @@ async fn postgres_prepayments_smoke() {
 
     let commerce = require_pg!("prepayment");
     let store = commerce.database().prepayments();
+    let (supplier, bill) = supplier_with_bill(commerce.database(), dec!(1000)).await;
 
     let created = store
         .create_async(CreatePrepayment {
-            supplier_id: uuid::Uuid::new_v4(),
+            supplier_id: supplier,
             amount: dec!(250),
             currency: None,
             method: Some("wire".into()),
@@ -795,7 +853,7 @@ async fn postgres_prepayments_smoke() {
             created.id,
             ApplyPrepayment {
                 target_type: PrepaymentTargetType::Bill,
-                target_id: uuid::Uuid::new_v4(),
+                target_id: bill,
                 amount: dec!(100),
             },
         )
@@ -809,7 +867,7 @@ async fn postgres_prepayments_smoke() {
                 created.id,
                 ApplyPrepayment {
                     target_type: PrepaymentTargetType::Bill,
-                    target_id: uuid::Uuid::new_v4(),
+                    target_id: bill,
                     amount: dec!(1000),
                 },
             )

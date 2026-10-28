@@ -131,4 +131,5 @@ async fn postgres_auto_post_bill_payment_posts_balanced_entry() {
         payment_date.date_naive(),
         "entry date should be the payment date"
     );
+    common::deactivate_posting(commerce.database().pool()).await;
 }

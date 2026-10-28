@@ -125,4 +125,5 @@ async fn postgres_auto_post_invoice_posts_balanced_entry() {
         invoice_date.date_naive(),
         "entry date should be the invoice date"
     );
+    common::deactivate_posting(commerce.database().pool()).await;
 }

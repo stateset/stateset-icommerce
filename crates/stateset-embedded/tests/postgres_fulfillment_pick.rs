@@ -134,19 +134,19 @@ async fn postgres_complete_pick_is_idempotent_and_rejects_over_pick() {
     .execute(&pool)
     .await
     .expect("seed inventory location");
-    sqlx::query(
-        "INSERT INTO inventory_balances
-         (item_id, location_id, quantity_on_hand, quantity_allocated, quantity_available)
-         SELECT id, $2, 5, 0, 5 FROM inventory_items WHERE sku = $1
-         ON CONFLICT (item_id, location_id) DO UPDATE SET
-             quantity_on_hand = EXCLUDED.quantity_on_hand,
-             quantity_available = EXCLUDED.quantity_available",
-    )
-    .bind("PICK-SKU")
-    .bind(warehouse.id)
-    .execute(&pool)
-    .await
-    .expect("seed warehouse balance");
+    // The shelf adjustment posts the warehouse balance too, so the balance is
+    // not seeded separately. The shared database may have ledger posting on,
+    // which needs costed stock.
+    commerce
+        .cost_accounting()
+        .set_item_cost(stateset_core::SetItemCost {
+            sku: "PICK-SKU".into(),
+            cost_method: Some(stateset_core::CostMethod::Average),
+            standard_cost: Some(dec!(1)),
+            ..Default::default()
+        })
+        .await
+        .expect("cost PICK-SKU");
     commerce
         .warehouse()
         .adjust_inventory(stateset_core::AdjustLocationInventory {

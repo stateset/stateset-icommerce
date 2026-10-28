@@ -40,7 +40,7 @@ async fn customer_with_invoice(
         })
         .await
         .expect("create customer");
-    commerce
+    let invoice = commerce
         .invoices()
         .create(CreateInvoice {
             customer_id: customer.id,
@@ -55,6 +55,8 @@ async fn customer_with_invoice(
         })
         .await
         .expect("create invoice");
+    // Aging counts issued invoices only.
+    commerce.invoices().send(invoice.id.into_uuid()).await.expect("issue invoice");
     customer.id.into_uuid()
 }
 
