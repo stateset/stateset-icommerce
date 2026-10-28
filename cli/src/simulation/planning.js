@@ -13,6 +13,7 @@ import { reconcilePlan } from './reconciliation.js';
 import { decideReplenishment } from './purchasing.js';
 import { reconcileCashFlow } from './cashflow.js';
 import { reconcileInventoryFlow } from './inventory-flow.js';
+import { costOpeningStock, receivePurchase } from './native-compat.js';
 
 export async function executeInventoryPlan(input, database) {
   const plan = inventoryPlanSchema.parse(input);
@@ -69,13 +70,7 @@ export async function executeInventoryPlan(input, database) {
       });
       await commerce.products.activate(product.id);
       const variant = await commerce.products.getVariantBySku(item.sku);
-      // Cost the opening stock at the plan's unit cost: the engine refuses to
-      // issue on-hand units that no cost layer covers.
-      await commerce.costAccounting.setItemCost({
-        sku: item.sku,
-        costMethod: 'average',
-        standardCost: item.unitCost,
-      });
+      await costOpeningStock(commerce, item.sku, item.unitCost);
       await commerce.inventory.createItem({
         sku: item.sku,
         name: 'Planning stock',
@@ -225,9 +220,10 @@ export async function executeInventoryPlan(input, database) {
         const quantity = delivery.nextReceiptQuantity;
         const remaining = delivery.quantity - quantity;
         if (quantity > 0) {
-          const po = await commerce.purchaseOrders.receive(
+          const po = await receivePurchase(
+            commerce,
             delivery.id,
-            [{ itemId: delivery.line, quantityReceivedExact: String(quantity) }],
+            [{ itemId: delivery.line, sku: delivery.sku, quantity: String(quantity) }],
             warehouse.id,
             location.id,
           );

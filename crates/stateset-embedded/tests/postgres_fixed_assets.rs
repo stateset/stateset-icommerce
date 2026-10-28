@@ -21,6 +21,11 @@ use stateset_core::{
 };
 use stateset_embedded::{AsyncCommerce, AsyncGeneralLedger};
 
+/// Ledger posting settings are global and one test here turns posting on, so
+/// the tests in this binary run one at a time: an asset acquired with posting
+/// off cannot depreciate once it is on.
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 fn postgres_url() -> Option<String> {
     stateset_test_utils::postgres_url()
 }
@@ -111,6 +116,7 @@ async fn postgres_fixed_asset_lifecycle_and_schedule_persistence() {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping fixed asset lifecycle test");
         return;
     };
+    let _serial = SERIAL.lock().await;
     let commerce = AsyncCommerce::connect(&url).await.expect("connect + migrate");
     let assets = commerce.fixed_assets();
     // Depreciation never posts a period that hasn't ended, so the whole
@@ -190,6 +196,7 @@ async fn postgres_fixed_asset_depreciation_auto_posts_journal_entry() {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping depreciation auto-post test");
         return;
     };
+    let _serial = SERIAL.lock().await;
     let commerce = AsyncCommerce::connect(&url).await.expect("connect + migrate");
     let gl = commerce.general_ledger();
     let assets = commerce.fixed_assets();
@@ -340,10 +347,11 @@ async fn postgres_fixed_asset_dispose_records_gain_loss() {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping fixed asset dispose test");
         return;
     };
+    let _serial = SERIAL.lock().await;
     let commerce = AsyncCommerce::connect(&url).await.expect("connect + migrate");
     let assets = commerce.fixed_assets();
-    // Another test in this binary may have ledger posting active: acquisition
-    // and disposal then post, needing accounts and open periods (Jan-Jun 2026).
+    // An earlier binary may have left ledger posting active: acquisition and
+    // disposal then post, needing accounts and open periods (Jan-Jun 2026).
     let gl = commerce.general_ledger();
     let (capitalization, accumulated, expense) = asset_accounts(&gl).await;
     let suffix = &uuid::Uuid::new_v4().simple().to_string()[..8];

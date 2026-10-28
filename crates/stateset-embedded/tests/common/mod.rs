@@ -18,7 +18,8 @@ use stateset_embedded::AsyncGeneralLedger;
 /// period_number)`, the unique-constraint conflict is resolved by looking the
 /// period up by date instead. Periods may not overlap, so binaries that post
 /// on the same dates must use the same period shape (see `ensure_open_month`).
-/// Opening an already-open period is a conflict, so an open one is reused.
+/// Opening an already-open period is a conflict, so an open one is reused,
+/// including one a concurrent test opened first.
 pub(crate) async fn ensure_open_period(gl: &AsyncGeneralLedger, input: CreateGlPeriod) -> GlPeriod {
     let probe_date = input.start_date;
     let period = match gl.create_period(input).await {
@@ -32,7 +33,17 @@ pub(crate) async fn ensure_open_period(gl: &AsyncGeneralLedger, input: CreateGlP
     if period.status == PeriodStatus::Open {
         return period;
     }
-    gl.open_period(period.id).await.expect("open period")
+    match gl.open_period(period.id).await {
+        Ok(opened) => opened,
+        // Tests in one binary run concurrently: another may have opened it
+        // between the read above and this call.
+        Err(err) => gl
+            .get_period_for_date(probe_date)
+            .await
+            .expect("look up period")
+            .filter(|p| p.status == PeriodStatus::Open)
+            .unwrap_or_else(|| panic!("open period: {err:?}")),
+    }
 }
 
 /// Convenience wrapper: build the `CreateGlPeriod` from parts.
