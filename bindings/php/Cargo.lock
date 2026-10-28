@@ -2605,6 +2605,7 @@ dependencies = [
  "r2d2_sqlite",
  "rusqlite",
  "rust_decimal",
+ "scheduled-thread-pool",
  "serde",
  "serde_jcs",
  "serde_json",
