@@ -188,6 +188,10 @@ strum = { version = "0.26", features = ["derive"] }
 rusqlite = { version = "0.32.1", features = ["bundled", "functions"] }
 r2d2 = "0.8"
 r2d2_sqlite = "0.25"
+# r2d2's thread pool. 0.2.8 needs parking_lot 0.13 (Rust 1.95) without
+# declaring a rust-version, so the MSRV-aware resolver cannot avoid it; cap it
+# until a release that fits the workspace MSRV.
+scheduled-thread-pool = ">=0.2, <0.2.8"
 
 # Database (PostgreSQL)
 # Avoid `sqlx` default features (notably `any`), which pull in MySQL and other

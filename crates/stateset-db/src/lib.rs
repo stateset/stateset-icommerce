@@ -86,6 +86,10 @@ pub use sqlite::{SQLITE_SYNCHRONOUS_ENV, SqliteDatabase, SqliteDurability, Sqlit
 #[cfg(feature = "postgres")]
 pub use postgres::PostgresDatabase;
 
+// Declared only to cap r2d2's thread pool below a release that breaks the MSRV.
+#[cfg(feature = "sqlite")]
+use scheduled_thread_pool as _;
+
 use stateset_core::{
     A2ACommerceRepository, A2ACreditTermsRepository, A2AMessagingRepository,
     AccountsPayableRepository, AccountsReceivableRepository, ActivityLogRepository,

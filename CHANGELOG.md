@@ -53,6 +53,13 @@ This project follows Keep a Changelog and Semantic Versioning.
   `rb-sys`. The Ruby binding's `rb-sys` crate moves to 0.9.130, matching its
   gem.
 
+### Fixed
+
+- `stateset-db` caps `scheduled-thread-pool` (r2d2's pool) below 0.2.8. That
+  release needs `parking_lot` 0.13, which requires Rust 1.95, and declares no
+  `rust-version`, so a fresh `cargo add stateset-sdk` failed to build on the
+  supported toolchains (MSRV 1.88).
+
 ## [1.40.0] - 2026-10-22
 
 ### Security
