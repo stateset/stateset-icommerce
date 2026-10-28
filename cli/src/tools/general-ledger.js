@@ -5,11 +5,51 @@
  */
 
 import { z } from 'zod';
+import { nonnegativeDecimalString, positiveDecimalString } from '../utils/decimal-schema.js';
 import { applyRequired } from '../utils/apply-guard.js';
 
 const withPolicyDomain = (policyDomain, tools) => tools.map((tool) => ({ policyDomain, ...tool }));
 
 export const generalLedgerTools = withPolicyDomain('general_ledger', [
+  {
+    name: 'get_gl_posting_config',
+    description: 'Read the active automatic ledger posting settings.',
+    inputSchema: {},
+    permission: 'read',
+    handler: async ({ commerce }) => ({
+      success: true,
+      config: await commerce.generalLedger.getAutoPostingConfig(),
+    }),
+  },
+  {
+    name: 'set_gl_posting_config',
+    description:
+      'Configure accounts for automatic ledger postings. Replaces the active settings atomically.',
+    inputSchema: {
+      configName: z.string().min(1),
+      cashAccountId: z.string().uuid(),
+      accountsReceivableAccountId: z.string().uuid(),
+      inventoryAccountId: z.string().uuid(),
+      accountsPayableAccountId: z.string().uuid(),
+      unearnedRevenueAccountId: z.string().uuid().optional(),
+      salesRevenueAccountId: z.string().uuid(),
+      shippingRevenueAccountId: z.string().uuid().optional(),
+      salesTaxPayableAccountId: z.string().uuid().optional(),
+      goodsReceivedNotInvoicedAccountId: z.string().uuid().optional(),
+      inventoryAdjustmentAccountId: z.string().uuid().optional(),
+      workInProgressAccountId: z.string().uuid().optional(),
+      cogsAccountId: z.string().uuid(),
+      badDebtExpenseAccountId: z.string().uuid().optional(),
+      fxGainLossAccountId: z.string().uuid().optional(),
+      autoPostDepreciation: z.boolean().default(false),
+      autoPostRevenueRecognition: z.boolean().default(false),
+    },
+    permission: 'admin',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) return applyRequired('Configure ledger posting', params);
+      return { success: true, config: await commerce.generalLedger.setAutoPostingConfig(params) };
+    },
+  },
   {
     name: 'list_gl_accounts',
     description: 'List general ledger accounts.',
@@ -70,7 +110,7 @@ export const generalLedgerTools = withPolicyDomain('general_ledger', [
     name: 'initialize_chart_of_accounts',
     description: 'Initialize the standard chart of accounts.',
     inputSchema: {},
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Initialize chart of accounts');
@@ -115,17 +155,21 @@ export const generalLedgerTools = withPolicyDomain('general_ledger', [
     description: 'Post a journal entry.',
     inputSchema: {
       journalEntryId: z.string().min(1).describe('Journal entry ID'),
-      postedBy: z.string().min(1).describe('User posting the entry'),
     },
-    permission: 'write',
-    handler: async ({ commerce, params, allowApply }) => {
+    permission: 'admin',
+    handler: async ({ commerce, params, allowApply, actorId }) => {
       if (!allowApply) {
         return applyRequired('Post journal entry', params);
       }
 
+      if (!actorId)
+        return {
+          success: false,
+          error: 'Configure --actor (STATESET_ERP_ACTOR) for financial audit identity',
+        };
       const journalEntry = await commerce.generalLedger.postJournalEntry(
         params.journalEntryId,
-        params.postedBy,
+        actorId,
       );
       return { success: true, message: 'Journal entry posted', journalEntry };
     },
@@ -136,7 +180,7 @@ export const generalLedgerTools = withPolicyDomain('general_ledger', [
     inputSchema: {
       journalEntryId: z.string().min(1).describe('Journal entry ID'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Void journal entry', params);
@@ -193,7 +237,7 @@ export const generalLedgerTools = withPolicyDomain('general_ledger', [
       asOfDate: z.string().min(1).describe('As-of date in ISO 8601'),
       baseCurrency: z.string().min(1).max(10).optional().describe('Optional base currency code'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Revalue general ledger', params);
@@ -223,15 +267,19 @@ export const generalLedgerTools = withPolicyDomain('general_ledger', [
         .boolean()
         .optional()
         .describe('Refuse with an error when any step reports warnings (strict mode)'),
-      closedBy: z.string().min(1).optional().describe('Actor recorded as the closer'),
     },
-    permission: 'write',
-    handler: async ({ commerce, params, allowApply }) => {
+    permission: 'admin',
+    handler: async ({ commerce, params, allowApply, actorId }) => {
       const dryRun = params.dryRun === true;
       if (!dryRun && !allowApply) {
         return applyRequired('Close month', params);
       }
 
+      if (!actorId && !dryRun)
+        return {
+          success: false,
+          error: 'Configure --actor (STATESET_ERP_ACTOR) for financial audit identity',
+        };
       const report = await commerce.generalLedger.closeMonth(params.periodId, {
         dryRun,
         skipDepreciation: params.skipDepreciation,
@@ -239,7 +287,7 @@ export const generalLedgerTools = withPolicyDomain('general_ledger', [
         skipFxRevaluation: params.skipFxRevaluation,
         skipPeriodClose: params.skipPeriodClose,
         failOnWarnings: params.failOnWarnings,
-        closedBy: params.closedBy,
+        closedBy: actorId || undefined,
       });
       return {
         success: true,
@@ -303,7 +351,7 @@ export const generalLedgerTools = withPolicyDomain('general_ledger', [
     inputSchema: {
       periodId: z.string().min(1).describe('Accounting period ID'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Open GL period', params);
@@ -327,6 +375,135 @@ export const generalLedgerTools = withPolicyDomain('general_ledger', [
         params.asOfDate,
       );
       return { success: true, accountId: params.accountId, asOfDate: params.asOfDate, balance };
+    },
+  },
+
+  {
+    name: 'create_journal_entry',
+    description: 'Create a balanced journal draft or post it atomically with exact decimal lines.',
+    permission: 'admin',
+    inputSchema: {
+      entryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      entryType: z.enum(['standard', 'adjusting', 'closing', 'reversing', 'opening']).optional(),
+      description: z.string().min(1),
+      lines: z
+        .array(
+          z.object({
+            accountId: z.string().uuid(),
+            description: z.string().optional(),
+            debitAmount: nonnegativeDecimalString.optional(),
+            creditAmount: nonnegativeDecimalString.optional(),
+          }),
+        )
+        .min(2),
+      autoPost: z.boolean().optional(),
+      currency: z.string().length(3).optional(),
+      exchangeRate: positiveDecimalString.optional(),
+    },
+    handler: async ({ commerce, params, allowApply, actorId }) => {
+      if (!allowApply) return applyRequired('Create journal entry', params);
+      if (!actorId)
+        return {
+          success: false,
+          error: 'Configure --actor (STATESET_ERP_ACTOR) for financial audit identity',
+        };
+      return {
+        success: true,
+        journalEntry: await commerce.generalLedger.createJournalEntry(params, actorId),
+      };
+    },
+  },
+  {
+    name: 'reverse_journal_entry',
+    description: 'Reverse a posted entry on an open accounting date.',
+    permission: 'admin',
+    inputSchema: {
+      journalEntryId: z.string().uuid(),
+      reversalDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    },
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) return applyRequired('Reverse journal entry', params);
+      return {
+        success: true,
+        journalEntry: await commerce.generalLedger.reverseJournalEntry(
+          params.journalEntryId,
+          params.reversalDate,
+        ),
+      };
+    },
+  },
+  {
+    name: 'get_gl_period',
+    description: 'Get an accounting period.',
+    permission: 'read',
+    inputSchema: { periodId: z.string().uuid() },
+    handler: async ({ commerce, params }) => ({
+      success: true,
+      period: await commerce.generalLedger.getPeriod(params.periodId),
+    }),
+  },
+  {
+    name: 'close_gl_period',
+    description: 'Close an accounting period.',
+    permission: 'admin',
+    inputSchema: { periodId: z.string().uuid() },
+    handler: async ({ commerce, params, allowApply, actorId }) => {
+      if (!allowApply) return applyRequired('Close period', params);
+      if (!actorId)
+        return {
+          success: false,
+          error: 'Configure --actor (STATESET_ERP_ACTOR) for financial audit identity',
+        };
+      return {
+        success: true,
+        result: await commerce.generalLedger.closePeriod(params.periodId, actorId),
+      };
+    },
+  },
+  {
+    name: 'lock_gl_period',
+    description: 'Lock an accounting period.',
+    permission: 'admin',
+    inputSchema: { periodId: z.string().uuid() },
+    handler: async ({ commerce, params, allowApply, actorId }) => {
+      if (!allowApply) return applyRequired('Lock period', params);
+      if (!actorId)
+        return {
+          success: false,
+          error: 'Configure --actor (STATESET_ERP_ACTOR) for financial audit identity',
+        };
+      return {
+        success: true,
+        result: await commerce.generalLedger.lockPeriod(params.periodId, actorId),
+      };
+    },
+  },
+  {
+    name: 'reopen_gl_period',
+    description: 'Reopen an accounting period.',
+    permission: 'admin',
+    inputSchema: { periodId: z.string().uuid() },
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) return applyRequired('Reopen period', params);
+      return { success: true, result: await commerce.generalLedger.reopenPeriod(params.periodId) };
+    },
+  },
+  {
+    name: 'reclose_gl_period',
+    description: 'Reclose an accounting period.',
+    permission: 'admin',
+    inputSchema: { periodId: z.string().uuid() },
+    handler: async ({ commerce, params, allowApply, actorId }) => {
+      if (!allowApply) return applyRequired('Reclose period', params);
+      if (!actorId)
+        return {
+          success: false,
+          error: 'Configure --actor (STATESET_ERP_ACTOR) for financial audit identity',
+        };
+      return {
+        success: true,
+        result: await commerce.generalLedger.reclosePeriod(params.periodId, actorId),
+      };
     },
   },
 ]);

@@ -102,6 +102,8 @@ fn purchase_order_receive_rejects_cross_order_item() {
         .receive(
             po_one.id.into(),
             ReceivePurchaseOrderItems {
+                warehouse_id: 1,
+                receiving_location_id: 1,
                 items: vec![ReceivePurchaseOrderItem {
                     item_id: po_two.items[0].id,
                     quantity_received: dec!(1),
@@ -186,6 +188,11 @@ fn create_journal_entry_rejects_line_with_debit_and_credit() {
         reference_type: None,
         reference_id: None,
         created_at: now,
+
+        transaction_currency: None,
+        transaction_debit_amount: None,
+        transaction_credit_amount: None,
+        exchange_rate: None,
     };
 
     let entry = JournalEntry {

@@ -86,3 +86,9 @@ use tower as _;
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]
 struct ReadmeDoctests;
+
+#[cfg(test)]
+mod finance_controls_tests;
+
+#[cfg(test)]
+mod erp_routes_tests;

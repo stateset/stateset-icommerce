@@ -98,6 +98,8 @@ pub enum Action {
     /// audit records name it. Requires [`PermissionLevel::Delete`] (the
     /// built-in `operator` role or above).
     Destructive,
+    /// Approve, settle, or post financial value; requires Admin.
+    ManageFinance,
 }
 
 impl Action {
@@ -115,6 +117,7 @@ impl Action {
             Self::Read | Self::List => PermissionLevel::Read,
             Self::Create | Self::Update | Self::Execute => PermissionLevel::Write,
             Self::Delete | Self::Destructive => PermissionLevel::Delete,
+            Self::ManageFinance => PermissionLevel::Admin,
         }
     }
 
@@ -129,6 +132,7 @@ impl Action {
             Self::List,
             Self::Execute,
             Self::Destructive,
+            Self::ManageFinance,
         ]
     }
 }
@@ -143,6 +147,7 @@ impl fmt::Display for Action {
             Self::List => "list",
             Self::Execute => "execute",
             Self::Destructive => "destructive",
+            Self::ManageFinance => "manage_finance",
         };
         f.write_str(s)
     }
@@ -228,8 +233,8 @@ mod tests {
     }
 
     #[test]
-    fn action_all_returns_seven() {
-        assert_eq!(Action::all().len(), 7);
+    fn action_all_returns_eight() {
+        assert_eq!(Action::all().len(), 8);
     }
 
     #[test]

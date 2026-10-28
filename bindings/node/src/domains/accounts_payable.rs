@@ -14,6 +14,10 @@ use super::*;
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreateBillInput {
+    /// Trusted host identity. Remote adapters must supply this from authentication.
+    pub created_by: Option<String>,
+    pub currency: Option<String>,
+    pub purchase_order_id: Option<String>,
     pub supplier_id: String,
     pub due_date: String,
     pub payment_terms: Option<String>,
@@ -25,22 +29,22 @@ pub struct CreateBillInput {
 }
 
 /// A bill line. Money follows the binding convention: send the `...Exact`
-/// base-10 string (preferred) or the float.
+/// base-10 string or its legacy Exact alias.
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreateBillItemInput {
     pub description: String,
     pub account_code: Option<String>,
-    /// Float quantity. Optional: send `quantity_exact` instead.
-    pub quantity: Option<f64>,
+    /// Exact decimal quantity; `quantity_exact` remains an alias.
+    pub quantity: Option<String>,
     /// Exact base-10 quantity. Takes precedence over `quantity` when present.
     pub quantity_exact: Option<String>,
-    /// Float unit price. Optional: send `unit_price_exact` instead for exact money.
-    pub unit_price: Option<f64>,
+    /// Exact decimal unit price; `unit_price_exact` remains an alias.
+    pub unit_price: Option<String>,
     /// Exact base-10 unit price. Takes precedence over `unit_price` when present.
     pub unit_price_exact: Option<String>,
-    /// Tax rate as a fraction (`0.08` = 8%).
-    pub tax_rate: Option<f64>,
+    /// Tax rate as a percentage (`"8"` = 8%).
+    pub tax_rate: Option<String>,
     /// Exact base-10 tax rate. Takes precedence over `tax_rate` when present.
     pub tax_rate_exact: Option<String>,
     pub po_line_id: Option<String>,
@@ -53,13 +57,17 @@ impl TryFrom<CreateBillItemInput> for stateset_core::CreateBillItem {
         Ok(Self {
             description: i.description,
             account_code: i.account_code,
-            quantity: money_input(i.quantity_exact.as_deref(), i.quantity, "bill item quantity")?,
-            unit_price: money_input(
+            quantity: finance_money_input(
+                i.quantity_exact.as_deref(),
+                i.quantity,
+                "bill item quantity",
+            )?,
+            unit_price: finance_money_input(
                 i.unit_price_exact.as_deref(),
                 i.unit_price,
                 "bill item unit price",
             )?,
-            tax_rate: optional_money_input(
+            tax_rate: optional_finance_money_input(
                 i.tax_rate_exact.as_deref(),
                 i.tax_rate,
                 "bill item tax rate",
@@ -80,18 +88,18 @@ pub struct BillItemOutput {
     pub account_code: Option<String>,
     /// Exact base-10 quantity.
     pub quantity_exact: String,
-    /// @deprecated Use the `unitPriceExact` twin; float money will be removed in 2.0.
-    pub unit_price: f64,
+    /// Exact decimal string.
+    pub unit_price: String,
     /// Exact base-10 unit price.
     pub unit_price_exact: String,
-    /// @deprecated Use the `amountExact` twin; float money will be removed in 2.0.
-    pub amount: f64,
+    /// Exact decimal string.
+    pub amount: String,
     /// Exact base-10 line amount (quantity x unit price).
     pub amount_exact: String,
     /// Exact base-10 tax rate (a fraction), when set.
     pub tax_rate_exact: Option<String>,
-    /// @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0.
-    pub tax_amount: f64,
+    /// Exact decimal string.
+    pub tax_amount: String,
     /// Exact base-10 line tax.
     pub tax_amount_exact: String,
     pub po_line_id: Option<String>,
@@ -102,9 +110,12 @@ impl TryFrom<stateset_core::BillItem> for BillItemOutput {
     type Error = Error;
 
     fn try_from(i: stateset_core::BillItem) -> Result<Self> {
-        let (unit_price, unit_price_exact) = money_pair(i.unit_price, "bill item unit price")?;
-        let (amount, amount_exact) = money_pair(i.amount, "bill item amount")?;
-        let (tax_amount, tax_amount_exact) = money_pair(i.tax_amount, "bill item tax amount")?;
+        let unit_price = i.unit_price.to_string();
+        let unit_price_exact = unit_price.clone();
+        let amount = i.amount.to_string();
+        let amount_exact = amount.clone();
+        let tax_amount = i.tax_amount.to_string();
+        let tax_amount_exact = tax_amount.clone();
         Ok(Self {
             id: i.id.to_string(),
             bill_id: i.bill_id.to_string(),
@@ -128,21 +139,25 @@ impl TryFrom<stateset_core::BillItem> for BillItemOutput {
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct BillOutput {
+    pub currency: String,
+    pub created_by: Option<String>,
+    pub approved_by: Option<String>,
+    pub match_override_reason: Option<String>,
     pub id: String,
     pub bill_number: String,
     pub supplier_id: String,
     #[napi(ts_type = "BillStatus")]
     pub status: String,
-    /// @deprecated Use the `totalAmountExact` twin; float money will be removed in 2.0.
-    pub total_amount: f64,
+    /// Exact decimal string.
+    pub total_amount: String,
     /// Exact base-10 total amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_amount_exact: String,
-    /// @deprecated Use the `amountPaidExact` twin; float money will be removed in 2.0.
-    pub amount_paid: f64,
+    /// Exact decimal string.
+    pub amount_paid: String,
     /// Exact base-10 amount paid, straight from the engine's `Decimal`. Prefer this field for money.
     pub amount_paid_exact: String,
-    /// @deprecated Use the `amountDueExact` twin; float money will be removed in 2.0.
-    pub amount_due: f64,
+    /// Exact decimal string.
+    pub amount_due: String,
     /// Exact base-10 amount due, straight from the engine's `Decimal`. Prefer this field for money.
     pub amount_due_exact: String,
     pub due_date: String,
@@ -153,12 +168,19 @@ impl TryFrom<stateset_core::Bill> for BillOutput {
     type Error = Error;
 
     fn try_from(b: stateset_core::Bill) -> Result<Self> {
-        let (total_amount, total_amount_exact) = money_pair(b.total_amount, "bill total amount")?;
-        let (amount_paid, amount_paid_exact) = money_pair(b.amount_paid, "bill amount paid")?;
-        let (amount_due, amount_due_exact) = money_pair(b.amount_due, "bill amount due")?;
+        let total_amount = b.total_amount.to_string();
+        let total_amount_exact = total_amount.clone();
+        let amount_paid = b.amount_paid.to_string();
+        let amount_paid_exact = amount_paid.clone();
+        let amount_due = b.amount_due.to_string();
+        let amount_due_exact = amount_due.clone();
         Ok(Self {
             id: b.id.to_string(),
             bill_number: b.bill_number,
+            currency: b.currency.to_string(),
+            match_override_reason: b.match_override_reason,
+            created_by: b.created_by,
+            approved_by: b.approved_by,
             supplier_id: b.supplier_id.to_string(),
             status: format!("{:?}", b.status),
             total_amount,
@@ -176,28 +198,28 @@ impl TryFrom<stateset_core::Bill> for BillOutput {
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ApAgingSummaryOutput {
-    /// @deprecated Use the `currentExact` twin; float money will be removed in 2.0.
-    pub current: f64,
+    /// Exact decimal string.
+    pub current: String,
     /// Exact base-10 current, straight from the engine's `Decimal`. Prefer this field for money.
     pub current_exact: String,
-    /// @deprecated Use the `days130Exact` twin; float money will be removed in 2.0.
-    pub days_1_30: f64,
+    /// Exact decimal string.
+    pub days_1_30: String,
     /// Exact base-10 days 1 30, straight from the engine's `Decimal`. Prefer this field for money.
     pub days_1_30_exact: String,
-    /// @deprecated Use the `days3160Exact` twin; float money will be removed in 2.0.
-    pub days_31_60: f64,
+    /// Exact decimal string.
+    pub days_31_60: String,
     /// Exact base-10 days 31 60, straight from the engine's `Decimal`. Prefer this field for money.
     pub days_31_60_exact: String,
-    /// @deprecated Use the `days6190Exact` twin; float money will be removed in 2.0.
-    pub days_61_90: f64,
+    /// Exact decimal string.
+    pub days_61_90: String,
     /// Exact base-10 days 61 90, straight from the engine's `Decimal`. Prefer this field for money.
     pub days_61_90_exact: String,
-    /// @deprecated Use the `daysOver90Exact` twin; float money will be removed in 2.0.
-    pub days_over_90: f64,
+    /// Exact decimal string.
+    pub days_over_90: String,
     /// Exact base-10 days over 90, straight from the engine's `Decimal`. Prefer this field for money.
     pub days_over_90_exact: String,
-    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
-    pub total: f64,
+    /// Exact decimal string.
+    pub total: String,
     /// Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_exact: String,
 }
@@ -206,13 +228,18 @@ impl TryFrom<stateset_core::ApAgingSummary> for ApAgingSummaryOutput {
     type Error = Error;
 
     fn try_from(a: stateset_core::ApAgingSummary) -> Result<Self> {
-        let (current, current_exact) = money_pair(a.current, "AP aging current")?;
-        let (days_1_30, days_1_30_exact) = money_pair(a.days_1_30, "AP aging 1-30 days")?;
-        let (days_31_60, days_31_60_exact) = money_pair(a.days_31_60, "AP aging 31-60 days")?;
-        let (days_61_90, days_61_90_exact) = money_pair(a.days_61_90, "AP aging 61-90 days")?;
-        let (days_over_90, days_over_90_exact) =
-            money_pair(a.days_over_90, "AP aging over 90 days")?;
-        let (total, total_exact) = money_pair(a.total, "AP aging total")?;
+        let current = a.current.to_string();
+        let current_exact = current.clone();
+        let days_1_30 = a.days_1_30.to_string();
+        let days_1_30_exact = days_1_30.clone();
+        let days_31_60 = a.days_31_60.to_string();
+        let days_31_60_exact = days_31_60.clone();
+        let days_61_90 = a.days_61_90.to_string();
+        let days_61_90_exact = days_61_90.clone();
+        let days_over_90 = a.days_over_90.to_string();
+        let days_over_90_exact = days_over_90.clone();
+        let total = a.total.to_string();
+        let total_exact = total.clone();
         Ok(Self {
             current,
             current_exact,
@@ -349,6 +376,101 @@ pub struct AccountsPayable {
 
 #[napi]
 impl AccountsPayable {
+    #[napi]
+    pub async fn create_payment(&self, input: CreateBillPaymentInput) -> Result<BillPaymentOutput> {
+        self.commerce
+            .get()?
+            .accounts_payable()
+            .create_payment(ap_workflow_input(input)?)
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to pay bills", e))
+    }
+    #[napi]
+    pub async fn get_payment(&self, id: String) -> Result<Option<BillPaymentOutput>> {
+        self.commerce
+            .get()?
+            .accounts_payable()
+            .get_payment(ap_workflow_id(&id)?)
+            .map(|v| v.map(Into::into))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get bill payment", e))
+    }
+    #[napi]
+    pub async fn void_payment(&self, id: String) -> Result<BillPaymentOutput> {
+        self.commerce
+            .get()?
+            .accounts_payable()
+            .void_payment(ap_workflow_id(&id)?)
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to void bill payment", e))
+    }
+    #[napi]
+    pub async fn create_payment_run(
+        &self,
+        input: CreateApPaymentRunInput,
+        actor: String,
+    ) -> Result<ApPaymentRunOutput> {
+        let mut request: stateset_core::CreatePaymentRun = ap_workflow_input(input)?;
+        request.created_by = Some(actor);
+        self.commerce
+            .get()?
+            .accounts_payable()
+            .create_payment_run(request)
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create payment run", e))
+    }
+    #[napi]
+    pub async fn get_payment_run(&self, id: String) -> Result<Option<ApPaymentRunOutput>> {
+        self.commerce
+            .get()?
+            .accounts_payable()
+            .get_payment_run(ap_workflow_id(&id)?)
+            .map(|v| v.map(Into::into))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get payment run", e))
+    }
+    #[napi]
+    pub async fn list_payment_runs(
+        &self,
+        filter: Option<ApPaymentRunFilterInput>,
+    ) -> Result<Vec<ApPaymentRunOutput>> {
+        self.commerce
+            .get()?
+            .accounts_payable()
+            .list_payment_runs(ap_workflow_input(filter.unwrap_or_default())?)
+            .map(|v| v.into_iter().map(Into::into).collect())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list payment runs", e))
+    }
+    #[napi]
+    pub async fn approve_payment_run(
+        &self,
+        id: String,
+        actor: String,
+    ) -> Result<ApPaymentRunOutput> {
+        self.commerce
+            .get()?
+            .accounts_payable()
+            .approve_payment_run(ap_workflow_id(&id)?, &actor)
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to approve payment run", e))
+    }
+    #[napi]
+    pub async fn process_payment_run(&self, id: String) -> Result<ApPaymentRunOutput> {
+        self.commerce
+            .get()?
+            .accounts_payable()
+            .process_payment_run(ap_workflow_id(&id)?)
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to process payment run", e))
+    }
+    #[napi]
+    pub async fn cancel_payment_run(&self, id: String) -> Result<ApPaymentRunOutput> {
+        self.commerce
+            .get()?
+            .accounts_payable()
+            .cancel_payment_run(ap_workflow_id(&id)?)
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel payment run", e))
+    }
+
     /// Create a bill
     #[napi]
     pub async fn create_bill(&self, input: CreateBillInput) -> Result<BillOutput> {
@@ -363,13 +485,14 @@ impl AccountsPayable {
         let bill = commerce
             .accounts_payable()
             .create_bill(stateset_core::CreateBill {
+                created_by: input.created_by,
                 bill_number: None,
                 supplier_id,
-                purchase_order_id: None,
+                purchase_order_id: parse_optional_id(input.purchase_order_id, "purchase order")?,
                 bill_date: None,
                 due_date,
                 payment_terms: input.payment_terms,
-                currency: None,
+                currency: parse_optional_enum(input.currency, "currency")?,
                 reference_number: input.reference_number,
                 memo: input.notes,
                 items: input
@@ -434,17 +557,51 @@ impl AccountsPayable {
 
     /// Approve a bill
     #[napi]
-    pub async fn approve_bill(&self, id: String) -> Result<BillOutput> {
+    pub async fn approve_bill(
+        &self,
+        id: String,
+        override_reason: Option<String>,
+        actor: Option<String>,
+    ) -> Result<BillOutput> {
         let commerce = self.commerce.get()?;
         let uuid: uuid::Uuid =
             id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
-        let bill = commerce
-            .accounts_payable()
-            .approve_bill(uuid)
-            .map_err(|e| wrap(ErrCode::Internal, "Failed to approve bill", e))?;
+        let bill = if let Some(actor) = actor {
+            commerce.accounts_payable().approve_bill_as(uuid, &actor, override_reason.as_deref())
+        } else {
+            match override_reason.as_deref() {
+                Some(reason) => {
+                    commerce.accounts_payable().approve_bill_with_override(uuid, reason)
+                }
+                None => commerce.accounts_payable().approve_bill(uuid),
+            }
+        }
+        .map_err(|e| wrap(ErrCode::Internal, "Failed to approve bill", e))?;
         convert_output(bill)
     }
 
+    /// Dispute a bill.
+    #[napi]
+    pub async fn dispute_bill(&self, id: String) -> Result<BillOutput> {
+        let commerce = self.commerce.get()?;
+        let id = id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid bill UUID"))?;
+        let bill = commerce
+            .accounts_payable()
+            .dispute_bill(id)
+            .map_err(|e| wrap(ErrCode::Internal, "Dispute a bill failed", e))?;
+        convert_output(bill)
+    }
+    /// Resolve a bill dispute.
+    #[napi]
+    pub async fn resolve_bill_dispute(&self, id: String) -> Result<BillOutput> {
+        let commerce = self.commerce.get()?;
+        let id = id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid bill UUID"))?;
+        let bill = commerce
+            .accounts_payable()
+            .resolve_bill_dispute(id)
+            .map_err(|e| wrap(ErrCode::Internal, "Resolve a bill dispute failed", e))?;
+        convert_output(bill)
+    }
     /// Cancel a bill
     #[napi]
     pub async fn cancel_bill(&self, id: String) -> Result<BillOutput> {
@@ -493,13 +650,13 @@ impl AccountsPayable {
 
     /// Get total outstanding
     #[napi]
-    pub async fn get_total_outstanding(&self) -> Result<f64> {
+    pub async fn get_total_outstanding(&self) -> Result<String> {
         let commerce = self.commerce.get()?;
         let total = commerce
             .accounts_payable()
             .get_total_outstanding()
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get total", e))?;
-        to_f64_checked(total, "accounts payable total outstanding")
+        Ok(total.to_string())
     }
 
     /// Count bills
@@ -537,5 +694,129 @@ impl AccountsPayable {
             .three_way_match(uuid, tolerance)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to three-way match bill", e))?;
         Ok(result.into())
+    }
+}
+
+fn ap_workflow_input<T: serde::de::DeserializeOwned>(value: impl Serialize) -> Result<T> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| wrap(ErrCode::Validation, "Invalid finance input", e))?;
+    serde_json::from_value(value).map_err(|e| wrap(ErrCode::Validation, "Invalid finance input", e))
+}
+fn ap_workflow_id(id: &str) -> Result<uuid::Uuid> {
+    id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid finance UUID"))
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateBillPaymentInput {
+    pub supplier_id: String,
+    pub payment_date: Option<String>,
+    pub payment_method: String,
+    pub amount: String,
+    pub currency: Option<String>,
+    pub reference_number: Option<String>,
+    pub bank_account: Option<String>,
+    pub check_number: Option<String>,
+    pub memo: Option<String>,
+    pub allocations: Vec<BillPaymentAllocationInput>,
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct BillPaymentAllocationInput {
+    pub bill_id: String,
+    pub amount: String,
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateApPaymentRunInput {
+    pub payment_date: String,
+    pub payment_method: String,
+    pub bill_ids: Vec<String>,
+    pub notes: Option<String>,
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct ApPaymentRunFilterInput {
+    pub status: Option<String>,
+    pub from_date: Option<String>,
+    pub to_date: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct BillPaymentOutput {
+    pub id: String,
+    pub supplier_id: String,
+    pub payment_method: String,
+    pub amount: String,
+    pub currency: String,
+    pub status: String,
+    pub payment_number: String,
+    pub reference_number: Option<String>,
+    pub bank_account: Option<String>,
+    pub check_number: Option<String>,
+    pub memo: Option<String>,
+    pub payment_date: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+impl From<stateset_core::BillPayment> for BillPaymentOutput {
+    fn from(v: stateset_core::BillPayment) -> Self {
+        Self {
+            id: v.id.to_string(),
+            supplier_id: v.supplier_id.to_string(),
+            payment_method: v.payment_method.to_string(),
+            amount: v.amount.to_string(),
+            currency: v.currency.to_string(),
+            status: v.status.to_string(),
+            payment_number: v.payment_number,
+            reference_number: v.reference_number,
+            bank_account: v.bank_account,
+            check_number: v.check_number,
+            memo: v.memo,
+            payment_date: v.payment_date.to_rfc3339(),
+            created_at: v.created_at.to_rfc3339(),
+            updated_at: v.updated_at.to_rfc3339(),
+        }
+    }
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ApPaymentRunOutput {
+    pub id: String,
+    pub status: String,
+    pub payment_method: String,
+    pub total_amount: String,
+    pub currency: Option<String>,
+    pub run_number: String,
+    pub payment_count: i32,
+    pub notes: Option<String>,
+    pub created_by: Option<String>,
+    pub approved_by: Option<String>,
+    pub approved_at: Option<String>,
+    pub processed_at: Option<String>,
+    pub payment_date: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+impl From<stateset_core::PaymentRun> for ApPaymentRunOutput {
+    fn from(v: stateset_core::PaymentRun) -> Self {
+        Self {
+            id: v.id.to_string(),
+            status: v.status.to_string(),
+            payment_method: v.payment_method.to_string(),
+            total_amount: v.total_amount.to_string(),
+            currency: v.currency.map(|x| x.to_string()),
+            run_number: v.run_number,
+            payment_count: v.payment_count,
+            notes: v.notes,
+            created_by: v.created_by,
+            approved_by: v.approved_by,
+            approved_at: v.approved_at.map(|x| x.to_rfc3339()),
+            processed_at: v.processed_at.map(|x| x.to_rfc3339()),
+            payment_date: v.payment_date.to_rfc3339(),
+            created_at: v.created_at.to_rfc3339(),
+            updated_at: v.updated_at.to_rfc3339(),
+        }
     }
 }

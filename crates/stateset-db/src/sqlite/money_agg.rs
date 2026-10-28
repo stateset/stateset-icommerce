@@ -47,6 +47,30 @@ fn overflow_err(fn_name: &str) -> rusqlite::Error {
 /// Aggregate that sums money-typed values exactly using `Decimal`.
 struct DecimalSum;
 
+/// Numeric MAX for TEXT decimals (SQLite's built-in MAX orders them as text).
+struct DecimalMax;
+
+impl Aggregate<Option<Decimal>, Option<String>> for DecimalMax {
+    fn init(&self, _: &mut Context<'_>) -> SqlResult<Option<Decimal>> {
+        Ok(None)
+    }
+
+    fn step(&self, ctx: &mut Context<'_>, acc: &mut Option<Decimal>) -> SqlResult<()> {
+        if let Some(value) = decimal_arg("decimal_max", ctx.get_raw(0))? {
+            *acc = Some(acc.map_or(value, |current| current.max(value)));
+        }
+        Ok(())
+    }
+
+    fn finalize(
+        &self,
+        _: &mut Context<'_>,
+        acc: Option<Option<Decimal>>,
+    ) -> SqlResult<Option<String>> {
+        Ok(acc.flatten().map(|value| value.to_string()))
+    }
+}
+
 impl Aggregate<Option<Decimal>, String> for DecimalSum {
     fn init(&self, _: &mut Context<'_>) -> SqlResult<Option<Decimal>> {
         Ok(None)
@@ -104,6 +128,12 @@ impl Aggregate<Option<Decimal>, String> for DecimalSumProduct {
 /// Called from the pool's `with_init` so every pooled connection (including the
 /// one migrations run on, and in-memory test databases) can use it.
 pub(super) fn register(conn: &Connection) -> SqlResult<()> {
+    conn.create_aggregate_function(
+        "decimal_max",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        DecimalMax,
+    )?;
     conn.create_aggregate_function(
         "decimal_sum",
         1,

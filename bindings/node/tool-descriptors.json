@@ -285,8 +285,8 @@
         "className": "X402"
       }
     ],
-    "toolCount": 769,
-    "readOnlyCount": 386,
+    "toolCount": 810,
+    "readOnlyCount": 398,
     "readOnlyPrefixes": [
       "calculate",
       "check",
@@ -711,6 +711,66 @@
       },
       "additionalProperties": false
     },
+    "ApPaymentRunFilterInput": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "fromDate": {
+          "type": "string"
+        },
+        "toDate": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "number"
+        },
+        "offset": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ApplyArPaymentInput": {
+      "type": "object",
+      "properties": {
+        "paymentId": {
+          "type": "string"
+        },
+        "applications": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ArPaymentLineInput"
+          }
+        }
+      },
+      "required": [
+        "paymentId",
+        "applications"
+      ],
+      "additionalProperties": false
+    },
+    "ApplyCreditMemoInput": {
+      "type": "object",
+      "properties": {
+        "creditMemoId": {
+          "type": "string"
+        },
+        "invoiceId": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "creditMemoId",
+        "invoiceId",
+        "amount"
+      ],
+      "additionalProperties": false
+    },
     "ApplyPrepaymentInput": {
       "type": "object",
       "properties": {
@@ -804,6 +864,118 @@
         "targetType",
         "targetId",
         "amount"
+      ],
+      "additionalProperties": false
+    },
+    "ArPaymentLineInput": {
+      "type": "object",
+      "properties": {
+        "invoiceId": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "invoiceId",
+        "amount"
+      ],
+      "additionalProperties": false
+    },
+    "ArWriteOffFilterInput": {
+      "type": "object",
+      "properties": {
+        "customerId": {
+          "type": "string"
+        },
+        "invoiceId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "includeReversed": {
+          "type": "boolean"
+        },
+        "fromDate": {
+          "type": "string"
+        },
+        "toDate": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "number"
+        },
+        "offset": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "AutoPostingConfigInput": {
+      "type": "object",
+      "properties": {
+        "configName": {
+          "type": "string"
+        },
+        "cashAccountId": {
+          "type": "string"
+        },
+        "accountsReceivableAccountId": {
+          "type": "string"
+        },
+        "inventoryAccountId": {
+          "type": "string"
+        },
+        "accountsPayableAccountId": {
+          "type": "string"
+        },
+        "unearnedRevenueAccountId": {
+          "type": "string"
+        },
+        "salesRevenueAccountId": {
+          "type": "string"
+        },
+        "shippingRevenueAccountId": {
+          "type": "string"
+        },
+        "salesTaxPayableAccountId": {
+          "type": "string"
+        },
+        "goodsReceivedNotInvoicedAccountId": {
+          "type": "string"
+        },
+        "inventoryAdjustmentAccountId": {
+          "type": "string"
+        },
+        "workInProgressAccountId": {
+          "type": "string"
+        },
+        "cogsAccountId": {
+          "type": "string"
+        },
+        "badDebtExpenseAccountId": {
+          "type": "string"
+        },
+        "fxGainLossAccountId": {
+          "type": "string"
+        },
+        "autoPostDepreciation": {
+          "type": "boolean"
+        },
+        "autoPostRevenueRecognition": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "configName",
+        "cashAccountId",
+        "accountsReceivableAccountId",
+        "inventoryAccountId",
+        "accountsPayableAccountId",
+        "salesRevenueAccountId",
+        "cogsAccountId"
       ],
       "additionalProperties": false
     },
@@ -918,6 +1090,22 @@
       },
       "additionalProperties": false,
       "description": "Optional filters for `AccountsPayable.listBills`. No argument lists all."
+    },
+    "BillPaymentAllocationInput": {
+      "type": "object",
+      "properties": {
+        "billId": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "billId",
+        "amount"
+      ],
+      "additionalProperties": false
     },
     "BillingCycleFilterInput": {
       "type": "object",
@@ -1080,9 +1268,6 @@
           }
         }
       },
-      "required": [
-        "lines"
-      ],
       "additionalProperties": false
     },
     "CaptureTopologySnapshotInput": {
@@ -1329,6 +1514,27 @@
       },
       "additionalProperties": false
     },
+    "CompletePutAwayInput": {
+      "type": "object",
+      "properties": {
+        "putAwayId": {
+          "type": "string"
+        },
+        "actualLocationId": {
+          "type": "number"
+        },
+        "completedBy": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "putAwayId"
+      ],
+      "additionalProperties": false
+    },
     "ConvertCurrencyInput": {
       "type": "object",
       "properties": {
@@ -1536,6 +1742,32 @@
       ],
       "additionalProperties": false
     },
+    "CreateApPaymentRunInput": {
+      "type": "object",
+      "properties": {
+        "paymentDate": {
+          "type": "string"
+        },
+        "paymentMethod": {
+          "type": "string"
+        },
+        "billIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "paymentDate",
+        "paymentMethod",
+        "billIds"
+      ],
+      "additionalProperties": false
+    },
     "CreateBackorderInput": {
       "type": "object",
       "properties": {
@@ -1576,6 +1808,16 @@
     "CreateBillInput": {
       "type": "object",
       "properties": {
+        "createdBy": {
+          "type": "string",
+          "description": "Trusted host identity. Remote adapters must supply this from authentication."
+        },
+        "currency": {
+          "type": "string"
+        },
+        "purchaseOrderId": {
+          "type": "string"
+        },
         "supplierId": {
           "type": "string"
         },
@@ -1615,9 +1857,8 @@
           "type": "string"
         },
         "quantity": {
-          "type": "number",
-          "x-money": "float",
-          "description": "Float quantity. Optional: send `quantity_exact` instead. Float money field; prefer the `quantityExact` string for exact amounts."
+          "type": "string",
+          "description": "Exact decimal quantity; `quantity_exact` remains an alias."
         },
         "quantityExact": {
           "type": "string",
@@ -1625,9 +1866,8 @@
           "description": "Exact base-10 quantity. Takes precedence over `quantity` when present."
         },
         "unitPrice": {
-          "type": "number",
-          "x-money": "float",
-          "description": "Float unit price. Optional: send `unit_price_exact` instead for exact money. Float money field; prefer the `unitPriceExact` string for exact amounts."
+          "type": "string",
+          "description": "Exact decimal unit price; `unit_price_exact` remains an alias."
         },
         "unitPriceExact": {
           "type": "string",
@@ -1635,9 +1875,8 @@
           "description": "Exact base-10 unit price. Takes precedence over `unit_price` when present."
         },
         "taxRate": {
-          "type": "number",
-          "x-money": "float",
-          "description": "Tax rate as a fraction (`0.08` = 8%). Float money field; prefer the `taxRateExact` string for exact amounts."
+          "type": "string",
+          "description": "Tax rate as a percentage (`\"8\"` = 8%)."
         },
         "taxRateExact": {
           "type": "string",
@@ -1652,7 +1891,52 @@
         "description"
       ],
       "additionalProperties": false,
-      "description": "A bill line. Money follows the binding convention: send the `...Exact` base-10 string (preferred) or the float."
+      "description": "A bill line. Money follows the binding convention: send the `...Exact` base-10 string or its legacy Exact alias."
+    },
+    "CreateBillPaymentInput": {
+      "type": "object",
+      "properties": {
+        "supplierId": {
+          "type": "string"
+        },
+        "paymentDate": {
+          "type": "string"
+        },
+        "paymentMethod": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "referenceNumber": {
+          "type": "string"
+        },
+        "bankAccount": {
+          "type": "string"
+        },
+        "checkNumber": {
+          "type": "string"
+        },
+        "memo": {
+          "type": "string"
+        },
+        "allocations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/BillPaymentAllocationInput"
+          }
+        }
+      },
+      "required": [
+        "supplierId",
+        "paymentMethod",
+        "amount",
+        "allocations"
+      ],
+      "additionalProperties": false
     },
     "CreateBomComponentInput": {
       "type": "object",
@@ -1880,7 +2164,7 @@
           "type": "string"
         },
         "creditLimit": {
-          "type": "number"
+          "type": "string"
         },
         "paymentTerms": {
           "type": "string"
@@ -1924,7 +2208,7 @@
           "description": "Credit memo reason accepted by `CreateCreditMemoInput.reason` (case-insensitive)."
         },
         "amount": {
-          "type": "number"
+          "type": "string"
         },
         "notes": {
           "type": "string"
@@ -2127,12 +2411,11 @@
         },
         "expectedQuantity": {
           "type": "string",
-          "description": "Exact decimal string"
+          "description": "Deprecated and ignored; expected stock is read from the ledger."
         }
       },
       "required": [
-        "sku",
-        "expectedQuantity"
+        "sku"
       ],
       "additionalProperties": false
     },
@@ -2311,6 +2594,12 @@
           "type": "string"
         },
         "accumulatedDepreciationAccountId": {
+          "type": "string"
+        },
+        "acquisitionOffsetAccountId": {
+          "type": "string"
+        },
+        "disposalGainLossAccountId": {
           "type": "string"
         },
         "depreciationExpenseAccountId": {
@@ -2762,6 +3051,12 @@
     "CreateInvoiceInput": {
       "type": "object",
       "properties": {
+        "currency": {
+          "type": "string"
+        },
+        "dueDate": {
+          "type": "string"
+        },
         "customerId": {
           "type": "string"
         },
@@ -2797,12 +3092,11 @@
           "type": "string"
         },
         "quantity": {
-          "type": "number"
+          "type": "string"
         },
         "unitPrice": {
-          "type": "number",
-          "x-money": "float",
-          "description": "Float unit price. Optional: send `unit_price_exact` instead for exact money. Float money field; prefer the `unitPriceExact` string for exact amounts."
+          "type": "string",
+          "description": "Exact decimal unit price; `unit_price_exact` remains an alias."
         },
         "unitPriceExact": {
           "type": "string",
@@ -2816,6 +3110,62 @@
       "required": [
         "description",
         "quantity"
+      ],
+      "additionalProperties": false
+    },
+    "CreateJournalEntryInput": {
+      "type": "object",
+      "properties": {
+        "entryDate": {
+          "type": "string"
+        },
+        "entryType": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CreateJournalEntryLineInput"
+          }
+        },
+        "autoPost": {
+          "type": "boolean"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "exchangeRate": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "entryDate",
+        "description",
+        "lines"
+      ],
+      "additionalProperties": false
+    },
+    "CreateJournalEntryLineInput": {
+      "type": "object",
+      "properties": {
+        "accountId": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "debitAmount": {
+          "type": "string"
+        },
+        "creditAmount": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "accountId"
       ],
       "additionalProperties": false
     },
@@ -2933,6 +3283,10 @@
         },
         "supplierLotNumber": {
           "type": "string"
+        },
+        "initialLocationId": {
+          "type": "number",
+          "description": "Warehouse receiving the initial stock into its unassigned location."
         }
       },
       "required": [
@@ -3838,6 +4192,46 @@
       ],
       "additionalProperties": false
     },
+    "CreatePutAwayInput": {
+      "type": "object",
+      "properties": {
+        "receiptId": {
+          "type": "string"
+        },
+        "receiptItemId": {
+          "type": "string"
+        },
+        "sku": {
+          "type": "string"
+        },
+        "fromLocationId": {
+          "type": "number"
+        },
+        "toLocationId": {
+          "type": "number"
+        },
+        "quantity": {
+          "type": "string"
+        },
+        "lotId": {
+          "type": "string"
+        },
+        "assignedTo": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "receiptId",
+        "receiptItemId",
+        "sku",
+        "toLocationId",
+        "quantity"
+      ],
+      "additionalProperties": false
+    },
     "CreateQualityHoldInput": {
       "type": "object",
       "properties": {
@@ -3909,6 +4303,9 @@
         "purchaseOrderId": {
           "type": "string"
         },
+        "supplierId": {
+          "type": "string"
+        },
         "carrier": {
           "type": "string"
         },
@@ -3942,9 +4339,8 @@
           "type": "string"
         },
         "expectedQuantity": {
-          "type": "number",
-          "x-money": "float",
-          "description": "Float quantity. Optional: send `expected_quantity_exact` instead. Float money field; prefer the `expectedQuantityExact` string for exact amounts."
+          "type": "string",
+          "description": "Decimal string quantity. Optional: send `expected_quantity_exact` instead."
         },
         "expectedQuantityExact": {
           "type": "string",
@@ -3952,9 +4348,8 @@
           "description": "Exact base-10 quantity. Takes precedence over `expected_quantity`."
         },
         "unitCost": {
-          "type": "number",
-          "x-money": "float",
-          "description": "Float unit cost. Optional: send `unit_cost_exact` instead for exact money. Float money field; prefer the `unitCostExact` string for exact amounts."
+          "type": "string",
+          "description": "Decimal string unit cost. Optional: send `unit_cost_exact` instead for exact money."
         },
         "unitCostExact": {
           "type": "string",
@@ -3976,7 +4371,7 @@
         "sku"
       ],
       "additionalProperties": false,
-      "description": "An expected receipt line. Money follows the binding convention: send the `...Exact` base-10 string (preferred) or the float."
+      "description": "An expected receipt line. Money follows the binding convention: send a decimal string through the canonical field or its `...Exact` alias."
     },
     "CreateRefundExactInput": {
       "type": "object",
@@ -4687,6 +5082,12 @@
     "CreateTransferOrderInput": {
       "type": "object",
       "properties": {
+        "sourceLocationId": {
+          "type": "number"
+        },
+        "destinationLocationId": {
+          "type": "number"
+        },
         "sourceWarehouseId": {
           "type": "string"
         },
@@ -4708,6 +5109,8 @@
         }
       },
       "required": [
+        "sourceLocationId",
+        "destinationLocationId",
         "sourceWarehouseId",
         "destinationWarehouseId",
         "items"
@@ -4717,6 +5120,12 @@
     "CreateTransferOrderItemInput": {
       "type": "object",
       "properties": {
+        "sku": {
+          "type": "string"
+        },
+        "lotId": {
+          "type": "string"
+        },
         "productId": {
           "type": "string"
         },
@@ -4726,6 +5135,7 @@
         }
       },
       "required": [
+        "sku",
         "productId",
         "quantity"
       ],
@@ -4837,6 +5247,9 @@
         "supplierId": {
           "type": "string"
         },
+        "warehouseId": {
+          "type": "number"
+        },
         "purchaseOrderId": {
           "type": "string"
         },
@@ -4855,6 +5268,7 @@
       },
       "required": [
         "supplierId",
+        "warehouseId",
         "items"
       ],
       "additionalProperties": false
@@ -4863,6 +5277,15 @@
       "type": "object",
       "properties": {
         "productId": {
+          "type": "string"
+        },
+        "sku": {
+          "type": "string"
+        },
+        "sourceLocationId": {
+          "type": "number"
+        },
+        "lotId": {
           "type": "string"
         },
         "quantity": {
@@ -4886,6 +5309,8 @@
       },
       "required": [
         "productId",
+        "sku",
+        "sourceLocationId",
         "quantity",
         "unitCost"
       ],
@@ -5052,6 +5477,13 @@
     "CreateWorkOrderInput": {
       "type": "object",
       "properties": {
+        "stock": {
+          "$ref": "#/definitions/WorkOrderStockInput"
+        },
+        "quantityToBuildExact": {
+          "type": "string",
+          "x-money": "exact"
+        },
         "productId": {
           "type": "string"
         },
@@ -5059,7 +5491,9 @@
           "type": "string"
         },
         "quantityToBuild": {
-          "type": "number"
+          "type": "number",
+          "x-money": "float",
+          "description": "Float money field; prefer the `quantityToBuildExact` string for exact amounts."
         },
         "priority": {
           "type": "string",
@@ -5076,8 +5510,30 @@
         }
       },
       "required": [
-        "productId",
-        "quantityToBuild"
+        "productId"
+      ],
+      "additionalProperties": false
+    },
+    "CreateWriteOffInput": {
+      "type": "object",
+      "properties": {
+        "invoiceId": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "invoiceId",
+        "amount",
+        "reason"
       ],
       "additionalProperties": false
     },
@@ -7126,6 +7582,30 @@
       },
       "additionalProperties": false
     },
+    "PutAwayFilterInput": {
+      "type": "object",
+      "properties": {
+        "receiptId": {
+          "type": "string"
+        },
+        "warehouseId": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string"
+        },
+        "assignedTo": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "number"
+        },
+        "offset": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
     "QualityHoldFilterInput": {
       "type": "object",
       "properties": {
@@ -7246,6 +7726,69 @@
       "additionalProperties": false,
       "description": "Optional filters for `Receiving.listReceipts`. No argument lists all."
     },
+    "ReceiveItemLineInput": {
+      "type": "object",
+      "properties": {
+        "receiptItemId": {
+          "type": "string"
+        },
+        "quantityReceived": {
+          "type": "string"
+        },
+        "quantityRejected": {
+          "type": "string"
+        },
+        "rejectionReason": {
+          "type": "string"
+        },
+        "lotNumber": {
+          "type": "string"
+        },
+        "serialNumbers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "expirationDate": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "receiptItemId",
+        "quantityReceived"
+      ],
+      "additionalProperties": false
+    },
+    "ReceiveItemsInput": {
+      "type": "object",
+      "properties": {
+        "receiptId": {
+          "type": "string"
+        },
+        "receivingLocationId": {
+          "type": "number"
+        },
+        "receivedBy": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ReceiveItemLineInput"
+          }
+        }
+      },
+      "required": [
+        "receiptId",
+        "receivingLocationId",
+        "items"
+      ],
+      "additionalProperties": false
+    },
     "ReceivePurchaseOrderItemInput": {
       "type": "object",
       "properties": {
@@ -7330,14 +7873,17 @@
       "type": "object",
       "properties": {
         "amount": {
-          "type": "number",
-          "x-money": "float",
-          "description": "Float amount. Optional: send `amount_exact` instead for exact money. Float money field; prefer the `amountExact` string for exact amounts."
+          "type": "string",
+          "description": "Exact decimal amount; `amount_exact` remains an alias."
         },
         "amountExact": {
           "type": "string",
           "x-money": "exact",
           "description": "Exact base-10 amount. Takes precedence over `amount` when present."
+        },
+        "paymentId": {
+          "type": "string",
+          "description": "Stable nonzero UUID for retry-safe recording of this invoice payment."
         },
         "paymentMethod": {
           "type": "string"
@@ -7815,16 +8361,16 @@
           "description": "Costing method accepted by `SetItemCostInput.costMethod` (case-insensitive)."
         },
         "standardCost": {
-          "type": "number"
+          "type": "string"
         },
         "materialCost": {
-          "type": "number"
+          "type": "string"
         },
         "laborCost": {
-          "type": "number"
+          "type": "string"
         },
         "overheadCost": {
-          "type": "number"
+          "type": "string"
         }
       },
       "required": [
@@ -8827,6 +9373,12 @@
         "accumulatedDepreciationAccountId": {
           "type": "string"
         },
+        "acquisitionOffsetAccountId": {
+          "type": "string"
+        },
+        "disposalGainLossAccountId": {
+          "type": "string"
+        },
         "depreciationExpenseAccountId": {
           "type": "string"
         }
@@ -9798,6 +10350,26 @@
       "additionalProperties": false,
       "description": "Filter for `workOrders.list()`"
     },
+    "WorkOrderStockInput": {
+      "type": "object",
+      "properties": {
+        "sourceLocationId": {
+          "type": "number"
+        },
+        "outputLocationId": {
+          "type": "number"
+        },
+        "outputSku": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sourceLocationId",
+        "outputLocationId",
+        "outputSku"
+      ],
+      "additionalProperties": false
+    },
     "X402AgentCardFilterInput": {
       "type": "object",
       "properties": {
@@ -10636,7 +11208,78 @@
       "className": "AccountsPayable",
       "method": "approveBill",
       "description": "Approve a bill",
-      "signature": "approveBill(id: string): Promise<BillOutput>",
+      "signature": "approveBill(id: string, overrideReason?: string | undefined | null, actor?: string | undefined | null): Promise<BillOutput>",
+      "returnType": "Promise<BillOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "overrideReason",
+        "actor"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "overrideReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "actor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "accountsPayable.approvePaymentRun",
+      "module": "accountsPayable",
+      "className": "AccountsPayable",
+      "method": "approvePaymentRun",
+      "description": "Approve payment run (AccountsPayable.approvePaymentRun). Returns ApPaymentRunOutput.",
+      "signature": "approvePaymentRun(id: string, actor: string): Promise<ApPaymentRunOutput>",
+      "returnType": "Promise<ApPaymentRunOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "actor"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "actor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "actor"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "accountsPayable.cancelBill",
+      "module": "accountsPayable",
+      "className": "AccountsPayable",
+      "method": "cancelBill",
+      "description": "Cancel a bill",
+      "signature": "cancelBill(id: string): Promise<BillOutput>",
       "returnType": "Promise<BillOutput>",
       "readOnly": false,
       "permission": "write",
@@ -10657,13 +11300,13 @@
       }
     },
     {
-      "name": "accountsPayable.cancelBill",
+      "name": "accountsPayable.cancelPaymentRun",
       "module": "accountsPayable",
       "className": "AccountsPayable",
-      "method": "cancelBill",
-      "description": "Cancel a bill",
-      "signature": "cancelBill(id: string): Promise<BillOutput>",
-      "returnType": "Promise<BillOutput>",
+      "method": "cancelPaymentRun",
+      "description": "Cancel payment run (AccountsPayable.cancelPaymentRun). Returns ApPaymentRunOutput.",
+      "signature": "cancelPaymentRun(id: string): Promise<ApPaymentRunOutput>",
+      "returnType": "Promise<ApPaymentRunOutput>",
       "readOnly": false,
       "permission": "write",
       "positional": [
@@ -10721,6 +11364,89 @@
         },
         "required": [
           "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "accountsPayable.createPayment",
+      "module": "accountsPayable",
+      "className": "AccountsPayable",
+      "method": "createPayment",
+      "description": "Create payment (AccountsPayable.createPayment). Returns BillPaymentOutput.",
+      "signature": "createPayment(input: CreateBillPaymentInput): Promise<BillPaymentOutput>",
+      "returnType": "Promise<BillPaymentOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "input"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "$ref": "#/definitions/CreateBillPaymentInput"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "accountsPayable.createPaymentRun",
+      "module": "accountsPayable",
+      "className": "AccountsPayable",
+      "method": "createPaymentRun",
+      "description": "Create payment run (AccountsPayable.createPaymentRun). Returns ApPaymentRunOutput.",
+      "signature": "createPaymentRun(input: CreateApPaymentRunInput, actor: string): Promise<ApPaymentRunOutput>",
+      "returnType": "Promise<ApPaymentRunOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "input",
+        "actor"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "$ref": "#/definitions/CreateApPaymentRunInput"
+          },
+          "actor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "input",
+          "actor"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "accountsPayable.disputeBill",
+      "module": "accountsPayable",
+      "className": "AccountsPayable",
+      "method": "disputeBill",
+      "description": "Dispute a bill.",
+      "signature": "disputeBill(id: string): Promise<BillOutput>",
+      "returnType": "Promise<BillOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
         ],
         "additionalProperties": false
       }
@@ -10864,13 +11590,65 @@
       }
     },
     {
+      "name": "accountsPayable.getPayment",
+      "module": "accountsPayable",
+      "className": "AccountsPayable",
+      "method": "getPayment",
+      "description": "Get payment (AccountsPayable.getPayment). Returns BillPaymentOutput | null.",
+      "signature": "getPayment(id: string): Promise<BillPaymentOutput | null>",
+      "returnType": "Promise<BillPaymentOutput | null>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "accountsPayable.getPaymentRun",
+      "module": "accountsPayable",
+      "className": "AccountsPayable",
+      "method": "getPaymentRun",
+      "description": "Get payment run (AccountsPayable.getPaymentRun). Returns ApPaymentRunOutput | null.",
+      "signature": "getPaymentRun(id: string): Promise<ApPaymentRunOutput | null>",
+      "returnType": "Promise<ApPaymentRunOutput | null>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "accountsPayable.getTotalOutstanding",
       "module": "accountsPayable",
       "className": "AccountsPayable",
       "method": "getTotalOutstanding",
       "description": "Get total outstanding",
-      "signature": "getTotalOutstanding(): Promise<number>",
-      "returnType": "Promise<number>",
+      "signature": "getTotalOutstanding(): Promise<string>",
+      "returnType": "Promise<string>",
       "readOnly": true,
       "permission": "read",
       "positional": [],
@@ -10911,6 +11689,88 @@
       }
     },
     {
+      "name": "accountsPayable.listPaymentRuns",
+      "module": "accountsPayable",
+      "className": "AccountsPayable",
+      "method": "listPaymentRuns",
+      "description": "List payment runs (AccountsPayable.listPaymentRuns). Returns Array<ApPaymentRunOutput>.",
+      "signature": "listPaymentRuns(filter?: ApPaymentRunFilterInput | undefined | null): Promise<Array<ApPaymentRunOutput>>",
+      "returnType": "Promise<Array<ApPaymentRunOutput>>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "filter"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ApPaymentRunFilterInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "accountsPayable.processPaymentRun",
+      "module": "accountsPayable",
+      "className": "AccountsPayable",
+      "method": "processPaymentRun",
+      "description": "Process payment run (AccountsPayable.processPaymentRun). Returns ApPaymentRunOutput.",
+      "signature": "processPaymentRun(id: string): Promise<ApPaymentRunOutput>",
+      "returnType": "Promise<ApPaymentRunOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "accountsPayable.resolveBillDispute",
+      "module": "accountsPayable",
+      "className": "AccountsPayable",
+      "method": "resolveBillDispute",
+      "description": "Resolve a bill dispute.",
+      "signature": "resolveBillDispute(id: string): Promise<BillOutput>",
+      "returnType": "Promise<BillOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "accountsPayable.threeWayMatch",
       "module": "accountsPayable",
       "className": "AccountsPayable",
@@ -10944,6 +11804,84 @@
       }
     },
     {
+      "name": "accountsPayable.voidPayment",
+      "module": "accountsPayable",
+      "className": "AccountsPayable",
+      "method": "voidPayment",
+      "description": "Void payment (AccountsPayable.voidPayment). Returns BillPaymentOutput.",
+      "signature": "voidPayment(id: string): Promise<BillPaymentOutput>",
+      "returnType": "Promise<BillPaymentOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "accountsReceivable.applyCreditMemo",
+      "module": "accountsReceivable",
+      "className": "AccountsReceivable",
+      "method": "applyCreditMemo",
+      "description": "Apply credit memo (AccountsReceivable.applyCreditMemo). Returns CreditMemoOutput.",
+      "signature": "applyCreditMemo(input: ApplyCreditMemoInput): Promise<CreditMemoOutput>",
+      "returnType": "Promise<CreditMemoOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "input"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "$ref": "#/definitions/ApplyCreditMemoInput"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "accountsReceivable.applyPaymentToInvoices",
+      "module": "accountsReceivable",
+      "className": "AccountsReceivable",
+      "method": "applyPaymentToInvoices",
+      "description": "Apply payment to invoices (AccountsReceivable.applyPaymentToInvoices). Returns Array<ArPaymentApplicationOutput>.",
+      "signature": "applyPaymentToInvoices(input: ApplyArPaymentInput): Promise<Array<ArPaymentApplicationOutput>>",
+      "returnType": "Promise<Array<ArPaymentApplicationOutput>>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "input"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "$ref": "#/definitions/ApplyArPaymentInput"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "accountsReceivable.createCreditMemo",
       "module": "accountsReceivable",
       "className": "AccountsReceivable",
@@ -10965,6 +11903,37 @@
         },
         "required": [
           "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "accountsReceivable.createWriteOff",
+      "module": "accountsReceivable",
+      "className": "AccountsReceivable",
+      "method": "createWriteOff",
+      "description": "Create write off (AccountsReceivable.createWriteOff). Returns ArWriteOffOutput.",
+      "signature": "createWriteOff(input: CreateWriteOffInput, actor: string): Promise<ArWriteOffOutput>",
+      "returnType": "Promise<ArWriteOffOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "input",
+        "actor"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "$ref": "#/definitions/CreateWriteOffInput"
+          },
+          "actor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "input",
+          "actor"
         ],
         "additionalProperties": false
       }
@@ -11018,8 +11987,8 @@
       "className": "AccountsReceivable",
       "method": "getDso",
       "description": "Get Days Sales Outstanding (DSO)",
-      "signature": "getDso(days: number): Promise<number>",
-      "returnType": "Promise<number>",
+      "signature": "getDso(days: number): Promise<string>",
+      "returnType": "Promise<string>",
       "readOnly": true,
       "permission": "read",
       "positional": [
@@ -11039,13 +12008,39 @@
       }
     },
     {
+      "name": "accountsReceivable.getPaymentApplications",
+      "module": "accountsReceivable",
+      "className": "AccountsReceivable",
+      "method": "getPaymentApplications",
+      "description": "Get payment applications (AccountsReceivable.getPaymentApplications). Returns Array<ArPaymentApplicationOutput>.",
+      "signature": "getPaymentApplications(paymentId: string): Promise<Array<ArPaymentApplicationOutput>>",
+      "returnType": "Promise<Array<ArPaymentApplicationOutput>>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "paymentId"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "paymentId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "paymentId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "accountsReceivable.getTotalOutstanding",
       "module": "accountsReceivable",
       "className": "AccountsReceivable",
       "method": "getTotalOutstanding",
       "description": "Get total outstanding",
-      "signature": "getTotalOutstanding(): Promise<number>",
-      "returnType": "Promise<number>",
+      "signature": "getTotalOutstanding(): Promise<string>",
+      "returnType": "Promise<string>",
       "readOnly": true,
       "permission": "read",
       "positional": [],
@@ -11108,6 +12103,88 @@
             ]
           }
         },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "accountsReceivable.listWriteOffs",
+      "module": "accountsReceivable",
+      "className": "AccountsReceivable",
+      "method": "listWriteOffs",
+      "description": "List write offs (AccountsReceivable.listWriteOffs). Returns Array<ArWriteOffOutput>.",
+      "signature": "listWriteOffs(filter?: ArWriteOffFilterInput | undefined | null): Promise<Array<ArWriteOffOutput>>",
+      "returnType": "Promise<Array<ArWriteOffOutput>>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "filter"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ArWriteOffFilterInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "accountsReceivable.reverseWriteOff",
+      "module": "accountsReceivable",
+      "className": "AccountsReceivable",
+      "method": "reverseWriteOff",
+      "description": "Reverse write off (AccountsReceivable.reverseWriteOff). Returns ArWriteOffOutput.",
+      "signature": "reverseWriteOff(id: string): Promise<ArWriteOffOutput>",
+      "returnType": "Promise<ArWriteOffOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "accountsReceivable.unapplyPayment",
+      "module": "accountsReceivable",
+      "className": "AccountsReceivable",
+      "method": "unapplyPayment",
+      "description": "Unapply payment (AccountsReceivable.unapplyPayment). Returns void.",
+      "signature": "unapplyPayment(id: string): Promise<void>",
+      "returnType": "Promise<void>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
         "additionalProperties": false
       }
     },
@@ -14374,8 +15451,8 @@
       "className": "CostAccounting",
       "method": "getTotalInventoryValue",
       "description": "Get total inventory value",
-      "signature": "getTotalInventoryValue(): Promise<number>",
-      "returnType": "Promise<number>",
+      "signature": "getTotalInventoryValue(): Promise<string>",
+      "returnType": "Promise<string>",
       "readOnly": true,
       "permission": "read",
       "positional": [],
@@ -14447,7 +15524,7 @@
       "className": "CostAccounting",
       "method": "updateAverageCost",
       "description": "Update average cost",
-      "signature": "updateAverageCost(sku: string, quantity: number, unitCost: number): Promise<ItemCostOutput>",
+      "signature": "updateAverageCost(sku: string, quantity: string, unitCost: string): Promise<ItemCostOutput>",
       "returnType": "Promise<ItemCostOutput>",
       "readOnly": false,
       "permission": "write",
@@ -14463,10 +15540,10 @@
             "type": "string"
           },
           "quantity": {
-            "type": "number"
+            "type": "string"
           },
           "unitCost": {
-            "type": "number"
+            "type": "string"
           }
         },
         "required": [
@@ -14483,7 +15560,7 @@
       "className": "Credit",
       "method": "adjustCreditLimit",
       "description": "Adjust credit limit",
-      "signature": "adjustCreditLimit(customerId: string, newLimit: number, reason: string): Promise<CreditAccountOutput>",
+      "signature": "adjustCreditLimit(customerId: string, newLimit: string, reason: string): Promise<CreditAccountOutput>",
       "returnType": "Promise<CreditAccountOutput>",
       "readOnly": false,
       "permission": "write",
@@ -14499,7 +15576,7 @@
             "type": "string"
           },
           "newLimit": {
-            "type": "number"
+            "type": "string"
           },
           "reason": {
             "type": "string"
@@ -14519,7 +15596,7 @@
       "className": "Credit",
       "method": "checkCredit",
       "description": "Check credit",
-      "signature": "checkCredit(customerId: string, orderAmount: number): Promise<CreditCheckOutput>",
+      "signature": "checkCredit(customerId: string, orderAmount: string): Promise<CreditCheckOutput>",
       "returnType": "Promise<CreditCheckOutput>",
       "readOnly": true,
       "permission": "read",
@@ -14534,7 +15611,7 @@
             "type": "string"
           },
           "orderAmount": {
-            "type": "number"
+            "type": "string"
           }
         },
         "required": [
@@ -18192,6 +19269,37 @@
       }
     },
     {
+      "name": "generalLedger.closePeriod",
+      "module": "generalLedger",
+      "className": "GeneralLedger",
+      "method": "closePeriod",
+      "description": "Close period (GeneralLedger.closePeriod). Returns GlPeriodOutput.",
+      "signature": "closePeriod(id: string, actor: string): Promise<GlPeriodOutput>",
+      "returnType": "Promise<GlPeriodOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "actor"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "actor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "actor"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "generalLedger.createAccount",
       "module": "generalLedger",
       "className": "GeneralLedger",
@@ -18213,6 +19321,39 @@
         },
         "required": [
           "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "generalLedger.createJournalEntry",
+      "module": "generalLedger",
+      "className": "GeneralLedger",
+      "method": "createJournalEntry",
+      "description": "Create a balanced draft or post it atomically using a trusted host identity.",
+      "signature": "createJournalEntry(i: CreateJournalEntryInput, actor?: string | undefined | null): Promise<JournalEntryOutput>",
+      "returnType": "Promise<JournalEntryOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "i",
+        "actor"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "i": {
+            "$ref": "#/definitions/CreateJournalEntryInput"
+          },
+          "actor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "i"
         ],
         "additionalProperties": false
       }
@@ -18275,8 +19416,8 @@
       "className": "GeneralLedger",
       "method": "getAccountBalance",
       "description": "Get account balance",
-      "signature": "getAccountBalance(accountId: string, asOfDate?: string | undefined | null): Promise<number>",
-      "returnType": "Promise<number>",
+      "signature": "getAccountBalance(accountId: string, asOfDate?: string | undefined | null): Promise<string>",
+      "returnType": "Promise<string>",
       "readOnly": true,
       "permission": "read",
       "positional": [
@@ -18325,6 +19466,23 @@
         "required": [
           "accountNumber"
         ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "generalLedger.getAutoPostingConfig",
+      "module": "generalLedger",
+      "className": "GeneralLedger",
+      "method": "getAutoPostingConfig",
+      "description": "Read the active automatic ledger posting settings.",
+      "signature": "getAutoPostingConfig(): Promise<AutoPostingConfigOutput | null>",
+      "returnType": "Promise<AutoPostingConfigOutput | null>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [],
+      "parameters": {
+        "type": "object",
+        "properties": {},
         "additionalProperties": false
       }
     },
@@ -18393,6 +19551,32 @@
       "description": "Get a journal entry by ID",
       "signature": "getJournalEntry(id: string): Promise<JournalEntryOutput | null>",
       "returnType": "Promise<JournalEntryOutput | null>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "generalLedger.getPeriod",
+      "module": "generalLedger",
+      "className": "GeneralLedger",
+      "method": "getPeriod",
+      "description": "Get period (GeneralLedger.getPeriod). Returns GlPeriodOutput | null.",
+      "signature": "getPeriod(id: string): Promise<GlPeriodOutput | null>",
+      "returnType": "Promise<GlPeriodOutput | null>",
       "readOnly": true,
       "permission": "read",
       "positional": [
@@ -18545,6 +19729,37 @@
       }
     },
     {
+      "name": "generalLedger.lockPeriod",
+      "module": "generalLedger",
+      "className": "GeneralLedger",
+      "method": "lockPeriod",
+      "description": "Lock period (GeneralLedger.lockPeriod). Returns GlPeriodOutput.",
+      "signature": "lockPeriod(id: string, actor: string): Promise<GlPeriodOutput>",
+      "returnType": "Promise<GlPeriodOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "actor"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "actor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "actor"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "generalLedger.openPeriod",
       "module": "generalLedger",
       "className": "GeneralLedger",
@@ -18602,6 +19817,63 @@
       }
     },
     {
+      "name": "generalLedger.reclosePeriod",
+      "module": "generalLedger",
+      "className": "GeneralLedger",
+      "method": "reclosePeriod",
+      "description": "Reclose period (GeneralLedger.reclosePeriod). Returns JournalEntryOutput.",
+      "signature": "reclosePeriod(id: string, actor: string): Promise<JournalEntryOutput>",
+      "returnType": "Promise<JournalEntryOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "actor"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "actor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "actor"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "generalLedger.reopenPeriod",
+      "module": "generalLedger",
+      "className": "GeneralLedger",
+      "method": "reopenPeriod",
+      "description": "Reopen period (GeneralLedger.reopenPeriod). Returns GlPeriodOutput.",
+      "signature": "reopenPeriod(id: string): Promise<GlPeriodOutput>",
+      "returnType": "Promise<GlPeriodOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "generalLedger.revalue",
       "module": "generalLedger",
       "className": "GeneralLedger",
@@ -18630,6 +19902,63 @@
         },
         "required": [
           "asOfDate"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "generalLedger.reverseJournalEntry",
+      "module": "generalLedger",
+      "className": "GeneralLedger",
+      "method": "reverseJournalEntry",
+      "description": "Reverse journal entry (GeneralLedger.reverseJournalEntry). Returns JournalEntryOutput.",
+      "signature": "reverseJournalEntry(id: string, reversalDate: string): Promise<JournalEntryOutput>",
+      "returnType": "Promise<JournalEntryOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "reversalDate"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reversalDate": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "reversalDate"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "generalLedger.setAutoPostingConfig",
+      "module": "generalLedger",
+      "className": "GeneralLedger",
+      "method": "setAutoPostingConfig",
+      "description": "Replace automatic posting settings atomically.",
+      "signature": "setAutoPostingConfig(input: AutoPostingConfigInput): Promise<AutoPostingConfigOutput>",
+      "returnType": "Promise<AutoPostingConfigOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "input"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "$ref": "#/definitions/AutoPostingConfigInput"
+          }
+        },
+        "required": [
+          "input"
         ],
         "additionalProperties": false
       }
@@ -19992,6 +21321,23 @@
         "required": [
           "id"
         ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "invoices.supportsPaymentIdempotency",
+      "module": "invoices",
+      "className": "Invoices",
+      "method": "supportsPaymentIdempotency",
+      "description": "This binding consumes paymentId atomically and rejects amount conflicts.",
+      "signature": "supportsPaymentIdempotency(): boolean",
+      "returnType": "boolean",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [],
+      "parameters": {
+        "type": "object",
+        "properties": {},
         "additionalProperties": false
       }
     },
@@ -21931,6 +23277,40 @@
           "id",
           "reason"
         ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "payments.supportsPaymentIdempotency",
+      "module": "payments",
+      "className": "Payments",
+      "method": "supportsPaymentIdempotency",
+      "description": "Atomic request-key deduplication and guarded completion for payment write-back.",
+      "signature": "supportsPaymentIdempotency(): boolean",
+      "returnType": "boolean",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [],
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "payments.supportsRefundIdempotency",
+      "module": "payments",
+      "className": "Payments",
+      "method": "supportsRefundIdempotency",
+      "description": "Immutable-key refund replay and atomic, idempotent refund completion.",
+      "signature": "supportsRefundIdempotency(): boolean",
+      "returnType": "boolean",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [],
+      "parameters": {
+        "type": "object",
+        "properties": {},
         "additionalProperties": false
       }
     },
@@ -24415,14 +25795,16 @@
       "module": "purchaseOrders",
       "className": "PurchaseOrders",
       "method": "receive",
-      "description": "Record received quantities on a sent purchase order. This updates the PO; warehouse stock must be posted separately through inventory/receiving.",
-      "signature": "receive(id: string, items: Array<ReceivePurchaseOrderItemInput>): Promise<PurchaseOrderOutput>",
+      "description": "Receive sent PO lines into an explicit warehouse location, atomically posting stock.",
+      "signature": "receive(id: string, items: Array<ReceivePurchaseOrderItemInput>, warehouseId: number, receivingLocationId: number): Promise<PurchaseOrderOutput>",
       "returnType": "Promise<PurchaseOrderOutput>",
       "readOnly": false,
       "permission": "write",
       "positional": [
         "id",
-        "items"
+        "items",
+        "warehouseId",
+        "receivingLocationId"
       ],
       "parameters": {
         "type": "object",
@@ -24435,11 +25817,19 @@
             "items": {
               "$ref": "#/definitions/ReceivePurchaseOrderItemInput"
             }
+          },
+          "warehouseId": {
+            "type": "number"
+          },
+          "receivingLocationId": {
+            "type": "number"
           }
         },
         "required": [
           "id",
-          "items"
+          "items",
+          "warehouseId",
+          "receivingLocationId"
         ],
         "additionalProperties": false
       }
@@ -25137,6 +26527,63 @@
       }
     },
     {
+      "name": "receiving.assignPutAway",
+      "module": "receiving",
+      "className": "Receiving",
+      "method": "assignPutAway",
+      "description": "Assign put away (Receiving.assignPutAway). Returns PutAwayOutput.",
+      "signature": "assignPutAway(id: string, assignedTo: string): Promise<PutAwayOutput>",
+      "returnType": "Promise<PutAwayOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "assignedTo"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "assignedTo": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "assignedTo"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "receiving.cancelPutAway",
+      "module": "receiving",
+      "className": "Receiving",
+      "method": "cancelPutAway",
+      "description": "Cancel put away (Receiving.cancelPutAway). Returns PutAwayOutput.",
+      "signature": "cancelPutAway(id: string): Promise<PutAwayOutput>",
+      "returnType": "Promise<PutAwayOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "receiving.cancelReceipt",
       "module": "receiving",
       "className": "Receiving",
@@ -25158,6 +26605,32 @@
         },
         "required": [
           "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "receiving.completePutAway",
+      "module": "receiving",
+      "className": "Receiving",
+      "method": "completePutAway",
+      "description": "Complete put away (Receiving.completePutAway). Returns PutAwayOutput.",
+      "signature": "completePutAway(i: CompletePutAwayInput): Promise<PutAwayOutput>",
+      "returnType": "Promise<PutAwayOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "i"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "i": {
+            "$ref": "#/definitions/CompletePutAwayInput"
+          }
+        },
+        "required": [
+          "i"
         ],
         "additionalProperties": false
       }
@@ -25202,6 +26675,32 @@
       "parameters": {
         "type": "object",
         "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "receiving.createPutAway",
+      "module": "receiving",
+      "className": "Receiving",
+      "method": "createPutAway",
+      "description": "Create put away (Receiving.createPutAway). Returns PutAwayOutput.",
+      "signature": "createPutAway(i: CreatePutAwayInput): Promise<PutAwayOutput>",
+      "returnType": "Promise<PutAwayOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "i"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "i": {
+            "$ref": "#/definitions/CreatePutAwayInput"
+          }
+        },
+        "required": [
+          "i"
+        ],
         "additionalProperties": false
       }
     },
@@ -25258,6 +26757,32 @@
         "required": [
           "poId",
           "warehouseId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "receiving.getPutAway",
+      "module": "receiving",
+      "className": "Receiving",
+      "method": "getPutAway",
+      "description": "Get put away (Receiving.getPutAway). Returns PutAwayOutput | null.",
+      "signature": "getPutAway(id: string): Promise<PutAwayOutput | null>",
+      "returnType": "Promise<PutAwayOutput | null>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
         ],
         "additionalProperties": false
       }
@@ -25341,6 +26866,36 @@
       }
     },
     {
+      "name": "receiving.listPutAways",
+      "module": "receiving",
+      "className": "Receiving",
+      "method": "listPutAways",
+      "description": "List put aways (Receiving.listPutAways). Returns Array<PutAwayOutput>.",
+      "signature": "listPutAways(filter?: PutAwayFilterInput | undefined | null): Promise<Array<PutAwayOutput>>",
+      "returnType": "Promise<Array<PutAwayOutput>>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "filter"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/PutAwayFilterInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "receiving.listReceipts",
       "module": "receiving",
       "className": "Receiving",
@@ -25367,6 +26922,58 @@
             ]
           }
         },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "receiving.receiveItems",
+      "module": "receiving",
+      "className": "Receiving",
+      "method": "receiveItems",
+      "description": "Receive stock into the explicitly selected warehouse location.",
+      "signature": "receiveItems(input: ReceiveItemsInput): Promise<ReceiptOutput>",
+      "returnType": "Promise<ReceiptOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "input"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "$ref": "#/definitions/ReceiveItemsInput"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "receiving.startPutAway",
+      "module": "receiving",
+      "className": "Receiving",
+      "method": "startPutAway",
+      "description": "Start put away (Receiving.startPutAway). Returns PutAwayOutput.",
+      "signature": "startPutAway(id: string): Promise<PutAwayOutput>",
+      "returnType": "Promise<PutAwayOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
         "additionalProperties": false
       }
     },
@@ -27594,7 +29201,7 @@
       "module": "stockSnapshots",
       "className": "StockSnapshots",
       "method": "capture",
-      "description": "Capture a new snapshot; totals are computed from the supplied lines.",
+      "description": "Capture a new snapshot from stored inventory balances.",
       "signature": "capture(input: CaptureStockSnapshotInput): Promise<StockSnapshotOutput>",
       "returnType": "Promise<StockSnapshotOutput>",
       "readOnly": false,
@@ -29315,6 +30922,32 @@
       }
     },
     {
+      "name": "transferOrders.completeReceiving",
+      "module": "transferOrders",
+      "className": "TransferOrders",
+      "method": "completeReceiving",
+      "description": "Close receiving, recording outstanding in-transit units as shortage.",
+      "signature": "completeReceiving(id: string): Promise<TransferOrderOutput>",
+      "returnType": "Promise<TransferOrderOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "transferOrders.create",
       "module": "transferOrders",
       "className": "TransferOrders",
@@ -30107,8 +31740,8 @@
       "module": "vendorReturns",
       "className": "VendorReturns",
       "method": "process",
-      "description": "Process a vendor return, optionally generating a vendor credit.",
-      "signature": "process(id: string, generateCredit: boolean): Promise<VendorReturnOutput>",
+      "description": "Process stock and its linked vendor credit atomically. Disabling the credit is refused.",
+      "signature": "process(id: string, generateCredit?: boolean | undefined | null): Promise<VendorReturnOutput>",
       "returnType": "Promise<VendorReturnOutput>",
       "readOnly": false,
       "permission": "write",
@@ -30123,12 +31756,14 @@
             "type": "string"
           },
           "generateCredit": {
-            "type": "boolean"
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         },
         "required": [
-          "id",
-          "generateCredit"
+          "id"
         ],
         "additionalProperties": false
       }
@@ -30918,6 +32553,68 @@
         "required": [
           "id",
           "quantityCompleted"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "workOrders.completeExact",
+      "module": "workOrders",
+      "className": "WorkOrders",
+      "method": "completeExact",
+      "description": "Complete an exact decimal quantity without a floating-point conversion.",
+      "signature": "completeExact(id: string, quantityCompleted: string): Promise<WorkOrderOutput>",
+      "returnType": "Promise<WorkOrderOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "quantityCompleted"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "quantityCompleted": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "quantityCompleted"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "workOrders.configureStock",
+      "module": "workOrders",
+      "className": "WorkOrders",
+      "method": "configureStock",
+      "description": "Configure explicit stock routing for a planned work order.",
+      "signature": "configureStock(id: string, stock: WorkOrderStockInput): Promise<WorkOrderOutput>",
+      "returnType": "Promise<WorkOrderOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "id",
+        "stock"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "stock": {
+            "$ref": "#/definitions/WorkOrderStockInput"
+          }
+        },
+        "required": [
+          "id",
+          "stock"
         ],
         "additionalProperties": false
       }

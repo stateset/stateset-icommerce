@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:a2b8949d925d43684f1d7af9fe7cbc0040e923fc4cf4e32a0cb18a0ccec2bd61",
+  "digest": "sha256:67bcce5dd72428b233b6d78af389b00d76ca1f422e36aa5239652bc437536264",
   "counts": {
-    "total": 966,
-    "readOnly": 478,
-    "mutations": 488,
+    "total": 1002,
+    "readOnly": 487,
+    "mutations": 515,
     "governed": 36,
     "governedComposite": 1,
-    "blocked": 451
+    "blocked": 478
   },
   "entries": [
     {
@@ -1076,7 +1076,7 @@
     },
     {
       "name": "adjust_credit_limit",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -1586,8 +1586,22 @@
       "commandType": null
     },
     {
+      "name": "apply_credit_memo",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "apply_payment_to_invoices",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "apply_prepayment",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -1601,14 +1615,21 @@
     },
     {
       "name": "apply_vendor_credit",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
     },
     {
       "name": "approve_bill",
-      "permission": "write",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "approve_bill_payment_run",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -1671,6 +1692,13 @@
     },
     {
       "name": "assign_pick_task",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "assign_put_away",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
@@ -1804,7 +1832,14 @@
     },
     {
       "name": "cancel_bill",
-      "permission": "write",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "cancel_bill_payment_run",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -1873,6 +1908,13 @@
       "commandType": null
     },
     {
+      "name": "cancel_put_away",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "cancel_receipt",
       "permission": "write",
       "mutation": true,
@@ -1909,7 +1951,7 @@
     },
     {
       "name": "cancel_vendor_credit",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -2118,8 +2160,15 @@
       "commandType": null
     },
     {
+      "name": "close_gl_period",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "close_month",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -2195,6 +2244,13 @@
       "commandType": null
     },
     {
+      "name": "complete_put_away",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "complete_receiving",
       "permission": "write",
       "mutation": true,
@@ -2207,6 +2263,13 @@
       "mutation": true,
       "disposition": "governed",
       "commandType": "returns.transition"
+    },
+    {
+      "name": "complete_transfer_order_receiving",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
     },
     {
       "name": "complete_warranty_claim",
@@ -2342,6 +2405,20 @@
       "commandType": null
     },
     {
+      "name": "create_bill_payment",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_bill_payment_run",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "create_bom",
       "permission": "write",
       "mutation": true,
@@ -2385,14 +2462,14 @@
     },
     {
       "name": "create_credit_account",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
     },
     {
       "name": "create_credit_memo",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -2517,6 +2594,13 @@
       "commandType": null
     },
     {
+      "name": "create_journal_entry",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "create_location",
       "permission": "write",
       "mutation": true,
@@ -2574,7 +2658,7 @@
     },
     {
       "name": "create_payment_obligation",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -2588,7 +2672,7 @@
     },
     {
       "name": "create_prepayment",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -2630,6 +2714,13 @@
     },
     {
       "name": "create_purchase_order",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_put_away",
       "permission": "write",
       "mutation": true,
       "disposition": "blocked",
@@ -2833,7 +2924,7 @@
     },
     {
       "name": "create_vendor_credit",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -2876,6 +2967,13 @@
     {
       "name": "create_work_order",
       "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "create_write_off",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -3120,7 +3218,14 @@
     },
     {
       "name": "dispose_fixed_asset",
-      "permission": "write",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "dispute_bill",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -3483,6 +3588,20 @@
       "commandType": null
     },
     {
+      "name": "get_bill_payment",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_bill_payment_run",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
       "name": "get_billing_cycle",
       "permission": "read",
       "mutation": false,
@@ -3701,6 +3820,20 @@
     },
     {
       "name": "get_gl_account_balance",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_gl_period",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_gl_posting_config",
       "permission": "read",
       "mutation": false,
       "disposition": "read_only",
@@ -3995,6 +4128,13 @@
     },
     {
       "name": "get_purgatory_order",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "get_put_away",
       "permission": "read",
       "mutation": false,
       "disposition": "read_only",
@@ -4429,7 +4569,7 @@
     },
     {
       "name": "initialize_chart_of_accounts",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -4450,7 +4590,7 @@
     },
     {
       "name": "link_payment_obligation_bill",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -4520,6 +4660,13 @@
     },
     {
       "name": "list_backorders_for_sku",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_bill_payment_runs",
       "permission": "read",
       "mutation": false,
       "disposition": "read_only",
@@ -4792,6 +4939,13 @@
       "commandType": null
     },
     {
+      "name": "list_invoice_payment_applications",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
       "name": "list_invoices",
       "permission": "read",
       "mutation": false,
@@ -5038,6 +5192,13 @@
     },
     {
       "name": "list_purgatory_orders",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "list_put_aways",
       "permission": "read",
       "mutation": false,
       "disposition": "read_only",
@@ -5331,8 +5492,22 @@
       "commandType": null
     },
     {
+      "name": "list_write_offs",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
       "name": "load_policy_file",
       "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "lock_gl_period",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -5402,7 +5577,7 @@
     },
     {
       "name": "open_gl_period",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -5430,7 +5605,7 @@
     },
     {
       "name": "place_asset_in_service",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -5444,14 +5619,14 @@
     },
     {
       "name": "post_depreciation",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
     },
     {
       "name": "post_journal_entry",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "governed",
       "commandType": "ledger.post"
@@ -5459,6 +5634,13 @@
     {
       "name": "post_purgatory_order",
       "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "process_bill_payment_run",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -5521,7 +5703,7 @@
     },
     {
       "name": "reactivate_credit_account",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -5548,6 +5730,13 @@
       "commandType": null
     },
     {
+      "name": "receive_receipt_items",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "receive_transfer_order_line",
       "permission": "write",
       "mutation": true,
@@ -5555,8 +5744,15 @@
       "commandType": null
     },
     {
+      "name": "reclose_gl_period",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "recognize_revenue",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -5584,14 +5780,14 @@
     },
     {
       "name": "record_invoice_payment",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
     },
     {
       "name": "record_payment_obligation_payment",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -5619,7 +5815,7 @@
     },
     {
       "name": "refund_prepayment",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -5737,6 +5933,13 @@
       "commandType": null
     },
     {
+      "name": "reopen_gl_period",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "reserve_cart_inventory",
       "permission": "write",
       "mutation": true,
@@ -5749,6 +5952,13 @@
       "mutation": true,
       "disposition": "governed",
       "commandType": "inventory.reserve"
+    },
+    {
+      "name": "resolve_bill_dispute",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
     },
     {
       "name": "resolve_integration_mapping",
@@ -5787,21 +5997,35 @@
     },
     {
       "name": "revalue_gl",
-      "permission": "write",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "reverse_journal_entry",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
     },
     {
       "name": "reverse_prepayment_application",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
     },
     {
       "name": "reverse_vendor_credit_application",
-      "permission": "write",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
+      "name": "reverse_write_off",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -5940,15 +6164,22 @@
       "commandType": null
     },
     {
+      "name": "set_gl_posting_config",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "set_item_cost",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
     },
     {
       "name": "set_payment_obligation_status",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -6059,6 +6290,13 @@
       "commandType": null
     },
     {
+      "name": "start_put_away",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "start_receiving",
       "permission": "write",
       "mutation": true,
@@ -6088,7 +6326,7 @@
     },
     {
       "name": "suspend_credit_account",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -6255,6 +6493,13 @@
       "commandType": null
     },
     {
+      "name": "unapply_invoice_payment",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "uninstall_wasm_connector",
       "permission": "delete",
       "mutation": true,
@@ -6263,7 +6508,7 @@
     },
     {
       "name": "update_average_item_cost",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -6626,22 +6871,29 @@
       "commandType": null
     },
     {
+      "name": "void_bill_payment",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
+      "commandType": null
+    },
+    {
       "name": "void_credit_memo",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
     },
     {
       "name": "void_invoice",
-      "permission": "delete",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
     },
     {
       "name": "void_journal_entry",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
@@ -6662,7 +6914,7 @@
     },
     {
       "name": "write_off_fixed_asset",
-      "permission": "write",
+      "permission": "admin",
       "mutation": true,
       "disposition": "blocked",
       "commandType": null

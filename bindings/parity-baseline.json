@@ -59,27 +59,47 @@
     "node": {
       "accounts_payable": [
         "approve_bill",
+        "approve_bill_as",
+        "approve_bill_with_override",
+        "approve_payment_run",
         "cancel_bill",
+        "cancel_payment_run",
         "count_bills",
         "create_bill",
+        "create_payment",
+        "create_payment_run",
+        "dispute_bill",
         "get_aging_summary",
         "get_bill",
         "get_bill_by_number",
         "get_bill_items",
         "get_bills_due_soon",
         "get_overdue_bills",
+        "get_payment",
+        "get_payment_run",
         "get_total_outstanding",
         "list_bills",
-        "three_way_match"
+        "list_payment_runs",
+        "process_payment_run",
+        "resolve_bill_dispute",
+        "three_way_match",
+        "void_payment"
       ],
       "accounts_receivable": [
+        "apply_credit_memo",
+        "apply_payment_to_invoices",
         "create_credit_memo",
+        "create_write_off",
         "get_aging_summary",
         "get_credit_memo",
         "get_dso",
+        "get_payment_applications",
         "get_total_outstanding",
         "get_unapplied_credits",
         "list_credit_memos",
+        "list_write_offs",
+        "reverse_write_off",
+        "unapply_payment",
         "void_credit_memo"
       ],
       "activity_logs": [
@@ -339,22 +359,32 @@
       ],
       "general_ledger": [
         "close_month",
+        "close_period",
         "create_account",
+        "create_journal_entry",
+        "create_journal_entry_as",
         "create_period",
         "get_account",
         "get_account_balance",
         "get_account_by_number",
+        "get_auto_posting_config",
         "get_balance_sheet",
         "get_income_statement",
         "get_journal_entry",
+        "get_period",
         "get_trial_balance",
         "initialize_chart_of_accounts",
         "list_accounts",
         "list_journal_entries",
         "list_periods",
+        "lock_period",
         "open_period",
         "post_journal_entry",
+        "reclose_period",
+        "reopen_period",
         "revalue",
+        "reverse_journal_entry",
+        "set_auto_posting_config",
         "void_journal_entry"
       ],
       "gift_cards": [
@@ -631,15 +661,23 @@
         "update_ncr"
       ],
       "receiving": [
+        "assign_put_away",
+        "cancel_put_away",
         "cancel_receipt",
+        "complete_put_away",
         "complete_receiving",
         "count_receipts",
+        "create_put_away",
         "create_receipt",
         "create_receipt_from_po",
+        "get_put_away",
         "get_receipt",
         "get_receipt_by_number",
         "get_receipt_items",
+        "list_put_aways",
         "list_receipts",
+        "receive_items",
+        "start_put_away",
         "start_receiving"
       ],
       "returns": [
@@ -815,6 +853,7 @@
       ],
       "transfer_orders": [
         "cancel",
+        "complete_receiving",
         "create",
         "get",
         "is_supported",
@@ -917,7 +956,8 @@
         "create",
         "get",
         "list",
-        "start"
+        "start",
+        "update"
       ],
       "x402": [
         "create_intent",
@@ -942,6 +982,8 @@
     "python": {
       "accounts_payable": [
         "approve_bill",
+        "approve_bill_as",
+        "approve_bill_with_override",
         "create_bill",
         "get_aging_summary",
         "get_bill",
@@ -1171,13 +1213,15 @@
         "create_period",
         "get_account",
         "get_account_by_number",
+        "get_auto_posting_config",
         "get_journal_entry",
         "get_trial_balance",
         "initialize_chart_of_accounts",
         "list_accounts",
         "open_period",
         "post_journal_entry",
-        "revalue"
+        "revalue",
+        "set_auto_posting_config"
       ],
       "gift_cards": [
         "charge",
@@ -1570,6 +1614,7 @@
       ],
       "transfer_orders": [
         "cancel",
+        "complete_receiving",
         "create",
         "get",
         "is_supported",
@@ -1621,6 +1666,7 @@
         "submit"
       ],
       "warehouse": [
+        "adjust_inventory",
         "cancel_cycle_count",
         "complete_cycle_count",
         "create_cycle_count",
@@ -1780,18 +1826,36 @@
   "gaps": {
     "python": {
       "accounts_payable": [
+        "approve_payment_run",
         "cancel_bill",
+        "cancel_payment_run",
         "count_bills",
+        "create_payment",
+        "create_payment_run",
+        "dispute_bill",
         "get_bill_by_number",
         "get_bill_items",
         "get_bills_due_soon",
-        "get_total_outstanding"
+        "get_payment",
+        "get_payment_run",
+        "get_total_outstanding",
+        "list_payment_runs",
+        "process_payment_run",
+        "resolve_bill_dispute",
+        "void_payment"
       ],
       "accounts_receivable": [
+        "apply_credit_memo",
+        "apply_payment_to_invoices",
+        "create_write_off",
         "get_credit_memo",
+        "get_payment_applications",
         "get_total_outstanding",
         "get_unapplied_credits",
         "list_credit_memos",
+        "list_write_offs",
+        "reverse_write_off",
+        "unapply_payment",
         "void_credit_memo"
       ],
       "backorder": [
@@ -1854,11 +1918,19 @@
         "start_pick"
       ],
       "general_ledger": [
+        "close_period",
+        "create_journal_entry",
+        "create_journal_entry_as",
         "get_account_balance",
         "get_balance_sheet",
         "get_income_statement",
+        "get_period",
         "list_journal_entries",
         "list_periods",
+        "lock_period",
+        "reclose_period",
+        "reopen_period",
+        "reverse_journal_entry",
         "void_journal_entry"
       ],
       "inventory": [
@@ -1918,10 +1990,18 @@
         "start_inspection"
       ],
       "receiving": [
+        "assign_put_away",
+        "cancel_put_away",
         "cancel_receipt",
+        "complete_put_away",
         "count_receipts",
+        "create_put_away",
         "create_receipt_from_po",
+        "get_put_away",
         "get_receipt_by_number",
+        "list_put_aways",
+        "receive_items",
+        "start_put_away",
         "start_receiving"
       ],
       "returns": [
@@ -1973,6 +2053,9 @@
         "get_warehouse_by_code",
         "list_locations"
       ],
+      "work_orders": [
+        "update"
+      ],
       "x402": [
         "create_intent",
         "credit_account",
@@ -1996,27 +2079,47 @@
     "go": {
       "accounts_payable": [
         "approve_bill",
+        "approve_bill_as",
+        "approve_bill_with_override",
+        "approve_payment_run",
         "cancel_bill",
+        "cancel_payment_run",
         "count_bills",
         "create_bill",
+        "create_payment",
+        "create_payment_run",
+        "dispute_bill",
         "get_aging_summary",
         "get_bill",
         "get_bill_by_number",
         "get_bill_items",
         "get_bills_due_soon",
         "get_overdue_bills",
+        "get_payment",
+        "get_payment_run",
         "get_total_outstanding",
         "list_bills",
-        "three_way_match"
+        "list_payment_runs",
+        "process_payment_run",
+        "resolve_bill_dispute",
+        "three_way_match",
+        "void_payment"
       ],
       "accounts_receivable": [
+        "apply_credit_memo",
+        "apply_payment_to_invoices",
         "create_credit_memo",
+        "create_write_off",
         "get_aging_summary",
         "get_credit_memo",
         "get_dso",
+        "get_payment_applications",
         "get_total_outstanding",
         "get_unapplied_credits",
         "list_credit_memos",
+        "list_write_offs",
+        "reverse_write_off",
+        "unapply_payment",
         "void_credit_memo"
       ],
       "activity_logs": [
@@ -2256,22 +2359,32 @@
       ],
       "general_ledger": [
         "close_month",
+        "close_period",
         "create_account",
+        "create_journal_entry",
+        "create_journal_entry_as",
         "create_period",
         "get_account",
         "get_account_balance",
         "get_account_by_number",
+        "get_auto_posting_config",
         "get_balance_sheet",
         "get_income_statement",
         "get_journal_entry",
+        "get_period",
         "get_trial_balance",
         "initialize_chart_of_accounts",
         "list_accounts",
         "list_journal_entries",
         "list_periods",
+        "lock_period",
         "open_period",
         "post_journal_entry",
+        "reclose_period",
+        "reopen_period",
         "revalue",
+        "reverse_journal_entry",
+        "set_auto_posting_config",
         "void_journal_entry"
       ],
       "gift_cards": [
@@ -2513,15 +2626,23 @@
         "update_ncr"
       ],
       "receiving": [
+        "assign_put_away",
+        "cancel_put_away",
         "cancel_receipt",
+        "complete_put_away",
         "complete_receiving",
         "count_receipts",
+        "create_put_away",
         "create_receipt",
         "create_receipt_from_po",
+        "get_put_away",
         "get_receipt",
         "get_receipt_by_number",
         "get_receipt_items",
+        "list_put_aways",
         "list_receipts",
+        "receive_items",
+        "start_put_away",
         "start_receiving"
       ],
       "returns": [
@@ -2685,6 +2806,7 @@
       ],
       "transfer_orders": [
         "cancel",
+        "complete_receiving",
         "create",
         "get",
         "is_supported",
@@ -2774,7 +2896,8 @@
         "update"
       ],
       "work_orders": [
-        "count"
+        "count",
+        "update"
       ],
       "x402": [
         "create_intent",

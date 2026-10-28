@@ -41,6 +41,12 @@
 //! in the `error_helpers` module for converting backend-specific errors.
 
 pub(crate) mod a2a_participants;
+mod ar_statement;
+mod asset_accounting;
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
+mod bom_cost;
+mod bom_integrity;
+mod credit_exposure;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod cart_rules;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
@@ -49,6 +55,10 @@ pub mod error_helpers;
 pub mod http_idempotency;
 pub mod kernel;
 pub mod kernel_outbox;
+mod ledger_fx;
+mod ledger_posting;
+mod ledger_reports;
+mod po_receipt;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod refund_replay;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
@@ -57,6 +67,9 @@ mod rules;
 mod shipment_allocations;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod shipment_updates;
+mod stock_move;
+mod stock_reports;
+mod stock_valuation;
 pub(crate) mod x402_claim;
 pub use http_idempotency::{HttpIdempotencyRecord, HttpIdempotencyRepository, PendingHttpReceipt};
 pub use kernel_outbox::{KernelOutboxEvent, KernelReceiptRecord};

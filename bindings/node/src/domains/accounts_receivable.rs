@@ -14,28 +14,28 @@ use super::*;
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ArAgingSummaryOutput {
-    /// @deprecated Use the `currentExact` twin; float money will be removed in 2.0.
-    pub current: f64,
+    /// Exact decimal string.
+    pub current: String,
     /// Exact base-10 current, straight from the engine's `Decimal`. Prefer this field for money.
     pub current_exact: String,
-    /// @deprecated Use the `days130Exact` twin; float money will be removed in 2.0.
-    pub days_1_30: f64,
+    /// Exact decimal string.
+    pub days_1_30: String,
     /// Exact base-10 days 1 30, straight from the engine's `Decimal`. Prefer this field for money.
     pub days_1_30_exact: String,
-    /// @deprecated Use the `days3160Exact` twin; float money will be removed in 2.0.
-    pub days_31_60: f64,
+    /// Exact decimal string.
+    pub days_31_60: String,
     /// Exact base-10 days 31 60, straight from the engine's `Decimal`. Prefer this field for money.
     pub days_31_60_exact: String,
-    /// @deprecated Use the `days6190Exact` twin; float money will be removed in 2.0.
-    pub days_61_90: f64,
+    /// Exact decimal string.
+    pub days_61_90: String,
     /// Exact base-10 days 61 90, straight from the engine's `Decimal`. Prefer this field for money.
     pub days_61_90_exact: String,
-    /// @deprecated Use the `daysOver90Exact` twin; float money will be removed in 2.0.
-    pub days_over_90: f64,
+    /// Exact decimal string.
+    pub days_over_90: String,
     /// Exact base-10 days over 90, straight from the engine's `Decimal`. Prefer this field for money.
     pub days_over_90_exact: String,
-    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
-    pub total: f64,
+    /// Exact decimal string.
+    pub total: String,
     /// Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_exact: String,
 }
@@ -44,13 +44,18 @@ impl TryFrom<stateset_core::ArAgingSummary> for ArAgingSummaryOutput {
     type Error = Error;
 
     fn try_from(a: stateset_core::ArAgingSummary) -> Result<Self> {
-        let (current, current_exact) = money_pair(a.current, "AR aging current")?;
-        let (days_1_30, days_1_30_exact) = money_pair(a.days_1_30, "AR aging 1-30 days")?;
-        let (days_31_60, days_31_60_exact) = money_pair(a.days_31_60, "AR aging 31-60 days")?;
-        let (days_61_90, days_61_90_exact) = money_pair(a.days_61_90, "AR aging 61-90 days")?;
-        let (days_over_90, days_over_90_exact) =
-            money_pair(a.days_over_90, "AR aging over 90 days")?;
-        let (total, total_exact) = money_pair(a.total, "AR aging total")?;
+        let current = a.current.to_string();
+        let current_exact = current.clone();
+        let days_1_30 = a.days_1_30.to_string();
+        let days_1_30_exact = days_1_30.clone();
+        let days_31_60 = a.days_31_60.to_string();
+        let days_31_60_exact = days_31_60.clone();
+        let days_61_90 = a.days_61_90.to_string();
+        let days_61_90_exact = days_61_90.clone();
+        let days_over_90 = a.days_over_90.to_string();
+        let days_over_90_exact = days_over_90.clone();
+        let total = a.total.to_string();
+        let total_exact = total.clone();
         Ok(Self {
             current,
             current_exact,
@@ -75,7 +80,7 @@ pub struct CreateCreditMemoInput {
     pub original_invoice_id: Option<String>,
     #[napi(ts_type = "CreditMemoReasonInput")]
     pub reason: String,
-    pub amount: f64,
+    pub amount: String,
     pub notes: Option<String>,
 }
 
@@ -85,8 +90,8 @@ pub struct CreditMemoOutput {
     pub id: String,
     pub credit_memo_number: String,
     pub customer_id: String,
-    /// @deprecated Use the `amountExact` twin; float money will be removed in 2.0.
-    pub amount: f64,
+    /// Exact decimal string.
+    pub amount: String,
     /// Exact base-10 amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub amount_exact: String,
     #[napi(ts_type = "CreditMemoStatus")]
@@ -100,7 +105,8 @@ impl TryFrom<stateset_core::CreditMemo> for CreditMemoOutput {
     type Error = Error;
 
     fn try_from(c: stateset_core::CreditMemo) -> Result<Self> {
-        let (amount, amount_exact) = money_pair(c.amount, "credit memo amount")?;
+        let amount = c.amount.to_string();
+        let amount_exact = amount.clone();
         Ok(Self {
             id: c.id.to_string(),
             credit_memo_number: c.credit_memo_number,
@@ -192,6 +198,85 @@ pub struct AccountsReceivable {
 
 #[napi]
 impl AccountsReceivable {
+    #[napi]
+    pub async fn apply_payment_to_invoices(
+        &self,
+        input: ApplyArPaymentInput,
+    ) -> Result<Vec<ArPaymentApplicationOutput>> {
+        self.commerce
+            .get()?
+            .accounts_receivable()
+            .apply_payment_to_invoices(ar_workflow_input(input)?)
+            .map(|rows| rows.into_iter().map(Into::into).collect())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to apply receipt", e))
+    }
+    #[napi]
+    pub async fn get_payment_applications(
+        &self,
+        payment_id: String,
+    ) -> Result<Vec<ArPaymentApplicationOutput>> {
+        self.commerce
+            .get()?
+            .accounts_receivable()
+            .get_payment_applications(ar_workflow_id(&payment_id)?)
+            .map(|rows| rows.into_iter().map(Into::into).collect())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list applications", e))
+    }
+    #[napi]
+    pub async fn unapply_payment(&self, id: String) -> Result<()> {
+        self.commerce
+            .get()?
+            .accounts_receivable()
+            .unapply_payment(ar_workflow_id(&id)?)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to unapply receipt", e))
+    }
+    #[napi]
+    pub async fn apply_credit_memo(&self, input: ApplyCreditMemoInput) -> Result<CreditMemoOutput> {
+        convert_output(
+            self.commerce
+                .get()?
+                .accounts_receivable()
+                .apply_credit_memo(ar_workflow_input(input)?)
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to apply credit memo", e))?,
+        )
+    }
+    #[napi]
+    pub async fn create_write_off(
+        &self,
+        input: CreateWriteOffInput,
+        actor: String,
+    ) -> Result<ArWriteOffOutput> {
+        let mut request: stateset_core::CreateWriteOff = ar_workflow_input(input)?;
+        request.approved_by = Some(actor);
+        self.commerce
+            .get()?
+            .accounts_receivable()
+            .create_write_off(request)
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to write off invoice", e))
+    }
+    #[napi]
+    pub async fn reverse_write_off(&self, id: String) -> Result<ArWriteOffOutput> {
+        self.commerce
+            .get()?
+            .accounts_receivable()
+            .reverse_write_off(ar_workflow_id(&id)?)
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to reverse write-off", e))
+    }
+    #[napi]
+    pub async fn list_write_offs(
+        &self,
+        filter: Option<ArWriteOffFilterInput>,
+    ) -> Result<Vec<ArWriteOffOutput>> {
+        self.commerce
+            .get()?
+            .accounts_receivable()
+            .list_write_offs(ar_workflow_input(filter.unwrap_or_default())?)
+            .map(|rows| rows.into_iter().map(Into::into).collect())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list write-offs", e))
+    }
+
     /// Get AR aging summary
     #[napi]
     pub async fn get_aging_summary(&self) -> Result<ArAgingSummaryOutput> {
@@ -205,24 +290,24 @@ impl AccountsReceivable {
 
     /// Get total outstanding
     #[napi]
-    pub async fn get_total_outstanding(&self) -> Result<f64> {
+    pub async fn get_total_outstanding(&self) -> Result<String> {
         let commerce = self.commerce.get()?;
         let total = commerce
             .accounts_receivable()
             .get_total_outstanding()
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get total", e))?;
-        to_f64_checked(total, "accounts receivable total outstanding")
+        Ok(total.to_string())
     }
 
     /// Get Days Sales Outstanding (DSO)
     #[napi]
-    pub async fn get_dso(&self, days: i32) -> Result<f64> {
+    pub async fn get_dso(&self, days: i32) -> Result<String> {
         let commerce = self.commerce.get()?;
         let dso = commerce
             .accounts_receivable()
             .get_dso(days)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get DSO", e))?;
-        to_f64_checked(dso, "days sales outstanding")
+        Ok(dso.to_string())
     }
 
     /// Create a credit memo
@@ -245,7 +330,7 @@ impl AccountsReceivable {
                     "original invoice",
                 )?,
                 reason: parse_credit_memo_reason(&input.reason)?,
-                amount: decimal_from_f64(input.amount, "credit memo amount")?,
+                amount: parse_decimal_str(&input.amount, "credit memo amount")?,
                 notes: input.notes,
             })
             .map_err(|e| wrap(ErrCode::Internal, "Failed to create credit memo", e))?;
@@ -306,5 +391,111 @@ impl AccountsReceivable {
             .get_unapplied_credits(uuid)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get credits", e))?;
         convert_outputs(memos)
+    }
+}
+
+fn ar_workflow_input<T: serde::de::DeserializeOwned>(value: impl Serialize) -> Result<T> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| wrap(ErrCode::Validation, "Invalid finance input", e))?;
+    serde_json::from_value(value).map_err(|e| wrap(ErrCode::Validation, "Invalid finance input", e))
+}
+fn ar_workflow_id(id: &str) -> Result<uuid::Uuid> {
+    id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid finance UUID"))
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ApplyArPaymentInput {
+    pub payment_id: String,
+    pub applications: Vec<ArPaymentLineInput>,
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ArPaymentLineInput {
+    pub invoice_id: String,
+    pub amount: String,
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ApplyCreditMemoInput {
+    pub credit_memo_id: String,
+    pub invoice_id: String,
+    pub amount: String,
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateWriteOffInput {
+    pub invoice_id: String,
+    pub amount: String,
+    pub reason: String,
+    pub notes: Option<String>,
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct ArWriteOffFilterInput {
+    pub customer_id: Option<String>,
+    pub invoice_id: Option<String>,
+    pub reason: Option<String>,
+    pub include_reversed: Option<bool>,
+    pub from_date: Option<String>,
+    pub to_date: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ArPaymentApplicationOutput {
+    pub id: String,
+    pub payment_id: String,
+    pub invoice_id: String,
+    pub applied_amount: String,
+    pub applied_date: String,
+    pub created_at: String,
+}
+impl From<stateset_core::ArPaymentApplication> for ArPaymentApplicationOutput {
+    fn from(v: stateset_core::ArPaymentApplication) -> Self {
+        Self {
+            id: v.id.to_string(),
+            payment_id: v.payment_id.to_string(),
+            invoice_id: v.invoice_id.to_string(),
+            applied_amount: v.applied_amount.to_string(),
+            applied_date: v.applied_date.to_rfc3339(),
+            created_at: v.created_at.to_rfc3339(),
+        }
+    }
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ArWriteOffOutput {
+    pub id: String,
+    pub invoice_id: String,
+    pub customer_id: String,
+    pub amount: String,
+    pub reason: String,
+    pub write_off_number: String,
+    pub notes: Option<String>,
+    pub approved_by: Option<String>,
+    pub approved_at: Option<String>,
+    pub reversed_at: Option<String>,
+    pub gl_journal_entry_id: Option<String>,
+    pub write_off_date: String,
+    pub created_at: String,
+}
+impl From<stateset_core::WriteOff> for ArWriteOffOutput {
+    fn from(v: stateset_core::WriteOff) -> Self {
+        Self {
+            id: v.id.to_string(),
+            invoice_id: v.invoice_id.to_string(),
+            customer_id: v.customer_id.to_string(),
+            amount: v.amount.to_string(),
+            reason: v.reason.to_string(),
+            write_off_number: v.write_off_number,
+            notes: v.notes,
+            approved_by: v.approved_by,
+            approved_at: v.approved_at.map(|x| x.to_rfc3339()),
+            reversed_at: v.reversed_at.map(|x| x.to_rfc3339()),
+            gl_journal_entry_id: v.gl_journal_entry_id.map(|x| x.to_string()),
+            write_off_date: v.write_off_date.to_rfc3339(),
+            created_at: v.created_at.to_rfc3339(),
+        }
     }
 }

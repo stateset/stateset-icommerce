@@ -87,7 +87,8 @@ pub struct CycleCountLine {
     pub expected_quantity: Decimal,
     /// Physically counted quantity (recorded while in progress).
     pub counted_quantity: Option<Decimal>,
-    /// `counted_quantity - expected_quantity`, set once counted.
+    /// Provisional variance against the snapshot while counting; the actual
+    /// adjustment against current system stock once completed.
     pub variance: Option<Decimal>,
 }
 
@@ -101,6 +102,8 @@ pub struct CycleCountLine {
 pub struct CreateCycleCountLine {
     pub sku: String,
     pub lot_id: Option<Uuid>,
+    /// Legacy input, ignored. The repository snapshots system stock itself.
+    #[serde(default)]
     pub expected_quantity: Decimal,
 }
 
@@ -120,8 +123,7 @@ impl CreateCycleCount {
     ///
     /// # Errors
     /// Returns [`CommerceError::ValidationError`] when the warehouse id is not
-    /// positive, no lines are supplied, a line has an empty SKU, or a line has
-    /// a negative expected quantity.
+    /// positive, no lines are supplied, or a line has an empty SKU.
     pub fn validate(&self) -> Result<()> {
         if self.warehouse_id <= 0 {
             return Err(CommerceError::ValidationError(
@@ -137,11 +139,6 @@ impl CreateCycleCount {
             if line.sku.trim().is_empty() {
                 return Err(CommerceError::ValidationError(format!(
                     "cycle count line {i} has an empty sku"
-                )));
-            }
-            if line.expected_quantity < Decimal::ZERO {
-                return Err(CommerceError::ValidationError(format!(
-                    "cycle count line {i} has a negative expected_quantity"
                 )));
             }
         }
@@ -267,7 +264,7 @@ mod tests {
 
         let mut bad = ok;
         bad.lines[0].expected_quantity = dec!(-1);
-        assert!(bad.validate().is_err());
+        assert!(bad.validate().is_ok(), "legacy expected quantity is ignored");
     }
 
     #[test]

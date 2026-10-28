@@ -13,8 +13,8 @@ use rust_decimal::Decimal;
 use stateset_core::{
     AddWorkOrderMaterial, BatchResult, CommerceError, CreateWorkOrder, CreateWorkOrderTask,
     ProductId, Result, TaskStatus, UpdateWorkOrder, UpdateWorkOrderTask, WorkOrder,
-    WorkOrderFilter, WorkOrderMaterial, WorkOrderPriority, WorkOrderRepository, WorkOrderStatus,
-    WorkOrderTask, validate_batch_size,
+    WorkOrderFilter, WorkOrderMaterial, WorkOrderRepository, WorkOrderStatus, WorkOrderTask,
+    validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -242,68 +242,10 @@ impl SqliteWorkOrderRepository {
 impl WorkOrderRepository for SqliteWorkOrderRepository {
     fn create(&self, input: CreateWorkOrder) -> Result<WorkOrder> {
         let id = Uuid::new_v4();
-        let work_order_number = WorkOrder::generate_work_order_number();
-        let now = Utc::now();
-        let priority = input.priority.unwrap_or(WorkOrderPriority::Normal);
-
-        // Insert work order in a scoped block to release connection before adding tasks
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-            conn.execute(
-                "INSERT INTO manufacturing_work_orders (id, work_order_number, product_id, bom_id, work_center_id,
-                 assigned_to, status, priority, quantity_to_build, quantity_completed, scheduled_start, scheduled_end, notes, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, 'planned', ?, ?, '0', ?, ?, ?, ?, ?)",
-                rusqlite::params![
-                    id.to_string(),
-                    work_order_number,
-                    input.product_id.to_string(),
-                    input.bom_id.map(|u| u.to_string()),
-                    input.work_center_id,
-                    input.assigned_to.map(|u| u.to_string()),
-                    priority.to_string(),
-                    input.quantity_to_build.to_string(),
-                    input.scheduled_start.map(|dt| dt.to_rfc3339()),
-                    input.scheduled_end.map(|dt| dt.to_rfc3339()),
-                    input.notes,
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
-                ],
-            )
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        } // Connection released here
-
-        // Create tasks if provided (after releasing the main connection)
-        let mut tasks = Vec::new();
-        if let Some(task_inputs) = input.tasks {
-            for task_input in task_inputs {
-                let task = self.add_task(id, task_input)?;
-                tasks.push(task);
-            }
-        }
-
-        Ok(WorkOrder {
-            id,
-            work_order_number,
-            product_id: input.product_id,
-            bom_id: input.bom_id,
-            work_center_id: input.work_center_id,
-            assigned_to: input.assigned_to,
-            status: WorkOrderStatus::Planned,
-            priority,
-            quantity_to_build: input.quantity_to_build,
-            quantity_completed: Decimal::ZERO,
-            scheduled_start: input.scheduled_start,
-            scheduled_end: input.scheduled_end,
-            actual_start: None,
-            actual_end: None,
-            notes: input.notes,
-            tasks,
-            materials: vec![],
-            version: 1,
-            created_at: now,
-            updated_at: now,
-        })
+        with_immediate_transaction(&self.pool, |tx| {
+            super::work_order_stock::create(tx, id, &input)
+        })?;
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn get(&self, id: Uuid) -> Result<Option<WorkOrder>> {
@@ -372,6 +314,13 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
                 let materials = self.load_materials(wo_id)?;
 
                 Ok(Some(WorkOrder {
+                    stock: {
+                        let conn = self
+                            .pool
+                            .get()
+                            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                        super::work_order_stock::stock(&conn, wo_id).map_err(map_db_error)?
+                    },
                     id: wo_id,
                     work_order_number,
                     product_id: ProductId::from(parse_uuid(
@@ -409,7 +358,18 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
                     notes,
                     tasks,
                     materials,
-                    version: 1, // Default to 1 for backwards compatibility
+                    version: {
+                        let conn = self
+                            .pool
+                            .get()
+                            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                        conn.query_row(
+                            "SELECT version FROM manufacturing_work_orders WHERE id = ?1",
+                            [&id_str],
+                            |r| r.get(0),
+                        )
+                        .map_err(map_db_error)?
+                    }, // Default to 1 for backwards compatibility
                     created_at: parse_datetime(&created_at, "work_order", "created_at")?,
                     updated_at: parse_datetime(&updated_at, "work_order", "updated_at")?,
                 }))
@@ -443,41 +403,9 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
     }
 
     fn update(&self, id: Uuid, input: UpdateWorkOrder) -> Result<WorkOrder> {
-        // Get existing work order first (releases connection after)
-        let existing = self.get(id)?.ok_or(CommerceError::NotFound)?;
-        let now = Utc::now();
-
-        let new_status = input.status.unwrap_or(existing.status);
-        let new_priority = input.priority.unwrap_or(existing.priority);
-        let new_assigned_to = input.assigned_to.or(existing.assigned_to);
-        let new_notes = input.notes.or(existing.notes);
-        let new_work_center_id = input.work_center_id.or(existing.work_center_id);
-        let new_scheduled_start = input.scheduled_start.or(existing.scheduled_start);
-        let new_scheduled_end = input.scheduled_end.or(existing.scheduled_end);
-
-        // Do the update in a scoped block
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-            conn.execute(
-                "UPDATE manufacturing_work_orders SET status = ?, priority = ?, assigned_to = ?,
-                 work_center_id = ?, scheduled_start = ?, scheduled_end = ?, notes = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![
-                    new_status.to_string(),
-                    new_priority.to_string(),
-                    new_assigned_to.map(|u| u.to_string()),
-                    new_work_center_id,
-                    new_scheduled_start.map(|dt| dt.to_rfc3339()),
-                    new_scheduled_end.map(|dt| dt.to_rfc3339()),
-                    new_notes,
-                    now.to_rfc3339(),
-                    id.to_string(),
-                ],
-            )
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        } // Connection released here
-
-        // Fetch and return the updated work order
+        with_immediate_transaction(&self.pool, |tx| {
+            super::work_order_stock::update(tx, id, &input)
+        })?;
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
@@ -569,128 +497,42 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
     }
 
     fn delete(&self, id: Uuid) -> Result<()> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-        // Mark as cancelled instead of hard delete
-        conn.execute(
-            "UPDATE manufacturing_work_orders SET status = 'cancelled', updated_at = ? WHERE id = ?",
-            rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
-        )
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-        Ok(())
+        self.cancel(id).map(|_| ())
     }
 
     fn start(&self, id: Uuid) -> Result<WorkOrder> {
-        let now = Utc::now();
-
-        // Do the update in a scoped block
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-            conn.execute(
-                "UPDATE manufacturing_work_orders SET status = 'in_progress', actual_start = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
-            )
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        } // Connection released here
-
-        // Fetch and return the updated work order
+        with_immediate_transaction(&self.pool, |tx| {
+            super::work_order_stock::transition(tx, id, WorkOrderStatus::InProgress)
+        })?;
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn complete(&self, id: Uuid, quantity_completed: Decimal) -> Result<WorkOrder> {
-        if quantity_completed <= Decimal::ZERO {
-            return Err(CommerceError::ValidationError(
-                "Completed quantity must be greater than zero".to_string(),
-            ));
-        }
-
-        let now = Utc::now();
-        let id_str = id.to_string();
-
-        // Read the current `quantity_completed`, accumulate, and write it back
-        // inside ONE `IMMEDIATE` transaction. IMMEDIATE takes the write lock up
-        // front, so two concurrent `complete` calls serialize instead of both
-        // reading the same starting quantity and one overwriting the other (a
-        // lost update that would under-count completed units).
         with_immediate_transaction(&self.pool, |tx| {
-            let existing: (String, String, Option<String>) = tx
-                .query_row(
-                    "SELECT quantity_completed, quantity_to_build, actual_end FROM manufacturing_work_orders WHERE id = ?",
-                    [&id_str],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .map_err(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => {
-                        rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::NotFound))
-                    }
-                    other => other,
-                })?;
-
-            let existing_completed =
-                parse_decimal_strict(&existing.0, "work_order", "quantity_completed")
-                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-            let quantity_to_build =
-                parse_decimal_strict(&existing.1, "work_order", "quantity_to_build")
-                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-            let new_quantity_completed =
-                existing_completed.checked_add(quantity_completed).ok_or_else(|| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(
-                        CommerceError::ValidationError(
-                            "Completed quantity exceeds decimal range".to_string(),
-                        ),
-                    ))
-                })?;
-            if new_quantity_completed > quantity_to_build {
-                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                    CommerceError::ValidationError(
-                        "Completed quantity would exceed quantity to build".to_string(),
-                    ),
-                )));
-            }
-            let is_complete = new_quantity_completed >= quantity_to_build;
-            let new_status = if is_complete { "completed" } else { "partially_completed" };
-            let new_actual_end = if is_complete { Some(now.to_rfc3339()) } else { existing.2 };
-
-            tx.execute(
-                "UPDATE manufacturing_work_orders
-                 SET quantity_completed = ?, status = ?, actual_end = ?, updated_at = ?
-                 WHERE id = ?",
-                rusqlite::params![
-                    new_quantity_completed.to_string(),
-                    new_status,
-                    new_actual_end,
-                    now.to_rfc3339(),
-                    id_str,
-                ],
-            )?;
-            Ok(())
+            super::work_order_stock::complete(tx, id, quantity_completed)
         })?;
-
-        // Fetch and return the updated work order
         self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn hold(&self, id: Uuid) -> Result<WorkOrder> {
-        self.update(
-            id,
-            UpdateWorkOrder { status: Some(WorkOrderStatus::OnHold), ..Default::default() },
-        )
+        with_immediate_transaction(&self.pool, |tx| {
+            super::work_order_stock::transition(tx, id, WorkOrderStatus::OnHold)
+        })?;
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn resume(&self, id: Uuid) -> Result<WorkOrder> {
-        self.update(
-            id,
-            UpdateWorkOrder { status: Some(WorkOrderStatus::InProgress), ..Default::default() },
-        )
+        with_immediate_transaction(&self.pool, |tx| {
+            super::work_order_stock::transition(tx, id, WorkOrderStatus::InProgress)
+        })?;
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn cancel(&self, id: Uuid) -> Result<WorkOrder> {
-        self.update(
-            id,
-            UpdateWorkOrder { status: Some(WorkOrderStatus::Cancelled), ..Default::default() },
-        )
+        with_immediate_transaction(&self.pool, |tx| {
+            super::work_order_stock::transition(tx, id, WorkOrderStatus::Cancelled)
+        })?;
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn add_task(&self, work_order_id: Uuid, task: CreateWorkOrderTask) -> Result<WorkOrderTask> {
@@ -837,86 +679,15 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
         work_order_id: Uuid,
         material: AddWorkOrderMaterial,
     ) -> Result<WorkOrderMaterial> {
-        if material.quantity <= Decimal::ZERO {
-            return Err(CommerceError::ValidationError(
-                "Reserved material quantity must be positive".into(),
-            ));
-        }
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-        let id = Uuid::new_v4();
-        let now = Utc::now();
-
-        conn.execute(
-            "INSERT INTO manufacturing_work_order_materials (id, work_order_id, component_id, component_sku, component_name, reserved_quantity, consumed_quantity, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, '0', ?, ?)",
-            rusqlite::params![
-                id.to_string(),
-                work_order_id.to_string(),
-                material.component_id.map(|u| u.to_string()),
-                material.component_sku,
-                material.component_name,
-                material.quantity.to_string(),
-                now.to_rfc3339(),
-                now.to_rfc3339(),
-            ],
-        )
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-        Ok(WorkOrderMaterial {
-            id,
-            work_order_id,
-            component_id: material.component_id,
-            component_sku: material.component_sku,
-            component_name: material.component_name,
-            reserved_quantity: material.quantity,
-            consumed_quantity: Decimal::ZERO,
-            inventory_reservation_id: None,
-            created_at: now,
-            updated_at: now,
-        })
+        let material_id = with_immediate_transaction(&self.pool, |tx| {
+            super::work_order_stock::add_material(tx, work_order_id, &material)
+        })?;
+        self.get_material_internal(material_id)
     }
 
     fn consume_material(&self, material_id: Uuid, quantity: Decimal) -> Result<WorkOrderMaterial> {
-        if quantity <= Decimal::ZERO {
-            return Err(CommerceError::ValidationError(
-                "Consumed material quantity must be positive".into(),
-            ));
-        }
-        let id = material_id.to_string();
         with_immediate_transaction(&self.pool, |tx| {
-            let (reserved, consumed): (String, String) = tx
-                .query_row(
-                    "SELECT reserved_quantity, consumed_quantity FROM manufacturing_work_order_materials WHERE id = ?1",
-                    [&id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .map_err(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows =>
-                        rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::NotFound)),
-                    other => other,
-                })?;
-            let reserved = parse_decimal_strict(&reserved, "material", "reserved_quantity")
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-            let consumed = parse_decimal_strict(&consumed, "material", "consumed_quantity")
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-            let new_consumed = consumed.checked_add(quantity).ok_or_else(|| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::ValidationError(
-                    "Cannot consume more material than reserved".into(),
-                )))
-            })?;
-            if new_consumed > reserved {
-                return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
-                    CommerceError::ValidationError(
-                        "Cannot consume more material than reserved".into(),
-                    ),
-                )));
-            }
-            tx.execute(
-                "UPDATE manufacturing_work_order_materials SET consumed_quantity = ?1, updated_at = ?2 WHERE id = ?3",
-                rusqlite::params![new_consumed.to_string(), Utc::now().to_rfc3339(), id],
-            )?;
-            Ok(())
+            super::work_order_stock::consume_material(tx, material_id, quantity)
         })?;
         self.get_material_internal(material_id)
     }
@@ -993,110 +764,16 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
 
     fn create_batch_atomic(&self, inputs: Vec<CreateWorkOrder>) -> Result<Vec<WorkOrder>> {
         validate_batch_size(&inputs)?;
-        if inputs.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
-        let mut results = Vec::with_capacity(inputs.len());
-
-        for input in inputs {
-            let id = Uuid::new_v4();
-            let work_order_number = WorkOrder::generate_work_order_number();
-            let now = Utc::now();
-            let priority = input.priority.unwrap_or(WorkOrderPriority::Normal);
-
-            tx.execute(
-                "INSERT INTO manufacturing_work_orders (id, work_order_number, product_id, bom_id, work_center_id,
-                 assigned_to, status, priority, quantity_to_build, quantity_completed, scheduled_start, scheduled_end, notes, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, 'planned', ?, ?, '0', ?, ?, ?, ?, ?)",
-                rusqlite::params![
-                    id.to_string(),
-                    work_order_number,
-                    input.product_id.to_string(),
-                    input.bom_id.map(|u| u.to_string()),
-                    input.work_center_id,
-                    input.assigned_to.map(|u| u.to_string()),
-                    priority.to_string(),
-                    input.quantity_to_build.to_string(),
-                    input.scheduled_start.map(|dt| dt.to_rfc3339()),
-                    input.scheduled_end.map(|dt| dt.to_rfc3339()),
-                    input.notes,
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
-                ],
-            )
-            .map_err(map_db_error)?;
-
-            // Insert tasks if provided
-            let mut tasks = Vec::new();
-            if let Some(task_inputs) = input.tasks {
-                for task_input in task_inputs {
-                    let task_id = Uuid::new_v4();
-                    let sequence = task_input.sequence.unwrap_or(1);
-
-                    tx.execute(
-                        "INSERT INTO manufacturing_work_order_tasks (id, work_order_id, sequence, task_name, status, estimated_hours, assigned_to, notes, created_at, updated_at)
-                         VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
-                        rusqlite::params![
-                            task_id.to_string(),
-                            id.to_string(),
-                            sequence,
-                            task_input.task_name,
-                            task_input.estimated_hours.map(|h| h.to_string()),
-                            task_input.assigned_to.map(|u| u.to_string()),
-                            task_input.notes,
-                            now.to_rfc3339(),
-                            now.to_rfc3339(),
-                        ],
-                    )
-                    .map_err(map_db_error)?;
-
-                    tasks.push(WorkOrderTask {
-                        id: task_id,
-                        work_order_id: id,
-                        sequence,
-                        task_name: task_input.task_name,
-                        status: TaskStatus::Pending,
-                        estimated_hours: task_input.estimated_hours,
-                        actual_hours: None,
-                        assigned_to: task_input.assigned_to,
-                        started_at: None,
-                        completed_at: None,
-                        notes: task_input.notes,
-                        created_at: now,
-                        updated_at: now,
-                    });
-                }
+        let ids = with_immediate_transaction(&self.pool, |tx| {
+            let mut result = Vec::with_capacity(inputs.len());
+            for input in &inputs {
+                let id = Uuid::new_v4();
+                super::work_order_stock::create(tx, id, input)?;
+                result.push(id);
             }
-
-            results.push(WorkOrder {
-                id,
-                work_order_number,
-                product_id: input.product_id,
-                bom_id: input.bom_id,
-                work_center_id: input.work_center_id,
-                assigned_to: input.assigned_to,
-                status: WorkOrderStatus::Planned,
-                priority,
-                quantity_to_build: input.quantity_to_build,
-                quantity_completed: Decimal::ZERO,
-                scheduled_start: input.scheduled_start,
-                scheduled_end: input.scheduled_end,
-                actual_start: None,
-                actual_end: None,
-                notes: input.notes,
-                tasks,
-                materials: vec![],
-                version: 1,
-                created_at: now,
-                updated_at: now,
-            });
-        }
-
-        tx.commit().map_err(map_db_error)?;
-        Ok(results)
+            Ok(result)
+        })?;
+        ids.into_iter().map(|id| self.get(id)?.ok_or(CommerceError::NotFound)).collect()
     }
 
     fn update_batch(
@@ -1118,79 +795,17 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
 
     fn update_batch_atomic(&self, updates: Vec<(Uuid, UpdateWorkOrder)>) -> Result<Vec<WorkOrder>> {
         validate_batch_size(&updates)?;
-        if updates.is_empty() {
-            return Ok(vec![]);
-        }
+        let ids = with_immediate_transaction(&self.pool, |tx| {
+            let mut result = Vec::with_capacity(updates.len());
+            for (id, input) in &updates {
+                let id = *id;
 
-        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
-        let mut updated_ids = Vec::with_capacity(updates.len());
-
-        for (id, input) in updates {
-            let now = Utc::now();
-
-            // Get existing work order data
-            let existing: (String, String, Option<String>, Option<String>, Option<String>, Option<String>) = tx
-                .query_row(
-                    "SELECT status, priority, assigned_to, work_center_id, scheduled_start, scheduled_end
-                     FROM manufacturing_work_orders WHERE id = ?",
-                    [id.to_string()],
-                    |row| Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                    )),
-                )
-                .map_err(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => CommerceError::NotFound,
-                    _ => map_db_error(e),
-                })?;
-
-            let new_status = input.status.map(|s| s.to_string()).unwrap_or(existing.0);
-            let new_priority = input.priority.map(|p| p.to_string()).unwrap_or(existing.1);
-            let new_assigned_to =
-                input.assigned_to.map(|u| Some(u.to_string())).unwrap_or(existing.2);
-            let new_work_center_id = input.work_center_id.or(existing.3);
-            let new_scheduled_start =
-                input.scheduled_start.map(|dt| Some(dt.to_rfc3339())).unwrap_or(existing.4);
-            let new_scheduled_end =
-                input.scheduled_end.map(|dt| Some(dt.to_rfc3339())).unwrap_or(existing.5);
-            let new_notes = input.notes;
-
-            tx.execute(
-                "UPDATE manufacturing_work_orders SET status = ?, priority = ?, assigned_to = ?,
-                 work_center_id = ?, scheduled_start = ?, scheduled_end = ?, notes = COALESCE(?, notes), updated_at = ? WHERE id = ?",
-                rusqlite::params![
-                    new_status,
-                    new_priority,
-                    new_assigned_to,
-                    new_work_center_id,
-                    new_scheduled_start,
-                    new_scheduled_end,
-                    new_notes,
-                    now.to_rfc3339(),
-                    id.to_string(),
-                ],
-            )
-            .map_err(map_db_error)?;
-
-            updated_ids.push(id);
-        }
-
-        tx.commit().map_err(map_db_error)?;
-
-        // Fetch all updated work orders
-        let mut results = Vec::with_capacity(updated_ids.len());
-        for id in updated_ids {
-            if let Some(wo) = self.get(id)? {
-                results.push(wo);
+                super::work_order_stock::update(tx, id, input)?;
+                result.push(id);
             }
-        }
-
-        Ok(results)
+            Ok(result)
+        })?;
+        ids.into_iter().map(|id| self.get(id)?.ok_or(CommerceError::NotFound)).collect()
     }
 
     fn delete_batch(&self, ids: Vec<Uuid>) -> Result<BatchResult<Uuid>> {
@@ -1209,27 +824,15 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
 
     fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
         validate_batch_size(&ids)?;
-        if ids.is_empty() {
-            return Ok(());
-        }
-
-        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
-
-        let placeholders = build_in_clause(ids.len());
-
-        // Soft-delete semantics must match single-item delete.
-        let now = Utc::now().to_rfc3339();
-        let mut all_params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
-        all_params.extend(uuid_params(&ids));
-        let all_params_refs = params_refs(&all_params);
-
-        let sql = format!(
-            "UPDATE manufacturing_work_orders SET status = 'cancelled', updated_at = ? WHERE id IN ({placeholders})"
-        );
-        tx.execute(&sql, all_params_refs.as_slice()).map_err(map_db_error)?;
-
-        tx.commit().map_err(map_db_error)?;
+        with_immediate_transaction(&self.pool, |tx| {
+            let mut result = Vec::with_capacity(ids.len());
+            for id in &ids {
+                let id = *id;
+                super::work_order_stock::transition(tx, id, WorkOrderStatus::Cancelled)?;
+                result.push(id);
+            }
+            Ok(result)
+        })?;
         Ok(())
     }
 
@@ -1314,6 +917,11 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
             let materials = self.load_materials(wo_id)?;
 
             work_orders.push(WorkOrder {
+                stock: {
+                    let conn =
+                        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                    super::work_order_stock::stock(&conn, wo_id).map_err(map_db_error)?
+                },
                 id: wo_id,
                 work_order_number,
                 product_id: ProductId::from(parse_uuid(&product_id, "work_order", "product_id")?),
@@ -1343,7 +951,16 @@ impl WorkOrderRepository for SqliteWorkOrderRepository {
                 notes,
                 tasks,
                 materials,
-                version: 1,
+                version: {
+                    let conn =
+                        self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                    conn.query_row(
+                        "SELECT version FROM manufacturing_work_orders WHERE id = ?1",
+                        [&id_str],
+                        |r| r.get(0),
+                    )
+                    .map_err(map_db_error)?
+                },
                 created_at: parse_datetime(&created_at, "work_order", "created_at")?,
                 updated_at: parse_datetime(&updated_at, "work_order", "updated_at")?,
             });
@@ -1359,21 +976,77 @@ mod tests {
     use crate::SqliteDatabase;
     use rust_decimal_macros::dec;
     use stateset_core::{
-        AddWorkOrderMaterial, CreateWorkOrder, CreateWorkOrderTask, ProductId, TaskStatus,
-        WorkOrderFilter, WorkOrderRepository, WorkOrderStatus,
+        AddWorkOrderMaterial, CreateWorkOrder, CreateWorkOrderTask, TaskStatus, WorkOrderFilter,
+        WorkOrderRepository, WorkOrderStatus,
     };
 
     fn fresh_repo() -> SqliteWorkOrderRepository {
         SqliteDatabase::in_memory().expect("in-memory").work_orders()
     }
 
-    fn make_wo(repo: &SqliteWorkOrderRepository, qty: Decimal) -> WorkOrder {
-        repo.create(CreateWorkOrder {
-            product_id: ProductId::new(),
+    fn make_input(repo: &SqliteWorkOrderRepository, qty: Decimal) -> CreateWorkOrder {
+        use stateset_core::{ProductRepository, WarehouseRepository};
+        let tag = Uuid::new_v4().to_string();
+        let product = super::super::products::SqliteProductRepository::new(repo.pool.clone())
+            .create(stateset_core::CreateProduct {
+                name: tag.clone(),
+                variants: Some(vec![stateset_core::CreateProductVariant {
+                    sku: tag.clone(),
+                    price: dec!(1),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .unwrap();
+        let warehouse = super::super::warehouse::SqliteWarehouseRepository::new(repo.pool.clone());
+        let wh = warehouse
+            .create_warehouse(stateset_core::CreateWarehouse {
+                code: tag.clone(),
+                name: tag.clone(),
+                ..Default::default()
+            })
+            .unwrap();
+        let location = warehouse
+            .create_location(stateset_core::CreateLocation {
+                warehouse_id: wh.id,
+                ..Default::default()
+            })
+            .unwrap();
+        CreateWorkOrder {
+            product_id: product.id,
             quantity_to_build: qty,
+            stock: Some(stateset_core::WorkOrderStock {
+                source_location_id: location.id,
+                output_location_id: location.id,
+                output_sku: tag,
+            }),
             ..Default::default()
-        })
-        .expect("create wo")
+        }
+    }
+
+    fn make_wo(repo: &SqliteWorkOrderRepository, qty: Decimal) -> WorkOrder {
+        repo.create(make_input(repo, qty)).expect("create wo")
+    }
+
+    fn seed_material(
+        repo: &SqliteWorkOrderRepository,
+        wo: &WorkOrder,
+        sku: &str,
+        quantity: Decimal,
+    ) {
+        use stateset_core::WarehouseRepository;
+        super::super::warehouse::SqliteWarehouseRepository::new(repo.pool.clone())
+            .adjust_inventory(stateset_core::AdjustLocationInventory {
+                location_id: wo.stock.as_ref().unwrap().source_location_id,
+                sku: sku.into(),
+                lot_id: None,
+                quantity,
+                reason: "fixture".into(),
+                reference_type: None,
+                reference_id: None,
+                performed_by: None,
+            })
+            .unwrap();
     }
 
     #[test]
@@ -1390,8 +1063,6 @@ mod tests {
         let repo = fresh_repo();
         let wo = repo
             .create(CreateWorkOrder {
-                product_id: ProductId::new(),
-                quantity_to_build: dec!(5),
                 tasks: Some(vec![
                     CreateWorkOrderTask {
                         sequence: Some(1),
@@ -1408,7 +1079,7 @@ mod tests {
                         notes: None,
                     },
                 ]),
-                ..Default::default()
+                ..make_input(&repo, dec!(5))
             })
             .expect("create");
         let tasks = repo.get_tasks(wo.id).expect("tasks");
@@ -1467,7 +1138,7 @@ mod tests {
             repo.complete(wo.id, dec!(2)).expect("exact remainder").quantity_completed,
             dec!(5)
         );
-        assert!(matches!(repo.complete(wo.id, dec!(1)), Err(CommerceError::ValidationError(_))));
+        assert!(matches!(repo.complete(wo.id, dec!(1)), Err(CommerceError::Conflict(_))));
     }
 
     #[test]
@@ -1558,6 +1229,8 @@ mod tests {
             .expect("add mat");
         assert_eq!(mat.component_sku, "PART-A");
 
+        seed_material(&repo, &wo, "PART-A", dec!(10));
+        repo.start(wo.id).unwrap();
         let consumed = repo.consume_material(mat.id, dec!(4)).expect("consume");
         assert_eq!(consumed.id, mat.id);
         let remaining_materials = repo.get_materials(wo.id).expect("materials");
@@ -1595,6 +1268,8 @@ mod tests {
                 },
             )
             .expect("add material");
+        seed_material(&repo, &wo, "PART-A", dec!(10));
+        repo.start(wo.id).unwrap();
         assert!(repo.consume_material(mat.id, dec!(-1)).is_err());
         assert!(repo.consume_material(mat.id, dec!(11)).is_err());
 
@@ -1632,11 +1307,13 @@ mod tests {
                 },
             )
             .expect("add");
+        seed_material(&repo, &wo, "MAX", Decimal::MAX);
+        repo.start(wo.id).unwrap();
         repo.consume_material(mat.id, Decimal::MAX).expect("consume full reservation");
         let err = repo.consume_material(mat.id, dec!(1)).expect_err("reject overflow");
         assert!(
             matches!(err, CommerceError::ValidationError(ref message)
-                if message.contains("more material than reserved")),
+                if message.contains("overflow")),
             "got {err:?}"
         );
         assert_eq!(
@@ -1649,18 +1326,7 @@ mod tests {
     fn create_batch_returns_per_input_results() {
         let repo = fresh_repo();
         let result = repo
-            .create_batch(vec![
-                CreateWorkOrder {
-                    product_id: ProductId::new(),
-                    quantity_to_build: dec!(1),
-                    ..Default::default()
-                },
-                CreateWorkOrder {
-                    product_id: ProductId::new(),
-                    quantity_to_build: dec!(2),
-                    ..Default::default()
-                },
-            ])
+            .create_batch(vec![make_input(&repo, dec!(1)), make_input(&repo, dec!(2))])
             .expect("batch");
         assert_eq!(result.success_count, 2);
         assert_eq!(result.failure_count, 0);
@@ -1692,14 +1358,8 @@ mod tests {
         use std::thread;
 
         let db = Arc::new(SqliteDatabase::in_memory().expect("in-memory"));
-        let wo = db
-            .work_orders()
-            .create(CreateWorkOrder {
-                product_id: ProductId::new(),
-                quantity_to_build: dec!(1000),
-                ..Default::default()
-            })
-            .expect("create wo");
+        let wo = make_wo(&db.work_orders(), dec!(1000));
+        db.work_orders().start(wo.id).unwrap();
 
         let thread_count = 10usize;
         let barrier = Arc::new(Barrier::new(thread_count));

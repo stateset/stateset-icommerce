@@ -53,6 +53,8 @@ fn create_asset(commerce: &Commerce) -> stateset_core::FixedAsset {
             location_id: None,
             asset_account_id: None,
             accumulated_depreciation_account_id: None,
+            acquisition_offset_account_id: None,
+            disposal_gain_loss_account_id: None,
             depreciation_expense_account_id: None,
             currency: None,
         })
@@ -486,6 +488,10 @@ fn setup_gl_with_fx(commerce: &Commerce) -> Uuid {
         unearned_revenue_account_id: None,
         sales_revenue_account_id: by_number("4010"),
         shipping_revenue_account_id: None,
+        sales_tax_payable_account_id: None,
+        goods_received_not_invoiced_account_id: None,
+        inventory_adjustment_account_id: None,
+        work_in_progress_account_id: None,
         cogs_account_id: by_number("5010"),
         bad_debt_expense_account_id: None,
         fx_gain_loss_account_id: Some(fx_id),
@@ -539,6 +545,7 @@ fn setup_gl_with_fx(commerce: &Commerce) -> Uuid {
         source_document_type: None,
         source_document_id: None,
         auto_post: Some(true),
+        fx: None,
     })
     .expect("seed EUR entry");
 

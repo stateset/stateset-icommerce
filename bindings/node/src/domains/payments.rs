@@ -173,6 +173,18 @@ pub struct Payments {
 
 #[napi]
 impl Payments {
+    /// Atomic request-key deduplication and guarded completion for payment write-back.
+    #[napi]
+    pub fn supports_payment_idempotency(&self) -> bool {
+        true
+    }
+
+    /// Immutable-key refund replay and atomic, idempotent refund completion.
+    #[napi]
+    pub fn supports_refund_idempotency(&self) -> bool {
+        true
+    }
+
     #[napi]
     pub async fn create(&self, input: CreatePaymentInput) -> Result<PaymentOutput> {
         let commerce = self.commerce.get()?;

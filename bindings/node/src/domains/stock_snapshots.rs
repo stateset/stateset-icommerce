@@ -27,7 +27,7 @@ pub struct CaptureStockLineInput {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CaptureStockSnapshotInput {
     pub label: Option<String>,
-    pub lines: Vec<CaptureStockLineInput>,
+    pub lines: Option<Vec<CaptureStockLineInput>>,
 }
 
 #[napi(object)]
@@ -42,7 +42,7 @@ pub struct StockSnapshotFilterInput {
 pub struct StockSnapshotLineOutput {
     pub id: String,
     pub stock_snapshot_id: String,
-    pub product_id: String,
+    pub product_id: Option<String>,
     pub sku: String,
     /// Exact decimal string
     pub quantity_on_hand: String,
@@ -56,7 +56,7 @@ impl From<stateset_core::StockSnapshotLine> for StockSnapshotLineOutput {
         Self {
             id: l.id.to_string(),
             stock_snapshot_id: l.stock_snapshot_id.to_string(),
-            product_id: l.product_id.to_string(),
+            product_id: l.product_id.map(|id| id.to_string()),
             sku: l.sku,
             quantity_on_hand: l.quantity_on_hand.to_string(),
             quantity_available: l.quantity_available.to_string(),
@@ -104,12 +104,13 @@ impl StockSnapshots {
         Ok(commerce.stock_snapshots().is_supported())
     }
 
-    /// Capture a new snapshot; totals are computed from the supplied lines.
+    /// Capture a new snapshot from stored inventory balances.
     #[napi]
     pub async fn capture(&self, input: CaptureStockSnapshotInput) -> Result<StockSnapshotOutput> {
         let commerce = self.commerce.get()?;
         let lines = input
             .lines
+            .unwrap_or_default()
             .into_iter()
             .map(|l| -> Result<stateset_core::CaptureStockLine> {
                 Ok(stateset_core::CaptureStockLine {

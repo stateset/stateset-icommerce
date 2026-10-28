@@ -1,5 +1,7 @@
 'use client';
 
+import { useState } from 'react';
+import ReceivableActions from './receivable-actions';
 import { Card, CardContent } from '@stateset/design';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getReceivablesPageData } from '@/app/actions/finance';
@@ -15,9 +17,14 @@ const AGING_BUCKETS = [
 ] as const;
 
 export default function ReceivablesClient() {
-  const { data, isLoading, error } = useEmbeddedData(() => getReceivablesPageData(), {
-    refreshInterval: 60000,
-  });
+  const [currency, setCurrency] = useState('USD');
+  const { data, isLoading, error, refetch } = useEmbeddedData(
+    () => getReceivablesPageData(currency),
+    {
+      refreshInterval: 60000,
+      queryKey: currency,
+    },
+  );
 
   if (isLoading && !data) {
     return (
@@ -44,9 +51,25 @@ export default function ReceivablesClient() {
 
   return (
     <div className="space-y-6">
+      <ReceivableActions refresh={refetch} />
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Receivables</h1>
+          <label className="text-sm">
+            Aging currency{' '}
+            <select
+              aria-label="Aging currency"
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value)}
+              className="rounded border border-ds-border bg-ds-background p-1"
+            >
+              {(data.currencies ?? ['USD']).map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </label>
           <p className="text-sm text-ds-muted-foreground">
             Accounts receivable — customer aging and collections
           </p>
@@ -58,7 +81,7 @@ export default function ReceivablesClient() {
                 DSO ({data.dsoWindowDays}d)
               </p>
               <p className="mt-1 font-mono text-lg font-semibold" data-testid="dso-stat">
-                {data.dso.toFixed(1)} days
+                {Number(data.dso).toFixed(1)} days
               </p>
             </CardContent>
           </Card>
@@ -76,7 +99,7 @@ export default function ReceivablesClient() {
                 {bucket.label}
               </p>
               <p className="mt-1 font-mono text-lg font-semibold">
-                {formatMoney(data.aging[bucket.key])}
+                {formatMoney(data.aging[bucket.key], currency)}
               </p>
             </CardContent>
           </Card>
@@ -103,17 +126,28 @@ export default function ReceivablesClient() {
               </thead>
               <tbody>
                 {data.customers.map((row) => (
-                  <tr key={row.customerId} className="border-b border-ds-border/50">
+                  <tr
+                    key={`${row.customerId}:${row.currency}`}
+                    className="border-b border-ds-border/50"
+                  >
                     <td className="py-2 pr-4 font-mono">{row.customerId}</td>
-                    <td className="py-2 pr-4 text-right font-mono">{formatMoney(row.current)}</td>
-                    <td className="py-2 pr-4 text-right font-mono">{formatMoney(row.days130)}</td>
-                    <td className="py-2 pr-4 text-right font-mono">{formatMoney(row.days3160)}</td>
-                    <td className="py-2 pr-4 text-right font-mono">{formatMoney(row.days6190)}</td>
                     <td className="py-2 pr-4 text-right font-mono">
-                      {formatMoney(row.daysOver90)}
+                      {formatMoney(row.current, row.currency)}
+                    </td>
+                    <td className="py-2 pr-4 text-right font-mono">
+                      {formatMoney(row.days130, row.currency)}
+                    </td>
+                    <td className="py-2 pr-4 text-right font-mono">
+                      {formatMoney(row.days3160, row.currency)}
+                    </td>
+                    <td className="py-2 pr-4 text-right font-mono">
+                      {formatMoney(row.days6190, row.currency)}
+                    </td>
+                    <td className="py-2 pr-4 text-right font-mono">
+                      {formatMoney(row.daysOver90, row.currency)}
                     </td>
                     <td className="py-2 text-right font-mono font-semibold">
-                      {formatMoney(row.total)}
+                      {formatMoney(row.total, row.currency)}
                     </td>
                   </tr>
                 ))}

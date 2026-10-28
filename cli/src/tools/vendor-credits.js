@@ -65,7 +65,7 @@ export const vendorCreditTools = withPolicyDomain('vendor_credits', [
       vendorReturnId: z.string().min(1).optional().describe('Optional related vendor return ID'),
       memo: z.string().max(2000).optional().describe('Optional memo'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Create vendor credit', params);
@@ -90,7 +90,7 @@ export const vendorCreditTools = withPolicyDomain('vendor_credits', [
       targetId: z.string().min(1).describe('Target ID'),
       amount: z.string().min(1).describe('Amount to apply as an exact decimal string'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Apply vendor credit', params);
@@ -123,7 +123,7 @@ export const vendorCreditTools = withPolicyDomain('vendor_credits', [
       vendorCreditId: z.string().min(1).describe('Vendor credit ID'),
       applicationId: z.string().min(1).describe('Application ID to reverse'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Reverse vendor credit application', params);
@@ -142,7 +142,7 @@ export const vendorCreditTools = withPolicyDomain('vendor_credits', [
     inputSchema: {
       vendorCreditId: z.string().min(1).describe('Vendor credit ID'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Cancel vendor credit', params);

@@ -367,7 +367,9 @@ pub struct UpdateInvoice {
 pub struct RecordInvoicePayment {
     /// Amount being paid
     pub amount: Decimal,
-    /// Payment ID (if linked to a payment record)
+    /// Optional nonzero payment ID. Replays on the same invoice return its current
+    /// state when the recorded amount matches; amount conflicts are rejected.
+    /// A payment can have explicit allocations across separate invoices.
     pub payment_id: Option<Uuid>,
     /// Payment method description
     pub payment_method: Option<String>,

@@ -7,12 +7,22 @@ precision loss); timestamps cross as RFC 3339 strings, enums as snake_case.
 import uuid
 
 import pytest
-from stateset_embedded import Commerce, VendorReturnItemInput
+from stateset_embedded import Commerce, VendorReturnItemInput, CreateProductVariantInput
 
 
 @pytest.fixture
 def commerce():
     return Commerce(":memory:")
+
+
+def seed_return_stock(commerce):
+    sku = f"RETURN-{uuid.uuid4()}"
+    supplier = commerce.purchase_orders.create_supplier(name=sku)
+    product = commerce.products.create(name=sku, variants=[CreateProductVariantInput(sku=sku, price=10)])
+    warehouse = commerce.warehouse.create_warehouse(code=sku, name=sku)
+    location = commerce.warehouse.create_location(warehouse.id, "SOURCE")
+    commerce.warehouse.adjust_inventory(int(location.id), sku, "5", "receipt")
+    return supplier.id, product.id, sku, int(warehouse.id), int(location.id)
 
 
 def test_vendor_returns_api_exists(commerce):
@@ -24,14 +34,16 @@ def test_vendor_return_full_lifecycle(commerce):
     if not vr.is_supported():
         pytest.skip("vendor returns are not supported by this engine build")
 
-    supplier_id = str(uuid.uuid4())
-    product_id = str(uuid.uuid4())
+    supplier_id, product_id, sku, warehouse_id, source_location_id = seed_return_stock(commerce)
 
     created = vr.create(
         supplier_id=supplier_id,
+        warehouse_id=warehouse_id,
         items=[
             VendorReturnItemInput(
                 product_id=product_id,
+                sku=sku,
+                source_location_id=source_location_id,
                 quantity="3",
                 unit_cost="10.00",
                 reason="defective",
@@ -86,11 +98,15 @@ def test_vendor_return_cancel_and_validation(commerce):
     if not vr.is_supported():
         pytest.skip("vendor returns are not supported by this engine build")
 
+    supplier_id, product_id, sku, warehouse_id, source_location_id = seed_return_stock(commerce)
     created = vr.create(
-        supplier_id=str(uuid.uuid4()),
+        supplier_id=supplier_id,
+        warehouse_id=warehouse_id,
         items=[
             VendorReturnItemInput(
-                product_id=str(uuid.uuid4()),
+                product_id=product_id,
+                sku=sku,
+                source_location_id=source_location_id,
                 quantity="1",
                 unit_cost="5.50",
             )

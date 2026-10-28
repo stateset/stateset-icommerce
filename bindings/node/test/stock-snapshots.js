@@ -11,6 +11,8 @@ const { randomUUID } = require('node:crypto');
 
 test('StockSnapshots: full lifecycle', async (t) => {
   const commerce = new Commerce(':memory:');
+  await commerce.inventory.createItem({ sku: 'SKU-1', name: 'A', initialQuantity: 10.5 });
+  await commerce.inventory.createItem({ sku: 'SKU-2', name: 'B', initialQuantity: 5 });
 
   await t.test('API exists and is supported', async () => {
     assert.ok(commerce.stockSnapshots, 'stockSnapshots API should exist');
@@ -18,32 +20,18 @@ test('StockSnapshots: full lifecycle', async (t) => {
   });
 
   let snapshot;
-  await t.test('capture computes totals from lines', async () => {
+  await t.test('capture reads stored balances', async () => {
     snapshot = await commerce.stockSnapshots.capture({
       label: 'EOM',
-      lines: [
-        {
-          productId: randomUUID(),
-          sku: 'SKU-1',
-          quantityOnHand: '10.5',
-          quantityAvailable: '8',
-          location: 'MAIN',
-        },
-        {
-          productId: randomUUID(),
-          sku: 'SKU-2',
-          quantityOnHand: '5',
-          quantityAvailable: '5',
-        },
-      ],
+
     });
     assert.ok(snapshot.id);
     assert.equal(snapshot.label, 'EOM');
     assert.equal(snapshot.totalSkus, '2');
     assert.equal(snapshot.totalUnits, '15.5');
     assert.equal(snapshot.lines.length, 2);
-    assert.equal(snapshot.lines[0].quantityAvailable, '8');
-    assert.equal(snapshot.lines[1].location, undefined);
+    assert.equal(snapshot.lines[0].quantityAvailable, '10.5');
+    assert.equal(snapshot.lines[1].productId, undefined);
     assert.ok(snapshot.capturedAt);
   });
 

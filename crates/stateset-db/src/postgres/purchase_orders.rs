@@ -297,11 +297,18 @@ impl PgPurchaseOrderRepository {
     }
 
     async fn recalculate_totals_async(&self, po_id: Uuid) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::locked_status(&mut tx, po_id).await?;
+        Self::recalculate_totals_on(tx.as_mut(), po_id).await?;
+        tx.commit().await.map_err(map_db_error)
+    }
+
+    async fn recalculate_totals_on(conn: &mut sqlx::PgConnection, po_id: Uuid) -> Result<()> {
         let subtotal: Option<Decimal> = sqlx::query_scalar(
             "SELECT COALESCE(SUM(line_total), 0) FROM purchase_order_items WHERE purchase_order_id = $1"
         )
         .bind(po_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *conn)
         .await
         .map_err(map_db_error)?;
 
@@ -311,7 +318,7 @@ impl PgPurchaseOrderRepository {
             "SELECT tax_amount, shipping_cost, discount_amount FROM purchase_orders WHERE id = $1"
         )
         .bind(po_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *conn)
         .await
         .map_err(map_db_error)?;
 
@@ -324,7 +331,7 @@ impl PgPurchaseOrderRepository {
         .bind(total)
         .bind(Utc::now())
         .bind(po_id)
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await
         .map_err(map_db_error)?;
 
@@ -788,6 +795,21 @@ impl PgPurchaseOrderRepository {
         })
     }
 
+    async fn require_editable(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+    ) -> Result<()> {
+        if !matches!(
+            Self::locked_status(tx, id).await?,
+            PurchaseOrderStatus::Draft | PurchaseOrderStatus::PendingApproval
+        ) {
+            return Err(CommerceError::Conflict(
+                "Purchase order lines can only be edited in draft or pending approval".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Is a receipt legal against a PO in `status`?
     ///
     /// Derived from the domain state machine rather than a hand-written list: a
@@ -957,17 +979,27 @@ impl PgPurchaseOrderRepository {
     pub async fn receive_async(
         &self,
         id: Uuid,
-        items: ReceivePurchaseOrderItems,
+        input: ReceivePurchaseOrderItems,
     ) -> Result<PurchaseOrder> {
-        let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::receiving::PgReceivingRepository::receive_po_tx(&mut tx, id, input).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        self.get_async(id).await?.ok_or(CommerceError::NotFound)
+    }
+
+    pub(super) async fn receive_quantities_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+        items: &[stateset_core::ReceivePurchaseOrderItem],
+    ) -> Result<()> {
+        let now = Utc::now();
 
         // The state-machine guard shares this transaction (and the row lock)
         // with the quantity guards below, so a concurrent cancel/complete
         // cannot slip between the check and the receipt. Without it, receiving
         // against a draft or cancelled PO succeeded and flipped it straight to
         // `received`, bypassing approval entirely.
-        let current_status = Self::locked_status(&mut tx, id).await?;
+        let current_status = Self::locked_status(tx, id).await?;
         if !Self::is_receivable(current_status) {
             return Err(CommerceError::Conflict(format!(
                 "Cannot receive against purchase order {id} in status '{current_status}'; \
@@ -975,7 +1007,7 @@ impl PgPurchaseOrderRepository {
             )));
         }
 
-        for item in &items.items {
+        for item in items {
             if item.quantity_received <= Decimal::ZERO {
                 return Err(CommerceError::ValidationError(
                     "Received quantity must be greater than zero".to_string(),
@@ -1036,8 +1068,7 @@ impl PgPurchaseOrderRepository {
         } else if any_received {
             PurchaseOrderStatus::PartiallyReceived
         } else {
-            tx.commit().await.map_err(map_db_error)?;
-            return self.get_async(id).await?.ok_or(CommerceError::NotFound);
+            return Ok(());
         };
 
         let delivered_date = if all_received { Some(now) } else { None };
@@ -1051,9 +1082,7 @@ impl PgPurchaseOrderRepository {
             .await
             .map_err(map_db_error)?;
 
-        tx.commit().await.map_err(map_db_error)?;
-
-        self.get_async(id).await?.ok_or(CommerceError::NotFound)
+        Ok(())
     }
 
     pub async fn complete_async(&self, id: Uuid) -> Result<PurchaseOrder> {
@@ -1065,6 +1094,8 @@ impl PgPurchaseOrderRepository {
         po_id: Uuid,
         item: CreatePurchaseOrderItem,
     ) -> Result<PurchaseOrderItem> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::require_editable(&mut tx, po_id).await?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let line_total = item.quantity * item.unit_cost - item.discount_amount.unwrap_or_default()
@@ -1093,20 +1124,21 @@ impl PgPurchaseOrderRepository {
         .bind(&item.notes)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        self.recalculate_totals_async(po_id).await?;
+        Self::recalculate_totals_on(tx.as_mut(), po_id).await?;
 
         let row = sqlx::query_as::<_, PurchaseOrderItemRow>(
             "SELECT * FROM purchase_order_items WHERE id = $1",
         )
         .bind(id)
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
+        tx.commit().await.map_err(map_db_error)?;
         Ok(Self::row_to_item(row))
     }
 
@@ -1119,12 +1151,14 @@ impl PgPurchaseOrderRepository {
         let line_total = item.quantity * item.unit_cost - item.discount_amount.unwrap_or_default()
             + item.tax_amount.unwrap_or_default();
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let po_id: Uuid =
             sqlx::query_scalar("SELECT purchase_order_id FROM purchase_order_items WHERE id = $1")
                 .bind(item_id)
-                .fetch_one(&self.pool)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
+        Self::require_editable(&mut tx, po_id).await?;
 
         sqlx::query(
             "UPDATE purchase_order_items SET sku = $1, name = $2, supplier_sku = $3,
@@ -1143,38 +1177,42 @@ impl PgPurchaseOrderRepository {
         .bind(&item.notes)
         .bind(now)
         .bind(item_id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        self.recalculate_totals_async(po_id).await?;
+        Self::recalculate_totals_on(tx.as_mut(), po_id).await?;
 
         let row = sqlx::query_as::<_, PurchaseOrderItemRow>(
             "SELECT * FROM purchase_order_items WHERE id = $1",
         )
         .bind(item_id)
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
+        tx.commit().await.map_err(map_db_error)?;
         Ok(Self::row_to_item(row))
     }
 
     pub async fn remove_item_async(&self, item_id: Uuid) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let po_id: Uuid =
             sqlx::query_scalar("SELECT purchase_order_id FROM purchase_order_items WHERE id = $1")
                 .bind(item_id)
-                .fetch_one(&self.pool)
+                .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
+        Self::require_editable(&mut tx, po_id).await?;
 
         sqlx::query("DELETE FROM purchase_order_items WHERE id = $1")
             .bind(item_id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
-        self.recalculate_totals_async(po_id).await?;
+        Self::recalculate_totals_on(tx.as_mut(), po_id).await?;
+        tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }
 

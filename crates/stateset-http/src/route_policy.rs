@@ -42,6 +42,12 @@ pub(crate) enum ActionClass {
     /// processing. Requires the `Delete` permission level (operator or above)
     /// and is always refused to customer-scoped principals.
     Destructive,
+    /// Approve, settle or post financial value: bill and payment-run
+    /// approval, AP/AR settlement, ledger posting and period control, asset
+    /// postings. Requires the `Admin` permission level, so one write or
+    /// operator key cannot both create and approve a payable, and is always
+    /// refused to customer-scoped principals.
+    ManageFinance,
 }
 
 impl ActionClass {
@@ -55,6 +61,7 @@ impl ActionClass {
             Self::Delete => Action::Delete,
             Self::Execute => Action::Execute,
             Self::Destructive => Action::Destructive,
+            Self::ManageFinance => Action::ManageFinance,
         }
     }
 
@@ -68,6 +75,7 @@ impl ActionClass {
             Self::Delete => "delete",
             Self::Execute => "execute",
             Self::Destructive => "destructive",
+            Self::ManageFinance => "manage_finance",
         }
     }
 }
@@ -237,30 +245,31 @@ pub(crate) static ROUTE_POLICIES: &[RoutePolicy] = &[
     RoutePolicy { method: "POST", path: "/api/v1/ap/bills", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/ap/bills", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/ap/bills/{id}", action: ActionClass::Read, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/ap/bills/{id}/approve", action: ActionClass::Execute, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/ap/bills/{id}/cancel", action: ActionClass::Delete, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/ap/bills/{id}/dispute", action: ActionClass::Execute, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/ap/bills/{id}/approve", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/ap/bills/{id}/cancel", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/ap/bills/{id}/dispute", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/ap/bills/{id}/three-way-match", action: ActionClass::List, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/ap/payments", action: ActionClass::Create, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/ap/payments/{id}/void", action: ActionClass::Destructive, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/ap/payments", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/ap/payments/{id}/void", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/ap/payment-runs", action: ActionClass::Create, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/ap/payment-runs/{id}/approve", action: ActionClass::Execute, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/ap/payment-runs/{id}/process", action: ActionClass::Destructive, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/ap/payment-runs/{id}/cancel", action: ActionClass::Delete, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/ap/payment-runs/{id}/approve", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/ap/payment-runs/{id}/process", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/ap/payment-runs/{id}/cancel", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/ap/aging", action: ActionClass::List, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/ap/bills/{id}/resolve-dispute", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/ar/aging", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/ar/aging/customers", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/ar/aging/customers/{customer_id}", action: ActionClass::Read, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/ar/payment-applications", action: ActionClass::Create, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/ar/payment-applications/{id}/unapply", action: ActionClass::Destructive, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/ar/credit-memos", action: ActionClass::Create, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/ar/payment-applications", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/ar/payment-applications/{id}/unapply", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/ar/credit-memos", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/ar/credit-memos", action: ActionClass::List, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/ar/credit-memos/{id}/apply", action: ActionClass::Execute, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/ar/write-offs", action: ActionClass::Destructive, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/ar/write-offs/{id}/reverse", action: ActionClass::Destructive, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/ar/collection-activities", action: ActionClass::Create, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/ar/credit-memos/{id}/apply", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/ar/write-offs", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/ar/write-offs/{id}/reverse", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/ar/collection-activities", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/ar/collection-activities", action: ActionClass::List, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/ar/invoices/{invoice_id}/dunning", action: ActionClass::Execute, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/ar/invoices/{invoice_id}/dunning", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/ar/dunning/due", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/ar/customers/{customer_id}/statement", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/activity-logs", action: ActionClass::Create, access: Access::Operator },
@@ -269,7 +278,11 @@ pub(crate) static ROUTE_POLICIES: &[RoutePolicy] = &[
     RoutePolicy { method: "GET", path: "/api/v1/activity-logs/{subject_type}/{subject_id}", action: ActionClass::Read, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/backorders", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/backorders", action: ActionClass::List, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/backorders/allocations/{id}/confirm", action: ActionClass::Execute, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/backorders/allocations/{id}/release", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/backorders/{id}", action: ActionClass::Read, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/backorders/{id}/allocations", action: ActionClass::List, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/backorders/{id}/allocations", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/backorders/{id}/fulfill", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/backorders/{id}/cancel", action: ActionClass::Delete, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/boms", action: ActionClass::Create, access: Access::Operator },
@@ -302,6 +315,45 @@ pub(crate) static ROUTE_POLICIES: &[RoutePolicy] = &[
     RoutePolicy { method: "DELETE", path: "/api/v1/companies/{id}", action: ActionClass::Delete, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/companies/{id}/contacts", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/companies/{id}/contacts", action: ActionClass::List, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/cost-accounting/adjustments", action: ActionClass::List, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/cost-accounting/adjustments", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/cost-accounting/adjustments/{id}", action: ActionClass::Read, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/cost-accounting/adjustments/{id}/apply", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/cost-accounting/adjustments/{id}/approve", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/cost-accounting/adjustments/{id}/reject", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/cost-accounting/close-check", action: ActionClass::Read, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/cost-accounting/items", action: ActionClass::List, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/cost-accounting/items", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/cost-accounting/items/{sku}", action: ActionClass::Read, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/cost-accounting/items/{sku}/average", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/cost-accounting/items/{sku}/last", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/cost-accounting/items/{sku}/remaining", action: ActionClass::Read, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/cost-accounting/items/{sku}/rollup", action: ActionClass::Read, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/cost-accounting/items/{sku}/rollup", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/cost-accounting/items/{sku}/summary", action: ActionClass::Read, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/cost-accounting/layers", action: ActionClass::List, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/cost-accounting/layers", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/cost-accounting/layers/issue-fifo", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/cost-accounting/layers/issue-lifo", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/cost-accounting/layers/{id}", action: ActionClass::Read, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/cost-accounting/total-value", action: ActionClass::Read, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/cost-accounting/transactions", action: ActionClass::List, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/cost-accounting/transactions", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/cost-accounting/valuation", action: ActionClass::Read, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/cost-accounting/variances", action: ActionClass::List, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/cost-accounting/variances", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/credit/accounts", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/credit/customers/{customer_id}", action: ActionClass::Read, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/credit/customers/{customer_id}/charge", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/credit/customers/{customer_id}/check", action: ActionClass::Read, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/credit/customers/{customer_id}/holds", action: ActionClass::List, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/credit/customers/{customer_id}/holds", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/credit/customers/{customer_id}/payments", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/credit/customers/{customer_id}/reactivate", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/credit/customers/{customer_id}/release-reservation", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/credit/customers/{customer_id}/reserve", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/credit/customers/{customer_id}/suspend", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/credit/holds/{id}/release", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/currencies/rates", action: ActionClass::List, access: Access::Public },
     RoutePolicy { method: "POST", path: "/api/v1/currencies/rates", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/currencies/convert", action: ActionClass::Execute, access: Access::Public },
@@ -320,12 +372,12 @@ pub(crate) static ROUTE_POLICIES: &[RoutePolicy] = &[
     RoutePolicy { method: "GET", path: "/api/v1/fixed-assets", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/fixed-assets/{id}", action: ActionClass::Read, access: Access::Operator },
     RoutePolicy { method: "PUT", path: "/api/v1/fixed-assets/{id}", action: ActionClass::Update, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/fixed-assets/{id}/place-in-service", action: ActionClass::Execute, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/fixed-assets/{id}/dispose", action: ActionClass::Destructive, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/fixed-assets/{id}/write-off", action: ActionClass::Destructive, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/fixed-assets/{id}/place-in-service", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/fixed-assets/{id}/dispose", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/fixed-assets/{id}/write-off", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/fixed-assets/{id}/schedule", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/fixed-assets/{id}/schedule", action: ActionClass::List, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/fixed-assets/{id}/post-depreciation", action: ActionClass::Destructive, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/fixed-assets/{id}/post-depreciation", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/fulfillment/waves", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/fulfillment/waves", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/fulfillment/waves/{id}", action: ActionClass::Read, access: Access::Operator },
@@ -342,23 +394,27 @@ pub(crate) static ROUTE_POLICIES: &[RoutePolicy] = &[
     RoutePolicy { method: "POST", path: "/api/v1/gl/accounts", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/gl/accounts", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/gl/accounts/{id}", action: ActionClass::Read, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/gl/journal-entries", action: ActionClass::Create, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/gl/accounts/{id}/balance", action: ActionClass::Read, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/gl/journal-entries", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/gl/journal-entries", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/gl/journal-entries/{id}", action: ActionClass::Read, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/gl/journal-entries/{id}/post", action: ActionClass::Execute, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/gl/journal-entries/{id}/void", action: ActionClass::Destructive, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/gl/journal-entries/{id}/reverse", action: ActionClass::Destructive, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/gl/revalue", action: ActionClass::Execute, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/gl/close-month", action: ActionClass::Destructive, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/gl/journal-entries/{id}/post", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/gl/journal-entries/{id}/void", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/gl/journal-entries/{id}/reverse", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/gl/revalue", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/gl/close-month", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/gl/trial-balance", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/gl/balance-sheet", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/gl/income-statement", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/gl/periods", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/gl/periods", action: ActionClass::List, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/gl/periods/{id}/open", action: ActionClass::Execute, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/gl/periods/{id}/close", action: ActionClass::Destructive, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/gl/periods/{id}/lock", action: ActionClass::Destructive, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/gl/periods/{id}/reopen", action: ActionClass::Destructive, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/gl/periods/{id}/open", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/gl/periods/{id}/close", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/gl/periods/{id}/lock", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/gl/periods/{id}/reclose", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/gl/periods/{id}/reopen", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/gl/posting-config", action: ActionClass::Read, access: Access::Operator },
+    RoutePolicy { method: "PUT", path: "/api/v1/gl/posting-config", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/gift-cards", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/gift-cards", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/gift-cards/{id}", action: ActionClass::Read, access: Access::Operator },
@@ -406,7 +462,7 @@ pub(crate) static ROUTE_POLICIES: &[RoutePolicy] = &[
     RoutePolicy { method: "GET", path: "/api/v1/invoices", action: ActionClass::List, access: Access::OwnedList { filter: "customer_id" } },
     RoutePolicy { method: "GET", path: "/api/v1/invoices/{id}", action: ActionClass::Read, access: Access::Owned { kind: OwnerKind::Invoice, param: "id" } },
     RoutePolicy { method: "POST", path: "/api/v1/invoices/{id}/send", action: ActionClass::Execute, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/invoices/{id}/payments", action: ActionClass::Execute, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/invoices/{id}/payments", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/kernel/audit", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/kernel/audit/checkpoint", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/lots", action: ActionClass::Create, access: Access::Operator },
@@ -416,9 +472,12 @@ pub(crate) static ROUTE_POLICIES: &[RoutePolicy] = &[
     RoutePolicy { method: "POST", path: "/api/v1/lots/{id}/consume", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/lots/{id}/reserve", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/lots/reservations/{reservation_id}/release", action: ActionClass::Execute, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/lots/{id}/adjust", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/lots/{id}/quarantine", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/lots/{id}/release-quarantine", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/lots/{id}/genealogy", action: ActionClass::List, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/lots/{id}/split", action: ActionClass::Execute, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/lots/{id}/transfer", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/loyalty/programs", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/loyalty/programs", action: ActionClass::List, access: Access::Public },
     RoutePolicy { method: "POST", path: "/api/v1/loyalty/enroll", action: ActionClass::Execute, access: Access::OwnedCreate { body: BodyOwner::Customer("customer_id") } },
@@ -433,23 +492,23 @@ pub(crate) static ROUTE_POLICIES: &[RoutePolicy] = &[
     RoutePolicy { method: "GET", path: "/api/v1/orders/{id}", action: ActionClass::Read, access: Access::Owned { kind: OwnerKind::Order, param: "id" } },
     RoutePolicy { method: "PATCH", path: "/api/v1/orders/{id}/cancel", action: ActionClass::Delete, access: Access::Owned { kind: OwnerKind::Order, param: "id" } },
     RoutePolicy { method: "PATCH", path: "/api/v1/orders/{id}/ship", action: ActionClass::Execute, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/payment-obligations", action: ActionClass::Create, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/payment-obligations", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/payment-obligations", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/payment-obligations/dashboard", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/payment-obligations/{id}", action: ActionClass::Read, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/payment-obligations/{id}/payments", action: ActionClass::Execute, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/payment-obligations/{id}/status", action: ActionClass::Execute, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/payment-obligations/{id}/bills", action: ActionClass::Execute, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/payment-obligations/{id}/payments", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/payment-obligations/{id}/status", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/payment-obligations/{id}/bills", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/payments", action: ActionClass::Create, access: Access::OwnedCreate { body: BodyOwner::Reference { field: "order_id", kind: OwnerKind::Order, customer_field: Some("customer_id") } } },
     RoutePolicy { method: "GET", path: "/api/v1/payments", action: ActionClass::List, access: Access::OwnedList { filter: "customer_id" } },
     RoutePolicy { method: "GET", path: "/api/v1/payments/{id}", action: ActionClass::Read, access: Access::Owned { kind: OwnerKind::Payment, param: "id" } },
     RoutePolicy { method: "POST", path: "/api/v1/payments/{id}/complete", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/payments/{id}/refund", action: ActionClass::Destructive, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/prepayments", action: ActionClass::Create, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/prepayments", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/prepayments", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/prepayments/{id}", action: ActionClass::Read, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/prepayments/{id}/apply", action: ActionClass::Execute, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/prepayments/{id}/refund", action: ActionClass::Destructive, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/prepayments/{id}/apply", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/prepayments/{id}/refund", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/price-levels", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/price-levels", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/price-levels/{id}", action: ActionClass::Read, access: Access::Operator },
@@ -527,6 +586,7 @@ pub(crate) static ROUTE_POLICIES: &[RoutePolicy] = &[
     RoutePolicy { method: "POST", path: "/api/v1/quality/holds/{id}/release", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/receipts", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/receipts", action: ActionClass::List, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/receipts/from-po", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/receipts/{id}", action: ActionClass::Read, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/receipts/{id}/items", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/receipts/{id}/start", action: ActionClass::Execute, access: Access::Operator },
@@ -536,7 +596,10 @@ pub(crate) static ROUTE_POLICIES: &[RoutePolicy] = &[
     RoutePolicy { method: "POST", path: "/api/v1/put-aways", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/put-aways", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/put-aways/{id}", action: ActionClass::Read, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/put-aways/{id}/assign", action: ActionClass::Execute, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/put-aways/{id}/cancel", action: ActionClass::Delete, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/put-aways/{id}/complete", action: ActionClass::Execute, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/put-aways/{id}/start", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/reports/inventory-aging", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/reports/sales-by-channel", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/reports/transaction-cogs", action: ActionClass::Execute, access: Access::Operator },
@@ -557,7 +620,7 @@ pub(crate) static ROUTE_POLICIES: &[RoutePolicy] = &[
     RoutePolicy { method: "GET", path: "/api/v1/revenue-contracts/{id}/obligations", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/revenue-obligations/{id}/schedule", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/revenue-obligations/{id}/schedule", action: ActionClass::List, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/revenue-obligations/{id}/recognize", action: ActionClass::Execute, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/revenue-obligations/{id}/recognize", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/reviews", action: ActionClass::Create, access: Access::OwnedCreate { body: BodyOwner::Customer("customer_id") } },
     RoutePolicy { method: "GET", path: "/api/v1/reviews", action: ActionClass::List, access: Access::Public },
     RoutePolicy { method: "GET", path: "/api/v1/reviews/{id}", action: ActionClass::Read, access: Access::Public },
@@ -608,6 +671,7 @@ pub(crate) static ROUTE_POLICIES: &[RoutePolicy] = &[
     RoutePolicy { method: "GET", path: "/api/v1/supplier-skus", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/supplier-skus/{id}", action: ActionClass::Read, access: Access::Operator },
     RoutePolicy { method: "DELETE", path: "/api/v1/supplier-skus/{id}", action: ActionClass::Delete, access: Access::Operator },
+    RoutePolicy { method: "PUT", path: "/api/v1/supplier-skus/{id}", action: ActionClass::Update, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/tax/exemptions", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/tax/exemptions", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/tax/exemptions/{id}", action: ActionClass::Read, access: Access::Operator },
@@ -623,17 +687,18 @@ pub(crate) static ROUTE_POLICIES: &[RoutePolicy] = &[
     RoutePolicy { method: "POST", path: "/api/v1/transfer-orders/{id}/ship", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/transfer-orders/{id}/receive", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/transfer-orders/{id}/cancel", action: ActionClass::Delete, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/transfer-orders/{id}/complete-receiving", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/unit-classes", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/unit-classes", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/units-of-measure", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/units-of-measure", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/unit-conversion-rules", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/unit-conversion-rules", action: ActionClass::List, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/vendor-credits", action: ActionClass::Create, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/vendor-credits", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/vendor-credits", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/vendor-credits/{id}", action: ActionClass::Read, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/vendor-credits/{id}/apply", action: ActionClass::Execute, access: Access::Operator },
-    RoutePolicy { method: "POST", path: "/api/v1/vendor-credits/{id}/cancel", action: ActionClass::Delete, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/vendor-credits/{id}/apply", action: ActionClass::ManageFinance, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/vendor-credits/{id}/cancel", action: ActionClass::ManageFinance, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/vendor-returns", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/vendor-returns", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/vendor-returns/{id}", action: ActionClass::Read, access: Access::Operator },
@@ -678,6 +743,7 @@ pub(crate) static ROUTE_POLICIES: &[RoutePolicy] = &[
     RoutePolicy { method: "DELETE", path: "/api/v1/wishlists/{id}/items/{product_id}", action: ActionClass::Delete, access: Access::Owned { kind: OwnerKind::Wishlist, param: "id" } },
     RoutePolicy { method: "POST", path: "/api/v1/work-orders", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/work-orders", action: ActionClass::List, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/work-orders/materials/{id}/consume", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/work-orders/{id}", action: ActionClass::Read, access: Access::Operator },
     RoutePolicy { method: "PUT", path: "/api/v1/work-orders/{id}", action: ActionClass::Update, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/work-orders/{id}/start", action: ActionClass::Execute, access: Access::Operator },
@@ -689,6 +755,8 @@ pub(crate) static ROUTE_POLICIES: &[RoutePolicy] = &[
     RoutePolicy { method: "GET", path: "/api/v1/work-orders/{id}/tasks", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/work-orders/tasks/{task_id}/start", action: ActionClass::Execute, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/work-orders/tasks/{task_id}/complete", action: ActionClass::Execute, access: Access::Operator },
+    RoutePolicy { method: "GET", path: "/api/v1/work-orders/{id}/materials", action: ActionClass::List, access: Access::Operator },
+    RoutePolicy { method: "POST", path: "/api/v1/work-orders/{id}/materials", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "POST", path: "/api/v1/x402/intents", action: ActionClass::Create, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/x402/intents", action: ActionClass::List, access: Access::Operator },
     RoutePolicy { method: "GET", path: "/api/v1/x402/intents/{id}", action: ActionClass::Read, access: Access::Operator },
@@ -717,10 +785,12 @@ pub(crate) fn render_markdown_table() -> String {
     let count = |label: &str| ROUTE_POLICIES.iter().filter(|p| p.access.label() == label).count();
     let destructive =
         ROUTE_POLICIES.iter().filter(|p| p.action == ActionClass::Destructive).count();
+    let manage_finance =
+        ROUTE_POLICIES.iter().filter(|p| p.action == ActionClass::ManageFinance).count();
     let _ = writeln!(
         out,
         "{} routes: {} owned, {} owned-list, {} owned-create, {} public, {} operator, {} infra \
-         ({} destructive).\n",
+         ({} destructive, {} manage_finance).\n",
         ROUTE_POLICIES.len(),
         count("owned"),
         count("owned-list"),
@@ -729,6 +799,7 @@ pub(crate) fn render_markdown_table() -> String {
         count("operator"),
         count("infra"),
         destructive,
+        manage_finance,
     );
     out.push_str("| Method | Path | Action | Access | Ownership rule |\n");
     out.push_str("|---|---|---|---|---|\n");
@@ -931,12 +1002,12 @@ mod tests {
                     assert!(policy.path.starts_with("/api/v1"), "{}", policy.path);
                 }
             }
-            // Customer principals never reach a destructive operation.
-            if policy.action == ActionClass::Destructive {
+            // Customer principals never reach a destructive or finance operation.
+            if matches!(policy.action, ActionClass::Destructive | ActionClass::ManageFinance) {
                 assert_eq!(
                     policy.access,
                     Access::Operator,
-                    "{} {} is destructive but not operator-only",
+                    "{} {} is destructive or manage_finance but not operator-only",
                     policy.method,
                     policy.path
                 );
@@ -951,22 +1022,51 @@ mod tests {
     #[test]
     fn money_moving_verbs_are_destructive() {
         for (method, path) in [
-            ("POST", "/api/v1/gl/journal-entries/{id}/void"),
-            ("POST", "/api/v1/gl/journal-entries/{id}/reverse"),
-            ("POST", "/api/v1/ar/write-offs"),
-            ("POST", "/api/v1/ar/write-offs/{id}/reverse"),
-            ("POST", "/api/v1/fixed-assets/{id}/write-off"),
             ("POST", "/api/v1/gift-cards/{id}/charge"),
             ("POST", "/api/v1/a2a/credit/{id}/charge"),
             ("POST", "/api/v1/x402/intents/{id}/settle"),
-            ("POST", "/api/v1/ap/payments/{id}/void"),
             ("POST", "/api/v1/payments/{id}/refund"),
-            ("POST", "/api/v1/gl/close-month"),
         ] {
             let policy = policy_for(method, path).expect(path);
             assert_eq!(policy.action, ActionClass::Destructive, "{method} {path}");
             assert_eq!(policy.action.to_authz(), Action::Destructive);
         }
+    }
+
+    /// Approval, settlement and posting need Admin, so one write or operator
+    /// key cannot both create and approve or pay a payable.
+    #[test]
+    fn finance_approvals_settlements_and_postings_require_admin() {
+        for (method, path) in [
+            ("POST", "/api/v1/ap/bills/{id}/approve"),
+            ("POST", "/api/v1/ap/payments"),
+            ("POST", "/api/v1/ap/payments/{id}/void"),
+            ("POST", "/api/v1/ap/payment-runs/{id}/approve"),
+            ("POST", "/api/v1/ap/payment-runs/{id}/process"),
+            ("POST", "/api/v1/ar/write-offs"),
+            ("POST", "/api/v1/ar/write-offs/{id}/reverse"),
+            ("POST", "/api/v1/fixed-assets/{id}/write-off"),
+            ("POST", "/api/v1/gl/journal-entries/{id}/post"),
+            ("POST", "/api/v1/gl/journal-entries/{id}/void"),
+            ("POST", "/api/v1/gl/journal-entries/{id}/reverse"),
+            ("POST", "/api/v1/gl/close-month"),
+            ("PUT", "/api/v1/gl/posting-config"),
+            ("POST", "/api/v1/invoices/{id}/payments"),
+            ("POST", "/api/v1/credit/customers/{customer_id}/charge"),
+        ] {
+            let policy = policy_for(method, path).expect(path);
+            assert_eq!(policy.action, ActionClass::ManageFinance, "{method} {path}");
+            assert_eq!(
+                policy.action.to_authz().required_permission(),
+                stateset_authz::PermissionLevel::Admin
+            );
+        }
+        // Creating a bill stays a plain write; only its approval is elevated.
+        let create = policy_for("POST", "/api/v1/ap/bills").expect("create bill");
+        assert_eq!(create.action, ActionClass::Create);
+        // A credit check is a read, not a credit movement.
+        let check = policy_for("POST", "/api/v1/credit/customers/{customer_id}/check").expect("check");
+        assert_eq!(check.action, ActionClass::Read);
     }
 
     #[test]

@@ -22,7 +22,10 @@ async function warehouse(commerce) {
 
 async function purchaseOrder(commerce, items) {
   const supplier = await commerce.purchaseOrders.createSupplier({ name: 'Acme Supply' });
-  return commerce.purchaseOrders.create({ supplierId: supplier.id, items });
+  const po = await commerce.purchaseOrders.create({ supplierId: supplier.id, items });
+  await commerce.purchaseOrders.submit(po.id);
+  await commerce.purchaseOrders.approve(po.id, 'receiving-test');
+  return commerce.purchaseOrders.send(po.id);
 }
 
 test('createReceipt -> getReceipt -> getReceiptByNumber -> listReceipts', async () => {
@@ -121,14 +124,23 @@ test('cancelReceipt works from expected and in_progress, never once goods are re
   const commerce = new Commerce(':memory:');
   const wh = await warehouse(commerce);
 
-  const expected = await commerce.receiving.createReceipt({ receiptType: 'po', warehouseId: wh.id });
+  const expected = await commerce.receiving.createReceipt({
+    receiptType: 'po',
+    warehouseId: wh.id,
+  });
   assert.equal((await commerce.receiving.cancelReceipt(expected.id)).status, 'Cancelled');
 
-  const inProgress = await commerce.receiving.createReceipt({ receiptType: 'po', warehouseId: wh.id });
+  const inProgress = await commerce.receiving.createReceipt({
+    receiptType: 'po',
+    warehouseId: wh.id,
+  });
   await commerce.receiving.startReceiving(inProgress.id);
   assert.equal((await commerce.receiving.cancelReceipt(inProgress.id)).status, 'Cancelled');
 
-  const received = await commerce.receiving.createReceipt({ receiptType: 'po', warehouseId: wh.id });
+  const received = await commerce.receiving.createReceipt({
+    receiptType: 'po',
+    warehouseId: wh.id,
+  });
   await commerce.receiving.startReceiving(received.id);
   await commerce.receiving.completeReceiving(received.id);
   await assert.rejects(
@@ -186,28 +198,30 @@ test('createReceiptFromPo builds an expected receipt against an exact-money purc
 test('createReceipt can reference a purchase order explicitly', async () => {
   const commerce = new Commerce(':memory:');
   const wh = await warehouse(commerce);
-  const po = await purchaseOrder(commerce, [{ sku: 'RAW-1', name: 'Raw', quantity: 1, unitCost: 1 }]);
+  const po = await purchaseOrder(commerce, [
+    { sku: 'RAW-1', name: 'Raw', quantity: 1, unitCost: 1 },
+  ]);
+  const [line] = await commerce.purchaseOrders.getItems(po.id);
   const receipt = await commerce.receiving.createReceipt({
     receiptType: 'po',
     warehouseId: wh.id,
     purchaseOrderId: po.id,
+    supplierId: po.supplierId,
+    items: [{ sku: line.sku, poLineId: line.id, expectedQuantity: '1', unitCost: '1' }],
   });
   assert.equal(receipt.status, 'Expected');
   assert.equal(receipt.receiptType, 'PurchaseOrder');
 });
 
-test(
-  'createReceiptFromPo refuses a purchase order the store does not have',
-  async () => {
-    const commerce = new Commerce(':memory:');
-    const wh = await warehouse(commerce);
-    await assert.rejects(
-      commerce.receiving.createReceiptFromPo(UNKNOWN_ID, wh.id),
-      (err) => err.code === 'NOT_FOUND',
-    );
-    assert.equal(await commerce.receiving.countReceipts(), 0);
-  },
-);
+test('createReceiptFromPo refuses a purchase order the store does not have', async () => {
+  const commerce = new Commerce(':memory:');
+  const wh = await warehouse(commerce);
+  await assert.rejects(
+    commerce.receiving.createReceiptFromPo(UNKNOWN_ID, wh.id),
+    (err) => err.code === 'NOT_FOUND',
+  );
+  assert.equal(await commerce.receiving.countReceipts(), 0);
+});
 
 test('createReceipt with an unknown warehouse is refused with VALIDATION', async () => {
   const commerce = new Commerce(':memory:');
@@ -227,7 +241,11 @@ test('malformed UUIDs are refused with VALIDATION before touching the engine', a
     (err) => err.code === 'VALIDATION' && /Invalid PO UUID/.test(err.message),
   );
   await assert.rejects(
-    commerce.receiving.createReceipt({ receiptType: 'po', warehouseId: wh.id, purchaseOrderId: 'not-a-uuid' }),
+    commerce.receiving.createReceipt({
+      receiptType: 'po',
+      warehouseId: wh.id,
+      purchaseOrderId: 'not-a-uuid',
+    }),
     (err) => err.code === 'VALIDATION' && /purchase order UUID 'not-a-uuid'/.test(err.message),
   );
   for (const op of ['getReceipt', 'startReceiving', 'completeReceiving', 'cancelReceipt']) {

@@ -482,7 +482,7 @@ impl SqliteBackorderRepository {
     /// writes a `shipment` ledger row. Any remainder is then taken straight
     /// from available stock when `source_type` is `Inventory` and the SKU
     /// has an inventory master (`InsufficientStock` if it does not cover the
-    /// remainder). For other sources (purchase order, transfer, production)
+    /// remainder). For other sources (transfer, production)
     /// the remainder is stock that arrives and ships through without ever
     /// being on hand, so no balance is touched; the same holds for SKUs
     /// without an inventory item.
@@ -493,6 +493,19 @@ impl SqliteBackorderRepository {
         source_location_id: Option<i32>,
         now: DateTime<Utc>,
     ) -> rusqlite::Result<()> {
+        if input.source_type == FulfillmentSourceType::PurchaseOrder {
+            let timestamp = now.to_rfc3339();
+            let po = super::backorder_receipt::validate_source(tx, input, sku, &timestamp)?;
+            release_open_allocations_in_tx(tx, &[input.backorder_id])?;
+            return super::backorder_receipt::consume(
+                tx,
+                input,
+                sku,
+                source_location_id,
+                po,
+                &timestamp,
+            );
+        }
         let reason = format!("Backorder {} fulfilment", input.backorder_id);
         let mut remaining = input.quantity;
         for allocation in open_allocations_in_tx(tx, input.backorder_id)? {

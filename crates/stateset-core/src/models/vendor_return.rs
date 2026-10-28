@@ -69,6 +69,10 @@ pub struct VendorReturnItem {
     pub product_id: ProductId,
     /// SKU snapshot.
     pub sku: String,
+    /// Physical source location; legacy returns without one cannot be processed.
+    pub source_location_id: Option<i32>,
+    /// Lot selected for this return, when applicable.
+    pub lot_id: Option<Uuid>,
     /// Quantity being returned.
     pub quantity: Decimal,
     /// Unit cost credited back per unit.
@@ -96,6 +100,8 @@ pub struct VendorReturn {
     pub supplier_id: Uuid,
     /// Originating purchase order, if known.
     pub purchase_order_id: Option<Uuid>,
+    /// Source warehouse; legacy returns without one cannot be processed.
+    pub warehouse_id: Option<i32>,
     /// Lifecycle status.
     pub status: VendorReturnStatus,
     /// Currency for credited amounts.
@@ -118,7 +124,10 @@ impl VendorReturn {
     /// Total credit value across all lines.
     #[must_use]
     pub fn total_credit(&self) -> Decimal {
-        self.items.iter().map(VendorReturnItem::line_total).sum()
+        self.items
+            .iter()
+            .map(|item| item.line_total().round_dp(u32::from(self.currency.decimal_places())))
+            .sum()
     }
 
     /// Whether the return can still be edited (only in draft).
@@ -133,6 +142,12 @@ impl VendorReturn {
 pub struct CreateVendorReturnItem {
     /// Product being returned.
     pub product_id: ProductId,
+    /// Exact product variant SKU being returned.
+    pub sku: String,
+    /// Physical source shelf or receiving/quarantine location.
+    pub source_location_id: i32,
+    /// Explicit lot identity, required when returning held lot stock.
+    pub lot_id: Option<Uuid>,
     /// Quantity to return.
     pub quantity: Decimal,
     /// Unit cost to credit.
@@ -147,6 +162,8 @@ pub struct CreateVendorReturnItem {
 pub struct CreateVendorReturn {
     /// Supplier the goods go back to.
     pub supplier_id: Uuid,
+    /// Warehouse containing every line's source location.
+    pub warehouse_id: i32,
     /// Originating purchase order, if any.
     pub purchase_order_id: Option<Uuid>,
     /// Currency (defaults to account base currency when omitted).
@@ -181,6 +198,8 @@ mod tests {
             vendor_return_id: VendorReturnId::new(),
             product_id: ProductId::new(),
             sku: "SKU-1".into(),
+            source_location_id: Some(1),
+            lot_id: None,
             quantity: qty,
             unit_cost: cost,
             reason: VendorReturnReason::Defective,
@@ -192,6 +211,7 @@ mod tests {
             id: VendorReturnId::new(),
             number: "VR-1".into(),
             supplier_id: Uuid::nil(),
+            warehouse_id: Some(1),
             purchase_order_id: None,
             status,
             currency: CurrencyCode::USD,

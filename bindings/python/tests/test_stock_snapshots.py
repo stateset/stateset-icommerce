@@ -5,6 +5,7 @@ timestamps cross as RFC3339 strings.
 """
 
 import uuid
+from decimal import Decimal
 
 import pytest
 from stateset_embedded import CaptureStockLineInput, Commerce
@@ -24,32 +25,24 @@ def test_stock_snapshot_full_lifecycle(commerce):
     if not api.is_supported():
         pytest.skip("stock snapshots backend not available on this build")
 
-    product_a = str(uuid.uuid4())
-    product_b = str(uuid.uuid4())
-
-    snapshot = api.capture(
-        lines=[
-            CaptureStockLineInput(product_a, "SKU-1", "10.00", "8.00", "MAIN"),
-            CaptureStockLineInput(product_b, "SKU-2", "5.00", "5.00"),
-        ],
-        label="EOM June 2026",
-    )
+    commerce.inventory.create_item(sku="SKU-1", name="A", initial_quantity=10)
+    commerce.inventory.create_item(sku="SKU-2", name="B", initial_quantity=5)
+    snapshot = api.capture(label="EOM June 2026")
     assert snapshot.id
     assert snapshot.label == "EOM June 2026"
     assert snapshot.total_skus == 2
-    assert snapshot.total_units == "15.00"
+    assert Decimal(snapshot.total_units) == Decimal("15")
     assert snapshot.captured_at
     assert len(snapshot.lines) == 2
 
     line = next(l for l in snapshot.lines if l.sku == "SKU-1")
     assert line.stock_snapshot_id == snapshot.id
-    assert line.product_id == product_a
-    assert line.quantity_on_hand == "10.00"
-    assert line.quantity_available == "8.00"
-    assert line.location == "MAIN"
+    assert line.product_id is None
+    assert Decimal(line.quantity_on_hand) == Decimal("10")
+    assert Decimal(line.quantity_available) == Decimal("10")
 
     other = next(l for l in snapshot.lines if l.sku == "SKU-2")
-    assert other.location is None
+    assert other.product_id is None
 
     # get finds the snapshot
     found = api.get(snapshot.id)

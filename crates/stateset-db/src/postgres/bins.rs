@@ -193,6 +193,7 @@ pub(crate) async fn apply_bin_delta_pg(
     delta_allocated: Decimal,
     now: DateTime<Utc>,
 ) -> Result<BinLevel> {
+    sqlx::query("INSERT INTO inventory_bin_levels (bin_id, sku, quantity_on_hand, quantity_allocated, updated_at) VALUES ($1, $2, 0, 0, $3) ON CONFLICT DO NOTHING").bind(bin.id).bind(sku).bind(now).execute(&mut *conn).await.map_err(map_db_error)?;
     let current = sqlx::query_as::<_, (Decimal, Decimal)>(
         "SELECT quantity_on_hand, quantity_allocated FROM inventory_bin_levels
          WHERE bin_id = $1 AND sku = $2 FOR UPDATE",
@@ -203,8 +204,12 @@ pub(crate) async fn apply_bin_delta_pg(
     .await
     .map_err(map_db_error)?;
     let (on_hand, allocated) = current.unwrap_or((Decimal::ZERO, Decimal::ZERO));
-    let new_on_hand = on_hand + delta_on_hand;
-    let new_allocated = allocated + delta_allocated;
+    let new_on_hand = on_hand
+        .checked_add(delta_on_hand)
+        .ok_or_else(|| CommerceError::ValidationError("Bin on-hand quantity overflow".into()))?;
+    let new_allocated = allocated
+        .checked_add(delta_allocated)
+        .ok_or_else(|| CommerceError::ValidationError("Bin allocated quantity overflow".into()))?;
     if new_on_hand < Decimal::ZERO
         || new_allocated < Decimal::ZERO
         || new_on_hand - new_allocated < Decimal::ZERO
@@ -245,159 +250,6 @@ pub(crate) async fn apply_bin_delta_pg(
         quantity_allocated: new_allocated,
         quantity_available: new_on_hand - new_allocated,
         updated_at: now,
-    })
-}
-
-/// Apply a signed `(on_hand, allocated)` delta to the warehouse-level balance
-/// (`inventory_balances` at `location_id = warehouse_id`).
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn apply_warehouse_delta_pg(
-    conn: &mut PgConnection,
-    warehouse_id: i32,
-    sku: &str,
-    delta_on_hand: Decimal,
-    delta_allocated: Decimal,
-    reason: &str,
-    reference_type: Option<&str>,
-    reference_id: Option<&str>,
-    now: DateTime<Utc>,
-) -> Result<()> {
-    let item_id: i64 = sqlx::query_scalar("SELECT id FROM inventory_items WHERE sku = $1")
-        .bind(sku)
-        .fetch_optional(&mut *conn)
-        .await
-        .map_err(map_db_error)?
-        .ok_or_else(|| {
-            CommerceError::ValidationError(format!(
-                "Inventory item {sku} not found; create it before stocking bins"
-            ))
-        })?;
-    let wh: Option<(String, String)> =
-        sqlx::query_as("SELECT code, name FROM warehouses WHERE id = $1")
-            .bind(warehouse_id)
-            .fetch_optional(&mut *conn)
-            .await
-            .map_err(map_db_error)?;
-    let (code, name) =
-        wh.unwrap_or_else(|| (format!("WH-{warehouse_id}"), format!("Warehouse {warehouse_id}")));
-    sqlx::query(
-        "INSERT INTO inventory_locations (id, name, code) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-    )
-    .bind(warehouse_id)
-    .bind(name)
-    .bind(code)
-    .execute(&mut *conn)
-    .await
-    .map_err(map_db_error)?;
-
-    let current = sqlx::query_as::<_, (Decimal, Decimal)>(
-        "SELECT quantity_on_hand, quantity_allocated FROM inventory_balances
-         WHERE item_id = $1 AND location_id = $2 FOR UPDATE",
-    )
-    .bind(item_id)
-    .bind(warehouse_id)
-    .fetch_optional(&mut *conn)
-    .await
-    .map_err(map_db_error)?;
-    let (on_hand, allocated) = current.unwrap_or((Decimal::ZERO, Decimal::ZERO));
-    let new_on_hand = on_hand + delta_on_hand;
-    let new_allocated = allocated + delta_allocated;
-    let new_available = new_on_hand - new_allocated;
-    if new_on_hand < Decimal::ZERO || new_allocated < Decimal::ZERO || new_available < Decimal::ZERO
-    {
-        return Err(CommerceError::InsufficientStock {
-            sku: sku.to_string(),
-            requested: delta_on_hand.abs().to_string(),
-            available: (on_hand - allocated).to_string(),
-        });
-    }
-    sqlx::query(
-        "INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, quantity_allocated,
-         quantity_available, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (item_id, location_id) DO UPDATE SET
-             quantity_on_hand = EXCLUDED.quantity_on_hand,
-             quantity_allocated = EXCLUDED.quantity_allocated,
-             quantity_available = EXCLUDED.quantity_available,
-             version = inventory_balances.version + 1,
-             updated_at = EXCLUDED.updated_at",
-    )
-    .bind(item_id)
-    .bind(warehouse_id)
-    .bind(new_on_hand)
-    .bind(new_allocated)
-    .bind(new_available)
-    .bind(now)
-    .execute(&mut *conn)
-    .await
-    .map_err(map_db_error)?;
-    if !delta_on_hand.is_zero() {
-        sqlx::query(
-            "INSERT INTO inventory_transactions (item_id, location_id, transaction_type, quantity,
-             reference_type, reference_id, reason, created_at)
-             VALUES ($1, $2, 'adjustment', $3, $4, $5, $6, $7)",
-        )
-        .bind(item_id)
-        .bind(warehouse_id)
-        .bind(delta_on_hand)
-        .bind(reference_type)
-        .bind(reference_id)
-        .bind(reason)
-        .bind(now)
-        .execute(&mut *conn)
-        .await
-        .map_err(map_db_error)?;
-    }
-    Ok(())
-}
-
-/// Insert a bin movement audit row.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn insert_bin_movement_pg(
-    conn: &mut PgConnection,
-    movement_type: BinMovementType,
-    from_bin_id: Option<i32>,
-    to_bin_id: Option<i32>,
-    sku: &str,
-    quantity: Decimal,
-    reason: Option<&str>,
-    reference_type: Option<&str>,
-    reference_id: Option<&str>,
-    performed_by: Option<&str>,
-    now: DateTime<Utc>,
-) -> Result<BinMovement> {
-    let id = Uuid::new_v4();
-    sqlx::query(
-        "INSERT INTO inventory_bin_movements (id, movement_type, from_bin_id, to_bin_id, sku,
-         quantity, reason, reference_type, reference_id, performed_by, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
-    )
-    .bind(id)
-    .bind(movement_type.to_string())
-    .bind(from_bin_id)
-    .bind(to_bin_id)
-    .bind(sku)
-    .bind(quantity)
-    .bind(reason)
-    .bind(reference_type)
-    .bind(reference_id)
-    .bind(performed_by)
-    .bind(now)
-    .execute(&mut *conn)
-    .await
-    .map_err(map_db_error)?;
-    Ok(BinMovement {
-        id,
-        movement_type,
-        from_bin_id,
-        to_bin_id,
-        sku: sku.to_string(),
-        quantity,
-        reason: reason.map(str::to_string),
-        reference_type: reference_type.map(str::to_string),
-        reference_id: reference_id.map(str::to_string),
-        performed_by: performed_by.map(str::to_string),
-        created_at: now,
     })
 }
 
@@ -569,8 +421,7 @@ impl PgBinRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         load_bin_pg(tx.as_mut(), id).await?;
         let holding: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM inventory_bin_levels
-             WHERE bin_id = $1 AND (quantity_on_hand <> 0 OR quantity_allocated <> 0)",
+            "SELECT COUNT(*) FROM (SELECT quantity_on_hand, quantity_allocated FROM inventory_bin_levels WHERE bin_id = $1 UNION ALL SELECT li.quantity_on_hand, li.quantity_reserved FROM location_inventory li JOIN stock_location_bins m ON m.location_id = li.location_id WHERE m.bin_id = $1) stock WHERE quantity_on_hand <> 0 OR quantity_allocated <> 0",
         )
         .bind(id)
         .fetch_one(tx.as_mut())
@@ -581,6 +432,11 @@ impl PgBinRepository {
                 "Bin {id} still holds stock; move or adjust it out first"
             )));
         }
+        sqlx::query("DELETE FROM stock_location_bins WHERE bin_id = $1")
+            .bind(id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
         sqlx::query("DELETE FROM inventory_bin_levels WHERE bin_id = $1")
             .bind(id)
             .execute(tx.as_mut())
@@ -622,108 +478,102 @@ impl PgBinRepository {
     }
 
     pub async fn adjust_bin_level_async(&self, input: AdjustBinLevel) -> Result<BinLevel> {
-        if input.quantity.is_zero() {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let known: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM inventory_items WHERE sku = $1)")
+                .bind(&input.sku)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if !known {
             return Err(CommerceError::ValidationError(
-                "Adjustment quantity cannot be zero".into(),
+                "Create the inventory item before adjusting bins".into(),
             ));
         }
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
-        let bin = load_bin_pg(tx.as_mut(), input.bin_id).await?;
-        if !bin.is_active {
-            return Err(CommerceError::ValidationError(format!("Bin {} is inactive", bin.code)));
-        }
-        let level =
-            apply_bin_delta_pg(tx.as_mut(), &bin, &input.sku, input.quantity, Decimal::ZERO, now)
-                .await?;
-        apply_warehouse_delta_pg(
-            tx.as_mut(),
-            bin.warehouse_id,
-            &input.sku,
-            input.quantity,
-            Decimal::ZERO,
-            &input.reason,
-            input.reference_type.as_deref(),
-            input.reference_id.as_deref(),
+        let movement_id = Uuid::new_v4();
+        let location = super::stock_move::location_for_bin(tx.as_mut(), input.bin_id, now).await?;
+        super::stock_move::post_from_slices(
+            &mut tx,
+            &crate::stock_move::StockMove {
+                id: movement_id,
+                sku: &input.sku,
+                lot_id: None,
+                from: (input.quantity < Decimal::ZERO).then_some(location),
+                to: (input.quantity > Decimal::ZERO).then_some(location),
+                quantity: input.quantity.abs(),
+                release_reserved: Decimal::ZERO,
+                reserve_received: Decimal::ZERO,
+                movement_type: stateset_core::MovementType::Adjustment,
+                lot_effect: crate::stock_move::LotEffect::Track,
+                check_sellable: false,
+                reference_type: input.reference_type.as_deref(),
+                reference_id: None,
+                reference_label: input.reference_id.as_deref(),
+                reason: Some(&input.reason),
+                performed_by: input.performed_by.as_deref(),
+            },
             now,
         )
         .await?;
-        let (from, to) = if input.quantity.is_sign_negative() {
-            (Some(bin.id), None)
-        } else {
-            (None, Some(bin.id))
-        };
-        insert_bin_movement_pg(
-            tx.as_mut(),
-            BinMovementType::Adjustment,
-            from,
-            to,
-            &input.sku,
-            input.quantity.abs(),
-            Some(&input.reason),
-            input.reference_type.as_deref(),
-            input.reference_id.as_deref(),
-            input.performed_by.as_deref(),
-            now,
-        )
-        .await?;
+        let level: LevelRow =
+            sqlx::query_as(&format!("{LEVEL_SELECT} WHERE l.bin_id = $1 AND l.sku = $2"))
+                .bind(input.bin_id)
+                .bind(&input.sku)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
         tx.commit().await.map_err(map_db_error)?;
-        Ok(level)
+        Ok(level.into())
     }
-
     pub async fn move_between_bins_async(&self, input: MoveBetweenBins) -> Result<BinMovement> {
-        if input.quantity <= Decimal::ZERO {
-            return Err(CommerceError::ValidationError("Move quantity must be positive".into()));
-        }
-        if input.from_bin_id == input.to_bin_id {
-            return Err(CommerceError::ValidationError(
-                "Source and destination bins must differ".into(),
-            ));
-        }
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
-        // Lock in a stable order to avoid deadlocks between opposite moves.
-        let (first, second) = if input.from_bin_id < input.to_bin_id {
-            (input.from_bin_id, input.to_bin_id)
-        } else {
-            (input.to_bin_id, input.from_bin_id)
-        };
-        let a = load_bin_pg(tx.as_mut(), first).await?;
-        let b = load_bin_pg(tx.as_mut(), second).await?;
-        let (from, to) = if a.id == input.from_bin_id { (a, b) } else { (b, a) };
-        if from.warehouse_id != to.warehouse_id {
+        let movement_id = Uuid::new_v4();
+        // Use the same location order as all other physical stock moves.
+        let source =
+            super::stock_move::location_for_bin(tx.as_mut(), input.from_bin_id, now).await?;
+        let destination =
+            super::stock_move::location_for_bin(tx.as_mut(), input.to_bin_id, now).await?;
+        if super::stock_move::warehouse_of(tx.as_mut(), source).await?
+            != super::stock_move::warehouse_of(tx.as_mut(), destination).await?
+        {
             return Err(CommerceError::ValidationError(
                 "Bins belong to different warehouses; use a transfer order".into(),
             ));
         }
-        if !to.is_active {
-            return Err(CommerceError::ValidationError(format!(
-                "Destination bin {} is inactive",
-                to.code
-            )));
-        }
-        apply_bin_delta_pg(tx.as_mut(), &from, &input.sku, -input.quantity, Decimal::ZERO, now)
-            .await?;
-        apply_bin_delta_pg(tx.as_mut(), &to, &input.sku, input.quantity, Decimal::ZERO, now)
-            .await?;
-        let movement = insert_bin_movement_pg(
-            tx.as_mut(),
-            BinMovementType::Transfer,
-            Some(from.id),
-            Some(to.id),
-            &input.sku,
-            input.quantity,
-            input.reason.as_deref(),
-            None,
-            None,
-            input.performed_by.as_deref(),
+        super::stock_move::post_from_slices(
+            &mut tx,
+            &crate::stock_move::StockMove {
+                id: movement_id,
+                sku: &input.sku,
+                lot_id: None,
+                from: Some(source),
+                to: Some(destination),
+                quantity: input.quantity,
+                release_reserved: Decimal::ZERO,
+                reserve_received: Decimal::ZERO,
+                movement_type: stateset_core::MovementType::Transfer,
+                lot_effect: crate::stock_move::LotEffect::Track,
+                check_sellable: true,
+                reference_type: None,
+                reference_id: None,
+                reference_label: None,
+                reason: input.reason.as_deref(),
+                performed_by: input.performed_by.as_deref(),
+            },
             now,
         )
         .await?;
+        let movement: MovementRow =
+            sqlx::query_as("SELECT * FROM inventory_bin_movements WHERE id = $1")
+                .bind(movement_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
         tx.commit().await.map_err(map_db_error)?;
-        Ok(movement)
+        movement.try_into()
     }
-
     pub async fn reconcile_async(&self, warehouse_id: i32, sku: &str) -> Result<BinReconciliation> {
         let bin_on_hand: Option<Decimal> = sqlx::query_scalar(
             "SELECT SUM(l.quantity_on_hand) FROM inventory_bin_levels l

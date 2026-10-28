@@ -47,6 +47,125 @@ fn to_rusqlite(e: CommerceError) -> rusqlite::Error {
 }
 
 impl SqlitePurchaseOrderRepository {
+    pub(super) fn receive_quantities_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id: PurchaseOrderId,
+        items: &[stateset_core::ReceivePurchaseOrderItem],
+    ) -> rusqlite::Result<PurchaseOrder> {
+        let now = chrono::Utc::now();
+        let smuggle = to_rusqlite;
+
+        // The state-machine guard shares this transaction with the quantity
+        // guard below, so a concurrent cancel/complete cannot slip between
+        // the check and the receipt. Without it, receiving against a draft
+        // or cancelled PO succeeded and flipped it straight to `received`,
+        // bypassing approval entirely.
+        let current_status = Self::current_status(tx, id).map_err(smuggle)?;
+        if !Self::is_receivable(current_status) {
+            return Err(smuggle(CommerceError::Conflict(format!(
+                "Cannot receive against purchase order {id} in status '{current_status}'; \
+                 only sent, acknowledged or partially received purchase orders accept receipts"
+            ))));
+        }
+
+        for item in items {
+            if item.quantity_received <= Decimal::ZERO {
+                return Err(smuggle(CommerceError::ValidationError(
+                    "Received quantity must be greater than zero".to_string(),
+                )));
+            }
+
+            let (ordered_str, received_str): (String, String) = tx.query_row(
+                "SELECT quantity_ordered, quantity_received
+                 FROM purchase_order_items
+                 WHERE id = ?1 AND purchase_order_id = ?2",
+                params![item.item_id.to_string(), id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+
+            let ordered =
+                parse_decimal_with_context(&ordered_str, "purchase_order_item", "quantity_ordered")
+                    .map_err(smuggle)?;
+            let received = parse_decimal_with_context(
+                &received_str,
+                "purchase_order_item",
+                "quantity_received",
+            )
+            .map_err(smuggle)?;
+            let new_received = received + item.quantity_received;
+
+            if new_received > ordered {
+                return Err(smuggle(CommerceError::ValidationError(format!(
+                    "Receiving {} would exceed ordered quantity {} for item {}",
+                    new_received, ordered, item.item_id
+                ))));
+            }
+
+            tx.execute(
+                "UPDATE purchase_order_items
+                 SET quantity_received = ?, updated_at = ?
+                 WHERE id = ? AND purchase_order_id = ?",
+                params![
+                    new_received.to_string(),
+                    now.to_rfc3339(),
+                    item.item_id.to_string(),
+                    id.to_string()
+                ],
+            )?;
+        }
+
+        // Check if fully or partially received
+        let mut has_items = false;
+        let mut all_received = true;
+        let mut any_received = false;
+        {
+            let mut stmt = tx.prepare(
+                "SELECT quantity_ordered, quantity_received
+                 FROM purchase_order_items
+                 WHERE purchase_order_id = ?",
+            )?;
+            let rows = stmt.query_map([id.to_string()], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+
+            for row in rows {
+                let (ordered, received) = row?;
+                let ordered_dec =
+                    parse_decimal_with_context(&ordered, "purchase_order_item", "quantity_ordered")
+                        .map_err(smuggle)?;
+                let received_dec = parse_decimal_with_context(
+                    &received,
+                    "purchase_order_item",
+                    "quantity_received",
+                )
+                .map_err(smuggle)?;
+
+                has_items = true;
+                all_received &= received_dec >= ordered_dec;
+                any_received |= received_dec > Decimal::ZERO;
+            }
+        }
+
+        let new_status = if !has_items {
+            current_status
+        } else if all_received {
+            PurchaseOrderStatus::Received
+        } else if any_received {
+            PurchaseOrderStatus::PartiallyReceived
+        } else {
+            current_status
+        };
+
+        tx.execute(
+            "UPDATE purchase_orders SET status = ?, delivered_date = CASE WHEN ? = 'received' THEN ? ELSE delivered_date END, updated_at = ? WHERE id = ?",
+            params![new_status.to_string(), new_status.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
+        )?;
+
+        Self::get_po_with_conn(tx, id)
+            .map_err(smuggle)?
+            .ok_or_else(|| smuggle(CommerceError::NotFound))
+    }
+
     #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
@@ -308,6 +427,18 @@ impl SqlitePurchaseOrderRepository {
         status.parse().map_err(|e| {
             CommerceError::DatabaseError(format!("Invalid purchase_order.status '{status}': {e}"))
         })
+    }
+
+    fn require_editable(conn: &rusqlite::Connection, id: PurchaseOrderId) -> Result<()> {
+        if !matches!(
+            Self::current_status(conn, id)?,
+            PurchaseOrderStatus::Draft | PurchaseOrderStatus::PendingApproval
+        ) {
+            return Err(CommerceError::Conflict(
+                "Purchase order lines can only be edited in draft or pending approval".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Is a receipt legal against a PO in `status`?
@@ -903,134 +1034,17 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
     fn receive(
         &self,
         id: PurchaseOrderId,
-        items: ReceivePurchaseOrderItems,
+        input: ReceivePurchaseOrderItems,
     ) -> Result<PurchaseOrder> {
-        let now = chrono::Utc::now();
-
-        // `receive` is a read-check-write of each item's `quantity_received`.
-        // Run it under an IMMEDIATE (retrying) transaction so concurrent receipts
-        // serialize and every one lands — a plain deferred transaction lets
-        // simultaneous receipts race and drop each other (matching the atomic
-        // conditional UPDATE the Postgres backend uses). Domain errors are carried
-        // out via `ToSqlConversionFailure` so they are not retried as lock errors.
-        let smuggle = to_rusqlite;
-
         with_immediate_transaction(&self.pool, |tx| {
-            // The state-machine guard shares this transaction with the quantity
-            // guard below, so a concurrent cancel/complete cannot slip between
-            // the check and the receipt. Without it, receiving against a draft
-            // or cancelled PO succeeded and flipped it straight to `received`,
-            // bypassing approval entirely.
-            let current_status = Self::current_status(tx, id).map_err(smuggle)?;
-            if !Self::is_receivable(current_status) {
-                return Err(smuggle(CommerceError::Conflict(format!(
-                    "Cannot receive against purchase order {id} in status '{current_status}'; \
-                     only sent, acknowledged or partially received purchase orders accept receipts"
-                ))));
-            }
-
-            for item in &items.items {
-                if item.quantity_received <= Decimal::ZERO {
-                    return Err(smuggle(CommerceError::ValidationError(
-                        "Received quantity must be greater than zero".to_string(),
-                    )));
-                }
-
-                let (ordered_str, received_str): (String, String) = tx.query_row(
-                    "SELECT quantity_ordered, quantity_received
-                     FROM purchase_order_items
-                     WHERE id = ?1 AND purchase_order_id = ?2",
-                    params![item.item_id.to_string(), id.to_string()],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )?;
-
-                let ordered = parse_decimal_with_context(
-                    &ordered_str,
-                    "purchase_order_item",
-                    "quantity_ordered",
-                )
-                .map_err(smuggle)?;
-                let received = parse_decimal_with_context(
-                    &received_str,
-                    "purchase_order_item",
-                    "quantity_received",
-                )
-                .map_err(smuggle)?;
-                let new_received = received + item.quantity_received;
-
-                if new_received > ordered {
-                    return Err(smuggle(CommerceError::ValidationError(format!(
-                        "Receiving {} would exceed ordered quantity {} for item {}",
-                        new_received, ordered, item.item_id
-                    ))));
-                }
-
-                tx.execute(
-                    "UPDATE purchase_order_items
-                     SET quantity_received = ?, updated_at = ?
-                     WHERE id = ? AND purchase_order_id = ?",
-                    params![
-                        new_received.to_string(),
-                        now.to_rfc3339(),
-                        item.item_id.to_string(),
-                        id.to_string()
-                    ],
-                )?;
-            }
-
-            // Check if fully or partially received
-            let mut has_items = false;
-            let mut all_received = true;
-            let mut any_received = false;
-            {
-                let mut stmt = tx.prepare(
-                    "SELECT quantity_ordered, quantity_received
-                     FROM purchase_order_items
-                     WHERE purchase_order_id = ?",
-                )?;
-                let rows = stmt.query_map([id.to_string()], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })?;
-
-                for row in rows {
-                    let (ordered, received) = row?;
-                    let ordered_dec = parse_decimal_with_context(
-                        &ordered,
-                        "purchase_order_item",
-                        "quantity_ordered",
-                    )
-                    .map_err(smuggle)?;
-                    let received_dec = parse_decimal_with_context(
-                        &received,
-                        "purchase_order_item",
-                        "quantity_received",
-                    )
-                    .map_err(smuggle)?;
-
-                    has_items = true;
-                    all_received &= received_dec >= ordered_dec;
-                    any_received |= received_dec > Decimal::ZERO;
-                }
-            }
-
-            let new_status = if !has_items {
-                current_status
-            } else if all_received {
-                PurchaseOrderStatus::Received
-            } else if any_received {
-                PurchaseOrderStatus::PartiallyReceived
-            } else {
-                current_status
-            };
-
-            tx.execute(
-                "UPDATE purchase_orders SET status = ?, delivered_date = CASE WHEN ? = 'received' THEN ? ELSE delivered_date END, updated_at = ? WHERE id = ?",
-                params![new_status.to_string(), new_status.to_string(), now.to_rfc3339(), now.to_rfc3339(), id.to_string()],
+            super::receiving::SqliteReceivingRepository::receive_po_tx(
+                tx,
+                id.into(),
+                input.clone(),
             )?;
-
             Self::get_po_with_conn(tx, id)
-                .map_err(smuggle)?
-                .ok_or_else(|| smuggle(CommerceError::NotFound))
+                .map_err(to_rusqlite)?
+                .ok_or_else(|| to_rusqlite(CommerceError::NotFound))
         })
     }
 
@@ -1045,6 +1059,7 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
     ) -> Result<PurchaseOrderItem> {
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        Self::require_editable(&tx, po_id)?;
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
         let line_total = item.quantity * item.unit_cost - item.discount_amount.unwrap_or_default()
@@ -1111,6 +1126,10 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
                 |row| row.get(0),
             )
             .map_err(map_db_error)?;
+        Self::require_editable(
+            &tx,
+            parse_uuid(&po_id, "purchase_order_item", "purchase_order_id")?.into(),
+        )?;
 
         tx.execute(
             "UPDATE purchase_order_items SET sku = ?, name = ?, supplier_sku = ?,
@@ -1162,6 +1181,10 @@ impl PurchaseOrderRepository for SqlitePurchaseOrderRepository {
                 |row| row.get(0),
             )
             .map_err(map_db_error)?;
+        Self::require_editable(
+            &tx,
+            parse_uuid(&po_id, "purchase_order_item", "purchase_order_id")?.into(),
+        )?;
 
         tx.execute("DELETE FROM purchase_order_items WHERE id = ?", [item_id.to_string()])
             .map_err(map_db_error)?;
@@ -1526,8 +1549,30 @@ mod tests {
         ReceivePurchaseOrderItems, SupplierFilter,
     };
 
+    fn receiving_destination(db: &SqliteDatabase) {
+        use stateset_core::WarehouseRepository;
+        let warehouse = db
+            .warehouse()
+            .create_warehouse(stateset_core::CreateWarehouse {
+                code: "RCV".into(),
+                name: "Receiving".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let location = db
+            .warehouse()
+            .create_location(stateset_core::CreateLocation {
+                warehouse_id: warehouse.id,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!((warehouse.id, location.id), (1, 1));
+    }
+
     fn fresh_repo() -> SqlitePurchaseOrderRepository {
-        SqliteDatabase::in_memory().expect("in-memory").purchase_orders()
+        let db = SqliteDatabase::in_memory().expect("in-memory");
+        receiving_destination(&db);
+        db.purchase_orders()
     }
 
     fn make_supplier(repo: &SqlitePurchaseOrderRepository, name: &str) -> Supplier {
@@ -1690,6 +1735,8 @@ mod tests {
             .receive(
                 po.id,
                 ReceivePurchaseOrderItems {
+                    warehouse_id: 1,
+                    receiving_location_id: 1,
                     items: vec![ReceivePurchaseOrderItem {
                         item_id: po.items[0].id,
                         quantity_received: dec!(1),
@@ -1792,6 +1839,8 @@ mod tests {
             repo.receive(
                 po_id,
                 ReceivePurchaseOrderItems {
+                    warehouse_id: 1,
+                    receiving_location_id: 1,
                     items: vec![ReceivePurchaseOrderItem {
                         item_id,
                         quantity_received: qty,
@@ -1824,6 +1873,7 @@ mod tests {
         use std::sync::{Arc, Barrier};
 
         let db = Arc::new(SqliteDatabase::in_memory().expect("in-memory"));
+        receiving_destination(&db);
         let s = make_supplier(&db.purchase_orders(), "RACE");
         let po = db
             .purchase_orders()
@@ -1854,6 +1904,8 @@ mod tests {
                     db.purchase_orders().receive(
                         po_id,
                         ReceivePurchaseOrderItems {
+                            warehouse_id: 1,
+                            receiving_location_id: 1,
                             items: vec![ReceivePurchaseOrderItem {
                                 item_id,
                                 quantity_received: dec!(2),

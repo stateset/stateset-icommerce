@@ -1630,6 +1630,7 @@ async fn postgres_kernel_journal_post_rejects_closed_period_durably() {
             source_document_type: Some("kernel_command".into()),
             source_document_id: None,
             auto_post: Some(false),
+            fx: None,
         })
         .await
         .expect("create journal");
@@ -1726,6 +1727,7 @@ async fn postgres_kernel_ledger_and_x402_commands_preserve_exact_fact_parity() {
             source_document_type: Some("kernel_command".into()),
             source_document_id: None,
             auto_post: Some(false),
+            fx: None,
         })
         .await
         .expect("create journal");

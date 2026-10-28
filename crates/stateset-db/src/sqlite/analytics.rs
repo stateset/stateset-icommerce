@@ -522,32 +522,45 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
     fn get_inventory_health(&self) -> Result<InventoryHealth> {
         let conn = self.conn()?;
 
-        let total_skus: i64 = conn
-            .query_row("SELECT COUNT(*) FROM inventory_items", [], |row| row.get(0))
-            .unwrap_or(0);
-
-        // Get stock levels
-        let (in_stock, low_stock, out_of_stock): (i64, i64, i64) = conn
-            .query_row(
-                r"
-                SELECT
-                    SUM(CASE WHEN ib.on_hand > COALESCE(ii.reorder_point, 10) THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN ib.on_hand <= COALESCE(ii.reorder_point, 10) AND ib.on_hand > 0 THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN ib.on_hand <= 0 THEN 1 ELSE 0 END)
-                FROM inventory_items ii
-                LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
-                ",
-                [],
-                |row| Ok((row.get(0).unwrap_or(0), row.get(1).unwrap_or(0), row.get(2).unwrap_or(0))),
+        let mut total_skus = 0_u64;
+        let mut in_stock = 0_u64;
+        let mut low_stock = 0_u64;
+        let mut out_of_stock = 0_u64;
+        // Quantities and reorder points belong to balances, not SKU masters.
+        // Classify each SKU once after summing its locations, using decimals.
+        let mut stmt = conn
+            .prepare(
+                "SELECT decimal_sum(ib.quantity_on_hand), decimal_max(ib.reorder_point)
+             FROM inventory_items ii LEFT JOIN inventory_balances ib ON ib.item_id = ii.id
+             GROUP BY ii.id",
             )
-            .unwrap_or((0, 0, 0));
+            .map_err(map_db_error)?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)))
+            .map_err(map_db_error)?;
+        for row in rows {
+            let (quantity, reorder) = row.map_err(map_db_error)?;
+            let quantity = parse_decimal_value(&quantity, "quantity_on_hand")?;
+            let reorder = reorder
+                .map(|value| parse_decimal_value(&value, "reorder_point"))
+                .transpose()?
+                .unwrap_or(Decimal::TEN);
+            total_skus += 1;
+            if quantity <= Decimal::ZERO {
+                out_of_stock += 1;
+            } else if quantity <= reorder {
+                low_stock += 1;
+            } else {
+                in_stock += 1;
+            }
+        }
 
         // Total inventory value, accumulated exactly (quantity x unit cost on
         // TEXT money columns would drift through IEEE-754 with built-in SUM).
         let total_value: String = conn
             .query_row(
                 r"
-                SELECT decimal_sum_product(ib.on_hand, COALESCE(pv.cost_price, pv.price, 0))
+                SELECT decimal_sum_product(ib.quantity_on_hand, COALESCE(pv.cost, pv.price, 0))
                 FROM inventory_items ii
                 LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
                 LEFT JOIN product_variants pv ON ii.sku = pv.sku
@@ -555,15 +568,15 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                 [],
                 |row| row.get(0),
             )
-            .unwrap_or_else(|_| "0".to_string());
+            .map_err(map_db_error)?;
 
         let total_value = parse_decimal_value(&total_value, "total_value")?;
 
         Ok(InventoryHealth {
-            total_skus: total_skus as u64,
-            in_stock_skus: in_stock as u64,
-            low_stock_skus: low_stock as u64,
-            out_of_stock_skus: out_of_stock as u64,
+            total_skus,
+            in_stock_skus: in_stock,
+            low_stock_skus: low_stock,
+            out_of_stock_skus: out_of_stock,
             total_value,
             turnover_ratio: None,
         })
@@ -587,7 +600,7 @@ impl AnalyticsRepository for SqliteAnalyticsRepository {
                     ii.name,
                     decimal_sum(ib.quantity_on_hand) as on_hand,
                     decimal_sum(ib.quantity_allocated) as allocated,
-                    MAX(ib.reorder_point) as reorder_point
+                    decimal_max(ib.reorder_point) as reorder_point
                 FROM inventory_items ii
                 LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
                 GROUP BY ii.id, ii.sku, ii.name

@@ -14,9 +14,26 @@
 #![cfg(feature = "postgres")]
 
 use rust_decimal_macros::dec;
-use stateset_core::{AddWorkOrderMaterial, CommerceError, CreateWorkOrder, ProductId};
+use stateset_core::{AddWorkOrderMaterial, CommerceError, CreateWorkOrder};
 use stateset_db::PostgresDatabase;
 use std::sync::Arc;
+
+#[path = "support/erp_transfer.rs"]
+mod setup;
+
+async fn input(db: &PostgresDatabase, quantity: rust_decimal::Decimal) -> CreateWorkOrder {
+    let source = setup::postgres_input(db, &[dec!(1)]).await;
+    CreateWorkOrder {
+        product_id: source.items[0].product_id,
+        quantity_to_build: quantity,
+        stock: Some(stateset_core::WorkOrderStock {
+            source_location_id: source.source_location_id,
+            output_location_id: source.destination_location_id,
+            output_sku: source.items[0].sku.clone(),
+        }),
+        ..Default::default()
+    }
+}
 
 fn postgres_url() -> Option<String> {
     stateset_test_utils::postgres_url()
@@ -32,13 +49,10 @@ async fn postgres_concurrent_completions_are_not_lost() {
 
     let wo = db
         .work_orders()
-        .create_async(CreateWorkOrder {
-            product_id: ProductId::new(),
-            quantity_to_build: dec!(1000),
-            ..Default::default()
-        })
+        .create_async(input(&db, dec!(1000)).await)
         .await
         .expect("create work order");
+    db.work_orders().start_async(wo.id).await.unwrap();
 
     // Fire many concurrent single-unit completions at the same work order.
     let contenders = 25u32;
@@ -50,6 +64,23 @@ async fn postgres_concurrent_completions_are_not_lost() {
             .push(tokio::spawn(async move { db.work_orders().complete_async(id, dec!(1)).await }));
     }
 
+    let editing_db = Arc::clone(&db);
+    let editing_id = wo.id;
+    let edit = tokio::spawn(async move {
+        for _ in 0..25 {
+            editing_db
+                .work_orders()
+                .update_async(
+                    editing_id,
+                    stateset_core::UpdateWorkOrder {
+                        notes: Some("concurrent edit".into()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+        }
+    });
     let mut successes = 0u32;
     for handle in handles {
         if handle.await.expect("join completion task").is_ok() {
@@ -58,9 +89,12 @@ async fn postgres_concurrent_completions_are_not_lost() {
     }
     assert_eq!(successes, contenders, "every completion should succeed: {successes}/{contenders}");
 
+    edit.await.unwrap();
     let wo = db.work_orders().get_async(wo.id).await.expect("get").expect("work order");
     // Each completion adds exactly one unit; with the read+write serialized every
     // one lands, so the total equals the number of completions (no lost updates).
+    assert_eq!(wo.status, stateset_core::WorkOrderStatus::PartiallyCompleted);
+    assert_eq!(wo.notes.as_deref(), Some("concurrent edit"));
     assert_eq!(wo.quantity_completed, dec!(25), "completions were lost to a race (expected 25)");
 }
 
@@ -71,15 +105,9 @@ async fn postgres_competing_completions_cannot_exceed_plan() {
         return;
     };
     let db = Arc::new(PostgresDatabase::connect(&url).await.expect("connect + migrate"));
-    let wo = db
-        .work_orders()
-        .create_async(CreateWorkOrder {
-            product_id: ProductId::new(),
-            quantity_to_build: dec!(3),
-            ..Default::default()
-        })
-        .await
-        .expect("create work order");
+    let wo =
+        db.work_orders().create_async(input(&db, dec!(3)).await).await.expect("create work order");
+    db.work_orders().start_async(wo.id).await.unwrap();
     let barrier = Arc::new(tokio::sync::Barrier::new(2));
     let mut handles = Vec::new();
     for _ in 0..2 {
@@ -110,14 +138,7 @@ async fn postgres_material_consumption_is_bounded_and_serialized() {
     };
     let db = Arc::new(PostgresDatabase::connect(&url).await.expect("connect + migrate"));
     let repo = db.work_orders();
-    let wo = repo
-        .create_async(CreateWorkOrder {
-            product_id: ProductId::new(),
-            quantity_to_build: dec!(1),
-            ..Default::default()
-        })
-        .await
-        .expect("create work order");
+    let wo = repo.create_async(input(&db, dec!(1)).await).await.expect("create work order");
     let mat = repo
         .add_material_async(
             wo.id,
@@ -130,6 +151,21 @@ async fn postgres_material_consumption_is_bounded_and_serialized() {
         )
         .await
         .expect("add material");
+
+    db.warehouse()
+        .adjust_inventory_async(stateset_core::AdjustLocationInventory {
+            location_id: wo.stock.as_ref().unwrap().source_location_id,
+            sku: "POSTGRES-MATERIAL-RACE".into(),
+            lot_id: None,
+            quantity: dec!(10),
+            reason: "fixture".into(),
+            reference_type: None,
+            reference_id: None,
+            performed_by: None,
+        })
+        .await
+        .unwrap();
+    repo.start_async(wo.id).await.unwrap();
 
     let contenders = 10usize;
     let barrier = Arc::new(tokio::sync::Barrier::new(contenders));

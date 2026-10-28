@@ -586,9 +586,12 @@ pub(crate) fn receipt_by_idempotency_key_tx(
 }
 
 pub(crate) fn append_kernel_event_tx(
-    tx: &rusqlite::Transaction<'_>,
+    tx: &rusqlite::Connection,
     event: &KernelOutboxEvent,
 ) -> rusqlite::Result<()> {
+    if tx.is_autocommit() {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
     let payload = serde_json::to_string(&event.payload)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
     let inserted = tx.execute(

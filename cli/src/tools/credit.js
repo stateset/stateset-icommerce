@@ -5,6 +5,7 @@
  */
 
 import { z } from 'zod';
+import { nonnegativeDecimalString } from '../utils/decimal-schema.js';
 import { applyRequired } from '../utils/apply-guard.js';
 
 const withPolicyDomain = (policyDomain, tools) => tools.map((tool) => ({ policyDomain, ...tool }));
@@ -45,11 +46,11 @@ export const creditTools = withPolicyDomain('credit', [
     description: 'Create a customer credit account.',
     inputSchema: {
       customerId: z.string().min(1).describe('Customer ID'),
-      creditLimit: z.number().positive().describe('Credit limit'),
+      creditLimit: nonnegativeDecimalString.describe('Credit limit'),
       paymentTerms: z.string().min(1).optional().describe('Payment terms'),
       notes: z.string().max(2000).optional().describe('Optional notes'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Create credit account', params);
@@ -69,7 +70,7 @@ export const creditTools = withPolicyDomain('credit', [
     description: 'Check customer credit availability for an order amount.',
     inputSchema: {
       customerId: z.string().min(1).describe('Customer ID'),
-      orderAmount: z.number().positive().describe('Order amount'),
+      orderAmount: nonnegativeDecimalString.describe('Order amount'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
@@ -82,10 +83,10 @@ export const creditTools = withPolicyDomain('credit', [
     description: 'Adjust a customer credit limit.',
     inputSchema: {
       customerId: z.string().min(1).describe('Customer ID'),
-      newLimit: z.number().positive().describe('New credit limit'),
+      newLimit: nonnegativeDecimalString.describe('New credit limit'),
       reason: z.string().min(1).max(2000).describe('Adjustment reason'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Adjust credit limit', params);
@@ -106,7 +107,7 @@ export const creditTools = withPolicyDomain('credit', [
       customerId: z.string().min(1).describe('Customer ID'),
       reason: z.string().min(1).max(2000).describe('Suspension reason'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Suspend credit account', params);
@@ -125,7 +126,7 @@ export const creditTools = withPolicyDomain('credit', [
     inputSchema: {
       customerId: z.string().min(1).describe('Customer ID'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Reactivate credit account', params);

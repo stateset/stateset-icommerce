@@ -13,14 +13,23 @@ mod agent_identities;
 mod agent_reputation;
 mod agent_validation;
 mod analytics;
+mod ap_match;
+mod ap_settlement;
+mod ar_settlement;
+mod ar_statement;
+mod asset_posting;
 mod backorder;
+mod backorder_receipt;
 mod bins;
 mod bom;
+mod bom_integrity;
 mod carts;
 mod channels;
 mod companies;
 mod cost_accounting;
+mod cost_reports;
 mod credit;
+mod credit_control;
 mod currency;
 mod custom_objects;
 mod customers;
@@ -38,6 +47,12 @@ mod inventory;
 mod invoices;
 mod kernel_executor;
 mod kernel_outbox;
+mod ledger_close;
+mod ledger_credit;
+mod ledger_fx;
+mod ledger_payment;
+mod ledger_reversal;
+mod ledger_source;
 mod lots;
 mod loyalty;
 mod orders;
@@ -47,14 +62,17 @@ mod prepayments;
 mod price_levels;
 mod price_schedules;
 mod print_stations;
+mod production_batch_members;
 mod production_batches;
 mod products;
 mod promotions;
 mod purchase_orders;
 mod purgatory;
 mod quality;
+mod receipt_serials;
 mod receiving;
 mod returns;
+mod revenue_invoice;
 mod revenue_recognition;
 mod reviews;
 mod rewards;
@@ -63,7 +81,16 @@ mod segments;
 mod serials;
 mod shipments;
 mod shipping_zones;
+mod stock_cost;
+mod stock_custody;
+mod stock_guard;
+mod stock_lot;
+mod stock_move;
+mod stock_placement;
+mod stock_reports;
+mod stock_reservation;
 mod stock_snapshots;
+mod stock_valuation;
 mod store_credits;
 mod subscriptions;
 mod supplier_skus;
@@ -72,10 +99,12 @@ mod topology_snapshots;
 mod transfer_orders;
 mod units_of_measure;
 mod vendor_credits;
+mod vendor_return_stock;
 mod vendor_returns;
 mod warehouse;
 mod warranties;
 mod wishlists;
+mod work_order_stock;
 mod work_orders;
 mod x402_credits;
 mod x402_payment_intents;
@@ -559,6 +588,71 @@ impl PostgresDatabase {
             include_str!("migrations/106_saga_rollback_intent.sql"),
         ));
 
+        migrations.push(("108_transfer_stock", include_str!("migrations/108_transfer_stock.sql")));
+        migrations
+            .push(("109_work_order_stock", include_str!("migrations/109_work_order_stock.sql")));
+        migrations.push(("110_stock_custody", include_str!("migrations/110_stock_custody.sql")));
+        migrations
+            .push(("111_pick_reservations", include_str!("migrations/111_pick_reservations.sql")));
+        migrations
+            .push(("112_lot_stock_holds", include_str!("migrations/112_lot_stock_holds.sql")));
+        migrations.push((
+            "113_vendor_return_stock",
+            include_str!("migrations/113_vendor_return_stock.sql"),
+        ));
+        migrations
+            .push(("114_receipt_serials", include_str!("migrations/114_receipt_serials.sql")));
+        migrations.push((
+            "115_backorder_receipt_stock",
+            include_str!("migrations/115_backorder_receipt_stock.sql"),
+        ));
+        migrations
+            .push(("116_snapshot_products", include_str!("migrations/116_snapshot_products.sql")));
+        migrations.push((
+            "117_production_batch_members",
+            include_str!("migrations/117_production_batch_members.sql"),
+        ));
+        migrations.push((
+            "118_invoice_posting_accounts",
+            include_str!("migrations/118_invoice_posting_accounts.sql"),
+        ));
+        migrations.push((
+            "119_inventory_posting_accounts",
+            include_str!("migrations/119_inventory_posting_accounts.sql"),
+        ));
+        migrations.push(("120_ledger_fx", include_str!("migrations/120_ledger_fx.sql")));
+        migrations
+            .push(("121_asset_accounting", include_str!("migrations/121_asset_accounting.sql")));
+        migrations
+            .push(("122_stock_accounting", include_str!("migrations/122_stock_accounting.sql")));
+
+        migrations.push((
+            "123_cost_filter_timestamps",
+            include_str!("migrations/123_cost_filter_timestamps.sql"),
+        ));
+        migrations.push((
+            "124_cost_layer_history",
+            include_str!("migrations/124_cost_layer_history.sql"),
+        ));
+        migrations.push((
+            "125_bill_dispute_state",
+            include_str!("migrations/125_bill_dispute_state.sql"),
+        ));
+        migrations.push((
+            "126_payment_run_currency",
+            include_str!("migrations/126_payment_run_currency.sql"),
+        ));
+        migrations
+            .push(("127_statement_history", include_str!("migrations/127_statement_history.sql")));
+        migrations.push((
+            "128_prepayment_refunds",
+            include_str!("migrations/128_prepayment_refunds.sql"),
+        ));
+        migrations.push((
+            "129_bill_approval_match",
+            include_str!("migrations/129_bill_approval_match.sql"),
+        ));
+        migrations.push(("130_finance_actors", include_str!("migrations/130_finance_actors.sql")));
         migrations
     }
 

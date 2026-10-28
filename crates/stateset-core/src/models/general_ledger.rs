@@ -632,7 +632,7 @@ pub struct JournalEntryLine {
     pub debit_amount: Decimal,
     /// Credit amount; exactly one of `debit_amount` or `credit_amount` must be non-zero.
     pub credit_amount: Decimal,
-    /// Currency of the amounts on this line.
+    /// Functional/base currency of `debit_amount` and `credit_amount`.
     pub currency: CurrencyCode,
     /// Entity type of a related sub-ledger record (e.g. `"invoice_line"`).
     pub reference_type: Option<String>,
@@ -640,6 +640,16 @@ pub struct JournalEntryLine {
     pub reference_id: Option<Uuid>,
     /// Timestamp of line creation.
     pub created_at: DateTime<Utc>,
+    /// Original transaction currency. None on legacy lines requiring reconciliation.
+    #[serde(default)]
+    pub transaction_currency: Option<CurrencyCode>,
+    #[serde(default)]
+    pub transaction_debit_amount: Option<Decimal>,
+    #[serde(default)]
+    pub transaction_credit_amount: Option<Decimal>,
+    /// Functional currency units per one transaction-currency unit.
+    #[serde(default)]
+    pub exchange_rate: Option<Decimal>,
 }
 
 impl JournalEntryLine {
@@ -648,6 +658,13 @@ impl JournalEntryLine {
     pub fn is_valid(&self) -> bool {
         (self.debit_amount > Decimal::ZERO && self.credit_amount == Decimal::ZERO)
             || (self.debit_amount == Decimal::ZERO && self.credit_amount > Decimal::ZERO)
+            || (self.debit_amount.is_zero()
+                && self.credit_amount.is_zero()
+                && self.transaction_currency.is_some()
+                && matches!((self.transaction_debit_amount, self.transaction_credit_amount),
+                    (Some(debit), Some(credit)) if
+                        (debit > Decimal::ZERO && credit.is_zero()) ||
+                        (credit > Decimal::ZERO && debit.is_zero())))
     }
 
     /// Returns the net amount (positive for debit, negative for credit)
@@ -669,6 +686,16 @@ pub struct AutoPostingConfig {
     pub unearned_revenue_account_id: Option<Uuid>,
     pub sales_revenue_account_id: Uuid,
     pub shipping_revenue_account_id: Option<Uuid>,
+    /// Liability account for sales tax collected on invoices. Required for taxed invoices.
+    #[serde(default)]
+    pub sales_tax_payable_account_id: Option<Uuid>,
+    /// Receipt accrual cleared by supplier bills.
+    #[serde(default)]
+    pub goods_received_not_invoiced_account_id: Option<Uuid>,
+    /// Gain/loss account for inventory adjustments and revaluations.
+    #[serde(default)]
+    pub inventory_adjustment_account_id: Option<Uuid>,
+    pub work_in_progress_account_id: Option<Uuid>,
     pub cogs_account_id: Uuid,
     pub bad_debt_expense_account_id: Option<Uuid>,
     /// Account receiving unrealized FX gains/losses posted by period-end revaluation.
@@ -836,6 +863,18 @@ pub struct CreateJournalEntry {
     pub source_document_type: Option<String>,
     pub source_document_id: Option<Uuid>,
     pub auto_post: Option<bool>,
+    /// Currency and agreed rate of the input amounts. Without this context,
+    /// manual entries use the store base currency; operational entries use
+    /// the source document's currency and its persisted historical rate.
+    #[serde(default)]
+    pub fx: Option<JournalEntryFx>,
+}
+
+/// Explicit transaction-currency context for a manual journal entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JournalEntryFx {
+    pub currency: CurrencyCode,
+    pub rate: Decimal,
 }
 
 /// Kernel command payload for posting a balanced draft journal entry.
@@ -895,6 +934,16 @@ pub struct CreateAutoPostingConfig {
     pub unearned_revenue_account_id: Option<Uuid>,
     pub sales_revenue_account_id: Uuid,
     pub shipping_revenue_account_id: Option<Uuid>,
+    /// Liability account for sales tax collected on invoices. Required for taxed invoices.
+    #[serde(default)]
+    pub sales_tax_payable_account_id: Option<Uuid>,
+    /// Receipt accrual cleared by supplier bills.
+    #[serde(default)]
+    pub goods_received_not_invoiced_account_id: Option<Uuid>,
+    /// Gain/loss account for inventory adjustments and revaluations.
+    #[serde(default)]
+    pub inventory_adjustment_account_id: Option<Uuid>,
+    pub work_in_progress_account_id: Option<Uuid>,
     pub cogs_account_id: Uuid,
     pub bad_debt_expense_account_id: Option<Uuid>,
     /// Account receiving unrealized FX gains/losses posted by period-end revaluation.
@@ -1084,7 +1133,7 @@ pub fn build_revaluation_journal_lines(
             )),
             debit_amount,
             credit_amount,
-            reference_type: Some(FX_REVALUATION_REFERENCE.to_string()),
+            reference_type: Some(format!("{FX_REVALUATION_REFERENCE}/{}", line.currency)),
             reference_id: Some(line.account_id),
         });
     }
@@ -1299,6 +1348,10 @@ mod tests {
             reference_type: None,
             reference_id: None,
             created_at: Utc::now(),
+            transaction_currency: None,
+            transaction_debit_amount: None,
+            transaction_credit_amount: None,
+            exchange_rate: None,
         }
     }
 

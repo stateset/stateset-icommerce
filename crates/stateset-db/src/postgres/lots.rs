@@ -2,7 +2,7 @@
 
 use super::{PgSerialRepository, block_on, map_db_error};
 use crate::rules::lots::{
-    ensure_consolidatable_source, ensure_transition, generate_lot_number,
+    ensure_consolidatable_source, ensure_transition, ensure_unexpired, generate_lot_number,
     generate_merged_lot_number, validate_merge_sources,
 };
 use chrono::{DateTime, Utc};
@@ -13,8 +13,8 @@ use stateset_core::{
     AddLotCertificate, AdjustLot, BatchResult, CertificateType, CommerceError, ConsumeLot,
     CreateLot, Lot, LotCertificate, LotFilter, LotGenealogyLink, LotLocation, LotRelationship,
     LotRepository, LotStatus, LotTransaction, LotTransactionType, MergeLots, MergedProvenance,
-    ReserveLot, Result, SplitLot, TraceNode, TraceNodeType, TraceabilityResult, TransactionType,
-    TransferLot, UpdateLot, validate_batch_size,
+    ReserveLot, Result, SplitLot, TraceNode, TraceNodeType, TraceabilityResult, TransferLot,
+    UpdateLot, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -128,20 +128,6 @@ fn ensure_consumable(lot: &Lot, now: DateTime<Utc>, operation: &str) -> Result<(
     Ok(())
 }
 
-/// Expiry half of [`ensure_consumable`], for `consume`/`reserve`, which keep
-/// reporting a non-`Active` status as `InsufficientStock` (nothing is
-/// available from a blocked lot) but must name an expired lot explicitly.
-fn ensure_unexpired(lot: &Lot, now: DateTime<Utc>, operation: &str) -> Result<()> {
-    if let Some(exp) = lot.expiration_date.filter(|exp| now > *exp) {
-        return Err(CommerceError::ValidationError(format!(
-            "Cannot {operation} from lot {} ({}): lot expired at {}",
-            lot.lot_number,
-            lot.id,
-            exp.to_rfc3339()
-        )));
-    }
-    Ok(())
-}
 
 impl PgLotRepository {
     /// Hop budget for [`Self::ancestor_lots_async`]: deep enough for any real
@@ -295,6 +281,17 @@ impl PgLotRepository {
         tx: &mut sqlx::Transaction<'_, Postgres>,
         id: Uuid,
     ) -> Result<Option<Lot>> {
+        // General inventory writers lock warehouse balances before lot rows.
+        // Use that order here too, including operations spanning warehouses.
+        let sku: Option<String> = sqlx::query_scalar("SELECT sku FROM lots WHERE id = $1")
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        if let Some(sku) = sku {
+            sqlx::query("SELECT b.id FROM inventory_balances b JOIN inventory_items i ON i.id = b.item_id WHERE i.sku = $1 ORDER BY b.location_id FOR UPDATE OF b")
+                .bind(sku).execute(tx.as_mut()).await.map_err(map_db_error)?;
+        }
         sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1 FOR UPDATE")
             .bind(id)
             .fetch_optional(tx.as_mut())
@@ -313,14 +310,15 @@ impl PgLotRepository {
         lot_number: &str,
         sku: Option<&str>,
     ) -> Result<Option<Lot>> {
-        let lot =
-            sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE lot_number = $1 FOR UPDATE")
-                .bind(lot_number)
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?
-                .map(Self::row_to_lot)
-                .transpose()?;
+        let id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM lots WHERE lot_number = $1")
+            .bind(lot_number)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        let lot = match id {
+            Some(id) => Self::load_lot_on(tx, id).await?,
+            None => None,
+        };
         match (lot, sku) {
             (Some(lot), Some(sku)) if lot.sku != sku => Err(CommerceError::Conflict(format!(
                 "Lot {lot_number} belongs to SKU {} (expected {sku})",
@@ -330,64 +328,7 @@ impl PgLotRepository {
         }
     }
 
-    /// Split `quantity` across the lot's placements: each location takes up
-    /// to what it holds, in `location_id` order, and any remainder (placement
-    /// rows are a routing hint, not a second ledger) lands on the last one.
-    /// An explicit `location` wins outright. No placement → no linkage.
-    async fn inventory_slices_on(
-        tx: &mut sqlx::Transaction<'_, Postgres>,
-        lot_id: Uuid,
-        location: Option<i32>,
-        quantity: Decimal,
-    ) -> Result<Vec<(i32, Decimal)>> {
-        if let Some(location_id) = location {
-            return Ok(vec![(location_id, quantity)]);
-        }
-        let placements: Vec<(i32, Decimal)> = sqlx::query_as(
-            "SELECT location_id, quantity FROM lot_locations WHERE lot_id = $1
-             ORDER BY location_id ASC",
-        )
-        .bind(lot_id)
-        .fetch_all(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-        let mut slices: Vec<(i32, Decimal)> = Vec::with_capacity(placements.len());
-        let mut left = quantity;
-        for (location_id, held) in &placements {
-            if left <= Decimal::ZERO {
-                break;
-            }
-            let take = left.min((*held).max(Decimal::ZERO));
-            if take > Decimal::ZERO {
-                slices.push((*location_id, take));
-                left -= take;
-            }
-        }
-        if left > Decimal::ZERO {
-            if let Some(last) = slices.last_mut() {
-                last.1 += left;
-            } else if let Some((location_id, _)) = placements.last() {
-                slices.push((*location_id, left));
-            }
-        }
-        Ok(slices)
-    }
-
-    /// Re-attribute `quantity` units of placement from `from_lot` to `to_lot`,
-    /// lowest `location_id` first, on the caller's transaction.
-    ///
-    /// `split` and `merge` move units *between lots* without moving any stock,
-    /// so `inventory_balances` is deliberately untouched — but the placement
-    /// rows must follow, because they are what
-    /// [`Self::inventory_slices_on`] uses to decide which balance a later lot
-    /// movement hits. A derived lot with no placement is invisible to
-    /// inventory (consuming it would never decrement a balance again), while a
-    /// source that keeps a placement it no longer backs over-reports; either
-    /// way the module invariant `Σ available over active lots placed at L ==
-    /// inventory available at L` breaks the moment the operation commits.
-    ///
-    /// A source with no placement at all floats free of inventory by design;
-    /// the derived lot inherits that and nothing is written.
+    /// Relabel actual unreserved physical stock and its warehouse placement.
     async fn move_placements_on(
         tx: &mut sqlx::Transaction<'_, Postgres>,
         from_lot: Uuid,
@@ -395,86 +336,9 @@ impl PgLotRepository {
         quantity: Decimal,
         now: DateTime<Utc>,
     ) -> Result<()> {
-        if quantity <= Decimal::ZERO {
-            return Ok(());
-        }
-        let placements: Vec<(i32, Decimal)> = sqlx::query_as(
-            "SELECT location_id, quantity FROM lot_locations WHERE lot_id = $1
-             ORDER BY location_id ASC FOR UPDATE",
-        )
-        .bind(from_lot)
-        .fetch_all(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-        let Some(&(last_location, _)) = placements.last() else {
-            return Ok(());
-        };
-
-        let mut moves: Vec<(i32, Decimal)> = Vec::with_capacity(placements.len());
-        let mut left = quantity;
-        for &(location_id, held) in &placements {
-            if left <= Decimal::ZERO {
-                break;
-            }
-            let take = left.min(held.max(Decimal::ZERO));
-            if take > Decimal::ZERO {
-                moves.push((location_id, take));
-                left -= take;
-            }
-        }
-        // Placement rows are a routing hint rather than a second ledger (a
-        // `consume` decrements the lot, not the placement), so they can fall
-        // short of the lot's own quantity. Attribute any shortfall to the last
-        // placement rather than stranding the units off-location.
-        if left > Decimal::ZERO {
-            match moves.last_mut() {
-                Some(last) if last.0 == last_location => last.1 += left,
-                _ => moves.push((last_location, left)),
-            }
-        }
-
-        for (location_id, take) in moves {
-            let held = placements
-                .iter()
-                .find(|(l, _)| *l == location_id)
-                .map_or(Decimal::ZERO, |(_, q)| *q);
-            let remaining = (held - take).max(Decimal::ZERO);
-            if remaining > Decimal::ZERO {
-                sqlx::query(
-                    "UPDATE lot_locations SET quantity = $1, updated_at = $2
-                     WHERE lot_id = $3 AND location_id = $4",
-                )
-                .bind(remaining)
-                .bind(now)
-                .bind(from_lot)
-                .bind(location_id)
-                .execute(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-            } else {
-                sqlx::query("DELETE FROM lot_locations WHERE lot_id = $1 AND location_id = $2")
-                    .bind(from_lot)
-                    .bind(location_id)
-                    .execute(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?;
-            }
-
-            sqlx::query(
-                "INSERT INTO lot_locations (lot_id, location_id, quantity, updated_at)
-                 VALUES ($1, $2, $3, $4)
-                 ON CONFLICT (lot_id, location_id) DO UPDATE SET
-                     quantity = lot_locations.quantity + excluded.quantity,
-                     updated_at = excluded.updated_at",
-            )
-            .bind(to_lot)
-            .bind(location_id)
-            .bind(take)
-            .bind(now)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-        }
+        let source = Self::load_lot_on(tx, from_lot).await?.ok_or(CommerceError::NotFound)?;
+        let target = Self::load_lot_on(tx, to_lot).await?.ok_or(CommerceError::NotFound)?;
+        super::stock_lot::relabel(tx, &source, &target, quantity, now).await?;
         Ok(())
     }
 
@@ -582,160 +446,6 @@ impl PgLotRepository {
         Ok(ancestors)
     }
 
-    /// Apply a signed movement to the `inventory_balances` row for
-    /// `(sku, location_id)` and write the matching `inventory_transactions`
-    /// row, all on the caller's transaction. No-op when the SKU has no
-    /// inventory item (the lot floats free). Balances are floored at zero
-    /// so a lot that pre-dates the linkage cannot fail consumption.
-    #[allow(clippy::too_many_arguments)]
-    async fn apply_inventory_delta_on(
-        tx: &mut sqlx::Transaction<'_, Postgres>,
-        sku: &str,
-        location_id: i32,
-        on_hand_delta: Decimal,
-        allocated_delta: Decimal,
-        lot_id: Uuid,
-        reason: &str,
-        now: DateTime<Utc>,
-    ) -> Result<()> {
-        if on_hand_delta.is_zero() && allocated_delta.is_zero() {
-            return Ok(());
-        }
-        let item_id: Option<i64> =
-            sqlx::query_scalar("SELECT id FROM inventory_items WHERE sku = $1")
-                .bind(sku)
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        let Some(item_id) = item_id else { return Ok(()) };
-        // `inventory_balances.location_id` references `inventory_locations`:
-        // a lot placement at an unregistered location cannot be mirrored, and
-        // silently skipping it would break the lot/inventory invariant.
-        let known_location: Option<i32> =
-            sqlx::query_scalar("SELECT id FROM inventory_locations WHERE id = $1")
-                .bind(location_id)
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        if known_location.is_none() {
-            return Err(CommerceError::ValidationError(format!(
-                "Location {location_id} is not an inventory location; register it before placing lot {lot_id} there"
-            )));
-        }
-
-        sqlx::query(
-            "INSERT INTO inventory_balances
-                (item_id, location_id, quantity_on_hand, quantity_allocated, quantity_available, updated_at)
-             VALUES ($1, $2, 0, 0, 0, $3)
-             ON CONFLICT (item_id, location_id) DO NOTHING",
-        )
-        .bind(item_id)
-        .bind(location_id)
-        .bind(now)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-        let (on_hand, allocated, version): (Decimal, Decimal, i32) = sqlx::query_as(
-            "SELECT quantity_on_hand, quantity_allocated, version FROM inventory_balances
-             WHERE item_id = $1 AND location_id = $2 FOR UPDATE",
-        )
-        .bind(item_id)
-        .bind(location_id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-        let new_on_hand = (on_hand + on_hand_delta).max(Decimal::ZERO);
-        let new_allocated = (allocated + allocated_delta).max(Decimal::ZERO);
-        let new_available = new_on_hand - new_allocated;
-        let updated = sqlx::query(
-            "UPDATE inventory_balances
-             SET quantity_on_hand = $1, quantity_allocated = $2, quantity_available = $3,
-                 version = version + 1, updated_at = $4
-             WHERE item_id = $5 AND location_id = $6 AND version = $7",
-        )
-        .bind(new_on_hand)
-        .bind(new_allocated)
-        .bind(new_available)
-        .bind(now)
-        .bind(item_id)
-        .bind(location_id)
-        .bind(version)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?
-        .rows_affected();
-        if updated != 1 {
-            return Err(CommerceError::VersionConflict {
-                entity: "inventory_balance".to_string(),
-                id: format!("{item_id}:{location_id}"),
-                expected_version: version,
-            });
-        }
-
-        let (tx_type, quantity) = if on_hand_delta.is_zero() {
-            if allocated_delta > Decimal::ZERO {
-                (TransactionType::Allocation, allocated_delta)
-            } else {
-                (TransactionType::Deallocation, allocated_delta)
-            }
-        } else if on_hand_delta > Decimal::ZERO {
-            (TransactionType::Receipt, on_hand_delta)
-        } else {
-            (TransactionType::Adjustment, on_hand_delta)
-        };
-        sqlx::query(
-            "INSERT INTO inventory_transactions
-                (item_id, location_id, transaction_type, quantity, reference_type, reference_id, reason, created_at)
-             VALUES ($1, $2, $3, $4, 'lot', $5, $6, $7)",
-        )
-        .bind(item_id)
-        .bind(location_id)
-        .bind(tx_type.to_string())
-        .bind(quantity)
-        .bind(lot_id.to_string())
-        .bind(reason)
-        .bind(now)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-        Ok(())
-    }
-
-    /// Mirror a lot movement onto inventory (see the `stateset_core::models::lot`
-    /// module docs for the model). `on_hand_sign` / `allocated_sign` are
-    /// `-1 | 0 | 1` multipliers applied to `quantity` per location slice.
-    #[allow(clippy::too_many_arguments)]
-    async fn sync_inventory_on(
-        tx: &mut sqlx::Transaction<'_, Postgres>,
-        lot: &Lot,
-        location: Option<i32>,
-        quantity: Decimal,
-        on_hand_sign: i8,
-        allocated_sign: i8,
-        reason: &str,
-        now: DateTime<Utc>,
-    ) -> Result<()> {
-        if quantity <= Decimal::ZERO || (on_hand_sign == 0 && allocated_sign == 0) {
-            return Ok(());
-        }
-        for (location_id, slice) in
-            Self::inventory_slices_on(tx, lot.id, location, quantity).await?
-        {
-            Self::apply_inventory_delta_on(
-                tx,
-                &lot.sku,
-                location_id,
-                slice * Decimal::from(on_hand_sign),
-                slice * Decimal::from(allocated_sign),
-                lot.id,
-                reason,
-                now,
-            )
-            .await?;
-        }
-        Ok(())
-    }
-
     /// Quarantine an already-loaded (and locked) lot on the caller's
     /// transaction: flip the status conditionally on the status observed,
     /// hold every unreserved unit, quarantine the lot's serials, hold the
@@ -759,7 +469,7 @@ impl PgLotRepository {
              WHERE id = $4 AND status = $5",
         )
         .bind(LotStatus::Quarantine.to_string())
-        .bind(available)
+        .bind(lot.quantity_quarantined + available)
         .bind(now)
         .bind(lot.id)
         .bind(lot.status.to_string())
@@ -788,13 +498,12 @@ impl PgLotRepository {
         )
         .await?;
         PgSerialRepository::quarantine_for_lot_on(tx, lot.id, reason, now).await?;
-        Self::sync_inventory_on(
+        super::stock_lot::allocate(
             tx,
             lot,
-            None,
+            lot.id,
             available,
-            0,
-            1,
+            false,
             &format!("Lot {} quarantined: {reason}", lot.lot_number),
             now,
         )
@@ -842,13 +551,13 @@ impl PgLotRepository {
         )
         .await?;
         PgSerialRepository::release_quarantine_for_lot_on(tx, lot.id, now).await?;
-        Self::sync_inventory_on(
+        super::stock_lot::finish_hold(
             tx,
             lot,
-            None,
+            lot.id,
             quarantined,
-            0,
-            -1,
+            false,
+            false,
             &format!("Lot {} released from quarantine", lot.lot_number),
             now,
         )
@@ -867,6 +576,13 @@ impl PgLotRepository {
         now: DateTime<Utc>,
         reason: &str,
     ) -> Result<()> {
+        let lot_id: Uuid = sqlx::query_scalar("SELECT lot_id FROM lot_reservations WHERE id = $1")
+            .bind(reservation_id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+        Self::load_lot_on(tx, lot_id).await?.ok_or(CommerceError::NotFound)?;
         let row = sqlx::query_as::<_, LotReservationRow>(
             "SELECT lot_id, quantity, reference_type, reference_id, expires_at
              FROM lot_reservations
@@ -887,13 +603,14 @@ impl PgLotRepository {
             .map_err(map_db_error)?;
 
         let lot = Self::load_lot_on(tx, row.lot_id).await?.ok_or(CommerceError::NotFound)?;
-        let under_quarantine = lot.status == LotStatus::Quarantine;
-        // Floor the aggregate at zero — it must never go negative even if it
-        // has drifted relative to the reservation rows.
+        if lot.quantity_reserved < row.quantity {
+            return Err(CommerceError::Conflict("Lot reservation total is inconsistent".into()));
+        }
+        let under_quarantine = matches!(lot.status, LotStatus::Quarantine | LotStatus::Expired);
         sqlx::query(
             "UPDATE lots SET
-                quantity_reserved = GREATEST(quantity_reserved - $1, 0),
-                quantity_quarantined = CASE WHEN status = 'quarantine'
+                quantity_reserved = quantity_reserved - $1,
+                quantity_quarantined = CASE WHEN status IN ('quarantine', 'expired')
                     THEN quantity_quarantined + $1 ELSE quantity_quarantined END,
                 updated_at = $2
              WHERE id = $3",
@@ -920,19 +637,19 @@ impl PgLotRepository {
         .await?;
         // Under quarantine the freed units stay held (the quarantine hold now
         // covers them), so inventory is untouched.
-        if !under_quarantine {
-            Self::sync_inventory_on(
-                tx,
-                &lot,
-                None,
-                row.quantity,
-                0,
-                -1,
-                &format!("Lot {} reservation released: {reason}", lot.lot_number),
-                now,
-            )
-            .await?;
-        }
+
+        super::stock_lot::finish_hold(
+            tx,
+            &lot,
+            reservation_id,
+            row.quantity,
+            false,
+            under_quarantine,
+            &format!("Lot {} reservation released: {reason}", lot.lot_number),
+            now,
+        )
+        .await?;
+
         Ok(())
     }
 
@@ -1082,13 +799,12 @@ impl PgLotRepository {
             updated_at: now,
         };
         // A placed lot is a receipt into the linked inventory balance.
-        Self::sync_inventory_on(
+        super::stock_lot::change(
             &mut tx,
             &lot,
             input.initial_location_id,
             lot.quantity_produced,
-            1,
-            0,
+            true,
             &format!("Lot {} received ({reference_type} {reference_id})", lot.lot_number),
             now,
         )
@@ -1261,16 +977,10 @@ impl PgLotRepository {
         // serializes against concurrent consume/reserve/adjust on the same lot
         // (matching the `FOR UPDATE` already used by confirm_reservation/transfer
         // and the SQLite backend's single-transaction serialization).
-        let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1 FOR UPDATE")
-            .bind(input.lot_id)
-            .fetch_optional(tx.as_mut())
-            .await
-            .map_err(map_db_error)?
-            .ok_or_else(|| CommerceError::ValidationError("Lot not found".to_string()))?;
-        let lot = Self::row_to_lot(lot_row)?;
+        let lot = Self::load_lot_on(&mut tx, input.lot_id).await?.ok_or(CommerceError::NotFound)?;
 
         let new_remaining = lot.quantity_remaining + input.quantity_change;
-        if new_remaining < Decimal::ZERO {
+        if new_remaining < lot.quantity_reserved + lot.quantity_quarantined {
             return Err(CommerceError::ValidationError(
                 "Cannot reduce quantity below zero".to_string(),
             ));
@@ -1298,13 +1008,12 @@ impl PgLotRepository {
         )
         .await?;
         let sign = if input.quantity_change > Decimal::ZERO { 1 } else { -1 };
-        Self::sync_inventory_on(
+        super::stock_lot::change(
             &mut tx,
             &lot,
             input.location_id,
-            input.quantity_change.abs(),
-            sign,
-            0,
+            (input.quantity_change.abs()) * Decimal::from(sign),
+            false,
             &format!("Lot {} adjusted: {}", lot.lot_number, input.reason),
             Utc::now(),
         )
@@ -1323,13 +1032,7 @@ impl PgLotRepository {
         // `quantity_remaining`, both pass `can_consume`, and both write — a TOCTOU
         // race that over-consumes stock. (Siblings confirm_reservation/transfer
         // already `FOR UPDATE`; the SQLite backend serializes via its transaction.)
-        let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1 FOR UPDATE")
-            .bind(input.lot_id)
-            .fetch_optional(tx.as_mut())
-            .await
-            .map_err(map_db_error)?
-            .ok_or_else(|| CommerceError::ValidationError("Lot not found".to_string()))?;
-        let lot = Self::row_to_lot(lot_row)?;
+        let lot = Self::load_lot_on(&mut tx, input.lot_id).await?.ok_or(CommerceError::NotFound)?;
 
         let now = Utc::now();
         ensure_unexpired(&lot, now, "consume")?;
@@ -1369,13 +1072,12 @@ impl PgLotRepository {
             input.performed_by.as_deref(),
         )
         .await?;
-        Self::sync_inventory_on(
+        super::stock_lot::change(
             &mut tx,
             &lot,
             input.location_id,
-            input.quantity,
-            -1,
-            0,
+            -(input.quantity),
+            false,
             &format!(
                 "Lot {} consumed ({} {})",
                 lot.lot_number, input.reference_type, input.reference_id
@@ -1413,6 +1115,8 @@ impl PgLotRepository {
             });
         }
 
+        super::stock_guard::ensure_sellable(tx.as_mut(), &lot.sku, Some(lot.id), None, None)
+            .await?;
         let reservation_id = Uuid::new_v4();
         let expires_at = input.expires_in_seconds.map(|s| now + chrono::Duration::seconds(s));
 
@@ -1456,13 +1160,12 @@ impl PgLotRepository {
             None,
         )
         .await?;
-        Self::sync_inventory_on(
+        super::stock_lot::allocate(
             &mut tx,
             &lot,
-            None,
+            reservation_id,
             input.quantity,
-            0,
-            1,
+            true,
             &format!(
                 "Lot {} reserved ({} {})",
                 lot.lot_number, input.reference_type, input.reference_id
@@ -1487,6 +1190,13 @@ impl PgLotRepository {
     pub async fn confirm_reservation_async(&self, reservation_id: Uuid) -> Result<LotTransaction> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
+        let lot_id: Uuid = sqlx::query_scalar("SELECT lot_id FROM lot_reservations WHERE id = $1")
+            .bind(reservation_id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?
+            .ok_or(CommerceError::NotFound)?;
+        Self::load_lot_on(&mut tx, lot_id).await?.ok_or(CommerceError::NotFound)?;
         let row = sqlx::query_as::<_, LotReservationRow>(
             "SELECT lot_id, quantity, reference_type, reference_id, expires_at
              FROM lot_reservations
@@ -1520,14 +1230,11 @@ impl PgLotRepository {
         // reservations, but they cannot ship until the lot is released.
         // Reserved units are inside `quantity_remaining` (not
         // `quantity_available`), so that is the bound.
-        let lot_row = sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1 FOR UPDATE")
-            .bind(row.lot_id)
-            .fetch_optional(tx.as_mut())
-            .await
-            .map_err(map_db_error)?
-            .ok_or(CommerceError::NotFound)?;
-        let lot = Self::row_to_lot(lot_row)?;
+        let lot = Self::load_lot_on(&mut tx, row.lot_id).await?.ok_or(CommerceError::NotFound)?;
         ensure_consumable(&lot, now, "confirm reservation")?;
+        if lot.quantity_reserved < row.quantity {
+            return Err(CommerceError::Conflict("Lot reservation total is inconsistent".into()));
+        }
         if lot.quantity_remaining < row.quantity {
             return Err(CommerceError::InsufficientStock {
                 sku: lot.sku.clone(),
@@ -1548,7 +1255,7 @@ impl PgLotRepository {
         let new_status =
             if new_remaining <= Decimal::ZERO { LotStatus::Consumed } else { lot.status };
         sqlx::query(
-            "UPDATE lots SET quantity_reserved = GREATEST(quantity_reserved - $1, 0),
+            "UPDATE lots SET quantity_reserved = quantity_reserved - $1,
                 quantity_remaining = quantity_remaining - $1, status = $2, updated_at = $3
              WHERE id = $4",
         )
@@ -1574,13 +1281,13 @@ impl PgLotRepository {
         )
         .await?;
         // The hold becomes a consumption: on-hand and allocated both drop.
-        Self::sync_inventory_on(
+        super::stock_lot::finish_hold(
             &mut tx,
             &lot,
-            None,
+            reservation_id,
             row.quantity,
-            -1,
-            -1,
+            true,
+            false,
             &format!(
                 "Lot {} reservation confirmed ({} {})",
                 lot.lot_number, row.reference_type, row.reference_id
@@ -1604,57 +1311,20 @@ impl PgLotRepository {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
 
-        // The source location must exist and cover the transfer — a blind
-        // decrement would silently mint quantity at the destination when the
-        // source row is missing, or drive it negative when short.
-        let from_qty: rust_decimal::Decimal = sqlx::query_scalar(
-            "SELECT quantity FROM lot_locations WHERE lot_id = $1 AND location_id = $2 FOR UPDATE",
-        )
-        .bind(input.lot_id)
-        .bind(input.from_location_id)
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(map_db_error)?
-        .ok_or_else(|| {
-            CommerceError::ValidationError(format!(
-                "Lot {} has no quantity at source location {}",
-                input.lot_id, input.from_location_id
-            ))
-        })?;
-        if from_qty < input.quantity {
-            return Err(CommerceError::ValidationError(format!(
-                "Insufficient quantity at source location {}: requested {}, available {}",
-                input.from_location_id, input.quantity, from_qty
-            )));
-        }
+        let lot = Self::load_lot_on(&mut tx, input.lot_id).await?.ok_or(CommerceError::NotFound)?;
+        super::stock_guard::ensure_sellable(tx.as_mut(), &lot.sku, Some(lot.id), None, None)
+            .await?;
 
-        sqlx::query(
-            "UPDATE lot_locations SET quantity = quantity - $1, updated_at = $2 WHERE lot_id = $3 AND location_id = $4",
+        super::stock_lot::transfer(
+            &mut tx,
+            &lot,
+            input.from_location_id,
+            input.to_location_id,
+            input.quantity,
+            input.reason.as_deref().unwrap_or("Lot transfer"),
+            now,
         )
-        .bind(input.quantity)
-        .bind(now)
-        .bind(input.lot_id)
-        .bind(input.from_location_id)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
-        sqlx::query(
-            r#"
-            INSERT INTO lot_locations (lot_id, location_id, quantity, updated_at)
-            VALUES ($1,$2,$3,$4)
-            ON CONFLICT (lot_id, location_id) DO UPDATE SET
-                quantity = lot_locations.quantity + excluded.quantity,
-                updated_at = excluded.updated_at
-            "#,
-        )
-        .bind(input.lot_id)
-        .bind(input.to_location_id)
-        .bind(input.quantity)
-        .bind(now)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        .await?;
 
         let transaction = Self::record_transaction_tx(
             &mut tx,
@@ -1669,34 +1339,6 @@ impl PgLotRepository {
             input.performed_by.as_deref(),
         )
         .await?;
-        if let Some(lot) = Self::load_lot_on(&mut tx, input.lot_id).await? {
-            let reason = format!(
-                "Lot {} transferred {} -> {}",
-                lot.lot_number, input.from_location_id, input.to_location_id
-            );
-            Self::apply_inventory_delta_on(
-                &mut tx,
-                &lot.sku,
-                input.from_location_id,
-                -input.quantity,
-                Decimal::ZERO,
-                lot.id,
-                &reason,
-                now,
-            )
-            .await?;
-            Self::apply_inventory_delta_on(
-                &mut tx,
-                &lot.sku,
-                input.to_location_id,
-                input.quantity,
-                Decimal::ZERO,
-                lot.id,
-                &reason,
-                now,
-            )
-            .await?;
-        }
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -1706,14 +1348,8 @@ impl PgLotRepository {
     pub async fn split_async(&self, input: SplitLot) -> Result<Lot> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        let original_row =
-            sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1 FOR UPDATE")
-                .bind(input.lot_id)
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?
-                .ok_or_else(|| CommerceError::ValidationError("Lot not found".to_string()))?;
-        let original = Self::row_to_lot(original_row)?;
+        let original =
+            Self::load_lot_on(&mut tx, input.lot_id).await?.ok_or(CommerceError::NotFound)?;
 
         ensure_consolidatable_source(&original, "split")?;
         if input.quantity <= Decimal::ZERO {
@@ -1847,16 +1483,7 @@ impl PgLotRepository {
         let mut lots_to_consume: Vec<Lot> = Vec::new();
 
         for lot_id in &lock_order {
-            let lot_row =
-                sqlx::query_as::<_, LotRow>("SELECT * FROM lots WHERE id = $1 FOR UPDATE")
-                    .bind(lot_id)
-                    .fetch_optional(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?
-                    .ok_or_else(|| {
-                        CommerceError::ValidationError(format!("Lot {} not found", lot_id))
-                    })?;
-            let lot = Self::row_to_lot(lot_row)?;
+            let lot = Self::load_lot_on(&mut tx, *lot_id).await?.ok_or(CommerceError::NotFound)?;
 
             if let Some(ref s) = sku {
                 if s != &lot.sku {
@@ -2233,7 +1860,7 @@ impl PgLotRepository {
         let due = sqlx::query_as::<_, LotRow>(
             "SELECT * FROM lots
              WHERE status = 'active' AND expiration_date IS NOT NULL AND expiration_date < $1
-             FOR UPDATE SKIP LOCKED",
+             ORDER BY sku, id",
         )
         .bind(now)
         .fetch_all(tx.as_mut())
@@ -2241,9 +1868,14 @@ impl PgLotRepository {
         .map_err(map_db_error)?;
         let mut flipped = 0u64;
         for row in due {
-            let lot = Self::row_to_lot(row)?;
+            let lot = Self::load_lot_on(&mut tx, row.id).await?.ok_or(CommerceError::NotFound)?;
+            if lot.status != LotStatus::Active
+                || lot.expiration_date.is_none_or(|expiry| expiry >= now)
+            {
+                continue;
+            }
             let updated = sqlx::query(
-                "UPDATE lots SET status = 'expired', updated_at = $1
+                "UPDATE lots SET status = 'expired', quantity_quarantined = quantity_remaining - quantity_reserved, updated_at = $1
                  WHERE id = $2 AND status = 'active'",
             )
             .bind(now)
@@ -2256,13 +1888,12 @@ impl PgLotRepository {
                 continue; // Moved on concurrently.
             }
             // Expired units are no longer sellable: hold them in inventory.
-            Self::sync_inventory_on(
+            super::stock_lot::allocate(
                 &mut tx,
                 &lot,
-                None,
+                lot.id,
                 lot.quantity_available().max(Decimal::ZERO),
-                0,
-                1,
+                false,
                 &format!("Lot {} expired", lot.lot_number),
                 now,
             )

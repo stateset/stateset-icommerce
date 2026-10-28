@@ -70,6 +70,10 @@ async fn postgres_auto_post_inventory_cost_issue_posts_cogs_debit() {
         unearned_revenue_account_id: None,
         sales_revenue_account_id: acct("4010").await,
         shipping_revenue_account_id: None,
+        sales_tax_payable_account_id: None,
+        goods_received_not_invoiced_account_id: None,
+        inventory_adjustment_account_id: None,
+        work_in_progress_account_id: None,
         cogs_account_id: acct("5010").await,
         bad_debt_expense_account_id: None,
         fx_gain_loss_account_id: None,
@@ -95,8 +99,11 @@ async fn postgres_auto_post_inventory_cost_issue_posts_cogs_debit() {
         .expect("record cost transaction");
     assert_eq!(txn.total_cost, dec!(100.00), "total cost should be quantity * unit cost");
 
-    let entry =
-        gl.auto_post_inventory_cost(txn.id).await.expect("auto_post_inventory_cost must succeed");
+    let entry = gl
+        .auto_post_inventory_cost(txn.id)
+        .await
+        .expect("auto_post_inventory_cost must succeed")
+        .expect("issue must post");
 
     assert_eq!(entry.total_debits, dec!(100.00));
     assert_eq!(entry.total_credits, dec!(100.00));

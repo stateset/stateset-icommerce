@@ -96,6 +96,32 @@ fn run_cases(operation: &str) {
             )
             .expect("seed balance");
 
+            // Every formal state must seed the canonical physical projections too.
+            // The production fulfiller refuses warehouse totals that disagree with
+            // location, bin or cost-layer custody.
+            let on_hand = scaled(case.before.on_hand, scale).to_string();
+            for sql in [
+                "UPDATE location_inventory SET quantity_on_hand = ?1, quantity_reserved = '0' WHERE sku = 'LEAN-CONFORMANCE'",
+                "UPDATE inventory_bin_levels SET quantity_on_hand = ?1, quantity_allocated = '0' WHERE sku = 'LEAN-CONFORMANCE'",
+                "UPDATE cost_layers SET quantity = ?1, remaining_quantity = ?1 WHERE sku = 'LEAN-CONFORMANCE'",
+            ] {
+                tx.execute(sql, [&on_hand]).expect("seed physical stock");
+            }
+            for (index, row) in case.before.rows.iter().enumerate() {
+                let status: ReservationStatus = row.status.parse().expect("status");
+                if status.holds_stock() {
+                    super::super::stock_reservation::allocate(
+                        &tx,
+                        if index == 0 { target } else { other },
+                        "LEAN-CONFORMANCE",
+                        1,
+                        scaled(row.quantity, scale),
+                        &now.to_rfc3339(),
+                    )
+                    .expect("seed physical reservation");
+                }
+            }
+
             let status: ReservationStatus = case.before.rows[0].status.parse().expect("status");
             let due = case.time == "past";
             let mut fulfil_event = None;

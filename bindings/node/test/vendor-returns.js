@@ -11,7 +11,23 @@ const { randomUUID } = require('node:crypto');
 
 test('VendorReturns: full lifecycle', async (t) => {
   const commerce = new Commerce(':memory:');
-  const supplierId = randomUUID();
+  const supplierId = (await commerce.purchaseOrders.createSupplier({ name: 'Vendor returns' })).id;
+  const warehouse = await commerce.warehouse.createWarehouse({ code: 'RETURNS', name: 'Returns' });
+  const location = await commerce.warehouse.createLocation({ warehouseId: warehouse.id, locationType: 'bulk' });
+  const products = [];
+  for (const sku of ['RETURN-A', 'RETURN-B']) {
+    products.push(await commerce.products.create({ name: sku, variants: [{ sku, priceExact: '10' }] }));
+  }
+  const po = await commerce.purchaseOrders.create({ supplierId, items: [
+    { sku: 'RETURN-A', name: 'A', quantity: 5, unitCostExact: '12.50' },
+    { sku: 'RETURN-B', name: 'B', quantity: 5, unitCostExact: '5.25' },
+  ] });
+  await commerce.purchaseOrders.submit(po.id);
+  await commerce.purchaseOrders.approve(po.id, 'test');
+  await commerce.purchaseOrders.send(po.id);
+  const received = (await commerce.purchaseOrders.getItems(po.id)).map(item => ({ itemId: item.id, quantityReceivedExact: '5' }));
+  await commerce.purchaseOrders.receive(po.id, received, warehouse.id, location.id);
+  const source = index => ({ productId: products[index].id, sku: index === 0 ? 'RETURN-A' : 'RETURN-B', sourceLocationId: location.id });
 
   await t.test('API exists and is supported', async () => {
     assert.ok(commerce.vendorReturns, 'vendorReturns API should exist');
@@ -22,11 +38,12 @@ test('VendorReturns: full lifecycle', async (t) => {
   await t.test('create totals the item lines exactly', async () => {
     vendorReturn = await commerce.vendorReturns.create({
       supplierId,
+      warehouseId: warehouse.id,
       currency: 'USD',
       notes: 'damaged pallet',
       items: [
-        { productId: randomUUID(), quantity: '3', unitCost: '12.50', reason: 'defective' },
-        { productId: randomUUID(), quantity: '1', unitCost: '5.25' },
+        { ...source(0), quantity: '3', unitCost: '12.50', reason: 'defective' },
+        { ...source(1), quantity: '1', unitCost: '5.25' },
       ],
     });
     assert.ok(vendorReturn.id);
@@ -44,7 +61,8 @@ test('VendorReturns: full lifecycle', async (t) => {
       () =>
         commerce.vendorReturns.create({
           supplierId,
-          items: [{ productId: randomUUID(), quantity: '1', unitCost: '1', reason: 'meh' }],
+      warehouseId: warehouse.id,
+          items: [{ ...source(0), quantity: '1', unitCost: '1', reason: 'meh' }],
         }),
       /Invalid vendor return reason: meh/,
     );
@@ -76,6 +94,12 @@ test('VendorReturns: full lifecycle', async (t) => {
     assert.equal(processed.status, 'processed');
     assert.equal(processed.creditGenerated, true);
     assert.ok(processed.processedAt);
+    const credits = await commerce.vendorCredits.list({ supplierId });
+    assert.equal(credits.length, 1);
+    assert.equal(credits[0].vendorReturnId, vendorReturn.id);
+    assert.equal(credits[0].amount, '42.75');
+    assert.equal(Number((await commerce.inventory.getStock('RETURN-A')).totalOnHand), 2);
+    assert.equal(Number((await commerce.inventory.getStock('RETURN-B')).totalOnHand), 4);
   });
 
   await t.test('cancel rejects an already-processed return', async () => {

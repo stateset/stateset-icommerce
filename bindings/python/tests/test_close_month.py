@@ -5,13 +5,31 @@ recognition, FX revaluation, and the period close in order; `dry_run=True`
 computes candidates without writing anything.
 """
 
+import json
+
 import pytest
 from stateset_embedded import Commerce
 
 
 def setup_close(commerce):
     gl = commerce.general_ledger
-    gl.initialize_chart_of_accounts()
+    accounts = {a.account_number: a.id for a in gl.initialize_chart_of_accounts()}
+    assert gl.get_auto_posting_config() is None
+    config = json.loads(gl.set_auto_posting_config(json.dumps({
+        "config_name": "Close test",
+        "cash_account_id": accounts["1010"],
+        "accounts_receivable_account_id": accounts["1100"],
+        "inventory_account_id": accounts["1200"],
+        "accounts_payable_account_id": accounts["2010"],
+        "sales_revenue_account_id": accounts["4010"],
+        "cogs_account_id": accounts["5010"],
+        "auto_post_depreciation": True,
+        "auto_post_revenue_recognition": True,
+    })))
+    assert json.loads(gl.get_auto_posting_config()) == config
+    capital = gl.create_account("1500", "Equipment", "asset")
+    accumulated = gl.create_account("1590", "Accumulated depreciation", "asset")
+    expense = gl.create_account("6100", "Depreciation expense", "expense")
 
     # Wide open period covering today: GL auto-posting stamps entries with
     # today's date, which must fall inside an open period.
@@ -29,14 +47,17 @@ def setup_close(commerce):
     # Asset: $1200 over 12 months straight-line; all periods due by period end.
     asset = commerce.fixed_assets.create(
         name="Espresso machine",
+        asset_account_id=capital.id,
+        accumulated_depreciation_account_id=accumulated.id,
+        depreciation_expense_account_id=expense.id,
         category="machinery",
-        acquisition_date="2026-01-01",
+        acquisition_date="2020-01-01",
         acquisition_cost="1200.00",
         salvage_value="0",
         useful_life_months=12,
         depreciation_method="straight_line",
     )
-    commerce.fixed_assets.place_in_service(asset.id, "2026-01-01")
+    commerce.fixed_assets.place_in_service(asset.id, "2020-01-01")
     commerce.fixed_assets.generate_schedule(asset.id)
     return period, asset
 
@@ -85,9 +106,7 @@ def test_real_run_posts_depreciation_with_period_close_skipped():
     commerce = Commerce(":memory:")
     period, asset = setup_close(commerce)
 
-    # Without GL auto-posting there is no P&L activity, so skip the final
-    # period close (which requires net income) and exercise the wet path
-    # for the depreciation step.
+    # Exercise depreciation posting without closing the period.
     report = commerce.general_ledger.close_month(
         period.id, closed_by="binding-test", skip_period_close=True
     )
@@ -120,7 +139,7 @@ def test_fail_on_warnings_refuses_before_writing():
     unscheduled = commerce.fixed_assets.create(
         name="Unscheduled lathe",
         category="machinery",
-        acquisition_date="2026-01-01",
+        acquisition_date="2020-01-01",
         acquisition_cost="600.00",
         salvage_value="0",
         useful_life_months=6,

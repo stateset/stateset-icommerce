@@ -13,6 +13,12 @@ const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { test } = require('node:test');
 
+async function settlementBill(commerce, supplierId) {
+  const bill = await commerce.accountsPayable.createBill({ supplierId, createdBy: 'maker', dueDate: '2026-12-01T00:00:00Z', items: [{ description: 'Settlement target', quantity: '1', unitPrice: '1000.00' }] });
+  await commerce.accountsPayable.approveBill(bill.id, undefined, 'checker');
+  return bill.id;
+}
+
 test('Prepayments: full lifecycle', async (t) => {
   const commerce = new Commerce(':memory:');
   const supplierId = randomUUID();
@@ -39,7 +45,7 @@ test('Prepayments: full lifecycle', async (t) => {
   const listed = await commerce.prepayments.list({ supplierId, status: 'open' });
   assert.ok(listed.some((p) => p.id === prepayment.id));
 
-  const targetId = randomUUID();
+  const targetId = await settlementBill(commerce, supplierId);
   const applied = await commerce.prepayments.apply(prepayment.id, {
     targetType: 'bill',
     targetId,
@@ -54,10 +60,7 @@ test('Prepayments: full lifecycle', async (t) => {
   assert.equal(applications[0].amount, '400.00');
   assert.equal(applications[0].reversed, false);
 
-  const reversed = await commerce.prepayments.reverseApplication(
-    prepayment.id,
-    applications[0].id,
-  );
+  const reversed = await commerce.prepayments.reverseApplication(prepayment.id, applications[0].id);
   assert.equal(reversed.remaining, '1000.00');
 
   const refunded = await commerce.prepayments.refund(prepayment.id);
@@ -89,7 +92,7 @@ test('VendorCredits: full lifecycle', async (t) => {
 
   const applied = await commerce.vendorCredits.apply(credit.id, {
     targetType: 'bill',
-    targetId: randomUUID(),
+    targetId: await settlementBill(commerce, supplierId),
     amount: '100.00',
   });
   assert.equal(applied.remaining, '150.00');
@@ -98,10 +101,7 @@ test('VendorCredits: full lifecycle', async (t) => {
   assert.equal(applications.length, 1);
   assert.equal(applications[0].amount, '100.00');
 
-  const reversed = await commerce.vendorCredits.reverseApplication(
-    credit.id,
-    applications[0].id,
-  );
+  const reversed = await commerce.vendorCredits.reverseApplication(credit.id, applications[0].id);
   assert.equal(reversed.remaining, '250.00');
 
   const cancelled = await commerce.vendorCredits.cancel(credit.id);
@@ -144,15 +144,9 @@ test('PriceSchedules: full lifecycle', async (t) => {
   const entries = await commerce.priceSchedules.listEntries(schedule.id);
   assert.equal(entries.length, 1);
 
-  const inWindow = await commerce.priceSchedules.resolvePrice(
-    productId,
-    '2026-11-28T12:00:00Z',
-  );
+  const inWindow = await commerce.priceSchedules.resolvePrice(productId, '2026-11-28T12:00:00Z');
   assert.equal(inWindow, '19.99');
-  const outOfWindow = await commerce.priceSchedules.resolvePrice(
-    productId,
-    '2026-12-25T12:00:00Z',
-  );
+  const outOfWindow = await commerce.priceSchedules.resolvePrice(productId, '2026-12-25T12:00:00Z');
   assert.equal(outOfWindow, null);
 
   await commerce.priceSchedules.deleteEntry(schedule.id, productId);
@@ -209,7 +203,36 @@ test('TransferOrders: full lifecycle', async (t) => {
   const commerce = new Commerce(':memory:');
   const sourceWarehouseId = randomUUID();
   const destinationWarehouseId = randomUUID();
-  const productId = randomUUID();
+  const sku = 'TRANSFER-STOCK';
+  const product = await commerce.products.create({
+    name: 'Transfer stock',
+    variants: [{ sku, priceExact: '1' }],
+  });
+  const productId = product.id;
+  const locations = [];
+  const warehouses = [];
+  for (const code of ['SRC', 'DST']) {
+    const warehouse = await commerce.warehouse.createWarehouse({ code, name: code });
+    warehouses.push(warehouse.id);
+    locations.push(
+      (await commerce.warehouse.createLocation({ warehouseId: warehouse.id, code: 'STOCK', locationType: 'bulk' })).id,
+    );
+  }
+  const supplier = await commerce.purchaseOrders.createSupplier({ name: 'Stock supplier' });
+  const po = await commerce.purchaseOrders.create({
+    supplierId: supplier.id,
+    items: [{ sku, name: 'Stock', quantity: 10, unitCostExact: '1' }],
+  });
+  await commerce.purchaseOrders.submit(po.id);
+  await commerce.purchaseOrders.approve(po.id, 'test');
+  await commerce.purchaseOrders.send(po.id);
+  const [line] = await commerce.purchaseOrders.getItems(po.id);
+  await commerce.purchaseOrders.receive(
+    po.id,
+    [{ itemId: line.id, quantityReceivedExact: '10' }],
+    warehouses[0],
+    locations[0],
+  );
 
   assert.ok(commerce.transferOrders, 'transferOrders API should exist');
   assert.equal(await commerce.transferOrders.isSupported(), true);
@@ -217,7 +240,9 @@ test('TransferOrders: full lifecycle', async (t) => {
   const order = await commerce.transferOrders.create({
     sourceWarehouseId,
     destinationWarehouseId,
-    items: [{ productId, quantity: '10' }],
+    sourceLocationId: locations[0],
+    destinationLocationId: locations[1],
+    items: [{ productId, sku, quantity: '10' }],
     notes: 'restock east coast',
   });
   assert.ok(order.id);
@@ -236,11 +261,7 @@ test('TransferOrders: full lifecycle', async (t) => {
   assert.equal(shipped.items[0].quantityShipped, '10');
   assert.ok(shipped.shippedAt);
 
-  const partial = await commerce.transferOrders.receiveLine(
-    order.id,
-    shipped.items[0].id,
-    '4',
-  );
+  const partial = await commerce.transferOrders.receiveLine(order.id, shipped.items[0].id, '4');
   assert.equal(partial.status, 'partially_received');
   assert.equal(partial.items[0].quantityReceived, '4');
 
@@ -251,7 +272,9 @@ test('TransferOrders: full lifecycle', async (t) => {
   const other = await commerce.transferOrders.create({
     sourceWarehouseId,
     destinationWarehouseId,
-    items: [{ productId, quantity: '5' }],
+    sourceLocationId: locations[0],
+    destinationLocationId: locations[1],
+    items: [{ productId, sku, quantity: '5' }],
   });
   const cancelled = await commerce.transferOrders.cancel(other.id);
   assert.equal(cancelled.status, 'cancelled');
@@ -259,8 +282,9 @@ test('TransferOrders: full lifecycle', async (t) => {
 
 test('ProductionBatches: full lifecycle', async (t) => {
   const commerce = new Commerce(':memory:');
-  const workOrderA = randomUUID();
-  const workOrderB = randomUUID();
+  const product = await commerce.products.create({ name: 'Batch product' });
+  const workOrderA = (await commerce.workOrders.create({ productId: product.id, quantityToBuildExact: '1' })).id;
+  const workOrderB = (await commerce.workOrders.create({ productId: product.id, quantityToBuildExact: '1' })).id;
 
   assert.ok(commerce.productionBatches, 'productionBatches API should exist');
   assert.equal(await commerce.productionBatches.isSupported(), true);
@@ -281,10 +305,9 @@ test('ProductionBatches: full lifecycle', async (t) => {
 
   const updated = await commerce.productionBatches.update(batch.id, {
     name: 'July widgets v2',
-    status: 'in_progress',
   });
   assert.equal(updated.name, 'July widgets v2');
-  assert.equal(updated.status, 'in_progress');
+  assert.equal(updated.status, 'planned');
 
   const added = await commerce.productionBatches.addWorkOrders(batch.id, [workOrderB]);
   assert.equal(added.workOrderIds.length, 2);
@@ -382,11 +405,7 @@ test('InboundShipments: full lifecycle', async (t) => {
   assert.equal(partial.status, 'partially_received');
   assert.equal(partial.items[0].quantityReceived, '4');
 
-  const full = await commerce.inboundShipments.receiveLine(
-    shipment.id,
-    shipment.items[0].id,
-    '6',
-  );
+  const full = await commerce.inboundShipments.receiveLine(shipment.id, shipment.items[0].id, '6');
   assert.equal(full.status, 'received');
   assert.ok(full.receivedAt);
 

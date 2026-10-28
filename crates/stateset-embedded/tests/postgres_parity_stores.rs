@@ -15,16 +15,18 @@
 
 #![cfg(feature = "postgres")]
 
+#[path = "../../stateset-db/tests/support/erp_transfer.rs"]
+mod transfer_setup;
+
 use rust_decimal_macros::dec;
 use stateset_core::{
-    ApplyVendorCredit, CaptureStockLine, CaptureStockSnapshot, ConversionRuleType,
-    CreateInboundShipment, CreateInboundShipmentItem, CreatePrintStation, CreateProductionBatch,
-    CreateSupplierSku, CreateTransferOrder, CreateTransferOrderItem, CreateUnitClass,
-    CreateUnitConversionRule, CreateUnitOfMeasure, CreateVendorCredit, CreateVendorReturn,
-    CreateVendorReturnItem, EnqueuePrintJob, InboundShipmentStatus, PrintJobStatus,
-    PrintPayloadKind, ProductId, ProductionBatchFilter, ProductionBatchStatus, SupplierSkuFilter,
-    TransferOrderStatus, UpdateProductionBatch, UpdateSupplierSku, VendorCreditStatus,
-    VendorCreditTargetType, VendorReturnReason, VendorReturnStatus, WarehouseId,
+    ApplyVendorCredit, CaptureStockSnapshot, ConversionRuleType, CreateInboundShipment,
+    CreateInboundShipmentItem, CreatePrintStation, CreateProductionBatch, CreateSupplierSku,
+    CreateUnitClass, CreateUnitConversionRule, CreateUnitOfMeasure, CreateVendorCredit,
+    CreateVendorReturn, CreateVendorReturnItem, EnqueuePrintJob, InboundShipmentStatus,
+    PrintJobStatus, PrintPayloadKind, ProductId, ProductionBatchFilter, ProductionBatchStatus,
+    SupplierSkuFilter, TransferOrderStatus, UpdateProductionBatch, UpdateSupplierSku,
+    VendorCreditStatus, VendorCreditTargetType, VendorReturnReason, VendorReturnStatus,
 };
 use stateset_embedded::AsyncCommerce;
 
@@ -55,35 +57,29 @@ async fn postgres_stock_snapshots_smoke() {
         stateset_db::postgres::PgStockSnapshotRepository::new(commerce.database().pool().clone());
 
     let label = format!("pg-snap-{}", uuid::Uuid::new_v4().simple());
-    let snapshot = store
-        .capture_async(CaptureStockSnapshot {
-            label: Some(label.clone()),
-            lines: vec![
-                CaptureStockLine {
-                    product_id: ProductId::new(),
-                    sku: "SNAP-A".into(),
-                    quantity_on_hand: dec!(10),
-                    quantity_available: dec!(8),
-                    location: Some("A-01".into()),
-                },
-                CaptureStockLine {
-                    product_id: ProductId::new(),
-                    sku: "SNAP-B".into(),
-                    quantity_on_hand: dec!(5),
-                    quantity_available: dec!(5),
-                    location: None,
-                },
-            ],
+    let sku = format!("SNAP-{}", uuid::Uuid::new_v4());
+    stateset_db::postgres::PgInventoryRepository::new(commerce.database().pool().clone())
+        .create_item_async(stateset_core::CreateInventoryItem {
+            sku: sku.clone(),
+            name: sku.clone(),
+            initial_quantity: Some(dec!(15)),
+            ..Default::default()
         })
         .await
-        .expect("capture snapshot");
-    assert_eq!(snapshot.total_skus, 2);
-    assert_eq!(snapshot.total_units, dec!(15));
+        .unwrap();
+    let snapshot = store
+        .capture_async(CaptureStockSnapshot { label: Some(label.clone()), lines: vec![] })
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot.lines.iter().find(|line| line.sku == sku).unwrap().quantity_on_hand,
+        dec!(15)
+    );
 
     let fetched =
         store.get_async(snapshot.id).await.expect("get snapshot").expect("snapshot exists");
     assert_eq!(fetched.label.as_deref(), Some(label.as_str()));
-    assert_eq!(fetched.lines.len(), 2);
+    assert_eq!(fetched.lines.len(), snapshot.lines.len());
 
     let latest = store.latest_async().await.expect("latest snapshot").expect("latest exists");
     assert_eq!(latest.id, snapshot.id);
@@ -107,16 +103,7 @@ async fn postgres_transfer_orders_smoke() {
         stateset_db::postgres::PgTransferOrderRepository::new(commerce.database().pool().clone());
 
     let created = store
-        .create_async(CreateTransferOrder {
-            source_warehouse_id: WarehouseId::new(),
-            destination_warehouse_id: WarehouseId::new(),
-            items: vec![CreateTransferOrderItem {
-                product_id: ProductId::new(),
-                quantity: dec!(10),
-            }],
-            expected_at: None,
-            notes: Some("pg smoke".into()),
-        })
+        .create_async(transfer_setup::postgres_input(commerce.database(), &[dec!(10)]).await)
         .await
         .expect("create transfer order");
     assert!(!created.number.is_empty());
@@ -341,19 +328,19 @@ async fn postgres_production_batches_smoke() {
             UpdateProductionBatch {
                 name: None,
                 vendor_id: None,
-                status: Some(ProductionBatchStatus::InProgress),
-                notes: None,
+                status: None,
+                notes: Some("Edited".into()),
                 scheduled_start: None,
                 scheduled_end: None,
             },
         )
         .await
         .expect("update batch");
-    assert_eq!(updated.status, ProductionBatchStatus::InProgress);
+    assert_eq!(updated.status, ProductionBatchStatus::Planned);
 
     let listed = store
         .list_async(ProductionBatchFilter {
-            status: Some(ProductionBatchStatus::InProgress),
+            status: Some(ProductionBatchStatus::Planned),
             ..Default::default()
         })
         .await
@@ -417,13 +404,71 @@ async fn postgres_vendor_returns_smoke() {
     let commerce = require_pg!("vendor return");
     let store = commerce.database().vendor_returns();
 
+    let db = commerce.database();
+    let sku = format!("VENDOR-PARITY-{}", uuid::Uuid::new_v4());
+    let supplier = db
+        .purchase_orders()
+        .create_supplier_async(stateset_core::CreateSupplier {
+            name: sku.clone(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let product = db
+        .products()
+        .create_async(stateset_core::CreateProduct {
+            name: sku.clone(),
+            variants: Some(vec![stateset_core::CreateProductVariant {
+                sku: sku.clone(),
+                price: dec!(15),
+                is_default: Some(true),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let warehouse = db
+        .warehouse()
+        .create_warehouse_async(stateset_core::CreateWarehouse {
+            code: sku.clone(),
+            name: sku.clone(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let location = db
+        .warehouse()
+        .create_location_async(stateset_core::CreateLocation {
+            warehouse_id: warehouse.id,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    db.warehouse()
+        .adjust_inventory_async(stateset_core::AdjustLocationInventory {
+            location_id: location.id,
+            sku: sku.clone(),
+            lot_id: None,
+            quantity: dec!(3),
+            reason: "receipt".into(),
+            reference_type: None,
+            reference_id: None,
+            performed_by: None,
+        })
+        .await
+        .unwrap();
     let created = store
         .create_async(CreateVendorReturn {
-            supplier_id: uuid::Uuid::new_v4(),
+            supplier_id: supplier.id,
+            warehouse_id: warehouse.id,
             purchase_order_id: None,
             currency: None,
             items: vec![CreateVendorReturnItem {
-                product_id: ProductId::new(),
+                product_id: product.id,
+                sku,
+                source_location_id: location.id,
+                lot_id: None,
                 quantity: dec!(3),
                 unit_cost: dec!(15),
                 reason: VendorReturnReason::Defective,

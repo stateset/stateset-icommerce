@@ -132,10 +132,36 @@ impl MisconfiguredApiAuthConfig {
     }
 }
 
-/// Request extension inserted when an actor-bound credential established the
-/// request's actor (and overwrote any client-supplied `x-actor-id`).
+/// Request extension carrying the established actor id: inserted when an
+/// actor-bound credential established the request's actor (and overwrote any
+/// client-supplied `x-actor-id`), and again once authorization allows the
+/// request. Authorization only allows a request whose actor was established
+/// that way or whose actor headers the operator explicitly trusts, so the
+/// second insertion never vouches for a self-asserted header.
 #[derive(Clone, Debug)]
-pub(crate) struct AuthenticatedActorIdentity;
+pub(crate) struct AuthenticatedActorIdentity(pub String);
+
+/// Only authentication or an explicitly trusted identity adapter can supply this.
+/// Raw headers and request bodies never establish finance audit identity.
+#[derive(Clone, Debug)]
+pub(crate) struct FinanceActor(pub String);
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for FinanceActor {
+    type Rejection = HttpError;
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        parts
+            .extensions
+            .get::<AuthenticatedActorIdentity>()
+            .map(|actor| Self(actor.0.clone()))
+            .ok_or_else(|| {
+                HttpError::Unauthorized(
+                    "An authenticated actor is required for finance operations".into(),
+                )
+            })
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct AuthzConfig {
@@ -302,7 +328,7 @@ async fn require_bearer_auth(
             }
         };
         request.headers_mut().insert(X_ACTOR_ID.clone(), actor_header_value);
-        request.extensions_mut().insert(AuthenticatedActorIdentity);
+        request.extensions_mut().insert(AuthenticatedActorIdentity(bound_actor_id.to_owned()));
     }
 
     let tenant_id = request
@@ -342,7 +368,7 @@ async fn reject_misconfigured_api_auth(
 
 async fn require_authorization(
     State(config): State<AuthzConfig>,
-    request: Request<Body>,
+    mut request: Request<Body>,
     next: Next,
 ) -> Response {
     if !request.uri().path().starts_with("/api/v1") {
@@ -396,14 +422,18 @@ async fn require_authorization(
 
     // The engine's reason names roles and permission levels: operator
     // configuration a client should not learn. Log it; answer generically.
+    let actor_id = actor_id.to_owned();
     match decision {
-        AccessDecision::Allowed => next.run(request).await,
+        AccessDecision::Allowed => {
+            request.extensions_mut().insert(AuthenticatedActorIdentity(actor_id));
+            next.run(request).await
+        }
         AccessDecision::Denied { reason } => {
-            tracing::warn!(actor_id, %reason, "authorization denied");
+            tracing::warn!(actor_id = %actor_id, %reason, "authorization denied");
             HttpError::Forbidden("authorization denied".to_string()).into_response()
         }
         AccessDecision::RequiresApproval { reason } => {
-            tracing::warn!(actor_id, %reason, "authorization requires approval");
+            tracing::warn!(actor_id = %actor_id, %reason, "authorization requires approval");
             HttpError::Forbidden("authorization requires approval".to_string()).into_response()
         }
         _ => HttpError::Forbidden("authorization denied".to_string()).into_response(),
@@ -1340,7 +1370,7 @@ mod tests {
             "/api/v1/gl/journal-entries/je_1/void",
         )
         .expect("void target should map");
-        assert_eq!(void_target, (Resource::with_id("gl", "je_1"), Action::Destructive));
+        assert_eq!(void_target, (Resource::with_id("gl", "je_1"), Action::ManageFinance));
 
         assert!(authz_target(&Method::HEAD, "/api/v1/orders", "/api/v1/orders").is_none());
         assert!(authz_target(&Method::GET, "/api/v1/widgets", "/api/v1/widgets").is_none());

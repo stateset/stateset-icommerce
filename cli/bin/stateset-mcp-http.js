@@ -84,6 +84,7 @@ OPTIONS:
   --no-seed              Start with an EMPTY store (default: seeded demo data)
   --strict-protocol      Serve ONLY 2026-07-28; reject 2025-era clients
   --kernel-policy <path> Trusted kernel policy JSON (env STATESET_KERNEL_POLICY)
+  --actor <id>            Trusted operator/service identity for ERP audit and approvals
   --kernel-principal <path>
                          Trusted principal JSON (env STATESET_KERNEL_PRINCIPAL)
   --kernel-store-id <id> Logical store scope (env STATESET_KERNEL_STORE_ID)
@@ -127,6 +128,7 @@ async function main() {
       host: { type: 'string' },
       port: { type: 'string' },
       db: { type: 'string' },
+      actor: { type: 'string' },
       profile: { type: 'string', default: DEFAULT_MCP_TOOL_PROFILE },
       domains: { type: 'string' },
       apply: { type: 'boolean', default: false },
@@ -277,6 +279,7 @@ async function main() {
               .filter(Boolean)
           : [],
         createServer: createStatesetMcpServer,
+        actorId: values.actor || process.env.STATESET_ERP_ACTOR || null,
       }),
     {
       legacy: values['strict-protocol'] ? 'reject' : 'stateless',
@@ -300,6 +303,7 @@ async function main() {
           .filter(Boolean)
       : [],
     createServer: createStatesetMcpServer,
+    actorId: values.actor || process.env.STATESET_ERP_ACTOR || null,
   });
   await warmupServer.close();
 

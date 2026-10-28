@@ -27,6 +27,7 @@ pub(crate) struct CaptureLineRequest {
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub(crate) struct CaptureRequest {
     pub label: Option<String>,
+    #[serde(default)]
     pub lines: Vec<CaptureLineRequest>,
 }
 
@@ -39,7 +40,7 @@ pub(crate) struct SnapshotFilterParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub(crate) struct SnapshotLineResponse {
-    pub product_id: String,
+    pub product_id: Option<String>,
     pub sku: String,
     pub quantity_on_hand: String,
     pub quantity_available: String,
@@ -82,7 +83,7 @@ fn to_resp(s: &stateset_core::StockSnapshot) -> SnapshotResponse {
             .lines
             .iter()
             .map(|l| SnapshotLineResponse {
-                product_id: l.product_id.to_string(),
+                product_id: l.product_id.map(|id| id.to_string()),
                 sku: l.sku.clone(),
                 quantity_on_hand: l.quantity_on_hand.to_string(),
                 quantity_available: l.quantity_available.to_string(),
@@ -228,20 +229,26 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
+    use rust_decimal::Decimal;
     use stateset_embedded::Commerce;
     use tower::ServiceExt;
 
     #[tokio::test]
     async fn capture_then_get() {
         let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let c = state.commerce_for_tenant(None).unwrap();
+        for (sku, quantity) in [("SKU-1", 10), ("SKU-2", 5)] {
+            c.inventory()
+                .create_item(stateset_core::CreateInventoryItem {
+                    sku: sku.into(),
+                    name: sku.into(),
+                    initial_quantity: Some(Decimal::from(quantity)),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
         let app = router().with_state(state);
-        let body = serde_json::json!({
-            "label": "EOM",
-            "lines": [
-                {"product_id": uuid::Uuid::new_v4().to_string(), "sku":"SKU-1", "quantity_on_hand":"10", "quantity_available":"8"},
-                {"product_id": uuid::Uuid::new_v4().to_string(), "sku":"SKU-2", "quantity_on_hand":"5", "quantity_available":"5"}
-            ]
-        });
+        let body = serde_json::json!({ "label": "EOM" });
         let resp = app
             .clone()
             .oneshot(

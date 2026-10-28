@@ -4,7 +4,7 @@
     "coverageModel": "cli/src/coverage/mcp-api-coverage.js"
   },
   "totalDomainModules": 89,
-  "totalDomainTools": 951,
+  "totalDomainTools": 987,
   "totalCommerceGetters": 68,
   "mappedCommerceGetters": 68,
   "uncoveredCommerceGetters": [],
@@ -13,12 +13,12 @@
     {
       "getter": "accountsPayable",
       "module": "accounts-payable",
-      "toolCount": 11
+      "toolCount": 22
     },
     {
       "getter": "accountsReceivable",
       "module": "accounts-receivable",
-      "toolCount": 8
+      "toolCount": 15
     },
     {
       "getter": "activityLogs",
@@ -118,7 +118,7 @@
     {
       "getter": "generalLedger",
       "module": "general-ledger",
-      "toolCount": 17
+      "toolCount": 26
     },
     {
       "getter": "giftCards",
@@ -233,7 +233,7 @@
     {
       "getter": "receiving",
       "module": "receiving",
-      "toolCount": 8
+      "toolCount": 16
     },
     {
       "getter": "returns",
@@ -308,7 +308,7 @@
     {
       "getter": "transferOrders",
       "module": "transfer-orders",
-      "toolCount": 7
+      "toolCount": 8
     },
     {
       "getter": "unitsOfMeasure",
@@ -352,25 +352,86 @@
     }
   ],
   "totalAuditedClasses": 32,
-  "totalAuditedMethods": 421,
+  "totalAuditedMethods": 461,
   "mappedAuditedMethods": 421,
-  "uncoveredAuditedMethods": [],
+  "uncoveredAuditedMethods": [
+    "AccountsPayable.approvePaymentRun",
+    "AccountsPayable.cancelPaymentRun",
+    "AccountsPayable.createPayment",
+    "AccountsPayable.createPaymentRun",
+    "AccountsPayable.disputeBill",
+    "AccountsPayable.getPayment",
+    "AccountsPayable.getPaymentRun",
+    "AccountsPayable.listPaymentRuns",
+    "AccountsPayable.processPaymentRun",
+    "AccountsPayable.resolveBillDispute",
+    "AccountsPayable.voidPayment",
+    "AccountsReceivable.applyCreditMemo",
+    "AccountsReceivable.applyPaymentToInvoices",
+    "AccountsReceivable.createWriteOff",
+    "AccountsReceivable.getPaymentApplications",
+    "AccountsReceivable.listWriteOffs",
+    "AccountsReceivable.reverseWriteOff",
+    "AccountsReceivable.unapplyPayment",
+    "GeneralLedger.closePeriod",
+    "GeneralLedger.createJournalEntry",
+    "GeneralLedger.getAutoPostingConfig",
+    "GeneralLedger.getPeriod",
+    "GeneralLedger.lockPeriod",
+    "GeneralLedger.reclosePeriod",
+    "GeneralLedger.reopenPeriod",
+    "GeneralLedger.reverseJournalEntry",
+    "GeneralLedger.setAutoPostingConfig",
+    "Invoices.supportsPaymentIdempotency",
+    "Payments.supportsPaymentIdempotency",
+    "Payments.supportsRefundIdempotency",
+    "Receiving.assignPutAway",
+    "Receiving.cancelPutAway",
+    "Receiving.completePutAway",
+    "Receiving.createPutAway",
+    "Receiving.getPutAway",
+    "Receiving.listPutAways",
+    "Receiving.receiveItems",
+    "Receiving.startPutAway",
+    "WorkOrders.completeExact",
+    "WorkOrders.configureStock"
+  ],
   "staleAuditedMethodMappings": [],
   "invalidAuditedToolReferences": [],
   "auditedClasses": [
     {
       "className": "AccountsPayable",
-      "methodCount": 13,
+      "methodCount": 24,
       "mappedMethodCount": 13,
-      "uncoveredMethods": [],
+      "uncoveredMethods": [
+        "approvePaymentRun",
+        "cancelPaymentRun",
+        "createPayment",
+        "createPaymentRun",
+        "disputeBill",
+        "getPayment",
+        "getPaymentRun",
+        "listPaymentRuns",
+        "processPaymentRun",
+        "resolveBillDispute",
+        "voidPayment"
+      ],
       "staleMappedMethods": [],
       "invalidToolReferences": []
     },
     {
       "className": "AccountsReceivable",
-      "methodCount": 8,
+      "methodCount": 15,
       "mappedMethodCount": 8,
-      "uncoveredMethods": [],
+      "uncoveredMethods": [
+        "applyCreditMemo",
+        "applyPaymentToInvoices",
+        "createWriteOff",
+        "getPaymentApplications",
+        "listWriteOffs",
+        "reverseWriteOff",
+        "unapplyPayment"
+      ],
       "staleMappedMethods": [],
       "invalidToolReferences": []
     },
@@ -456,9 +517,19 @@
     },
     {
       "className": "GeneralLedger",
-      "methodCount": 18,
+      "methodCount": 27,
       "mappedMethodCount": 18,
-      "uncoveredMethods": [],
+      "uncoveredMethods": [
+        "closePeriod",
+        "createJournalEntry",
+        "getAutoPostingConfig",
+        "getPeriod",
+        "lockPeriod",
+        "reclosePeriod",
+        "reopenPeriod",
+        "reverseJournalEntry",
+        "setAutoPostingConfig"
+      ],
       "staleMappedMethods": [],
       "invalidToolReferences": []
     },
@@ -472,9 +543,11 @@
     },
     {
       "className": "Invoices",
-      "methodCount": 8,
+      "methodCount": 9,
       "mappedMethodCount": 8,
-      "uncoveredMethods": [],
+      "uncoveredMethods": [
+        "supportsPaymentIdempotency"
+      ],
       "staleMappedMethods": [],
       "invalidToolReferences": []
     },
@@ -496,9 +569,12 @@
     },
     {
       "className": "Payments",
-      "methodCount": 14,
+      "methodCount": 16,
       "mappedMethodCount": 14,
-      "uncoveredMethods": [],
+      "uncoveredMethods": [
+        "supportsPaymentIdempotency",
+        "supportsRefundIdempotency"
+      ],
       "staleMappedMethods": [],
       "invalidToolReferences": []
     },
@@ -536,9 +612,18 @@
     },
     {
       "className": "Receiving",
-      "methodCount": 10,
+      "methodCount": 18,
       "mappedMethodCount": 10,
-      "uncoveredMethods": [],
+      "uncoveredMethods": [
+        "assignPutAway",
+        "cancelPutAway",
+        "completePutAway",
+        "createPutAway",
+        "getPutAway",
+        "listPutAways",
+        "receiveItems",
+        "startPutAway"
+      ],
       "staleMappedMethods": [],
       "invalidToolReferences": []
     },
@@ -600,9 +685,12 @@
     },
     {
       "className": "WorkOrders",
-      "methodCount": 7,
+      "methodCount": 9,
       "mappedMethodCount": 7,
-      "uncoveredMethods": [],
+      "uncoveredMethods": [
+        "completeExact",
+        "configureStock"
+      ],
       "staleMappedMethods": [],
       "invalidToolReferences": []
     },
@@ -615,5 +703,5 @@
       "invalidToolReferences": []
     }
   ],
-  "fullyCovered": true
+  "fullyCovered": false
 }

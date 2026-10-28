@@ -1744,6 +1744,7 @@ async fn gl_posting_surfaces_ledger_invariant_codes() {
             source_document_type: None,
             source_document_id: None,
             auto_post: None,
+            fx: None,
         })
         .unwrap();
 
@@ -4406,6 +4407,7 @@ async fn gl_close_month_dry_run_then_close() {
         source_document_type: None,
         source_document_id: None,
         auto_post: Some(true),
+        fx: None,
     })
     .unwrap();
 
@@ -4527,6 +4529,7 @@ async fn gl_close_month_fail_on_warnings_is_strict() {
         source_document_type: None,
         source_document_id: None,
         auto_post: Some(true),
+        fx: None,
     })
     .unwrap();
 
@@ -4547,6 +4550,8 @@ async fn gl_close_month_fail_on_warnings_is_strict() {
             location_id: None,
             asset_account_id: None,
             accumulated_depreciation_account_id: None,
+            acquisition_offset_account_id: None,
+            disposal_gain_loss_account_id: None,
             depreciation_expense_account_id: None,
             currency: None,
         })

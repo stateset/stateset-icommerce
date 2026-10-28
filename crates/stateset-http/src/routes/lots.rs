@@ -30,6 +30,8 @@ pub(crate) struct CreateLotRequest {
     /// Decimal unit cost as a string.
     pub cost_per_unit: Option<String>,
     pub notes: Option<String>,
+    /// Warehouse receiving initial stock into its unassigned location. Omit to register before receiving.
+    pub initial_location_id: Option<i32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
@@ -238,6 +240,7 @@ pub(crate) async fn create(
                 supplier_id,
                 cost_per_unit,
                 notes: req.notes,
+                initial_location_id: req.initial_location_id,
                 ..Default::default()
             };
             let lot = c.lots().create(input)?;
@@ -468,7 +471,25 @@ mod tests {
     use tower::ServiceExt;
 
     fn app() -> Router {
-        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let commerce = Commerce::new(":memory:").expect("in-memory Commerce");
+        let wh = commerce
+            .warehouse()
+            .create_warehouse(stateset_core::CreateWarehouse {
+                code: "LOT-WH".into(),
+                name: "Lots".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let location = commerce
+            .warehouse()
+            .create_location(stateset_core::CreateLocation {
+                warehouse_id: wh.id,
+                code: Some("LOT-STOCK".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(location.id, 1);
+        let state = AppState::new(commerce);
         router().with_state(state)
     }
 
@@ -478,7 +499,7 @@ mod tests {
     }
 
     async fn create_lot(app: &Router, quantity: &str) -> serde_json::Value {
-        let body = serde_json::json!({ "sku": "WIDGET-001", "quantity": quantity });
+        let body = serde_json::json!({ "sku": "WIDGET-001", "quantity": quantity, "initial_location_id": 1 });
         let resp = app
             .clone()
             .oneshot(

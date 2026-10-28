@@ -683,3 +683,42 @@ describe('manufacturingTools — error paths (empty commerce)', () => {
     });
   }
 });
+
+describe('manufacturingTools — stock routing and exact quantities', () => {
+  it('forwards physical locations and exact build quantity', async () => {
+    const stock = { sourceLocationId: 2, outputLocationId: 3, outputSku: 'FINISHED' };
+    let received;
+    await findTool('create_work_order').handler({
+      commerce: {
+        workOrders: {
+          create: async (input) => {
+            received = input;
+            return mockWorkOrder;
+          },
+        },
+      },
+      params: { productId: 'prod_001', quantityToBuild: '1.234567890123456789', stock },
+      allowApply: true,
+    });
+    assert.deepEqual(received.stock, stock);
+    assert.equal(received.quantityToBuildExact, '1.234567890123456789');
+    assert.equal(received.quantityToBuild, undefined);
+  });
+
+  it('routes fractional string completions through the exact binding', async () => {
+    let received;
+    await findTool('complete_work_order').handler({
+      commerce: {
+        workOrders: {
+          completeExact: async (...args) => {
+            received = args;
+            return mockWorkOrder;
+          },
+        },
+      },
+      params: { workOrderId: 'wo_001', quantityCompleted: '0.125' },
+      allowApply: true,
+    });
+    assert.deepEqual(received, ['wo_001', '0.125']);
+  });
+});

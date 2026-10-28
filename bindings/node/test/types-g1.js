@@ -157,10 +157,7 @@ test('g1 unions are referenced from the generated interfaces', () => {
     ],
     ProductFilterInput: ['status?: ProductStatus', 'search?: string'],
     ReturnFilterInput: ['status?: ReturnStatus', 'reason?: ReturnReason'],
-    PaymentFilterInput: [
-      'status?: PaymentTransactionStatus',
-      'paymentMethod?: PaymentMethodType',
-    ],
+    PaymentFilterInput: ['status?: PaymentTransactionStatus', 'paymentMethod?: PaymentMethodType'],
     ShipmentFilterInput: ['status?: ShipmentStatus', 'carrier?: ShippingCarrierFilter'],
     WarrantyFilterInput: ['status?: WarrantyStatus', 'warrantyType?: WarrantyType'],
     InvoiceFilterInput: ['status?: InvoiceStatus'],
@@ -190,9 +187,13 @@ test('g1 method signatures carry unions and optional filters', () => {
       'list(filter?: OrderFilterInput | undefined | null): Promise<Array<OrderOutput>>',
       'updateStatus(id: string, status: OrderStatusUpdate): Promise<OrderOutput>',
     ],
-    Products: ['list(filter?: ProductFilterInput | undefined | null): Promise<Array<ProductOutput>>'],
+    Products: [
+      'list(filter?: ProductFilterInput | undefined | null): Promise<Array<ProductOutput>>',
+    ],
     Returns: ['list(filter?: ReturnFilterInput | undefined | null): Promise<Array<ReturnOutput>>'],
-    Payments: ['list(filter?: PaymentFilterInput | undefined | null): Promise<Array<PaymentOutput>>'],
+    Payments: [
+      'list(filter?: PaymentFilterInput | undefined | null): Promise<Array<PaymentOutput>>',
+    ],
     Shipments: [
       'list(filter?: ShipmentFilterInput | undefined | null): Promise<Array<ShipmentOutput>>',
     ],
@@ -203,7 +204,9 @@ test('g1 method signatures carry unions and optional filters', () => {
     PurchaseOrders: [
       'listSuppliers(filter?: SupplierFilterInput | undefined | null): Promise<Array<SupplierOutput>>',
     ],
-    Invoices: ['list(filter?: InvoiceFilterInput | undefined | null): Promise<Array<InvoiceOutput>>'],
+    Invoices: [
+      'list(filter?: InvoiceFilterInput | undefined | null): Promise<Array<InvoiceOutput>>',
+    ],
     Bom: ['list(filter?: BomFilterInput | undefined | null): Promise<Array<BomOutput>>'],
     Carts: ['list(filter?: CartFilterInput | undefined | null): Promise<Array<CartOutput>>'],
     Analytics: [
@@ -321,7 +324,9 @@ test('orders.list paginates and filters by customer and status', async () => {
 
 test('products.list paginates and filters by status and search', async () => {
   const commerce = new Commerce(':memory:');
-  const hat = await seedProductWithVariant(commerce, 'Alpha Hat', 'HAT-1', '10.00', { activate: false });
+  const hat = await seedProductWithVariant(commerce, 'Alpha Hat', 'HAT-1', '10.00', {
+    activate: false,
+  });
   await seedProductWithVariant(commerce, 'Beta Shoe', 'SHOE-1', '20.00', { activate: false });
   await seedProductWithVariant(commerce, 'Gamma Sock', 'SOCK-1', '3.00', { activate: false });
 
@@ -450,7 +455,7 @@ test('warranties, invoices, bom, carts and suppliers paginate', async () => {
   for (const c of [customer, customer, other]) {
     await commerce.invoices.create({
       customerId: c.id,
-      items: [{ description: 'Service', quantity: 1, unitPriceExact: '12.50' }],
+      items: [{ description: 'Service', quantity: '1', unitPriceExact: '12.50' }],
     });
   }
   assert.equal((await commerce.invoices.list()).length, 3);
@@ -464,7 +469,7 @@ test('warranties, invoices, bom, carts and suppliers paginate', async () => {
 
   const product = await commerce.products.create({ name: 'Assembly' });
   for (let i = 0; i < 3; i += 1) {
-    await commerce.bom.create({ name: `BOM ${i}`, productId: product.id });
+    await commerce.bom.create({ name: `BOM ${i}`, productId: product.id, revision: String(i + 1) });
   }
   assert.equal((await commerce.bom.list()).length, 3);
   assert.equal((await commerce.bom.list({ limit: 2 })).length, 2);

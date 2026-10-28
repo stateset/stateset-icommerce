@@ -13,7 +13,7 @@ use stateset_core::{
     CommerceError, CreateRevenueContract, CurrencyCode, PerformanceObligation, RecognitionMethod,
     Result, RevenueContract, RevenueContractFilter, RevenueContractStatus, RevenueEntryStatus,
     RevenueSchedule, RevenueScheduleEntry, UpdateRevenueContract, Validate,
-    generate_revenue_contract_number, generate_revenue_schedule,
+    generate_revenue_contract_number, generate_revenue_schedule_for_currency,
 };
 use uuid::Uuid;
 
@@ -232,6 +232,16 @@ impl stateset_core::RevenueRecognitionRepository for SqliteRevenueRecognitionRep
             input.contract_number.clone().unwrap_or_else(generate_revenue_contract_number);
         with_immediate_transaction(&self.pool, |tx| {
             let currency = resolve_currency_in_tx(input.currency, tx)?;
+            if let Some(invoice) = input.invoice_id {
+                super::revenue_invoice::validate_link(
+                    tx,
+                    id,
+                    invoice,
+                    input.customer_id,
+                    input.transaction_price,
+                    currency.as_str(),
+                )?;
+            }
             tx.execute(
                 "INSERT INTO revenue_contracts (id, contract_number, customer_id, order_id, invoice_id, transaction_price, currency, status, effective_date, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)",
@@ -349,6 +359,23 @@ impl stateset_core::RevenueRecognitionRepository for SqliteRevenueRecognitionRep
         let now = Utc::now().to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
             let contract = Self::load_full(tx, &id_str)?;
+            if let Some(invoice) = input.invoice_id.filter(|id| Some(*id) != contract.invoice_id) {
+                if contract.invoice_id.is_some()
+                    || contract.status != stateset_core::RevenueContractStatus::Draft
+                {
+                    return Err(Self::conflict(
+                        "A contract invoice link is immutable once assigned or activated",
+                    ));
+                }
+                super::revenue_invoice::validate_link(
+                    tx,
+                    id,
+                    invoice,
+                    contract.customer_id,
+                    contract.transaction_price,
+                    contract.currency.as_str(),
+                )?;
+            }
             let status = match input.status {
                 Some(next) if next != contract.status => {
                     if !contract.status.can_transition_to(next) {
@@ -418,10 +445,23 @@ impl stateset_core::RevenueRecognitionRepository for SqliteRevenueRecognitionRep
             )?;
             let recognition_date =
                 parse_date_row(&effective_date, "revenue_contract", "effective_date")?;
-            let entries = generate_revenue_schedule(
+            let currency: CurrencyCode = tx
+                .query_row(
+                    "SELECT currency FROM revenue_contracts WHERE id = ?1",
+                    rusqlite::params![(obligation.contract_id).to_string()],
+                    |r| r.get::<_, String>(0),
+                )?
+                .parse()
+                .map_err(|_| {
+                    super::bins::smuggle(CommerceError::ValidationError(
+                        "Invalid contract currency".into(),
+                    ))
+                })?;
+            let entries = generate_revenue_schedule_for_currency(
                 obligation.recognition_method,
                 obligation.allocated_amount,
                 recognition_date,
+                currency,
             );
             if entries.is_empty() {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -592,6 +632,7 @@ impl SqliteRevenueRecognitionRepository {
                 }
             }
         };
+        super::revenue_invoice::require_funded(conn, obligation_id, deferred_account_id)?;
         Gl::create_posted_entry_with_conn(
             conn,
             &stateset_core::CreateJournalEntry {
@@ -613,6 +654,7 @@ impl SqliteRevenueRecognitionRepository {
                 source_document_type: Some("revenue_recognition".to_string()),
                 source_document_id: Some(obligation_id),
                 auto_post: Some(true),
+                fx: None,
             },
             "system",
         )?;
@@ -915,6 +957,10 @@ mod tests {
                 unearned_revenue_account_id: None,
                 sales_revenue_account_id: by_number("4010"),
                 shipping_revenue_account_id: None,
+                sales_tax_payable_account_id: None,
+                goods_received_not_invoiced_account_id: None,
+                inventory_adjustment_account_id: None,
+                work_in_progress_account_id: None,
                 cogs_account_id: by_number("5010"),
                 bad_debt_expense_account_id: None,
                 fx_gain_loss_account_id: None,
@@ -1032,6 +1078,10 @@ mod tests {
                 unearned_revenue_account_id: Some(unearned_id),
                 sales_revenue_account_id: by_number("4010"),
                 shipping_revenue_account_id: None,
+                sales_tax_payable_account_id: None,
+                goods_received_not_invoiced_account_id: None,
+                inventory_adjustment_account_id: None,
+                work_in_progress_account_id: None,
                 cogs_account_id: by_number("5010"),
                 bad_debt_expense_account_id: None,
                 fx_gain_loss_account_id: None,

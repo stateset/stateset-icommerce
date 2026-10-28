@@ -6,7 +6,7 @@
 //! - Depreciation schedule generation with exact final-period plug
 //! - Asset lifecycle status transitions and disposal gain/loss calculation
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, Months, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_primitives::CurrencyCode;
@@ -159,6 +159,10 @@ pub struct FixedAsset {
     pub asset_account_id: Option<Uuid>,
     /// GL accumulated depreciation (contra-asset) account.
     pub accumulated_depreciation_account_id: Option<Uuid>,
+    /// Acquisition credit account; defaults to the configured cash account.
+    pub acquisition_offset_account_id: Option<Uuid>,
+    /// Income or expense account used for disposal proceeds and carrying value.
+    pub disposal_gain_loss_account_id: Option<Uuid>,
     /// GL depreciation expense account.
     pub depreciation_expense_account_id: Option<Uuid>,
     /// Depreciation accumulated to date.
@@ -174,6 +178,16 @@ pub struct FixedAsset {
 }
 
 impl FixedAsset {
+    /// Calendar month end for a 1-based monthly depreciation period.
+    /// The first period ends in the month the asset enters service.
+    #[must_use]
+    pub fn depreciation_period_end(&self, period: u32) -> Option<NaiveDate> {
+        if period == 0 {
+            return None;
+        }
+        self.in_service_date?.with_day(1)?.checked_add_months(Months::new(period))?.pred_opt()
+    }
+
     /// Depreciable base: acquisition cost less salvage value.
     #[must_use]
     pub fn depreciable_base(&self) -> Decimal {
@@ -340,6 +354,8 @@ pub struct CreateFixedAsset {
     pub location_id: Option<Uuid>,
     pub asset_account_id: Option<Uuid>,
     pub accumulated_depreciation_account_id: Option<Uuid>,
+    pub acquisition_offset_account_id: Option<Uuid>,
+    pub disposal_gain_loss_account_id: Option<Uuid>,
     pub depreciation_expense_account_id: Option<Uuid>,
     pub currency: Option<CurrencyCode>,
 }
@@ -360,7 +376,12 @@ impl Validate for CreateFixedAsset {
                 self.salvage_value <= self.acquisition_cost,
                 "must not exceed acquisition_cost",
             )
-            .check("useful_life_months", self.useful_life_months > 0, "must be positive");
+            .check("useful_life_months", self.useful_life_months > 0, "must be positive")
+            .check(
+                "in_service_date",
+                self.in_service_date.is_none_or(|date| date >= self.acquisition_date),
+                "cannot precede acquisition",
+            );
 
         let builder = match self.depreciation_method {
             DepreciationMethod::DecliningBalance { rate } => builder.check(
@@ -387,6 +408,8 @@ pub struct UpdateFixedAsset {
     pub location_id: Option<Uuid>,
     pub asset_account_id: Option<Uuid>,
     pub accumulated_depreciation_account_id: Option<Uuid>,
+    pub acquisition_offset_account_id: Option<Uuid>,
+    pub disposal_gain_loss_account_id: Option<Uuid>,
     pub depreciation_expense_account_id: Option<Uuid>,
 }
 
@@ -449,6 +472,8 @@ mod tests {
             location_id: None,
             asset_account_id: None,
             accumulated_depreciation_account_id: None,
+            acquisition_offset_account_id: None,
+            disposal_gain_loss_account_id: None,
             depreciation_expense_account_id: None,
             currency: None,
         }
@@ -471,6 +496,8 @@ mod tests {
             location_id: None,
             asset_account_id: None,
             accumulated_depreciation_account_id: None,
+            acquisition_offset_account_id: None,
+            disposal_gain_loss_account_id: None,
             depreciation_expense_account_id: None,
             accumulated_depreciation: dec!(3000),
             currency: CurrencyCode::default(),

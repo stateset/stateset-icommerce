@@ -4561,6 +4561,7 @@ pub extern "C" fn stateset_gl_create_journal_entry(
                 source_document_type: None,
                 source_document_id: None,
                 auto_post: Some(false),
+                fx: None,
             })
             .map_err(|e| e.to_string())
     });

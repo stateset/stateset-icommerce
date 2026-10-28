@@ -27,7 +27,33 @@ pub(crate) struct CreateWorkOrderTaskRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub(crate) struct WorkOrderStockRequest {
+    pub source_location_id: i32,
+    pub output_location_id: i32,
+    pub output_sku: String,
+}
+impl From<WorkOrderStockRequest> for stateset_core::WorkOrderStock {
+    fn from(value: WorkOrderStockRequest) -> Self {
+        Self {
+            source_location_id: value.source_location_id,
+            output_location_id: value.output_location_id,
+            output_sku: value.output_sku,
+        }
+    }
+}
+impl From<stateset_core::WorkOrderStock> for WorkOrderStockRequest {
+    fn from(value: stateset_core::WorkOrderStock) -> Self {
+        Self {
+            source_location_id: value.source_location_id,
+            output_location_id: value.output_location_id,
+            output_sku: value.output_sku,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub(crate) struct CreateWorkOrderRequest {
+    pub stock: Option<WorkOrderStockRequest>,
     pub product_id: String,
     /// Decimal quantity as a string.
     pub quantity_to_build: String,
@@ -46,6 +72,7 @@ pub(crate) struct CreateWorkOrderRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub(crate) struct UpdateWorkOrderRequest {
+    pub stock: Option<WorkOrderStockRequest>,
     pub work_center_id: Option<String>,
     pub assigned_to: Option<String>,
     /// One of `low`, `normal`, `high`, `urgent`.
@@ -87,6 +114,7 @@ pub(crate) struct WorkOrderFilterParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub(crate) struct WorkOrderResponse {
+    pub stock: Option<WorkOrderStockRequest>,
     pub id: String,
     pub work_order_number: String,
     pub product_id: String,
@@ -130,6 +158,7 @@ pub(crate) struct WorkOrderTaskListResponse {
 
 fn to_resp(wo: &stateset_core::WorkOrder) -> WorkOrderResponse {
     WorkOrderResponse {
+        stock: wo.stock.clone().map(Into::into),
         id: wo.id.to_string(),
         work_order_number: wo.work_order_number.clone(),
         product_id: wo.product_id.to_string(),
@@ -217,6 +246,7 @@ pub(crate) async fn create(
                 None => None,
             };
             let input = stateset_core::CreateWorkOrder {
+                stock: req.stock.map(Into::into),
                 product_id: parse_id::<ProductId>(&req.product_id, "product_id")?,
                 bom_id: parse_opt_id::<Uuid>(req.bom_id.as_deref(), "bom_id")?,
                 work_center_id: req.work_center_id,
@@ -345,6 +375,7 @@ pub(crate) async fn update(
                 None => None,
             };
             let input = stateset_core::UpdateWorkOrder {
+                stock: req.stock.map(Into::into),
                 work_center_id: req.work_center_id,
                 assigned_to: parse_opt_id::<Uuid>(req.assigned_to.as_deref(), "assigned_to")?,
                 priority,
@@ -529,6 +560,39 @@ mod tests {
     use stateset_embedded::Commerce;
     use tower::ServiceExt;
 
+    fn stocked_state() -> (AppState, String, serde_json::Value) {
+        let commerce = Commerce::new(":memory:").unwrap();
+        let product = commerce
+            .products()
+            .create(stateset_core::CreateProduct {
+                name: "Manufactured item".into(),
+                variants: Some(vec![stateset_core::CreateProductVariant {
+                    sku: "FINISHED".into(),
+                    price: rust_decimal::Decimal::ONE,
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .unwrap();
+        let warehouse = commerce
+            .warehouse()
+            .create_warehouse(stateset_core::CreateWarehouse {
+                code: "FACTORY".into(),
+                name: "Factory".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let location = commerce
+            .warehouse()
+            .create_location(stateset_core::CreateLocation {
+                warehouse_id: warehouse.id,
+                ..Default::default()
+            })
+            .unwrap();
+        let stock = serde_json::json!({ "source_location_id": location.id, "output_location_id": location.id, "output_sku": "FINISHED" });
+        (AppState::new(commerce), product.id.to_string(), stock)
+    }
+
     async fn json_body(resp: axum::response::Response) -> serde_json::Value {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         serde_json::from_slice(&bytes).unwrap()
@@ -536,10 +600,11 @@ mod tests {
 
     #[tokio::test]
     async fn create_start_complete_flow() {
-        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let (state, product_id, stock) = stocked_state();
         let app = router().with_state(state);
         let body = serde_json::json!({
-            "product_id": uuid::Uuid::new_v4().to_string(),
+            "product_id": product_id,
+            "stock": stock,
             "quantity_to_build": "100",
             "priority": "high",
             "tasks": [{"task_name": "Assembly", "sequence": 1, "estimated_hours": "2"}]
@@ -569,6 +634,7 @@ mod tests {
         assert_eq!(json_body(resp).await["status"], "in_progress");
 
         let resp = app
+            .clone()
             .oneshot(
                 Request::post(format!("/work-orders/{id}/complete"))
                     .header("content-type", "application/json")
@@ -581,14 +647,20 @@ mod tests {
         let json = json_body(resp).await;
         assert_eq!(json["status"], "completed");
         assert_eq!(json["quantity_completed"], "100");
+        let retry = app
+            .oneshot(Request::post(format!("/work-orders/{id}/start")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(retry.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]
     async fn list_and_tasks() {
-        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let (state, product_id, stock) = stocked_state();
         let app = router().with_state(state);
         let body = serde_json::json!({
-            "product_id": uuid::Uuid::new_v4().to_string(),
+            "product_id": product_id,
+            "stock": stock,
             "quantity_to_build": "5"
         });
         let resp = app
@@ -635,12 +707,13 @@ mod tests {
 
     #[tokio::test]
     async fn list_work_orders_has_more_and_next_cursor() {
-        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let (state, product_id, stock) = stocked_state();
         let app = router().with_state(state);
         for i in 0..3 {
             let _ = i;
             let body = serde_json::json!({
-                "product_id": uuid::Uuid::new_v4().to_string(),
+                "product_id": product_id,
+            "stock": stock,
                 "quantity_to_build": "10"
             });
             let resp = app

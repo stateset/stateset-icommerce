@@ -83,6 +83,213 @@ struct PutAwayRow {
 }
 
 impl PgReceivingRepository {
+    async fn validate_destination_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        receipt: Uuid,
+        location: i32,
+    ) -> Result<()> {
+        let valid: Option<i32> = sqlx::query_scalar("SELECT l.id FROM locations l JOIN warehouses w ON w.id = l.warehouse_id JOIN receipts r ON r.warehouse_id = w.id WHERE r.id = $1 AND l.id = $2 AND l.is_active AND l.is_receivable AND w.is_active FOR SHARE OF l, w")
+            .bind(receipt).bind(location).fetch_optional(tx.as_mut()).await.map_err(map_db_error)?;
+        if valid.is_none() {
+            return Err(CommerceError::ValidationError(
+                "Put-away destination must be active, receivable, and in the receipt warehouse"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn po_receipt_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        po_id: Uuid,
+        warehouse_id: i32,
+    ) -> Result<CreateReceipt> {
+        let (supplier_id, status): (Option<Uuid>, String) = sqlx::query_as(
+            "SELECT supplier_id, status FROM purchase_orders WHERE id = $1 FOR UPDATE",
+        )
+        .bind(po_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+        if !matches!(status.as_str(), "sent" | "acknowledged" | "partially_received") {
+            return Err(CommerceError::Conflict(format!(
+                "Cannot receive purchase order in status '{status}'"
+            )));
+        }
+        let rows: Vec<(Uuid, String, Option<String>, Decimal, Decimal)> = sqlx::query_as("SELECT id, sku, name, quantity_ordered - quantity_received, unit_cost FROM purchase_order_items WHERE purchase_order_id = $1 AND quantity_ordered > quantity_received ORDER BY id")
+            .bind(po_id).fetch_all(tx.as_mut()).await.map_err(map_db_error)?;
+        let items: Vec<_> = rows
+            .into_iter()
+            .map(|(id, sku, description, expected_quantity, cost)| CreateReceiptItem {
+                po_line_id: Some(id),
+                sku,
+                description,
+                expected_quantity,
+                unit_cost: Some(cost),
+                ..Default::default()
+            })
+            .collect();
+        if items.is_empty() {
+            return Err(CommerceError::Conflict(
+                "Purchase order has no outstanding quantities".into(),
+            ));
+        }
+        Ok(CreateReceipt {
+            receipt_type: ReceiptType::PurchaseOrder,
+            reference_type: Some("purchase_order".into()),
+            reference_id: Some(po_id),
+            supplier_id,
+            warehouse_id,
+            items,
+            ..Default::default()
+        })
+    }
+
+    pub(super) async fn receive_po_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        po_id: Uuid,
+        input: stateset_core::ReceivePurchaseOrderItems,
+    ) -> Result<()> {
+        let outstanding = Self::po_receipt_tx(tx, po_id, input.warehouse_id).await?;
+        let selected = crate::po_receipt::select(outstanding, &input)?;
+        let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM locations l JOIN warehouses w ON w.id = l.warehouse_id WHERE l.id = $1 AND l.warehouse_id = $2 AND l.is_active AND l.is_receivable AND w.is_active)")
+            .bind(input.receiving_location_id).bind(input.warehouse_id).fetch_one(tx.as_mut()).await.map_err(map_db_error)?;
+        if !valid {
+            return Err(CommerceError::ValidationError("Receiving location must be active, receivable, and belong to the specified active warehouse".into()));
+        }
+        let receipt = Self::create_receipt_tx(tx, selected).await?;
+        let lines = sqlx::query_as::<_, ReceiptItemRow>(
+            "SELECT * FROM receipt_items WHERE receipt_id = $1 ORDER BY line_number",
+        )
+        .bind(receipt.id)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        Self::receive_items_tx(
+            tx,
+            ReceiveItems {
+                receipt_id: receipt.id,
+                receiving_location_id: Some(input.receiving_location_id),
+                received_by: None,
+                items: lines
+                    .iter()
+                    .map(|line| stateset_core::ReceiveItemLine {
+                        receipt_item_id: line.id,
+                        quantity_received: line.expected_quantity,
+                        quantity_rejected: None,
+                        rejection_reason: None,
+                        lot_number: None,
+                        serial_numbers: None,
+                        expiration_date: None,
+                        notes: None,
+                    })
+                    .collect(),
+            },
+        )
+        .await?;
+        Self::complete_receiving_tx(tx, receipt.id).await?;
+        for line in lines {
+            let task = Self::create_put_away_tx(
+                tx,
+                CreatePutAway {
+                    receipt_id: receipt.id,
+                    receipt_item_id: line.id,
+                    sku: line.sku,
+                    from_location_id: None,
+                    to_location_id: input.receiving_location_id,
+                    quantity: line.expected_quantity,
+                    lot_id: None,
+                    assigned_to: None,
+                    notes: None,
+                },
+            )
+            .await?;
+            Self::complete_put_away_tx(
+                tx,
+                CompletePutAway {
+                    put_away_id: task.id,
+                    actual_location_id: None,
+                    completed_by: None,
+                    notes: None,
+                },
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn read_put_away_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        id: Uuid,
+    ) -> Result<PutAway> {
+        let row = sqlx::query_as::<_, PutAwayRow>("SELECT * FROM put_aways WHERE id = $1")
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        Self::row_to_put_away(row)
+    }
+
+    async fn receipt_lot_pg(
+        conn: &mut sqlx::PgConnection,
+        receipt: Uuid,
+        item: Uuid,
+        sku: &str,
+        requested_lot: Option<Uuid>,
+    ) -> Result<Option<Uuid>> {
+        // Serialize with cancellation and receipt quantity changes.
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM receipts WHERE id = $1 FOR UPDATE")
+                .bind(receipt)
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        if status == "cancelled" {
+            return Err(CommerceError::Conflict("Cannot put away a cancelled receipt".into()));
+        }
+        let (line_sku, lot_number): (String, Option<String>) = sqlx::query_as(
+            "SELECT sku, lot_number FROM receipt_items WHERE id = $1 AND receipt_id = $2",
+        )
+        .bind(item)
+        .bind(receipt)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(map_db_error)?
+        .ok_or(CommerceError::NotFound)?;
+        if line_sku != sku {
+            return Err(CommerceError::ValidationError(
+                "Put-away SKU must match the receipt line".into(),
+            ));
+        }
+        let lot = if let Some(number) = lot_number {
+            Some(
+                sqlx::query_scalar::<_, Uuid>(
+                    "SELECT id FROM lots WHERE lot_number = $1 AND sku = $2",
+                )
+                .bind(number)
+                .bind(sku)
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(map_db_error)?
+                .ok_or_else(|| {
+                    CommerceError::ValidationError(
+                        "Receipt lot must be registered for this SKU before put-away".into(),
+                    )
+                })?,
+            )
+        } else {
+            None
+        };
+        if requested_lot.is_some() && requested_lot != lot {
+            return Err(CommerceError::ValidationError(
+                "Put-away lot must match the receipt line".into(),
+            ));
+        }
+        Ok(lot)
+    }
+
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -303,13 +510,33 @@ impl PgReceivingRepository {
     /// pool, a failure part-way through the line loop left a receipt whose
     /// `expected_quantity` header total counted lines that were never inserted.
     pub async fn create_receipt_async(&self, input: CreateReceipt) -> Result<Receipt> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let result = Self::create_receipt_tx(&mut tx, input).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(result)
+    }
+
+    pub(super) async fn create_receipt_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        input: CreateReceipt,
+    ) -> Result<Receipt> {
+        if input.reference_type.as_deref() == Some("purchase_order") {
+            let po = input.reference_id.ok_or_else(|| {
+                CommerceError::ValidationError("PO receipt requires a purchase order ID".into())
+            })?;
+            let outstanding = Self::po_receipt_tx(tx, po, input.warehouse_id).await?;
+            crate::po_receipt::validate(&input, &outstanding)?;
+        } else if input.items.iter().any(|line| line.po_line_id.is_some()) {
+            return Err(CommerceError::ValidationError(
+                "PO lines require a purchase_order receipt reference".into(),
+            ));
+        }
+
         let now = Utc::now();
         let id = Uuid::new_v4();
         let receipt_number = input.receipt_number.unwrap_or_else(generate_receipt_number);
 
         let expected_total: Decimal = input.items.iter().map(|i| i.expected_quantity).sum();
-
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         sqlx::query(
             r#"
@@ -372,8 +599,6 @@ impl PgReceivingRepository {
             .await
             .map_err(map_db_error)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to create receipt".into()))?;
-
-        tx.commit().await.map_err(map_db_error)?;
 
         Self::row_to_receipt(row)
     }
@@ -544,10 +769,18 @@ impl PgReceivingRepository {
     ///    be received against a 10-unit line, corrupting inventory and the
     ///    downstream three-way match.
     pub async fn receive_items_async(&self, input: ReceiveItems) -> Result<Receipt> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let result = Self::receive_items_tx(&mut tx, input).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(result)
+    }
+
+    pub(super) async fn receive_items_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        input: ReceiveItems,
+    ) -> Result<Receipt> {
         let now = Utc::now();
         let receipt_id = input.receipt_id;
-
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         let status_str: String =
             sqlx::query_scalar("SELECT status FROM receipts WHERE id = $1 FOR UPDATE")
@@ -578,7 +811,6 @@ impl PgReceivingRepository {
 
         for line in &input.items {
             let reject_qty = line.quantity_rejected.unwrap_or(Decimal::ZERO);
-            let serial_str = line.serial_numbers.as_ref().map(|v| v.join(","));
 
             if line.quantity_received <= Decimal::ZERO {
                 return Err(CommerceError::ValidationError(
@@ -622,6 +854,10 @@ impl PgReceivingRepository {
                 )));
             }
 
+            let serial_str =
+                super::receipt_serials::register(tx, line, input.received_by.as_deref(), now)
+                    .await?;
+
             let new_status = if new_received >= expected {
                 "received"
             } else if new_received > Decimal::ZERO {
@@ -656,6 +892,43 @@ impl PgReceivingRepository {
             .map_err(map_db_error)?;
         }
 
+        let (reference_type, reference_id): (Option<String>, Option<Uuid>) =
+            sqlx::query_as("SELECT reference_type, reference_id FROM receipts WHERE id = $1")
+                .bind(receipt_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if reference_type.as_deref() == Some("purchase_order") {
+            let mut items = Vec::new();
+            for line in &input.items {
+                let po_line: Option<Uuid> = sqlx::query_scalar(
+                    "SELECT po_line_id FROM receipt_items WHERE id = $1 AND receipt_id = $2",
+                )
+                .bind(line.receipt_item_id)
+                .bind(receipt_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+                let item_id = po_line.ok_or_else(|| {
+                    CommerceError::ValidationError(
+                        "PO receipt line is missing its PO line reference".into(),
+                    )
+                })?;
+                items.push(stateset_core::ReceivePurchaseOrderItem {
+                    item_id,
+                    quantity_received: line.quantity_received,
+                    notes: line.notes.clone(),
+                });
+            }
+            let po = reference_id.ok_or_else(|| {
+                CommerceError::ValidationError("PO receipt is missing its PO reference".into())
+            })?;
+            super::purchase_orders::PgPurchaseOrderRepository::receive_quantities_tx(
+                tx, po, &items,
+            )
+            .await?;
+        }
+
         Self::update_receipt_totals(tx.as_mut(), receipt_id).await?;
 
         let row = sqlx::query_as::<_, ReceiptRow>("SELECT * FROM receipts WHERE id = $1")
@@ -664,8 +937,6 @@ impl PgReceivingRepository {
             .await
             .map_err(map_db_error)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to retrieve receipt".into()))?;
-
-        tx.commit().await.map_err(map_db_error)?;
 
         Self::row_to_receipt(row)
     }
@@ -676,13 +947,22 @@ impl PgReceivingRepository {
     /// transaction as the line sweep, so a receipt cannot be completed twice by
     /// two callers that both read `in_progress` before either wrote.
     pub async fn complete_receiving_async(&self, id: Uuid) -> Result<Receipt> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let result = Self::complete_receiving_tx(&mut tx, id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(result)
+    }
+
+    pub(super) async fn complete_receiving_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        id: Uuid,
+    ) -> Result<Receipt> {
         let now = Utc::now();
 
         // Complete the receipt header and mark its non-rejected line items
         // `received` in one transaction (matching the SQLite backend, which marks
         // items received on completion — the Postgres path previously updated only
         // the header, leaving items in their prior status).
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         let changed = sqlx::query(
             "UPDATE receipts SET status = $1, completed_date = $2
@@ -702,21 +982,13 @@ impl PgReceivingRepository {
             .await);
         }
 
-        sqlx::query(
-            "UPDATE receipt_items SET status = 'received' WHERE receipt_id = $1 AND status != 'rejected'",
-        )
-        .bind(id)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        // Line statuses remain derived from the quantities actually received.
 
         let row = sqlx::query_as::<_, ReceiptRow>("SELECT * FROM receipts WHERE id = $1")
             .bind(id)
             .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
-
-        tx.commit().await.map_err(map_db_error)?;
 
         Self::row_to_receipt(row)
     }
@@ -730,6 +1002,13 @@ impl PgReceivingRepository {
     pub async fn cancel_receipt_async(&self, id: Uuid) -> Result<Receipt> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
+        let blocked: bool = sqlx::query_scalar("SELECT COALESCE(reference_type = 'purchase_order', FALSE) AND received_quantity > 0 FROM receipts WHERE id = $1 FOR UPDATE")
+            .bind(id).fetch_optional(tx.as_mut()).await.map_err(map_db_error)?.ok_or(CommerceError::NotFound)?;
+        if blocked {
+            return Err(CommerceError::Conflict(
+                "Cannot cancel a PO receipt after quantities have been received".into(),
+            ));
+        }
         let changed = sqlx::query(
             "UPDATE receipts SET status = $1
              WHERE id = $2 AND status IN ('expected', 'in_progress')",
@@ -810,16 +1089,29 @@ impl PgReceivingRepository {
     /// 3. the requested quantity plus every non-cancelled put-away already
     ///    planned for the line may not exceed the line's `received_quantity`.
     pub async fn create_put_away_async(&self, input: CreatePutAway) -> Result<PutAway> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let result = Self::create_put_away_tx(&mut tx, input).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(result)
+    }
+
+    pub(super) async fn create_put_away_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        input: CreatePutAway,
+    ) -> Result<PutAway> {
         if input.quantity <= Decimal::ZERO {
             return Err(CommerceError::ValidationError(
                 "Put-away quantity must be greater than zero".into(),
             ));
         }
+        Self::validate_destination_tx(tx, input.receipt_id, input.to_location_id).await?;
         let now = Utc::now();
         let id = Uuid::new_v4();
         let item_id = input.receipt_item_id;
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
+        let lot_id =
+            Self::receipt_lot_pg(tx.as_mut(), input.receipt_id, item_id, &input.sku, input.lot_id)
+                .await?;
         let (owner, received): (Uuid, Decimal) = sqlx::query_as(
             "SELECT receipt_id, received_quantity FROM receipt_items WHERE id = $1 FOR UPDATE",
         )
@@ -867,7 +1159,7 @@ impl PgReceivingRepository {
         .bind(input.from_location_id)
         .bind(input.to_location_id)
         .bind(input.quantity)
-        .bind(input.lot_id)
+        .bind(lot_id)
         .bind(&input.assigned_to)
         .bind(&input.notes)
         .bind(now)
@@ -875,7 +1167,7 @@ impl PgReceivingRepository {
         .await
         .map_err(map_db_error)?;
 
-        Self::commit_and_read_put_away(tx, id).await
+        Self::read_put_away_tx(tx, id).await
     }
 
     pub async fn get_put_away_async(&self, id: Uuid) -> Result<Option<PutAway>> {
@@ -982,9 +1274,18 @@ impl PgReceivingRepository {
     /// guarded UPDATE matches zero rows on a second attempt, so completing twice
     /// raises a conflict before any stock moves.
     pub async fn complete_put_away_async(&self, input: CompletePutAway) -> Result<PutAway> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let result = Self::complete_put_away_tx(&mut tx, input).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(result)
+    }
+
+    pub(super) async fn complete_put_away_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        input: CompletePutAway,
+    ) -> Result<PutAway> {
         let now = Utc::now();
         let id = input.put_away_id;
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
         let existing =
             sqlx::query_as::<_, PutAwayRow>("SELECT * FROM put_aways WHERE id = $1 FOR UPDATE")
@@ -993,8 +1294,22 @@ impl PgReceivingRepository {
                 .await
                 .map_err(map_db_error)?
                 .ok_or(CommerceError::NotFound)?;
+        let lot = Self::receipt_lot_pg(
+            tx.as_mut(),
+            existing.receipt_id,
+            existing.receipt_item_id,
+            &existing.sku,
+            existing.lot_id,
+        )
+        .await?;
+        if lot != existing.lot_id {
+            return Err(CommerceError::Conflict(
+                "Receipt lot changed after put-away was planned".into(),
+            ));
+        }
         let receipt_id = existing.receipt_id;
         let to_location = input.actual_location_id.unwrap_or(existing.to_location_id);
+        Self::validate_destination_tx(tx, existing.receipt_id, to_location).await?;
 
         let changed = sqlx::query(
             "UPDATE put_aways SET status = $1, to_location_id = $2, completed_at = $3, notes = COALESCE($4, notes)
@@ -1028,48 +1343,41 @@ impl PgReceivingRepository {
             .await
             .map_err(map_db_error)?;
 
-        // Stock effect: the units land in the destination bin and in the
-        // warehouse balance.
-        let warehouse_id =
-            super::warehouse::warehouse_of_location_pg(tx.as_mut(), to_location).await?;
-        super::warehouse::ensure_inventory_item_pg(tx.as_mut(), &existing.sku).await?;
-        super::warehouse::apply_location_delta_pg(
-            tx.as_mut(),
-            to_location,
-            &existing.sku,
-            existing.lot_id,
-            existing.quantity,
-            now,
-        )
-        .await?;
-        super::bins::apply_warehouse_delta_pg(
-            tx.as_mut(),
-            warehouse_id,
-            &existing.sku,
-            existing.quantity,
-            Decimal::ZERO,
-            "put-away completed",
-            Some("put_away"),
-            Some(&id.to_string()),
-            now,
-        )
-        .await?;
-        super::warehouse::insert_wms_movement_pg(
-            tx.as_mut(),
-            stateset_core::MovementType::Receipt,
-            existing.from_location_id,
-            Some(to_location),
-            &existing.sku,
-            existing.lot_id,
-            existing.quantity,
-            "put_away",
-            id,
-            existing.assigned_to.as_deref(),
+        super::stock_move::post(
+            tx,
+            &crate::stock_move::StockMove {
+                id: uuid::Uuid::new_v4(),
+                sku: &existing.sku,
+                lot_id: existing.lot_id,
+                from: None,
+                to: Some(to_location),
+                quantity: existing.quantity,
+                release_reserved: Decimal::ZERO,
+                reserve_received: Decimal::ZERO,
+                movement_type: stateset_core::MovementType::Receipt,
+                lot_effect: crate::stock_move::LotEffect::Track,
+                check_sellable: false,
+                reference_type: Some("put_away"),
+                reference_id: Some(existing.id),
+                reference_label: None,
+                reason: Some("put-away completed"),
+                performed_by: existing.assigned_to.as_deref(),
+            },
             now,
         )
         .await?;
 
-        Self::commit_and_read_put_away(tx, id).await
+        super::receipt_serials::place(
+            tx,
+            existing.receipt_item_id,
+            existing.id,
+            existing.quantity,
+            to_location,
+            now,
+        )
+        .await?;
+
+        Self::read_put_away_tx(tx, id).await
     }
 
     /// Cancel a put-away task.
@@ -1148,53 +1456,11 @@ impl PgReceivingRepository {
         po_id: Uuid,
         warehouse_id: i32,
     ) -> Result<Receipt> {
-        // The PO must exist: an unknown id is `NotFound`, not an empty receipt.
-        let supplier_id: Option<Uuid> =
-            sqlx::query_as("SELECT supplier_id FROM purchase_orders WHERE id = $1")
-                .bind(po_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(map_db_error)?
-                .map(|row: (Option<Uuid>,)| row.0)
-                .ok_or(CommerceError::NotFound)?;
-
-        let rows = sqlx::query_as::<_, (String, Option<String>, Decimal, Decimal)>(
-            "SELECT sku, name, quantity_ordered, unit_cost FROM purchase_order_items WHERE purchase_order_id = $1",
-        )
-        .bind(po_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        let mut items = Vec::new();
-        for (sku, description, quantity, unit_cost) in rows {
-            items.push(CreateReceiptItem {
-                sku,
-                description,
-                po_line_id: None,
-                expected_quantity: quantity,
-                unit_cost: Some(unit_cost),
-                lot_number: None,
-                expiration_date: None,
-                notes: None,
-            });
-        }
-
-        self.create_receipt_async(CreateReceipt {
-            receipt_number: None,
-            receipt_type: ReceiptType::PurchaseOrder,
-            reference_type: Some("purchase_order".to_string()),
-            reference_id: Some(po_id),
-            supplier_id,
-            warehouse_id,
-            carrier: None,
-            tracking_number: None,
-            expected_date: None,
-            items,
-            notes: None,
-            created_by: None,
-        })
-        .await
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let input = Self::po_receipt_tx(&mut tx, po_id, warehouse_id).await?;
+        let receipt = Self::create_receipt_tx(&mut tx, input).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(receipt)
     }
 
     pub async fn create_receipts_batch_async(

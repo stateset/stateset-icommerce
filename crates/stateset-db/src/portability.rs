@@ -1070,6 +1070,7 @@ fn import_journal_entry(
             None => None,
         },
         auto_post: Some(false),
+        fx: None,
     };
     db.general_ledger().create_journal_entry(input)?;
     Ok(Outcome::Created)

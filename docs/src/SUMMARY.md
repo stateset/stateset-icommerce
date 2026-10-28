@@ -45,6 +45,7 @@
 - [Tax & Promotions](commerce/tax-promotions.md)
 - [Manufacturing & Supply Chain](commerce/manufacturing.md)
 - [Accounting & Finance](commerce/accounting.md)
+- [ERP Upgrade & Reconciliation](guides/erp-upgrade.md)
 - [Analytics & Forecasting](commerce/analytics.md)
 - [Customer Engagement](commerce/engagement.md)
 - [Fraud Detection](commerce/fraud.md)

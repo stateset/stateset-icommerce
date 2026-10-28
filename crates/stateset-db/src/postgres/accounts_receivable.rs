@@ -13,13 +13,10 @@ use stateset_core::{
     CreateCreditMemo, CreateWriteOff, CreditMemo, CreditMemoFilter, CreditMemoReason,
     CreditMemoStatus, CurrencyCode, CustomerArAging, CustomerArSummary, CustomerStatement,
     DunningLetterType, GenerateStatementRequest, Invoice, InvoiceId, InvoiceStatus, InvoiceType,
-    Result, StatementLineItem, StatementTransactionType, WriteOff, WriteOffFilter, WriteOffReason,
-    generate_credit_memo_number, generate_write_off_number,
+    Result, WriteOff, WriteOffFilter, WriteOffReason, generate_credit_memo_number,
+    generate_write_off_number,
 };
 use uuid::Uuid;
-
-/// One statement-visible event: (date, type, reference, description, amount).
-type PgStatementActivityRow = (DateTime<Utc>, StatementTransactionType, String, String, Decimal);
 
 #[derive(Debug, Clone)]
 
@@ -392,10 +389,18 @@ impl PgAccountsReceivableRepository {
         Ok(customer_id)
     }
 
-    async fn recalculate_invoice_tx(
+    pub(super) async fn recalculate_invoice_tx(
         tx: &mut sqlx::Transaction<'_, Postgres>,
         invoice_id: Uuid,
     ) -> Result<()> {
+        let (total, direct, current_status): (Decimal, Decimal, String) = sqlx::query_as(
+            "SELECT total, direct_amount_paid, status FROM invoices WHERE id = $1 FOR UPDATE",
+        )
+        .bind(invoice_id)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+
         let paid: Decimal = sqlx::query_scalar(
             "SELECT COALESCE(SUM(applied_amount), 0) FROM ar_payment_applications WHERE invoice_id = $1",
         )
@@ -417,22 +422,15 @@ impl PgAccountsReceivableRepository {
         // would REPLACE amount_paid with the application sums and erase them.
         // Read it inside the transaction (FOR UPDATE) so a concurrent
         // record_payment serializes against this recalculation.
-        let (total, direct, current_status): (Decimal, Decimal, String) = sqlx::query_as(
-            "SELECT total, direct_amount_paid, status FROM invoices WHERE id = $1 FOR UPDATE",
-        )
-        .bind(invoice_id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
+        let written_off: Decimal = sqlx::query_scalar("SELECT COALESCE(SUM(amount),0) FROM ar_write_offs WHERE invoice_id=$1 AND reversed_at IS NULL").bind(invoice_id).fetch_one(tx.as_mut()).await.map_err(map_db_error)?;
         let total_applied = direct + paid + credits;
-        let balance_due = total - total_applied;
-        // Derive the status from the money WITHOUT discarding an operator's
-        // own classification — see the SQLite twin for the full rationale.
-        // Terminal statuses are still reset so `reverse_write_off` can bring a
-        // written-off invoice back to a live state.
-        let status = if balance_due <= Decimal::ZERO {
-            "paid"
+        let balance_due = total - total_applied - written_off;
+        // Only explicit write-off reversal may restore a written-off balance.
+        // Voided/cancelled states never change as a side effect of recalculation.
+        let status = if matches!(current_status.as_str(), "voided" | "cancelled") {
+            current_status.as_str()
+        } else if balance_due <= Decimal::ZERO {
+            if written_off > Decimal::ZERO { "written_off" } else { "paid" }
         } else if total_applied > Decimal::ZERO {
             if current_status == "disputed" { "disputed" } else { "partially_paid" }
         } else if matches!(
@@ -445,7 +443,7 @@ impl PgAccountsReceivableRepository {
         };
 
         sqlx::query(
-            "UPDATE invoices SET amount_paid = $1, balance_due = $2, status = $3 WHERE id = $4",
+            "UPDATE invoices SET amount_paid = $1, balance_due = $2, status = $3, collection_status = CASE WHEN $3='written_off' THEN 'written_off' WHEN collection_status='written_off' THEN 'none' ELSE collection_status END, paid_at = CASE WHEN $3='paid' THEN COALESCE(paid_at,CURRENT_TIMESTAMP) ELSE NULL END, updated_at=CURRENT_TIMESTAMP WHERE id = $4",
         )
         .bind(total_applied)
         .bind(balance_due)
@@ -473,7 +471,7 @@ impl PgAccountsReceivableRepository {
                 COALESCE(SUM(CASE WHEN due_date < NOW() - INTERVAL '60 days' AND due_date >= NOW() - INTERVAL '90 days' THEN balance_due ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN due_date < NOW() - INTERVAL '90 days' THEN balance_due ELSE 0 END), 0)
              FROM invoices
-             WHERE status NOT IN ('paid', 'voided', 'written_off')
+             WHERE status NOT IN ('draft', 'paid', 'voided', 'written_off', 'cancelled')
                AND balance_due > 0",
         )
         .fetch_one(&self.pool)
@@ -519,7 +517,7 @@ impl PgAccountsReceivableRepository {
                 MIN(created_at) AS oldest_invoice_date
              FROM invoices
              WHERE customer_id = $1
-               AND status NOT IN ('paid', 'voided', 'written_off')
+               AND status NOT IN ('draft', 'paid', 'voided', 'written_off', 'cancelled')
                AND balance_due > 0",
         )
         .bind(customer_id)
@@ -562,7 +560,7 @@ impl PgAccountsReceivableRepository {
                 MIN(i.created_at) AS oldest_invoice_date
              FROM invoices i
              LEFT JOIN customers c ON i.customer_id = c.id
-             WHERE i.status NOT IN ('paid', 'voided', 'written_off')
+             WHERE i.status NOT IN ('draft', 'paid', 'voided', 'written_off', 'cancelled')
                AND i.balance_due > 0",
         );
 
@@ -760,7 +758,7 @@ impl PgAccountsReceivableRepository {
                     amount_paid, balance_due, po_number, notes, terms, footer, sent_at, viewed_at,
                     paid_at, voided_at, created_at, updated_at
              FROM invoices
-             WHERE status NOT IN ('paid', 'voided', 'written_off')
+             WHERE status NOT IN ('draft', 'paid', 'voided', 'written_off', 'cancelled')
                AND balance_due > 0
                AND due_date < NOW()
                AND (last_dunning_date IS NULL OR last_dunning_date < NOW() - INTERVAL '7 days')
@@ -841,7 +839,10 @@ impl PgAccountsReceivableRepository {
         .await
         .map_err(map_db_error)?
         .ok_or(CommerceError::NotFound)?;
-        if matches!(invoice_status.as_str(), "voided" | "cancelled") {
+        if !matches!(
+            invoice_status.as_str(),
+            "sent" | "viewed" | "overdue" | "disputed" | "partially_paid"
+        ) {
             return Err(CommerceError::ValidationError(format!(
                 "Cannot write off invoice {} with status {invoice_status}",
                 input.invoice_id
@@ -852,18 +853,6 @@ impl PgAccountsReceivableRepository {
                 "Write-off amount ({}) exceeds invoice balance due ({balance_due})",
                 input.amount
             )));
-        }
-
-        let updated = sqlx::query(
-            "UPDATE invoices SET status = 'written_off', collection_status = 'written_off'
-             WHERE id = $1 AND status <> 'written_off'",
-        )
-        .bind(input.invoice_id)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-        if updated.rows_affected() == 0 {
-            return Err(CommerceError::Conflict("Invoice not found or already written off".into()));
         }
 
         sqlx::query(
@@ -886,6 +875,7 @@ impl PgAccountsReceivableRepository {
         .await
         .map_err(map_db_error)?;
 
+        Self::recalculate_invoice_tx(&mut tx, input.invoice_id).await?;
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(WriteOff {
@@ -973,6 +963,17 @@ impl PgAccountsReceivableRepository {
         // transaction; the reversed_at IS NULL guard makes a concurrent/duplicate
         // reversal a no-op conflict instead of a double restore.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let invoice_status: String =
+            sqlx::query_scalar("SELECT status FROM invoices WHERE id=$1 FOR UPDATE")
+                .bind(write_off.invoice_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if matches!(invoice_status.as_str(), "voided" | "cancelled") {
+            return Err(CommerceError::Conflict(
+                "Cannot reverse a write-off on a terminal invoice".into(),
+            ));
+        }
 
         let updated = sqlx::query(
             "UPDATE ar_write_offs SET reversed_at = $1 WHERE id = $2 AND reversed_at IS NULL",
@@ -1001,13 +1002,21 @@ impl PgAccountsReceivableRepository {
 
         sqlx::query(
             "UPDATE invoices SET status = 'overdue'
-             WHERE id = $1 AND due_date < NOW() AND status NOT IN ('paid', 'voided')",
+             WHERE id = $1 AND due_date < NOW() AND status NOT IN ('paid', 'voided', 'written_off', 'cancelled')",
         )
         .bind(write_off.invoice_id)
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
+        super::ledger_reversal::reverse_source(
+            &mut tx,
+            &super::general_ledger::PgGeneralLedgerRepository::new(self.pool.clone()),
+            "write_off",
+            id,
+            chrono::Utc::now().date_naive(),
+        )
+        .await?;
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(WriteOff { reversed_at: Some(now), ..write_off })
@@ -1032,6 +1041,7 @@ impl PgAccountsReceivableRepository {
             return Err(CommerceError::NotFound);
         }
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let credit_memo_number = generate_credit_memo_number();
@@ -1053,26 +1063,23 @@ impl PgAccountsReceivableRepository {
         .bind(to_date(now))
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        Ok(CreditMemo {
-            id,
-            credit_memo_number,
-            customer_id: input.customer_id,
-            original_invoice_id: input.original_invoice_id,
-            reason: input.reason,
-            amount: input.amount,
-            applied_amount: Decimal::ZERO,
-            unapplied_amount: input.amount,
-            status: CreditMemoStatus::Open,
-            notes: input.notes,
-            issue_date: now,
-            gl_journal_entry_id: None,
-            created_at: now,
-            updated_at: now,
-        })
+        if super::general_ledger::PgGeneralLedgerRepository::get_auto_posting_config_tx(&mut tx)
+            .await?
+            .is_some()
+        {
+            super::ledger_credit::post(
+                &mut tx,
+                &super::general_ledger::PgGeneralLedgerRepository::new(self.pool.clone()),
+                id,
+            )
+            .await?;
+        }
+        tx.commit().await.map_err(map_db_error)?;
+        self.get_credit_memo_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn get_credit_memo_async(&self, id: Uuid) -> Result<Option<CreditMemo>> {
@@ -1145,7 +1152,7 @@ impl PgAccountsReceivableRepository {
             builder.push(" AND issue_date <= ").push_bind(to_date(to_date_val));
         }
 
-        builder.push(" ORDER BY issue_date DESC");
+        builder.push(" ORDER BY issue_date DESC, created_at DESC, id DESC");
 
         builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
@@ -1302,6 +1309,14 @@ impl PgAccountsReceivableRepository {
             .await
             .map_err(map_db_error)?;
 
+        super::ledger_reversal::reverse_source(
+            &mut tx,
+            &super::general_ledger::PgGeneralLedgerRepository::new(self.pool.clone()),
+            "credit_memo",
+            id,
+            chrono::Utc::now().date_naive(),
+        )
+        .await?;
         tx.commit().await.map_err(map_db_error)?;
 
         Ok(CreditMemo { status: CreditMemoStatus::Voided, updated_at: Utc::now(), ..cm })
@@ -1320,124 +1335,10 @@ impl PgAccountsReceivableRepository {
         &self,
         input: ApplyPaymentToInvoices,
     ) -> Result<Vec<ArPaymentApplication>> {
-        if input.applications.is_empty() {
-            return Ok(Vec::new());
-        }
-
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let now = Utc::now();
-        let mut applications = Vec::new();
-        let mut expected_customer_id: Option<Uuid> = None;
-
-        // The payment itself bounds the total that can be applied: read its
-        // amount and what is already applied inside the transaction, so a
-        // payment can never be applied beyond its own value.
-        let payment_amount: Decimal =
-            sqlx::query_scalar("SELECT amount FROM payments WHERE id = $1")
-                .bind(input.payment_id)
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?
-                .ok_or_else(|| {
-                    CommerceError::ValidationError(format!(
-                        "Payment {} not found",
-                        input.payment_id
-                    ))
-                })?;
-        let existing_applied: Decimal = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(applied_amount), 0) FROM ar_payment_applications WHERE payment_id = $1",
-        )
-        .bind(input.payment_id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
-        let mut total_new = Decimal::ZERO;
-        for app in &input.applications {
-            if app.amount <= Decimal::ZERO {
-                return Err(CommerceError::ValidationError(
-                    "Payment application amount must be greater than zero".into(),
-                ));
-            }
-            total_new += app.amount;
-        }
-        if existing_applied + total_new > payment_amount {
-            return Err(CommerceError::ValidationError(format!(
-                "Payment applications ({total_new}) plus already applied ({existing_applied}) exceed payment amount ({payment_amount})"
-            )));
-        }
-
-        for app in input.applications {
-            let (invoice_customer_id, invoice_status): (Uuid, String) =
-                sqlx::query_as("SELECT customer_id, status FROM invoices WHERE id = $1")
-                    .bind(app.invoice_id)
-                    .fetch_one(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?;
-            if matches!(invoice_status.as_str(), "voided" | "cancelled" | "written_off") {
-                return Err(CommerceError::ValidationError(format!(
-                    "Cannot apply payment to invoice {} with status {invoice_status}",
-                    app.invoice_id
-                )));
-            }
-            if let Some(expected) = expected_customer_id {
-                if expected != invoice_customer_id {
-                    return Err(CommerceError::ValidationError(
-                        "All invoice applications for a payment must belong to the same customer"
-                            .into(),
-                    ));
-                }
-            } else {
-                expected_customer_id = Some(invoice_customer_id);
-            }
-
-            // Lock the invoice row so concurrent payments serialize: without
-            // FOR UPDATE, two READ COMMITTED transactions both read the same
-            // balance and over-apply (the sibling apply_credit_memo_async and
-            // AP create_payment_async already lock their rows this way).
-            let balance_due: Decimal =
-                sqlx::query_scalar("SELECT balance_due FROM invoices WHERE id = $1 FOR UPDATE")
-                    .bind(app.invoice_id)
-                    .fetch_one(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?;
-            if app.amount > balance_due {
-                return Err(CommerceError::ValidationError(
-                    "Payment application amount exceeds invoice balance due".into(),
-                ));
-            }
-
-            let app_id = Uuid::new_v4();
-
-            sqlx::query(
-                "INSERT INTO ar_payment_applications (id, payment_id, invoice_id, applied_amount,
-                    applied_date, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6)",
-            )
-            .bind(app_id)
-            .bind(input.payment_id)
-            .bind(app.invoice_id)
-            .bind(app.amount)
-            .bind(now)
-            .bind(now)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            Self::recalculate_invoice_tx(&mut tx, app.invoice_id).await?;
-
-            applications.push(ArPaymentApplication {
-                id: app_id,
-                payment_id: input.payment_id,
-                invoice_id: app.invoice_id,
-                applied_amount: app.amount,
-                applied_date: now,
-                created_at: now,
-            });
-        }
-
+        let result = super::ar_settlement::apply_payment(&mut tx, &input).await?;
         tx.commit().await.map_err(map_db_error)?;
-        Ok(applications)
+        Ok(result)
     }
 
     pub async fn get_payment_applications_async(
@@ -1457,28 +1358,8 @@ impl PgAccountsReceivableRepository {
     }
 
     pub async fn unapply_payment_async(&self, application_id: Uuid) -> Result<()> {
-        // Atomic: read the application, delete it, and recalculate the invoice
-        // in one transaction. Previously three autocommit statements — a
-        // recalculation failure after the DELETE committed left the application
-        // gone while the invoice still showed the old amount_paid/status.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-
-        // Missing application id -> RowNotFound -> NotFound.
-        let invoice_id: Uuid =
-            sqlx::query_scalar("SELECT invoice_id FROM ar_payment_applications WHERE id = $1")
-                .bind(application_id)
-                .fetch_one(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-
-        sqlx::query("DELETE FROM ar_payment_applications WHERE id = $1")
-            .bind(application_id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-        Self::recalculate_invoice_tx(&mut tx, invoice_id).await?;
-
+        super::ar_settlement::unapply_payment(&mut tx, application_id).await?;
         tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }
@@ -1520,194 +1401,14 @@ impl PgAccountsReceivableRepository {
         &self,
         request: GenerateStatementRequest,
     ) -> Result<CustomerStatement> {
-        let now = Utc::now();
-        let period_start = request.period_start.unwrap_or_else(|| now - chrono::Duration::days(30));
-        let period_end = request.period_end.unwrap_or(now);
-
-        let (customer_name, customer_email): (String, Option<String>) = sqlx::query_as(
-            "SELECT first_name || ' ' || last_name, email FROM customers WHERE id = $1",
-        )
-        .bind(request.customer_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        let aging = self
-            .get_customer_aging_async(request.customer_id)
-            .await?
-            .ok_or(CommerceError::NotFound)?;
-
-        // Gather statement-visible activity — invoices (debits), payment and
-        // credit-memo applications and non-reversed write-offs (credits) — as
-        // (date, type, ref, description, amount) rows for one window.
-        // Mirrors the SQLite backend.
-        async fn collect_activity(
-            pool: &sqlx::PgPool,
-            customer_id: Uuid,
-            from: DateTime<Utc>,
-            to: DateTime<Utc>,
-        ) -> Result<Vec<PgStatementActivityRow>> {
-            let mut rows: Vec<PgStatementActivityRow> = Vec::new();
-
-            let invoices: Vec<(DateTime<Utc>, String, Decimal)> = sqlx::query_as(
-                "SELECT created_at, invoice_number, total FROM invoices
-                 WHERE customer_id = $1 AND created_at >= $2 AND created_at <= $3",
-            )
-            .bind(customer_id)
-            .bind(from)
-            .bind(to)
-            .fetch_all(pool)
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
-            for (date, number, total) in invoices {
-                rows.push((
-                    date,
-                    StatementTransactionType::Invoice,
-                    number,
-                    "Invoice".into(),
-                    total,
-                ));
-            }
-
-            let payments: Vec<(DateTime<Utc>, Uuid, Decimal)> = sqlx::query_as(
-                "SELECT pa.applied_date, p.id, pa.applied_amount
-                 FROM ar_payment_applications pa
-                 JOIN payments p ON pa.payment_id = p.id
-                 JOIN invoices i ON pa.invoice_id = i.id
-                 WHERE i.customer_id = $1 AND pa.applied_date >= $2 AND pa.applied_date <= $3",
-            )
-            .bind(customer_id)
-            .bind(from)
-            .bind(to)
-            .fetch_all(pool)
-            .await
-            .map_err(map_db_error)?;
-            for (date, id, amount) in payments {
-                rows.push((
-                    date,
-                    StatementTransactionType::Payment,
-                    id.to_string()[..8].to_string(),
-                    "Payment".into(),
-                    amount,
-                ));
-            }
-
-            let credits: Vec<(DateTime<Utc>, String, Decimal)> = sqlx::query_as(
-                "SELECT ca.applied_date, cm.credit_memo_number, ca.applied_amount
-                 FROM ar_credit_memo_applications ca
-                 JOIN ar_credit_memos cm ON ca.credit_memo_id = cm.id
-                 JOIN invoices i ON ca.invoice_id = i.id
-                 WHERE i.customer_id = $1 AND ca.applied_date >= $2 AND ca.applied_date <= $3",
-            )
-            .bind(customer_id)
-            .bind(from)
-            .bind(to)
-            .fetch_all(pool)
-            .await
-            .map_err(map_db_error)?;
-            for (date, number, amount) in credits {
-                rows.push((
-                    date,
-                    StatementTransactionType::CreditMemo,
-                    number,
-                    "Credit Memo".into(),
-                    amount,
-                ));
-            }
-
-            let write_offs: Vec<(DateTime<Utc>, String, Decimal)> = sqlx::query_as(
-                "SELECT write_off_date, write_off_number, amount FROM ar_write_offs
-                 WHERE customer_id = $1 AND reversed_at IS NULL
-                   AND write_off_date >= $2 AND write_off_date <= $3",
-            )
-            .bind(customer_id)
-            .bind(from)
-            .bind(to)
-            .fetch_all(pool)
-            .await
-            .map_err(map_db_error)?;
-            for (date, number, amount) in write_offs {
-                rows.push((
-                    date,
-                    StatementTransactionType::WriteOff,
-                    number,
-                    "Write-off".into(),
-                    amount,
-                ));
-            }
-
-            rows.sort_by(|a, b| a.0.cmp(&b.0));
-            Ok(rows)
-        }
-
-        // Opening balance: everything statement-visible before the period.
-        let epoch = DateTime::<Utc>::from_timestamp(0, 0).unwrap_or(period_start);
-        let opening_balance =
-            collect_activity(&self.pool, request.customer_id, epoch, period_start)
-                .await?
-                .into_iter()
-                // Pre-period rows exactly at period_start belong to the period.
-                .filter(|(date, ..)| *date < period_start)
-                .map(|(_, kind, _, _, amount)| match kind {
-                    StatementTransactionType::Invoice => amount,
-                    _ => -amount,
-                })
-                .sum::<Decimal>();
-
-        let activity =
-            collect_activity(&self.pool, request.customer_id, period_start, period_end).await?;
-
-        let mut line_items: Vec<StatementLineItem> = Vec::new();
-        let mut running_balance = opening_balance;
-        let mut total_invoices = Decimal::ZERO;
-        let mut total_payments = Decimal::ZERO;
-        let mut total_credits = Decimal::ZERO;
-        for (date, kind, reference_number, description, amount) in activity {
-            let (debit, credit) = match kind {
-                StatementTransactionType::Invoice => {
-                    running_balance += amount;
-                    total_invoices += amount;
-                    (Some(amount), None)
-                }
-                other => {
-                    running_balance -= amount;
-                    match other {
-                        StatementTransactionType::Payment => total_payments += amount,
-                        StatementTransactionType::CreditMemo => total_credits += amount,
-                        _ => {}
-                    }
-                    (None, Some(amount))
-                }
-            };
-            line_items.push(StatementLineItem {
-                date,
-                transaction_type: kind,
-                reference_number,
-                description,
-                debit,
-                credit,
-                balance: running_balance,
-            });
-        }
-
-        Ok(CustomerStatement {
-            customer_id: request.customer_id,
-            customer_name,
-            customer_email,
-            billing_address: None,
-            statement_date: now,
-            period_start,
-            period_end,
-            opening_balance,
-            total_invoices,
-            total_payments,
-            total_credits,
-            // The live aging total; matches the running balance when every
-            // balance-affecting event is statement-visible for the window.
-            closing_balance: aging.total_outstanding,
-            aging,
-            line_items,
-        })
+        let statement = super::ar_statement::generate(&mut tx, request).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(statement)
     }
 
     pub async fn get_total_outstanding_async(&self) -> Result<Decimal> {
@@ -1718,7 +1419,7 @@ impl PgAccountsReceivableRepository {
     pub async fn get_dso_async(&self, days: i32) -> Result<Decimal> {
         let ar_balance: Decimal = sqlx::query_scalar(
             "SELECT COALESCE(SUM(balance_due), 0) FROM invoices
-             WHERE status NOT IN ('paid', 'voided', 'written_off')",
+             WHERE status NOT IN ('draft', 'paid', 'voided', 'written_off', 'cancelled')",
         )
         .fetch_one(&self.pool)
         .await
@@ -1726,7 +1427,7 @@ impl PgAccountsReceivableRepository {
 
         let total_sales: Decimal = sqlx::query_scalar(
             "SELECT COALESCE(SUM(total), 0) FROM invoices
-             WHERE created_at >= NOW() - ($1::text || ' days')::interval",
+             WHERE status NOT IN ('draft', 'voided', 'cancelled') AND COALESCE(sent_at, invoice_date) >= NOW() - ($1::text || ' days')::interval",
         )
         .bind(days)
         .fetch_one(&self.pool)
@@ -1755,7 +1456,7 @@ impl PgAccountsReceivableRepository {
              WHERE i.customer_id = $1 AND i.status = 'paid'",
         )
         .bind(customer_id)
-        .fetch_optional(&self.pool)
+        .fetch_one(&self.pool)
         .await
         .map_err(map_db_error)?;
 

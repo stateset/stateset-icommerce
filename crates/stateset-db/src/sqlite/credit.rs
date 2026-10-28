@@ -814,14 +814,27 @@ impl CreditRepository for SqliteCreditRepository {
         order_amount: Decimal,
     ) -> Result<CreditCheckResult> {
         let now = Utc::now();
-        let account = self.get_credit_account_by_customer(customer_id)?;
+        let mut account = self.get_credit_account_by_customer(customer_id)?;
 
+        let available = with_immediate_transaction(&self.pool, |tx| {
+            super::credit_control::available(tx, customer_id.into())
+        })?;
+        if let (Some(account), Some((_, _, available))) = (account.as_mut(), available) {
+            account.available_credit = available;
+        }
+        let holds = self.get_active_holds(customer_id)?;
         match account {
             Some(acc) => {
                 let approved = acc.status == CreditAccountStatus::Active
+                    && holds.is_empty()
+                    && order_amount >= Decimal::ZERO
                     && acc.available_credit >= order_amount;
                 let reason = if approved {
                     None
+                } else if !holds.is_empty() {
+                    Some("Active credit hold".into())
+                } else if order_amount < Decimal::ZERO {
+                    Some("Amount cannot be negative".into())
                 } else if acc.status == CreditAccountStatus::Active {
                     Some(format!(
                         "Insufficient credit: available ${}, required ${}",
@@ -886,6 +899,7 @@ impl CreditRepository for SqliteCreditRepository {
         // `rust_decimal::Decimal` and the new hold is written back as an exact
         // bound parameter rather than coercing to a float in SQL.
         with_immediate_transaction(&self.pool, |tx| {
+            super::credit_control::require_active(tx, customer_id.into(), Some(order_id.into()))?;
             let (limit_str, balance_str, hold_str): (String, String, String) = tx.query_row(
                 "SELECT credit_limit, current_balance, hold_amount FROM credit_accounts WHERE customer_id = ?",
                 [customer_id.to_string()],
@@ -921,7 +935,8 @@ impl CreditRepository for SqliteCreditRepository {
                 [&new_hold.to_string(), &customer_id.to_string()],
             )?;
 
-            Self::recalculate_available_credit_with_conn(tx, customer_id)
+            Self::recalculate_available_credit_with_conn(tx, customer_id)?;
+            super::credit_control::check_customer(tx, customer_id.into(), Some(order_id.into()))
         })?;
 
         self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)
@@ -986,6 +1001,7 @@ impl CreditRepository for SqliteCreditRepository {
         let ledger_id = Uuid::new_v4();
 
         with_immediate_transaction(&self.pool, |tx| {
+            super::credit_control::require_active(tx, customer_id.into(), Some(order_id.into()))?;
             let (current_balance, limit_str): (String, String) = tx.query_row(
                 "SELECT current_balance, credit_limit FROM credit_accounts WHERE customer_id = ?",
                 [customer_id.to_string()],
@@ -1029,7 +1045,8 @@ impl CreditRepository for SqliteCreditRepository {
                 &now,
             )?;
 
-            Self::recalculate_available_credit_with_conn(tx, customer_id)
+            Self::recalculate_available_credit_with_conn(tx, customer_id)?;
+            super::credit_control::check_customer(tx, customer_id.into(), Some(order_id.into()))
         })?;
 
         self.get_credit_account_by_customer(customer_id)?.ok_or(CommerceError::NotFound)

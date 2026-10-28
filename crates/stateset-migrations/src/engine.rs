@@ -501,6 +501,40 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ("099_canadian_sales_tax", include_str!("../migrations/099_canadian_sales_tax.sql")),
         ("100_shipment_version", include_str!("../migrations/100_shipment_version.sql")),
         ("101_audit_log", include_str!("../migrations/101_audit_log.sql")),
+        ("102_transfer_stock", include_str!("../migrations/102_transfer_stock.sql")),
+        ("103_work_order_stock", include_str!("../migrations/103_work_order_stock.sql")),
+        ("104_stock_custody", include_str!("../migrations/104_stock_custody.sql")),
+        ("105_pick_reservations", include_str!("../migrations/105_pick_reservations.sql")),
+        ("106_lot_stock_holds", include_str!("../migrations/106_lot_stock_holds.sql")),
+        ("107_vendor_return_stock", include_str!("../migrations/107_vendor_return_stock.sql")),
+        ("108_receipt_serials", include_str!("../migrations/108_receipt_serials.sql")),
+        (
+            "109_backorder_receipt_stock",
+            include_str!("../migrations/109_backorder_receipt_stock.sql"),
+        ),
+        ("110_snapshot_products", include_str!("../migrations/110_snapshot_products.sql")),
+        (
+            "111_production_batch_members",
+            include_str!("../migrations/111_production_batch_members.sql"),
+        ),
+        (
+            "112_invoice_posting_accounts",
+            include_str!("../migrations/112_invoice_posting_accounts.sql"),
+        ),
+        (
+            "113_inventory_posting_accounts",
+            include_str!("../migrations/113_inventory_posting_accounts.sql"),
+        ),
+        ("114_ledger_fx", include_str!("../migrations/114_ledger_fx.sql")),
+        ("115_asset_accounting", include_str!("../migrations/115_asset_accounting.sql")),
+        ("116_stock_accounting", include_str!("../migrations/116_stock_accounting.sql")),
+        ("117_cost_layer_history", include_str!("../migrations/117_cost_layer_history.sql")),
+        ("118_bill_dispute_state", include_str!("../migrations/118_bill_dispute_state.sql")),
+        ("119_payment_run_currency", include_str!("../migrations/119_payment_run_currency.sql")),
+        ("120_statement_history", include_str!("../migrations/120_statement_history.sql")),
+        ("121_prepayment_refunds", include_str!("../migrations/121_prepayment_refunds.sql")),
+        ("122_bill_approval_match", include_str!("../migrations/122_bill_approval_match.sql")),
+        ("123_finance_actors", include_str!("../migrations/123_finance_actors.sql")),
     ]
 }
 

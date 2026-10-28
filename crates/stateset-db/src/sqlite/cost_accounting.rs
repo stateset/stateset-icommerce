@@ -467,6 +467,28 @@ impl SqliteCostAccountingRepository {
 }
 
 impl CostAccountingRepository for SqliteCostAccountingRepository {
+    fn transaction_cogs(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<stateset_core::TransactionCogsReport> {
+        let mut conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        super::cost_reports::transaction_cogs(&tx, from, to).map_err(map_db_error)
+    }
+
+    fn close_books_check(&self) -> Result<stateset_core::CloseBooksReport> {
+        let mut conn = self
+            .pool
+            .get()
+            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        super::cost_reports::close_books_check(&tx).map_err(map_db_error)
+    }
+
     fn get_item_cost(&self, sku: &str) -> Result<Option<ItemCost>> {
         let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         let result = conn.query_row(
@@ -493,6 +515,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         // pooled connections let two concurrent callers both observe "absent"
         // and race on the INSERT.
         with_immediate_transaction(&self.pool, |tx| {
+            super::stock_cost::guard_master(tx, &input, false)?;
             Self::set_item_cost_with_conn(tx, input.clone(), now)
         })?;
 
@@ -693,14 +716,20 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         // CAST(... AS REAL) coerces to IEEE-754 floats, so the filter is
         // applied below on the exact parsed `Decimal` values instead (and the
         // LIMIT after it, so filtering never eats into the page).
-        let has_remaining = filter.has_remaining == Some(true);
+        let has_remaining = filter.has_remaining;
 
-        sql.push_str(" ORDER BY layer_date ASC");
+        if let Some(from) = filter.from_date {
+            sql.push_str(" AND layer_date >= ?");
+            params.push(Box::new(from.to_rfc3339()));
+        }
+        if let Some(to) = filter.to_date {
+            sql.push_str(" AND layer_date <= ?");
+            params.push(Box::new(to.to_rfc3339()));
+        }
+        sql.push_str(" ORDER BY layer_date ASC, id ASC");
 
-        if !has_remaining {
-            if let Some(limit) = filter.limit {
-                sql.push_str(&format!(" LIMIT {limit}"));
-            }
+        if has_remaining.is_none() {
+            super::append_limit_offset(&mut sql, filter.limit, filter.offset);
         }
 
         let param_refs: Vec<&dyn rusqlite::ToSql> =
@@ -714,11 +743,13 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         for row in rows {
             layers.push(row.map_err(map_db_error)?);
         }
-        if has_remaining {
-            layers.retain(|layer| layer.remaining_quantity > Decimal::ZERO);
-            if let Some(limit) = filter.limit {
-                layers.truncate(limit as usize);
-            }
+        if let Some(has_remaining) = has_remaining {
+            layers.retain(|layer| (layer.remaining_quantity > Decimal::ZERO) == has_remaining);
+            layers = layers
+                .into_iter()
+                .skip(filter.offset.unwrap_or(0) as usize)
+                .take(super::effective_limit(filter.limit) as usize)
+                .collect();
         }
         Ok(layers)
     }
@@ -761,6 +792,18 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
                 break;
             }
 
+            let managed = tx
+                .query_row(
+                    "SELECT base_currency FROM cost_layers WHERE id = ?1",
+                    rusqlite::params![(layer.id).to_string()],
+                    |r| r.get::<_, Option<String>>(0),
+                )
+                .map_err(map_db_error)?;
+            if managed.is_some() {
+                return Err(CommerceError::ValidationError(
+                    "Use a physical stock operation to consume managed cost layers".into(),
+                ));
+            }
             let consume_qty = remaining.min(layer.remaining_quantity);
             let new_remaining = layer.remaining_quantity - consume_qty;
 
@@ -837,6 +880,18 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
                 break;
             }
 
+            let managed = tx
+                .query_row(
+                    "SELECT base_currency FROM cost_layers WHERE id = ?1",
+                    rusqlite::params![(layer.id).to_string()],
+                    |r| r.get::<_, Option<String>>(0),
+                )
+                .map_err(map_db_error)?;
+            if managed.is_some() {
+                return Err(CommerceError::ValidationError(
+                    "Use a physical stock operation to consume managed cost layers".into(),
+                ));
+            }
             let consume_qty = remaining.min(layer.remaining_quantity);
             let new_remaining = layer.remaining_quantity - consume_qty;
 
@@ -936,11 +991,17 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             params.push(Box::new(tx_type.to_string()));
         }
 
-        sql.push_str(" ORDER BY created_at DESC");
-
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
+        if let Some(from) = filter.from_date {
+            sql.push_str(" AND created_at >= ?");
+            params.push(Box::new(from.to_rfc3339()));
         }
+        if let Some(to) = filter.to_date {
+            sql.push_str(" AND created_at <= ?");
+            params.push(Box::new(to.to_rfc3339()));
+        }
+        sql.push_str(" ORDER BY created_at DESC, id DESC");
+
+        super::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let param_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
@@ -1030,11 +1091,17 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             params.push(Box::new(var_type.to_string()));
         }
 
-        sql.push_str(" ORDER BY variance_date DESC");
-
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
+        if let Some(from) = filter.from_date {
+            sql.push_str(" AND variance_date >= ?");
+            params.push(Box::new(from.to_rfc3339()));
         }
+        if let Some(to) = filter.to_date {
+            sql.push_str(" AND variance_date <= ?");
+            params.push(Box::new(to.to_rfc3339()));
+        }
+        sql.push_str(" ORDER BY variance_date DESC, id DESC");
+
+        super::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let param_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
@@ -1140,11 +1207,21 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             params.push(Box::new(status.to_string()));
         }
 
-        sql.push_str(" ORDER BY created_at DESC");
-
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {limit}"));
+        if let Some(kind) = filter.adjustment_type {
+            sql.push_str(" AND adjustment_type = ?");
+            params.push(Box::new(kind.to_string()));
         }
+        if let Some(from) = filter.from_date {
+            sql.push_str(" AND created_at >= ?");
+            params.push(Box::new(from.to_rfc3339()));
+        }
+        if let Some(to) = filter.to_date {
+            sql.push_str(" AND created_at <= ?");
+            params.push(Box::new(to.to_rfc3339()));
+        }
+        sql.push_str(" ORDER BY created_at DESC, id DESC");
+
+        super::append_limit_offset(&mut sql, filter.limit, filter.offset);
 
         let param_refs: Vec<&dyn rusqlite::ToSql> =
             params.iter().map(std::convert::AsRef::as_ref).collect();
@@ -1213,6 +1290,16 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             )?;
             let new_cost = parse_decimal_row(&new_cost, "cost_adjustment", "new_cost")?;
 
+            super::stock_cost::guard_master(
+                tx,
+                &SetItemCost {
+                    sku: sku.clone(),
+                    standard_cost: Some(new_cost),
+                    ..Default::default()
+                },
+                true,
+            )?;
+            super::stock_cost::revalue(tx, id, &sku, new_cost, &now.to_rfc3339())?;
             Self::set_item_cost_with_conn(
                 tx,
                 SetItemCost { sku, standard_cost: Some(new_cost), ..Default::default() },
@@ -1243,53 +1330,141 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn calculate_rollup(&self, sku: &str, bom_id: Option<Uuid>) -> Result<CostRollup> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        Self::validate_sku(sku)?;
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_db_error)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
-
-        // Get previous cost
-        let previous_cost = self.get_rollup(sku)?.map(|r| r.total_cost).unwrap_or_default();
-
-        // Calculate from BOM components if bom_id provided
-        let (material_cost, labor_cost, overhead_cost) = if let Some(bom_id) = bom_id {
-            // Sum component costs
-            let mut stmt = conn
-                .prepare(
-                    "SELECT bc.quantity, ic.standard_cost
-                     FROM bom_components bc
-                     LEFT JOIN item_costs ic ON bc.component_sku = ic.sku
-                     WHERE bc.bom_id = ?",
+        use rusqlite::OptionalExtension;
+        let read_cost = |sku: &str| -> Result<Option<(Decimal, Decimal, Decimal, Decimal)>> {
+            tx.query_row("SELECT standard_cost, material_cost, labor_cost, overhead_cost FROM item_costs WHERE sku = ?", [sku], |r| {
+                Ok((parse_decimal_row(&r.get::<_, String>(0)?, "item_costs", "standard_cost")?,
+                    parse_decimal_row(&r.get::<_, String>(1)?, "item_costs", "material_cost")?,
+                    parse_decimal_row(&r.get::<_, String>(2)?, "item_costs", "labor_cost")?,
+                    parse_decimal_row(&r.get::<_, String>(3)?, "item_costs", "overhead_cost")?))
+            }).optional().map_err(map_db_error)
+        };
+        let root_cost = read_cost(sku)?;
+        let previous_cost = root_cost.map(|c| c.0).unwrap_or_default();
+        let mut material_cost = Decimal::ZERO;
+        let mut labor_cost = Decimal::ZERO;
+        let mut overhead_cost = Decimal::ZERO;
+        let mut pending = Vec::new();
+        if let Some(bom) = bom_id {
+            pending.push((bom, sku.to_owned(), Decimal::ONE, Vec::<Uuid>::new()));
+        } else {
+            let cost = root_cost.ok_or_else(|| {
+                CommerceError::ValidationError(format!("Missing item cost for {sku}"))
+            })?;
+            material_cost = cost.1;
+            labor_cost = cost.2;
+            overhead_cost = cost.3;
+        }
+        while let Some((current, assembly_sku, factor, mut ancestors)) = pending.pop() {
+            if ancestors.contains(&current) || ancestors.len() >= 64 {
+                return Err(CommerceError::ValidationError(
+                    "Cyclic BOM or BOM depth exceeds 64".into(),
+                ));
+            }
+            ancestors.push(current);
+            let exists: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM manufacturing_boms WHERE id = ?)",
+                    [current.to_string()],
+                    |r| r.get(0),
                 )
                 .map_err(map_db_error)?;
-            let mut rows = stmt.query([bom_id.to_string()]).map_err(map_db_error)?;
-            let mut material_cost = Decimal::ZERO;
-
-            while let Some(row) = rows.next().map_err(map_db_error)? {
-                let qty_str: String = row.get(0).map_err(map_db_error)?;
-                let quantity = parse_decimal_strict(&qty_str, "bom_components", "quantity")?;
-                let cost_str: Option<String> = row.get(1).map_err(map_db_error)?;
-                let standard_cost = match cost_str {
-                    Some(value) if !value.is_empty() => {
-                        parse_decimal_strict(&value, "item_costs", "standard_cost")?
-                    }
-                    _ => Decimal::ZERO,
-                };
-                material_cost += quantity * standard_cost;
+            if !exists {
+                return Err(CommerceError::NotFound);
             }
-            (material_cost, Decimal::ZERO, Decimal::ZERO)
-        } else {
-            // Get from item cost
-            let item = self.get_item_cost(sku)?;
-            match item {
-                Some(c) => (c.material_cost, c.labor_cost, c.overhead_cost),
-                None => (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO),
-            }
-        };
+            let local_cost = read_cost(&assembly_sku)?;
 
-        let total_cost = material_cost + labor_cost + overhead_cost;
+            if let Some((_, _, labor, overhead)) = local_cost {
+                if Some(current) == bom_id {
+                    crate::bom_cost::add_cost(&mut labor_cost, factor, labor)?;
+                    crate::bom_cost::add_cost(&mut overhead_cost, factor, overhead)?;
+                } else {
+                    // Subassembly conversion costs are part of the component's
+                    // material cost to its parent. Preserve the parent's own
+                    // labor/overhead so repeated rollups do not compound them.
+                    crate::bom_cost::add_cost(&mut material_cost, factor, labor)?;
+                    crate::bom_cost::add_cost(&mut material_cost, factor, overhead)?;
+                }
+            }
+            let components = {
+                let mut stmt = tx
+                    .prepare(
+                        "SELECT bc.id, bc.quantity, bc.component_sku, b.id,
+       CASE ic.cost_method WHEN 'standard' THEN ic.standard_cost
+            WHEN 'specific' THEN ic.last_cost ELSE ic.average_cost END
+FROM manufacturing_bom_components bc
+LEFT JOIN manufacturing_boms b ON b.product_id = COALESCE(bc.component_product_id,
+    (SELECT product_id FROM product_variants WHERE sku = bc.component_sku)) AND b.status = 'active'
+LEFT JOIN item_costs ic ON ic.sku = bc.component_sku
+WHERE bc.bom_id = ?",
+                    )
+                    .map_err(map_db_error)?;
+                stmt.query_map([current.to_string()], |r| {
+                    Ok((
+                        parse_uuid_row(&r.get::<_, String>(0)?, "bom_components", "id")?,
+                        parse_decimal_row(&r.get::<_, String>(1)?, "bom_components", "quantity")?,
+                        r.get::<_, Option<String>>(2)?,
+                        parse_uuid_opt_row(r.get::<_, Option<String>>(3)?, "boms", "id")?,
+                        r.get::<_, Option<String>>(4)?
+                            .map(|v| parse_decimal_row(&v, "item_costs", "cost"))
+                            .transpose()?,
+                    ))
+                })
+                .map_err(map_db_error)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(map_db_error)?
+            };
+
+            if components.is_empty() {
+                return Err(CommerceError::ValidationError(format!(
+                    "BOM {current} has no components"
+                )));
+            }
+            let mut seen = std::collections::HashSet::new();
+            for (component_id, quantity, component_sku, child, unit_cost) in components {
+                if !seen.insert(component_id) {
+                    return Err(CommerceError::ValidationError(
+                        "Component has multiple active BOM revisions".into(),
+                    ));
+                }
+                if quantity <= Decimal::ZERO {
+                    return Err(CommerceError::ValidationError(
+                        "BOM component quantity must be positive".into(),
+                    ));
+                }
+                let quantity =
+                    factor.checked_mul(quantity).ok_or_else(crate::bom_cost::overflow)?;
+                if let Some(child) = child {
+                    pending.push((
+                        child,
+                        component_sku.unwrap_or_default(),
+                        quantity,
+                        ancestors.clone(),
+                    ));
+                } else {
+                    let unit_cost = unit_cost.ok_or_else(|| {
+                        CommerceError::ValidationError(format!(
+                            "Missing component cost for {}",
+                            component_sku.as_deref().unwrap_or("component without SKU")
+                        ))
+                    })?;
+                    crate::bom_cost::add_cost(&mut material_cost, quantity, unit_cost)?;
+                }
+            }
+        }
+        let total_cost = material_cost
+            .checked_add(labor_cost)
+            .and_then(|c| c.checked_add(overhead_cost))
+            .ok_or_else(crate::bom_cost::overflow)?;
         let cost_change = total_cost - previous_cost;
-
-        conn.execute(
+        tx.execute(
             "INSERT INTO cost_rollups (id, sku, bom_id, rollup_date, material_cost, labor_cost,
                 overhead_cost, total_cost, previous_cost, cost_change, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -1308,6 +1483,27 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
             ],
         )
         .map_err(map_db_error)?;
+
+        super::stock_cost::guard_master(
+            &tx,
+            &SetItemCost { sku: sku.into(), standard_cost: Some(total_cost), ..Default::default() },
+            false,
+        )
+        .map_err(map_db_error)?;
+        Self::set_item_cost_with_conn(
+            &tx,
+            SetItemCost {
+                sku: sku.to_owned(),
+                standard_cost: Some(total_cost),
+                material_cost: Some(material_cost),
+                labor_cost: Some(labor_cost),
+                overhead_cost: Some(overhead_cost),
+                ..Default::default()
+            },
+            now,
+        )
+        .map_err(map_db_error)?;
+        tx.commit().map_err(map_db_error)?;
 
         Ok(CostRollup {
             id,
@@ -1329,7 +1525,7 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
         let result = conn.query_row(
             "SELECT id, sku, bom_id, rollup_date, material_cost, labor_cost, overhead_cost,
                     total_cost, previous_cost, cost_change, created_at
-             FROM cost_rollups WHERE sku = ? ORDER BY rollup_date DESC LIMIT 1",
+             FROM cost_rollups WHERE sku = ? ORDER BY rollup_date DESC, created_at DESC, id DESC LIMIT 1",
             [sku],
             |row| self.row_to_cost_rollup(row),
         );
@@ -1342,156 +1538,27 @@ impl CostAccountingRepository for SqliteCostAccountingRepository {
     }
 
     fn get_inventory_valuation(&self, cost_method: CostMethod) -> Result<InventoryValuation> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        let now = Utc::now();
-
-        // Sum on-hand from inventory_balances (per-location) up to per-sku via
-        // inventory_items.id. Quantities are TEXT decimals, so use the exact
-        // `decimal_sum` aggregate (see money_agg) instead of SUM(CAST(.. AS
-        // REAL)), which accumulates IEEE-754 float error in the costing path.
-        let mut stmt = conn
-            .prepare(
-                "SELECT decimal_sum(ib.quantity_on_hand) AS qty,
-                        ic.standard_cost, ic.average_cost, ic.last_cost
-                 FROM inventory_items ii
-                 LEFT JOIN inventory_balances ib ON ib.item_id = ii.id
-                 LEFT JOIN item_costs ic ON ii.sku = ic.sku
-                 GROUP BY ii.id, ic.standard_cost, ic.average_cost, ic.last_cost",
-            )
-            .map_err(map_db_error)?;
-        let mut rows = stmt.query([]).map_err(map_db_error)?;
-
-        let mut total_quantity = Decimal::ZERO;
-        let mut total_value = Decimal::ZERO;
-
-        while let Some(row) = rows.next().map_err(map_db_error)? {
-            let qty_text: String = row.get(0).map_err(map_db_error)?;
-            let quantity =
-                parse_decimal_strict(&qty_text, "inventory_balances", "quantity_on_hand")?;
-
-            let standard_raw: Option<String> = row.get(1).map_err(map_db_error)?;
-            let average_raw: Option<String> = row.get(2).map_err(map_db_error)?;
-            let last_raw: Option<String> = row.get(3).map_err(map_db_error)?;
-
-            let standard_cost = match standard_raw {
-                Some(value) if !value.is_empty() => {
-                    parse_decimal_strict(&value, "item_costs", "standard_cost")?
-                }
-                _ => Decimal::ZERO,
-            };
-            let average_cost = match average_raw {
-                Some(value) if !value.is_empty() => {
-                    parse_decimal_strict(&value, "item_costs", "average_cost")?
-                }
-                _ => Decimal::ZERO,
-            };
-            let last_cost = match last_raw {
-                Some(value) if !value.is_empty() => {
-                    parse_decimal_strict(&value, "item_costs", "last_cost")?
-                }
-                _ => Decimal::ZERO,
-            };
-
-            let unit_cost = match cost_method {
-                CostMethod::Standard => standard_cost,
-                CostMethod::Average => average_cost,
-                CostMethod::Fifo | CostMethod::Lifo => average_cost,
-                CostMethod::Specific => last_cost,
-                _ => average_cost,
-            };
-
-            total_quantity += quantity;
-            total_value += quantity * unit_cost;
-        }
-
-        let average_unit_cost = if total_quantity > Decimal::ZERO {
-            total_value / total_quantity
-        } else {
-            Decimal::ZERO
-        };
-
-        Ok(InventoryValuation {
-            total_quantity,
-            total_value,
-            average_unit_cost,
-            valuation_method: cost_method,
-            as_of_date: now,
-        })
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let rows =
+            super::stock_valuation::summaries(&tx, None, cost_method).map_err(map_db_error)?;
+        crate::stock_valuation::report(rows, cost_method)
     }
 
     fn get_sku_cost_summary(&self, sku: &str) -> Result<Option<SkuCostSummary>> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-        // Quantities are TEXT decimals; `decimal_sum` (see money_agg) keeps the
-        // aggregation exact instead of round-tripping through f64.
-        let result = conn.query_row(
-            "SELECT
-                ii.sku,
-                decimal_sum(ib.quantity_on_hand) AS qty,
-                ic.standard_cost,
-                ic.average_cost
-             FROM inventory_items ii
-             LEFT JOIN inventory_balances ib ON ib.item_id = ii.id
-             LEFT JOIN item_costs ic ON ii.sku = ic.sku
-             WHERE ii.sku = ?
-             GROUP BY ii.id, ic.standard_cost, ic.average_cost",
-            [sku],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                ))
-            },
-        );
-
-        let (sku_value, qty_text, standard_raw, average_raw) = match result {
-            Ok(row) => row,
-            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
-            Err(e) => return Err(map_db_error(e)),
-        };
-
-        let quantity_on_hand =
-            parse_decimal_strict(&qty_text, "inventory_balances", "quantity_on_hand")?;
-        let standard_cost = match standard_raw {
-            Some(value) if !value.is_empty() => {
-                parse_decimal_strict(&value, "sku_cost_summary", "standard_cost")?
-            }
-            _ => Decimal::ZERO,
-        };
-        let average_cost = match average_raw {
-            Some(value) if !value.is_empty() => {
-                parse_decimal_strict(&value, "sku_cost_summary", "average_cost")?
-            }
-            _ => Decimal::ZERO,
-        };
-        let total_value = quantity_on_hand * average_cost;
-
-        let sku_param = sku.to_string();
-        let sku_params: [&dyn rusqlite::ToSql; 1] = [&sku_param];
-        let variance_ytd = sum_decimal_query(
-            &conn,
-            "SELECT total_variance FROM cost_variances
-             WHERE sku = ? AND strftime('%Y', variance_date) = strftime('%Y', 'now')",
-            &sku_params,
-            "cost_variances",
-            "total_variance",
-        )?;
-
-        Ok(Some(SkuCostSummary {
-            sku: sku_value,
-            quantity_on_hand,
-            standard_cost,
-            average_cost,
-            total_value,
-            variance_ytd,
-        }))
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let rows = super::stock_valuation::summaries(&tx, Some(sku), CostMethod::Average)
+            .map_err(map_db_error)?;
+        Ok(rows.into_iter().next())
     }
 
     fn get_total_inventory_value(&self) -> Result<Decimal> {
-        let valuation = self.get_inventory_valuation(CostMethod::Average)?;
-        Ok(valuation.total_value)
+        let mut conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let rows = super::stock_valuation::summaries(&tx, None, CostMethod::Average)
+            .map_err(map_db_error)?;
+        Ok(crate::stock_valuation::report(rows, CostMethod::Average)?.total_value)
     }
 }
 

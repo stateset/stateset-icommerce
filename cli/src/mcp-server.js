@@ -225,6 +225,7 @@ export function createStatesetMcpServer({
   autonomousEngine = null,
   telemetry = null,
   permissionGate = null,
+  actorId = null,
   hookRunner = null,
   policyEngine = null,
   policyStorePath = null,
@@ -237,6 +238,12 @@ export function createStatesetMcpServer({
   toolProfile = 'all',
   toolDomains = [],
 }) {
+  if (
+    actorId !== null &&
+    (typeof actorId !== 'string' || !/^[A-Za-z0-9_.:@+-]{1,128}$/.test(actorId))
+  ) {
+    throw new Error('actorId must be an operator-configured identity of 1–128 characters');
+  }
   const strictKernelBoundary = Boolean(kernel && kernel.strict !== false);
   const isToolInProfile = resolveMcpToolFilter({ profile: toolProfile, domains: toolDomains });
   const profileToolDefs = ALL_TOOL_DEFS.filter((tool) => isToolInProfile(tool.name));
@@ -593,6 +600,7 @@ export function createStatesetMcpServer({
 
   const toolContext = {
     commerce: commerceWithA2A,
+    actorId,
     a2aStore,
     dbPath,
     getAuditStore: getScopedAuditStore,

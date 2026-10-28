@@ -38,6 +38,7 @@ OPTIONS:
   --domains <a,b,...>        Add specific tool domains to the selected profile
   --strict-protocol          Serve ONLY 2026-07-28; reject 2025-era clients
   --kernel-policy <path>     Trusted kernel policy JSON (env STATESET_KERNEL_POLICY)
+  --actor <id>            Trusted operator/service identity for ERP audit and approvals
   --kernel-principal <path>  Trusted principal JSON (env STATESET_KERNEL_PRINCIPAL)
   --kernel-store-id <id>     Logical store scope (env STATESET_KERNEL_STORE_ID)
   --kernel-allow-legacy-writes
@@ -55,6 +56,7 @@ async function main() {
   const { values } = parseArgs({
     options: {
       db: { type: 'string' },
+      actor: { type: 'string' },
       apply: { type: 'boolean', default: false },
       'structured-tool-results': { type: 'boolean', default: false },
       profile: { type: 'string', default: DEFAULT_MCP_TOOL_PROFILE },
@@ -106,6 +108,7 @@ async function main() {
     () =>
       createStatesetV2McpServer({
         createServer: createStatesetMcpServer,
+        actorId: values.actor || process.env.STATESET_ERP_ACTOR || null,
         commerce,
         dbPath,
         allowApply: values.apply,

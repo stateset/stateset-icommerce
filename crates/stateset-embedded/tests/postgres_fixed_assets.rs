@@ -44,6 +44,8 @@ fn new_asset_input(name: &str) -> CreateFixedAsset {
         location_id: None,
         asset_account_id: None,
         accumulated_depreciation_account_id: None,
+        acquisition_offset_account_id: None,
+        disposal_gain_loss_account_id: None,
         depreciation_expense_account_id: None,
         currency: None,
     }
@@ -199,6 +201,10 @@ async fn postgres_fixed_asset_depreciation_auto_posts_journal_entry() {
         unearned_revenue_account_id: None,
         sales_revenue_account_id: acct("4010").await,
         shipping_revenue_account_id: None,
+        sales_tax_payable_account_id: None,
+        goods_received_not_invoiced_account_id: None,
+        inventory_adjustment_account_id: None,
+        work_in_progress_account_id: None,
         cogs_account_id: acct("5010").await,
         bad_debt_expense_account_id: None,
         fx_gain_loss_account_id: None,
@@ -227,19 +233,19 @@ async fn postgres_fixed_asset_depreciation_auto_posts_journal_entry() {
         })
         .await
         .expect("list journal entries");
-    assert_eq!(entries.len(), 1, "exactly one depreciation entry for this posting");
+    assert_eq!(entries.len(), 2, "one entry per depreciation month");
     let entry = &entries[0];
-    assert_eq!(entry.total_debits, dec!(200));
-    assert_eq!(entry.total_credits, dec!(200));
+    assert_eq!(entry.total_debits, dec!(100));
+    assert_eq!(entry.total_credits, dec!(100));
 
     let lines = gl.get_journal_entry_lines(entry.id).await.expect("entry lines");
     assert_eq!(lines.len(), 2);
     assert!(
-        lines.iter().any(|l| l.account_id == expense.id && l.debit_amount == dec!(200)),
+        lines.iter().any(|l| l.account_id == expense.id && l.debit_amount == dec!(100)),
         "debit hits the asset's depreciation expense account"
     );
     assert!(
-        lines.iter().any(|l| l.account_id == accumulated.id && l.credit_amount == dec!(200)),
+        lines.iter().any(|l| l.account_id == accumulated.id && l.credit_amount == dec!(100)),
         "credit hits the asset's accumulated depreciation account"
     );
 }

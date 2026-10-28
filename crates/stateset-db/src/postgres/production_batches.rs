@@ -24,6 +24,7 @@ struct ProductionBatchRow {
     status: String,
     vendor_id: Option<Uuid>,
     work_order_ids: serde_json::Value,
+    unresolved_links: bool,
     notes: Option<String>,
     scheduled_start: Option<DateTime<Utc>>,
     scheduled_end: Option<DateTime<Utc>>,
@@ -37,6 +38,12 @@ impl PgProductionBatchRepository {
     }
 
     fn row_to_batch(row: ProductionBatchRow) -> Result<ProductionBatch> {
+        if row.unresolved_links {
+            return Err(CommerceError::ValidationError(
+                "Legacy production batch has missing work-order links; reconcile before reading"
+                    .into(),
+            ));
+        }
         let status: ProductionBatchStatus = row.status.parse().map_err(|e| {
             CommerceError::DatabaseError(format!(
                 "Invalid production_batch.status '{}': {}",
@@ -65,7 +72,7 @@ impl PgProductionBatchRepository {
 
     async fn fetch_async(&self, id: Uuid) -> Result<Option<ProductionBatch>> {
         let row = sqlx::query_as::<_, ProductionBatchRow>(
-            "SELECT * FROM production_batches WHERE id = $1",
+            "SELECT * FROM production_batch_state WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -76,6 +83,7 @@ impl PgProductionBatchRepository {
 
     /// Create a production batch (async)
     pub async fn create_async(&self, input: CreateProductionBatch) -> Result<ProductionBatch> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let id = ProductionBatchId::new();
         let now = Utc::now();
         let work_order_ids = serde_json::to_value(&input.work_order_ids)
@@ -93,10 +101,13 @@ impl PgProductionBatchRepository {
         .bind(input.scheduled_start)
         .bind(input.scheduled_end)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
+        super::production_batch_members::add(&mut tx, id.into(), &input.work_order_ids, now)
+            .await?;
+        tx.commit().await.map_err(map_db_error)?;
         self.fetch_async(id.into()).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -111,31 +122,13 @@ impl PgProductionBatchRepository {
         id: ProductionBatchId,
         input: UpdateProductionBatch,
     ) -> Result<ProductionBatch> {
-        let existing = self.fetch_async(id.into()).await?.ok_or(CommerceError::NotFound)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
-
-        let name = input.name.unwrap_or(existing.name);
-        let vendor_id = input.vendor_id.or(existing.vendor_id);
-        let status = input.status.unwrap_or(existing.status);
-        let notes = input.notes.or(existing.notes);
-        let scheduled_start = input.scheduled_start.or(existing.scheduled_start);
-        let scheduled_end = input.scheduled_end.or(existing.scheduled_end);
-
-        sqlx::query(
-            "UPDATE production_batches SET name = $1, vendor_id = $2, status = $3, notes = $4, scheduled_start = $5, scheduled_end = $6, updated_at = $7 WHERE id = $8",
-        )
-        .bind(&name)
-        .bind(vendor_id)
-        .bind(status.to_string())
-        .bind(&notes)
-        .bind(scheduled_start)
-        .bind(scheduled_end)
-        .bind(now)
-        .bind(Uuid::from(id))
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
+        super::production_batch_members::update_status(&mut tx, id.into(), input.status, now)
+            .await?;
+        sqlx::query("UPDATE production_batches SET name = COALESCE($1, name), vendor_id = COALESCE($2, vendor_id), notes = COALESCE($3, notes), scheduled_start = COALESCE($4, scheduled_start), scheduled_end = COALESCE($5, scheduled_end), updated_at = $6 WHERE id = $7")
+            .bind(input.name).bind(input.vendor_id).bind(input.notes).bind(input.scheduled_start).bind(input.scheduled_end).bind(now).bind(Uuid::from(id)).execute(tx.as_mut()).await.map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
         self.fetch_async(id.into()).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -144,7 +137,7 @@ impl PgProductionBatchRepository {
         let limit = super::effective_limit(filter.limit);
         let offset = i64::from(filter.offset.unwrap_or(0));
 
-        let mut query = String::from("SELECT * FROM production_batches WHERE 1=1");
+        let mut query = String::from("SELECT * FROM production_batch_state WHERE 1=1");
         let mut param_idx = 1;
         if filter.status.is_some() {
             query.push_str(&format!(" AND status = ${param_idx}"));
@@ -173,11 +166,14 @@ impl PgProductionBatchRepository {
 
     /// Delete a production batch (async)
     pub async fn delete_async(&self, id: ProductionBatchId) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::production_batch_members::guard(&mut tx, id.into(), true, Utc::now()).await?;
         sqlx::query("DELETE FROM production_batches WHERE id = $1")
             .bind(Uuid::from(id))
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }
 
@@ -188,23 +184,9 @@ impl PgProductionBatchRepository {
         work_order_ids: Vec<Uuid>,
     ) -> Result<ProductionBatch> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let row = sqlx::query_as::<_, ProductionBatchRow>(
-            "SELECT * FROM production_batches WHERE id = $1 FOR UPDATE",
-        )
-        .bind(Uuid::from(id))
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(map_db_error)?
-        .ok_or(CommerceError::NotFound)?;
-        let batch = Self::row_to_batch(row)?;
-
-        let mut ids = batch.work_order_ids;
-        for wo in work_order_ids {
-            if !ids.contains(&wo) {
-                ids.push(wo);
-            }
-        }
-        Self::store_work_orders(&mut tx, id, &ids).await?;
+        let now = Utc::now();
+        super::production_batch_members::guard(&mut tx, id.into(), true, now).await?;
+        super::production_batch_members::add(&mut tx, id.into(), &work_order_ids, now).await?;
         tx.commit().await.map_err(map_db_error)?;
         self.fetch_async(id.into()).await?.ok_or(CommerceError::NotFound)
     }
@@ -216,40 +198,19 @@ impl PgProductionBatchRepository {
         work_order_id: Uuid,
     ) -> Result<ProductionBatch> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let row = sqlx::query_as::<_, ProductionBatchRow>(
-            "SELECT * FROM production_batches WHERE id = $1 FOR UPDATE",
-        )
-        .bind(Uuid::from(id))
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(map_db_error)?
-        .ok_or(CommerceError::NotFound)?;
-        let batch = Self::row_to_batch(row)?;
-
-        let mut ids = batch.work_order_ids;
-        ids.retain(|w| *w != work_order_id);
-        Self::store_work_orders(&mut tx, id, &ids).await?;
-        tx.commit().await.map_err(map_db_error)?;
-        self.fetch_async(id.into()).await?.ok_or(CommerceError::NotFound)
-    }
-
-    async fn store_work_orders(
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        id: ProductionBatchId,
-        ids: &[Uuid],
-    ) -> Result<()> {
-        let json =
-            serde_json::to_value(ids).map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let now = Utc::now();
+        super::production_batch_members::guard(&mut tx, id.into(), true, now).await?;
         sqlx::query(
-            "UPDATE production_batches SET work_order_ids = $1, updated_at = $2 WHERE id = $3",
+            "DELETE FROM production_batch_work_orders WHERE batch_id = $1 AND work_order_id = $2",
         )
-        .bind(&json)
-        .bind(Utc::now())
         .bind(Uuid::from(id))
+        .bind(work_order_id)
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
-        Ok(())
+        super::production_batch_members::sync(&mut tx, id.into(), now).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        self.fetch_async(id.into()).await?.ok_or(CommerceError::NotFound)
     }
 }
 

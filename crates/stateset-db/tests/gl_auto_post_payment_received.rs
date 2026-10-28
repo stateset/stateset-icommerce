@@ -61,6 +61,10 @@ fn sqlite_auto_post_payment_received_posts_balanced_entry() {
         unearned_revenue_account_id: None,
         sales_revenue_account_id: acct("4010"),
         shipping_revenue_account_id: None,
+        sales_tax_payable_account_id: None,
+        goods_received_not_invoiced_account_id: None,
+        inventory_adjustment_account_id: None,
+        work_in_progress_account_id: None,
         cogs_account_id: acct("5010"),
         bad_debt_expense_account_id: None,
         fx_gain_loss_account_id: None,
@@ -74,6 +78,7 @@ fn sqlite_auto_post_payment_received_posts_balanced_entry() {
         .create(CreatePayment { amount: dec!(100.00), ..Default::default() })
         .expect("create payment");
 
+    db.payments().mark_completed(payment.id).expect("complete payment");
     let entry = gl
         .auto_post_payment_received(payment.id.into())
         .expect("auto_post_payment_received must succeed");

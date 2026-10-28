@@ -1,7 +1,7 @@
 //! SQLite implementation of Lot repository
 
 use crate::rules::lots::{
-    ensure_consolidatable_source, ensure_transition, generate_lot_number,
+    ensure_consolidatable_source, ensure_transition, ensure_unexpired, generate_lot_number,
     generate_merged_lot_number, validate_merge_sources,
 };
 use crate::sqlite::{
@@ -19,7 +19,7 @@ use stateset_core::{
     AddLotCertificate, AdjustLot, CommerceError, ConsumeLot, CreateLot, Lot, LotCertificate,
     LotFilter, LotGenealogyLink, LotLocation, LotRelationship, LotStatus, LotTransaction,
     LotTransactionType, MergeLots, MergedProvenance, ReserveLot, Result, SplitLot, TraceNode,
-    TraceNodeType, TraceabilityResult, TransactionType, TransferLot, UpdateLot,
+    TraceNodeType, TraceabilityResult, TransferLot, UpdateLot,
 };
 use uuid::Uuid;
 
@@ -52,20 +52,6 @@ fn ensure_consumable(lot: &Lot, now: chrono::DateTime<Utc>, operation: &str) -> 
     Ok(())
 }
 
-/// Expiry half of [`ensure_consumable`], for `consume`/`reserve`, which keep
-/// reporting a non-`Active` status as `InsufficientStock` (nothing is
-/// available from a blocked lot) but must name an expired lot explicitly.
-fn ensure_unexpired(lot: &Lot, now: chrono::DateTime<Utc>, operation: &str) -> Result<()> {
-    if let Some(exp) = lot.expiration_date.filter(|exp| now > *exp) {
-        return Err(CommerceError::ValidationError(format!(
-            "Cannot {operation} from lot {} ({}): lot expired at {}",
-            lot.lot_number,
-            lot.id,
-            exp.to_rfc3339()
-        )));
-    }
-    Ok(())
-}
 
 impl SqliteLotRepository {
     /// Hop budget for [`Self::ancestor_lots_on`]: deep enough for any real
@@ -314,78 +300,7 @@ impl SqliteLotRepository {
         }
     }
 
-    /// The lot's placements, oldest location first, as `(location_id, quantity)`.
-    fn lot_locations_on(conn: &rusqlite::Connection, lot_id: Uuid) -> Result<Vec<(i32, Decimal)>> {
-        let mut stmt = conn
-            .prepare(
-                "SELECT location_id, quantity FROM lot_locations WHERE lot_id = ?
-                 ORDER BY location_id ASC",
-            )
-            .map_err(map_db_error)?;
-        let rows = stmt
-            .query_map([lot_id.to_string()], |row| {
-                Ok((row.get::<_, i32>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(map_db_error)?;
-        let mut out = Vec::new();
-        for row in rows {
-            let (location_id, quantity) = row.map_err(map_db_error)?;
-            out.push((location_id, parse_decimal_strict(&quantity, "lot_location", "quantity")?));
-        }
-        Ok(out)
-    }
-
-    /// Split `quantity` across the lot's placements: each location takes up
-    /// to what it holds, in `location_id` order, and any remainder (placement
-    /// rows are a routing hint, not a second ledger) lands on the last one.
-    /// An explicit `location` wins outright. No placement → no linkage.
-    fn inventory_slices_on(
-        conn: &rusqlite::Connection,
-        lot_id: Uuid,
-        location: Option<i32>,
-        quantity: Decimal,
-    ) -> Result<Vec<(i32, Decimal)>> {
-        if let Some(location_id) = location {
-            return Ok(vec![(location_id, quantity)]);
-        }
-        let placements = Self::lot_locations_on(conn, lot_id)?;
-        let mut slices: Vec<(i32, Decimal)> = Vec::with_capacity(placements.len());
-        let mut left = quantity;
-        for (location_id, held) in &placements {
-            if left <= Decimal::ZERO {
-                break;
-            }
-            let take = left.min((*held).max(Decimal::ZERO));
-            if take > Decimal::ZERO {
-                slices.push((*location_id, take));
-                left -= take;
-            }
-        }
-        if left > Decimal::ZERO {
-            if let Some(last) = slices.last_mut() {
-                last.1 += left;
-            } else if let Some((location_id, _)) = placements.last() {
-                slices.push((*location_id, left));
-            }
-        }
-        Ok(slices)
-    }
-
-    /// Re-attribute `quantity` units of placement from `from_lot` to `to_lot`,
-    /// lowest `location_id` first, on the caller's transaction.
-    ///
-    /// `split` and `merge` move units *between lots* without moving any stock,
-    /// so `inventory_balances` is deliberately untouched — but the placement
-    /// rows must follow, because they are what
-    /// [`Self::inventory_slices_on`] uses to decide which balance a later lot
-    /// movement hits. A derived lot with no placement is invisible to
-    /// inventory (consuming it would never decrement a balance again), while a
-    /// source that keeps a placement it no longer backs over-reports; either
-    /// way the module invariant `Σ available over active lots placed at L ==
-    /// inventory available at L` breaks the moment the operation commits.
-    ///
-    /// A source with no placement at all floats free of inventory by design;
-    /// the derived lot inherits that and nothing is written.
+    /// Relabel actual unreserved physical stock and its warehouse placement.
     fn move_placements_on(
         conn: &rusqlite::Connection,
         from_lot: Uuid,
@@ -393,95 +308,10 @@ impl SqliteLotRepository {
         quantity: Decimal,
         now: DateTime<Utc>,
     ) -> Result<()> {
-        if quantity <= Decimal::ZERO {
-            return Ok(());
-        }
-        let placements = Self::lot_locations_on(conn, from_lot)?;
-        let Some(&(last_location, _)) = placements.last() else {
-            return Ok(());
-        };
-
-        let mut moves: Vec<(i32, Decimal)> = Vec::with_capacity(placements.len());
-        let mut left = quantity;
-        for &(location_id, held) in &placements {
-            if left <= Decimal::ZERO {
-                break;
-            }
-            let take = left.min(held.max(Decimal::ZERO));
-            if take > Decimal::ZERO {
-                moves.push((location_id, take));
-                left -= take;
-            }
-        }
-        // Placement rows are a routing hint rather than a second ledger (a
-        // `consume` decrements the lot, not the placement), so they can fall
-        // short of the lot's own quantity. Attribute any shortfall to the last
-        // placement rather than stranding the units off-location.
-        if left > Decimal::ZERO {
-            match moves.last_mut() {
-                Some(last) if last.0 == last_location => last.1 += left,
-                _ => moves.push((last_location, left)),
-            }
-        }
-
-        let now_str = now.to_rfc3339();
-        for (location_id, take) in moves {
-            let held = placements
-                .iter()
-                .find(|(l, _)| *l == location_id)
-                .map_or(Decimal::ZERO, |(_, q)| *q);
-            let remaining = (held - take).max(Decimal::ZERO);
-            if remaining > Decimal::ZERO {
-                conn.execute(
-                    "UPDATE lot_locations SET quantity = ?, updated_at = ?
-                     WHERE lot_id = ? AND location_id = ?",
-                    rusqlite::params![
-                        remaining.to_string(),
-                        &now_str,
-                        from_lot.to_string(),
-                        location_id,
-                    ],
-                )
-                .map_err(map_db_error)?;
-            } else {
-                conn.execute(
-                    "DELETE FROM lot_locations WHERE lot_id = ? AND location_id = ?",
-                    rusqlite::params![from_lot.to_string(), location_id],
-                )
-                .map_err(map_db_error)?;
-            }
-
-            // Compute the destination in `Decimal`: SQL arithmetic on these
-            // TEXT columns coerces through IEEE-754 floats.
-            let existing: Option<String> = conn
-                .query_row(
-                    "SELECT quantity FROM lot_locations WHERE lot_id = ? AND location_id = ?",
-                    rusqlite::params![to_lot.to_string(), location_id],
-                    |row| row.get(0),
-                )
-                .map(Some)
-                .or_else(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => Ok(None),
-                    e => Err(map_db_error(e)),
-                })?;
-            let destination = match existing {
-                Some(q) => parse_decimal_strict(&q, "lot_location", "quantity")? + take,
-                None => take,
-            };
-            conn.execute(
-                "INSERT INTO lot_locations (lot_id, location_id, quantity, updated_at)
-                 VALUES (?, ?, ?, ?)
-                 ON CONFLICT(lot_id, location_id) DO UPDATE SET
-                 quantity = excluded.quantity, updated_at = excluded.updated_at",
-                rusqlite::params![
-                    to_lot.to_string(),
-                    location_id,
-                    destination.to_string(),
-                    &now_str,
-                ],
-            )
+        let source = Self::load_lot_on(conn, from_lot)?.ok_or(CommerceError::NotFound)?;
+        let target = Self::load_lot_on(conn, to_lot)?.ok_or(CommerceError::NotFound)?;
+        super::stock_lot::relabel(conn, &source, &target, quantity, &(now).to_rfc3339())
             .map_err(map_db_error)?;
-        }
         Ok(())
     }
 
@@ -594,158 +424,6 @@ impl SqliteLotRepository {
         Ok(ancestors)
     }
 
-    /// Apply a signed movement to the `inventory_balances` row for
-    /// `(sku, location_id)` and write the matching `inventory_transactions`
-    /// row, all on the caller's transaction. No-op when the SKU has no
-    /// inventory item (the lot floats free). Balances are floored at zero
-    /// so a lot that pre-dates the linkage cannot fail consumption.
-    #[allow(clippy::too_many_arguments)]
-    fn apply_inventory_delta_on(
-        conn: &rusqlite::Connection,
-        sku: &str,
-        location_id: i32,
-        on_hand_delta: Decimal,
-        allocated_delta: Decimal,
-        lot_id: Uuid,
-        reason: &str,
-        now: DateTime<Utc>,
-    ) -> Result<()> {
-        if on_hand_delta.is_zero() && allocated_delta.is_zero() {
-            return Ok(());
-        }
-        let item_id: Option<i64> = conn
-            .query_row("SELECT id FROM inventory_items WHERE sku = ?", [sku], |row| row.get(0))
-            .map(Some)
-            .or_else(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => Ok(None),
-                e => Err(map_db_error(e)),
-            })?;
-        let Some(item_id) = item_id else { return Ok(()) };
-        // `inventory_balances.location_id` references `inventory_locations`:
-        // a lot placement at an unregistered location cannot be mirrored, and
-        // silently skipping it would break the lot/inventory invariant.
-        let known_location: Option<i32> = conn
-            .query_row("SELECT id FROM inventory_locations WHERE id = ?", [location_id], |row| {
-                row.get(0)
-            })
-            .map(Some)
-            .or_else(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => Ok(None),
-                e => Err(map_db_error(e)),
-            })?;
-        if known_location.is_none() {
-            return Err(CommerceError::ValidationError(format!(
-                "Location {location_id} is not an inventory location; register it before placing lot {lot_id} there"
-            )));
-        }
-
-        conn.execute(
-            "INSERT OR IGNORE INTO inventory_balances
-                (item_id, location_id, quantity_on_hand, quantity_allocated, quantity_available, updated_at)
-             VALUES (?, ?, '0', '0', '0', ?)",
-            rusqlite::params![item_id, location_id, now.to_rfc3339()],
-        )
-        .map_err(map_db_error)?;
-        let (on_hand, allocated, version): (String, String, i32) = conn
-            .query_row(
-                "SELECT quantity_on_hand, quantity_allocated, version FROM inventory_balances
-                 WHERE item_id = ? AND location_id = ?",
-                rusqlite::params![item_id, location_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .map_err(map_db_error)?;
-        let on_hand = parse_decimal_strict(&on_hand, "inventory_balance", "quantity_on_hand")?;
-        let allocated =
-            parse_decimal_strict(&allocated, "inventory_balance", "quantity_allocated")?;
-        let new_on_hand = (on_hand + on_hand_delta).max(Decimal::ZERO);
-        let new_allocated = (allocated + allocated_delta).max(Decimal::ZERO);
-        let new_available = new_on_hand - new_allocated;
-        let updated = conn
-            .execute(
-                "UPDATE inventory_balances
-                 SET quantity_on_hand = ?, quantity_allocated = ?, quantity_available = ?,
-                     version = version + 1, updated_at = ?
-                 WHERE item_id = ? AND location_id = ? AND version = ?",
-                rusqlite::params![
-                    new_on_hand.to_string(),
-                    new_allocated.to_string(),
-                    new_available.to_string(),
-                    now.to_rfc3339(),
-                    item_id,
-                    location_id,
-                    version,
-                ],
-            )
-            .map_err(map_db_error)?;
-        if updated != 1 {
-            return Err(CommerceError::VersionConflict {
-                entity: "inventory_balance".to_string(),
-                id: format!("{item_id}:{location_id}"),
-                expected_version: version,
-            });
-        }
-
-        let (tx_type, quantity) = if on_hand_delta.is_zero() {
-            if allocated_delta > Decimal::ZERO {
-                (TransactionType::Allocation, allocated_delta)
-            } else {
-                (TransactionType::Deallocation, allocated_delta)
-            }
-        } else if on_hand_delta > Decimal::ZERO {
-            (TransactionType::Receipt, on_hand_delta)
-        } else {
-            (TransactionType::Adjustment, on_hand_delta)
-        };
-        conn.execute(
-            "INSERT INTO inventory_transactions
-                (item_id, location_id, transaction_type, quantity, reference_type, reference_id, reason, created_at)
-             VALUES (?, ?, ?, ?, 'lot', ?, ?, ?)",
-            rusqlite::params![
-                item_id,
-                location_id,
-                tx_type.to_string(),
-                quantity.to_string(),
-                lot_id.to_string(),
-                reason,
-                now.to_rfc3339(),
-            ],
-        )
-        .map_err(map_db_error)?;
-        Ok(())
-    }
-
-    /// Mirror a lot movement onto inventory (see the `stateset_core::models::lot`
-    /// module docs for the model). `on_hand_sign` / `allocated_sign` are
-    /// `-1 | 0 | 1` multipliers applied to `quantity` per location slice.
-    #[allow(clippy::too_many_arguments)]
-    fn sync_inventory_on(
-        conn: &rusqlite::Connection,
-        lot: &Lot,
-        location: Option<i32>,
-        quantity: Decimal,
-        on_hand_sign: i8,
-        allocated_sign: i8,
-        reason: &str,
-        now: DateTime<Utc>,
-    ) -> Result<()> {
-        if quantity <= Decimal::ZERO || (on_hand_sign == 0 && allocated_sign == 0) {
-            return Ok(());
-        }
-        for (location_id, slice) in Self::inventory_slices_on(conn, lot.id, location, quantity)? {
-            Self::apply_inventory_delta_on(
-                conn,
-                &lot.sku,
-                location_id,
-                slice * Decimal::from(on_hand_sign),
-                slice * Decimal::from(allocated_sign),
-                lot.id,
-                reason,
-                now,
-            )?;
-        }
-        Ok(())
-    }
-
     /// Quarantine an already-loaded lot on the caller's transaction: flip the
     /// status (conditionally on the status the caller observed), hold every
     /// unreserved unit, quarantine the lot's serials, hold the units in
@@ -771,7 +449,7 @@ impl SqliteLotRepository {
                  WHERE id = ? AND status = ?",
                 rusqlite::params![
                     LotStatus::Quarantine.to_string(),
-                    available.to_string(),
+                    (lot.quantity_quarantined + available).to_string(),
                     now.to_rfc3339(),
                     lot.id.to_string(),
                     lot.status.to_string(),
@@ -798,16 +476,16 @@ impl SqliteLotRepository {
             None,
         )?;
         SqliteSerialRepository::quarantine_for_lot_on(tx, lot.id, reason, &now.to_rfc3339())?;
-        Self::sync_inventory_on(
+        super::stock_lot::allocate(
             tx,
             lot,
-            None,
+            lot.id,
             available,
-            0,
-            1,
+            false,
             &format!("Lot {} quarantined: {reason}", lot.lot_number),
-            now,
-        )?;
+            &(now).to_rfc3339(),
+        )
+        .map_err(map_db_error)?;
         Ok(available)
     }
 
@@ -847,16 +525,17 @@ impl SqliteLotRepository {
             None,
         )?;
         SqliteSerialRepository::release_quarantine_for_lot_on(tx, lot.id, &now.to_rfc3339())?;
-        Self::sync_inventory_on(
+        super::stock_lot::finish_hold(
             tx,
             lot,
-            None,
+            lot.id,
             quarantined,
-            0,
-            -1,
+            false,
+            false,
             &format!("Lot {} released from quarantine", lot.lot_number),
-            now,
-        )?;
+            &(now).to_rfc3339(),
+        )
+        .map_err(map_db_error)?;
         Ok(quarantined)
     }
 
@@ -893,11 +572,13 @@ impl SqliteLotRepository {
         )
         .map_err(map_db_error)?;
 
-        // Computed in Decimal and floored at zero (the aggregate must never go
-        // negative even if it has drifted).
+        // A reservation must still own exactly the quantity it releases.
         let lot = Self::load_lot_on(tx, lot_id)?.ok_or(CommerceError::NotFound)?;
-        let new_reserved = (lot.quantity_reserved - quantity).max(Decimal::ZERO);
-        let under_quarantine = lot.status == LotStatus::Quarantine;
+        let new_reserved = lot.quantity_reserved - quantity;
+        if new_reserved < Decimal::ZERO {
+            return Err(CommerceError::Conflict("Lot reservation total is inconsistent".into()));
+        }
+        let under_quarantine = matches!(lot.status, LotStatus::Quarantine | LotStatus::Expired);
         let new_quarantined = if under_quarantine {
             lot.quantity_quarantined + quantity
         } else {
@@ -928,18 +609,19 @@ impl SqliteLotRepository {
         )?;
         // Under quarantine the freed units stay held (the quarantine hold now
         // covers them), so inventory is untouched.
-        if !under_quarantine {
-            Self::sync_inventory_on(
-                tx,
-                &lot,
-                None,
-                quantity,
-                0,
-                -1,
-                &format!("Lot {} reservation released: {reason}", lot.lot_number),
-                now,
-            )?;
-        }
+
+        super::stock_lot::finish_hold(
+            tx,
+            &lot,
+            reservation_id,
+            quantity,
+            false,
+            under_quarantine,
+            &format!("Lot {} reservation released: {reason}", lot.lot_number),
+            &(now).to_rfc3339(),
+        )
+        .map_err(map_db_error)?;
+
         Ok(())
     }
 
@@ -1108,16 +790,16 @@ impl LotRepository for SqliteLotRepository {
             updated_at: now,
         };
         // A placed lot is a receipt into the linked inventory balance.
-        Self::sync_inventory_on(
+        super::stock_lot::change(
             &tx,
             &lot,
             input.initial_location_id,
             lot.quantity_produced,
-            1,
-            0,
+            true,
             &format!("Lot {} received ({reference_type} {reference_id})", lot.lot_number),
-            now,
-        )?;
+            &(now).to_rfc3339(),
+        )
+        .map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
 
@@ -1315,7 +997,7 @@ impl LotRepository for SqliteLotRepository {
             })?;
 
         let new_remaining = lot.quantity_remaining + input.quantity_change;
-        if new_remaining < Decimal::ZERO {
+        if new_remaining < lot.quantity_reserved + lot.quantity_quarantined {
             return Err(CommerceError::ValidationError(
                 "Cannot reduce quantity below zero".to_string(),
             ));
@@ -1346,16 +1028,16 @@ impl LotRepository for SqliteLotRepository {
             input.performed_by.as_deref(),
         )?;
         let sign = if input.quantity_change > Decimal::ZERO { 1 } else { -1 };
-        Self::sync_inventory_on(
+        super::stock_lot::change(
             &tx,
             &lot,
             input.location_id,
-            input.quantity_change.abs(),
-            sign,
-            0,
+            (input.quantity_change.abs()) * Decimal::from(sign),
+            false,
             &format!("Lot {} adjusted: {}", lot.lot_number, input.reason),
-            Utc::now(),
-        )?;
+            &(Utc::now()).to_rfc3339(),
+        )
+        .map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
 
@@ -1421,19 +1103,19 @@ impl LotRepository for SqliteLotRepository {
             None,
             input.performed_by.as_deref(),
         )?;
-        Self::sync_inventory_on(
+        super::stock_lot::change(
             &tx,
             &lot,
             input.location_id,
-            input.quantity,
-            -1,
-            0,
+            -(input.quantity),
+            false,
             &format!(
                 "Lot {} consumed ({} {})",
                 lot.lot_number, input.reference_type, input.reference_id
             ),
-            now,
-        )?;
+            &(now).to_rfc3339(),
+        )
+        .map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
 
@@ -1463,6 +1145,7 @@ impl LotRepository for SqliteLotRepository {
             });
         }
 
+        super::stock_guard::ensure_sellable(&tx, &lot.sku, Some(lot.id), None, None)?;
         let reservation_id = Uuid::new_v4();
         let expires_at = input.expires_in_seconds.map(|s| now + chrono::Duration::seconds(s));
 
@@ -1508,19 +1191,19 @@ impl LotRepository for SqliteLotRepository {
             None,
             None,
         )?;
-        Self::sync_inventory_on(
+        super::stock_lot::allocate(
             &tx,
             &lot,
-            None,
+            reservation_id,
             input.quantity,
-            0,
-            1,
+            true,
             &format!(
                 "Lot {} reserved ({} {})",
                 lot.lot_number, input.reference_type, input.reference_id
             ),
-            now,
-        )?;
+            &(now).to_rfc3339(),
+        )
+        .map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
 
@@ -1599,7 +1282,10 @@ impl LotRepository for SqliteLotRepository {
 
         // Update lot: reduce both reserved and remaining, computed in Decimal;
         // the lot is Consumed once nothing remains, exactly like `consume`.
-        let new_reserved = (lot.quantity_reserved - quantity).max(Decimal::ZERO);
+        let new_reserved = lot.quantity_reserved - quantity;
+        if new_reserved < Decimal::ZERO {
+            return Err(CommerceError::Conflict("Lot reservation total is inconsistent".into()));
+        }
         let new_remaining = lot.quantity_remaining - quantity;
         let new_status =
             if new_remaining <= Decimal::ZERO { LotStatus::Consumed } else { lot.status };
@@ -1629,19 +1315,20 @@ impl LotRepository for SqliteLotRepository {
             None,
         )?;
         // The hold becomes a consumption: on-hand and allocated both drop.
-        Self::sync_inventory_on(
+        super::stock_lot::finish_hold(
             &tx,
             &lot,
-            None,
+            reservation_id,
             quantity,
-            -1,
-            -1,
+            true,
+            false,
             &format!(
                 "Lot {} reservation confirmed ({reference_type} {reference_id})",
                 lot.lot_number
             ),
-            now,
-        )?;
+            &(now).to_rfc3339(),
+        )
+        .map_err(map_db_error)?;
 
         tx.commit().map_err(map_db_error)?;
 
@@ -1659,70 +1346,17 @@ impl LotRepository for SqliteLotRepository {
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let now = Utc::now();
 
-        // The source location must exist and cover the transfer — a blind
-        // decrement would silently mint quantity at the destination when the
-        // source row is missing, or drive it negative when short.
-        let from_qty_str: String = tx
-            .query_row(
-                "SELECT quantity FROM lot_locations WHERE lot_id = ? AND location_id = ?",
-                rusqlite::params![input.lot_id.to_string(), input.from_location_id],
-                |row| row.get(0),
-            )
-            .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => CommerceError::ValidationError(format!(
-                    "Lot {} has no quantity at source location {}",
-                    input.lot_id, input.from_location_id
-                )),
-                e => map_db_error(e),
-            })?;
-        let from_qty = parse_decimal_strict(&from_qty_str, "lot_location", "quantity")?;
-        if from_qty < input.quantity {
-            return Err(CommerceError::ValidationError(format!(
-                "Insufficient quantity at source location {}: requested {}, available {}",
-                input.from_location_id, input.quantity, from_qty
-            )));
-        }
+        let lot = Self::load_lot_on(&tx, input.lot_id)?.ok_or(CommerceError::NotFound)?;
+        super::stock_guard::ensure_sellable(&tx, &lot.sku, Some(lot.id), None, None)?;
 
-        // Compute both sides in Decimal (TEXT-column SQL arithmetic coerces
-        // through IEEE-754 floats).
-        let new_from_qty = from_qty - input.quantity;
-        tx.execute(
-            "UPDATE lot_locations SET quantity = ?, updated_at = ? WHERE lot_id = ? AND location_id = ?",
-            rusqlite::params![
-                new_from_qty.to_string(),
-                now.to_rfc3339(),
-                input.lot_id.to_string(),
-                input.from_location_id,
-            ],
-        )
-        .map_err(map_db_error)?;
-
-        let existing_dest: Option<String> = tx
-            .query_row(
-                "SELECT quantity FROM lot_locations WHERE lot_id = ? AND location_id = ?",
-                rusqlite::params![input.lot_id.to_string(), input.to_location_id],
-                |row| row.get(0),
-            )
-            .map(Some)
-            .or_else(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => Ok(None),
-                e => Err(map_db_error(e)),
-            })?;
-        let new_dest_qty = match existing_dest {
-            Some(q) => parse_decimal_strict(&q, "lot_location", "quantity")? + input.quantity,
-            None => input.quantity,
-        };
-        tx.execute(
-            "INSERT INTO lot_locations (lot_id, location_id, quantity, updated_at)
-             VALUES (?, ?, ?, ?)
-             ON CONFLICT(lot_id, location_id) DO UPDATE SET
-             quantity = excluded.quantity, updated_at = excluded.updated_at",
-            rusqlite::params![
-                input.lot_id.to_string(),
-                input.to_location_id,
-                new_dest_qty.to_string(),
-                now.to_rfc3339(),
-            ],
+        super::stock_lot::transfer(
+            &tx,
+            &lot,
+            input.from_location_id,
+            input.to_location_id,
+            input.quantity,
+            input.reason.as_deref().unwrap_or("Lot transfer"),
+            &(now).to_rfc3339(),
         )
         .map_err(map_db_error)?;
 
@@ -1739,32 +1373,6 @@ impl LotRepository for SqliteLotRepository {
             input.reason.as_deref(),
             input.performed_by.as_deref(),
         )?;
-        if let Some(lot) = Self::load_lot_on(&tx, input.lot_id)? {
-            let reason = format!(
-                "Lot {} transferred {} -> {}",
-                lot.lot_number, input.from_location_id, input.to_location_id
-            );
-            Self::apply_inventory_delta_on(
-                &tx,
-                &lot.sku,
-                input.from_location_id,
-                -input.quantity,
-                Decimal::ZERO,
-                lot.id,
-                &reason,
-                now,
-            )?;
-            Self::apply_inventory_delta_on(
-                &tx,
-                &lot.sku,
-                input.to_location_id,
-                input.quantity,
-                Decimal::ZERO,
-                lot.id,
-                &reason,
-                now,
-            )?;
-        }
 
         tx.commit().map_err(map_db_error)?;
 
@@ -2337,25 +1945,29 @@ impl LotRepository for SqliteLotRepository {
         for lot in due {
             let updated = tx
                 .execute(
-                    "UPDATE lots SET status = 'expired', updated_at = ?
+                    "UPDATE lots SET status = 'expired', quantity_quarantined = ?, updated_at = ?
                      WHERE id = ? AND status = 'active'",
-                    rusqlite::params![now.to_rfc3339(), lot.id.to_string()],
+                    rusqlite::params![
+                        (lot.quantity_remaining - lot.quantity_reserved).to_string(),
+                        now.to_rfc3339(),
+                        lot.id.to_string()
+                    ],
                 )
                 .map_err(map_db_error)?;
             if updated != 1 {
                 continue; // Moved on concurrently.
             }
             // Expired units are no longer sellable: hold them in inventory.
-            Self::sync_inventory_on(
+            super::stock_lot::allocate(
                 &tx,
                 &lot,
-                None,
+                lot.id,
                 lot.quantity_available().max(Decimal::ZERO),
-                0,
-                1,
+                false,
                 &format!("Lot {} expired", lot.lot_number),
-                now,
-            )?;
+                &(now).to_rfc3339(),
+            )
+            .map_err(map_db_error)?;
             flipped += 1;
         }
         tx.commit().map_err(map_db_error)?;
@@ -2567,6 +2179,7 @@ mod tests {
     use crate::SqliteDatabase;
     use chrono::Duration;
     use rust_decimal_macros::dec;
+    use stateset_core::TransactionType;
     use stateset_core::{
         AdjustLot, ConsumeLot, CreateLot, LotFilter, LotRelationship, LotRepository, LotStatus,
         MergeLots, ReserveLot, SplitLot, TransferLot, UpdateLot,
@@ -3416,6 +3029,7 @@ mod tests {
         let mk = |exp: Option<chrono::DateTime<Utc>>, qty: Decimal| {
             repo.create(CreateLot {
                 sku: "SKU-L4".into(),
+                initial_location_id: Some(1),
                 quantity: qty,
                 expiration_date: exp,
                 ..Default::default()
@@ -3802,7 +3416,7 @@ mod tests {
                 performed_by: None,
             })
             .expect_err("unregistered location");
-        assert_validation_mentions(&err, &["not an inventory location"]);
+        assert_validation_mentions(&err, &["Unknown stock warehouse"]);
         assert_eq!(lots.get_quantity_at_location(other.id, 1).unwrap(), Some(dec!(10)));
         db.lots()
             .pool
@@ -3856,7 +3470,7 @@ mod tests {
     }
 
     #[test]
-    fn unlinked_lots_leave_inventory_alone() {
+    fn unreceived_lots_require_receiving_before_stock_operations() {
         use stateset_core::InventoryRepository;
         // No location → no linkage even though the SKU has an inventory item.
         let sku = "SKU-FREE";
@@ -3865,36 +3479,43 @@ mod tests {
             .lots()
             .create(CreateLot { sku: sku.into(), quantity: dec!(50), ..Default::default() })
             .expect("create");
-        db.lots().quarantine(lot.id, "x").expect("quarantine");
+        db.lots().quarantine(lot.id, "block before receiving").unwrap();
+        db.lots().release_quarantine(lot.id).unwrap();
+        assert!(
+            db.lots()
+                .consume(ConsumeLot {
+                    lot_id: lot.id,
+                    quantity: dec!(1),
+                    reference_type: "test".into(),
+                    reference_id: Uuid::new_v4(),
+                    ..Default::default()
+                })
+                .is_err()
+        );
         assert_eq!(inventory_on_hand(&db, sku, 1), dec!(0));
         assert_eq!(inventory_available(&db, sku, 1), dec!(0));
-        // No inventory item → the lot floats free and nothing is created.
+        // A placed lot receives stock and creates its inventory item.
         let db2 = SqliteDatabase::in_memory().expect("in-memory");
         let lot2 = make_lot(&db2.lots(), "SKU-NOITEM", dec!(5));
         db2.lots().quarantine(lot2.id, "x").expect("quarantine");
-        assert!(db2.inventory().get_item_by_sku("SKU-NOITEM").unwrap().is_none());
+        assert!(db2.inventory().get_item_by_sku("SKU-NOITEM").unwrap().is_some());
+        assert_eq!(inventory_on_hand(&db2, "SKU-NOITEM", 1), dec!(5));
+        assert_eq!(inventory_available(&db2, "SKU-NOITEM", 1), dec!(0));
     }
 
     #[test]
-    fn legacy_lot_never_received_floors_inventory_at_zero() {
-        // A lot placed before the SKU had an inventory item: consuming it must
-        // not fail, and the balance floors at zero instead of going negative.
-        use stateset_core::{CreateInventoryItem, InventoryRepository};
+    fn inconsistent_legacy_balance_refuses_consumption_atomically() {
         let sku = "SKU-LEGACY";
         let db = SqliteDatabase::in_memory().expect("in-memory");
         let lot = make_lot(&db.lots(), sku, dec!(5));
-        db.inventory()
-            .create_item(CreateInventoryItem {
-                sku: sku.into(),
-                name: "late".into(),
-                description: None,
-                unit_of_measure: None,
-                initial_quantity: None,
-                location_id: Some(1),
-                reorder_point: None,
-                safety_stock: None,
-            })
-            .expect("item");
+        db.lots()
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE inventory_balances SET quantity_on_hand = '0', quantity_available = '0'",
+                [],
+            )
+            .unwrap();
         db.lots()
             .consume(ConsumeLot {
                 lot_id: lot.id,
@@ -3903,8 +3524,9 @@ mod tests {
                 reference_id: Uuid::new_v4(),
                 ..Default::default()
             })
-            .expect("consume still works");
+            .expect_err("inconsistent legacy stock requires reconciliation");
         assert_eq!(inventory_on_hand(&db, sku, 1), dec!(0));
+        assert_eq!(db.lots().get(lot.id).unwrap().unwrap().quantity_remaining, dec!(5));
     }
 
     #[test]
@@ -4019,6 +3641,7 @@ mod tests {
         let a = repo
             .create(CreateLot {
                 sku: "SKU-GEN".into(),
+                initial_location_id: Some(1),
                 quantity: dec!(10),
                 supplier_id: Some(supplier_a),
                 supplier_lot: Some("SUP-A".into()),
@@ -4029,6 +3652,7 @@ mod tests {
         let b = repo
             .create(CreateLot {
                 sku: "SKU-GEN".into(),
+                initial_location_id: Some(1),
                 quantity: dec!(5),
                 supplier_id: Some(supplier_b),
                 supplier_lot: Some("SUP-B".into()),
@@ -4090,6 +3714,7 @@ mod tests {
         let mk = |supplier_id, po_id| {
             repo.create(CreateLot {
                 sku: "SKU-GEN2".into(),
+                initial_location_id: Some(1),
                 quantity: dec!(4),
                 supplier_id,
                 purchase_order_id: po_id,
@@ -4119,6 +3744,7 @@ mod tests {
         let root = repo
             .create(CreateLot {
                 sku: "SKU-GEN3".into(),
+                initial_location_id: Some(1),
                 quantity: dec!(100),
                 purchase_order_id: Some(po),
                 supplier_lot: Some("ROOT-SUP".into()),

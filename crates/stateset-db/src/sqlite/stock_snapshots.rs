@@ -1,7 +1,8 @@
 //! SQLite implementation of the stock snapshot repository
 
 use super::{
-    map_db_error, parse_datetime_row, parse_decimal_row, parse_uuid_row, with_immediate_transaction,
+    map_db_error, parse_datetime_row, parse_decimal_row, parse_uuid_opt_row, parse_uuid_row,
+    with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -35,12 +36,12 @@ impl SqliteStockSnapshotRepository {
                 "stock_snapshot_id",
             )?
             .into(),
-            product_id: parse_uuid_row(
-                &row.get::<_, String>("product_id")?,
+            product_id: parse_uuid_opt_row(
+                row.get("product_id")?,
                 "stock_snapshot_line",
                 "product_id",
             )?
-            .into(),
+            .map(Into::into),
             sku: row.get("sku")?,
             quantity_on_hand: parse_decimal_row(
                 &row.get::<_, String>("quantity_on_hand")?,
@@ -94,18 +95,53 @@ impl SqliteStockSnapshotRepository {
 }
 
 impl StockSnapshotRepository for SqliteStockSnapshotRepository {
+    fn inventory_aging(
+        &self,
+        as_of: chrono::NaiveDate,
+    ) -> Result<stateset_core::InventoryAgingReport> {
+        let mut conn = self.conn()?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        super::stock_reports::aging(&tx, as_of).map_err(super::map_db_error)
+    }
+
     fn capture(&self, input: CaptureStockSnapshot) -> Result<StockSnapshot> {
-        if input.lines.is_empty() {
+        if !input.lines.is_empty() {
             return Err(CommerceError::ValidationError(
-                "a stock snapshot requires at least one line".into(),
+                "Snapshot lines are read from the stock ledger; omit caller-supplied lines".into(),
             ));
         }
         let id = StockSnapshotId::new();
         let id_str = id.to_string();
         let now = Utc::now().to_rfc3339();
-        let total_skus = input.total_skus();
-        let total_units = input.total_units();
         with_immediate_transaction(&self.pool, |tx| {
+            let lines = {
+                let mut stmt = tx.prepare("SELECT v.product_id, i.sku, b.quantity_on_hand, b.quantity_available, w.code FROM inventory_balances b JOIN inventory_items i ON i.id = b.item_id LEFT JOIN product_variants v ON v.sku = i.sku LEFT JOIN warehouses w ON w.id = b.location_id ORDER BY i.sku, b.location_id")?;
+                let rows = stmt.query_map([], |r| {
+                    Ok(StockSnapshotLine {
+                        id: StockSnapshotLineId::new(),
+                        stock_snapshot_id: id,
+                        product_id: parse_uuid_opt_row(r.get(0)?, "snapshot", "product_id")?
+                            .map(Into::into),
+                        sku: r.get(1)?,
+                        quantity_on_hand: parse_decimal_row(
+                            &r.get::<_, String>(2)?,
+                            "snapshot",
+                            "quantity_on_hand",
+                        )?,
+                        quantity_available: parse_decimal_row(
+                            &r.get::<_, String>(3)?,
+                            "snapshot",
+                            "quantity_available",
+                        )?,
+                        location: r.get(4)?,
+                    })
+                })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            let total_skus =
+                lines.iter().map(|line| &line.sku).collect::<std::collections::HashSet<_>>().len();
+            let total_units: rust_decimal::Decimal =
+                lines.iter().map(|line| line.quantity_on_hand).sum();
             tx.execute(
                 "INSERT INTO stock_snapshots (id, label, total_skus, total_units, captured_at)
                  VALUES (?, ?, ?, ?, ?)",
@@ -117,14 +153,14 @@ impl StockSnapshotRepository for SqliteStockSnapshotRepository {
                     &now,
                 ],
             )?;
-            for line in &input.lines {
+            for line in &lines {
                 tx.execute(
                     "INSERT INTO stock_snapshot_lines (id, stock_snapshot_id, product_id, sku, quantity_on_hand, quantity_available, location)
                      VALUES (?, ?, ?, ?, ?, ?, ?)",
                     rusqlite::params![
                         StockSnapshotLineId::new().to_string(),
                         &id_str,
-                        line.product_id.to_string(),
+                        line.product_id.map(|id| id.to_string()),
                         &line.sku,
                         line.quantity_on_hand.to_string(),
                         line.quantity_available.to_string(),
@@ -190,34 +226,39 @@ mod tests {
     use crate::DatabaseConfig;
     use crate::sqlite::SqliteDatabase;
     use rust_decimal_macros::dec;
-    use stateset_core::{CaptureStockLine, ProductId};
+    use stateset_core::{
+        CaptureStockLine, CreateInventoryItem, InventoryRepository, ProductId, ReserveInventory,
+    };
 
     fn test_repo() -> SqliteStockSnapshotRepository {
         let db = SqliteDatabase::new(&DatabaseConfig::in_memory()).expect("in-memory db");
+        let inventory = super::super::SqliteInventoryRepository::new(db.pool().clone());
+        for (sku, quantity) in [("SKU-1", dec!(10)), ("SKU-2", dec!(5))] {
+            inventory
+                .create_item(CreateInventoryItem {
+                    sku: sku.into(),
+                    name: sku.into(),
+                    initial_quantity: Some(quantity),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        inventory
+            .reserve(ReserveInventory {
+                sku: "SKU-1".into(),
+                quantity: dec!(2),
+                location_id: None,
+                reference_type: "snapshot".into(),
+                reference_id: "snapshot".into(),
+                expires_in_seconds: None,
+            })
+            .unwrap();
         SqliteStockSnapshotRepository::new(db.pool().clone())
     }
 
     fn capture(repo: &SqliteStockSnapshotRepository) -> StockSnapshot {
-        repo.capture(CaptureStockSnapshot {
-            label: Some("EOM".into()),
-            lines: vec![
-                CaptureStockLine {
-                    product_id: ProductId::new(),
-                    sku: "SKU-1".into(),
-                    quantity_on_hand: dec!(10),
-                    quantity_available: dec!(8),
-                    location: Some("MAIN".into()),
-                },
-                CaptureStockLine {
-                    product_id: ProductId::new(),
-                    sku: "SKU-2".into(),
-                    quantity_on_hand: dec!(5),
-                    quantity_available: dec!(5),
-                    location: None,
-                },
-            ],
-        })
-        .expect("capture")
+        repo.capture(CaptureStockSnapshot { label: Some("EOM".into()), lines: vec![] })
+            .expect("capture")
     }
 
     #[test]
@@ -231,9 +272,21 @@ mod tests {
     }
 
     #[test]
-    fn capture_rejects_empty() {
+    fn capture_rejects_imported_values() {
         let repo = test_repo();
-        assert!(repo.capture(CaptureStockSnapshot { label: None, lines: vec![] }).is_err());
+        assert!(
+            repo.capture(CaptureStockSnapshot {
+                label: None,
+                lines: vec![CaptureStockLine {
+                    product_id: ProductId::new(),
+                    sku: "FAKE".into(),
+                    quantity_on_hand: dec!(100),
+                    quantity_available: dec!(100),
+                    location: None
+                }]
+            })
+            .is_err()
+        );
     }
 
     #[test]

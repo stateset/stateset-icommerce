@@ -868,6 +868,7 @@ fn gl_create_journal_entry_requires_open_period() {
         source_document_type: None,
         source_document_id: None,
         auto_post: None,
+        fx: None,
     });
 
     assert!(result.is_err(), "Expected journal entry creation to fail without an open period");

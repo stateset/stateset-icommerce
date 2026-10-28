@@ -52,7 +52,7 @@ fn create_invoice(
             ..Default::default()
         })
         .expect("Failed to create invoice");
-    invoice.id.into()
+    commerce.invoices().send(invoice.id.into()).expect("issue invoice").id.into()
 }
 
 /// Create a payment of the given amount and return its id.
@@ -61,12 +61,11 @@ fn create_payment(
     customer_id: stateset_embedded::CustomerId,
     amount: Decimal,
 ) -> Uuid {
-    commerce
+    let payment = commerce
         .payments()
         .create(CreatePayment { customer_id: Some(customer_id), amount, ..Default::default() })
-        .expect("Failed to create payment")
-        .id
-        .into()
+        .expect("Failed to create payment");
+    commerce.payments().mark_completed(payment.id).expect("complete payment").id.into()
 }
 
 // ============================================================================
@@ -517,7 +516,7 @@ fn create_invoice_due(
             ..Default::default()
         })
         .expect("Failed to create invoice");
-    invoice.id.into()
+    commerce.invoices().send(invoice.id.into()).expect("issue invoice").id.into()
 }
 
 #[test]
@@ -726,6 +725,7 @@ fn statement_includes_credit_memos_and_balances() {
     let statement = commerce
         .accounts_receivable()
         .generate_statement(GenerateStatementRequest {
+            currency: None,
             customer_id: customer_id.into(),
             period_start: None, // default: last 30 days, covers everything
             period_end: None,
@@ -803,6 +803,7 @@ fn statement_reconciles_payment_credit_memo_and_write_off_to_zero() {
     let statement = commerce
         .accounts_receivable()
         .generate_statement(GenerateStatementRequest {
+            currency: None,
             customer_id: customer_id.into(),
             period_start: None, // default: last 30 days, covers everything
             period_end: None,
@@ -846,6 +847,7 @@ fn statement_opening_balance_carries_pre_period_activity() {
     let statement = commerce
         .accounts_receivable()
         .generate_statement(GenerateStatementRequest {
+            currency: None,
             customer_id: customer_id.into(),
             period_start: Some(start),
             period_end: Some(end),

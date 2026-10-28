@@ -234,7 +234,7 @@ function payloadFor(toolName, params, issuedAt = new Date(), actorAddress = null
     case 'cancel_return':
       return { return_id: params.returnId, status: RETURN_STATUS_BY_TOOL[toolName] };
     case 'post_journal_entry':
-      return { journal_entry_id: params.journalEntryId, posted_by: params.postedBy };
+      return { journal_entry_id: params.journalEntryId, posted_by: actorAddress };
     case 'x402_mark_settled':
       return {
         intent_id: params.intentId,
@@ -473,7 +473,12 @@ export function createKernelToolExecutor({ commerce, kernel, allowApply, agentCo
       kernelConfig.actor_address ||
       kernelConfig.principal?.id ||
       null;
-    const payload = payloadFor(toolName, params, issuedAt, actorAddress);
+    const payload = payloadFor(
+      toolName,
+      params,
+      issuedAt,
+      toolName === 'post_journal_entry' ? kernelConfig.principal?.id : actorAddress,
+    );
     if (!payload) {
       throw new Error(`Governed tool '${toolName}' does not define a typed command payload.`);
     }

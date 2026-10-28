@@ -269,9 +269,15 @@ export const supplierTools = [
   {
     name: 'receive_purchase_order',
     description:
-      'Record exact received quantities against sent PO lines. This updates the purchase order only; inventory stock must be posted separately through the inventory or warehouse workflow.',
+      'Receive exact quantities against sent PO lines into an explicit warehouse location. PO quantities, receipt documents, and inventory stock are posted atomically.',
     inputSchema: {
       purchaseOrderId: z.string().uuid().describe('PO ID'),
+      warehouseId: z.number().int().positive().describe('Receiving warehouse ID'),
+      receivingLocationId: z
+        .number()
+        .int()
+        .positive()
+        .describe('Active receiving location in that warehouse'),
       items: z
         .array(
           z
@@ -289,11 +295,15 @@ export const supplierTools = [
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
-      if (!allowApply)
-        return applyRequired('Receive PO quantities (inventory posting is separate)', params);
+      if (!allowApply) return applyRequired('Receive PO quantities and post stock', params);
       return {
         success: true,
-        purchaseOrder: await commerce.purchaseOrders.receive(params.purchaseOrderId, params.items),
+        purchaseOrder: await commerce.purchaseOrders.receive(
+          params.purchaseOrderId,
+          params.items,
+          params.warehouseId,
+          params.receivingLocationId,
+        ),
       };
     },
   },

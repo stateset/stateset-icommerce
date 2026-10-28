@@ -14,6 +14,8 @@ use super::*;
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreateTransferOrderItemInput {
+    pub sku: String,
+    pub lot_id: Option<String>,
     pub product_id: String,
     /// Exact decimal string
     pub quantity: String,
@@ -22,6 +24,8 @@ pub struct CreateTransferOrderItemInput {
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreateTransferOrderInput {
+    pub source_location_id: i32,
+    pub destination_location_id: i32,
     pub source_warehouse_id: String,
     pub destination_warehouse_id: String,
     pub items: Vec<CreateTransferOrderItemInput>,
@@ -45,6 +49,8 @@ pub struct TransferOrderFilterInput {
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TransferOrderItemOutput {
+    pub lot_id: Option<String>,
+    pub quantity_variance: String,
     pub id: String,
     pub transfer_order_id: String,
     pub product_id: String,
@@ -64,6 +70,8 @@ impl From<stateset_core::TransferOrderItem> for TransferOrderItemOutput {
             transfer_order_id: i.transfer_order_id.to_string(),
             product_id: i.product_id.to_string(),
             sku: i.sku,
+            lot_id: i.lot_id.map(|id| id.to_string()),
+            quantity_variance: i.quantity_variance.to_string(),
             quantity: i.quantity.to_string(),
             quantity_shipped: i.quantity_shipped.to_string(),
             quantity_received: i.quantity_received.to_string(),
@@ -74,6 +82,8 @@ impl From<stateset_core::TransferOrderItem> for TransferOrderItemOutput {
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TransferOrderOutput {
+    pub source_location_id: Option<i32>,
+    pub destination_location_id: Option<i32>,
     pub id: String,
     pub number: String,
     pub source_warehouse_id: String,
@@ -98,6 +108,8 @@ impl From<stateset_core::TransferOrder> for TransferOrderOutput {
         Self {
             id: o.id.to_string(),
             number: o.number,
+            source_location_id: o.source_location_id,
+            destination_location_id: o.destination_location_id,
             source_warehouse_id: o.source_warehouse_id.to_string(),
             destination_warehouse_id: o.destination_warehouse_id.to_string(),
             status: format!("{}", o.status),
@@ -134,6 +146,8 @@ impl TransferOrders {
             .into_iter()
             .map(|i| -> Result<stateset_core::CreateTransferOrderItem> {
                 Ok(stateset_core::CreateTransferOrderItem {
+                    sku: i.sku,
+                    lot_id: parse_optional_uuid(i.lot_id, "lot_id")?,
                     product_id: parse_uuid_str(&i.product_id, "product")?.into(),
                     quantity: parse_decimal_str(&i.quantity, "quantity")?,
                 })
@@ -142,6 +156,8 @@ impl TransferOrders {
         let order = commerce
             .transfer_orders()
             .create(stateset_core::CreateTransferOrder {
+                source_location_id: input.source_location_id,
+                destination_location_id: input.destination_location_id,
                 source_warehouse_id: parse_uuid_str(
                     &input.source_warehouse_id,
                     "source_warehouse_id",
@@ -239,6 +255,18 @@ impl TransferOrders {
             .transfer_orders()
             .receive_line(uuid.into(), item_uuid.into(), parse_decimal_str(&quantity, "quantity")?)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to receive transfer order line", e))?;
+        Ok(order.into())
+    }
+
+    /// Close receiving, recording outstanding in-transit units as shortage.
+    #[napi]
+    pub async fn complete_receiving(&self, id: String) -> Result<TransferOrderOutput> {
+        let commerce = self.commerce.get()?;
+        let id = parse_uuid_str(&id, "transfer order")?;
+        let order = commerce
+            .transfer_orders()
+            .complete_receiving(id.into())
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to close transfer receiving", e))?;
         Ok(order.into())
     }
 

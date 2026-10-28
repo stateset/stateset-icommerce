@@ -3978,6 +3978,29 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
+        let source: Option<(Uuid,Option<String>,Option<Uuid>)> = sqlx::query_as("SELECT period_id,source_document_type,source_document_id FROM gl_journal_entries WHERE id = $1").bind(command.payload.journal_entry_id).fetch_optional(tx.as_mut()).await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        if let Some((period_id, kind, source_id)) = source {
+            if let Err(error) =
+                super::ledger_source::validate(&mut tx, kind.as_deref(), source_id).await
+            {
+                let mut receipt = rejected_receipt(
+                    command,
+                    Some(policy.clone()),
+                    "commerce.ledger.source_not_postable",
+                    &error.to_string(),
+                    RetryDisposition::Never,
+                    "journal_entry",
+                );
+                append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+                tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+                return Ok(receipt);
+            }
+            sqlx::query("SELECT id FROM gl_periods WHERE id = $1 FOR SHARE")
+                .bind(period_id)
+                .execute(tx.as_mut())
+                .await
+                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        }
         let row = sqlx::query_as::<_, JournalEntryRow>(
             "SELECT * FROM gl_journal_entries WHERE id = $1 FOR UPDATE",
         )
@@ -4010,7 +4033,11 @@ impl PgKernelExecutor {
         .collect();
         let mut entry = PgGeneralLedgerRepository::row_to_journal_entry(row)?;
         entry.lines = lines;
-        if let Err(error) = entry.ensure_postable() {
+        let base = super::ledger_fx::base_currency(&mut tx).await?;
+        if let Err(error) = entry
+            .ensure_postable()
+            .and_then(|_| crate::ledger_fx::validate_recorded_entry(&entry, base))
+        {
             let code = error.invariant_code().unwrap_or("commerce.ledger.entry_not_postable");
             let mut receipt = rejected_receipt(
                 command,
@@ -4038,6 +4065,24 @@ impl PgKernelExecutor {
                 Some(policy.clone()),
                 "commerce.ledger.period_not_open",
                 &format!("cannot post journal entry: its period is {period_status}, not open"),
+                RetryDisposition::Never,
+                "journal_entry",
+            );
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            return Ok(receipt);
+        }
+        if let Err(error) = PgGeneralLedgerRepository::validate_posting_accounts(
+            &mut tx,
+            entry.lines.iter().map(|line| line.account_id).collect(),
+        )
+        .await
+        {
+            let mut receipt = rejected_receipt(
+                command,
+                Some(policy.clone()),
+                "commerce.ledger.account_not_postable",
+                &error.to_string(),
                 RetryDisposition::Never,
                 "journal_entry",
             );
@@ -4073,6 +4118,13 @@ impl PgKernelExecutor {
                 )
                 .await?;
         }
+        super::ledger_source::link(
+            &mut tx,
+            entry.source_document_type.as_deref(),
+            entry.source_document_id,
+            entry.id,
+        )
+        .await?;
         let mut event = KernelOutboxEvent::domain(
             "ledger.journal_entry_posted.v1",
             "journal_entry",
@@ -4690,7 +4742,7 @@ impl PgKernelExecutor {
                     .map_err(pg_err)?
                     .ok_or(CommerceError::NotFound)?;
             refuse_recapture(&status)?;
-            mark_completed_pg(step.as_mut(), payment_id, Utc::now()).await?;
+            mark_completed_pg(&mut step, payment_id, Utc::now()).await?;
             let row = sqlx::query_as::<_, PaymentRow>(
                 "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
                         amount, currency, amount_refunded, external_id, idempotency_key, processor,

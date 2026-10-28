@@ -37,7 +37,24 @@ use uuid::Uuid;
 // ============================================================================
 
 fn commerce() -> Commerce {
-    Commerce::new(":memory:").expect("create in-memory commerce")
+    let c = Commerce::new(":memory:").expect("create in-memory commerce");
+    let warehouse = c
+        .warehouse()
+        .create_warehouse(stateset_core::CreateWarehouse {
+            code: "RCV".into(),
+            name: "Receiving".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let location = c
+        .warehouse()
+        .create_location(stateset_core::CreateLocation {
+            warehouse_id: warehouse.id,
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!((warehouse.id, location.id), (1, 1));
+    c
 }
 
 fn make_supplier(commerce: &Commerce) -> Supplier {
@@ -89,6 +106,8 @@ fn receive(
     commerce.purchase_orders().receive(
         po.id.into(),
         ReceivePurchaseOrderItems {
+            warehouse_id: 1,
+            receiving_location_id: 1,
             items: vec![ReceivePurchaseOrderItem {
                 item_id: po.items[0].id,
                 quantity_received: qty,
@@ -413,6 +432,8 @@ fn transitions_on_a_missing_po_report_not_found() {
             .receive(
                 missing,
                 ReceivePurchaseOrderItems {
+                    warehouse_id: 1,
+                    receiving_location_id: 1,
                     items: vec![ReceivePurchaseOrderItem {
                         item_id: Uuid::new_v4(),
                         quantity_received: dec!(1),

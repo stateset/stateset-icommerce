@@ -401,7 +401,10 @@ pub trait SerialRepository: Send + Sync {
 /// Stock snapshot repository trait.
 #[auto_impl::auto_impl(&, Box, Arc)]
 pub trait StockSnapshotRepository: Send + Sync {
-    /// Capture a new stock snapshot (totals are computed from the lines).
+    /// Age stored cost layers as of a date, reconciled to owned-stock movements.
+    fn inventory_aging(&self, as_of: chrono::NaiveDate) -> Result<crate::InventoryAgingReport>;
+
+    /// Capture a new stock snapshot from the stored inventory balances.
     fn capture(&self, input: CaptureStockSnapshot) -> Result<StockSnapshot>;
 
     /// Get a snapshot by ID (with lines).

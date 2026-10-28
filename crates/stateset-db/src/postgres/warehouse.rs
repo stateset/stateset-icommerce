@@ -24,104 +24,6 @@ use uuid::Uuid;
 // transaction that writes the document's status — so the movement and the
 // status flip commit or roll back together.
 
-/// `location_inventory.lot_id` is `NOT NULL`; lot-less rows use the nil UUID.
-fn location_lot_key(lot_id: Option<Uuid>) -> Uuid {
-    lot_id.unwrap_or_else(Uuid::nil)
-}
-
-/// Add `delta` units of `sku` to a location's on-hand, creating the row on
-/// first use. A negative delta is refused when the bin does not hold enough
-/// unreserved stock (`InsufficientStock`). The row is taken `FOR UPDATE` first
-/// so concurrent WMS writers serialize.
-pub(crate) async fn apply_location_delta_pg(
-    conn: &mut sqlx::PgConnection,
-    location_id: i32,
-    sku: &str,
-    lot_id: Option<Uuid>,
-    delta: Decimal,
-    now: DateTime<Utc>,
-) -> Result<()> {
-    if delta.is_zero() {
-        return Ok(());
-    }
-    let lot_key = location_lot_key(lot_id);
-    let existing = sqlx::query_as::<_, (Decimal, Decimal)>(
-        "SELECT quantity_on_hand, quantity_reserved FROM location_inventory
-         WHERE location_id = $1 AND sku = $2 AND lot_id = $3 FOR UPDATE",
-    )
-    .bind(location_id)
-    .bind(sku)
-    .bind(lot_key)
-    .fetch_optional(&mut *conn)
-    .await
-    .map_err(map_db_error)?;
-    let (on_hand, reserved) = existing.unwrap_or((Decimal::ZERO, Decimal::ZERO));
-    let new_on_hand = on_hand + delta;
-    if new_on_hand < reserved {
-        return Err(CommerceError::InsufficientStock {
-            sku: sku.to_string(),
-            requested: delta.abs().to_string(),
-            available: (on_hand - reserved).to_string(),
-        });
-    }
-    sqlx::query(
-        "INSERT INTO location_inventory
-         (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
-         VALUES ($1, $2, $3, $4, 0, $5)
-         ON CONFLICT (location_id, sku, lot_id) DO UPDATE SET
-             quantity_on_hand = EXCLUDED.quantity_on_hand,
-             updated_at = EXCLUDED.updated_at",
-    )
-    .bind(location_id)
-    .bind(sku)
-    .bind(lot_key)
-    .bind(new_on_hand)
-    .bind(now)
-    .execute(&mut *conn)
-    .await
-    .map_err(map_db_error)?;
-    Ok(())
-}
-
-/// Record a WMS movement in the `inventory_movements` audit trail.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn insert_wms_movement_pg(
-    conn: &mut sqlx::PgConnection,
-    movement_type: MovementType,
-    from_location_id: Option<i32>,
-    to_location_id: Option<i32>,
-    sku: &str,
-    lot_id: Option<Uuid>,
-    quantity: Decimal,
-    reference_type: &str,
-    reference_id: Uuid,
-    performed_by: Option<&str>,
-    now: DateTime<Utc>,
-) -> Result<()> {
-    sqlx::query(
-        "INSERT INTO inventory_movements
-         (id, movement_type, from_location_id, to_location_id, sku, lot_id, quantity,
-          reference_type, reference_id, reason, performed_by, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
-    )
-    .bind(Uuid::new_v4())
-    .bind(movement_type.to_string())
-    .bind(from_location_id)
-    .bind(to_location_id)
-    .bind(sku)
-    .bind(lot_id)
-    .bind(quantity)
-    .bind(reference_type)
-    .bind(reference_id)
-    .bind(format!("{movement_type} {reference_type} {reference_id}"))
-    .bind(performed_by)
-    .bind(now)
-    .execute(&mut *conn)
-    .await
-    .map_err(map_db_error)?;
-    Ok(())
-}
-
 /// The warehouse a location belongs to.
 pub(crate) async fn warehouse_of_location_pg(
     conn: &mut sqlx::PgConnection,
@@ -430,30 +332,6 @@ impl PgWarehouseRepository {
 
     fn lot_key(lot_id: Option<Uuid>) -> Uuid {
         lot_id.unwrap_or_else(Uuid::nil)
-    }
-
-    /// Take a shared lock on a `locations` row before writing stock at it.
-    ///
-    /// `delete_location_async` takes the same row `FOR UPDATE`, so the two
-    /// serialize: either the stock write commits first and the delete then sees
-    /// the inventory it must refuse, or the delete commits first and the stock
-    /// write finds no location (`NotFound`) instead of writing a row that the
-    /// `ON DELETE CASCADE` silently swallowed. Shared mode lets concurrent
-    /// stock writers proceed together.
-    async fn lock_location_for_stock_write(
-        conn: &mut sqlx::PgConnection,
-        location_id: i32,
-    ) -> Result<()> {
-        let found: Option<(i32,)> =
-            sqlx::query_as("SELECT id FROM locations WHERE id = $1 FOR SHARE")
-                .bind(location_id)
-                .fetch_optional(&mut *conn)
-                .await
-                .map_err(map_db_error)?;
-        if found.is_none() {
-            return Err(CommerceError::NotFound);
-        }
-        Ok(())
     }
 
     pub async fn create_warehouse_async(&self, input: CreateWarehouse) -> Result<Warehouse> {
@@ -1084,233 +962,85 @@ impl PgWarehouseRepository {
         input: AdjustLocationInventory,
     ) -> Result<LocationInventory> {
         let now = Utc::now();
-        let lot_key = Self::lot_key(input.lot_id);
-
-        // An adjustment is a read-modify-write plus a movement insert. Run all
-        // of it in ONE transaction and lock the inventory row with
-        // `FOR UPDATE` before the arithmetic: on a pooled connection with no
-        // transaction two concurrent `+5`s both read on-hand 10 and both wrote
-        // 15, silently losing one adjustment (worse here than on SQLite, which
-        // at least serialises writers), and a rejected adjustment could still
-        // leave a movement row behind. SQLite gets the same guarantee from an
-        // IMMEDIATE write transaction.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-
-        // Pin the location itself (`FOR SHARE`) so a concurrent
-        // `delete_location_async` — which takes it `FOR UPDATE` — cannot cascade
-        // this adjustment away between its zero-stock read and its DELETE.
-        // Concurrent adjustments hold the share lock together and do not block.
-        Self::lock_location_for_stock_write(tx.as_mut(), input.location_id).await?;
-
-        let existing = sqlx::query_as::<_, (Decimal, Decimal)>(
-            "SELECT quantity_on_hand, quantity_reserved FROM location_inventory WHERE location_id = $1 AND sku = $2 AND lot_id = $3 FOR UPDATE",
+        super::stock_move::post(
+            &mut tx,
+            &crate::stock_move::StockMove {
+                id: Uuid::new_v4(),
+                sku: &input.sku,
+                lot_id: input.lot_id,
+                from: (input.quantity < Decimal::ZERO).then_some(input.location_id),
+                to: (input.quantity > Decimal::ZERO).then_some(input.location_id),
+                quantity: input.quantity.abs(),
+                release_reserved: Decimal::ZERO,
+                reserve_received: Decimal::ZERO,
+                movement_type: stateset_core::MovementType::Adjustment,
+                lot_effect: crate::stock_move::LotEffect::Track,
+                check_sellable: false,
+                reference_type: input.reference_type.as_deref(),
+                reference_id: input.reference_id,
+                reference_label: None,
+                reason: Some(&input.reason),
+                performed_by: input.performed_by.as_deref(),
+            },
+            now,
+        )
+        .await?;
+        let row = sqlx::query_as::<_, LocationInventoryRow>(
+            "SELECT * FROM location_inventory WHERE location_id = $1 AND sku = $2 AND lot_id = $3",
         )
         .bind(input.location_id)
         .bind(&input.sku)
-        .bind(lot_key)
-        .fetch_optional(tx.as_mut())
+        .bind(Self::lot_key(input.lot_id))
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
-
-        let (new_on_hand, reserved) = if let Some((on_hand, reserved)) = existing {
-            let new_qty = on_hand + input.quantity;
-            if new_qty < Decimal::ZERO {
-                return Err(CommerceError::ValidationError(
-                    "Adjustment would result in negative inventory".into(),
-                ));
-            }
-
-            sqlx::query(
-                "UPDATE location_inventory SET quantity_on_hand = $1, updated_at = $2 WHERE location_id = $3 AND sku = $4 AND lot_id = $5",
-            )
-            .bind(new_qty)
-            .bind(now)
-            .bind(input.location_id)
-            .bind(&input.sku)
-            .bind(lot_key)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            (new_qty, reserved)
-        } else {
-            if input.quantity < Decimal::ZERO {
-                return Err(CommerceError::ValidationError(
-                    "Cannot create negative inventory".into(),
-                ));
-            }
-
-            // `FOR UPDATE` cannot lock a row that does not exist yet, so two
-            // transactions can both reach this branch for the same key. The
-            // upsert makes that convergent instead of a primary-key violation:
-            // the loser blocks on the unique index, then adds its (necessarily
-            // non-negative) quantity to the winner's row. `RETURNING` reports
-            // the authoritative post-write values.
-            sqlx::query_as::<_, (Decimal, Decimal)>(
-                r#"
-                INSERT INTO location_inventory (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
-                VALUES ($1,$2,$3,$4,0,$5)
-                ON CONFLICT (location_id, sku, lot_id) DO UPDATE SET
-                    quantity_on_hand = location_inventory.quantity_on_hand + EXCLUDED.quantity_on_hand,
-                    updated_at = EXCLUDED.updated_at
-                RETURNING quantity_on_hand, quantity_reserved
-                "#,
-            )
-            .bind(input.location_id)
-            .bind(&input.sku)
-            .bind(lot_key)
-            .bind(input.quantity)
-            .bind(now)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?
-        };
-
-        let movement_id = Uuid::new_v4();
-        sqlx::query(
-            r#"
-            INSERT INTO inventory_movements (
-                id, movement_type, to_location_id, sku, lot_id, quantity,
-                reference_type, reference_id, reason, performed_by, created_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-            "#,
-        )
-        .bind(movement_id)
-        .bind(MovementType::Adjustment.to_string())
-        .bind(input.location_id)
-        .bind(&input.sku)
-        .bind(input.lot_id)
-        .bind(input.quantity)
-        .bind(input.reference_type)
-        .bind(input.reference_id)
-        .bind(input.reason)
-        .bind(input.performed_by)
-        .bind(now)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
         tx.commit().await.map_err(map_db_error)?;
-
-        Ok(LocationInventory {
-            location_id: input.location_id,
-            sku: input.sku,
-            lot_id: input.lot_id,
-            quantity_on_hand: new_on_hand,
-            quantity_reserved: reserved,
-            quantity_available: new_on_hand - reserved,
-            updated_at: now,
-        })
+        Ok(Self::row_to_location_inventory(row))
     }
-
     pub async fn move_inventory_async(&self, input: MoveInventory) -> Result<LocationMovement> {
-        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let now = Utc::now();
-        let lot_key = Self::lot_key(input.lot_id);
-
-        // Pin both locations (`FOR SHARE`) against a concurrent
-        // `delete_location_async`, lowest id first so two opposing moves cannot
-        // deadlock.
-        let mut pin = [input.from_location_id, input.to_location_id];
-        pin.sort_unstable();
-        for location_id in pin {
-            Self::lock_location_for_stock_write(tx.as_mut(), location_id).await?;
-        }
-
-        // Lock the source row (`FOR UPDATE`) before the availability guard so
-        // concurrent moves of the same (location, sku, lot) serialize and cannot both
-        // pass the guard and over-transfer the source into negative stock. SQLite
-        // achieves the same via an IMMEDIATE write transaction.
-        let (source_on_hand, source_reserved) = sqlx::query_as::<_, (Decimal, Decimal)>(
-            "SELECT quantity_on_hand, quantity_reserved FROM location_inventory WHERE location_id = $1 AND sku = $2 AND lot_id = $3 FOR UPDATE",
-        )
-        .bind(input.from_location_id)
-        .bind(&input.sku)
-        .bind(lot_key)
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(map_db_error)?
-        .ok_or(CommerceError::NotFound)?;
-
-        let available = source_on_hand - source_reserved;
-        if input.quantity > available {
-            return Err(CommerceError::ValidationError(format!(
-                "Insufficient available quantity. Requested: {}, Available: {}",
-                input.quantity, available
-            )));
-        }
-
-        sqlx::query(
-            "UPDATE location_inventory SET quantity_on_hand = quantity_on_hand - $1, updated_at = $2 WHERE location_id = $3 AND sku = $4 AND lot_id = $5",
-        )
-        .bind(input.quantity)
-        .bind(now)
-        .bind(input.from_location_id)
-        .bind(&input.sku)
-        .bind(lot_key)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
-        sqlx::query(
-            r#"
-            INSERT INTO location_inventory (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
-            VALUES ($1,$2,$3,$4,0,$5)
-            ON CONFLICT (location_id, sku, lot_id) DO UPDATE SET
-                quantity_on_hand = location_inventory.quantity_on_hand + EXCLUDED.quantity_on_hand,
-                updated_at = EXCLUDED.updated_at
-            "#,
-        )
-        .bind(input.to_location_id)
-        .bind(&input.sku)
-        .bind(lot_key)
-        .bind(input.quantity)
-        .bind(now)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
         let movement_id = Uuid::new_v4();
-        sqlx::query(
-            r#"
-            INSERT INTO inventory_movements (
-                id, movement_type, from_location_id, to_location_id, sku, lot_id,
-                quantity, reason, performed_by, created_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-            "#,
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::stock_move::post(
+            &mut tx,
+            &crate::stock_move::StockMove {
+                id: movement_id,
+                sku: &input.sku,
+                lot_id: input.lot_id,
+                from: Some(input.from_location_id),
+                to: Some(input.to_location_id),
+                quantity: input.quantity,
+                release_reserved: Decimal::ZERO,
+                reserve_received: Decimal::ZERO,
+                movement_type: stateset_core::MovementType::Transfer,
+                lot_effect: crate::stock_move::LotEffect::Track,
+                check_sellable: true,
+                reference_type: None,
+                reference_id: None,
+                reference_label: None,
+                reason: input.reason.as_deref(),
+                performed_by: input.performed_by.as_deref(),
+            },
+            now,
         )
-        .bind(movement_id)
-        .bind(MovementType::Transfer.to_string())
-        .bind(input.from_location_id)
-        .bind(input.to_location_id)
-        .bind(&input.sku)
-        .bind(input.lot_id)
-        .bind(input.quantity)
-        .bind(input.reason.clone())
-        .bind(input.performed_by.clone())
-        .bind(now)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
+        .await?;
         tx.commit().await.map_err(map_db_error)?;
-
         Ok(LocationMovement {
             id: movement_id,
             movement_type: MovementType::Transfer,
             from_location_id: Some(input.from_location_id),
             to_location_id: Some(input.to_location_id),
-            sku: input.sku,
+            sku: input.sku.clone(),
             lot_id: input.lot_id,
             quantity: input.quantity,
             reference_type: None,
             reference_id: None,
-            reason: input.reason,
-            performed_by: input.performed_by,
+            reason: input.reason.clone(),
+            performed_by: input.performed_by.clone(),
             created_at: now,
         })
     }
-
     pub async fn list_location_inventory_async(
         &self,
         filter: LocationInventoryFilter,
@@ -1567,7 +1297,27 @@ impl PgWarehouseRepository {
         .await
         .map_err(map_db_error)?;
 
+        if let Some(location) = input.location_id {
+            if warehouse_of_location_pg(tx.as_mut(), location).await? != input.warehouse_id {
+                return Err(CommerceError::ValidationError(
+                    "Cycle count location belongs to another warehouse".into(),
+                ));
+            }
+        }
         for line in &input.lines {
+            let expected: Decimal = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(li.quantity_on_hand), 0) FROM location_inventory li
+                 JOIN locations l ON l.id = li.location_id
+                 WHERE l.warehouse_id = $1 AND ($2::integer IS NULL OR li.location_id = $2)
+                   AND li.sku = $3 AND li.lot_id = $4",
+            )
+            .bind(input.warehouse_id)
+            .bind(input.location_id)
+            .bind(&line.sku)
+            .bind(Self::lot_key(line.lot_id))
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
             sqlx::query(
                 "INSERT INTO cycle_count_lines (id, cycle_count_id, sku, lot_id, expected_quantity)
                  VALUES ($1,$2,$3,$4,$5)",
@@ -1576,7 +1326,7 @@ impl PgWarehouseRepository {
             .bind(id)
             .bind(&line.sku)
             .bind(Self::lot_key(line.lot_id))
-            .bind(line.expected_quantity)
+            .bind(expected)
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
@@ -1814,91 +1564,58 @@ impl PgWarehouseRepository {
                     line.sku
                 ))
             })?;
-            let variance = counted - line.expected_quantity;
+            let location_id = existing.location_id.ok_or_else(|| {
+                CommerceError::ValidationError(
+                    "Completing a cycle count requires a single location".into(),
+                )
+            })?;
+            if warehouse_of_location_pg(tx.as_mut(), location_id).await? != existing.warehouse_id {
+                return Err(CommerceError::ValidationError(
+                    "Cycle count location belongs to another warehouse".into(),
+                ));
+            }
+            // Lock even the first balance for this location/SKU/lot.
+            sqlx::query("INSERT INTO location_inventory (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
+                VALUES ($1, $2, $3, 0, 0, $4) ON CONFLICT (location_id, sku, lot_id) DO NOTHING")
+                .bind(location_id).bind(&line.sku).bind(Self::lot_key(line.lot_id)).bind(now)
+                .execute(tx.as_mut()).await.map_err(map_db_error)?;
+            let current: Decimal = sqlx::query_scalar(
+                "SELECT quantity_on_hand FROM location_inventory WHERE location_id = $1 AND sku = $2 AND lot_id = $3 FOR UPDATE"
+            ).bind(location_id).bind(&line.sku).bind(Self::lot_key(line.lot_id))
+                .fetch_one(tx.as_mut()).await.map_err(map_db_error)?;
+            let variance = counted - current;
             sqlx::query("UPDATE cycle_count_lines SET variance = $1 WHERE id = $2")
                 .bind(variance)
                 .bind(line.id)
                 .execute(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
-            if variance == Decimal::ZERO {
+            if variance.is_zero() {
                 continue;
             }
-            let location_id = existing.location_id.ok_or_else(|| {
-                CommerceError::ValidationError(
-                    "cycle count has no location_id; cannot apply variance adjustments".into(),
-                )
-            })?;
-            let lot_key = Self::lot_key(line.lot_id);
-
-            // Adjust location_inventory (same path as adjust_inventory), with a
-            // row lock so concurrent writers serialize.
-            let current: Option<Decimal> = sqlx::query_scalar(
-                "SELECT quantity_on_hand FROM location_inventory
-                 WHERE location_id = $1 AND sku = $2 AND lot_id = $3 FOR UPDATE",
+            super::stock_move::post(
+                &mut tx,
+                &crate::stock_move::StockMove {
+                    id: Uuid::new_v4(),
+                    sku: &line.sku,
+                    lot_id: line.lot_id,
+                    from: (variance < Decimal::ZERO).then_some(location_id),
+                    to: (variance > Decimal::ZERO).then_some(location_id),
+                    quantity: variance.abs(),
+                    release_reserved: Decimal::ZERO,
+                    reserve_received: Decimal::ZERO,
+                    movement_type: stateset_core::MovementType::CycleCount,
+                    lot_effect: crate::stock_move::LotEffect::Track,
+                    check_sellable: false,
+                    reference_type: Some("cycle_count"),
+                    reference_id: Some(id),
+                    reference_label: None,
+                    reason: Some("Cycle count variance"),
+                    performed_by: existing.counted_by.as_deref(),
+                },
+                now,
             )
-            .bind(location_id)
-            .bind(&line.sku)
-            .bind(lot_key)
-            .fetch_optional(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            let new_qty = current.unwrap_or(Decimal::ZERO) + variance;
-            if new_qty < Decimal::ZERO {
-                return Err(CommerceError::ValidationError(format!(
-                    "cycle count adjustment for sku {} would result in negative inventory",
-                    line.sku
-                )));
-            }
-            if current.is_some() {
-                sqlx::query(
-                    "UPDATE location_inventory SET quantity_on_hand = $1, updated_at = $2
-                     WHERE location_id = $3 AND sku = $4 AND lot_id = $5",
-                )
-                .bind(new_qty)
-                .bind(now)
-                .bind(location_id)
-                .bind(&line.sku)
-                .bind(lot_key)
-                .execute(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-            } else {
-                sqlx::query(
-                    "INSERT INTO location_inventory (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
-                     VALUES ($1,$2,$3,$4,0,$5)",
-                )
-                .bind(location_id)
-                .bind(&line.sku)
-                .bind(lot_key)
-                .bind(new_qty)
-                .bind(now)
-                .execute(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-            }
-
-            sqlx::query(
-                "INSERT INTO inventory_movements (
-                    id, movement_type, to_location_id, sku, lot_id, quantity,
-                    reference_type, reference_id, reason, performed_by, created_at
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
-            )
-            .bind(Uuid::new_v4())
-            .bind(MovementType::CycleCount.to_string())
-            .bind(location_id)
-            .bind(&line.sku)
-            .bind(line.lot_id)
-            .bind(variance)
-            .bind("cycle_count")
-            .bind(existing.id)
-            .bind("Cycle count variance")
-            .bind(&existing.counted_by)
-            .bind(now)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+            .await?;
         }
 
         let changed = sqlx::query(

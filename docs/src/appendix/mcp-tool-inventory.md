@@ -13,20 +13,20 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Metric | Value |
 | --- | --- |
-| Total tools | 984 |
+| Total tools | 1020 |
 | MCP servers | 3 |
 | Policy domains | 91 |
-| Read tools | 487 |
-| Write tools | 429 |
-| Delete tools | 21 |
-| Admin tools | 47 |
+| Read tools | 496 |
+| Write tools | 402 |
+| Delete tools | 20 |
+| Admin tools | 102 |
 | Unknown permission | 0 |
 
 ## MCP Server Counts
 
 | MCP server | Tools | Source |
 | --- | --- | --- |
-| stateset-commerce | 966 | `cli/src/mcp-server.js` |
+| stateset-commerce | 1002 | `cli/src/mcp-server.js` |
 | stateset-scaffold | 13 | `cli/src/scaffold-server.js` |
 | stateset-x402 | 5 | `cli/src/x402-mcp-server.js` |
 
@@ -39,8 +39,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | a2a_intelligence | 17 |
 | a2a_observability | 15 |
 | a2a_platform | 16 |
-| accounts_payable | 11 |
-| accounts_receivable | 8 |
+| accounts_payable | 22 |
+| accounts_receivable | 15 |
 | activity_logs | 5 |
 | agent_cards | 5 |
 | agent_receipt | 11 |
@@ -69,7 +69,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | fixed_assets | 9 |
 | fraud | 6 |
 | fulfillment | 14 |
-| general_ledger | 17 |
+| general_ledger | 26 |
 | gift_cards | 7 |
 | import | 10 |
 | inbound_shipments | 8 |
@@ -95,7 +95,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | proofs | 7 |
 | purgatory | 6 |
 | quality | 15 |
-| receiving | 8 |
+| receiving | 16 |
 | returns | 12 |
 | revenue_recognition | 6 |
 | reviews | 7 |
@@ -115,7 +115,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | sync | 20 |
 | tax | 29 |
 | topology-snapshots | 5 |
-| transfer_orders | 7 |
+| transfer_orders | 8 |
 | treasury | 6 |
 | units-of-measure | 10 |
 | vector | 16 |
@@ -130,10 +130,10 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Permission | Tools |
 | --- | --- |
-| admin | 47 |
-| delete | 21 |
-| read | 487 |
-| write | 429 |
+| admin | 102 |
+| delete | 20 |
+| read | 496 |
+| write | 402 |
 
 ## Tool Registry
 
@@ -291,7 +291,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `add_return_tracking` | `stateset-commerce` | `returns` | `write` |
 | `add_shipment_item` | `stateset-commerce` | `shipments` | `write` |
 | `add_to_wishlist` | `stateset-commerce` | `wishlists` | `write` |
-| `adjust_credit_limit` | `stateset-commerce` | `credit` | `write` |
+| `adjust_credit_limit` | `stateset-commerce` | `credit` | `admin` |
 | `adjust_inventory` | `stateset-commerce` | `inventory` | `write` |
 | `adjust_store_credit` | `stateset-commerce` | `store_credits` | `write` |
 | `agent_attach_sla` | `stateset-commerce` | `agent_runtime` | `write` |
@@ -364,10 +364,13 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `allocate_backorder` | `stateset-commerce` | `backorders` | `write` |
 | `apply_cart_discount` | `stateset-commerce` | `carts` | `write` |
 | `apply_cart_promotions` | `stateset-commerce` | `promotions` | `write` |
-| `apply_prepayment` | `stateset-commerce` | `prepayments` | `write` |
+| `apply_credit_memo` | `stateset-commerce` | `accounts_receivable` | `admin` |
+| `apply_payment_to_invoices` | `stateset-commerce` | `accounts_receivable` | `admin` |
+| `apply_prepayment` | `stateset-commerce` | `prepayments` | `admin` |
 | `apply_store_credit` | `stateset-commerce` | `store_credits` | `write` |
-| `apply_vendor_credit` | `stateset-commerce` | `vendor_credits` | `write` |
-| `approve_bill` | `stateset-commerce` | `accounts_payable` | `write` |
+| `apply_vendor_credit` | `stateset-commerce` | `vendor_credits` | `admin` |
+| `approve_bill` | `stateset-commerce` | `accounts_payable` | `admin` |
+| `approve_bill_payment_run` | `stateset-commerce` | `accounts_payable` | `admin` |
 | `approve_purchase_order` | `stateset-commerce` | `suppliers` | `write` |
 | `approve_return` | `stateset-commerce` | `returns` | `write` |
 | `approve_review` | `stateset-commerce` | `reviews` | `write` |
@@ -377,6 +380,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `assess_order_fraud` | `stateset-commerce` | `fraud` | `write` |
 | `assess_wasm_connector_safety` | `stateset-commerce` | `connectors` | `read` |
 | `assign_pick_task` | `stateset-commerce` | `fulfillment` | `write` |
+| `assign_put_away` | `stateset-commerce` | `receiving` | `write` |
 | `audit_export` | `stateset-commerce` | `audit` | `admin` |
 | `audit_query` | `stateset-commerce` | `audit` | `read` |
 | `audit_retention` | `stateset-commerce` | `audit` | `admin` |
@@ -395,7 +399,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `calculate_tax_quote` | `stateset-commerce` | `tax` | `read` |
 | `calculate_tax_quote_with_failover` | `stateset-commerce` | `tax` | `read` |
 | `cancel_backorder` | `stateset-commerce` | `backorders` | `write` |
-| `cancel_bill` | `stateset-commerce` | `accounts_payable` | `write` |
+| `cancel_bill` | `stateset-commerce` | `accounts_payable` | `admin` |
+| `cancel_bill_payment_run` | `stateset-commerce` | `accounts_payable` | `admin` |
 | `cancel_cart` | `stateset-commerce` | `carts` | `delete` |
 | `cancel_cycle_count` | `stateset-commerce` | `cycle_counts` | `write` |
 | `cancel_fulfillment_wave` | `stateset-commerce` | `fulfillment` | `write` |
@@ -405,12 +410,13 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `cancel_payment_intent` | `stateset-commerce` | `payments` | `delete` |
 | `cancel_pick_task` | `stateset-commerce` | `fulfillment` | `write` |
 | `cancel_purchase_order` | `stateset-commerce` | `suppliers` | `write` |
+| `cancel_put_away` | `stateset-commerce` | `receiving` | `write` |
 | `cancel_receipt` | `stateset-commerce` | `receiving` | `write` |
 | `cancel_return` | `stateset-commerce` | `returns` | `write` |
 | `cancel_shipment` | `stateset-commerce` | `shipments` | `delete` |
 | `cancel_subscription` | `stateset-commerce` | `subscriptions` | `delete` |
 | `cancel_transfer_order` | `stateset-commerce` | `transfer_orders` | `write` |
-| `cancel_vendor_credit` | `stateset-commerce` | `vendor_credits` | `write` |
+| `cancel_vendor_credit` | `stateset-commerce` | `vendor_credits` | `admin` |
 | `cancel_vendor_return` | `stateset-commerce` | `vendor-returns` | `write` |
 | `cancel_work_order` | `stateset-commerce` | `manufacturing` | `delete` |
 | `capture_payment_intent` | `stateset-commerce` | `payments` | `write` |
@@ -440,7 +446,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `check_vendor_credits_supported` | `stateset-commerce` | `vendor_credits` | `read` |
 | `checkout_with_crypto` | `stateset-commerce` | `checkout` | `write` |
 | `clear_cart_items` | `stateset-commerce` | `carts` | `delete` |
-| `close_month` | `stateset-commerce` | `general_ledger` | `write` |
+| `close_gl_period` | `stateset-commerce` | `general_ledger` | `admin` |
+| `close_month` | `stateset-commerce` | `general_ledger` | `admin` |
 | `close_ncr` | `stateset-commerce` | `quality` | `write` |
 | `commit_tax_transaction` | `stateset-commerce` | `tax` | `write` |
 | `compare_commerce_scenarios` | `stateset-commerce` | `simulations` | `read` |
@@ -451,8 +458,10 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `complete_inspection` | `stateset-commerce` | `quality` | `write` |
 | `complete_payment` | `stateset-commerce` | `payments` | `write` |
 | `complete_print_job` | `stateset-commerce` | `print-stations` | `write` |
+| `complete_put_away` | `stateset-commerce` | `receiving` | `write` |
 | `complete_receiving` | `stateset-commerce` | `receiving` | `write` |
 | `complete_return` | `stateset-commerce` | `returns` | `write` |
+| `complete_transfer_order_receiving` | `stateset-commerce` | `transfer_orders` | `write` |
 | `complete_warranty_claim` | `stateset-commerce` | `warranties` | `write` |
 | `complete_work_order` | `stateset-commerce` | `manufacturing` | `write` |
 | `compliance_summary` | `stateset-commerce` | `compliance` | `read` |
@@ -472,14 +481,16 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `count_warehouses` | `stateset-commerce` | `warehouse` | `read` |
 | `create_backorder` | `stateset-commerce` | `backorders` | `write` |
 | `create_bill` | `stateset-commerce` | `accounts_payable` | `write` |
+| `create_bill_payment` | `stateset-commerce` | `accounts_payable` | `admin` |
+| `create_bill_payment_run` | `stateset-commerce` | `accounts_payable` | `admin` |
 | `create_bom` | `stateset-commerce` | `manufacturing` | `write` |
 | `create_cart` | `stateset-commerce` | `carts` | `write` |
 | `create_channel` | `stateset-commerce` | `channels` | `write` |
 | `create_company` | `stateset-commerce` | `companies` | `write` |
 | `create_company_contact` | `stateset-commerce` | `companies` | `write` |
 | `create_coupon` | `stateset-commerce` | `promotions` | `write` |
-| `create_credit_account` | `stateset-commerce` | `credit` | `write` |
-| `create_credit_memo` | `stateset-commerce` | `accounts_receivable` | `write` |
+| `create_credit_account` | `stateset-commerce` | `credit` | `admin` |
+| `create_credit_memo` | `stateset-commerce` | `accounts_receivable` | `admin` |
 | `create_custom_object` | `stateset-commerce` | `custom_objects` | `write` |
 | `create_custom_object_type` | `stateset-commerce` | `custom_objects` | `write` |
 | `create_customer` | `stateset-commerce` | `customers` | `write` |
@@ -497,6 +508,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `create_integration_mapping` | `stateset-commerce` | `integration-mappings` | `write` |
 | `create_inventory_item` | `stateset-commerce` | `inventory` | `write` |
 | `create_invoice` | `stateset-commerce` | `invoices` | `write` |
+| `create_journal_entry` | `stateset-commerce` | `general_ledger` | `admin` |
 | `create_location` | `stateset-commerce` | `warehouse` | `write` |
 | `create_lot` | `stateset-commerce` | `lots` | `write` |
 | `create_loyalty_program` | `stateset-commerce` | `loyalty` | `admin` |
@@ -505,15 +517,16 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `create_payment` | `stateset-commerce` | `payments` | `write` |
 | `create_payment_intent` | `stateset-commerce` | `payments` | `write` |
 | `create_payment_link` | `stateset-commerce` | `checkout` | `write` |
-| `create_payment_obligation` | `stateset-commerce` | `payment-obligations` | `write` |
+| `create_payment_obligation` | `stateset-commerce` | `payment-obligations` | `admin` |
 | `create_payment_settlement_batch` | `stateset-commerce` | `payments` | `write` |
-| `create_prepayment` | `stateset-commerce` | `prepayments` | `write` |
+| `create_prepayment` | `stateset-commerce` | `prepayments` | `admin` |
 | `create_price_level` | `stateset-commerce` | `price_levels` | `write` |
 | `create_price_schedule` | `stateset-commerce` | `price_schedules` | `write` |
 | `create_product` | `stateset-commerce` | `products` | `write` |
 | `create_production_batch` | `stateset-commerce` | `production_batches` | `write` |
 | `create_promotion` | `stateset-commerce` | `promotions` | `write` |
 | `create_purchase_order` | `stateset-commerce` | `suppliers` | `write` |
+| `create_put_away` | `stateset-commerce` | `receiving` | `write` |
 | `create_quality_hold` | `stateset-commerce` | `quality` | `write` |
 | `create_receipt` | `stateset-commerce` | `receiving` | `write` |
 | `create_receipt_from_purchase_order` | `stateset-commerce` | `receiving` | `write` |
@@ -542,13 +555,14 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `create_unit_class` | `stateset-commerce` | `units-of-measure` | `write` |
 | `create_unit_conversion_rule` | `stateset-commerce` | `units-of-measure` | `write` |
 | `create_unit_of_measure` | `stateset-commerce` | `units-of-measure` | `write` |
-| `create_vendor_credit` | `stateset-commerce` | `vendor_credits` | `write` |
+| `create_vendor_credit` | `stateset-commerce` | `vendor_credits` | `admin` |
 | `create_vendor_return` | `stateset-commerce` | `vendor-returns` | `write` |
 | `create_warehouse` | `stateset-commerce` | `warehouse` | `write` |
 | `create_warranty` | `stateset-commerce` | `warranties` | `write` |
 | `create_warranty_claim` | `stateset-commerce` | `warranties` | `write` |
 | `create_wishlist` | `stateset-commerce` | `wishlists` | `write` |
 | `create_work_order` | `stateset-commerce` | `manufacturing` | `write` |
+| `create_write_off` | `stateset-commerce` | `accounts_receivable` | `admin` |
 | `deactivate_promotion` | `stateset-commerce` | `promotions` | `write` |
 | `delegate_to_agent` | `stateset-commerce` | `agentic` | `write` |
 | `delete_cart` | `stateset-commerce` | `carts` | `delete` |
@@ -583,7 +597,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `disable_gift_card` | `stateset-commerce` | `gift_cards` | `write` |
 | `discover_agents` | `stateset-commerce` | `agent_cards` | `read` |
 | `discover_tools` | `stateset-commerce` | `agentic` | `read` |
-| `dispose_fixed_asset` | `stateset-commerce` | `fixed_assets` | `write` |
+| `dispose_fixed_asset` | `stateset-commerce` | `fixed_assets` | `admin` |
+| `dispute_bill` | `stateset-commerce` | `accounts_payable` | `admin` |
 | `earn_points` | `stateset-commerce` | `loyalty` | `write` |
 | `enable_currencies` | `stateset-commerce` | `currency` | `admin` |
 | `enqueue_print_job` | `stateset-commerce` | `print-stations` | `write` |
@@ -635,6 +650,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `get_backorder_summary` | `stateset-commerce` | `backorders` | `read` |
 | `get_balance_sheet` | `stateset-commerce` | `general_ledger` | `read` |
 | `get_bill` | `stateset-commerce` | `accounts_payable` | `read` |
+| `get_bill_payment` | `stateset-commerce` | `accounts_payable` | `read` |
+| `get_bill_payment_run` | `stateset-commerce` | `accounts_payable` | `read` |
 | `get_billing_cycle` | `stateset-commerce` | `subscriptions` | `read` |
 | `get_bom` | `stateset-commerce` | `manufacturing` | `read` |
 | `get_cart` | `stateset-commerce` | `carts` | `read` |
@@ -667,6 +684,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `get_gift_card` | `stateset-commerce` | `gift_cards` | `read` |
 | `get_gl_account` | `stateset-commerce` | `general_ledger` | `read` |
 | `get_gl_account_balance` | `stateset-commerce` | `general_ledger` | `read` |
+| `get_gl_period` | `stateset-commerce` | `general_ledger` | `read` |
+| `get_gl_posting_config` | `stateset-commerce` | `general_ledger` | `read` |
 | `get_inbound_shipment` | `stateset-commerce` | `inbound_shipments` | `read` |
 | `get_income_statement` | `stateset-commerce` | `general_ledger` | `read` |
 | `get_inspection` | `stateset-commerce` | `quality` | `read` |
@@ -709,6 +728,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `get_purchase_order` | `stateset-commerce` | `suppliers` | `read` |
 | `get_purchase_order_items` | `stateset-commerce` | `suppliers` | `read` |
 | `get_purgatory_order` | `stateset-commerce` | `purgatory` | `read` |
+| `get_put_away` | `stateset-commerce` | `receiving` | `read` |
 | `get_quality_hold` | `stateset-commerce` | `quality` | `read` |
 | `get_receipt` | `stateset-commerce` | `receiving` | `read` |
 | `get_return` | `stateset-commerce` | `returns` | `read` |
@@ -770,10 +790,10 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `ingest_purgatory_order` | `stateset-commerce` | `purgatory` | `write` |
 | `ingest_shipping_provider_webhook` | `stateset-commerce` | `shipments` | `write` |
 | `ingest_tax_provider_webhook` | `stateset-commerce` | `tax` | `write` |
-| `initialize_chart_of_accounts` | `stateset-commerce` | `general_ledger` | `write` |
+| `initialize_chart_of_accounts` | `stateset-commerce` | `general_ledger` | `admin` |
 | `inspect_batch` | `stateset-commerce` | `proofs` | `read` |
 | `install_wasm_connector` | `stateset-commerce` | `connectors` | `write` |
-| `link_payment_obligation_bill` | `stateset-commerce` | `payment-obligations` | `write` |
+| `link_payment_obligation_bill` | `stateset-commerce` | `payment-obligations` | `admin` |
 | `list_active_lots` | `stateset-commerce` | `lots` | `read` |
 | `list_active_quality_holds` | `stateset-commerce` | `quality` | `read` |
 | `list_activity_logs` | `stateset-commerce` | `activity_logs` | `read` |
@@ -784,6 +804,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `list_backorders_for_customer` | `stateset-commerce` | `backorders` | `read` |
 | `list_backorders_for_order` | `stateset-commerce` | `backorders` | `read` |
 | `list_backorders_for_sku` | `stateset-commerce` | `backorders` | `read` |
+| `list_bill_payment_runs` | `stateset-commerce` | `accounts_payable` | `read` |
 | `list_billing_cycles` | `stateset-commerce` | `subscriptions` | `read` |
 | `list_bills` | `stateset-commerce` | `accounts_payable` | `read` |
 | `list_bills_due_soon` | `stateset-commerce` | `accounts_payable` | `read` |
@@ -822,6 +843,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `list_integration_field_mappings` | `stateset-commerce` | `integration-field-mappings` | `read` |
 | `list_integration_mapping_groups` | `stateset-commerce` | `integration-field-mappings` | `read` |
 | `list_integration_mappings` | `stateset-commerce` | `integration-mappings` | `read` |
+| `list_invoice_payment_applications` | `stateset-commerce` | `accounts_receivable` | `read` |
 | `list_invoices` | `stateset-commerce` | `invoices` | `read` |
 | `list_item_costs` | `stateset-commerce` | `cost_accounting` | `read` |
 | `list_journal_entries` | `stateset-commerce` | `general_ledger` | `read` |
@@ -858,6 +880,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `list_promotions` | `stateset-commerce` | `promotions` | `read` |
 | `list_purchase_orders` | `stateset-commerce` | `suppliers` | `read` |
 | `list_purgatory_orders` | `stateset-commerce` | `purgatory` | `read` |
+| `list_put_aways` | `stateset-commerce` | `receiving` | `read` |
 | `list_quality_holds` | `stateset-commerce` | `quality` | `read` |
 | `list_quarantined_lots` | `stateset-commerce` | `lots` | `read` |
 | `list_receipts` | `stateset-commerce` | `receiving` | `read` |
@@ -899,7 +922,9 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `list_warranties` | `stateset-commerce` | `warranties` | `read` |
 | `list_wishlists` | `stateset-commerce` | `wishlists` | `read` |
 | `list_work_orders` | `stateset-commerce` | `manufacturing` | `read` |
+| `list_write_offs` | `stateset-commerce` | `accounts_receivable` | `read` |
 | `load_policy_file` | `stateset-commerce` | `policies` | `write` |
+| `lock_gl_period` | `stateset-commerce` | `general_ledger` | `admin` |
 | `map_purgatory_line` | `stateset-commerce` | `purgatory` | `write` |
 | `mark_cart_ready_for_payment` | `stateset-commerce` | `carts` | `write` |
 | `mark_failed_payment` | `stateset-commerce` | `payments` | `write` |
@@ -909,15 +934,16 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `mark_serial_sold` | `stateset-commerce` | `serials` | `write` |
 | `match_agent_to_products` | `stateset-commerce` | `catalog` | `read` |
 | `match_product_to_agents` | `stateset-commerce` | `catalog` | `read` |
-| `open_gl_period` | `stateset-commerce` | `general_ledger` | `write` |
+| `open_gl_period` | `stateset-commerce` | `general_ledger` | `admin` |
 | `pair_print_station` | `stateset-commerce` | `print-stations` | `write` |
 | `pause_subscription` | `stateset-commerce` | `subscriptions` | `write` |
 | `pick_up_next_print_job` | `stateset-commerce` | `print-stations` | `write` |
-| `place_asset_in_service` | `stateset-commerce` | `fixed_assets` | `write` |
+| `place_asset_in_service` | `stateset-commerce` | `fixed_assets` | `admin` |
 | `plan_partial_shipment` | `stateset-commerce` | `shipments` | `read` |
-| `post_depreciation` | `stateset-commerce` | `fixed_assets` | `write` |
-| `post_journal_entry` | `stateset-commerce` | `general_ledger` | `write` |
+| `post_depreciation` | `stateset-commerce` | `fixed_assets` | `admin` |
+| `post_journal_entry` | `stateset-commerce` | `general_ledger` | `admin` |
 | `post_purgatory_order` | `stateset-commerce` | `purgatory` | `write` |
+| `process_bill_payment_run` | `stateset-commerce` | `accounts_payable` | `admin` |
 | `process_vendor_return` | `stateset-commerce` | `vendor-returns` | `write` |
 | `publish_product_catalog` | `stateset-commerce` | `catalog` | `write` |
 | `publish_wasm_connector` | `stateset-commerce` | `connectors` | `admin` |
@@ -926,21 +952,23 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `query_agent_catalog` | `stateset-commerce` | `catalog` | `read` |
 | `quote_promotions` | `stateset-commerce` | `promotions` | `read` |
 | `quote_shipping_rates` | `stateset-commerce` | `shipments` | `read` |
-| `reactivate_credit_account` | `stateset-commerce` | `credit` | `write` |
+| `reactivate_credit_account` | `stateset-commerce` | `credit` | `admin` |
 | `recalculate_cart` | `stateset-commerce` | `carts` | `write` |
 | `receive_inbound_shipment_line` | `stateset-commerce` | `inbound_shipments` | `write` |
 | `receive_purchase_order` | `stateset-commerce` | `suppliers` | `write` |
+| `receive_receipt_items` | `stateset-commerce` | `receiving` | `write` |
 | `receive_transfer_order_line` | `stateset-commerce` | `transfer_orders` | `write` |
-| `recognize_revenue` | `stateset-commerce` | `revenue_recognition` | `write` |
+| `reclose_gl_period` | `stateset-commerce` | `general_ledger` | `admin` |
+| `recognize_revenue` | `stateset-commerce` | `revenue_recognition` | `admin` |
 | `reconcile_payment_provider` | `stateset-commerce` | `payments` | `read` |
 | `record_activity` | `stateset-commerce` | `activity_logs` | `write` |
 | `record_cycle_counts` | `stateset-commerce` | `cycle_counts` | `write` |
-| `record_invoice_payment` | `stateset-commerce` | `invoices` | `write` |
-| `record_payment_obligation_payment` | `stateset-commerce` | `payment-obligations` | `write` |
+| `record_invoice_payment` | `stateset-commerce` | `invoices` | `admin` |
+| `record_payment_obligation_payment` | `stateset-commerce` | `payment-obligations` | `admin` |
 | `record_promotion_usage` | `stateset-commerce` | `promotions` | `write` |
 | `redeem_points` | `stateset-commerce` | `loyalty` | `write` |
 | `refund_payment_intent` | `stateset-commerce` | `payments` | `write` |
-| `refund_prepayment` | `stateset-commerce` | `prepayments` | `write` |
+| `refund_prepayment` | `stateset-commerce` | `prepayments` | `admin` |
 | `refund_to_gift_card` | `stateset-commerce` | `gift_cards` | `write` |
 | `register_agent_card` | `stateset-commerce` | `agent_cards` | `write` |
 | `register_policy_template` | `stateset-commerce` | `policies` | `write` |
@@ -957,16 +985,20 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `remove_from_wishlist` | `stateset-commerce` | `wishlists` | `write` |
 | `remove_production_batch_work_order` | `stateset-commerce` | `production_batches` | `write` |
 | `remove_shipment_item` | `stateset-commerce` | `shipments` | `write` |
+| `reopen_gl_period` | `stateset-commerce` | `general_ledger` | `admin` |
 | `reserve_cart_inventory` | `stateset-commerce` | `carts` | `write` |
 | `reserve_inventory` | `stateset-commerce` | `inventory` | `write` |
+| `resolve_bill_dispute` | `stateset-commerce` | `accounts_payable` | `admin` |
 | `resolve_integration_mapping` | `stateset-commerce` | `integration-mappings` | `read` |
 | `resolve_payment_link` | `stateset-commerce` | `checkout` | `read` |
 | `resolve_scheduled_price` | `stateset-commerce` | `price_schedules` | `read` |
 | `restore_database` | `stateset-commerce` | `maintenance` | `write` |
 | `resume_subscription` | `stateset-commerce` | `subscriptions` | `write` |
-| `revalue_gl` | `stateset-commerce` | `general_ledger` | `write` |
-| `reverse_prepayment_application` | `stateset-commerce` | `prepayments` | `write` |
-| `reverse_vendor_credit_application` | `stateset-commerce` | `vendor_credits` | `write` |
+| `revalue_gl` | `stateset-commerce` | `general_ledger` | `admin` |
+| `reverse_journal_entry` | `stateset-commerce` | `general_ledger` | `admin` |
+| `reverse_prepayment_application` | `stateset-commerce` | `prepayments` | `admin` |
+| `reverse_vendor_credit_application` | `stateset-commerce` | `vendor_credits` | `admin` |
+| `reverse_write_off` | `stateset-commerce` | `accounts_receivable` | `admin` |
 | `review_flagged_order` | `stateset-commerce` | `fraud` | `write` |
 | `revoke_payment_link` | `stateset-commerce` | `checkout` | `write` |
 | `revoke_print_station` | `stateset-commerce` | `print-stations` | `write` |
@@ -986,8 +1018,9 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `set_edi_document_status` | `stateset-commerce` | `edi_documents` | `write` |
 | `set_exchange_rate` | `stateset-commerce` | `currency` | `admin` |
 | `set_exchange_rates` | `stateset-commerce` | `currency` | `admin` |
-| `set_item_cost` | `stateset-commerce` | `cost_accounting` | `write` |
-| `set_payment_obligation_status` | `stateset-commerce` | `payment-obligations` | `write` |
+| `set_gl_posting_config` | `stateset-commerce` | `general_ledger` | `admin` |
+| `set_item_cost` | `stateset-commerce` | `cost_accounting` | `admin` |
+| `set_payment_obligation_status` | `stateset-commerce` | `payment-obligations` | `admin` |
 | `set_price_level_entry` | `stateset-commerce` | `price_levels` | `write` |
 | `set_price_schedule_entry` | `stateset-commerce` | `price_schedules` | `write` |
 | `set_tax_enabled` | `stateset-commerce` | `tax` | `write` |
@@ -1003,11 +1036,12 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `start_cycle_count` | `stateset-commerce` | `cycle_counts` | `write` |
 | `start_inspection` | `stateset-commerce` | `quality` | `write` |
 | `start_pick_task` | `stateset-commerce` | `fulfillment` | `write` |
+| `start_put_away` | `stateset-commerce` | `receiving` | `write` |
 | `start_receiving` | `stateset-commerce` | `receiving` | `write` |
 | `start_work_order` | `stateset-commerce` | `manufacturing` | `write` |
 | `submit_purchase_order` | `stateset-commerce` | `suppliers` | `write` |
 | `submit_vendor_return` | `stateset-commerce` | `vendor-returns` | `write` |
-| `suspend_credit_account` | `stateset-commerce` | `credit` | `write` |
+| `suspend_credit_account` | `stateset-commerce` | `credit` | `admin` |
 | `sync_conflicts` | `stateset-commerce` | `sync` | `read` |
 | `sync_decrypt_event` | `stateset-commerce` | `sync` | `read` |
 | `sync_entity_history` | `stateset-commerce` | `sync` | `read` |
@@ -1031,8 +1065,9 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `treasury_ledger` | `stateset-commerce` | `treasury` | `read` |
 | `treasury_list_tokens` | `stateset-commerce` | `treasury` | `read` |
 | `treasury_register_token` | `stateset-commerce` | `treasury` | `admin` |
+| `unapply_invoice_payment` | `stateset-commerce` | `accounts_receivable` | `admin` |
 | `uninstall_wasm_connector` | `stateset-commerce` | `connectors` | `delete` |
-| `update_average_item_cost` | `stateset-commerce` | `cost_accounting` | `write` |
+| `update_average_item_cost` | `stateset-commerce` | `cost_accounting` | `admin` |
 | `update_backorder` | `stateset-commerce` | `backorders` | `write` |
 | `update_cart` | `stateset-commerce` | `carts` | `write` |
 | `update_cart_item` | `stateset-commerce` | `carts` | `write` |
@@ -1084,12 +1119,13 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `verify_inclusion_proof` | `stateset-commerce` | `proofs` | `read` |
 | `verify_receipt` | `stateset-commerce` | `proofs` | `read` |
 | `verify_wasm_connector_attestation` | `stateset-commerce` | `connectors` | `read` |
-| `void_credit_memo` | `stateset-commerce` | `accounts_receivable` | `write` |
-| `void_invoice` | `stateset-commerce` | `invoices` | `delete` |
-| `void_journal_entry` | `stateset-commerce` | `general_ledger` | `write` |
+| `void_bill_payment` | `stateset-commerce` | `accounts_payable` | `admin` |
+| `void_credit_memo` | `stateset-commerce` | `accounts_receivable` | `admin` |
+| `void_invoice` | `stateset-commerce` | `invoices` | `admin` |
+| `void_journal_entry` | `stateset-commerce` | `general_ledger` | `admin` |
 | `void_shipping_label` | `stateset-commerce` | `shipments` | `delete` |
 | `void_tax_transaction` | `stateset-commerce` | `tax` | `delete` |
-| `write_off_fixed_asset` | `stateset-commerce` | `fixed_assets` | `write` |
+| `write_off_fixed_asset` | `stateset-commerce` | `fixed_assets` | `admin` |
 | `x402_circuit_status` | `stateset-commerce` | `a2a_automation` | `read` |
 | `x402_create_payment_intent` | `stateset-commerce` | `x402` | `write` |
 | `x402_credit_balance` | `stateset-commerce` | `x402` | `read` |

@@ -55,6 +55,14 @@ close/lock/reopen, month-end close, payment-run processing, store-credit
 adjust/apply) needs the `Delete` permission level, which means the built-in
 `operator` role or above. Customer-scoped principals are always refused it.
 
+The **`manage_finance`** action class (bill and payment-run approval and
+processing, AP payments and their voids, AR settlements and write-offs, ledger
+posting, voiding, reversal and period control, posting configuration, asset
+postings, prepayment, vendor-credit, payment-obligation, credit and
+cost-accounting mutations) needs the `Admin` permission level, so a single
+write or operator key cannot both create and approve or pay a payable.
+Customer-scoped principals are always refused it too.
+
 ### Not-found versus forbidden
 
 For an `owned` route, a customer asking for another customer's record gets
@@ -84,7 +92,7 @@ Tests in that module fail when any of the following happens:
   classified**),
 - a row names a route that is not mounted,
 - an OpenAPI operation has no row,
-- a destructive route is not `operator`,
+- a destructive or `manage_finance` route is not `operator`,
 - this page drifts from the table.
 
 At runtime, a matched route that has no row fails closed with 403.
@@ -98,7 +106,7 @@ STATESET_BLESS_HTTP_AUTHZ_DOC=1 cargo test -p stateset-http --lib route_policy
 
 <!-- BEGIN GENERATED ROUTE TABLE (route_policy.rs) -->
 
-477 routes: 30 owned, 9 owned-list, 9 owned-create, 9 public, 415 operator, 5 infra (23 destructive).
+537 routes: 30 owned, 9 owned-list, 9 owned-create, 9 public, 475 operator, 5 infra (8 destructive, 67 manage_finance).
 
 | Method | Path | Action | Access | Ownership rule |
 |---|---|---|---|---|
@@ -116,30 +124,31 @@ STATESET_BLESS_HTTP_AUTHZ_DOC=1 cargo test -p stateset-http --lib route_policy
 | POST | `/api/v1/ap/bills` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/ap/bills` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/ap/bills/{id}` | read | operator | customer principals refused (403) |
-| POST | `/api/v1/ap/bills/{id}/approve` | execute | operator | customer principals refused (403) |
-| POST | `/api/v1/ap/bills/{id}/cancel` | delete | operator | customer principals refused (403) |
-| POST | `/api/v1/ap/bills/{id}/dispute` | execute | operator | customer principals refused (403) |
+| POST | `/api/v1/ap/bills/{id}/approve` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/ap/bills/{id}/cancel` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/ap/bills/{id}/dispute` | manage_finance | operator | customer principals refused (403) |
 | GET | `/api/v1/ap/bills/{id}/three-way-match` | list | operator | customer principals refused (403) |
-| POST | `/api/v1/ap/payments` | create | operator | customer principals refused (403) |
-| POST | `/api/v1/ap/payments/{id}/void` | destructive | operator | customer principals refused (403) |
+| POST | `/api/v1/ap/payments` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/ap/payments/{id}/void` | manage_finance | operator | customer principals refused (403) |
 | POST | `/api/v1/ap/payment-runs` | create | operator | customer principals refused (403) |
-| POST | `/api/v1/ap/payment-runs/{id}/approve` | execute | operator | customer principals refused (403) |
-| POST | `/api/v1/ap/payment-runs/{id}/process` | destructive | operator | customer principals refused (403) |
-| POST | `/api/v1/ap/payment-runs/{id}/cancel` | delete | operator | customer principals refused (403) |
+| POST | `/api/v1/ap/payment-runs/{id}/approve` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/ap/payment-runs/{id}/process` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/ap/payment-runs/{id}/cancel` | manage_finance | operator | customer principals refused (403) |
 | GET | `/api/v1/ap/aging` | list | operator | customer principals refused (403) |
+| POST | `/api/v1/ap/bills/{id}/resolve-dispute` | manage_finance | operator | customer principals refused (403) |
 | GET | `/api/v1/ar/aging` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/ar/aging/customers` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/ar/aging/customers/{customer_id}` | read | operator | customer principals refused (403) |
-| POST | `/api/v1/ar/payment-applications` | create | operator | customer principals refused (403) |
-| POST | `/api/v1/ar/payment-applications/{id}/unapply` | destructive | operator | customer principals refused (403) |
-| POST | `/api/v1/ar/credit-memos` | create | operator | customer principals refused (403) |
+| POST | `/api/v1/ar/payment-applications` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/ar/payment-applications/{id}/unapply` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/ar/credit-memos` | manage_finance | operator | customer principals refused (403) |
 | GET | `/api/v1/ar/credit-memos` | list | operator | customer principals refused (403) |
-| POST | `/api/v1/ar/credit-memos/{id}/apply` | execute | operator | customer principals refused (403) |
-| POST | `/api/v1/ar/write-offs` | destructive | operator | customer principals refused (403) |
-| POST | `/api/v1/ar/write-offs/{id}/reverse` | destructive | operator | customer principals refused (403) |
-| POST | `/api/v1/ar/collection-activities` | create | operator | customer principals refused (403) |
+| POST | `/api/v1/ar/credit-memos/{id}/apply` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/ar/write-offs` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/ar/write-offs/{id}/reverse` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/ar/collection-activities` | manage_finance | operator | customer principals refused (403) |
 | GET | `/api/v1/ar/collection-activities` | list | operator | customer principals refused (403) |
-| POST | `/api/v1/ar/invoices/{invoice_id}/dunning` | execute | operator | customer principals refused (403) |
+| POST | `/api/v1/ar/invoices/{invoice_id}/dunning` | manage_finance | operator | customer principals refused (403) |
 | GET | `/api/v1/ar/dunning/due` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/ar/customers/{customer_id}/statement` | list | operator | customer principals refused (403) |
 | POST | `/api/v1/activity-logs` | create | operator | customer principals refused (403) |
@@ -148,7 +157,11 @@ STATESET_BLESS_HTTP_AUTHZ_DOC=1 cargo test -p stateset-http --lib route_policy
 | GET | `/api/v1/activity-logs/{subject_type}/{subject_id}` | read | operator | customer principals refused (403) |
 | POST | `/api/v1/backorders` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/backorders` | list | operator | customer principals refused (403) |
+| POST | `/api/v1/backorders/allocations/{id}/confirm` | execute | operator | customer principals refused (403) |
+| POST | `/api/v1/backorders/allocations/{id}/release` | execute | operator | customer principals refused (403) |
 | GET | `/api/v1/backorders/{id}` | read | operator | customer principals refused (403) |
+| GET | `/api/v1/backorders/{id}/allocations` | list | operator | customer principals refused (403) |
+| POST | `/api/v1/backorders/{id}/allocations` | create | operator | customer principals refused (403) |
 | POST | `/api/v1/backorders/{id}/fulfill` | execute | operator | customer principals refused (403) |
 | POST | `/api/v1/backorders/{id}/cancel` | delete | operator | customer principals refused (403) |
 | POST | `/api/v1/boms` | create | operator | customer principals refused (403) |
@@ -181,6 +194,45 @@ STATESET_BLESS_HTTP_AUTHZ_DOC=1 cargo test -p stateset-http --lib route_policy
 | DELETE | `/api/v1/companies/{id}` | delete | operator | customer principals refused (403) |
 | POST | `/api/v1/companies/{id}/contacts` | execute | operator | customer principals refused (403) |
 | GET | `/api/v1/companies/{id}/contacts` | list | operator | customer principals refused (403) |
+| GET | `/api/v1/cost-accounting/adjustments` | list | operator | customer principals refused (403) |
+| POST | `/api/v1/cost-accounting/adjustments` | manage_finance | operator | customer principals refused (403) |
+| GET | `/api/v1/cost-accounting/adjustments/{id}` | read | operator | customer principals refused (403) |
+| POST | `/api/v1/cost-accounting/adjustments/{id}/apply` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/cost-accounting/adjustments/{id}/approve` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/cost-accounting/adjustments/{id}/reject` | manage_finance | operator | customer principals refused (403) |
+| GET | `/api/v1/cost-accounting/close-check` | read | operator | customer principals refused (403) |
+| GET | `/api/v1/cost-accounting/items` | list | operator | customer principals refused (403) |
+| POST | `/api/v1/cost-accounting/items` | manage_finance | operator | customer principals refused (403) |
+| GET | `/api/v1/cost-accounting/items/{sku}` | read | operator | customer principals refused (403) |
+| POST | `/api/v1/cost-accounting/items/{sku}/average` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/cost-accounting/items/{sku}/last` | manage_finance | operator | customer principals refused (403) |
+| GET | `/api/v1/cost-accounting/items/{sku}/remaining` | read | operator | customer principals refused (403) |
+| GET | `/api/v1/cost-accounting/items/{sku}/rollup` | read | operator | customer principals refused (403) |
+| POST | `/api/v1/cost-accounting/items/{sku}/rollup` | manage_finance | operator | customer principals refused (403) |
+| GET | `/api/v1/cost-accounting/items/{sku}/summary` | read | operator | customer principals refused (403) |
+| GET | `/api/v1/cost-accounting/layers` | list | operator | customer principals refused (403) |
+| POST | `/api/v1/cost-accounting/layers` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/cost-accounting/layers/issue-fifo` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/cost-accounting/layers/issue-lifo` | manage_finance | operator | customer principals refused (403) |
+| GET | `/api/v1/cost-accounting/layers/{id}` | read | operator | customer principals refused (403) |
+| GET | `/api/v1/cost-accounting/total-value` | read | operator | customer principals refused (403) |
+| GET | `/api/v1/cost-accounting/transactions` | list | operator | customer principals refused (403) |
+| POST | `/api/v1/cost-accounting/transactions` | manage_finance | operator | customer principals refused (403) |
+| GET | `/api/v1/cost-accounting/valuation` | read | operator | customer principals refused (403) |
+| GET | `/api/v1/cost-accounting/variances` | list | operator | customer principals refused (403) |
+| POST | `/api/v1/cost-accounting/variances` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/credit/accounts` | manage_finance | operator | customer principals refused (403) |
+| GET | `/api/v1/credit/customers/{customer_id}` | read | operator | customer principals refused (403) |
+| POST | `/api/v1/credit/customers/{customer_id}/charge` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/credit/customers/{customer_id}/check` | read | operator | customer principals refused (403) |
+| GET | `/api/v1/credit/customers/{customer_id}/holds` | list | operator | customer principals refused (403) |
+| POST | `/api/v1/credit/customers/{customer_id}/holds` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/credit/customers/{customer_id}/payments` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/credit/customers/{customer_id}/reactivate` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/credit/customers/{customer_id}/release-reservation` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/credit/customers/{customer_id}/reserve` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/credit/customers/{customer_id}/suspend` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/credit/holds/{id}/release` | manage_finance | operator | customer principals refused (403) |
 | GET | `/api/v1/currencies/rates` | list | public | any authenticated principal |
 | POST | `/api/v1/currencies/rates` | create | operator | customer principals refused (403) |
 | POST | `/api/v1/currencies/convert` | execute | public | any authenticated principal |
@@ -199,12 +251,12 @@ STATESET_BLESS_HTTP_AUTHZ_DOC=1 cargo test -p stateset-http --lib route_policy
 | GET | `/api/v1/fixed-assets` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/fixed-assets/{id}` | read | operator | customer principals refused (403) |
 | PUT | `/api/v1/fixed-assets/{id}` | update | operator | customer principals refused (403) |
-| POST | `/api/v1/fixed-assets/{id}/place-in-service` | execute | operator | customer principals refused (403) |
-| POST | `/api/v1/fixed-assets/{id}/dispose` | destructive | operator | customer principals refused (403) |
-| POST | `/api/v1/fixed-assets/{id}/write-off` | destructive | operator | customer principals refused (403) |
+| POST | `/api/v1/fixed-assets/{id}/place-in-service` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/fixed-assets/{id}/dispose` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/fixed-assets/{id}/write-off` | manage_finance | operator | customer principals refused (403) |
 | POST | `/api/v1/fixed-assets/{id}/schedule` | execute | operator | customer principals refused (403) |
 | GET | `/api/v1/fixed-assets/{id}/schedule` | list | operator | customer principals refused (403) |
-| POST | `/api/v1/fixed-assets/{id}/post-depreciation` | destructive | operator | customer principals refused (403) |
+| POST | `/api/v1/fixed-assets/{id}/post-depreciation` | manage_finance | operator | customer principals refused (403) |
 | POST | `/api/v1/fulfillment/waves` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/fulfillment/waves` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/fulfillment/waves/{id}` | read | operator | customer principals refused (403) |
@@ -221,23 +273,27 @@ STATESET_BLESS_HTTP_AUTHZ_DOC=1 cargo test -p stateset-http --lib route_policy
 | POST | `/api/v1/gl/accounts` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/gl/accounts` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/gl/accounts/{id}` | read | operator | customer principals refused (403) |
-| POST | `/api/v1/gl/journal-entries` | create | operator | customer principals refused (403) |
+| GET | `/api/v1/gl/accounts/{id}/balance` | read | operator | customer principals refused (403) |
+| POST | `/api/v1/gl/journal-entries` | manage_finance | operator | customer principals refused (403) |
 | GET | `/api/v1/gl/journal-entries` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/gl/journal-entries/{id}` | read | operator | customer principals refused (403) |
-| POST | `/api/v1/gl/journal-entries/{id}/post` | execute | operator | customer principals refused (403) |
-| POST | `/api/v1/gl/journal-entries/{id}/void` | destructive | operator | customer principals refused (403) |
-| POST | `/api/v1/gl/journal-entries/{id}/reverse` | destructive | operator | customer principals refused (403) |
-| POST | `/api/v1/gl/revalue` | execute | operator | customer principals refused (403) |
-| POST | `/api/v1/gl/close-month` | destructive | operator | customer principals refused (403) |
+| POST | `/api/v1/gl/journal-entries/{id}/post` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/gl/journal-entries/{id}/void` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/gl/journal-entries/{id}/reverse` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/gl/revalue` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/gl/close-month` | manage_finance | operator | customer principals refused (403) |
 | GET | `/api/v1/gl/trial-balance` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/gl/balance-sheet` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/gl/income-statement` | list | operator | customer principals refused (403) |
 | POST | `/api/v1/gl/periods` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/gl/periods` | list | operator | customer principals refused (403) |
-| POST | `/api/v1/gl/periods/{id}/open` | execute | operator | customer principals refused (403) |
-| POST | `/api/v1/gl/periods/{id}/close` | destructive | operator | customer principals refused (403) |
-| POST | `/api/v1/gl/periods/{id}/lock` | destructive | operator | customer principals refused (403) |
-| POST | `/api/v1/gl/periods/{id}/reopen` | destructive | operator | customer principals refused (403) |
+| POST | `/api/v1/gl/periods/{id}/open` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/gl/periods/{id}/close` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/gl/periods/{id}/lock` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/gl/periods/{id}/reclose` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/gl/periods/{id}/reopen` | manage_finance | operator | customer principals refused (403) |
+| GET | `/api/v1/gl/posting-config` | read | operator | customer principals refused (403) |
+| PUT | `/api/v1/gl/posting-config` | manage_finance | operator | customer principals refused (403) |
 | POST | `/api/v1/gift-cards` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/gift-cards` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/gift-cards/{id}` | read | operator | customer principals refused (403) |
@@ -285,7 +341,7 @@ STATESET_BLESS_HTTP_AUTHZ_DOC=1 cargo test -p stateset-http --lib route_policy
 | GET | `/api/v1/invoices` | list | owned-list | `customer_id` forced to the customer |
 | GET | `/api/v1/invoices/{id}` | read | owned | `{id}` is a invoice the customer owns |
 | POST | `/api/v1/invoices/{id}/send` | execute | operator | customer principals refused (403) |
-| POST | `/api/v1/invoices/{id}/payments` | execute | operator | customer principals refused (403) |
+| POST | `/api/v1/invoices/{id}/payments` | manage_finance | operator | customer principals refused (403) |
 | GET | `/api/v1/kernel/audit` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/kernel/audit/checkpoint` | list | operator | customer principals refused (403) |
 | POST | `/api/v1/lots` | create | operator | customer principals refused (403) |
@@ -295,9 +351,12 @@ STATESET_BLESS_HTTP_AUTHZ_DOC=1 cargo test -p stateset-http --lib route_policy
 | POST | `/api/v1/lots/{id}/consume` | execute | operator | customer principals refused (403) |
 | POST | `/api/v1/lots/{id}/reserve` | execute | operator | customer principals refused (403) |
 | POST | `/api/v1/lots/reservations/{reservation_id}/release` | execute | operator | customer principals refused (403) |
+| POST | `/api/v1/lots/{id}/adjust` | execute | operator | customer principals refused (403) |
 | POST | `/api/v1/lots/{id}/quarantine` | execute | operator | customer principals refused (403) |
 | POST | `/api/v1/lots/{id}/release-quarantine` | execute | operator | customer principals refused (403) |
 | GET | `/api/v1/lots/{id}/genealogy` | list | operator | customer principals refused (403) |
+| POST | `/api/v1/lots/{id}/split` | execute | operator | customer principals refused (403) |
+| POST | `/api/v1/lots/{id}/transfer` | execute | operator | customer principals refused (403) |
 | POST | `/api/v1/loyalty/programs` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/loyalty/programs` | list | public | any authenticated principal |
 | POST | `/api/v1/loyalty/enroll` | execute | owned-create | body `customer_id` must be (or is set to) the customer |
@@ -312,23 +371,23 @@ STATESET_BLESS_HTTP_AUTHZ_DOC=1 cargo test -p stateset-http --lib route_policy
 | GET | `/api/v1/orders/{id}` | read | owned | `{id}` is a order the customer owns |
 | PATCH | `/api/v1/orders/{id}/cancel` | delete | owned | `{id}` is a order the customer owns |
 | PATCH | `/api/v1/orders/{id}/ship` | execute | operator | customer principals refused (403) |
-| POST | `/api/v1/payment-obligations` | create | operator | customer principals refused (403) |
+| POST | `/api/v1/payment-obligations` | manage_finance | operator | customer principals refused (403) |
 | GET | `/api/v1/payment-obligations` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/payment-obligations/dashboard` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/payment-obligations/{id}` | read | operator | customer principals refused (403) |
-| POST | `/api/v1/payment-obligations/{id}/payments` | execute | operator | customer principals refused (403) |
-| POST | `/api/v1/payment-obligations/{id}/status` | execute | operator | customer principals refused (403) |
-| POST | `/api/v1/payment-obligations/{id}/bills` | execute | operator | customer principals refused (403) |
+| POST | `/api/v1/payment-obligations/{id}/payments` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/payment-obligations/{id}/status` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/payment-obligations/{id}/bills` | manage_finance | operator | customer principals refused (403) |
 | POST | `/api/v1/payments` | create | owned-create | body `order_id` must be a order the customer owns; `customer_id` must be (or is set to) the customer |
 | GET | `/api/v1/payments` | list | owned-list | `customer_id` forced to the customer |
 | GET | `/api/v1/payments/{id}` | read | owned | `{id}` is a payment the customer owns |
 | POST | `/api/v1/payments/{id}/complete` | execute | operator | customer principals refused (403) |
 | POST | `/api/v1/payments/{id}/refund` | destructive | operator | customer principals refused (403) |
-| POST | `/api/v1/prepayments` | create | operator | customer principals refused (403) |
+| POST | `/api/v1/prepayments` | manage_finance | operator | customer principals refused (403) |
 | GET | `/api/v1/prepayments` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/prepayments/{id}` | read | operator | customer principals refused (403) |
-| POST | `/api/v1/prepayments/{id}/apply` | execute | operator | customer principals refused (403) |
-| POST | `/api/v1/prepayments/{id}/refund` | destructive | operator | customer principals refused (403) |
+| POST | `/api/v1/prepayments/{id}/apply` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/prepayments/{id}/refund` | manage_finance | operator | customer principals refused (403) |
 | POST | `/api/v1/price-levels` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/price-levels` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/price-levels/{id}` | read | operator | customer principals refused (403) |
@@ -406,6 +465,7 @@ STATESET_BLESS_HTTP_AUTHZ_DOC=1 cargo test -p stateset-http --lib route_policy
 | POST | `/api/v1/quality/holds/{id}/release` | execute | operator | customer principals refused (403) |
 | POST | `/api/v1/receipts` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/receipts` | list | operator | customer principals refused (403) |
+| POST | `/api/v1/receipts/from-po` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/receipts/{id}` | read | operator | customer principals refused (403) |
 | GET | `/api/v1/receipts/{id}/items` | list | operator | customer principals refused (403) |
 | POST | `/api/v1/receipts/{id}/start` | execute | operator | customer principals refused (403) |
@@ -415,7 +475,10 @@ STATESET_BLESS_HTTP_AUTHZ_DOC=1 cargo test -p stateset-http --lib route_policy
 | POST | `/api/v1/put-aways` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/put-aways` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/put-aways/{id}` | read | operator | customer principals refused (403) |
+| POST | `/api/v1/put-aways/{id}/assign` | execute | operator | customer principals refused (403) |
+| POST | `/api/v1/put-aways/{id}/cancel` | delete | operator | customer principals refused (403) |
 | POST | `/api/v1/put-aways/{id}/complete` | execute | operator | customer principals refused (403) |
+| POST | `/api/v1/put-aways/{id}/start` | execute | operator | customer principals refused (403) |
 | POST | `/api/v1/reports/inventory-aging` | execute | operator | customer principals refused (403) |
 | POST | `/api/v1/reports/sales-by-channel` | execute | operator | customer principals refused (403) |
 | POST | `/api/v1/reports/transaction-cogs` | execute | operator | customer principals refused (403) |
@@ -436,7 +499,7 @@ STATESET_BLESS_HTTP_AUTHZ_DOC=1 cargo test -p stateset-http --lib route_policy
 | GET | `/api/v1/revenue-contracts/{id}/obligations` | list | operator | customer principals refused (403) |
 | POST | `/api/v1/revenue-obligations/{id}/schedule` | execute | operator | customer principals refused (403) |
 | GET | `/api/v1/revenue-obligations/{id}/schedule` | list | operator | customer principals refused (403) |
-| POST | `/api/v1/revenue-obligations/{id}/recognize` | execute | operator | customer principals refused (403) |
+| POST | `/api/v1/revenue-obligations/{id}/recognize` | manage_finance | operator | customer principals refused (403) |
 | POST | `/api/v1/reviews` | create | owned-create | body `customer_id` must be (or is set to) the customer |
 | GET | `/api/v1/reviews` | list | public | any authenticated principal |
 | GET | `/api/v1/reviews/{id}` | read | public | any authenticated principal |
@@ -487,6 +550,7 @@ STATESET_BLESS_HTTP_AUTHZ_DOC=1 cargo test -p stateset-http --lib route_policy
 | GET | `/api/v1/supplier-skus` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/supplier-skus/{id}` | read | operator | customer principals refused (403) |
 | DELETE | `/api/v1/supplier-skus/{id}` | delete | operator | customer principals refused (403) |
+| PUT | `/api/v1/supplier-skus/{id}` | update | operator | customer principals refused (403) |
 | POST | `/api/v1/tax/exemptions` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/tax/exemptions` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/tax/exemptions/{id}` | read | operator | customer principals refused (403) |
@@ -502,17 +566,18 @@ STATESET_BLESS_HTTP_AUTHZ_DOC=1 cargo test -p stateset-http --lib route_policy
 | POST | `/api/v1/transfer-orders/{id}/ship` | execute | operator | customer principals refused (403) |
 | POST | `/api/v1/transfer-orders/{id}/receive` | execute | operator | customer principals refused (403) |
 | POST | `/api/v1/transfer-orders/{id}/cancel` | delete | operator | customer principals refused (403) |
+| POST | `/api/v1/transfer-orders/{id}/complete-receiving` | execute | operator | customer principals refused (403) |
 | POST | `/api/v1/unit-classes` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/unit-classes` | list | operator | customer principals refused (403) |
 | POST | `/api/v1/units-of-measure` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/units-of-measure` | list | operator | customer principals refused (403) |
 | POST | `/api/v1/unit-conversion-rules` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/unit-conversion-rules` | list | operator | customer principals refused (403) |
-| POST | `/api/v1/vendor-credits` | create | operator | customer principals refused (403) |
+| POST | `/api/v1/vendor-credits` | manage_finance | operator | customer principals refused (403) |
 | GET | `/api/v1/vendor-credits` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/vendor-credits/{id}` | read | operator | customer principals refused (403) |
-| POST | `/api/v1/vendor-credits/{id}/apply` | execute | operator | customer principals refused (403) |
-| POST | `/api/v1/vendor-credits/{id}/cancel` | delete | operator | customer principals refused (403) |
+| POST | `/api/v1/vendor-credits/{id}/apply` | manage_finance | operator | customer principals refused (403) |
+| POST | `/api/v1/vendor-credits/{id}/cancel` | manage_finance | operator | customer principals refused (403) |
 | POST | `/api/v1/vendor-returns` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/vendor-returns` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/vendor-returns/{id}` | read | operator | customer principals refused (403) |
@@ -557,6 +622,7 @@ STATESET_BLESS_HTTP_AUTHZ_DOC=1 cargo test -p stateset-http --lib route_policy
 | DELETE | `/api/v1/wishlists/{id}/items/{product_id}` | delete | owned | `{id}` is a wishlist the customer owns |
 | POST | `/api/v1/work-orders` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/work-orders` | list | operator | customer principals refused (403) |
+| POST | `/api/v1/work-orders/materials/{id}/consume` | execute | operator | customer principals refused (403) |
 | GET | `/api/v1/work-orders/{id}` | read | operator | customer principals refused (403) |
 | PUT | `/api/v1/work-orders/{id}` | update | operator | customer principals refused (403) |
 | POST | `/api/v1/work-orders/{id}/start` | execute | operator | customer principals refused (403) |
@@ -568,6 +634,8 @@ STATESET_BLESS_HTTP_AUTHZ_DOC=1 cargo test -p stateset-http --lib route_policy
 | GET | `/api/v1/work-orders/{id}/tasks` | list | operator | customer principals refused (403) |
 | POST | `/api/v1/work-orders/tasks/{task_id}/start` | execute | operator | customer principals refused (403) |
 | POST | `/api/v1/work-orders/tasks/{task_id}/complete` | execute | operator | customer principals refused (403) |
+| GET | `/api/v1/work-orders/{id}/materials` | list | operator | customer principals refused (403) |
+| POST | `/api/v1/work-orders/{id}/materials` | create | operator | customer principals refused (403) |
 | POST | `/api/v1/x402/intents` | create | operator | customer principals refused (403) |
 | GET | `/api/v1/x402/intents` | list | operator | customer principals refused (403) |
 | GET | `/api/v1/x402/intents/{id}` | read | operator | customer principals refused (403) |

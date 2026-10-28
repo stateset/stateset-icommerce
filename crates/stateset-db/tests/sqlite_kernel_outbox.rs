@@ -1789,6 +1789,7 @@ fn create_kernel_journal(
             source_document_type: Some("kernel_command".into()),
             source_document_id: None,
             auto_post: Some(false),
+            fx: None,
         })
         .expect("create journal entry");
     (entry, cash.id, revenue.id)

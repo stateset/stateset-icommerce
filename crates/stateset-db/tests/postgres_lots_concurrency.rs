@@ -24,6 +24,62 @@ fn postgres_url() -> Option<String> {
     stateset_test_utils::postgres_url()
 }
 
+#[tokio::test]
+async fn lot_and_inventory_consumers_share_physical_stock() {
+    let Some(url) = postgres_url() else {
+        return;
+    };
+    let db = Arc::new(PostgresDatabase::connect(&url).await.unwrap());
+    let sku = format!("LOT-MIXED-{}", Uuid::new_v4());
+    let lot = db
+        .lots()
+        .create_async(CreateLot {
+            sku: sku.clone(),
+            quantity: dec!(10),
+            initial_location_id: Some(1),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let barrier = Arc::new(tokio::sync::Barrier::new(10));
+    let mut handles = Vec::new();
+    for index in 0..10 {
+        let (db, sku, barrier) = (db.clone(), sku.clone(), barrier.clone());
+        handles.push(tokio::spawn(async move {
+            barrier.wait().await;
+            if index % 2 == 0 {
+                db.lots()
+                    .consume_async(ConsumeLot {
+                        lot_id: lot.id,
+                        quantity: dec!(1),
+                        reference_type: "race".into(),
+                        reference_id: Uuid::new_v4(),
+                        ..Default::default()
+                    })
+                    .await
+                    .map(|_| ())
+            } else {
+                db.inventory()
+                    .adjust_async(stateset_core::AdjustInventory {
+                        sku,
+                        location_id: Some(1),
+                        quantity: dec!(-1),
+                        reason: "race".into(),
+                        reference_type: None,
+                        reference_id: None,
+                    })
+                    .await
+                    .map(|_| ())
+            }
+        }));
+    }
+    for handle in handles {
+        handle.await.unwrap().unwrap();
+    }
+    assert_eq!(db.lots().get_async(lot.id).await.unwrap().unwrap().quantity_remaining, dec!(0));
+    assert_eq!(db.inventory().get_stock_async(&sku).await.unwrap().unwrap().total_on_hand, dec!(0));
+}
+
 /// Sequential guard: consuming the whole lot then one more unit must fail with
 /// `InsufficientStock`, never over-consume.
 #[tokio::test]
@@ -36,7 +92,12 @@ async fn postgres_consume_rejects_over_available() {
     let sku = format!("LOT-{}", Uuid::new_v4().simple());
     let lot = db
         .lots()
-        .create_async(CreateLot { sku, quantity: dec!(5), ..Default::default() })
+        .create_async(CreateLot {
+            sku,
+            quantity: dec!(5),
+            initial_location_id: Some(1),
+            ..Default::default()
+        })
         .await
         .expect("create lot");
 
@@ -72,7 +133,12 @@ async fn postgres_concurrent_consume_does_not_over_consume() {
     let available = 10u32;
     let lot = db
         .lots()
-        .create_async(CreateLot { sku, quantity: dec!(10), ..Default::default() })
+        .create_async(CreateLot {
+            sku,
+            quantity: dec!(10),
+            initial_location_id: Some(1),
+            ..Default::default()
+        })
         .await
         .expect("create lot");
 
@@ -205,6 +271,7 @@ async fn create_lot(
             lot_number: Some(format!("L-{}", Uuid::new_v4().simple())),
             quantity: qty,
             expiration_date,
+            initial_location_id: Some(1),
             ..Default::default()
         })
         .await

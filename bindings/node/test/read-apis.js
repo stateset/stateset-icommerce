@@ -176,7 +176,7 @@ test('accountsPayable.createBill carries lines; getBillItems reads them back', a
     dueDate: new Date('2026-12-01T00:00:00Z').toISOString(),
     items: [
       { description: 'Widgets', quantityExact: '3', unitPriceExact: '19.99', accountCode: '5000' },
-      { description: 'Freight', quantity: 1, unitPrice: 12.5 },
+      { description: 'Freight', quantity: '1', unitPrice: '12.5' },
     ],
   });
   assert.equal(bill.totalAmountExact, '72.47');
@@ -201,7 +201,7 @@ test('accountsPayable.createBill carries lines; getBillItems reads them back', a
       commerce.accountsPayable.createBill({
         supplierId: UNKNOWN_ID,
         dueDate: new Date('2026-12-01T00:00:00Z').toISOString(),
-        items: [{ description: 'No price', quantity: 1 }],
+        items: [{ description: 'No price', quantity: '1' }],
       }),
     (err) => err.code === 'VALIDATION',
   );
@@ -241,7 +241,7 @@ test('receiving.createReceipt carries lines; getReceiptItems reads them back', a
     warehouseId: wh.id,
     items: [
       { sku: 'RCV-1', expectedQuantityExact: '10', unitCostExact: '3.33', description: 'Cogs' },
-      { sku: 'RCV-2', expectedQuantity: 2 },
+      { sku: 'RCV-2', expectedQuantity: '2' },
     ],
   });
   const items = await commerce.receiving.getReceiptItems(receipt.id);

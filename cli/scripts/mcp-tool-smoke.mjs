@@ -89,12 +89,17 @@ function sampleString(key, def) {
   else if (has('email') || k.includes('email')) value = 'smoke@example.com';
   else if (has('url') || /url|endpoint|webhook/.test(k)) value = 'https://example.com/hook';
   else if (has('datetime') || /date|_at$|at$|since|until|from|to$/.test(k))
-    value = new Date('2026-01-15T00:00:00Z').toISOString();
+    value = checks.some(
+      (c) => c.kind === 'regex' && c.regex.source.includes('\\d{4}-\\d{2}-\\d{2}'),
+    )
+      ? '2026-01-15'
+      : new Date('2026-01-15T00:00:00Z').toISOString();
   else if (/currency/.test(k)) value = 'USD';
   else if (/countr/.test(k)) value = 'US';
   else if (/state|region/.test(k)) value = 'CA';
   else if (/sku/.test(k)) value = 'SMOKE-SKU';
-  else if (/amount|price|total|value/.test(k)) value = '10.00';
+  else if (/amount|price|total|value|quantity|cost|rate|limit|debit|credit/.test(k))
+    value = '10.00';
   else value = 'smoke';
   while (value.length < min) value += 'x';
   const max = Math.min(...checks.filter((c) => c.check === 'max_length').map((c) => c.maximum));
@@ -226,6 +231,7 @@ export async function runSmoke({
   tools = ALL_DOMAIN_TOOLS,
   timeoutMs = 20_000,
   allowApply = true,
+  toolProfile = 'all',
 } = {}) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'mcp-smoke-'));
   const dbPath = path.join(dir, 'store.db');
@@ -242,7 +248,12 @@ export async function runSmoke({
   const savedCwd = process.cwd();
   process.chdir(dir);
   // Every tier, so any tool can be swept regardless of the default profile.
-  const server = createStatesetMcpServer({ dbPath, allowApply, toolProfile: 'all' });
+  const server = createStatesetMcpServer({
+    dbPath,
+    allowApply,
+    toolProfile,
+    actorId: 'smoke-operator',
+  });
   const rows = [];
   try {
     for (const tool of tools) {

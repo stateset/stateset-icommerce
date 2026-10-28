@@ -117,6 +117,7 @@ async fn postgres_list_journal_entries_break_ties_by_entry_number() {
             source_document_type: None,
             source_document_id: None,
             auto_post: Some(false),
+            fx: None,
         })
         .await
         .expect("create entry");

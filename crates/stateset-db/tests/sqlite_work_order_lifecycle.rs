@@ -1,7 +1,9 @@
 #![cfg(feature = "sqlite")]
 
 use rust_decimal_macros::dec;
-use stateset_core::{CreateWorkOrder, ProductId, WorkOrderRepository, WorkOrderStatus};
+use stateset_core::{CreateWorkOrder, WorkOrderRepository, WorkOrderStatus};
+#[path = "support/erp_manufacturing.rs"]
+mod setup;
 use stateset_db::SqliteDatabase;
 
 #[test]
@@ -11,9 +13,9 @@ fn sqlite_work_order_complete_transitions_partial_then_completed() {
 
     let work_order = repo
         .create(CreateWorkOrder {
-            product_id: ProductId::new(),
+            bom_id: None,
             quantity_to_build: dec!(100),
-            ..Default::default()
+            ..setup::input(&db).0
         })
         .expect("create work order");
 

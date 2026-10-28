@@ -115,6 +115,16 @@ impl SqliteFixedAssetRepository {
                 "fixed_asset",
                 "accumulated_depreciation_account_id",
             )?,
+            acquisition_offset_account_id: parse_uuid_opt_row(
+                row.get("acquisition_offset_account_id")?,
+                "fixed_asset",
+                "acquisition_offset_account_id",
+            )?,
+            disposal_gain_loss_account_id: parse_uuid_opt_row(
+                row.get("disposal_gain_loss_account_id")?,
+                "fixed_asset",
+                "disposal_gain_loss_account_id",
+            )?,
             depreciation_expense_account_id: parse_uuid_opt_row(
                 row.get::<_, Option<String>>("depreciation_expense_account_id")?,
                 "fixed_asset",
@@ -234,6 +244,12 @@ impl SqliteFixedAssetRepository {
                     )?;
                 }
             }
+            let after = Self::load_asset(tx, &id_str)?;
+            if matches!(next, FixedAssetStatus::Disposed | FixedAssetStatus::WrittenOff) {
+                super::asset_posting::dispose(tx, &asset, date, proceeds.unwrap_or(Decimal::ZERO))?;
+            } else {
+                super::asset_posting::revise(tx, &asset, &after)?;
+            }
             Self::load_asset(tx, &id_str)
         })
     }
@@ -280,7 +296,10 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
                     &now,
                 ],
             )?;
-            Self::load_asset(tx, &id_str)
+            tx.execute("UPDATE fixed_assets SET acquisition_offset_account_id = ?1,disposal_gain_loss_account_id = ?2 WHERE id = ?3", rusqlite::params![(input.acquisition_offset_account_id).map(|id| id.to_string()), (input.disposal_gain_loss_account_id).map(|id| id.to_string()), (id).to_string()])?;
+            let asset = Self::load_asset(tx, &id_str)?;
+            super::asset_posting::acquire(tx, &asset)?;
+            Ok(asset)
         })
     }
 
@@ -352,8 +371,8 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
             if asset.status.is_terminal() {
                 return Err(Self::conflict("disposed or written-off assets cannot be updated"));
             }
-            let name = input.name.clone().unwrap_or(asset.name);
-            let description = input.description.clone().or(asset.description);
+            let name = input.name.clone().unwrap_or(asset.name.clone());
+            let description = input.description.clone().or(asset.description.clone());
             let category = input.category.unwrap_or(asset.category);
             let salvage_value = input.salvage_value.unwrap_or(asset.salvage_value);
             let useful_life_months = input.useful_life_months.unwrap_or(asset.useful_life_months);
@@ -382,6 +401,9 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
                     &id_str,
                 ],
             )?;
+            tx.execute("UPDATE fixed_assets SET acquisition_offset_account_id = ?1,disposal_gain_loss_account_id = ?2 WHERE id = ?3", rusqlite::params![(input.acquisition_offset_account_id.or(asset.acquisition_offset_account_id)).map(|id| id.to_string()), (input.disposal_gain_loss_account_id.or(asset.disposal_gain_loss_account_id)).map(|id| id.to_string()), (id).to_string()])?;
+            let after = Self::load_asset(tx, &id_str)?;
+            super::asset_posting::revise(tx, &asset, &after)?;
             Self::load_asset(tx, &id_str)
         })
     }
@@ -504,6 +526,18 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
             if pending.is_empty() {
                 return Err(Self::conflict("no scheduled depreciation entries remain to post"));
             }
+            let today = Utc::now().date_naive();
+            for entry in &pending {
+                let end = asset
+                    .depreciation_period_end(entry.period)
+                    .ok_or_else(|| Self::conflict("Asset has no valid in-service schedule date"))?;
+                if end > today {
+                    return Err(Self::conflict(&format!(
+                        "Depreciation period {} is not due until {end}",
+                        entry.period
+                    )));
+                }
+            }
             for e in &pending {
                 tx.execute(
                     "UPDATE fixed_asset_depreciation_entries SET status = 'posted' WHERE asset_id = ? AND period = ?",
@@ -523,21 +557,17 @@ impl stateset_core::FixedAssetRepository for SqliteFixedAssetRepository {
                 "UPDATE fixed_assets SET accumulated_depreciation = ?, status = ?, updated_at = ? WHERE id = ?",
                 rusqlite::params![accumulated.to_string(), status.to_string(), &now, &id_str],
             )?;
-            let posted_amount: Decimal = pending.iter().map(|e| e.amount).sum();
-            let first_period = pending.first().map_or(0, |e| e.period);
-            let last_period = pending.last().map_or(0, |e| e.period);
+            // Each elapsed month retains its own accounting date, even when
+            // several months are posted together. Any failure rolls back all of them.
+            for entry in &pending {
+                Self::auto_post_depreciation_entry_with_conn(
+                    tx,
+                    &asset,
+                    entry.amount,
+                    entry.period,
+                )?;
+            }
             let asset = Self::load_asset(tx, &id_str)?;
-            // The GL entry posts on THIS transaction: the depreciation
-            // posting and its journal entry are one atomic fact — a GL
-            // failure rolls back the posting, so a retry posts the full
-            // amount.
-            Self::auto_post_depreciation_entry_with_conn(
-                tx,
-                &asset,
-                posted_amount,
-                first_period,
-                last_period,
-            )?;
             Ok(asset)
         })
     }
@@ -559,14 +589,16 @@ impl SqliteFixedAssetRepository {
         tx: &rusqlite::Transaction<'_>,
         asset: &FixedAsset,
         amount: Decimal,
-        first_period: u32,
-        last_period: u32,
+        period: u32,
     ) -> rusqlite::Result<()> {
         use super::general_ledger::SqliteGeneralLedgerRepository as Gl;
         let Some(config) = Gl::get_auto_posting_config_with_conn(tx)? else { return Ok(()) };
         if !config.auto_post_depreciation || amount <= Decimal::ZERO {
             return Ok(());
         }
+        let stored = Self::load_asset(tx, &asset.id.to_string())?;
+        let asset = &stored;
+        super::asset_posting::require_acquired(tx, asset)?;
         let expense_account_id = resolve_depreciation_account_with_conn(
             tx,
             asset.depreciation_expense_account_id,
@@ -577,17 +609,16 @@ impl SqliteFixedAssetRepository {
             asset.accumulated_depreciation_account_id,
             stateset_core::AccountSubType::AccumulatedDepreciation,
         )?;
-        let periods = if first_period == last_period {
-            format!("period {first_period}")
-        } else {
-            format!("periods {first_period}-{last_period}")
-        };
+        tx.execute("UPDATE fixed_assets SET accumulated_depreciation_account_id = ?1, depreciation_expense_account_id = ?2 WHERE id = ?3",rusqlite::params![accumulated_account_id.to_string(),expense_account_id.to_string(),asset.id.to_string()])?;
+        let entry_date = asset
+            .depreciation_period_end(period)
+            .ok_or_else(|| Self::conflict("Invalid depreciation date"))?;
         Gl::create_posted_entry_with_conn(
             tx,
             &stateset_core::CreateJournalEntry {
-                entry_date: Utc::now().date_naive(),
+                entry_date,
                 entry_type: Some(stateset_core::JournalEntryType::Standard),
-                description: format!("Depreciation {} {periods}", asset.asset_number),
+                description: format!("Depreciation {} period {period}", asset.asset_number),
                 lines: vec![
                     stateset_core::CreateJournalEntryLine::debit(
                         expense_account_id,
@@ -603,6 +634,7 @@ impl SqliteFixedAssetRepository {
                 source_document_type: Some("fixed_asset_depreciation".to_string()),
                 source_document_id: Some(asset.id),
                 auto_post: Some(true),
+                fx: None,
             },
             "system",
         )?;
@@ -671,6 +703,8 @@ mod tests {
             location_id: None,
             asset_account_id: None,
             accumulated_depreciation_account_id: None,
+            acquisition_offset_account_id: None,
+            disposal_gain_loss_account_id: None,
             depreciation_expense_account_id: None,
             currency: None,
         }
@@ -876,6 +910,13 @@ mod tests {
 
         fn setup_gl(gl: &SqliteGeneralLedgerRepository, auto_post_depreciation: bool) {
             gl.initialize_chart_of_accounts().expect("init chart");
+            create_sub_account(
+                gl,
+                "1500",
+                "Equipment",
+                AccountType::Asset,
+                AccountSubType::FixedAsset,
+            );
             let period = gl
                 .create_period(CreateGlPeriod {
                     period_name: "All".into(),
@@ -898,6 +939,10 @@ mod tests {
                 unearned_revenue_account_id: None,
                 sales_revenue_account_id: by_number("4010"),
                 shipping_revenue_account_id: None,
+                sales_tax_payable_account_id: None,
+                goods_received_not_invoiced_account_id: None,
+                inventory_adjustment_account_id: None,
+                work_in_progress_account_id: None,
                 cogs_account_id: by_number("5010"),
                 bad_debt_expense_account_id: None,
                 fx_gain_loss_account_id: None,
@@ -908,7 +953,11 @@ mod tests {
         }
 
         fn in_service_asset(repo: &SqliteFixedAssetRepository) -> FixedAsset {
-            let a = repo.create(create_input()).expect("create");
+            let mut input = create_input();
+            let gl = SqliteGeneralLedgerRepository::new(repo.pool.clone());
+            input.asset_account_id =
+                gl.get_account_by_number("1500").unwrap().map(|account| account.id);
+            let a = repo.create(input).expect("create");
             let a = repo
                 .place_in_service(a.id, NaiveDate::from_ymd_opt(2026, 1, 1).unwrap())
                 .expect("in service");
@@ -956,12 +1005,13 @@ mod tests {
             assert_eq!(a.accumulated_depreciation, dec!(750));
             let entries = gl
                 .list_journal_entries(JournalEntryFilter {
+                    source_document_type: Some("fixed_asset_depreciation".into()),
                     source_document_id: Some(a.id),
                     ..Default::default()
                 })
                 .expect("list entries");
-            assert_eq!(entries.len(), 1, "retry posts the full depreciation once");
-            assert_eq!(entries[0].total_debits, dec!(750));
+            assert_eq!(entries.len(), 3, "retry posts each depreciation month once");
+            assert_eq!(entries.iter().map(|entry| entry.total_debits).sum::<Decimal>(), dec!(750));
         }
 
         #[test]
@@ -989,24 +1039,25 @@ mod tests {
 
             let entries = gl
                 .list_journal_entries(JournalEntryFilter {
+                    source_document_type: Some("fixed_asset_depreciation".into()),
                     source_document_id: Some(a.id),
                     ..Default::default()
                 })
                 .expect("list entries");
-            assert_eq!(entries.len(), 1);
+            assert_eq!(entries.len(), 3);
             let entry = &entries[0];
             assert_eq!(entry.status, JournalEntryStatus::Posted);
             assert!(entry.is_balanced);
-            assert_eq!(entry.total_debits, dec!(750));
-            assert_eq!(entry.total_credits, dec!(750));
+            assert_eq!(entry.total_debits, dec!(250));
+            assert_eq!(entry.total_credits, dec!(250));
             assert_eq!(entry.source_document_type.as_deref(), Some("fixed_asset_depreciation"));
             assert_eq!(entry.lines.len(), 2);
             let debit = entry.lines.iter().find(|l| l.debit_amount > dec!(0)).expect("debit");
             let credit = entry.lines.iter().find(|l| l.credit_amount > dec!(0)).expect("credit");
             assert_eq!(debit.account_id, expense_id);
-            assert_eq!(debit.debit_amount, dec!(750));
+            assert_eq!(debit.debit_amount, dec!(250));
             assert_eq!(credit.account_id, accum_id);
-            assert_eq!(credit.credit_amount, dec!(750));
+            assert_eq!(credit.credit_amount, dec!(250));
         }
 
         #[test]
@@ -1029,6 +1080,8 @@ mod tests {
             );
 
             let mut input = create_input();
+            input.asset_account_id =
+                gl.get_account_by_number("1500").unwrap().map(|account| account.id);
             input.depreciation_expense_account_id = Some(expense_id);
             input.accumulated_depreciation_account_id = Some(accum_id);
             let a = repo.create(input).expect("create");
@@ -1040,6 +1093,7 @@ mod tests {
 
             let entries = gl
                 .list_journal_entries(JournalEntryFilter {
+                    source_document_type: Some("fixed_asset_depreciation".into()),
                     source_document_id: Some(a.id),
                     ..Default::default()
                 })
@@ -1060,6 +1114,7 @@ mod tests {
 
             let entries = gl
                 .list_journal_entries(JournalEntryFilter {
+                    source_document_type: Some("fixed_asset_depreciation".into()),
                     source_document_id: Some(a.id),
                     ..Default::default()
                 })
@@ -1074,6 +1129,7 @@ mod tests {
             repo.post_depreciation(a.id, 1).expect("post depreciation");
             let entries = gl
                 .list_journal_entries(JournalEntryFilter {
+                    source_document_type: Some("fixed_asset_depreciation".into()),
                     source_document_id: Some(a.id),
                     ..Default::default()
                 })

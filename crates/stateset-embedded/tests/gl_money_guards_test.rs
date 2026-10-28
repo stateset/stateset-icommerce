@@ -40,6 +40,10 @@ fn setup(commerce: &Commerce) -> Uuid {
         unearned_revenue_account_id: None,
         sales_revenue_account_id: by_number("4010"),
         shipping_revenue_account_id: None,
+        sales_tax_payable_account_id: None,
+        goods_received_not_invoiced_account_id: None,
+        inventory_adjustment_account_id: None,
+        work_in_progress_account_id: None,
         cogs_account_id: by_number("5010"),
         bad_debt_expense_account_id: None,
         fx_gain_loss_account_id: None,
@@ -105,6 +109,7 @@ fn post_revenue_entry(commerce: &Commerce, entry_date: NaiveDate) -> Uuid {
         source_document_type: None,
         source_document_id: None,
         auto_post: Some(true),
+        fx: None,
     })
     .expect("create journal entry")
     .id
@@ -195,6 +200,7 @@ fn post_into_closed_period_is_rejected() {
             source_document_type: None,
             source_document_id: None,
             auto_post: Some(false),
+            fx: None,
         })
         .expect("create draft");
 
@@ -302,6 +308,7 @@ fn reports_exclude_voided_and_draft_entries() {
         source_document_type: None,
         source_document_id: None,
         auto_post: Some(false),
+        fx: None,
     })
     .expect("create draft");
 

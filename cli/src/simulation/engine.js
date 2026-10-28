@@ -70,6 +70,15 @@ export async function executeCommerceScenario(input, database) {
     return { inventory, orders: orderState, payments: paymentState, purchases: purchaseState };
   }
   try {
+    const warehouse = await commerce.warehouse.createWarehouse({
+      code: 'SIM',
+      name: 'Simulation warehouse',
+    });
+    const location = await commerce.warehouse.createLocation({
+      warehouseId: warehouse.id,
+      code: 'RECEIVING',
+      isReceivable: true,
+    });
     const customer = await commerce.customers.create({
       email: 'simulation@example.test',
       firstName: 'Simulation',
@@ -134,15 +143,9 @@ export async function executeCommerceScenario(input, database) {
                 itemId: line.id,
                 quantityReceivedExact: line.quantityOrderedExact,
               })),
+              warehouse.id,
+              location.id,
             );
-            // Native receipt and physical stock posting are separate transactions.
-            // A repeated full receipt is refused by the engine before stock is added.
-            for (const line of lines)
-              await commerce.inventory.adjust(
-                line.sku,
-                Number(line.quantityOrderedExact),
-                'Synthetic purchase receipt',
-              );
             observation = {
               purchase: step.purchase,
               status: purchase.status,
