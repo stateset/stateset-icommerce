@@ -53,6 +53,8 @@ def test_an_invoice_with_items_can_actually_be_paid(commerce):
     invoice = commerce.invoices.create(
         customer.id, items=[CreateInvoiceItemInput("Widget", 1.0, 19.99)]
     )
+    # Payments are recorded only against issued invoices.
+    invoice = commerce.invoices.send(invoice.id)
 
     # This is the failure the empty item list caused: balance due was 0, so
     # every positive payment was refused as exceeding it.

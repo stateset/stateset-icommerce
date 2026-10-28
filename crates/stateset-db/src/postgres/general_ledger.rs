@@ -9,13 +9,12 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
-    AccountStatus, AccountSubType, AccountType, AutoPostingConfig, BalanceSheet, BalanceSheetLine,
-    BalanceSide, BatchResult, CommerceError, CreateAutoPostingConfig, CreateGlAccount,
-    CreateGlPeriod, CreateJournalEntry, CreateJournalEntryLine, Currency, CurrencyCode,
-    FX_REVALUATION_REFERENCE, GeneralLedgerRepository, GlAccount, GlAccountFilter, GlPeriod,
-    GlPeriodFilter, IncomeStatement, IncomeStatementLine, InvoiceId, JournalEntry,
-    JournalEntryFilter, JournalEntryLine, JournalEntrySource, JournalEntryStatus, JournalEntryType,
-    PeriodStatus, Result, RevaluationResult, TrialBalance, TrialBalanceLine,
+    AccountStatus, AccountType, AutoPostingConfig, BalanceSheet, BalanceSide, BatchResult,
+    CommerceError, CreateAutoPostingConfig, CreateGlAccount, CreateGlPeriod, CreateJournalEntry,
+    CreateJournalEntryLine, Currency, CurrencyCode, GeneralLedgerRepository, GlAccount,
+    GlAccountFilter, GlPeriod, GlPeriodFilter, IncomeStatement, IncomeStatementLine, InvoiceId,
+    JournalEntry, JournalEntryFilter, JournalEntryLine, JournalEntrySource, JournalEntryStatus,
+    JournalEntryType, PeriodStatus, Result, RevaluationResult, TrialBalance, TrialBalanceLine,
     create_default_chart_of_accounts, generate_journal_entry_number,
 };
 use uuid::Uuid;
@@ -99,6 +98,10 @@ pub(crate) struct JournalEntryLineRow {
     reference_type: Option<String>,
     reference_id: Option<Uuid>,
     created_at: DateTime<Utc>,
+    transaction_currency: Option<CurrencyCode>,
+    transaction_debit_amount: Option<Decimal>,
+    transaction_credit_amount: Option<Decimal>,
+    exchange_rate: Option<Decimal>,
 }
 
 #[derive(FromRow)]
@@ -112,6 +115,11 @@ struct AutoPostingConfigRow {
     unearned_revenue_account_id: Option<Uuid>,
     sales_revenue_account_id: Uuid,
     shipping_revenue_account_id: Option<Uuid>,
+    sales_tax_payable_account_id: Option<Uuid>,
+    goods_received_not_invoiced_account_id: Option<Uuid>,
+    inventory_adjustment_account_id: Option<Uuid>,
+    work_in_progress_account_id: Option<Uuid>,
+
     cogs_account_id: Uuid,
     bad_debt_expense_account_id: Option<Uuid>,
     fx_gain_loss_account_id: Option<Uuid>,
@@ -309,6 +317,10 @@ impl PgGeneralLedgerRepository {
             reference_type: row.reference_type,
             reference_id: row.reference_id,
             created_at: row.created_at,
+            transaction_currency: row.transaction_currency,
+            transaction_debit_amount: row.transaction_debit_amount,
+            transaction_credit_amount: row.transaction_credit_amount,
+            exchange_rate: row.exchange_rate,
         }
     }
 
@@ -323,6 +335,11 @@ impl PgGeneralLedgerRepository {
             unearned_revenue_account_id: row.unearned_revenue_account_id,
             sales_revenue_account_id: row.sales_revenue_account_id,
             shipping_revenue_account_id: row.shipping_revenue_account_id,
+            sales_tax_payable_account_id: row.sales_tax_payable_account_id,
+            goods_received_not_invoiced_account_id: row.goods_received_not_invoiced_account_id,
+            inventory_adjustment_account_id: row.inventory_adjustment_account_id,
+            work_in_progress_account_id: row.work_in_progress_account_id,
+
             cogs_account_id: row.cogs_account_id,
             bad_debt_expense_account_id: row.bad_debt_expense_account_id,
             fx_gain_loss_account_id: row.fx_gain_loss_account_id,
@@ -334,8 +351,40 @@ impl PgGeneralLedgerRepository {
         }
     }
 
+    pub(crate) async fn validate_posting_accounts(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        mut ids: Vec<Uuid>,
+    ) -> Result<()> {
+        ids.sort_unstable();
+        ids.dedup();
+        for id in ids {
+            let (status, posting, header): (String, bool, bool) = sqlx::query_as(
+                "SELECT status,is_posting,is_header FROM gl_accounts WHERE id = $1 FOR UPDATE",
+            )
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+            if status != "active" || !posting || header {
+                return Err(CommerceError::ValidationError(format!(
+                    "Account {id} must be active, posting and not a header"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) async fn update_account_balance_tx(
         &self,
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        account_id: Uuid,
+        debit: Decimal,
+        credit: Decimal,
+    ) -> Result<()> {
+        Self::update_account_balance_with_conn(tx, account_id, debit, credit).await
+    }
+
+    pub(crate) async fn update_account_balance_with_conn(
         tx: &mut sqlx::Transaction<'_, Postgres>,
         account_id: Uuid,
         debit: Decimal,
@@ -349,7 +398,7 @@ impl PgGeneralLedgerRepository {
                     ELSE $2 - $1
                 END
              )
-             WHERE id = $3",
+             WHERE id = $3 AND status = 'active' AND is_posting = TRUE AND is_header = FALSE",
         )
         .bind(debit)
         .bind(credit)
@@ -359,7 +408,9 @@ impl PgGeneralLedgerRepository {
         .map_err(map_db_error)?;
 
         if updated.rows_affected() == 0 {
-            return Err(CommerceError::NotFound);
+            return Err(CommerceError::ValidationError(
+                "Account must be active, posting and not a header".into(),
+            ));
         }
 
         Ok(())
@@ -439,6 +490,21 @@ impl PgGeneralLedgerRepository {
         id: Uuid,
         input: stateset_core::UpdateGlAccount,
     ) -> Result<GlAccount> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let balance: Decimal =
+            sqlx::query_scalar("SELECT current_balance FROM gl_accounts WHERE id = $1 FOR UPDATE")
+                .bind(id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if input.status.is_some_and(|status| status != AccountStatus::Active) {
+            let foreign: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM gl_journal_entry_lines l JOIN gl_journal_entries e ON e.id=l.journal_entry_id WHERE l.account_id=$1 AND e.status IN ('posted','reversed') GROUP BY l.transaction_currency HAVING SUM(l.transaction_debit_amount) != SUM(l.transaction_credit_amount))").bind(id).fetch_one(tx.as_mut()).await.map_err(map_db_error)?;
+            if !balance.is_zero() || foreign {
+                return Err(CommerceError::ValidationError(
+                    "Cannot deactivate an account with a balance".into(),
+                ));
+            }
+        }
         sqlx::query(
             "UPDATE gl_accounts SET
                 name = COALESCE($1, name),
@@ -454,10 +520,11 @@ impl PgGeneralLedgerRepository {
         .bind(input.status.map(|s| s.to_string()))
         .bind(Utc::now())
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
+        tx.commit().await.map_err(map_db_error)?;
         self.get_account_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -554,6 +621,29 @@ impl PgGeneralLedgerRepository {
     }
 
     pub async fn create_period_async(&self, input: CreateGlPeriod) -> Result<GlPeriod> {
+        if input.start_date > input.end_date {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Period end must not precede its start".into(),
+            ));
+        }
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        sqlx::query("SELECT pg_advisory_xact_lock(42420019)")
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        let overlaps: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM gl_periods WHERE start_date <= $1 AND end_date >= $2)",
+        )
+        .bind(input.end_date)
+        .bind(input.start_date)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        if overlaps {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "GL periods must not overlap".into(),
+            ));
+        }
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -571,10 +661,11 @@ impl PgGeneralLedgerRepository {
         .bind(PeriodStatus::Future.to_string())
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
+        tx.commit().await.map_err(map_db_error)?;
         self.get_period_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -606,20 +697,13 @@ impl PgGeneralLedgerRepository {
     }
 
     pub async fn get_period_for_date_async(&self, date: NaiveDate) -> Result<Option<GlPeriod>> {
-        let row = sqlx::query_as::<_, PeriodRow>(
-            "SELECT id, period_name, fiscal_year, period_number, start_date, end_date,
-                    status, closed_at, closed_by, locked_at, locked_by, created_at, updated_at
-             FROM gl_periods
-             WHERE start_date <= $1 AND end_date >= $1 AND status = 'open'
-             ORDER BY start_date DESC, period_number DESC
-             LIMIT 1",
-        )
-        .bind(date)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        row.map(Self::row_to_period).transpose()
+        let rows = sqlx::query_as::<_, PeriodRow>("SELECT id,period_name,fiscal_year,period_number,start_date,end_date,status,closed_at,closed_by,locked_at,locked_by,created_at,updated_at FROM gl_periods WHERE start_date <= $1 AND end_date >= $1 ORDER BY start_date,id LIMIT 2").bind(date).fetch_all(&self.pool).await.map_err(map_db_error)?;
+        if rows.len() > 1 {
+            return Err(CommerceError::ValidationError(
+                "Overlapping legacy periods require reconciliation".into(),
+            ));
+        }
+        rows.into_iter().next().map(Self::row_to_period).transpose()
     }
 
     pub async fn list_periods_async(&self, filter: GlPeriodFilter) -> Result<Vec<GlPeriod>> {
@@ -656,95 +740,159 @@ impl PgGeneralLedgerRepository {
     }
 
     pub async fn open_period_async(&self, id: Uuid) -> Result<GlPeriod> {
-        sqlx::query("UPDATE gl_periods SET status = 'open' WHERE id = $1 AND status = 'future'")
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        self.get_period_async(id).await?.ok_or(CommerceError::NotFound)
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let status = sqlx::query_scalar::<_, String>(
+            "SELECT status FROM gl_periods WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?
+        .ok_or_else(|| CommerceError::NotFound)?;
+        if status != "future" {
+            return Err(CommerceError::Conflict(format!(
+                "Cannot open period in {status} state; expected future"
+            )));
+        }
+        sqlx::query(
+            "UPDATE gl_periods SET status = 'open', updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+        )
+        .bind(id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        let row = sqlx::query_as::<_, PeriodRow>("SELECT id, period_name, fiscal_year, period_number, start_date, end_date, status, closed_at, closed_by, locked_at, locked_by, created_at, updated_at FROM gl_periods WHERE id = $1").bind(id).fetch_one(tx.as_mut()).await.map_err(map_db_error)?;
+        let period = Self::row_to_period(row)?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(period)
     }
 
     pub async fn close_period_async(&self, id: Uuid, closed_by: &str) -> Result<GlPeriod> {
-        let now = Utc::now();
-        sqlx::query(
-            "UPDATE gl_periods SET status = 'closed', closed_at = $1, closed_by = $2
-             WHERE id = $3 AND status = 'open'",
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let status = sqlx::query_scalar::<_, String>(
+            "SELECT status FROM gl_periods WHERE id = $1 FOR UPDATE",
         )
-        .bind(now)
-        .bind(closed_by)
         .bind(id)
-        .execute(&self.pool)
+        .fetch_optional(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
-
-        self.get_period_async(id).await?.ok_or(CommerceError::NotFound)
+        .map_err(map_db_error)?
+        .ok_or_else(|| CommerceError::NotFound)?;
+        if status != "open" {
+            return Err(CommerceError::Conflict(format!(
+                "Cannot close period in {status} state; expected open"
+            )));
+        }
+        let now = chrono::Utc::now();
+        sqlx::query("UPDATE gl_periods SET status = 'closed', updated_at = CURRENT_TIMESTAMP, closed_at = $2, closed_by = $3 WHERE id = $1").bind(id).bind(now).bind(closed_by).execute(tx.as_mut()).await.map_err(map_db_error)?;
+        let row = sqlx::query_as::<_, PeriodRow>("SELECT id, period_name, fiscal_year, period_number, start_date, end_date, status, closed_at, closed_by, locked_at, locked_by, created_at, updated_at FROM gl_periods WHERE id = $1").bind(id).fetch_one(tx.as_mut()).await.map_err(map_db_error)?;
+        let period = Self::row_to_period(row)?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(period)
     }
 
     pub async fn lock_period_async(&self, id: Uuid, locked_by: &str) -> Result<GlPeriod> {
-        let now = Utc::now();
-        sqlx::query(
-            "UPDATE gl_periods SET status = 'locked', locked_at = $1, locked_by = $2
-             WHERE id = $3 AND status = 'closed'",
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let status = sqlx::query_scalar::<_, String>(
+            "SELECT status FROM gl_periods WHERE id = $1 FOR UPDATE",
         )
-        .bind(now)
-        .bind(locked_by)
         .bind(id)
-        .execute(&self.pool)
+        .fetch_optional(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
-
-        self.get_period_async(id).await?.ok_or(CommerceError::NotFound)
+        .map_err(map_db_error)?
+        .ok_or_else(|| CommerceError::NotFound)?;
+        if status != "closed" {
+            return Err(CommerceError::Conflict(format!(
+                "Cannot lock period in {status} state; expected closed"
+            )));
+        }
+        let now = chrono::Utc::now();
+        sqlx::query("UPDATE gl_periods SET status = 'locked', updated_at = CURRENT_TIMESTAMP, locked_at = $2, locked_by = $3 WHERE id = $1").bind(id).bind(now).bind(locked_by).execute(tx.as_mut()).await.map_err(map_db_error)?;
+        let row = sqlx::query_as::<_, PeriodRow>("SELECT id, period_name, fiscal_year, period_number, start_date, end_date, status, closed_at, closed_by, locked_at, locked_by, created_at, updated_at FROM gl_periods WHERE id = $1").bind(id).fetch_one(tx.as_mut()).await.map_err(map_db_error)?;
+        let period = Self::row_to_period(row)?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(period)
     }
 
     pub async fn reopen_period_async(&self, id: Uuid) -> Result<GlPeriod> {
-        sqlx::query(
-            "UPDATE gl_periods SET status = 'open', closed_at = NULL, closed_by = NULL
-             WHERE id = $1 AND status = 'closed'",
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let status = sqlx::query_scalar::<_, String>(
+            "SELECT status FROM gl_periods WHERE id = $1 FOR UPDATE",
         )
         .bind(id)
-        .execute(&self.pool)
+        .fetch_optional(tx.as_mut())
         .await
-        .map_err(map_db_error)?;
-
-        self.get_period_async(id).await?.ok_or(CommerceError::NotFound)
+        .map_err(map_db_error)?
+        .ok_or_else(|| CommerceError::NotFound)?;
+        if status != "closed" {
+            return Err(CommerceError::Conflict(format!(
+                "Cannot reopen period in {status} state; expected closed"
+            )));
+        }
+        sqlx::query("UPDATE gl_periods SET status = 'open', updated_at = CURRENT_TIMESTAMP, closed_at = NULL, closed_by = NULL WHERE id = $1").bind(id).execute(tx.as_mut()).await.map_err(map_db_error)?;
+        let row = sqlx::query_as::<_, PeriodRow>("SELECT id, period_name, fiscal_year, period_number, start_date, end_date, status, closed_at, closed_by, locked_at, locked_by, created_at, updated_at FROM gl_periods WHERE id = $1").bind(id).fetch_one(tx.as_mut()).await.map_err(map_db_error)?;
+        let period = Self::row_to_period(row)?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(period)
     }
 
     pub async fn create_journal_entry_async(
         &self,
         input: CreateJournalEntry,
     ) -> Result<JournalEntry> {
+        self.create_journal_entry_as_async(input, "system").await
+    }
+
+    pub async fn create_journal_entry_as_async(
+        &self,
+        input: CreateJournalEntry,
+        actor: &str,
+    ) -> Result<JournalEntry> {
         let id = Uuid::new_v4();
         let now = Utc::now();
         let entry_number = generate_journal_entry_number();
 
-        let period = self.get_period_for_date_async(input.entry_date).await?.ok_or_else(|| {
-            CommerceError::ValidationError(format!("No period found for date {}", input.entry_date))
-        })?;
-
-        if !period.can_post() {
-            return Err(CommerceError::ValidationError(
-                "Period is not open for posting".to_string(),
-            ));
-        }
-
-        let total_debits: Decimal = input.lines.iter().map(|l| l.debit_amount).sum();
-        let total_credits: Decimal = input.lines.iter().map(|l| l.credit_amount).sum();
-        let is_balanced = total_debits == total_credits;
-        // Invariant `commerce.ledger.line_not_single_sided`: a line is a pure
-        // debit or a pure credit, never both and never neither.
         if let Some((index, _)) = input.lines.iter().enumerate().find(|(_, l)| {
-            !((l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
-                || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO))
+            !(input.source_document_type.as_deref() == Some("reversal")
+                && l.debit_amount.is_zero()
+                && l.credit_amount.is_zero())
+                && !((l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
+                    || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO))
         }) {
             return Err(CommerceError::JournalLineNotSingleSided {
                 entry_id: id,
                 line_number: i32::try_from(index + 1).unwrap_or(i32::MAX),
             });
         }
-
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::ledger_source::validate(
+            &mut tx,
+            input.source_document_type.as_deref(),
+            input.source_document_id,
+        )
+        .await?;
+        let period_id = Self::posting_period(&mut tx, input.entry_date).await?;
+        if input.auto_post.unwrap_or(false)
+            && input.lines.iter().map(|l| l.debit_amount).sum::<Decimal>()
+                == input.lines.iter().map(|l| l.credit_amount).sum::<Decimal>()
+        {
+            let entry = self.create_posted_entry_tx(&mut tx, &input, actor).await?;
+            tx.commit().await.map_err(map_db_error)?;
+            return Ok(entry);
+        }
 
+        let prepared = super::ledger_fx::prepare(&mut tx, &input).await?;
+        let input = &prepared.input;
+        let total_debits: Decimal = input.lines.iter().map(|l| l.debit_amount).sum();
+        let total_credits: Decimal = input.lines.iter().map(|l| l.credit_amount).sum();
+        let is_balanced = prepared.transaction_balanced && total_debits == total_credits;
+        // Invariant `commerce.ledger.line_not_single_sided`: a line is a pure
+        // debit or a pure credit, never both and never neither.
+
+        Self::validate_posting_accounts(
+            &mut tx,
+            input.lines.iter().map(|line| line.account_id).collect(),
+        )
+        .await?;
         sqlx::query(
             "INSERT INTO gl_journal_entries (id, entry_number, entry_date, period_id, entry_type,
                 source, source_document_type, source_document_id, source_document_key,
@@ -755,7 +903,7 @@ impl PgGeneralLedgerRepository {
         .bind(id)
         .bind(&entry_number)
         .bind(input.entry_date)
-        .bind(period.id)
+        .bind(period_id)
         .bind(input.entry_type.unwrap_or(JournalEntryType::Standard).to_string())
         .bind(JournalEntrySource::Manual.to_string())
         .bind(input.source_document_type.clone())
@@ -780,8 +928,8 @@ impl PgGeneralLedgerRepository {
             sqlx::query(
                 "INSERT INTO gl_journal_entry_lines (id, journal_entry_id, line_number, account_id,
                     account_number, account_name, description, debit_amount, credit_amount, currency,
-                    reference_type, reference_id, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+                    reference_type, reference_id, created_at, transaction_currency, transaction_debit_amount, transaction_credit_amount, exchange_rate)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
             )
             .bind(line_id)
             .bind(id)
@@ -792,10 +940,14 @@ impl PgGeneralLedgerRepository {
             .bind(line.description.clone())
             .bind(line.debit_amount)
             .bind(line.credit_amount)
-            .bind(account.currency)
+            .bind(prepared.base_currency)
             .bind(line.reference_type.clone())
             .bind(line.reference_id)
             .bind(now)
+.bind(prepared.transaction_currencies[line_num])
+.bind(prepared.amounts[line_num].transaction_debit)
+.bind(prepared.amounts[line_num].transaction_credit)
+.bind(prepared.rates[line_num])
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
@@ -804,7 +956,7 @@ impl PgGeneralLedgerRepository {
         tx.commit().await.map_err(map_db_error)?;
 
         if input.auto_post.unwrap_or(false) && is_balanced {
-            return self.post_journal_entry_async(id, "system").await;
+            return self.post_journal_entry_async(id, actor).await;
         }
 
         self.get_journal_entry_async(id).await?.ok_or(CommerceError::NotFound)
@@ -934,12 +1086,17 @@ impl PgGeneralLedgerRepository {
     /// change — posting into (or voiding out of) a closed/locked period
     /// would silently diverge the period's reported financials from its
     /// closing entry.
-    async fn ensure_period_open_async(&self, period_id: Uuid, action: &str) -> Result<()> {
-        let status: String = sqlx::query_scalar("SELECT status FROM gl_periods WHERE id = $1")
-            .bind(period_id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
+    async fn ensure_period_open_tx(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        period_id: Uuid,
+        action: &str,
+    ) -> Result<()> {
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM gl_periods WHERE id = $1 FOR SHARE")
+                .bind(period_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
         if status != "open" {
             return Err(CommerceError::ValidationError(format!(
                 "Cannot {action} journal entry: its period is {status}, not open"
@@ -948,33 +1105,8 @@ impl PgGeneralLedgerRepository {
         Ok(())
     }
 
-    /// Non-voided journal entry already recorded for a source document, if
-    /// any — the idempotency check for the `auto_post_*` family and for
-    /// `run_period_close`.
-    async fn existing_entry_for_source_async(
-        &self,
-        source_document_type: &str,
-        source_document_id: Uuid,
-    ) -> Result<Option<JournalEntry>> {
-        let id: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM gl_journal_entries
-             WHERE source_document_type = $1 AND source_document_id = $2
-               AND status != 'voided'
-             LIMIT 1",
-        )
-        .bind(source_document_type)
-        .bind(source_document_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-        match id {
-            Some(id) => self.get_journal_entry_async(id).await,
-            None => Ok(None),
-        }
-    }
-
     /// Load a journal entry with its lines on the caller's transaction.
-    async fn load_journal_entry_tx(
+    pub(super) async fn load_journal_entry_tx(
         tx: &mut sqlx::Transaction<'_, Postgres>,
         id: Uuid,
     ) -> Result<JournalEntry> {
@@ -993,7 +1125,7 @@ impl PgGeneralLedgerRepository {
         let lines = sqlx::query_as::<_, JournalEntryLineRow>(
             "SELECT id, journal_entry_id, line_number, account_id, account_number, account_name,
                     description, debit_amount, credit_amount, currency, reference_type, reference_id,
-                    created_at
+                    created_at, transaction_currency, transaction_debit_amount, transaction_credit_amount, exchange_rate
              FROM gl_journal_entry_lines WHERE journal_entry_id = $1 ORDER BY line_number",
         )
         .bind(id)
@@ -1040,7 +1172,7 @@ impl PgGeneralLedgerRepository {
                     accounts_payable_account_id, unearned_revenue_account_id, sales_revenue_account_id,
                     shipping_revenue_account_id, cogs_account_id, bad_debt_expense_account_id,
                     fx_gain_loss_account_id, auto_post_depreciation, auto_post_revenue_recognition,
-                    is_active, created_at, updated_at
+                    is_active, created_at, updated_at, sales_tax_payable_account_id, goods_received_not_invoiced_account_id, inventory_adjustment_account_id, work_in_progress_account_id
              FROM gl_auto_posting_config WHERE is_active = TRUE
              ORDER BY created_at DESC LIMIT 1",
         )
@@ -1048,6 +1180,23 @@ impl PgGeneralLedgerRepository {
         .await
         .map_err(map_db_error)?;
         Ok(row.map(Self::row_to_auto_posting_config))
+    }
+
+    pub(super) async fn posting_period(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        date: NaiveDate,
+    ) -> Result<Uuid> {
+        let rows: Vec<(Uuid,String)> = sqlx::query_as("SELECT id,status FROM gl_periods WHERE start_date <= $1 AND end_date >= $1 ORDER BY start_date,id LIMIT 2 FOR SHARE").bind(date).fetch_all(tx.as_mut()).await.map_err(map_db_error)?;
+        if rows.len() != 1 {
+            return Err(CommerceError::ValidationError(format!(
+                "Expected exactly one period for {date}; found {}",
+                rows.len()
+            )));
+        }
+        if rows[0].1 != "open" {
+            return Err(CommerceError::ValidationError("Period is not open for posting".into()));
+        }
+        Ok(rows[0].0)
     }
 
     /// Create AND post a balanced journal entry entirely on the caller's
@@ -1061,48 +1210,54 @@ impl PgGeneralLedgerRepository {
         input: &CreateJournalEntry,
         posted_by: &str,
     ) -> Result<JournalEntry> {
+        Self::create_posted_entry_with_conn(tx, input, posted_by).await
+    }
+
+    pub(crate) async fn create_posted_entry_with_conn(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        input: &CreateJournalEntry,
+        posted_by: &str,
+    ) -> Result<JournalEntry> {
         let id = Uuid::new_v4();
         let now = Utc::now();
         let entry_number = generate_journal_entry_number();
 
-        let total_debits: Decimal = input.lines.iter().map(|l| l.debit_amount).sum();
-        let total_credits: Decimal = input.lines.iter().map(|l| l.credit_amount).sum();
-        if total_debits != total_credits {
-            return Err(CommerceError::ValidationError(format!(
-                "Journal entry must balance to post: debits {total_debits} != credits {total_credits}"
-            )));
-        }
-        // Invariant `commerce.ledger.line_not_single_sided`: a line is a pure
-        // debit or a pure credit, never both and never neither.
         if let Some((index, _)) = input.lines.iter().enumerate().find(|(_, l)| {
-            !((l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
-                || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO))
+            !(input.source_document_type.as_deref() == Some("reversal")
+                && l.debit_amount.is_zero()
+                && l.credit_amount.is_zero())
+                && !((l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
+                    || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO))
         }) {
             return Err(CommerceError::JournalLineNotSingleSided {
                 entry_id: id,
                 line_number: i32::try_from(index + 1).unwrap_or(i32::MAX),
             });
         }
-
-        let period: Option<(Uuid, String)> = sqlx::query_as(
-            "SELECT id, status FROM gl_periods
-             WHERE start_date <= $1 AND end_date >= $1 AND status = 'open'
-             ORDER BY start_date DESC, period_number DESC
-             LIMIT 1",
+        super::ledger_source::validate(
+            tx,
+            input.source_document_type.as_deref(),
+            input.source_document_id,
         )
-        .bind(input.entry_date)
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-        let (period_id, period_status) = period.ok_or_else(|| {
-            CommerceError::ValidationError(format!("No period found for date {}", input.entry_date))
-        })?;
-        if period_status != "open" {
-            return Err(CommerceError::ValidationError(
-                "Period is not open for posting".to_string(),
-            ));
+        .await?;
+        let prepared = super::ledger_fx::prepare(tx, input).await?;
+        let input = &prepared.input;
+        let total_debits: Decimal = input.lines.iter().map(|l| l.debit_amount).sum();
+        let total_credits: Decimal = input.lines.iter().map(|l| l.credit_amount).sum();
+        if !prepared.transaction_balanced || total_debits != total_credits {
+            return Err(CommerceError::ValidationError(format!(
+                "Journal entry must balance to post: debits {total_debits} != credits {total_credits}"
+            )));
         }
+        // Invariant `commerce.ledger.line_not_single_sided`: a line is a pure
+        // debit or a pure credit, never both and never neither.
 
+        let period_id = Self::posting_period(tx, input.entry_date).await?;
+        Self::validate_posting_accounts(
+            tx,
+            input.lines.iter().map(|line| line.account_id).collect(),
+        )
+        .await?;
         sqlx::query(
             "INSERT INTO gl_journal_entries (id, entry_number, entry_date, period_id, entry_type,
                 source, source_document_type, source_document_id, source_document_key,
@@ -1137,14 +1292,14 @@ impl PgGeneralLedgerRepository {
             .fetch_optional(tx.as_mut())
             .await
             .map_err(map_db_error)?;
-            let (account_number, account_name, currency) =
+            let (account_number, account_name, _currency) =
                 account.ok_or(CommerceError::NotFound)?;
 
             sqlx::query(
                 "INSERT INTO gl_journal_entry_lines (id, journal_entry_id, line_number, account_id,
                     account_number, account_name, description, debit_amount, credit_amount, currency,
-                    reference_type, reference_id, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+                    reference_type, reference_id, created_at, transaction_currency, transaction_debit_amount, transaction_credit_amount, exchange_rate)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
             )
             .bind(Uuid::new_v4())
             .bind(id)
@@ -1155,15 +1310,19 @@ impl PgGeneralLedgerRepository {
             .bind(line.description.clone())
             .bind(line.debit_amount)
             .bind(line.credit_amount)
-            .bind(currency)
+            .bind(prepared.base_currency)
             .bind(line.reference_type.clone())
             .bind(line.reference_id)
             .bind(now)
+.bind(prepared.transaction_currencies[line_num])
+.bind(prepared.amounts[line_num].transaction_debit)
+.bind(prepared.amounts[line_num].transaction_credit)
+.bind(prepared.rates[line_num])
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
-            self.update_account_balance_tx(
+            Self::update_account_balance_with_conn(
                 tx,
                 line.account_id,
                 line.debit_amount,
@@ -1172,6 +1331,13 @@ impl PgGeneralLedgerRepository {
             .await?;
         }
 
+        super::ledger_source::link(
+            tx,
+            input.source_document_type.as_deref(),
+            input.source_document_id,
+            id,
+        )
+        .await?;
         append_kernel_event_tx(
             tx.as_mut(),
             &KernelOutboxEvent::domain(
@@ -1224,10 +1390,26 @@ impl PgGeneralLedgerRepository {
         // "no lines" keep the historical untyped message.
         entry.ensure_postable()?;
 
-        self.ensure_period_open_async(entry.period_id, "post").await?;
-
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        crate::ledger_fx::validate_recorded_entry(
+            &entry,
+            super::ledger_fx::base_currency(&mut tx).await?,
+        )?;
+        super::ledger_source::validate(
+            &mut tx,
+            entry.source_document_type.as_deref(),
+            entry.source_document_id,
+        )
+        .await?;
+        Self::ensure_period_open_tx(&mut tx, entry.period_id, "post").await?;
+
+        Self::validate_posting_accounts(
+            &mut tx,
+            entry.lines.iter().map(|line| line.account_id).collect(),
+        )
+        .await?;
 
         // The status guard takes the row lock; a concurrent poster blocks on
         // it and then matches zero rows, so the balance updates below can
@@ -1259,6 +1441,13 @@ impl PgGeneralLedgerRepository {
             .await?;
         }
 
+        super::ledger_source::link(
+            &mut tx,
+            entry.source_document_type.as_deref(),
+            entry.source_document_id,
+            id,
+        )
+        .await?;
         append_kernel_event_tx(
             tx.as_mut(),
             &KernelOutboxEvent::domain(
@@ -1294,9 +1483,15 @@ impl PgGeneralLedgerRepository {
             ));
         }
 
-        self.ensure_period_open_async(entry.period_id, "void").await?;
-
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        Self::ensure_period_open_tx(&mut tx, entry.period_id, "void").await?;
+
+        Self::validate_posting_accounts(
+            &mut tx,
+            entry.lines.iter().map(|line| line.account_id).collect(),
+        )
+        .await?;
 
         // The status guard takes the row lock; a concurrent voider blocks on
         // it and then matches zero rows, so the balance reversal below can
@@ -1356,121 +1551,12 @@ impl PgGeneralLedgerRepository {
         id: Uuid,
         reversal_date: NaiveDate,
     ) -> Result<JournalEntry> {
-        let entry = self.get_journal_entry_async(id).await?.ok_or(CommerceError::NotFound)?;
-
-        match entry.status {
-            JournalEntryStatus::Posted => {
-                // Claim the entry (posted -> reversed) before creating the
-                // reversing entry, which commits its own transactions; the
-                // status guard ensures concurrent reversals cannot both
-                // create (and auto-post) a reversal.
-                let claimed = sqlx::query(
-                    "UPDATE gl_journal_entries SET status = 'reversed' WHERE id = $1 AND status = 'posted'",
-                )
-                .bind(id)
-                .execute(&self.pool)
-                .await
-                .map_err(map_db_error)?;
-
-                if claimed.rows_affected() == 0 {
-                    return Err(CommerceError::Conflict(
-                        "Journal entry was modified concurrently".to_string(),
-                    ));
-                }
-            }
-            JournalEntryStatus::Reversed => {
-                // A claim with no reversing entry is the stranded state left
-                // by a crash between the claim and the reversing entry's
-                // creation (the best-effort un-claim below can itself be
-                // lost). Resume it; an entry whose reversal exists stays a
-                // completed reversal and rejects a second one (repairing the
-                // cross-links first if a crash lost them). Mirrors SQLite.
-                if let Some(reversal) = self.existing_entry_for_source_async("reversal", id).await?
-                {
-                    sqlx::query(
-                        "UPDATE gl_journal_entries SET reversing_entry_id = $1
-                         WHERE id = $2 AND reversing_entry_id IS NULL",
-                    )
-                    .bind(reversal.id)
-                    .bind(id)
-                    .execute(&self.pool)
-                    .await
-                    .map_err(map_db_error)?;
-                    sqlx::query(
-                        "UPDATE gl_journal_entries SET reversed_entry_id = $1
-                         WHERE id = $2 AND reversed_entry_id IS NULL",
-                    )
-                    .bind(id)
-                    .bind(reversal.id)
-                    .execute(&self.pool)
-                    .await
-                    .map_err(map_db_error)?;
-                    return Err(CommerceError::Conflict(
-                        "Journal entry is already reversed".to_string(),
-                    ));
-                }
-            }
-            _ => {
-                return Err(CommerceError::ValidationError(
-                    "Can only reverse posted entries".to_string(),
-                ));
-            }
-        }
-
-        let reversing_lines: Vec<CreateJournalEntryLine> = entry
-            .lines
-            .iter()
-            .map(|l| CreateJournalEntryLine {
-                account_id: l.account_id,
-                description: Some(format!("Reversal of {}", entry.entry_number)),
-                debit_amount: l.credit_amount,
-                credit_amount: l.debit_amount,
-                reference_type: l.reference_type.clone(),
-                reference_id: l.reference_id,
-            })
-            .collect();
-
-        let reversing_entry = match self
-            .create_journal_entry_async(CreateJournalEntry {
-                entry_date: reversal_date,
-                entry_type: Some(JournalEntryType::Reversing),
-                description: format!("Reversal of {}", entry.entry_number),
-                lines: reversing_lines,
-                source_document_type: Some("reversal".to_string()),
-                source_document_id: Some(entry.id),
-                auto_post: Some(true),
-            })
-            .await
-        {
-            Ok(reversing_entry) => reversing_entry,
-            Err(e) => {
-                // Best-effort release of the claim so the entry is not left
-                // marked reversed without a reversing entry.
-                let _ = sqlx::query(
-                    "UPDATE gl_journal_entries SET status = 'posted' WHERE id = $1 AND status = 'reversed'",
-                )
-                .bind(id)
-                .execute(&self.pool)
-                .await;
-                return Err(e);
-            }
-        };
-
-        sqlx::query("UPDATE gl_journal_entries SET reversing_entry_id = $1 WHERE id = $2")
-            .bind(reversing_entry.id)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        sqlx::query("UPDATE gl_journal_entries SET reversed_entry_id = $1 WHERE id = $2")
-            .bind(id)
-            .bind(reversing_entry.id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        self.get_journal_entry_async(reversing_entry.id).await?.ok_or(CommerceError::NotFound)
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let result =
+            super::ledger_reversal::reverse(&mut tx, self, id, reversal_date, "system", false)
+                .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(result)
     }
 
     pub async fn get_journal_entry_lines_async(
@@ -1480,7 +1566,7 @@ impl PgGeneralLedgerRepository {
         let rows = sqlx::query_as::<_, JournalEntryLineRow>(
             "SELECT id, journal_entry_id, line_number, account_id, account_number, account_name,
                     description, debit_amount, credit_amount, currency, reference_type, reference_id,
-                    created_at
+                    created_at, transaction_currency, transaction_debit_amount, transaction_credit_amount, exchange_rate
              FROM gl_journal_entry_lines WHERE journal_entry_id = $1 ORDER BY line_number",
         )
         .bind(journal_entry_id)
@@ -1497,7 +1583,7 @@ impl PgGeneralLedgerRepository {
                     accounts_payable_account_id, unearned_revenue_account_id, sales_revenue_account_id,
                     shipping_revenue_account_id, cogs_account_id, bad_debt_expense_account_id,
                     fx_gain_loss_account_id, auto_post_depreciation, auto_post_revenue_recognition,
-                    is_active, created_at, updated_at
+                    is_active, created_at, updated_at, sales_tax_payable_account_id, goods_received_not_invoiced_account_id, inventory_adjustment_account_id, work_in_progress_account_id
              FROM gl_auto_posting_config WHERE is_active = TRUE
              ORDER BY created_at DESC LIMIT 1",
         )
@@ -1522,6 +1608,19 @@ impl PgGeneralLedgerRepository {
         // governed auto-posting.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
+        sqlx::query("SELECT pg_advisory_xact_lock(42420018)")
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        let accounts = crate::ledger_posting::config_accounts(&input)?;
+        for (account, expected) in accounts {
+            let (kind, status, posting, header): (String, String, bool, bool) = sqlx::query_as(
+                "SELECT account_type, status, is_posting, is_header FROM gl_accounts WHERE id = $1 FOR SHARE")
+                .bind(account).fetch_one(tx.as_mut()).await.map_err(map_db_error)?;
+            crate::ledger_posting::validate_config_account(
+                &kind, &status, posting, header, expected,
+            )?;
+        }
         sqlx::query("UPDATE gl_auto_posting_config SET is_active = FALSE WHERE is_active = TRUE")
             .execute(tx.as_mut())
             .await
@@ -1532,8 +1631,8 @@ impl PgGeneralLedgerRepository {
                 inventory_account_id, accounts_payable_account_id, unearned_revenue_account_id,
                 sales_revenue_account_id, shipping_revenue_account_id, cogs_account_id,
                 bad_debt_expense_account_id, fx_gain_loss_account_id, auto_post_depreciation,
-                auto_post_revenue_recognition, is_active, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
+                auto_post_revenue_recognition, is_active, created_at, updated_at, sales_tax_payable_account_id, goods_received_not_invoiced_account_id, inventory_adjustment_account_id, work_in_progress_account_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)",
         )
         .bind(id)
         .bind(&input.config_name)
@@ -1552,18 +1651,25 @@ impl PgGeneralLedgerRepository {
         .bind(true)
         .bind(now)
         .bind(now)
+        .bind(input.sales_tax_payable_account_id)
+        .bind(input.goods_received_not_invoiced_account_id)
+        .bind(input.inventory_adjustment_account_id)
+        .bind(input.work_in_progress_account_id)
+
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
+        let config =
+            Self::get_auto_posting_config_tx(&mut tx).await?.ok_or(CommerceError::NotFound)?;
         tx.commit().await.map_err(map_db_error)?;
-
-        self.get_auto_posting_config_async().await?.ok_or(CommerceError::NotFound)
+        Ok(config)
     }
 
     pub async fn auto_post_invoice_async(&self, invoice_id: Uuid) -> Result<JournalEntry> {
         // Idempotent under retry: the same source document never posts twice.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::ledger_source::validate(&mut tx, Some("invoice"), Some(invoice_id)).await?;
         Self::take_auto_post_lock_tx(&mut tx, "invoice", invoice_id).await?;
         if let Some(existing) =
             Self::existing_entry_for_source_tx(&mut tx, "invoice", invoice_id).await?
@@ -1574,8 +1680,8 @@ impl PgGeneralLedgerRepository {
             CommerceError::ValidationError("Auto-posting not configured".to_string())
         })?;
 
-        let (amount, invoice_date): (Decimal, DateTime<Utc>) =
-            sqlx::query_as("SELECT total, invoice_date FROM invoices WHERE id = $1")
+        let (amount, tax, shipping, invoice_date, invoice_type): (Decimal, Decimal, Decimal, DateTime<Utc>, String) =
+            sqlx::query_as("SELECT total, tax_amount, shipping_amount, invoice_date, invoice_type FROM invoices WHERE id = $1 FOR UPDATE")
                 .bind(invoice_id)
                 .fetch_one(tx.as_mut())
                 .await
@@ -1583,6 +1689,7 @@ impl PgGeneralLedgerRepository {
 
         let entry_date = invoice_date.date_naive();
 
+        let deferred = super::revenue_invoice::is_deferred(&mut tx, invoice_id).await?;
         let entry = self
             .create_posted_entry_tx(
                 &mut tx,
@@ -1590,21 +1697,18 @@ impl PgGeneralLedgerRepository {
                     entry_date,
                     entry_type: Some(JournalEntryType::Standard),
                     description: format!("Invoice {}", invoice_id),
-                    lines: vec![
-                        CreateJournalEntryLine::debit(
-                            config.accounts_receivable_account_id,
-                            amount,
-                            Some("Accounts Receivable".to_string()),
-                        ),
-                        CreateJournalEntryLine::credit(
-                            config.sales_revenue_account_id,
-                            amount,
-                            Some("Sales Revenue".to_string()),
-                        ),
-                    ],
+                    lines: crate::ledger_posting::invoice_lines(
+                        &config,
+                        amount,
+                        tax,
+                        shipping,
+                        deferred,
+                        invoice_type == "credit_memo",
+                    )?,
                     source_document_type: Some("invoice".to_string()),
                     source_document_id: Some(invoice_id),
                     auto_post: Some(true),
+                    fx: None,
                 },
                 "system",
             )
@@ -1615,6 +1719,7 @@ impl PgGeneralLedgerRepository {
 
     pub async fn auto_post_payment_received_async(&self, payment_id: Uuid) -> Result<JournalEntry> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::ledger_source::validate(&mut tx, Some("payment"), Some(payment_id)).await?;
         Self::take_auto_post_lock_tx(&mut tx, "payment", payment_id).await?;
         if let Some(existing) =
             Self::existing_entry_for_source_tx(&mut tx, "payment", payment_id).await?
@@ -1657,6 +1762,7 @@ impl PgGeneralLedgerRepository {
                     source_document_type: Some("payment".to_string()),
                     source_document_id: Some(payment_id),
                     auto_post: Some(true),
+                    fx: None,
                 },
                 "system",
             )
@@ -1667,6 +1773,7 @@ impl PgGeneralLedgerRepository {
 
     pub async fn auto_post_bill_async(&self, bill_id: Uuid) -> Result<JournalEntry> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::ledger_source::validate(&mut tx, Some("bill"), Some(bill_id)).await?;
         Self::take_auto_post_lock_tx(&mut tx, "bill", bill_id).await?;
         if let Some(existing) = Self::existing_entry_for_source_tx(&mut tx, "bill", bill_id).await?
         {
@@ -1683,6 +1790,8 @@ impl PgGeneralLedgerRepository {
                 .await
                 .map_err(map_db_error)?;
 
+        let items = sqlx::query_as::<_, (Option<String>, Option<Uuid>, Decimal, Decimal)>("SELECT i.account_code, a.id, i.amount, i.tax_amount FROM ap_bill_items i LEFT JOIN gl_accounts a ON a.account_number = i.account_code WHERE i.bill_id = $1 ORDER BY i.line_number").bind(bill_id).fetch_all(tx.as_mut()).await.map_err(map_db_error)?;
+        let lines = crate::ledger_posting::bill_lines(&config, amount, items)?;
         let entry = self
             .create_posted_entry_tx(
                 &mut tx,
@@ -1690,21 +1799,11 @@ impl PgGeneralLedgerRepository {
                     entry_date: bill_date,
                     entry_type: Some(JournalEntryType::Standard),
                     description: format!("Bill {}", bill_id),
-                    lines: vec![
-                        CreateJournalEntryLine::debit(
-                            config.inventory_account_id,
-                            amount,
-                            Some("Inventory/Expense".to_string()),
-                        ),
-                        CreateJournalEntryLine::credit(
-                            config.accounts_payable_account_id,
-                            amount,
-                            Some("Accounts Payable".to_string()),
-                        ),
-                    ],
+                    lines,
                     source_document_type: Some("bill".to_string()),
                     source_document_id: Some(bill_id),
                     auto_post: Some(true),
+                    fx: None,
                 },
                 "system",
             )
@@ -1715,6 +1814,7 @@ impl PgGeneralLedgerRepository {
 
     pub async fn auto_post_bill_payment_async(&self, payment_id: Uuid) -> Result<JournalEntry> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::ledger_source::validate(&mut tx, Some("bill_payment"), Some(payment_id)).await?;
         Self::take_auto_post_lock_tx(&mut tx, "bill_payment", payment_id).await?;
         if let Some(existing) =
             Self::existing_entry_for_source_tx(&mut tx, "bill_payment", payment_id).await?
@@ -1754,6 +1854,7 @@ impl PgGeneralLedgerRepository {
                     source_document_type: Some("bill_payment".to_string()),
                     source_document_id: Some(payment_id),
                     auto_post: Some(true),
+                    fx: None,
                 },
                 "system",
             )
@@ -1765,14 +1866,14 @@ impl PgGeneralLedgerRepository {
     pub async fn auto_post_inventory_cost_async(
         &self,
         cost_transaction_id: Uuid,
-    ) -> Result<JournalEntry> {
+    ) -> Result<Option<JournalEntry>> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         Self::take_auto_post_lock_tx(&mut tx, "cost_transaction", cost_transaction_id).await?;
         if let Some(existing) =
             Self::existing_entry_for_source_tx(&mut tx, "cost_transaction", cost_transaction_id)
                 .await?
         {
-            return Ok(existing);
+            return Ok(Some(existing));
         }
         let config = Self::get_auto_posting_config_tx(&mut tx).await?.ok_or_else(|| {
             CommerceError::ValidationError("Auto-posting not configured".to_string())
@@ -1788,13 +1889,22 @@ impl PgGeneralLedgerRepository {
             .map_err(map_db_error)?;
 
         let entry_date = created_at.date_naive();
-        let is_issue = transaction_type == "issue" || transaction_type == "sale";
-        let (debit_account, credit_account) = if is_issue {
-            (config.cogs_account_id, config.inventory_account_id)
+        let event = sqlx::query_as::<_, (String, Decimal, Decimal)>(
+            "SELECT kind, carrying_cost, actual_cost FROM stock_cost_events WHERE movement_id = $1",
+        )
+        .bind(cost_transaction_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        let lines = if let Some((kind, carrying, actual)) = event {
+            crate::ledger_posting::stock_lines(&config, &kind, carrying, actual)?
         } else {
-            (config.inventory_account_id, config.cogs_account_id)
+            crate::ledger_posting::inventory_lines(&config, &transaction_type, cost)?
+                .unwrap_or_default()
         };
-
+        if lines.is_empty() {
+            return Ok(None);
+        }
         let entry = self
             .create_posted_entry_tx(
                 &mut tx,
@@ -1802,31 +1912,29 @@ impl PgGeneralLedgerRepository {
                     entry_date,
                     entry_type: Some(JournalEntryType::Standard),
                     description: format!("Inventory Cost {}", cost_transaction_id),
-                    lines: vec![
-                        CreateJournalEntryLine::debit(
-                            debit_account,
-                            cost,
-                            Some(if is_issue { "COGS" } else { "Inventory" }.to_string()),
-                        ),
-                        CreateJournalEntryLine::credit(
-                            credit_account,
-                            cost,
-                            Some(if is_issue { "Inventory" } else { "COGS" }.to_string()),
-                        ),
-                    ],
+                    lines,
                     source_document_type: Some("cost_transaction".to_string()),
                     source_document_id: Some(cost_transaction_id),
                     auto_post: Some(true),
+                    fx: None,
                 },
                 "system",
             )
             .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(Some(entry))
+    }
+
+    pub async fn auto_post_credit_memo_async(&self, id: Uuid) -> Result<JournalEntry> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let entry = super::ledger_credit::post(&mut tx, self, id).await?;
         tx.commit().await.map_err(map_db_error)?;
         Ok(entry)
     }
 
     pub async fn auto_post_write_off_async(&self, write_off_id: Uuid) -> Result<JournalEntry> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::ledger_source::validate(&mut tx, Some("write_off"), Some(write_off_id)).await?;
         Self::take_auto_post_lock_tx(&mut tx, "write_off", write_off_id).await?;
         if let Some(existing) =
             Self::existing_entry_for_source_tx(&mut tx, "write_off", write_off_id).await?
@@ -1870,6 +1978,7 @@ impl PgGeneralLedgerRepository {
                     source_document_type: Some("write_off".to_string()),
                     source_document_id: Some(write_off_id),
                     auto_post: Some(true),
+                    fx: None,
                 },
                 "system",
             )
@@ -1879,6 +1988,7 @@ impl PgGeneralLedgerRepository {
     }
 
     pub async fn get_trial_balance_async(&self, as_of_date: NaiveDate) -> Result<TrialBalance> {
+        super::ledger_fx::require_reconciled(&self.pool, as_of_date).await?;
         // Balances are derived from journal lines dated on or before the
         // requested date (posted and reversed entries carry balance effect;
         // draft and voided do not), so the report honors `as_of_date` instead
@@ -1894,7 +2004,7 @@ impl PgGeneralLedgerRepository {
                  JOIN gl_journal_entries je ON l.journal_entry_id = je.id
                  WHERE je.status IN ('posted', 'reversed') AND je.entry_date <= $1
              ) t ON t.account_id = a.id
-             WHERE a.is_posting = TRUE AND a.status = 'active'
+             WHERE a.is_posting = TRUE
              GROUP BY a.id
              ORDER BY a.account_number",
         )
@@ -1954,102 +2064,18 @@ impl PgGeneralLedgerRepository {
     }
 
     pub async fn get_balance_sheet_async(&self, as_of_date: NaiveDate) -> Result<BalanceSheet> {
-        // Same as-of derivation as the trial balance: lines from posted and
-        // reversed entries dated on or before the requested date.
-        let rows = sqlx::query_as::<
-            _,
-            (Uuid, String, String, String, Option<String>, Decimal, Decimal, String),
-        >(
-            "SELECT a.id, a.account_number, a.name, a.account_type, a.account_sub_type,
-                    COALESCE(SUM(t.debit_amount), 0) AS debits,
-                    COALESCE(SUM(t.credit_amount), 0) AS credits,
-                    a.normal_balance
-             FROM gl_accounts a
-             LEFT JOIN (
-                 SELECT l.account_id, l.debit_amount, l.credit_amount
-                 FROM gl_journal_entry_lines l
-                 JOIN gl_journal_entries je ON l.journal_entry_id = je.id
-                 WHERE je.status IN ('posted', 'reversed') AND je.entry_date <= $1
-             ) t ON t.account_id = a.id
-             WHERE a.is_posting = TRUE AND a.status = 'active'
-               AND a.account_type IN ('asset', 'liability', 'equity')
-             GROUP BY a.id
-             ORDER BY a.account_number",
-        )
-        .bind(as_of_date)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        let mut assets = Vec::new();
-        let mut liabilities = Vec::new();
-        let mut equity = Vec::new();
-        let mut total_assets = Decimal::ZERO;
-        let mut total_liabilities = Decimal::ZERO;
-        let mut total_equity = Decimal::ZERO;
-
-        for (id, number, name, account_type, sub_type, debits, credits, normal_balance) in rows {
-            let normal: BalanceSide = normal_balance.parse().map_err(|e| {
-                CommerceError::DatabaseError(format!(
-                    "Invalid gl_account.normal_balance '{}': {}",
-                    normal_balance, e
-                ))
-            })?;
-            let balance = match normal {
-                BalanceSide::Credit => credits - debits,
-                _ => debits - credits,
-            };
-            let account_type: AccountType = account_type.parse().map_err(|e| {
-                CommerceError::DatabaseError(format!(
-                    "Invalid gl_account.account_type '{}': {}",
-                    account_type, e
-                ))
-            })?;
-            let sub_type = match sub_type {
-                Some(value) if !value.trim().is_empty() => Some(value.parse().map_err(|e| {
-                    CommerceError::DatabaseError(format!(
-                        "Invalid gl_account.account_sub_type '{}': {}",
-                        value, e
-                    ))
-                })?),
-                _ => None,
-            };
-            let line = BalanceSheetLine {
-                account_id: id,
-                account_number: number,
-                account_name: name,
-                account_sub_type: sub_type,
-                balance,
-                indent_level: 0,
-                is_total: false,
-            };
-
-            match account_type {
-                AccountType::Asset => {
-                    total_assets += balance;
-                    assets.push(line);
-                }
-                AccountType::Liability => {
-                    total_liabilities += balance;
-                    liabilities.push(line);
-                }
-                AccountType::Equity => {
-                    total_equity += balance;
-                    equity.push(line);
-                }
-                _ => {}
-            }
-        }
-
-        Ok(BalanceSheet {
-            as_of_date,
-            total_assets,
-            total_liabilities,
-            total_equity,
-            assets,
-            liabilities,
-            equity,
-        })
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        super::ledger_fx::require_reconciled(tx.as_mut(), as_of_date).await?;
+        let date = as_of_date.to_string();
+        let year_start = sqlx::query_scalar::<_, Option<String>>("SELECT CAST(MIN(start_date) AS TEXT) FROM gl_periods WHERE fiscal_year IN (SELECT fiscal_year FROM gl_periods WHERE start_date <= CAST($1 AS DATE) AND end_date >= CAST($1 AS DATE))").bind(&date).fetch_one(tx.as_mut()).await.map_err(map_db_error)?.unwrap_or_else(|| format!("{}-01-01", chrono::Datelike::year(&as_of_date)));
+        let rows = sqlx::query_as::<_, (Uuid, String, String, String, Option<String>, Decimal, Decimal, Decimal, Decimal)>("SELECT a.id, a.account_number, a.name, a.account_type, a.account_sub_type,\n COALESCE(SUM(t.debit_amount),0), COALESCE(SUM(t.credit_amount),0),\n COALESCE(SUM(CASE WHEN t.entry_date >= CAST($2 AS DATE) THEN t.debit_amount ELSE 0 END),0),\n COALESCE(SUM(CASE WHEN t.entry_date >= CAST($2 AS DATE) THEN t.credit_amount ELSE 0 END),0)\n FROM gl_accounts a LEFT JOIN (SELECT l.account_id, l.debit_amount, l.credit_amount, je.entry_date\n FROM gl_journal_entry_lines l JOIN gl_journal_entries je ON je.id=l.journal_entry_id\n WHERE je.status IN ('posted','reversed') AND je.entry_date <= CAST($1 AS DATE)) t ON t.account_id=a.id\n WHERE a.is_posting = TRUE GROUP BY a.id ORDER BY a.account_number").bind(&date).bind(&year_start).fetch_all(tx.as_mut()).await.map_err(map_db_error)?;
+        let report = crate::ledger_reports::balance_sheet(as_of_date, rows)?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(report)
     }
 
     pub async fn get_income_statement_async(
@@ -2057,6 +2083,7 @@ impl PgGeneralLedgerRepository {
         start_date: NaiveDate,
         end_date: NaiveDate,
     ) -> Result<IncomeStatement> {
+        super::ledger_fx::require_reconciled(&self.pool, end_date).await?;
         let rows =
             sqlx::query_as::<_, (Uuid, String, String, String, Option<String>, Decimal, Decimal)>(
                 "SELECT a.id, a.account_number, a.name, a.account_type, a.account_sub_type,
@@ -2065,9 +2092,9 @@ impl PgGeneralLedgerRepository {
              FROM gl_accounts a
              LEFT JOIN gl_journal_entry_lines l ON a.id = l.account_id
              LEFT JOIN gl_journal_entries je ON l.journal_entry_id = je.id
-             WHERE a.is_posting = TRUE AND a.status = 'active'
+             WHERE a.is_posting = TRUE
                AND a.account_type IN ('revenue', 'expense')
-               AND (je.status = 'posted' OR je.id IS NULL)
+               AND (je.status IN ('posted', 'reversed') OR je.id IS NULL)
                AND (je.entry_type != 'closing' OR je.id IS NULL)
                AND (je.entry_date >= $1 AND je.entry_date <= $2 OR je.id IS NULL)
              GROUP BY a.id
@@ -2186,7 +2213,7 @@ impl PgGeneralLedgerRepository {
         let mut builder = QueryBuilder::<Postgres>::new(
             "SELECT l.id, l.journal_entry_id, l.line_number, l.account_id, l.account_number,
                     l.account_name, l.description, l.debit_amount, l.credit_amount, l.currency,
-                    l.reference_type, l.reference_id, l.created_at
+                    l.reference_type, l.reference_id, l.created_at, l.transaction_currency, l.transaction_debit_amount, l.transaction_credit_amount, l.exchange_rate
              FROM gl_journal_entry_lines l
              JOIN gl_journal_entries je ON l.journal_entry_id = je.id
              WHERE l.account_id = ",
@@ -2221,158 +2248,23 @@ impl PgGeneralLedgerRepository {
         period_id: Uuid,
         closed_by: &str,
     ) -> Result<JournalEntry> {
-        let period = self.get_period_async(period_id).await?.ok_or(CommerceError::NotFound)?;
-
-        if period.status != PeriodStatus::Open {
-            return Err(CommerceError::ValidationError("Period must be open to close".to_string()));
-        }
-
-        // The income statement excludes closing entries, so a re-close would
-        // sweep the same revenue/expense again: while a closing entry stands
-        // (not voided), the period cannot be closed a second time.
-        if let Some(existing) =
-            self.existing_entry_for_source_async("period_close", period_id).await?
-        {
-            return Err(CommerceError::ValidationError(format!(
-                "Period already has closing entry {}; void it before re-closing",
-                existing.entry_number
-            )));
-        }
-
-        let income_statement =
-            self.get_income_statement_async(period.start_date, period.end_date).await?;
-
-        if income_statement.net_income == Decimal::ZERO
-            && income_statement.revenue_lines.iter().all(|l| l.amount == Decimal::ZERO)
-            && income_statement.expense_lines.iter().all(|l| l.amount == Decimal::ZERO)
-        {
-            return Err(CommerceError::ValidationError("No net income to close".to_string()));
-        }
-
-        let retained_earnings = self
-            .list_accounts_async(GlAccountFilter {
-                account_sub_type: Some(AccountSubType::RetainedEarnings),
-                ..Default::default()
-            })
-            .await?
-            .into_iter()
-            .next()
-            .ok_or_else(|| {
-                CommerceError::ValidationError("Retained earnings account not found".to_string())
-            })?;
-
-        let mut lines = Vec::new();
-
-        for rev in income_statement.revenue_lines {
-            // Revenue is credit-normal: positive balances close with a debit,
-            // contra-normal (negative) balances with a credit.
-            let memo = Some(format!("Close {} to Retained Earnings", rev.account_name));
-            if rev.amount > Decimal::ZERO {
-                lines.push(CreateJournalEntryLine::debit(rev.account_id, rev.amount, memo));
-            } else if rev.amount < Decimal::ZERO {
-                lines.push(CreateJournalEntryLine::credit(rev.account_id, rev.amount.abs(), memo));
-            }
-        }
-
-        for exp in income_statement.expense_lines {
-            // Expenses are debit-normal: positive balances close with a
-            // credit, contra-normal balances (e.g. a net FX gain on an
-            // expense-type gain/loss account) with a debit.
-            let memo = Some(format!("Close {} to Retained Earnings", exp.account_name));
-            if exp.amount > Decimal::ZERO {
-                lines.push(CreateJournalEntryLine::credit(exp.account_id, exp.amount, memo));
-            } else if exp.amount < Decimal::ZERO {
-                lines.push(CreateJournalEntryLine::debit(exp.account_id, exp.amount.abs(), memo));
-            }
-        }
-
-        if income_statement.net_income > Decimal::ZERO {
-            lines.push(CreateJournalEntryLine::credit(
-                retained_earnings.id,
-                income_statement.net_income,
-                Some("Net income to Retained Earnings".to_string()),
-            ));
-        } else if income_statement.net_income < Decimal::ZERO {
-            lines.push(CreateJournalEntryLine::debit(
-                retained_earnings.id,
-                income_statement.net_income.abs(),
-                Some("Net loss to Retained Earnings".to_string()),
-            ));
-        }
-
-        let closing_entry = self
-            .create_journal_entry_async(CreateJournalEntry {
-                entry_date: period.end_date,
-                entry_type: Some(JournalEntryType::Closing),
-                description: format!("Closing entries for {}", period.period_name),
-                lines,
-                source_document_type: Some("period_close".to_string()),
-                source_document_id: Some(period_id),
-                auto_post: Some(true),
-            })
-            .await?;
-
-        self.close_period_async(period_id, closed_by).await?;
-
-        Ok(closing_entry)
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let result = super::ledger_close::close(&mut tx, self, period_id, closed_by).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(result)
     }
 
-    /// Look up the exchange rate converting one `from` unit into `to` units,
-    /// falling back to the inverse of the reverse pair when only that is set.
-    async fn lookup_rate_async(&self, from: &str, to: &str) -> Result<Option<Decimal>> {
-        let direct: Option<Decimal> = sqlx::query_scalar(
-            "SELECT rate FROM exchange_rates WHERE base_currency = $1 AND quote_currency = $2",
-        )
-        .bind(from)
-        .bind(to)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-        if let Some(rate) = direct {
-            return Ok(Some(rate));
-        }
-
-        let inverse: Option<Decimal> = sqlx::query_scalar(
-            "SELECT rate FROM exchange_rates WHERE base_currency = $1 AND quote_currency = $2",
-        )
-        .bind(to)
-        .bind(from)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-        Ok(inverse.and_then(|rate| if rate.is_zero() { None } else { Some(Decimal::ONE / rate) }))
-    }
-
-    /// Resolve the account receiving unrealized FX gains/losses: the
-    /// configured `fx_gain_loss_account_id`, else the first active posting
-    /// account with an Other Expense / Other Revenue sub-type.
-    async fn resolve_fx_gain_loss_account_async(&self) -> Result<Uuid> {
-        if let Some(id) = self
-            .get_auto_posting_config_async()
-            .await?
-            .and_then(|config| config.fx_gain_loss_account_id)
-        {
-            return Ok(id);
-        }
-        for sub_type in [AccountSubType::OtherExpense, AccountSubType::OtherRevenue] {
-            let fallback = self
-                .list_accounts_async(GlAccountFilter {
-                    account_sub_type: Some(sub_type),
-                    status: Some(AccountStatus::Active),
-                    is_posting: Some(true),
-                    limit: Some(1),
-                    ..Default::default()
-                })
-                .await?
-                .into_iter()
-                .next();
-            if let Some(account) = fallback {
-                return Ok(account.id);
-            }
-        }
-        Err(CommerceError::ValidationError(
-            "No FX gain/loss account configured for revaluation".to_string(),
-        ))
+    /// Revalue monetary positions at historical rates in one transaction.
+    pub async fn preview_revaluation_async(
+        &self,
+        as_of_date: NaiveDate,
+        base_currency: Option<Currency>,
+    ) -> Result<RevaluationResult> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let result =
+            super::ledger_fx::revalue(&mut tx, self, as_of_date, base_currency, true).await?;
+        tx.rollback().await.map_err(map_db_error)?;
+        Ok(result)
     }
 
     pub async fn revalue_async(
@@ -2380,114 +2272,11 @@ impl PgGeneralLedgerRepository {
         as_of_date: NaiveDate,
         base_currency: Option<Currency>,
     ) -> Result<RevaluationResult> {
-        let base = match base_currency {
-            Some(base) => base,
-            None => {
-                let code: Option<String> =
-                    sqlx::query_scalar("SELECT base_currency FROM store_currency_settings LIMIT 1")
-                        .fetch_optional(&self.pool)
-                        .await
-                        .map_err(map_db_error)?;
-                match code {
-                    Some(code) => code.parse::<Currency>().map_err(|e| {
-                        CommerceError::DatabaseError(format!(
-                            "Invalid store base currency {code:?}: {e}"
-                        ))
-                    })?,
-                    None => Currency::default(),
-                }
-            }
-        };
-        let base_code: CurrencyCode = base.code().parse().map_err(|e| {
-            CommerceError::ValidationError(format!(
-                "Base currency {} is not a valid ISO code: {e}",
-                base.code()
-            ))
-        })?;
-        let base_places = u32::from(base.decimal_places());
-
-        let accounts = self
-            .list_accounts_async(GlAccountFilter {
-                status: Some(AccountStatus::Active),
-                is_posting: Some(true),
-                ..Default::default()
-            })
-            .await?;
-
-        let mut lines: Vec<stateset_core::RevaluationLine> = Vec::new();
-        for account in accounts {
-            if account.currency == base_code {
-                continue;
-            }
-
-            // Outstanding foreign-currency balance: posted lines excluding
-            // prior base-currency FX revaluation adjustments.
-            let row: (Decimal, Decimal) = sqlx::query_as(
-                "SELECT COALESCE(SUM(l.debit_amount), 0), COALESCE(SUM(l.credit_amount), 0)
-                 FROM gl_journal_entry_lines l
-                 JOIN gl_journal_entries je ON l.journal_entry_id = je.id
-                 WHERE l.account_id = $1 AND je.status = 'posted'
-                   AND (l.reference_type IS NULL OR l.reference_type != $2)",
-            )
-            .bind(account.id)
-            .bind(FX_REVALUATION_REFERENCE)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-            let foreign_balance = account.balance_effect(row.0, row.1);
-
-            if foreign_balance.is_zero() && account.current_balance.is_zero() {
-                continue;
-            }
-
-            let rate = self
-                .lookup_rate_async(account.currency.as_str(), base.code())
-                .await?
-                .ok_or_else(|| {
-                    CommerceError::ValidationError(format!(
-                        "No exchange rate available for {} -> {}",
-                        account.currency,
-                        base.code()
-                    ))
-                })?;
-
-            lines.push(stateset_core::compute_revaluation_line(
-                &account,
-                foreign_balance,
-                rate,
-                base_places,
-            ));
-        }
-
-        let total_unrealized_gain_loss: Decimal =
-            lines.iter().map(|l| l.unrealized_gain_loss).sum();
-
-        let journal_entry = if lines.iter().any(|l| !l.adjustment.is_zero()) {
-            let fx_account_id = self.resolve_fx_gain_loss_account_async().await?;
-            let entry_lines = stateset_core::build_revaluation_journal_lines(&lines, fx_account_id);
-            Some(
-                self.create_journal_entry_async(CreateJournalEntry {
-                    entry_date: as_of_date,
-                    entry_type: Some(JournalEntryType::Adjusting),
-                    description: format!("FX revaluation as of {as_of_date}"),
-                    lines: entry_lines,
-                    source_document_type: Some(FX_REVALUATION_REFERENCE.to_string()),
-                    source_document_id: None,
-                    auto_post: Some(true),
-                })
-                .await?,
-            )
-        } else {
-            None
-        };
-
-        Ok(RevaluationResult {
-            as_of_date,
-            base_currency: base_code,
-            total_unrealized_gain_loss,
-            lines,
-            journal_entry,
-        })
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let result =
+            super::ledger_fx::revalue(&mut tx, self, as_of_date, base_currency, false).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(result)
     }
 
     pub async fn create_accounts_batch_async(
@@ -2586,6 +2375,14 @@ impl GeneralLedgerRepository for PgGeneralLedgerRepository {
         block_on(self.reopen_period_async(id))
     }
 
+    fn create_journal_entry_as(
+        &self,
+        input: CreateJournalEntry,
+        actor: &str,
+    ) -> Result<JournalEntry> {
+        block_on(self.create_journal_entry_as_async(input, actor))
+    }
+
     fn create_journal_entry(&self, input: CreateJournalEntry) -> Result<JournalEntry> {
         block_on(self.create_journal_entry_async(input))
     }
@@ -2642,8 +2439,12 @@ impl GeneralLedgerRepository for PgGeneralLedgerRepository {
         block_on(self.auto_post_bill_payment_async(payment_id))
     }
 
-    fn auto_post_inventory_cost(&self, cost_transaction_id: Uuid) -> Result<JournalEntry> {
+    fn auto_post_inventory_cost(&self, cost_transaction_id: Uuid) -> Result<Option<JournalEntry>> {
         block_on(self.auto_post_inventory_cost_async(cost_transaction_id))
+    }
+
+    fn auto_post_credit_memo(&self, id: Uuid) -> Result<JournalEntry> {
+        block_on(self.auto_post_credit_memo_async(id))
     }
 
     fn auto_post_write_off(&self, write_off_id: Uuid) -> Result<JournalEntry> {
@@ -2684,6 +2485,14 @@ impl GeneralLedgerRepository for PgGeneralLedgerRepository {
 
     fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
         block_on(self.run_period_close_async(period_id, closed_by))
+    }
+
+    fn preview_revaluation(
+        &self,
+        as_of_date: NaiveDate,
+        base_currency: Option<Currency>,
+    ) -> Result<RevaluationResult> {
+        block_on(self.preview_revaluation_async(as_of_date, base_currency))
     }
 
     fn revalue(

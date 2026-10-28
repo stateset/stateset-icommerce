@@ -70,6 +70,10 @@ async fn postgres_auto_post_bill_payment_posts_balanced_entry() {
         unearned_revenue_account_id: None,
         sales_revenue_account_id: acct("4010").await,
         shipping_revenue_account_id: None,
+        sales_tax_payable_account_id: None,
+        goods_received_not_invoiced_account_id: None,
+        inventory_adjustment_account_id: None,
+        work_in_progress_account_id: None,
         cogs_account_id: acct("5010").await,
         bad_debt_expense_account_id: None,
         fx_gain_loss_account_id: None,
@@ -116,6 +120,7 @@ async fn postgres_auto_post_bill_payment_posts_balanced_entry() {
         .await
         .expect("create bill payment");
 
+    ap.clear_payment(payment.id).await.expect("clear bill payment");
     let entry =
         gl.auto_post_bill_payment(payment.id).await.expect("auto_post_bill_payment must succeed");
 
@@ -126,4 +131,5 @@ async fn postgres_auto_post_bill_payment_posts_balanced_entry() {
         payment_date.date_naive(),
         "entry date should be the payment date"
     );
+    common::deactivate_posting(commerce.database().pool()).await;
 }

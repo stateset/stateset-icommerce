@@ -1,3 +1,4 @@
+vi.mock('@/components/finance/bill-actions', () => ({ default: () => null }));
 // Component test for the Finance > Bills page client: aging summary cards,
 // bills table, and the status filter.
 

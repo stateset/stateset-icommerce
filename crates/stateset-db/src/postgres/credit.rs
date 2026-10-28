@@ -749,14 +749,27 @@ impl PgCreditRepository {
         order_amount: Decimal,
     ) -> Result<CreditCheckResult> {
         let now = Utc::now();
-        let account = self.get_credit_account_by_customer_async(customer_id).await?;
+        let mut account = self.get_credit_account_by_customer_async(customer_id).await?;
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let available = super::credit_control::available(&mut tx, customer_id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        if let (Some(account), Some((_, _, available))) = (account.as_mut(), available) {
+            account.available_credit = available;
+        }
+        let holds = self.get_active_holds_async(customer_id).await?;
         match account {
             Some(acc) => {
                 let approved = acc.status == CreditAccountStatus::Active
+                    && holds.is_empty()
+                    && order_amount >= Decimal::ZERO
                     && acc.available_credit >= order_amount;
                 let reason = if !approved {
-                    if acc.status != CreditAccountStatus::Active {
+                    if !holds.is_empty() {
+                        Some("Active credit hold".into())
+                    } else if order_amount < Decimal::ZERO {
+                        Some("Amount cannot be negative".into())
+                    } else if acc.status != CreditAccountStatus::Active {
                         Some(format!("Account status: {}", acc.status))
                     } else {
                         Some(format!(
@@ -810,6 +823,7 @@ impl PgCreditRepository {
         let id = Uuid::new_v4();
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::credit_control::require_active(&mut tx, customer_id, Some(order_id)).await?;
 
         // The reservation must fit within the customer's remaining credit
         // (limit minus balance minus existing holds) — otherwise a hold can
@@ -857,6 +871,7 @@ impl PgCreditRepository {
         // Recompute inside the same transaction: a hold must never commit
         // without the `available_credit` it invalidates.
         Self::recalculate_available_credit_tx(&mut tx, customer_id).await?;
+        super::credit_control::check_customer(&mut tx, customer_id, Some(order_id)).await?;
         tx.commit().await.map_err(map_db_error)?;
 
         self.get_credit_account_by_customer_async(customer_id).await?.ok_or(CommerceError::NotFound)
@@ -912,6 +927,7 @@ impl PgCreditRepository {
         // `limit - balance - holds` — negative.
         let now = Utc::now();
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::credit_control::require_active(&mut tx, customer_id, Some(order_id)).await?;
         let (credit_limit, current_balance): (Decimal, Decimal) = sqlx::query_as(
             "SELECT credit_limit, current_balance FROM credit_accounts WHERE customer_id = $1 FOR UPDATE",
         )
@@ -962,6 +978,7 @@ impl PgCreditRepository {
         .await?;
 
         Self::recalculate_available_credit_tx(&mut tx, customer_id).await?;
+        super::credit_control::check_customer(&mut tx, customer_id, Some(order_id)).await?;
         tx.commit().await.map_err(map_db_error)?;
 
         self.get_credit_account_by_customer_async(customer_id).await?.ok_or(CommerceError::NotFound)
@@ -970,6 +987,13 @@ impl PgCreditRepository {
     pub async fn place_hold_async(&self, input: PlaceCreditHold) -> Result<CreditHold> {
         let id = Uuid::new_v4();
         let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        // Serialize hold placement against reservations, charges and document checks.
+        sqlx::query("SELECT id FROM credit_accounts WHERE customer_id=$1 FOR UPDATE")
+            .bind(input.customer_id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
 
         sqlx::query(
             "INSERT INTO credit_holds (id, customer_id, order_id, hold_type, hold_amount, reason,
@@ -985,10 +1009,11 @@ impl PgCreditRepository {
         .bind(input.placed_by.clone())
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
+        tx.commit().await.map_err(map_db_error)?;
         Ok(CreditHold {
             id,
             customer_id: input.customer_id,

@@ -55,6 +55,19 @@ impl std::fmt::Debug for CostAccounting {
 }
 
 impl CostAccounting {
+    /// Report recognized revenue and recorded sales costs from stored transactions.
+    pub fn transaction_cogs(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<stateset_core::TransactionCogsReport> {
+        self.db.cost_accounting().transaction_cogs(from, to)
+    }
+    /// Check stored sales and inventory for missing costs before closing.
+    pub fn close_books_check(&self) -> Result<stateset_core::CloseBooksReport> {
+        self.db.cost_accounting().close_books_check()
+    }
+
     pub(crate) fn new(db: Arc<dyn Database>) -> Self {
         Self { db }
     }

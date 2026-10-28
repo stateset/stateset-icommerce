@@ -73,16 +73,13 @@ export const cycleCountTools = withPolicyDomain('cycle_counts', [
   {
     name: 'create_cycle_count',
     description:
-      'Create a draft cycle count for a warehouse with the SKUs to count and the quantity the system expects for each.',
+      'Create a draft cycle count for a warehouse. Expected quantities are read from stored inventory.',
     inputSchema: {
       warehouseId: z.number().int().positive().describe('Warehouse ID to count in'),
       lines: z
         .array(
           z.object({
             sku: z.string().min(1).describe('SKU to count'),
-            expectedQuantity: quantityInput.describe(
-              'Quantity the system expects on hand (exact decimal string or integer)',
-            ),
             lotId: z.string().min(1).optional().describe('Lot ID (UUID) for lot-tracked stock'),
           }),
         )
@@ -115,7 +112,6 @@ export const cycleCountTools = withPolicyDomain('cycle_counts', [
             omitAbsent({
               sku: line.sku,
               lotId: line.lotId,
-              expectedQuantity: String(line.expectedQuantity),
             }),
           ),
         }),

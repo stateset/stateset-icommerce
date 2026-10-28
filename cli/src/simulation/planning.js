@@ -13,6 +13,7 @@ import { reconcilePlan } from './reconciliation.js';
 import { decideReplenishment } from './purchasing.js';
 import { reconcileCashFlow } from './cashflow.js';
 import { reconcileInventoryFlow } from './inventory-flow.js';
+import { costOpeningStock, receivePurchase } from './native-compat.js';
 
 export async function executeInventoryPlan(input, database) {
   const plan = inventoryPlanSchema.parse(input);
@@ -43,6 +44,15 @@ export async function executeInventoryPlan(input, database) {
   let extraPurchasedUnits = 0;
   let orderCount = 0;
   try {
+    const warehouse = await commerce.warehouse.createWarehouse({
+      code: 'SIM',
+      name: 'Simulation warehouse',
+    });
+    const location = await commerce.warehouse.createLocation({
+      warehouseId: warehouse.id,
+      locationType: 'receiving',
+      isReceivable: true,
+    });
     const supplier = await commerce.purchaseOrders.createSupplier({
       name: 'Simulated supplier',
       supplierCode: 'SIM-SUPPLIER',
@@ -60,6 +70,7 @@ export async function executeInventoryPlan(input, database) {
       });
       await commerce.products.activate(product.id);
       const variant = await commerce.products.getVariantBySku(item.sku);
+      await costOpeningStock(commerce, item.sku, item.unitCost);
       await commerce.inventory.createItem({
         sku: item.sku,
         name: 'Planning stock',
@@ -209,14 +220,16 @@ export async function executeInventoryPlan(input, database) {
         const quantity = delivery.nextReceiptQuantity;
         const remaining = delivery.quantity - quantity;
         if (quantity > 0) {
-          const po = await commerce.purchaseOrders.receive(delivery.id, [
-            { itemId: delivery.line, quantityReceivedExact: String(quantity) },
-          ]);
+          const po = await receivePurchase(
+            commerce,
+            delivery.id,
+            [{ itemId: delivery.line, sku: delivery.sku, quantity: String(quantity) }],
+            warehouse.id,
+            location.id,
+          );
           const expectedStatus = remaining ? 'partially_received' : 'received';
           if (po.status !== expectedStatus)
             throw new Error('Native purchase receipt status does not match delivered stock');
-          // PO receipt quantities and inventory postings are separate native transactions.
-          await commerce.inventory.adjust(delivery.sku, quantity, 'Simulated purchase receipt');
           products.get(delivery.sku).receivedUnits += quantity;
           delivery.receivedQuantity += quantity;
           receiptEvents += 1;

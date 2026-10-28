@@ -23,6 +23,8 @@ struct OrderRow {
     number: String,
     source_warehouse_id: uuid::Uuid,
     destination_warehouse_id: uuid::Uuid,
+    source_location_id: Option<i32>,
+    destination_location_id: Option<i32>,
     status: String,
     expected_at: Option<DateTime<Utc>>,
     shipped_at: Option<DateTime<Utc>>,
@@ -38,12 +40,86 @@ struct ItemRow {
     transfer_order_id: TransferOrderId,
     product_id: uuid::Uuid,
     sku: String,
+    lot_id: Option<uuid::Uuid>,
+    quantity_variance: Decimal,
     quantity: Decimal,
     quantity_shipped: Decimal,
     quantity_received: Decimal,
 }
 
 impl PgTransferOrderRepository {
+    fn stock_locations(order: &TransferOrder) -> Result<(i32, i32)> {
+        match (order.source_location_id, order.destination_location_id) {
+            (Some(source), Some(destination)) if source > 0 && destination > 0 && source != destination => Ok((source, destination)),
+            _ => Err(CommerceError::ValidationError("Transfer requires explicit source and destination stock locations; legacy document-only transfers must be reconciled before stock posting".into())),
+        }
+    }
+
+    async fn validate_locations(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        source: i32,
+        destination: i32,
+    ) -> Result<()> {
+        if source <= 0 || destination <= 0 || source == destination {
+            return Err(CommerceError::ValidationError(
+                "Transfer requires two distinct stock locations".into(),
+            ));
+        }
+        let rows: Vec<i32> = sqlx::query_scalar("SELECT l.id FROM locations l JOIN warehouses w ON w.id = l.warehouse_id WHERE l.id = ANY($1) AND l.is_active AND w.is_active AND (l.id != $2 OR l.is_receivable) ORDER BY l.id FOR SHARE OF l, w")
+            .bind(vec![source, destination]).bind(destination).fetch_all(tx.as_mut()).await.map_err(map_db_error)?;
+        if rows.len() != 2 {
+            return Err(CommerceError::ValidationError(
+                "Transfer locations must be active, with a receivable destination".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn post_stock(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        order: &TransferOrder,
+        item: &TransferOrderItem,
+        quantity: Decimal,
+        receiving: bool,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let (source, destination) = Self::stock_locations(order)?;
+        Self::validate_locations(tx, source, destination).await?;
+        let location = if receiving { destination } else { source };
+        super::stock_guard::ensure_sellable(
+            tx.as_mut(),
+            &item.sku,
+            item.lot_id,
+            None,
+            Some(location),
+        )
+        .await?;
+        super::stock_move::post(
+            tx,
+            &crate::stock_move::StockMove {
+                id: uuid::Uuid::new_v4(),
+                sku: &item.sku,
+                lot_id: item.lot_id,
+                from: if receiving { None } else { Some(source) },
+                to: if receiving { Some(destination) } else { None },
+                quantity,
+                release_reserved: Decimal::ZERO,
+                reserve_received: Decimal::ZERO,
+                movement_type: stateset_core::MovementType::Transfer,
+                lot_effect: crate::stock_move::LotEffect::PlacementOnly,
+                check_sellable: true,
+                reference_type: Some("transfer_order"),
+                reference_id: Some(order.id.into()),
+                reference_label: None,
+                reason: Some("transfer stock"),
+                performed_by: None,
+            },
+            now,
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Create a new repository over the given pool.
     #[must_use]
     pub const fn new(pool: PgPool) -> Self {
@@ -62,6 +138,8 @@ impl PgTransferOrderRepository {
             number: row.number,
             source_warehouse_id: row.source_warehouse_id.into(),
             destination_warehouse_id: row.destination_warehouse_id.into(),
+            source_location_id: row.source_location_id,
+            destination_location_id: row.destination_location_id,
             status,
             items: Vec::new(),
             expected_at: row.expected_at,
@@ -79,6 +157,8 @@ impl PgTransferOrderRepository {
             transfer_order_id: row.transfer_order_id,
             product_id: row.product_id.into(),
             sku: row.sku,
+            lot_id: row.lot_id,
+            quantity_variance: row.quantity_variance,
             quantity: row.quantity,
             quantity_shipped: row.quantity_shipped,
             quantity_received: row.quantity_received,
@@ -157,10 +237,12 @@ impl PgTransferOrderRepository {
         let number = format!("TO-{}", &id.to_string()[..8]);
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::validate_locations(&mut tx, input.source_location_id, input.destination_location_id)
+            .await?;
 
         sqlx::query(
-            "INSERT INTO transfer_orders (id, number, source_warehouse_id, destination_warehouse_id, status, expected_at, notes, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $7)",
+            "INSERT INTO transfer_orders (id, number, source_warehouse_id, destination_warehouse_id, status, expected_at, notes, created_at, updated_at, source_location_id, destination_location_id)
+             VALUES ($1, $2, $3, $4, 'draft', $5, $6, $7, $7, $8, $9)",
         )
         .bind(id)
         .bind(&number)
@@ -169,19 +251,41 @@ impl PgTransferOrderRepository {
         .bind(input.expected_at)
         .bind(&input.notes)
         .bind(now)
+        .bind(input.source_location_id)
+        .bind(input.destination_location_id)
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
         for item in &input.items {
+            if item.quantity <= Decimal::ZERO || item.sku.trim().is_empty() {
+                return Err(CommerceError::ValidationError(
+                    "Transfer lines require a SKU and positive quantity".into(),
+                ));
+            }
+            let matches: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM product_variants WHERE product_id = $1 AND sku = $2)",
+            )
+            .bind(item.product_id)
+            .bind(&item.sku)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+            if !matches {
+                return Err(CommerceError::ValidationError(
+                    "Transfer SKU must belong to its product".into(),
+                ));
+            }
             sqlx::query(
-                "INSERT INTO transfer_order_items (id, transfer_order_id, product_id, sku, quantity, quantity_shipped, quantity_received)
-                 VALUES ($1, $2, $3, '', $4, 0, 0)",
+                "INSERT INTO transfer_order_items (id, transfer_order_id, product_id, sku, quantity, quantity_shipped, quantity_received, lot_id)
+                 VALUES ($1, $2, $3, $4, $5, 0, 0, $6)",
             )
             .bind(TransferOrderItemId::new())
             .bind(id)
             .bind(*item.product_id.as_uuid())
+            .bind(&item.sku)
             .bind(item.quantity)
+            .bind(item.lot_id)
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
@@ -292,6 +396,10 @@ impl PgTransferOrderRepository {
                 "Cannot ship a transfer order in status {status}"
             )));
         }
+        let order = Self::load_full_tx(&mut tx, id).await?;
+        for item in &order.items {
+            Self::post_stock(&mut tx, &order, item, item.quantity, false, now).await?;
+        }
         // Shipping sets quantity_shipped = quantity on each line.
         sqlx::query(
             "UPDATE transfer_order_items SET quantity_shipped = quantity WHERE transfer_order_id = $1",
@@ -374,6 +482,10 @@ impl PgTransferOrderRepository {
                 "receiving {quantity} would exceed the {shipped} shipped on this line ({current} already received)"
             )));
         }
+        let order = Self::load_full_tx(&mut tx, id).await?;
+        let item =
+            order.items.iter().find(|item| item.id == item_id).ok_or(CommerceError::NotFound)?;
+        Self::post_stock(&mut tx, &order, item, quantity, true, now).await?;
         sqlx::query(
             "UPDATE transfer_order_items SET quantity_received = quantity_received + $1 WHERE id = $2",
         )
@@ -404,6 +516,60 @@ impl PgTransferOrderRepository {
         self.require_full(id).await
     }
 
+    /// Close transit custody and record any missing units as a shortage.
+    pub async fn complete_receiving_async(&self, id: TransferOrderId) -> Result<TransferOrder> {
+        let now = Utc::now();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let status = Self::lock_order(&mut tx, id).await?;
+        if !matches!(
+            status,
+            TransferOrderStatus::InTransit | TransferOrderStatus::PartiallyReceived
+        ) {
+            return Err(CommerceError::Conflict(
+                "Only in-transit transfers can close receiving".into(),
+            ));
+        }
+        let order = Self::load_full_tx(&mut tx, id).await?;
+        Self::stock_locations(&order)?;
+        for item in &order.items {
+            let missing = item.quantity_shipped - item.quantity_received;
+            sqlx::query("UPDATE transfer_order_items SET quantity_variance = $1 WHERE id = $2")
+                .bind(missing)
+                .bind(item.id)
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            if missing > Decimal::ZERO {
+                super::stock_move::post(
+                    &mut tx,
+                    &crate::stock_move::StockMove {
+                        id: uuid::Uuid::new_v4(),
+                        sku: &item.sku,
+                        lot_id: item.lot_id,
+                        from: None,
+                        to: None,
+                        quantity: missing,
+                        release_reserved: Decimal::ZERO,
+                        reserve_received: Decimal::ZERO,
+                        movement_type: stateset_core::MovementType::Adjustment,
+                        lot_effect: crate::stock_move::LotEffect::TransitLoss,
+                        check_sellable: false,
+                        reference_type: Some("transfer_shortage"),
+                        reference_id: Some(id.into()),
+                        reference_label: None,
+                        reason: Some("transfer shortage"),
+                        performed_by: None,
+                    },
+                    now,
+                )
+                .await?;
+            }
+        }
+        sqlx::query("UPDATE transfer_orders SET status = 'received', received_at = $1, updated_at = $1 WHERE id = $2").bind(now).bind(id).execute(tx.as_mut()).await.map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
+        self.require_full(id).await
+    }
+
     /// Cancel a transfer order.
     ///
     /// The terminal-state guard reads the status and the cancel writes it, so
@@ -414,7 +580,7 @@ impl PgTransferOrderRepository {
     pub async fn cancel_async(&self, id: TransferOrderId) -> Result<TransferOrder> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let status = Self::lock_order(&mut tx, id).await?;
-        if status.is_terminal() {
+        if !matches!(status, TransferOrderStatus::Draft | TransferOrderStatus::Pending) {
             return Err(CommerceError::ValidationError(format!(
                 "Cannot cancel a transfer order in status {status}"
             )));
@@ -456,6 +622,10 @@ impl TransferOrderRepository for PgTransferOrderRepository {
         quantity: Decimal,
     ) -> Result<TransferOrder> {
         block_on(self.receive_line_async(id, item_id, quantity))
+    }
+
+    fn complete_receiving(&self, id: TransferOrderId) -> Result<TransferOrder> {
+        block_on(self.complete_receiving_async(id))
     }
 
     fn cancel(&self, id: TransferOrderId) -> Result<TransferOrder> {

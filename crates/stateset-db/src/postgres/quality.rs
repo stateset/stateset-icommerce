@@ -1288,6 +1288,8 @@ impl PgQualityRepository {
     // ========================================================================
 
     pub async fn create_hold_async(&self, input: CreateQualityHold) -> Result<QualityHold> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::stock_guard::lock_hold_scope(tx.as_mut(), &input.sku).await?;
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -1309,10 +1311,11 @@ impl PgQualityRepository {
         .bind(&input.placed_by)
         .bind(now)
         .bind(input.expires_at)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
+        tx.commit().await.map_err(map_db_error)?;
         self.get_hold_async(id).await?.ok_or(CommerceError::NotFound)
     }
 

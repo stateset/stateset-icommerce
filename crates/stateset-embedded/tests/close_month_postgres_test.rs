@@ -145,6 +145,13 @@ fn setup(commerce: &Commerce, fiscal_year: i32, label: &str) -> (uuid::Uuid, u32
     let tag = TAG.fetch_add(1, Ordering::SeqCst);
     let gl = commerce.general_ledger();
     gl.initialize_chart_of_accounts().expect("init chart");
+    sub_account(
+        commerce,
+        "1500".to_owned(),
+        "Equipment",
+        AccountType::Asset,
+        AccountSubType::FixedAsset,
+    );
 
     let num = |base: u32| (base + tag).to_string();
     sub_account(
@@ -180,6 +187,10 @@ fn setup(commerce: &Commerce, fiscal_year: i32, label: &str) -> (uuid::Uuid, u32
         unearned_revenue_account_id: Some(unearned_id),
         sales_revenue_account_id: by_number("4010"),
         shipping_revenue_account_id: None,
+        sales_tax_payable_account_id: None,
+        goods_received_not_invoiced_account_id: None,
+        inventory_adjustment_account_id: None,
+        work_in_progress_account_id: None,
         cogs_account_id: by_number("5010"),
         bad_debt_expense_account_id: None,
         fx_gain_loss_account_id: None,
@@ -206,22 +217,26 @@ fn setup(commerce: &Commerce, fiscal_year: i32, label: &str) -> (uuid::Uuid, u32
             name: format!("pg press {label} {tag}"),
             description: None,
             category: FixedAssetCategory::Machinery,
-            acquisition_date: date(2026, 1, 1),
+            acquisition_date: date(2025, 1, 1),
             acquisition_cost: dec!(1200),
             salvage_value: dec!(0),
             useful_life_months: 12,
             depreciation_method: DepreciationMethod::StraightLine,
             in_service_date: None,
             location_id: None,
-            asset_account_id: None,
+            asset_account_id: Some(
+                commerce.general_ledger().get_account_by_number("1500").unwrap().unwrap().id,
+            ),
             accumulated_depreciation_account_id: None,
+            acquisition_offset_account_id: None,
+            disposal_gain_loss_account_id: None,
             depreciation_expense_account_id: None,
             currency: None,
         })
         .expect("create asset");
     let asset = commerce
         .fixed_assets()
-        .place_in_service(asset.id, date(2026, 1, 1))
+        .place_in_service(asset.id, date(2025, 1, 1))
         .expect("place in service");
     commerce.fixed_assets().generate_schedule(asset.id).expect("generate schedule");
 
@@ -234,14 +249,14 @@ fn setup(commerce: &Commerce, fiscal_year: i32, label: &str) -> (uuid::Uuid, u32
             invoice_id: None,
             transaction_price: dec!(600),
             currency: None,
-            effective_date: date(2026, 1, 1),
+            effective_date: date(2025, 1, 1),
             obligations: vec![CreatePerformanceObligation {
                 description: "Q1 support".into(),
                 standalone_selling_price: None,
                 allocated_amount: dec!(600),
                 recognition_method: RecognitionMethod::RatableOverTime {
-                    start: date(2026, 1, 1),
-                    end: date(2026, 3, 31),
+                    start: date(2025, 1, 1),
+                    end: date(2025, 3, 31),
                 },
             }],
         })
@@ -296,22 +311,26 @@ fn pg_close_month_fail_on_warnings_refuses_before_writing_anything() {
             name: "pg unscheduled lathe".into(),
             description: None,
             category: FixedAssetCategory::Machinery,
-            acquisition_date: date(2026, 1, 1),
+            acquisition_date: date(2025, 1, 1),
             acquisition_cost: dec!(600),
             salvage_value: dec!(0),
             useful_life_months: 6,
             depreciation_method: DepreciationMethod::StraightLine,
             in_service_date: None,
             location_id: None,
-            asset_account_id: None,
+            asset_account_id: Some(
+                commerce.general_ledger().get_account_by_number("1500").unwrap().unwrap().id,
+            ),
             accumulated_depreciation_account_id: None,
+            acquisition_offset_account_id: None,
+            disposal_gain_loss_account_id: None,
             depreciation_expense_account_id: None,
             currency: None,
         })
         .expect("create asset");
     commerce
         .fixed_assets()
-        .place_in_service(unscheduled.id, date(2026, 1, 1))
+        .place_in_service(unscheduled.id, date(2025, 1, 1))
         .expect("place in service");
 
     let entries_before =

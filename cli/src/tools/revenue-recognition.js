@@ -153,7 +153,7 @@ export const revenueRecognitionTools = withPolicyDomain('revenue_recognition', [
       obligationId: z.string().min(1).describe('Performance obligation ID'),
       through: isoDate().describe('Recognize entries with a period start on or before this date'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Recognize revenue', params);

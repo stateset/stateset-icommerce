@@ -7,10 +7,10 @@
   "openapiVersion": "3.1.0",
   "title": "StateSet Commerce API",
   "version": "1.0.4",
-  "totalPaths": 355,
-  "totalOperations": 475,
-  "totalSchemas": 459,
-  "totalTags": 64,
+  "totalPaths": 404,
+  "totalOperations": 535,
+  "totalSchemas": 489,
+  "totalTags": 67,
   "methods": [
     {
       "name": "DELETE",
@@ -18,7 +18,7 @@
     },
     {
       "name": "GET",
-      "count": 188
+      "count": 208
     },
     {
       "name": "PATCH",
@@ -26,11 +26,11 @@
     },
     {
       "name": "POST",
-      "count": 234
+      "count": 272
     },
     {
       "name": "PUT",
-      "count": 13
+      "count": 15
     }
   ],
   "tags": [
@@ -42,7 +42,7 @@
     {
       "name": "accounts_payable",
       "description": "Supplier bills, AP payments and allocations, payment runs, and AP aging",
-      "count": 14
+      "count": 15
     },
     {
       "name": "accounts_receivable",
@@ -80,6 +80,16 @@
       "count": 6
     },
     {
+      "name": "cost_accounting",
+      "description": "Item costs, cost layers, adjustments, variances and inventory valuation",
+      "count": 27
+    },
+    {
+      "name": "credit",
+      "description": "Customer credit accounts, checks, holds and settlements",
+      "count": 12
+    },
+    {
       "name": "currency",
       "description": "Exchange rates and currency conversion",
       "count": 3
@@ -93,6 +103,11 @@
       "name": "edi_documents",
       "description": "EDI document exchange",
       "count": 5
+    },
+    {
+      "name": "erp_operations",
+      "description": "Receipts from purchase orders, put-away tasks, backorder allocations, lot moves, work-order materials and period reclose",
+      "count": 16
     },
     {
       "name": "events",
@@ -112,7 +127,7 @@
     {
       "name": "general_ledger",
       "description": "Chart of accounts, journal entries, accounting periods, and financial reports (trial balance, balance sheet, income statement)",
-      "count": 20
+      "count": 22
     },
     {
       "name": "gift_cards",
@@ -297,7 +312,7 @@
     {
       "name": "supplier_skus",
       "description": "Supplier SKU catalog",
-      "count": 4
+      "count": 5
     },
     {
       "name": "tax",
@@ -312,7 +327,7 @@
     {
       "name": "transfer_orders",
       "description": "Inter-warehouse transfer orders",
-      "count": 6
+      "count": 7
     },
     {
       "name": "units_of_measure",
@@ -368,6 +383,7 @@
     "AdjustStoreCreditRequest",
     "AgingBucketResponse",
     "AgingLayerRequest",
+    "AllocateBackorderRequest",
     "ApAgingResponse",
     "ApBillListResponse",
     "ApBillResponse",
@@ -379,6 +395,7 @@
     "ApplyPrepaymentRequest",
     "ApplyStoreCreditRequest",
     "ApplyVendorCreditRequest",
+    "ApproveApBillRequest",
     "ApprovePaymentRunRequest",
     "ApprovePurchaseOrderRequest",
     "ArAgingResponse",
@@ -396,7 +413,11 @@
     "ArPaymentApplicationResponse",
     "ArStatementLineResponse",
     "ArWriteOffResponse",
+    "AssignPutAwayRequest",
     "AssignTaskRequest",
+    "AutoPostingConfigRequest",
+    "AutoPostingConfigResponse",
+    "AverageCostRequest",
     "BackorderListResponse",
     "BackorderResponse",
     "BalanceSheetLineResponse",
@@ -447,6 +468,7 @@
     "CompleteWorkOrderRequest",
     "CompleteWorkOrderTaskRequest",
     "ConsumeLotRequest",
+    "ConsumeMaterialRequest",
     "ConsumptionRecordRequest",
     "ConsumptionRequest",
     "ConsumptionResponse",
@@ -455,6 +477,11 @@
     "ConversionResponse",
     "ConversionRuleResponse",
     "ConvertCurrencyRequest",
+    "CostAdjustmentRequest",
+    "CostLayerRequest",
+    "CostRollupRequest",
+    "CostTransactionRequest",
+    "CostVarianceRequest",
     "CounterOfferRequest",
     "CreateApBillItemRequest",
     "CreateApBillRequest",
@@ -488,6 +515,7 @@
     "CreateInspectionRequest",
     "CreateIntegrationMappingRequest",
     "CreateIntentRequest",
+    "CreateInvoiceItemRequest",
     "CreateInvoiceRequest",
     "CreateJournalEntryLineRequest",
     "CreateJournalEntryRequest",
@@ -542,8 +570,12 @@
     "CreateWishlistRequest",
     "CreateWorkOrderRequest",
     "CreateWorkOrderTaskRequest",
+    "CreditAccountRequest",
     "CreditAmountRequest",
     "CreditEntryResponse",
+    "CreditHoldRequest",
+    "CreditReasonRequest",
+    "CreditReleaseRequest",
     "CreditTermsResponse",
     "CustomerListResponse",
     "CustomerResponse",
@@ -601,14 +633,18 @@
     "InventoryItemResponse",
     "InventoryListResponse",
     "InventoryResponse",
+    "InvoiceItemResponse",
     "InvoiceListResponse",
     "InvoiceResponse",
+    "IssueLayersRequest",
     "JobResponse",
+    "JournalEntryFxRequest",
     "JournalEntryLineResponse",
     "JournalEntryListResponse",
     "JournalEntryResponse",
     "KernelAuditCheckpointResponse",
     "KernelAuditVerificationResponse",
+    "LastCostRequest",
     "LinkBillRequest",
     "LocationInventoryListResponse",
     "LocationInventoryResponse",
@@ -616,12 +652,15 @@
     "LocationResponse",
     "LockChannelRequest",
     "LockPeriodRequest",
+    "LotAdjustmentRequest",
     "LotGenealogyLinkResponse",
     "LotGenealogyResponse",
     "LotListResponse",
     "LotReservationResponse",
     "LotResponse",
+    "LotSplitRequest",
     "LotTransactionResponse",
+    "LotTransferRequest",
     "LoyaltyAccountResponse",
     "LoyaltyProgramListResponse",
     "LoyaltyProgramResponse",
@@ -678,6 +717,7 @@
     "QualityHoldResponse",
     "QuarantineLotRequest",
     "ReadyResponse",
+    "ReceiptFromPoRequest",
     "ReceiptItemListResponse",
     "ReceiptItemResponse",
     "ReceiptListResponse",
@@ -728,6 +768,7 @@
     "SerialResponse",
     "SetCartPaymentRequest",
     "SetCartShippingRequest",
+    "SetCostRequest",
     "SetEntryRequest",
     "SetExchangeRateRequest",
     "SetReturnDispositionRequest",
@@ -790,10 +831,12 @@
     "UpdateRevenueContractRequest",
     "UpdateShipmentRequest",
     "UpdateSupplierRequest",
+    "UpdateSupplierSkuRequest",
     "UpdateWarehouseRequest",
     "UpdateWorkOrderRequest",
     "VendorCreditListResponse",
     "VendorCreditResponse",
+    "VendorReturnItemResponse",
     "VendorReturnListResponse",
     "VendorReturnResponse",
     "VerifyTaxExemptionRequest",
@@ -809,7 +852,9 @@
     "WishlistListResponse",
     "WishlistResponse",
     "WorkOrderListResponse",
+    "WorkOrderMaterialRequest",
     "WorkOrderResponse",
+    "WorkOrderStockRequest",
     "WorkOrderTaskListResponse",
     "WorkOrderTaskResponse",
     "WorkOrdersRequest",
@@ -1010,6 +1055,15 @@
       "path": "/api/v1/ap/bills/{id}/dispute",
       "method": "POST",
       "operationId": "ap_dispute_bill",
+      "tags": [
+        "accounts_payable"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/ap/bills/{id}/resolve-dispute",
+      "method": "POST",
+      "operationId": "ap_resolve_bill_dispute",
       "tags": [
         "accounts_payable"
       ],
@@ -1241,6 +1295,24 @@
       "summary": ""
     },
     {
+      "path": "/api/v1/backorders/{id}/allocations",
+      "method": "GET",
+      "operationId": "erp_backorder_allocations",
+      "tags": [
+        "erp_operations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/backorders/{id}/allocations",
+      "method": "POST",
+      "operationId": "erp_allocate_backorder",
+      "tags": [
+        "erp_operations"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/backorders/{id}/cancel",
       "method": "POST",
       "operationId": "backorders_cancel",
@@ -1255,6 +1327,24 @@
       "operationId": "backorders_fulfill",
       "tags": [
         "backorders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/backorders/allocations/{id}/confirm",
+      "method": "POST",
+      "operationId": "erp_confirm_allocation",
+      "tags": [
+        "erp_operations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/backorders/allocations/{id}/release",
+      "method": "POST",
+      "operationId": "erp_release_allocation",
+      "tags": [
+        "erp_operations"
       ],
       "summary": ""
     },
@@ -1525,6 +1615,357 @@
       "operationId": "companies_create_contact",
       "tags": [
         "companies"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/adjustments",
+      "method": "GET",
+      "operationId": "cost_list_adjustments",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/adjustments",
+      "method": "POST",
+      "operationId": "cost_create_adjustment",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/adjustments/{id}",
+      "method": "GET",
+      "operationId": "cost_get_adjustment",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/adjustments/{id}/apply",
+      "method": "POST",
+      "operationId": "cost_apply_adjustment",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/adjustments/{id}/approve",
+      "method": "POST",
+      "operationId": "cost_approve_adjustment",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/adjustments/{id}/reject",
+      "method": "POST",
+      "operationId": "cost_reject_adjustment",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/close-check",
+      "method": "GET",
+      "operationId": "cost_close_check",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/items",
+      "method": "GET",
+      "operationId": "cost_list_items",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/items",
+      "method": "POST",
+      "operationId": "cost_set_cost",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/items/{sku}",
+      "method": "GET",
+      "operationId": "cost_get_cost",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/items/{sku}/average",
+      "method": "POST",
+      "operationId": "cost_average_cost",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/items/{sku}/last",
+      "method": "POST",
+      "operationId": "cost_last_cost",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/items/{sku}/remaining",
+      "method": "GET",
+      "operationId": "cost_layers_remaining",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/items/{sku}/rollup",
+      "method": "GET",
+      "operationId": "cost_get_rollup",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/items/{sku}/rollup",
+      "method": "POST",
+      "operationId": "cost_calculate_rollup",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/items/{sku}/summary",
+      "method": "GET",
+      "operationId": "cost_cost_summary",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/layers",
+      "method": "GET",
+      "operationId": "cost_list_layers",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/layers",
+      "method": "POST",
+      "operationId": "cost_create_layer",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/layers/{id}",
+      "method": "GET",
+      "operationId": "cost_get_layer",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/layers/issue-fifo",
+      "method": "POST",
+      "operationId": "cost_issue_fifo",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/layers/issue-lifo",
+      "method": "POST",
+      "operationId": "cost_issue_lifo",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/total-value",
+      "method": "GET",
+      "operationId": "cost_total_value",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/transactions",
+      "method": "GET",
+      "operationId": "cost_list_transactions",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/transactions",
+      "method": "POST",
+      "operationId": "cost_record_transaction",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/valuation",
+      "method": "GET",
+      "operationId": "cost_valuation",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/variances",
+      "method": "GET",
+      "operationId": "cost_list_variances",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/cost-accounting/variances",
+      "method": "POST",
+      "operationId": "cost_record_variance",
+      "tags": [
+        "cost_accounting"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/credit/accounts",
+      "method": "POST",
+      "operationId": "customer_credit_create",
+      "tags": [
+        "credit"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/credit/customers/{customer_id}",
+      "method": "GET",
+      "operationId": "customer_credit_get_account",
+      "tags": [
+        "credit"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/credit/customers/{customer_id}/charge",
+      "method": "POST",
+      "operationId": "customer_credit_charge",
+      "tags": [
+        "credit"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/credit/customers/{customer_id}/check",
+      "method": "POST",
+      "operationId": "customer_credit_check",
+      "tags": [
+        "credit"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/credit/customers/{customer_id}/holds",
+      "method": "GET",
+      "operationId": "customer_credit_holds",
+      "tags": [
+        "credit"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/credit/customers/{customer_id}/holds",
+      "method": "POST",
+      "operationId": "customer_credit_place_hold",
+      "tags": [
+        "credit"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/credit/customers/{customer_id}/payments",
+      "method": "POST",
+      "operationId": "customer_credit_payment",
+      "tags": [
+        "credit"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/credit/customers/{customer_id}/reactivate",
+      "method": "POST",
+      "operationId": "customer_credit_reactivate",
+      "tags": [
+        "credit"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/credit/customers/{customer_id}/release-reservation",
+      "method": "POST",
+      "operationId": "customer_credit_release_reservation",
+      "tags": [
+        "credit"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/credit/customers/{customer_id}/reserve",
+      "method": "POST",
+      "operationId": "customer_credit_reserve",
+      "tags": [
+        "credit"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/credit/customers/{customer_id}/suspend",
+      "method": "POST",
+      "operationId": "customer_credit_suspend",
+      "tags": [
+        "credit"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/credit/holds/{id}/release",
+      "method": "POST",
+      "operationId": "customer_credit_release_hold",
+      "tags": [
+        "credit"
       ],
       "summary": ""
     },
@@ -2006,6 +2447,15 @@
       "summary": ""
     },
     {
+      "path": "/api/v1/gl/accounts/{id}/balance",
+      "method": "GET",
+      "operationId": "erp_account_balance",
+      "tags": [
+        "erp_operations"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/gl/balance-sheet",
       "method": "GET",
       "operationId": "general_ledger_balance_sheet",
@@ -2132,9 +2582,36 @@
       "summary": ""
     },
     {
+      "path": "/api/v1/gl/periods/{id}/reclose",
+      "method": "POST",
+      "operationId": "erp_reclose_period",
+      "tags": [
+        "erp_operations"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/gl/periods/{id}/reopen",
       "method": "POST",
       "operationId": "general_ledger_reopen_period",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/posting-config",
+      "method": "GET",
+      "operationId": "gl_get_posting_config",
+      "tags": [
+        "general_ledger"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/gl/posting-config",
+      "method": "PUT",
+      "operationId": "gl_set_posting_config",
       "tags": [
         "general_ledger"
       ],
@@ -2537,6 +3014,15 @@
       "summary": ""
     },
     {
+      "path": "/api/v1/lots/{id}/adjust",
+      "method": "POST",
+      "operationId": "erp_adjust_lot",
+      "tags": [
+        "erp_operations"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/lots/{id}/consume",
       "method": "POST",
       "operationId": "lots_consume",
@@ -2578,6 +3064,24 @@
       "operationId": "lots_reserve",
       "tags": [
         "lots"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/lots/{id}/split",
+      "method": "POST",
+      "operationId": "erp_split_lot",
+      "tags": [
+        "erp_operations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/lots/{id}/transfer",
+      "method": "POST",
+      "operationId": "erp_transfer_lot",
+      "tags": [
+        "erp_operations"
       ],
       "summary": ""
     },
@@ -3401,11 +3905,38 @@
       "summary": ""
     },
     {
+      "path": "/api/v1/put-aways/{id}/assign",
+      "method": "POST",
+      "operationId": "erp_assign_put_away",
+      "tags": [
+        "erp_operations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/put-aways/{id}/cancel",
+      "method": "POST",
+      "operationId": "erp_cancel_put_away",
+      "tags": [
+        "erp_operations"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/put-aways/{id}/complete",
       "method": "POST",
       "operationId": "receiving_put_away_complete",
       "tags": [
         "receiving"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/put-aways/{id}/start",
+      "method": "POST",
+      "operationId": "erp_start_put_away",
+      "tags": [
+        "erp_operations"
       ],
       "summary": ""
     },
@@ -3613,6 +4144,15 @@
       "operationId": "receiving_receipt_start",
       "tags": [
         "receiving"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/receipts/from-po",
+      "method": "POST",
+      "operationId": "erp_receipt_from_po",
+      "tags": [
+        "erp_operations"
       ],
       "summary": ""
     },
@@ -4256,6 +4796,15 @@
       "summary": ""
     },
     {
+      "path": "/api/v1/supplier-skus/{id}",
+      "method": "PUT",
+      "operationId": "supplier_skus_update",
+      "tags": [
+        "supplier_skus"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/suppliers",
       "method": "GET",
       "operationId": "purchase_orders_list_suppliers",
@@ -4412,6 +4961,15 @@
       "path": "/api/v1/transfer-orders/{id}/cancel",
       "method": "POST",
       "operationId": "transfer_orders_cancel",
+      "tags": [
+        "transfer_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/transfer-orders/{id}/complete-receiving",
+      "method": "POST",
+      "operationId": "transfer_orders_complete_receiving",
       "tags": [
         "transfer_orders"
       ],
@@ -4913,6 +5471,24 @@
       "summary": ""
     },
     {
+      "path": "/api/v1/work-orders/{id}/materials",
+      "method": "GET",
+      "operationId": "erp_list_materials",
+      "tags": [
+        "erp_operations"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/work-orders/{id}/materials",
+      "method": "POST",
+      "operationId": "erp_add_material",
+      "tags": [
+        "erp_operations"
+      ],
+      "summary": ""
+    },
+    {
       "path": "/api/v1/work-orders/{id}/resume",
       "method": "POST",
       "operationId": "work_orders_resume",
@@ -4945,6 +5521,15 @@
       "operationId": "work_orders_add_task",
       "tags": [
         "work_orders"
+      ],
+      "summary": ""
+    },
+    {
+      "path": "/api/v1/work-orders/materials/{id}/consume",
+      "method": "POST",
+      "operationId": "erp_consume_material",
+      "tags": [
+        "erp_operations"
       ],
       "summary": ""
     },

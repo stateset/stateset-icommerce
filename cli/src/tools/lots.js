@@ -49,6 +49,12 @@ export const lotTools = withPolicyDomain('lots', [
       productionDate: z.string().optional().describe('Production date in ISO 8601'),
       expirationDate: z.string().optional().describe('Expiration date in ISO 8601'),
       supplierLotNumber: z.string().min(1).optional().describe('Optional supplier lot number'),
+      initialLocationId: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Warehouse receiving the initial stock; omit for pre-receipt registration'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -63,6 +69,7 @@ export const lotTools = withPolicyDomain('lots', [
         productionDate: params.productionDate,
         expirationDate: params.expirationDate,
         supplierLotNumber: params.supplierLotNumber,
+        initialLocationId: params.initialLocationId,
       });
       return { success: true, message: 'Lot created', lot };
     },

@@ -11,13 +11,16 @@
 //! - Manufacturing (BOMs, work orders)
 //!
 
+#[path = "support/manufacturing.rs"]
+mod manufacturing_fixture;
+
 use rust_decimal_macros::dec;
 use stateset_embedded::{
-    BillingInterval, CancelSubscription, Commerce, CreateBackorder, CreateBom, CreateCustomer,
+    BillingInterval, CancelSubscription, Commerce, CreateBackorder, CreateCustomer,
     CreateInventoryItem, CreateOrder, CreateOrderItem, CreatePayment, CreateRefund,
-    CreateSerialNumbersBulk, CreateSubscription, CreateSubscriptionPlan, CreateWorkOrder,
-    FulfillmentSourceType, Order, OrderStatus, PauseSubscription, PaymentMethodType, PaymentStatus,
-    ReservationStatus, ReserveSerialNumber, SerialStatus, SubscriptionStatus, WorkOrderStatus,
+    CreateSerialNumbersBulk, CreateSubscription, CreateSubscriptionPlan, FulfillmentSourceType,
+    Order, OrderStatus, PauseSubscription, PaymentMethodType, PaymentStatus, ReservationStatus,
+    ReserveSerialNumber, SerialStatus, SubscriptionStatus, WorkOrderStatus,
 };
 use uuid::Uuid;
 
@@ -432,21 +435,8 @@ fn test_serial_number_state_machine() {
 fn test_work_order_state_machine() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let product_id = Uuid::new_v4().into();
-    let bom = commerce
-        .bom()
-        .create(CreateBom { product_id, name: "Widget Assembly".into(), ..Default::default() })
-        .expect("Failed to create BOM");
-
-    let mut work_order = commerce
-        .work_orders()
-        .create(CreateWorkOrder {
-            product_id,
-            bom_id: Some(bom.id),
-            quantity_to_build: dec!(50),
-            ..Default::default()
-        })
-        .expect("Failed to create work order");
+    let mut work_order =
+        commerce.work_orders().create(manufacturing_fixture::input(&commerce, dec!(50))).unwrap();
     assert_eq!(work_order.status, WorkOrderStatus::Planned);
 
     work_order = commerce.work_orders().start(work_order.id).expect("Failed to start work order");

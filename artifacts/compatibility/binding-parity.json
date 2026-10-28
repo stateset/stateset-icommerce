@@ -8,7 +8,7 @@
   },
   "engine": {
     "domainCount": 70,
-    "methodCount": 1232,
+    "methodCount": 1241,
     "accessorAliases": [
       {
         "accessor": "custom_states",
@@ -96,6 +96,8 @@
         "methods": [
           "add_bill_item",
           "approve_bill",
+          "approve_bill_as",
+          "approve_bill_with_override",
           "approve_payment_run",
           "cancel_bill",
           "cancel_payment_run",
@@ -129,6 +131,7 @@
           "pay_bill",
           "process_payment_run",
           "remove_bill_item",
+          "resolve_bill_dispute",
           "three_way_match",
           "update_bill",
           "void_payment"
@@ -343,6 +346,7 @@
           "apply_adjustment",
           "approve_adjustment",
           "calculate_rollup",
+          "close_books_check",
           "create_adjustment",
           "create_cost_layer",
           "get_adjustment",
@@ -365,6 +369,7 @@
           "record_variance",
           "reject_adjustment",
           "set_item_cost",
+          "transaction_cogs",
           "update_average_cost",
           "update_last_cost"
         ]
@@ -610,6 +615,7 @@
         "methods": [
           "auto_post_bill",
           "auto_post_bill_payment",
+          "auto_post_credit_memo",
           "auto_post_inventory_cost",
           "auto_post_invoice",
           "auto_post_payment_received",
@@ -619,6 +625,7 @@
           "create_account",
           "create_accounts_batch",
           "create_journal_entry",
+          "create_journal_entry_as",
           "create_period",
           "delete_account",
           "get_account",
@@ -1398,6 +1405,7 @@
           "capture",
           "delete",
           "get",
+          "inventory_aging",
           "is_supported",
           "latest",
           "list"
@@ -1518,6 +1526,7 @@
         "features": [],
         "methods": [
           "cancel",
+          "complete_receiving",
           "create",
           "get",
           "is_supported",
@@ -1825,9 +1834,9 @@
       "evidence": "traced: #[napi] methods -> engine calls",
       "engineBacked": true,
       "gated": true,
-      "exposedCount": 745,
-      "applicableCount": 1224,
-      "coverage": 60.9,
+      "exposedCount": 785,
+      "applicableCount": 1233,
+      "coverage": 63.7,
       "notes": null,
       "domains": {
         "commerce": {
@@ -1855,66 +1864,73 @@
           ]
         },
         "accounts_payable": {
-          "coverage": 34.2,
+          "coverage": 63.4,
           "exposed": [
             "approve_bill",
+            "approve_bill_as",
+            "approve_bill_with_override",
+            "approve_payment_run",
             "cancel_bill",
+            "cancel_payment_run",
             "count_bills",
             "create_bill",
+            "create_payment",
+            "create_payment_run",
+            "dispute_bill",
             "get_aging_summary",
             "get_bill",
             "get_bill_by_number",
             "get_bill_items",
             "get_bills_due_soon",
             "get_overdue_bills",
+            "get_payment",
+            "get_payment_run",
             "get_total_outstanding",
             "list_bills",
-            "three_way_match"
+            "list_payment_runs",
+            "process_payment_run",
+            "resolve_bill_dispute",
+            "three_way_match",
+            "void_payment"
           ],
           "missing": [
             "add_bill_item",
-            "approve_payment_run",
-            "cancel_payment_run",
             "clear_payment",
             "count_payments",
             "create_bills_batch",
-            "create_payment",
-            "create_payment_run",
             "delete_bill",
-            "dispute_bill",
             "get_bills_batch",
-            "get_payment",
             "get_payment_allocations",
             "get_payment_by_number",
-            "get_payment_run",
             "get_payment_run_bills",
             "get_payments_for_bill",
             "get_supplier_summary",
-            "list_payment_runs",
             "list_payments",
             "pay_bill",
-            "process_payment_run",
             "remove_bill_item",
-            "update_bill",
-            "void_payment"
+            "update_bill"
           ]
         },
         "accounts_receivable": {
-          "coverage": 28.6,
+          "coverage": 53.6,
           "exposed": [
+            "apply_credit_memo",
+            "apply_payment_to_invoices",
             "create_credit_memo",
+            "create_write_off",
             "get_aging_summary",
             "get_credit_memo",
             "get_dso",
+            "get_payment_applications",
             "get_total_outstanding",
             "get_unapplied_credits",
             "list_credit_memos",
+            "list_write_offs",
+            "reverse_write_off",
+            "unapply_payment",
             "void_credit_memo"
           ],
           "missing": [
-            "apply_credit_memo",
-            "apply_payment_to_invoices",
-            "create_write_off",
             "generate_statement",
             "get_aging_report",
             "get_average_days_to_pay",
@@ -1923,14 +1939,10 @@
             "get_customer_summary",
             "get_customers_batch",
             "get_invoices_due_for_dunning",
-            "get_payment_applications",
             "get_write_off",
             "list_collection_activities",
-            "list_write_offs",
             "log_collection_activity",
-            "reverse_write_off",
             "send_dunning_letter",
-            "unapply_payment",
             "update_collection_status"
           ]
         },
@@ -2090,7 +2102,7 @@
           "missing": []
         },
         "cost_accounting": {
-          "coverage": 18.5,
+          "coverage": 17.2,
           "exposed": [
             "get_item_cost",
             "get_total_inventory_value",
@@ -2102,6 +2114,7 @@
             "apply_adjustment",
             "approve_adjustment",
             "calculate_rollup",
+            "close_books_check",
             "create_adjustment",
             "create_cost_layer",
             "get_adjustment",
@@ -2120,6 +2133,7 @@
             "record_cost_transaction",
             "record_variance",
             "reject_adjustment",
+            "transaction_cogs",
             "update_last_cost"
           ]
         },
@@ -2355,53 +2369,55 @@
           ]
         },
         "general_ledger": {
-          "coverage": 40.9,
+          "coverage": 60.9,
           "exposed": [
             "close_month",
+            "close_period",
             "create_account",
+            "create_journal_entry",
+            "create_journal_entry_as",
             "create_period",
             "get_account",
             "get_account_balance",
             "get_account_by_number",
+            "get_auto_posting_config",
             "get_balance_sheet",
             "get_income_statement",
             "get_journal_entry",
+            "get_period",
             "get_trial_balance",
             "initialize_chart_of_accounts",
             "list_accounts",
             "list_journal_entries",
             "list_periods",
+            "lock_period",
             "open_period",
             "post_journal_entry",
+            "reclose_period",
+            "reopen_period",
             "revalue",
+            "reverse_journal_entry",
+            "set_auto_posting_config",
             "void_journal_entry"
           ],
           "missing": [
             "auto_post_bill",
             "auto_post_bill_payment",
+            "auto_post_credit_memo",
             "auto_post_inventory_cost",
             "auto_post_invoice",
             "auto_post_payment_received",
             "auto_post_write_off",
-            "close_period",
             "create_accounts_batch",
-            "create_journal_entry",
             "delete_account",
             "get_account_hierarchy",
             "get_account_transactions",
             "get_accounts_batch",
-            "get_auto_posting_config",
             "get_current_period",
             "get_journal_entry_by_number",
             "get_journal_entry_lines",
-            "get_period",
             "get_period_for_date",
-            "lock_period",
-            "reclose_period",
-            "reopen_period",
-            "reverse_journal_entry",
             "run_period_close",
-            "set_auto_posting_config",
             "update_account"
           ]
         },
@@ -2886,33 +2902,33 @@
           ]
         },
         "receiving": {
-          "coverage": 41.7,
+          "coverage": 75,
           "exposed": [
+            "assign_put_away",
+            "cancel_put_away",
             "cancel_receipt",
+            "complete_put_away",
             "complete_receiving",
             "count_receipts",
+            "create_put_away",
             "create_receipt",
             "create_receipt_from_po",
+            "get_put_away",
             "get_receipt",
             "get_receipt_by_number",
             "get_receipt_items",
+            "list_put_aways",
             "list_receipts",
+            "receive_items",
+            "start_put_away",
             "start_receiving"
           ],
           "missing": [
-            "assign_put_away",
-            "cancel_put_away",
-            "complete_put_away",
             "count_put_aways",
-            "create_put_away",
             "create_receipts_batch",
             "delete_receipt",
             "get_pending_put_aways",
-            "get_put_away",
             "get_receipts_batch",
-            "list_put_aways",
-            "receive_items",
-            "start_put_away",
             "update_receipt"
           ]
         },
@@ -3094,7 +3110,7 @@
           "missing": []
         },
         "stock_snapshots": {
-          "coverage": 100,
+          "coverage": 85.7,
           "exposed": [
             "capture",
             "delete",
@@ -3103,7 +3119,9 @@
             "latest",
             "list"
           ],
-          "missing": []
+          "missing": [
+            "inventory_aging"
+          ]
         },
         "store_credits": {
           "coverage": 100,
@@ -3215,6 +3233,7 @@
           "coverage": 100,
           "exposed": [
             "cancel",
+            "complete_receiving",
             "create",
             "get",
             "is_supported",
@@ -3402,7 +3421,7 @@
           "missing": []
         },
         "work_orders": {
-          "coverage": 30.4,
+          "coverage": 34.8,
           "exposed": [
             "cancel",
             "complete",
@@ -3410,7 +3429,8 @@
             "create",
             "get",
             "list",
-            "start"
+            "start",
+            "update"
           ],
           "missing": [
             "add_material",
@@ -3427,7 +3447,6 @@
             "remove_task",
             "resume",
             "start_task",
-            "update",
             "update_task"
           ]
         },
@@ -3515,9 +3534,9 @@
       "evidence": "traced: #[pymethods] methods -> engine calls",
       "engineBacked": true,
       "gated": true,
-      "exposedCount": 593,
-      "applicableCount": 1224,
-      "coverage": 48.4,
+      "exposedCount": 599,
+      "applicableCount": 1233,
+      "coverage": 48.6,
       "notes": null,
       "domains": {
         "commerce": {
@@ -3545,9 +3564,11 @@
           ]
         },
         "accounts_payable": {
-          "coverage": 21.1,
+          "coverage": 24.4,
           "exposed": [
             "approve_bill",
+            "approve_bill_as",
+            "approve_bill_with_override",
             "create_bill",
             "get_aging_summary",
             "get_bill",
@@ -3585,6 +3606,7 @@
             "list_payments",
             "process_payment_run",
             "remove_bill_item",
+            "resolve_bill_dispute",
             "update_bill",
             "void_payment"
           ]
@@ -3781,7 +3803,7 @@
           "missing": []
         },
         "cost_accounting": {
-          "coverage": 18.5,
+          "coverage": 17.2,
           "exposed": [
             "get_inventory_valuation",
             "get_item_cost",
@@ -3793,6 +3815,7 @@
             "apply_adjustment",
             "approve_adjustment",
             "calculate_rollup",
+            "close_books_check",
             "create_adjustment",
             "create_cost_layer",
             "get_adjustment",
@@ -3811,6 +3834,7 @@
             "record_cost_transaction",
             "record_variance",
             "reject_adjustment",
+            "transaction_cogs",
             "update_last_cost"
           ]
         },
@@ -4045,24 +4069,27 @@
           ]
         },
         "general_ledger": {
-          "coverage": 27.3,
+          "coverage": 30.4,
           "exposed": [
             "close_month",
             "create_account",
             "create_period",
             "get_account",
             "get_account_by_number",
+            "get_auto_posting_config",
             "get_journal_entry",
             "get_trial_balance",
             "initialize_chart_of_accounts",
             "list_accounts",
             "open_period",
             "post_journal_entry",
-            "revalue"
+            "revalue",
+            "set_auto_posting_config"
           ],
           "missing": [
             "auto_post_bill",
             "auto_post_bill_payment",
+            "auto_post_credit_memo",
             "auto_post_inventory_cost",
             "auto_post_invoice",
             "auto_post_payment_received",
@@ -4070,12 +4097,12 @@
             "close_period",
             "create_accounts_batch",
             "create_journal_entry",
+            "create_journal_entry_as",
             "delete_account",
             "get_account_balance",
             "get_account_hierarchy",
             "get_account_transactions",
             "get_accounts_batch",
-            "get_auto_posting_config",
             "get_balance_sheet",
             "get_current_period",
             "get_income_statement",
@@ -4090,7 +4117,6 @@
             "reopen_period",
             "reverse_journal_entry",
             "run_period_close",
-            "set_auto_posting_config",
             "update_account",
             "void_journal_entry"
           ]
@@ -4784,7 +4810,7 @@
           "missing": []
         },
         "stock_snapshots": {
-          "coverage": 100,
+          "coverage": 85.7,
           "exposed": [
             "capture",
             "delete",
@@ -4793,7 +4819,9 @@
             "latest",
             "list"
           ],
-          "missing": []
+          "missing": [
+            "inventory_aging"
+          ]
         },
         "store_credits": {
           "coverage": 100,
@@ -4905,6 +4933,7 @@
           "coverage": 100,
           "exposed": [
             "cancel",
+            "complete_receiving",
             "create",
             "get",
             "is_supported",
@@ -4988,8 +5017,9 @@
           "missing": []
         },
         "warehouse": {
-          "coverage": 23.1,
+          "coverage": 25,
           "exposed": [
+            "adjust_inventory",
             "cancel_cycle_count",
             "complete_cycle_count",
             "create_cycle_count",
@@ -5005,7 +5035,6 @@
           ],
           "missing": [
             "adjust_bin_level",
-            "adjust_inventory",
             "count_bins",
             "count_locations",
             "count_movements",
@@ -5205,7 +5234,7 @@
       "engineBacked": true,
       "gated": true,
       "exposedCount": 80,
-      "applicableCount": 1224,
+      "applicableCount": 1233,
       "coverage": 6.5,
       "notes": null,
       "domains": {
@@ -5238,6 +5267,8 @@
           "missing": [
             "add_bill_item",
             "approve_bill",
+            "approve_bill_as",
+            "approve_bill_with_override",
             "approve_payment_run",
             "cancel_bill",
             "cancel_payment_run",
@@ -5271,6 +5302,7 @@
             "pay_bill",
             "process_payment_run",
             "remove_bill_item",
+            "resolve_bill_dispute",
             "three_way_match",
             "update_bill",
             "void_payment"
@@ -5473,6 +5505,7 @@
             "apply_adjustment",
             "approve_adjustment",
             "calculate_rollup",
+            "close_books_check",
             "create_adjustment",
             "create_cost_layer",
             "get_adjustment",
@@ -5495,6 +5528,7 @@
             "record_variance",
             "reject_adjustment",
             "set_item_cost",
+            "transaction_cogs",
             "update_average_cost",
             "update_last_cost"
           ]
@@ -5732,6 +5766,7 @@
           "missing": [
             "auto_post_bill",
             "auto_post_bill_payment",
+            "auto_post_credit_memo",
             "auto_post_inventory_cost",
             "auto_post_invoice",
             "auto_post_payment_received",
@@ -5741,6 +5776,7 @@
             "create_account",
             "create_accounts_batch",
             "create_journal_entry",
+            "create_journal_entry_as",
             "create_period",
             "delete_account",
             "get_account",
@@ -6465,6 +6501,7 @@
             "capture",
             "delete",
             "get",
+            "inventory_aging",
             "is_supported",
             "latest",
             "list"
@@ -6579,6 +6616,7 @@
           "exposed": [],
           "missing": [
             "cancel",
+            "complete_receiving",
             "create",
             "get",
             "is_supported",
@@ -6876,12 +6914,12 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 48,
-      "applicableCount": 1224,
+      "applicableCount": 1233,
       "coverage": 3.9,
       "notes": "host (C#) layer is not traced; known in-memory fake at the host level",
       "domains": {
         "accounts_payable": {
-          "coverage": 5.3,
+          "coverage": 4.9,
           "exposed": [
             "create_bill",
             "list_bills"
@@ -6918,7 +6956,7 @@
           ]
         },
         "cost_accounting": {
-          "coverage": 7.4,
+          "coverage": 6.9,
           "exposed": [
             "get_item_cost",
             "set_item_cost"
@@ -6940,7 +6978,7 @@
           ]
         },
         "general_ledger": {
-          "coverage": 4.5,
+          "coverage": 4.3,
           "exposed": [
             "create_account",
             "list_accounts"
@@ -7032,12 +7070,12 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 77,
-      "applicableCount": 1224,
-      "coverage": 6.3,
+      "applicableCount": 1233,
+      "coverage": 6.2,
       "notes": "host (Java/JNI) layer is not traced",
       "domains": {
         "accounts_payable": {
-          "coverage": 7.9,
+          "coverage": 7.3,
           "exposed": [
             "create_bill",
             "get_aging_summary",
@@ -7077,7 +7115,7 @@
           ]
         },
         "cost_accounting": {
-          "coverage": 11.1,
+          "coverage": 10.3,
           "exposed": [
             "get_item_cost",
             "get_total_inventory_value",
@@ -7111,7 +7149,7 @@
           ]
         },
         "general_ledger": {
-          "coverage": 6.8,
+          "coverage": 6.5,
           "exposed": [
             "create_account",
             "get_trial_balance",
@@ -7222,12 +7260,12 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 61,
-      "applicableCount": 1224,
-      "coverage": 5,
+      "applicableCount": 1233,
+      "coverage": 4.9,
       "notes": "host (Kotlin/JNI) layer is not traced",
       "domains": {
         "accounts_payable": {
-          "coverage": 7.9,
+          "coverage": 7.3,
           "exposed": [
             "create_bill",
             "get_aging_summary",
@@ -7265,7 +7303,7 @@
           ]
         },
         "cost_accounting": {
-          "coverage": 7.4,
+          "coverage": 6.9,
           "exposed": [
             "get_item_cost",
             "set_item_cost"
@@ -7288,7 +7326,7 @@
           ]
         },
         "general_ledger": {
-          "coverage": 4.5,
+          "coverage": 4.3,
           "exposed": [
             "create_account",
             "get_trial_balance"
@@ -7391,12 +7429,12 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 178,
-      "applicableCount": 1224,
-      "coverage": 14.5,
+      "applicableCount": 1233,
+      "coverage": 14.4,
       "notes": "engine linkage is behind an optional cargo feature",
       "domains": {
         "accounts_payable": {
-          "coverage": 10.5,
+          "coverage": 9.8,
           "exposed": [
             "create_bill",
             "get_bill",
@@ -7453,7 +7491,7 @@
           ]
         },
         "cost_accounting": {
-          "coverage": 11.1,
+          "coverage": 10.3,
           "exposed": [
             "get_item_cost",
             "get_total_inventory_value",
@@ -7500,7 +7538,7 @@
           ]
         },
         "general_ledger": {
-          "coverage": 11.4,
+          "coverage": 10.9,
           "exposed": [
             "create_account",
             "get_account",
@@ -7732,7 +7770,7 @@
       "engineBacked": false,
       "gated": false,
       "exposedCount": 0,
-      "applicableCount": 1224,
+      "applicableCount": 1233,
       "coverage": 0,
       "notes": "does not depend on stateset-embedded",
       "domains": {}
@@ -7744,12 +7782,12 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 51,
-      "applicableCount": 1224,
-      "coverage": 4.2,
+      "applicableCount": 1233,
+      "coverage": 4.1,
       "notes": "host (Swift) layer is not traced; known in-memory fake at the host level",
       "domains": {
         "accounts_payable": {
-          "coverage": 7.9,
+          "coverage": 7.3,
           "exposed": [
             "create_bill",
             "get_aging_summary",
@@ -7787,7 +7825,7 @@
           ]
         },
         "cost_accounting": {
-          "coverage": 7.4,
+          "coverage": 6.9,
           "exposed": [
             "get_item_cost",
             "set_item_cost"
@@ -7810,7 +7848,7 @@
           ]
         },
         "general_ledger": {
-          "coverage": 4.5,
+          "coverage": 4.3,
           "exposed": [
             "create_account",
             "get_trial_balance"
@@ -7903,7 +7941,7 @@
       "engineBacked": false,
       "gated": false,
       "exposedCount": 0,
-      "applicableCount": 1224,
+      "applicableCount": 1233,
       "coverage": 0,
       "notes": "in-memory reimplementation; does not link stateset-embedded",
       "domains": {}
@@ -7911,48 +7949,48 @@
   ],
   "parityVsReference": {
     "python": {
-      "shared": 588,
-      "referenceExposed": 745,
-      "parity": 78.9,
+      "shared": 593,
+      "referenceExposed": 785,
+      "parity": 75.5,
       "beyondReference": [
         "accounts_payable.pay_bill",
         "cost_accounting.get_inventory_valuation",
         "fulfillment.complete_pick",
         "serials.change_status",
+        "warehouse.adjust_inventory",
         "warehouse.get_locations_for_warehouse"
       ]
     },
     "go": {
       "shared": 80,
-      "referenceExposed": 745,
-      "parity": 10.7,
+      "referenceExposed": 785,
+      "parity": 10.2,
       "beyondReference": []
     },
     "dotnet": {
       "shared": 47,
-      "referenceExposed": 745,
-      "parity": 6.3,
+      "referenceExposed": 785,
+      "parity": 6,
       "beyondReference": [
         "accounts_receivable.get_customer_aging"
       ]
     },
     "java": {
-      "shared": 71,
-      "referenceExposed": 745,
-      "parity": 9.5,
+      "shared": 72,
+      "referenceExposed": 785,
+      "parity": 9.2,
       "beyondReference": [
         "fulfillment.create_picks_for_order",
         "inventory.get_item",
         "inventory.get_item_by_sku",
         "inventory.list",
-        "orders.deliver",
-        "receiving.receive_items"
+        "orders.deliver"
       ]
     },
     "kotlin": {
       "shared": 59,
-      "referenceExposed": 745,
-      "parity": 7.9,
+      "referenceExposed": 785,
+      "parity": 7.5,
       "beyondReference": [
         "shipments.mark_in_transit",
         "shipments.mark_out_for_delivery"
@@ -7960,8 +7998,8 @@
     },
     "php": {
       "shared": 161,
-      "referenceExposed": 745,
-      "parity": 21.6,
+      "referenceExposed": 785,
+      "parity": 20.5,
       "beyondReference": [
         "bom.delete",
         "bom.remove_component",
@@ -7984,19 +8022,19 @@
     },
     "ruby": {
       "shared": 0,
-      "referenceExposed": 745,
+      "referenceExposed": 785,
       "parity": 0,
       "beyondReference": []
     },
     "swift": {
       "shared": 51,
-      "referenceExposed": 745,
-      "parity": 6.8,
+      "referenceExposed": 785,
+      "parity": 6.5,
       "beyondReference": []
     },
     "wasm": {
       "shared": 0,
-      "referenceExposed": 745,
+      "referenceExposed": 785,
       "parity": 0,
       "beyondReference": []
     }
@@ -8009,8 +8047,8 @@
       "engineBacked": null,
       "gated": false,
       "exposedCount": 220,
-      "applicableCount": 1224,
-      "coverage": 18,
+      "applicableCount": 1233,
+      "coverage": 17.8,
       "notes": null,
       "hostMethodCount": 245,
       "mappedTypes": {
@@ -8055,7 +8093,7 @@
       ],
       "domains": {
         "accounts_payable": {
-          "coverage": 26.3,
+          "coverage": 24.4,
           "exposed": [
             "approve_bill",
             "cancel_bill",
@@ -8110,7 +8148,7 @@
           ]
         },
         "cost_accounting": {
-          "coverage": 18.5,
+          "coverage": 17.2,
           "exposed": [
             "get_item_cost",
             "get_total_inventory_value",
@@ -8171,7 +8209,7 @@
           ]
         },
         "general_ledger": {
-          "coverage": 29.5,
+          "coverage": 28.3,
           "exposed": [
             "create_account",
             "get_account",
@@ -8428,7 +8466,7 @@
       "engineBacked": null,
       "gated": false,
       "exposedCount": 71,
-      "applicableCount": 1224,
+      "applicableCount": 1233,
       "coverage": 5.8,
       "notes": null,
       "hostMethodCount": 71,
@@ -8498,7 +8536,7 @@
           ]
         },
         "general_ledger": {
-          "coverage": 4.5,
+          "coverage": 4.3,
           "exposed": [
             "create_account",
             "list_accounts"
@@ -8620,7 +8658,7 @@
       "engineBacked": null,
       "gated": false,
       "exposedCount": 134,
-      "applicableCount": 1224,
+      "applicableCount": 1233,
       "coverage": 10.9,
       "notes": null,
       "hostMethodCount": 148,
@@ -8881,12 +8919,12 @@
       {
         "className": "AccountsPayable",
         "domain": "accounts_payable",
-        "methodCount": 13
+        "methodCount": 24
       },
       {
         "className": "AccountsReceivable",
         "domain": "accounts_receivable",
-        "methodCount": 8
+        "methodCount": 15
       },
       {
         "className": "ActivityLogs",
@@ -8996,7 +9034,7 @@
       {
         "className": "GeneralLedger",
         "domain": "general_ledger",
-        "methodCount": 18
+        "methodCount": 27
       },
       {
         "className": "GiftCards",
@@ -9026,7 +9064,7 @@
       {
         "className": "Invoices",
         "domain": "invoices",
-        "methodCount": 8
+        "methodCount": 9
       },
       {
         "className": "Lots",
@@ -9056,7 +9094,7 @@
       {
         "className": "Payments",
         "domain": "payments",
-        "methodCount": 14
+        "methodCount": 16
       },
       {
         "className": "Prepayments",
@@ -9111,7 +9149,7 @@
       {
         "className": "Receiving",
         "domain": "receiving",
-        "methodCount": 10
+        "methodCount": 18
       },
       {
         "className": "Returns",
@@ -9186,7 +9224,7 @@
       {
         "className": "TransferOrders",
         "domain": "transfer_orders",
-        "methodCount": 7
+        "methodCount": 8
       },
       {
         "className": "UnitsOfMeasure",
@@ -9226,7 +9264,7 @@
       {
         "className": "WorkOrders",
         "domain": "work_orders",
-        "methodCount": 7
+        "methodCount": 9
       },
       {
         "className": "X402",
@@ -9443,7 +9481,7 @@
       {
         "className": "GeneralLedgerApi",
         "domain": "general_ledger",
-        "methodCount": 12
+        "methodCount": 14
       },
       {
         "className": "GiftCards",
@@ -9798,7 +9836,7 @@
       {
         "className": "TransferOrders",
         "domain": "transfer_orders",
-        "methodCount": 7
+        "methodCount": 8
       },
       {
         "className": "UnitsOfMeasure",
@@ -9828,7 +9866,7 @@
       {
         "className": "WarehouseApi",
         "domain": "warehouse",
-        "methodCount": 5
+        "methodCount": 6
       },
       {
         "className": "Warranties",
@@ -10359,6 +10397,24 @@
         "vector.index_products"
       ],
       "documented": true
+    },
+    {
+      "binding": "node",
+      "hostMethod": "WorkOrders.completeExact",
+      "domain": "work_orders",
+      "engineMethods": [
+        "work_orders.complete"
+      ],
+      "documented": false
+    },
+    {
+      "binding": "node",
+      "hostMethod": "WorkOrders.configureStock",
+      "domain": "work_orders",
+      "engineMethods": [
+        "work_orders.update"
+      ],
+      "documented": false
     },
     {
       "binding": "python",

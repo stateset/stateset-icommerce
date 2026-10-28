@@ -69,6 +69,12 @@ impl TransferOrders {
         self.db.transfer_orders().receive_line(id, item_id, quantity)
     }
 
+    /// Close receiving and record the outstanding in-transit quantity as shortage.
+    pub fn complete_receiving(&self, id: TransferOrderId) -> Result<TransferOrder> {
+        self.ensure()?;
+        self.db.transfer_orders().complete_receiving(id)
+    }
+
     /// Cancel a transfer order.
     pub fn cancel(&self, id: TransferOrderId) -> Result<TransferOrder> {
         self.ensure()?;

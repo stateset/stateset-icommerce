@@ -20,6 +20,66 @@ pub struct SqliteTransferOrderRepository {
 }
 
 impl SqliteTransferOrderRepository {
+    fn stock_locations(order: &TransferOrder) -> rusqlite::Result<(i32, i32)> {
+        match (order.source_location_id, order.destination_location_id) {
+            (Some(source), Some(destination)) if source > 0 && destination > 0 && source != destination => Ok((source, destination)),
+            _ => Err(super::bins::smuggle(CommerceError::ValidationError("Transfer requires explicit source and destination stock locations; legacy document-only transfers must be reconciled before stock posting".into()))),
+        }
+    }
+
+    fn validate_locations(
+        tx: &rusqlite::Transaction<'_>,
+        source: i32,
+        destination: i32,
+    ) -> rusqlite::Result<()> {
+        let valid: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM locations s JOIN warehouses sw ON sw.id = s.warehouse_id JOIN locations d ON d.id = ?2 JOIN warehouses dw ON dw.id = d.warehouse_id WHERE s.id = ?1 AND s.id != d.id AND s.is_active = 1 AND sw.is_active = 1 AND d.is_active = 1 AND d.is_receivable = 1 AND dw.is_active = 1)", rusqlite::params![source, destination], |r| r.get(0))?;
+        if !valid {
+            return Err(super::bins::smuggle(CommerceError::ValidationError(
+                "Transfer locations must be distinct and active, with a receivable destination"
+                    .into(),
+            )));
+        }
+        Ok(())
+    }
+
+    fn post_stock(
+        tx: &rusqlite::Transaction<'_>,
+        order: &TransferOrder,
+        item: &TransferOrderItem,
+        quantity: Decimal,
+        receiving: bool,
+        now: &str,
+    ) -> rusqlite::Result<()> {
+        let (source, destination) = Self::stock_locations(order)?;
+        Self::validate_locations(tx, source, destination)?;
+        let location = if receiving { destination } else { source };
+        super::stock_guard::ensure_sellable(tx, &item.sku, item.lot_id, None, Some(location))
+            .map_err(super::bins::smuggle)?;
+        super::stock_move::post(
+            tx,
+            &crate::stock_move::StockMove {
+                id: uuid::Uuid::new_v4(),
+                sku: &item.sku,
+                lot_id: item.lot_id,
+                from: if receiving { None } else { Some(source) },
+                to: if receiving { Some(destination) } else { None },
+                quantity,
+                release_reserved: Decimal::ZERO,
+                reserve_received: Decimal::ZERO,
+                movement_type: stateset_core::MovementType::Transfer,
+                lot_effect: crate::stock_move::LotEffect::PlacementOnly,
+                check_sellable: true,
+                reference_type: Some("transfer_order"),
+                reference_id: Some(order.id.into()),
+                reference_label: None,
+                reason: Some("transfer stock"),
+                performed_by: None,
+            },
+            now,
+        )?;
+        Ok(())
+    }
+
     #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
@@ -45,6 +105,12 @@ impl SqliteTransferOrderRepository {
             )?
             .into(),
             sku: row.get("sku")?,
+            lot_id: super::parse_uuid_opt_row(row.get("lot_id")?, "transfer_order_item", "lot_id")?,
+            quantity_variance: parse_decimal_row(
+                &row.get::<_, String>("quantity_variance")?,
+                "transfer_order_item",
+                "quantity_variance",
+            )?,
             quantity: parse_decimal_row(
                 &row.get::<_, String>("quantity")?,
                 "transfer_order_item",
@@ -84,6 +150,8 @@ impl SqliteTransferOrderRepository {
                 "transfer_order",
                 "status",
             )?,
+            source_location_id: row.get("source_location_id")?,
+            destination_location_id: row.get("destination_location_id")?,
             items: Vec::new(),
             expected_at: parse_datetime_opt_row(
                 row.get::<_, Option<String>>("expected_at")?,
@@ -184,9 +252,10 @@ impl stateset_core::TransferOrderRepository for SqliteTransferOrderRepository {
         let number = format!("TO-{}", &id_str[..8]);
 
         with_immediate_transaction(&self.pool, |tx| {
+            Self::validate_locations(tx, input.source_location_id, input.destination_location_id)?;
             tx.execute(
-                "INSERT INTO transfer_orders (id, number, source_warehouse_id, destination_warehouse_id, status, expected_at, notes, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?)",
+                "INSERT INTO transfer_orders (id, number, source_warehouse_id, destination_warehouse_id, status, expected_at, notes, created_at, updated_at, source_location_id, destination_location_id)
+                 VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
                     &id_str,
                     &number,
@@ -196,19 +265,34 @@ impl stateset_core::TransferOrderRepository for SqliteTransferOrderRepository {
                     &input.notes,
                     &now_str,
                     &now_str,
+                    input.source_location_id,
+                    input.destination_location_id,
                 ],
             )?;
 
             for item in &input.items {
+                if item.quantity <= Decimal::ZERO || item.sku.trim().is_empty() {
+                    return Err(super::bins::smuggle(CommerceError::ValidationError(
+                        "Transfer lines require a SKU and positive quantity".into(),
+                    )));
+                }
+                let matches: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM product_variants WHERE product_id = ?1 AND sku = ?2)", rusqlite::params![item.product_id.to_string(), item.sku], |r| r.get(0))?;
+                if !matches {
+                    return Err(super::bins::smuggle(CommerceError::ValidationError(
+                        "Transfer SKU must belong to its product".into(),
+                    )));
+                }
                 let item_id = TransferOrderItemId::new().to_string();
                 tx.execute(
-                    "INSERT INTO transfer_order_items (id, transfer_order_id, product_id, sku, quantity, quantity_shipped, quantity_received)
-                     VALUES (?, ?, ?, '', ?, '0', '0')",
+                    "INSERT INTO transfer_order_items (id, transfer_order_id, product_id, sku, quantity, quantity_shipped, quantity_received, lot_id)
+                     VALUES (?, ?, ?, ?, ?, '0', '0', ?)",
                     rusqlite::params![
                         &item_id,
                         &id_str,
                         item.product_id.to_string(),
+                        item.sku,
                         item.quantity.to_string(),
+                        item.lot_id.map(|id| id.to_string()),
                     ],
                 )?;
             }
@@ -280,6 +364,10 @@ impl stateset_core::TransferOrderRepository for SqliteTransferOrderRepository {
                         "Cannot ship a transfer order in status {status}"
                     )),
                 )));
+            }
+            let order = Self::load_full(tx, &id_str)?;
+            for item in &order.items {
+                Self::post_stock(tx, &order, item, item.quantity, false, &now)?;
             }
             // Shipping sets quantity_shipped = quantity on each line.
             tx.execute(
@@ -356,6 +444,13 @@ impl stateset_core::TransferOrderRepository for SqliteTransferOrderRepository {
                     )),
                 )));
             }
+            let order = Self::load_full(tx, &id_str)?;
+            let item = order
+                .items
+                .iter()
+                .find(|item| item.id == item_id)
+                .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+            Self::post_stock(tx, &order, item, quantity, true, &now)?;
             tx.execute(
                 "UPDATE transfer_order_items SET quantity_received = ? WHERE id = ?",
                 rusqlite::params![new_received.to_string(), &item_str],
@@ -370,6 +465,56 @@ impl stateset_core::TransferOrderRepository for SqliteTransferOrderRepository {
                 "UPDATE transfer_orders SET status = ?, received_at = COALESCE(?, received_at), updated_at = ? WHERE id = ?",
                 rusqlite::params![derived.to_string(), received_at, &now, &id_str],
             )?;
+            Self::load_full(tx, &id_str)
+        })
+    }
+
+    fn complete_receiving(&self, id: TransferOrderId) -> Result<TransferOrder> {
+        let id_str = id.to_string();
+        let now = Utc::now().to_rfc3339();
+        with_immediate_transaction(&self.pool, |tx| {
+            let order = Self::load_full(tx, &id_str)?;
+            if !matches!(
+                order.status,
+                TransferOrderStatus::InTransit | TransferOrderStatus::PartiallyReceived
+            ) {
+                return Err(super::bins::smuggle(CommerceError::Conflict(
+                    "Only in-transit transfers can close receiving".into(),
+                )));
+            }
+            Self::stock_locations(&order)?;
+            for item in &order.items {
+                let missing = item.quantity_shipped - item.quantity_received;
+                tx.execute(
+                    "UPDATE transfer_order_items SET quantity_variance = ?1 WHERE id = ?2",
+                    rusqlite::params![missing.to_string(), item.id.to_string()],
+                )?;
+                if missing > Decimal::ZERO {
+                    super::stock_move::post(
+                        tx,
+                        &crate::stock_move::StockMove {
+                            id: uuid::Uuid::new_v4(),
+                            sku: &item.sku,
+                            lot_id: item.lot_id,
+                            from: None,
+                            to: None,
+                            quantity: missing,
+                            release_reserved: Decimal::ZERO,
+                            reserve_received: Decimal::ZERO,
+                            movement_type: stateset_core::MovementType::Adjustment,
+                            lot_effect: crate::stock_move::LotEffect::TransitLoss,
+                            check_sellable: false,
+                            reference_type: Some("transfer_shortage"),
+                            reference_id: Some(id.into()),
+                            reference_label: None,
+                            reason: Some("transfer shortage"),
+                            performed_by: None,
+                        },
+                        &now,
+                    )?;
+                }
+            }
+            tx.execute("UPDATE transfer_orders SET status = 'received', received_at = ?1, updated_at = ?1 WHERE id = ?2", rusqlite::params![now, id_str])?;
             Self::load_full(tx, &id_str)
         })
     }
@@ -389,7 +534,7 @@ impl stateset_core::TransferOrderRepository for SqliteTransferOrderRepository {
                 [&id_str],
                 |row| row.get(0),
             )?;
-            if matches!(status.as_str(), "received" | "cancelled") {
+            if !matches!(status.as_str(), "draft" | "pending") {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                     CommerceError::ValidationError(format!(
                         "Cannot cancel a transfer order in status {status}"
@@ -419,11 +564,65 @@ mod tests {
     }
 
     fn new_order(repo: &SqliteTransferOrderRepository) -> TransferOrder {
+        use stateset_core::{ProductRepository, WarehouseRepository};
+        let tag = uuid::Uuid::new_v4().to_string();
+        let warehouse_repo = crate::sqlite::SqliteWarehouseRepository::new(repo.pool.clone());
+        let mut locations = Vec::new();
+        for prefix in ["SRC", "DST"] {
+            let warehouse = warehouse_repo
+                .create_warehouse(stateset_core::CreateWarehouse {
+                    code: format!("{prefix}-{tag}"),
+                    name: prefix.into(),
+                    ..Default::default()
+                })
+                .unwrap();
+            locations.push(
+                warehouse_repo
+                    .create_location(stateset_core::CreateLocation {
+                        warehouse_id: warehouse.id,
+                        ..Default::default()
+                    })
+                    .unwrap()
+                    .id,
+            );
+        }
+        let sku = format!("TRANSFER-{tag}");
+        let product = crate::sqlite::SqliteProductRepository::new(repo.pool.clone())
+            .create(stateset_core::CreateProduct {
+                name: sku.clone(),
+                slug: None,
+                description: None,
+                product_type: None,
+                attributes: None,
+                seo: None,
+                variants: Some(vec![stateset_core::CreateProductVariant {
+                    sku: sku.clone(),
+                    price: Decimal::ONE,
+                    ..Default::default()
+                }]),
+            })
+            .unwrap();
+        warehouse_repo
+            .adjust_inventory(stateset_core::AdjustLocationInventory {
+                location_id: locations[0],
+                sku: sku.clone(),
+                lot_id: None,
+                quantity: dec!(10),
+                reason: "transfer fixture".into(),
+                reference_type: None,
+                reference_id: None,
+                performed_by: None,
+            })
+            .unwrap();
         repo.create(CreateTransferOrder {
+            source_location_id: locations[0],
+            destination_location_id: locations[1],
             source_warehouse_id: WarehouseId::new(),
             destination_warehouse_id: WarehouseId::new(),
             items: vec![CreateTransferOrderItem {
-                product_id: ProductId::new(),
+                product_id: product.id,
+                sku,
+                lot_id: None,
                 quantity: dec!(10),
             }],
             expected_at: None,
@@ -437,10 +636,14 @@ mod tests {
         let repo = test_repo();
         let w = WarehouseId::new();
         let res = repo.create(CreateTransferOrder {
+            source_location_id: 1,
+            destination_location_id: 2,
             source_warehouse_id: w,
             destination_warehouse_id: w,
             items: vec![CreateTransferOrderItem {
                 product_id: ProductId::new(),
+                sku: "BAD".into(),
+                lot_id: None,
                 quantity: dec!(1),
             }],
             expected_at: None,
@@ -498,8 +701,7 @@ mod tests {
     fn receive_line_rejects_cancelled_order() {
         let repo = test_repo();
         let o = new_order(&repo);
-        let shipped = repo.ship(o.id).expect("ship");
-        let item_id = shipped.items[0].id;
+        let item_id = o.items[0].id;
         repo.cancel(o.id).expect("cancel");
         // Units cannot be booked in against a cancelled transfer order: the
         // status is sticky in `derive_receipt_status`, so without this guard the

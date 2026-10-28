@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { Card, CardContent, Badge } from '@stateset/design';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
@@ -91,9 +92,10 @@ export default function ManufacturingClient() {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Manufacturing</h1>
-          <p className="text-sm text-ds-muted-foreground">
-            Work orders and quality inspections (read-only)
-          </p>
+          <Link href="/operations/manufacturing/setup" className="text-sm underline">
+            Manage BOMs, batches and costs
+          </Link>
+          <p className="text-sm text-ds-muted-foreground">Work orders and quality inspections</p>
         </div>
         <label className="flex items-center gap-2 text-sm">
           <span className="text-ds-muted-foreground">Status</span>

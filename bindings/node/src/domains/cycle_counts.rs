@@ -16,8 +16,8 @@ use super::*;
 pub struct CreateCycleCountLineInput {
     pub sku: String,
     pub lot_id: Option<String>,
-    /// Exact decimal string
-    pub expected_quantity: String,
+    /// Deprecated and ignored; expected stock is read from the ledger.
+    pub expected_quantity: Option<String>,
 }
 
 #[napi(object)]
@@ -64,7 +64,7 @@ pub struct CycleCountLineOutput {
     pub expected_quantity: String,
     /// Exact decimal string
     pub counted_quantity: Option<String>,
-    /// Exact decimal string: counted_quantity - expected_quantity
+    /// Exact decimal string: provisional snapshot variance, or actual stock adjustment after completion
     pub variance: Option<String>,
 }
 
@@ -144,10 +144,7 @@ impl CycleCounts {
                 Ok(stateset_core::CreateCycleCountLine {
                     sku: l.sku,
                     lot_id: parse_optional_uuid(l.lot_id, "lot_id")?,
-                    expected_quantity: parse_decimal_str(
-                        &l.expected_quantity,
-                        "expected_quantity",
-                    )?,
+                    expected_quantity: rust_decimal::Decimal::ZERO,
                 })
             })
             .collect::<Result<Vec<_>>>()?;

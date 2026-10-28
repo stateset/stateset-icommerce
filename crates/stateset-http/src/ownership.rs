@@ -132,7 +132,7 @@ async fn authorize(
     customer: CustomerId,
     request: Request<Body>,
 ) -> Result<Request<Body>, HttpError> {
-    if policy.action == ActionClass::Destructive {
+    if matches!(policy.action, ActionClass::Destructive | ActionClass::ManageFinance) {
         return Err(HttpError::Forbidden(
             "destructive operations require an operator principal".to_string(),
         ));

@@ -15,16 +15,18 @@
 
 #![cfg(feature = "postgres")]
 
+#[path = "../../stateset-db/tests/support/erp_transfer.rs"]
+mod transfer_setup;
+
 use rust_decimal_macros::dec;
 use stateset_core::{
-    ApplyVendorCredit, CaptureStockLine, CaptureStockSnapshot, ConversionRuleType,
-    CreateInboundShipment, CreateInboundShipmentItem, CreatePrintStation, CreateProductionBatch,
-    CreateSupplierSku, CreateTransferOrder, CreateTransferOrderItem, CreateUnitClass,
-    CreateUnitConversionRule, CreateUnitOfMeasure, CreateVendorCredit, CreateVendorReturn,
-    CreateVendorReturnItem, EnqueuePrintJob, InboundShipmentStatus, PrintJobStatus,
-    PrintPayloadKind, ProductId, ProductionBatchFilter, ProductionBatchStatus, SupplierSkuFilter,
-    TransferOrderStatus, UpdateProductionBatch, UpdateSupplierSku, VendorCreditStatus,
-    VendorCreditTargetType, VendorReturnReason, VendorReturnStatus, WarehouseId,
+    ApplyVendorCredit, CaptureStockSnapshot, ConversionRuleType, CreateInboundShipment,
+    CreateInboundShipmentItem, CreatePrintStation, CreateProductionBatch, CreateSupplierSku,
+    CreateUnitClass, CreateUnitConversionRule, CreateUnitOfMeasure, CreateVendorCredit,
+    CreateVendorReturn, CreateVendorReturnItem, EnqueuePrintJob, InboundShipmentStatus,
+    PrintJobStatus, PrintPayloadKind, ProductId, ProductionBatchFilter, ProductionBatchStatus,
+    SupplierSkuFilter, TransferOrderStatus, UpdateProductionBatch, UpdateSupplierSku,
+    VendorCreditStatus, VendorCreditTargetType, VendorReturnReason, VendorReturnStatus,
 };
 use stateset_embedded::AsyncCommerce;
 
@@ -55,35 +57,40 @@ async fn postgres_stock_snapshots_smoke() {
         stateset_db::postgres::PgStockSnapshotRepository::new(commerce.database().pool().clone());
 
     let label = format!("pg-snap-{}", uuid::Uuid::new_v4().simple());
-    let snapshot = store
-        .capture_async(CaptureStockSnapshot {
-            label: Some(label.clone()),
-            lines: vec![
-                CaptureStockLine {
-                    product_id: ProductId::new(),
-                    sku: "SNAP-A".into(),
-                    quantity_on_hand: dec!(10),
-                    quantity_available: dec!(8),
-                    location: Some("A-01".into()),
-                },
-                CaptureStockLine {
-                    product_id: ProductId::new(),
-                    sku: "SNAP-B".into(),
-                    quantity_on_hand: dec!(5),
-                    quantity_available: dec!(5),
-                    location: None,
-                },
-            ],
+    let sku = format!("SNAP-{}", uuid::Uuid::new_v4());
+    // The shared database may have ledger posting on, which needs costed stock.
+    commerce
+        .cost_accounting()
+        .set_item_cost(stateset_core::SetItemCost {
+            sku: sku.clone(),
+            cost_method: Some(stateset_core::CostMethod::Average),
+            standard_cost: Some(rust_decimal::Decimal::ONE),
+            ..Default::default()
         })
         .await
-        .expect("capture snapshot");
-    assert_eq!(snapshot.total_skus, 2);
-    assert_eq!(snapshot.total_units, dec!(15));
+        .expect("cost the SKU");
+    stateset_db::postgres::PgInventoryRepository::new(commerce.database().pool().clone())
+        .create_item_async(stateset_core::CreateInventoryItem {
+            sku: sku.clone(),
+            name: sku.clone(),
+            initial_quantity: Some(dec!(15)),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let snapshot = store
+        .capture_async(CaptureStockSnapshot { label: Some(label.clone()), lines: vec![] })
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot.lines.iter().find(|line| line.sku == sku).unwrap().quantity_on_hand,
+        dec!(15)
+    );
 
     let fetched =
         store.get_async(snapshot.id).await.expect("get snapshot").expect("snapshot exists");
     assert_eq!(fetched.label.as_deref(), Some(label.as_str()));
-    assert_eq!(fetched.lines.len(), 2);
+    assert_eq!(fetched.lines.len(), snapshot.lines.len());
 
     let latest = store.latest_async().await.expect("latest snapshot").expect("latest exists");
     assert_eq!(latest.id, snapshot.id);
@@ -107,16 +114,7 @@ async fn postgres_transfer_orders_smoke() {
         stateset_db::postgres::PgTransferOrderRepository::new(commerce.database().pool().clone());
 
     let created = store
-        .create_async(CreateTransferOrder {
-            source_warehouse_id: WarehouseId::new(),
-            destination_warehouse_id: WarehouseId::new(),
-            items: vec![CreateTransferOrderItem {
-                product_id: ProductId::new(),
-                quantity: dec!(10),
-            }],
-            expected_at: None,
-            notes: Some("pg smoke".into()),
-        })
+        .create_async(transfer_setup::postgres_input(commerce.database(), &[dec!(10)]).await)
         .await
         .expect("create transfer order");
     assert!(!created.number.is_empty());
@@ -341,19 +339,19 @@ async fn postgres_production_batches_smoke() {
             UpdateProductionBatch {
                 name: None,
                 vendor_id: None,
-                status: Some(ProductionBatchStatus::InProgress),
-                notes: None,
+                status: None,
+                notes: Some("Edited".into()),
                 scheduled_start: None,
                 scheduled_end: None,
             },
         )
         .await
         .expect("update batch");
-    assert_eq!(updated.status, ProductionBatchStatus::InProgress);
+    assert_eq!(updated.status, ProductionBatchStatus::Planned);
 
     let listed = store
         .list_async(ProductionBatchFilter {
-            status: Some(ProductionBatchStatus::InProgress),
+            status: Some(ProductionBatchStatus::Planned),
             ..Default::default()
         })
         .await
@@ -417,13 +415,81 @@ async fn postgres_vendor_returns_smoke() {
     let commerce = require_pg!("vendor return");
     let store = commerce.database().vendor_returns();
 
+    let db = commerce.database();
+    let sku = format!("VENDOR-PARITY-{}", uuid::Uuid::new_v4());
+    let supplier = db
+        .purchase_orders()
+        .create_supplier_async(stateset_core::CreateSupplier {
+            name: sku.clone(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let product = db
+        .products()
+        .create_async(stateset_core::CreateProduct {
+            name: sku.clone(),
+            variants: Some(vec![stateset_core::CreateProductVariant {
+                sku: sku.clone(),
+                price: dec!(15),
+                is_default: Some(true),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let warehouse = db
+        .warehouse()
+        .create_warehouse_async(stateset_core::CreateWarehouse {
+            code: sku.clone(),
+            name: sku.clone(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let location = db
+        .warehouse()
+        .create_location_async(stateset_core::CreateLocation {
+            warehouse_id: warehouse.id,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    // The shared database may have ledger posting on, which needs costed stock.
+    db.cost_accounting()
+        .set_item_cost_async(stateset_core::SetItemCost {
+            sku: sku.clone(),
+            cost_method: Some(stateset_core::CostMethod::Average),
+            standard_cost: Some(rust_decimal::Decimal::ONE),
+            ..Default::default()
+        })
+        .await
+        .expect("cost the SKU");
+    db.warehouse()
+        .adjust_inventory_async(stateset_core::AdjustLocationInventory {
+            location_id: location.id,
+            sku: sku.clone(),
+            lot_id: None,
+            quantity: dec!(3),
+            reason: "receipt".into(),
+            reference_type: None,
+            reference_id: None,
+            performed_by: None,
+        })
+        .await
+        .unwrap();
     let created = store
         .create_async(CreateVendorReturn {
-            supplier_id: uuid::Uuid::new_v4(),
+            supplier_id: supplier.id,
+            warehouse_id: warehouse.id,
             purchase_order_id: None,
             currency: None,
             items: vec![CreateVendorReturnItem {
-                product_id: ProductId::new(),
+                product_id: product.id,
+                sku,
+                source_location_id: location.id,
+                lot_id: None,
                 quantity: dec!(3),
                 unit_cost: dec!(15),
                 reason: VendorReturnReason::Defective,
@@ -453,10 +519,11 @@ async fn postgres_vendor_returns_smoke() {
 async fn postgres_vendor_credits_smoke() {
     let commerce = require_pg!("vendor credit");
     let store = commerce.database().vendor_credits();
+    let (supplier, bill) = supplier_with_bill(commerce.database(), dec!(1000)).await;
 
     let created = store
         .create_async(CreateVendorCredit {
-            supplier_id: uuid::Uuid::new_v4(),
+            supplier_id: supplier,
             vendor_return_id: None,
             amount: dec!(100),
             currency: None,
@@ -472,7 +539,7 @@ async fn postgres_vendor_credits_smoke() {
             created.id,
             ApplyVendorCredit {
                 target_type: VendorCreditTargetType::Bill,
-                target_id: uuid::Uuid::new_v4(),
+                target_id: bill,
                 amount: dec!(40),
             },
         )
@@ -487,7 +554,7 @@ async fn postgres_vendor_credits_smoke() {
                 created.id,
                 ApplyVendorCredit {
                     target_type: VendorCreditTargetType::Bill,
-                    target_id: uuid::Uuid::new_v4(),
+                    target_id: bill,
                     amount: dec!(1000),
                 },
             )
@@ -722,6 +789,41 @@ async fn postgres_price_levels_smoke() {
     assert!(store.get_async(created.id).await.expect("get after delete").is_none());
 }
 
+/// A supplier with an approved bill: prepayments and vendor credits settle real
+/// bills from the same supplier.
+async fn supplier_with_bill(
+    db: &stateset_db::PostgresDatabase,
+    amount: rust_decimal::Decimal,
+) -> (uuid::Uuid, uuid::Uuid) {
+    let supplier = db
+        .purchase_orders()
+        .create_supplier_async(stateset_core::CreateSupplier {
+            name: format!("Settlement supplier {}", uuid::Uuid::new_v4()),
+            ..Default::default()
+        })
+        .await
+        .expect("create supplier")
+        .id;
+    let bill = db
+        .accounts_payable()
+        .create_bill_async(stateset_core::CreateBill {
+            supplier_id: supplier,
+            due_date: chrono::Utc::now(),
+            items: vec![stateset_core::CreateBillItem {
+                description: "Settlement".into(),
+                quantity: dec!(1),
+                unit_price: amount,
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .await
+        .expect("create bill")
+        .id;
+    db.accounts_payable().approve_bill_async(bill).await.expect("approve bill");
+    (supplier, bill)
+}
+
 #[tokio::test]
 async fn postgres_prepayments_smoke() {
     use stateset_core::{
@@ -730,10 +832,11 @@ async fn postgres_prepayments_smoke() {
 
     let commerce = require_pg!("prepayment");
     let store = commerce.database().prepayments();
+    let (supplier, bill) = supplier_with_bill(commerce.database(), dec!(1000)).await;
 
     let created = store
         .create_async(CreatePrepayment {
-            supplier_id: uuid::Uuid::new_v4(),
+            supplier_id: supplier,
             amount: dec!(250),
             currency: None,
             method: Some("wire".into()),
@@ -750,7 +853,7 @@ async fn postgres_prepayments_smoke() {
             created.id,
             ApplyPrepayment {
                 target_type: PrepaymentTargetType::Bill,
-                target_id: uuid::Uuid::new_v4(),
+                target_id: bill,
                 amount: dec!(100),
             },
         )
@@ -764,7 +867,7 @@ async fn postgres_prepayments_smoke() {
                 created.id,
                 ApplyPrepayment {
                     target_type: PrepaymentTargetType::Bill,
-                    target_id: uuid::Uuid::new_v4(),
+                    target_id: bill,
                     amount: dec!(1000),
                 },
             )

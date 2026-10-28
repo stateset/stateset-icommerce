@@ -1023,6 +1023,7 @@ pub use stateset_core::{
     WorkOrderMaterial,
     WorkOrderPriority,
     WorkOrderStatus,
+    WorkOrderStock,
     WorkOrderTask,
     WriteOff,
     WriteOffFilter,

@@ -12,6 +12,9 @@
 //! - Manufacturing workflows
 //!
 
+#[path = "support/manufacturing.rs"]
+mod manufacturing_fixture;
+
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     AddCartItem, BillingCycleFilter, BillingInterval, CartAddress, Commerce, CreateBackorder,
@@ -273,7 +276,8 @@ fn test_subscription_billing_cycle() {
 fn test_manufacturing_workflow() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let product_id = Uuid::new_v4().into();
+    let input = manufacturing_fixture::input(&commerce, dec!(50));
+    let product_id = input.product_id;
     let bom = commerce
         .bom()
         .create(CreateBom { product_id, name: "Widget Assembly".into(), ..Default::default() })
@@ -285,6 +289,7 @@ fn test_manufacturing_workflow() {
             bom.id,
             CreateBomComponent {
                 name: "Part A".into(),
+                component_sku: Some("PART-A".into()),
                 quantity: dec!(2),
                 unit_of_measure: Some("pcs".into()),
                 ..Default::default()
@@ -298,6 +303,7 @@ fn test_manufacturing_workflow() {
             bom.id,
             CreateBomComponent {
                 name: "Part B".into(),
+                component_sku: Some("PART-B".into()),
                 quantity: dec!(1),
                 unit_of_measure: Some("pcs".into()),
                 ..Default::default()
@@ -305,13 +311,16 @@ fn test_manufacturing_workflow() {
         )
         .expect("Failed to add second component to BOM");
 
+    commerce.bom().activate(bom.id).unwrap();
+    manufacturing_fixture::seed(&commerce, input.stock.as_ref().unwrap(), "PART-A", dec!(100));
+    manufacturing_fixture::seed(&commerce, input.stock.as_ref().unwrap(), "PART-B", dec!(50));
     let work_order = commerce
         .work_orders()
         .create(CreateWorkOrder {
             product_id,
             bom_id: Some(bom.id),
             quantity_to_build: dec!(50),
-            ..Default::default()
+            ..input
         })
         .expect("Failed to create work order");
 

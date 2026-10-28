@@ -929,6 +929,51 @@ pub struct CreateInvoiceRequest {
     pub payment_terms: Option<String>,
     pub currency: Option<String>,
     pub notes: Option<String>,
+    pub invoice_date: Option<String>,
+    pub days_until_due: Option<i32>,
+    pub billing_name: Option<String>,
+    pub billing_email: Option<String>,
+    pub billing_address: Option<String>,
+    pub billing_city: Option<String>,
+    pub billing_state: Option<String>,
+    pub billing_postal_code: Option<String>,
+    pub billing_country: Option<String>,
+    pub discount_amount: Option<String>,
+    pub discount_percent: Option<String>,
+    pub tax_amount: Option<String>,
+    pub tax_rate: Option<String>,
+    pub shipping_amount: Option<String>,
+    pub po_number: Option<String>,
+    pub terms: Option<String>,
+    pub footer: Option<String>,
+    #[serde(default)]
+    pub items: Vec<CreateInvoiceItemRequest>,
+}
+
+/// Invoice lines use decimal strings for quantities, prices, discounts and tax.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateInvoiceItemRequest {
+    pub order_item_id: Option<String>,
+    pub product_id: Option<String>,
+    pub sku: Option<String>,
+    pub description: String,
+    pub quantity: String,
+    pub unit_of_measure: Option<String>,
+    pub unit_price: String,
+    pub discount_amount: Option<String>,
+    pub tax_amount: Option<String>,
+    pub sort_order: Option<i32>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct InvoiceItemResponse {
+    pub id: String,
+    pub description: String,
+    pub sku: Option<String>,
+    pub quantity: String,
+    pub unit_price: String,
+    pub discount_amount: String,
+    pub tax_amount: String,
+    pub line_total: String,
 }
 
 /// Request body for `POST /api/v1/invoices/:id/payments`.
@@ -936,6 +981,8 @@ pub struct CreateInvoiceRequest {
 pub struct RecordInvoicePaymentRequest {
     #[schema(value_type = String)]
     pub amount: Decimal,
+    /// Stable payment identity for retry-safe invoice recording.
+    pub payment_id: Option<uuid::Uuid>,
     pub payment_method: Option<String>,
     pub reference: Option<String>,
     pub notes: Option<String>,
@@ -944,6 +991,7 @@ pub struct RecordInvoicePaymentRequest {
 /// Response body for a single invoice.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct InvoiceResponse {
+    pub items: Vec<InvoiceItemResponse>,
     #[schema(value_type = String, format = "uuid")]
     pub id: stateset_primitives::InvoiceId,
     pub invoice_number: String,
@@ -1276,6 +1324,20 @@ impl From<stateset_core::Payment> for PaymentResponse {
 impl From<stateset_core::Invoice> for InvoiceResponse {
     fn from(i: stateset_core::Invoice) -> Self {
         Self {
+            items: i
+                .items
+                .iter()
+                .map(|i| InvoiceItemResponse {
+                    id: i.id.to_string(),
+                    description: i.description.clone(),
+                    sku: i.sku.clone(),
+                    quantity: i.quantity.to_string(),
+                    unit_price: i.unit_price.to_string(),
+                    discount_amount: i.discount_amount.to_string(),
+                    tax_amount: i.tax_amount.to_string(),
+                    line_total: i.line_total.to_string(),
+                })
+                .collect(),
             id: i.id,
             invoice_number: i.invoice_number,
             customer_id: i.customer_id,

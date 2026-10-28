@@ -17,8 +17,8 @@ use uuid::Uuid;
 use stateset_core::{
     AccountsPayableRepository, ApAgingSummary, BatchResult, Bill, BillFilter, BillItem,
     BillPayment, BillPaymentFilter, BillStatus, CommerceError, CreateBill, CreateBillItem,
-    CreateBillPayment, CreatePaymentRun, PaymentAllocation, PaymentRun, PaymentRunFilter,
-    PaymentRunStatus, PaymentStatusAP, Result, SupplierApSummary, UpdateBill,
+    CreateBillPayment, CreatePaymentRun, CurrencyCode, PaymentAllocation, PaymentRun,
+    PaymentRunFilter, PaymentRunStatus, PaymentStatusAP, Result, SupplierApSummary, UpdateBill,
     generate_ap_payment_number, generate_bill_number, generate_payment_run_number,
 };
 
@@ -153,6 +153,9 @@ impl SqliteAccountsPayableRepository {
             currency: row.get("currency")?,
             reference_number: row.get("reference_number")?,
             memo: row.get("memo")?,
+            match_override_reason: row.get("match_override_reason")?,
+            created_by: row.get("created_by")?,
+            approved_by: row.get("approved_by")?,
             created_at: parse_datetime_row(
                 &row.get::<_, String>("created_at")?,
                 "bill",
@@ -253,6 +256,10 @@ impl SqliteAccountsPayableRepository {
                 "payment_run",
                 "payment_method",
             )?,
+            currency: row
+                .get::<_, Option<String>>("currency")?
+                .map(|code| super::parse_enum_row(&code, "payment_run", "currency"))
+                .transpose()?,
             total_amount: parse_decimal_row(
                 &row.get::<_, String>("total_amount")?,
                 "payment_run",
@@ -314,6 +321,10 @@ impl SqliteAccountsPayableRepository {
             "ap_payment_allocations",
             "amount",
         )?;
+        let credits = super::ap_settlement::bill_credits(conn, bill_id).map_err(map_db_error)?;
+        let paid = paid
+            .checked_add(credits)
+            .ok_or_else(|| CommerceError::ValidationError("Bill settlement overflow".into()))?;
         let due = total - paid;
 
         conn.execute(
@@ -460,6 +471,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         let now = Utc::now();
         let id = Uuid::new_v4();
         let CreateBill {
+            created_by,
             bill_number,
             supplier_id,
             purchase_order_id,
@@ -482,8 +494,8 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             let currency = resolve_currency_in_tx(currency, tx)?;
             tx.execute(
                 "INSERT INTO ap_bills (id, bill_number, supplier_id, purchase_order_id, status, bill_date, due_date,
-                 payment_terms, currency, reference_number, memo, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+                 payment_terms, currency, reference_number, memo, created_at, updated_at, created_by)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, ?13)",
                 params![
                     id.to_string(),
                     bill_number,
@@ -497,6 +509,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                     reference_number,
                     memo,
                     now.to_rfc3339(),
+                    created_by,
                 ],
             )?;
 
@@ -602,44 +615,60 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         Ok(())
     }
 
-    fn approve_bill(&self, id: Uuid) -> Result<Bill> {
-        let conn = self.conn()?;
-        // Status-guarded UPDATE: only a draft/pending bill can be approved, and
-        // 0 matched rows is an error (previously a silent success that returned
-        // the bill unchanged).
-        let rows = conn
-            .execute(
-                "UPDATE ap_bills SET status = ?1 WHERE id = ?2 AND status IN ('draft', 'pending')",
-                params![BillStatus::Approved.to_string(), id.to_string()],
-            )
-            .map_err(map_db_error)?;
-        if rows == 0 {
-            return Err(CommerceError::Conflict(
-                "Bill not found or not in an approvable status".into(),
-            ));
-        }
+    fn approve_bill_as(&self, id: Uuid, actor: &str, reason: Option<&str>) -> Result<Bill> {
+        with_immediate_transaction(&self.pool, |tx| {
+            super::ap_match::approve(tx, id, reason, Some(actor))?;
+            tx.query_row("SELECT * FROM ap_bills WHERE id=?1", [id.to_string()], Self::row_to_bill)
+        })
+    }
 
-        self.get_bill(id)?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to approve bill".into()))
+    fn approve_bill(&self, id: Uuid) -> Result<Bill> {
+        with_immediate_transaction(&self.pool, |tx| {
+            super::ap_match::approve(tx, id, None, None)?;
+            tx.query_row("SELECT * FROM ap_bills WHERE id=?1", [id.to_string()], Self::row_to_bill)
+        })
+    }
+    fn approve_bill_with_override(&self, id: Uuid, reason: &str) -> Result<Bill> {
+        with_immediate_transaction(&self.pool, |tx| {
+            super::ap_match::approve(tx, id, Some(reason), None)?;
+            tx.query_row("SELECT * FROM ap_bills WHERE id=?1", [id.to_string()], Self::row_to_bill)
+        })
     }
 
     fn cancel_bill(&self, id: Uuid) -> Result<Bill> {
-        let conn = self.conn()?;
-        // A bill with payments applied (paid/partially paid) or already
-        // cancelled cannot be cancelled; void the payments first.
-        let rows = conn
-            .execute(
+        with_immediate_transaction(&self.pool, |tx| {
+            Self::recalculate_bill_with_conn(tx, id).map_err(super::bins::smuggle)?;
+            let paid: String = tx.query_row(
+                "SELECT amount_paid FROM ap_bills WHERE id=?1",
+                [id.to_string()],
+                |r| r.get(0),
+            )?;
+            if !super::parse_decimal_row(&paid, "bill", "amount_paid")?.is_zero() {
+                return Err(super::bins::smuggle(CommerceError::Conflict(
+                    "Release all bill payments and credits before cancellation".into(),
+                )));
+            }
+            // A bill with payments applied (paid/partially paid) or already
+            // cancelled cannot be cancelled; void the payments first.
+            let rows = tx.execute(
                 "UPDATE ap_bills SET status = ?1 WHERE id = ?2
                  AND status IN ('draft', 'pending', 'approved', 'overdue', 'disputed')",
                 params![BillStatus::Cancelled.to_string(), id.to_string()],
-            )
-            .map_err(map_db_error)?;
-        if rows == 0 {
-            return Err(CommerceError::Conflict(
-                "Bill not found or not in a cancellable status".into(),
-            ));
-        }
+            )?;
+            if rows == 0 {
+                return Err(super::bins::smuggle(CommerceError::Conflict(
+                    "Bill not found or not in a cancellable status".into(),
+                )));
+            }
 
+            super::ledger_reversal::reverse_source(
+                tx,
+                "bill",
+                id,
+                chrono::Utc::now().date_naive(),
+            )?;
+            Ok(())
+        })?;
         self.get_bill(id)?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel bill".into()))
     }
@@ -650,7 +679,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         // cancelled or fully paid one.
         let rows = conn
             .execute(
-                "UPDATE ap_bills SET status = ?1 WHERE id = ?2
+                "UPDATE ap_bills SET disputed_from_status = status, updated_at=CURRENT_TIMESTAMP, status = ?1 WHERE id = ?2
                  AND status IN ('draft', 'pending', 'approved', 'partially_paid', 'overdue')",
                 params![BillStatus::Disputed.to_string(), id.to_string()],
             )
@@ -665,6 +694,13 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to dispute bill".into()))
     }
 
+    fn resolve_bill_dispute(&self, id: Uuid) -> Result<Bill> {
+        with_immediate_transaction(&self.pool, |tx| {
+            Self::recalculate_bill_with_conn(tx, id).map_err(super::bins::smuggle)?;
+            super::ap_settlement::resolve_dispute(tx, id)?;
+            tx.query_row("SELECT * FROM ap_bills WHERE id=?1", [id.to_string()], Self::row_to_bill)
+        })
+    }
     fn get_bill_items(&self, bill_id: Uuid) -> Result<Vec<BillItem>> {
         let conn = self.conn()?;
         let mut stmt = conn
@@ -824,15 +860,26 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             let to_rusqlite =
                 |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
 
-            let currency = resolve_currency_in_tx(input.currency, tx)?;
+            let mut payment_currency = input.currency;
 
             for (bill_id, allocated_amount) in &allocation_by_bill {
-                let (supplier_id, status, amount_due): (String, String, String) = tx.query_row(
-                    "SELECT supplier_id, status, amount_due FROM ap_bills WHERE id = ?1",
+                let (supplier_id, status, amount_due, denomination): (
+                    String,
+                    String,
+                    String,
+                    String,
+                ) = tx.query_row(
+                    "SELECT supplier_id, status, amount_due, currency FROM ap_bills WHERE id = ?1",
                     params![bill_id.to_string()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                 )?;
 
+                let denomination: CurrencyCode =
+                    super::parse_enum_row(&denomination, "bill", "currency")?;
+                if payment_currency.is_some_and(|code| code != denomination) {
+                    return Err(to_rusqlite(CommerceError::ValidationError("Payment allocations must use the bill currency; create separate payments for different currencies".into())));
+                }
+                payment_currency = Some(denomination);
                 let parsed_supplier_id =
                     parse_uuid(&supplier_id, "bill", "supplier_id").map_err(to_rusqlite)?;
                 if parsed_supplier_id != input.supplier_id {
@@ -864,6 +911,9 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                 }
             }
 
+            let currency = payment_currency.ok_or_else(|| {
+                to_rusqlite(CommerceError::ValidationError("Payment has no bill currency".into()))
+            })?;
             tx.execute(
                 "INSERT INTO ap_payments (id, payment_number, supplier_id, payment_date, payment_method, amount, currency, reference_number, bank_account, check_number, memo, status, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
@@ -1052,15 +1102,18 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                     params![alloc.bill_id.to_string()],
                     Self::row_to_bill,
                 )?;
-                let new_status = if bill.amount_due <= Decimal::ZERO {
-                    BillStatus::Paid
-                } else if bill.amount_paid > Decimal::ZERO {
-                    BillStatus::PartiallyPaid
-                } else if bill.status == BillStatus::Overdue {
-                    BillStatus::Overdue
-                } else {
-                    BillStatus::Approved
-                };
+                let new_status =
+                    if matches!(bill.status, BillStatus::Cancelled | BillStatus::Disputed) {
+                        bill.status
+                    } else if bill.amount_due <= Decimal::ZERO {
+                        BillStatus::Paid
+                    } else if bill.amount_paid > Decimal::ZERO {
+                        BillStatus::PartiallyPaid
+                    } else if bill.status == BillStatus::Overdue {
+                        BillStatus::Overdue
+                    } else {
+                        BillStatus::Approved
+                    };
 
                 tx.execute(
                     "UPDATE ap_bills SET status = ?1 WHERE id = ?2",
@@ -1068,6 +1121,12 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                 )?;
             }
 
+            super::ledger_reversal::reverse_source(
+                tx,
+                "bill_payment",
+                id,
+                chrono::Utc::now().date_naive(),
+            )?;
             Ok(())
         })?;
 
@@ -1183,6 +1242,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             let to_rusqlite =
                 |e: CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
 
+            let mut run_currency = None;
             let mut total = Decimal::ZERO;
             for bill_id in &input.bill_ids {
                 let bill = tx
@@ -1222,6 +1282,13 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                     )));
                 }
 
+                if run_currency.is_some_and(|currency| currency != bill.currency) {
+                    return Err(to_rusqlite(CommerceError::ValidationError(
+                        "Payment runs must contain one currency; group bills into separate runs"
+                            .into(),
+                    )));
+                }
+                run_currency = Some(bill.currency);
                 total += bill.amount_due;
             }
 
@@ -1242,6 +1309,13 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                 ],
             )?;
 
+            tx.execute(
+                "UPDATE ap_payment_runs SET currency=?1 WHERE id=?2",
+                rusqlite::params![
+                    run_currency.map(|code: CurrencyCode| code.to_string()),
+                    (id).to_string()
+                ],
+            )?;
             for bill_id in &input.bill_ids {
                 tx.execute(
                     "INSERT INTO ap_payment_run_bills (run_id, bill_id) VALUES (?1, ?2)",
@@ -1313,6 +1387,10 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
     }
 
     fn approve_payment_run(&self, id: Uuid, approved_by: &str) -> Result<PaymentRun> {
+        let approved_by = approved_by.trim();
+        if approved_by.is_empty() {
+            return Err(CommerceError::ValidationError("Approver identity is required".into()));
+        }
         let conn = self.conn()?;
         let now = Utc::now().to_rfc3339();
 
@@ -1320,7 +1398,7 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
         // draft/pending run can be approved — a cancelled, completed, or
         // in-flight run cannot.
         let rows = conn.execute(
-            "UPDATE ap_payment_runs SET status = ?1, approved_by = ?2, approved_at = ?3 WHERE id = ?4 AND status IN ('draft', 'pending')",
+            "UPDATE ap_payment_runs SET status = ?1, approved_by = ?2, approved_at = ?3 WHERE id = ?4 AND status IN ('draft', 'pending') AND (created_by IS NULL OR TRIM(created_by) <> ?2)",
             params![PaymentRunStatus::Approved.to_string(), approved_by, now, id.to_string()],
         ).map_err(map_db_error)?;
         if rows == 0 {
@@ -1366,6 +1444,16 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
 
+            let run_currency: Option<String> = tx.query_row(
+                "SELECT currency FROM ap_payment_runs WHERE id=?1",
+                [id.to_string()],
+                |r| r.get(0),
+            )?;
+            let run_currency = run_currency.ok_or_else(|| {
+                to_rusqlite(CommerceError::Conflict(
+                    "Reconcile the legacy payment run currency before processing".into(),
+                ))
+            })?;
             let bills: Vec<Bill> = {
                 let mut stmt = tx.prepare(
                     "SELECT b.* FROM ap_bills b JOIN ap_payment_run_bills rb ON b.id = rb.bill_id WHERE rb.run_id = ?1",
@@ -1383,6 +1471,12 @@ impl AccountsPayableRepository for SqliteAccountsPayableRepository {
             let mut skipped: u32 = 0;
 
             for bill in bills {
+                if bill.currency.as_str() != run_currency {
+                    return Err(to_rusqlite(CommerceError::ValidationError(
+                        "Payment run contains mixed currencies".into(),
+                    )));
+                }
+
                 // Balance/status were re-read under the write lock (the SELECT
                 // above runs inside this immediate transaction). A bill paid
                 // off or made unpayable (paid/cancelled/disputed) since run
@@ -1665,6 +1759,7 @@ mod tests {
         price: Decimal,
     ) -> Bill {
         repo.create_bill(CreateBill {
+            created_by: None,
             bill_number: None,
             supplier_id: supplier,
             purchase_order_id: None,
@@ -1687,6 +1782,38 @@ mod tests {
     }
 
     #[test]
+    fn void_preserves_legacy_cancelled_bill() {
+        let repo = fresh_repo();
+        let supplier = Uuid::new_v4();
+        let bill = make_bill(&repo, supplier, dec!(1), dec!(100));
+        repo.approve_bill(bill.id).unwrap();
+        let payment = repo
+            .create_payment(CreateBillPayment {
+                supplier_id: supplier,
+                payment_date: None,
+                payment_method: stateset_core::PaymentMethodAP::Check,
+                amount: dec!(30),
+                currency: None,
+                reference_number: None,
+                bank_account: None,
+                check_number: None,
+                memo: None,
+                allocations: vec![stateset_core::PaymentAllocationInput {
+                    bill_id: bill.id,
+                    amount: dec!(30),
+                }],
+            })
+            .unwrap();
+        repo.pool
+            .get()
+            .unwrap()
+            .execute("UPDATE ap_bills SET status='cancelled' WHERE id=?1", [bill.id.to_string()])
+            .unwrap();
+        repo.void_payment(payment.id).unwrap();
+        assert_eq!(repo.get_bill(bill.id).unwrap().unwrap().status, BillStatus::Cancelled);
+    }
+
+    #[test]
     fn list_bills_honors_po_amount_and_offset_filters() {
         let repo = fresh_repo();
         let supplier = Uuid::new_v4();
@@ -1696,6 +1823,7 @@ mod tests {
         let big = make_bill(&repo, supplier, dec!(1), dec!(200));
         let with_po = repo
             .create_bill(CreateBill {
+                created_by: None,
                 bill_number: None,
                 supplier_id: supplier,
                 purchase_order_id: Some(po),

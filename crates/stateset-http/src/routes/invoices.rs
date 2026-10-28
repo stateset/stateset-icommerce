@@ -205,14 +205,70 @@ pub(crate) async fn create_invoice(
                 ))
             })?;
 
+            fn parse<T: std::str::FromStr>(value: String, field: &str) -> Result<T, HttpError> {
+                value
+                    .parse()
+                    .map_err(|_| HttpError::BadRequest(format!("Invalid {field}: {value}")))
+            }
+            let items = req
+                .items
+                .into_iter()
+                .map(|i| {
+                    Ok(stateset_core::CreateInvoiceItem {
+                        order_item_id: i
+                            .order_item_id
+                            .map(|v| parse(v, "order_item_id"))
+                            .transpose()?,
+                        product_id: i.product_id.map(|v| parse(v, "product_id")).transpose()?,
+                        sku: i.sku,
+                        description: i.description,
+                        quantity: parse(i.quantity, "quantity")?,
+                        unit_of_measure: i.unit_of_measure,
+                        unit_price: parse(i.unit_price, "unit_price")?,
+                        discount_amount: i
+                            .discount_amount
+                            .map(|v| parse(v, "discount_amount"))
+                            .transpose()?,
+                        tax_amount: i.tax_amount.map(|v| parse(v, "tax_amount")).transpose()?,
+                        sort_order: i.sort_order,
+                    })
+                })
+                .collect::<Result<Vec<_>, HttpError>>()?;
             let input = CreateInvoice {
                 customer_id: req.customer_id,
                 order_id: req.order_id,
                 invoice_type,
+                invoice_date: req.invoice_date.map(|v| parse(v, "invoice_date")).transpose()?,
+                due_date: req.due_date.map(|v| parse(v, "due_date")).transpose()?,
+                days_until_due: req.days_until_due,
+                currency: req.currency.map(|v| parse(v, "currency")).transpose()?,
                 payment_terms: req.payment_terms,
-                currency: req.currency.map(|c| c.parse().unwrap_or_default()),
+                billing_name: req.billing_name,
+                billing_email: req.billing_email,
+                billing_address: req.billing_address,
+                billing_city: req.billing_city,
+                billing_state: req.billing_state,
+                billing_postal_code: req.billing_postal_code,
+                billing_country: req.billing_country,
+                discount_amount: req
+                    .discount_amount
+                    .map(|v| parse(v, "discount_amount"))
+                    .transpose()?,
+                discount_percent: req
+                    .discount_percent
+                    .map(|v| parse(v, "discount_percent"))
+                    .transpose()?,
+                tax_amount: req.tax_amount.map(|v| parse(v, "tax_amount")).transpose()?,
+                tax_rate: req.tax_rate.map(|v| parse(v, "tax_rate")).transpose()?,
+                shipping_amount: req
+                    .shipping_amount
+                    .map(|v| parse(v, "shipping_amount"))
+                    .transpose()?,
+                po_number: req.po_number,
                 notes: req.notes,
-                ..Default::default()
+                terms: req.terms,
+                footer: req.footer,
+                items,
             };
             let invoice = commerce.invoices().create(input)?;
             Ok((StatusCode::CREATED, Json(InvoiceResponse::from(invoice))))
@@ -270,7 +326,7 @@ pub(crate) async fn record_invoice_payment(
         .run_blocking(tenant_id.as_deref(), move |commerce| {
             let input = RecordInvoicePayment {
                 amount: req.amount,
-                payment_id: None,
+                payment_id: req.payment_id,
                 payment_method: req.payment_method,
                 reference: req.reference,
                 notes: req.notes,
@@ -416,5 +472,113 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let msg = json["error"]["message"].as_str().unwrap_or("");
         assert!(msg.contains("Valid values"), "Error should list valid values, got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn invoice_payment_id_survives_http_retries_and_rejects_amount_conflicts() {
+        use rust_decimal_macros::dec;
+        let (app, state) = app_with_state();
+        let customer = state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "idempotency@example.invalid".into(),
+                first_name: "Set".into(),
+                last_name: "Test".into(),
+                phone: None,
+                accepts_marketing: None,
+                tags: None,
+                metadata: None,
+            })
+            .unwrap();
+        let invoice = state
+            .commerce()
+            .invoices()
+            .create(stateset_core::CreateInvoice {
+                customer_id: customer.id,
+                items: vec![stateset_core::CreateInvoiceItem {
+                    description: "Settlement".into(),
+                    quantity: dec!(1),
+                    unit_price: dec!(100),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+        state.commerce().invoices().send(invoice.id.into()).unwrap();
+        let payment_id = Uuid::new_v4();
+        for (amount, id, status, paid) in [
+            ("40.00", payment_id, StatusCode::OK, dec!(40)),
+            ("40.00", payment_id, StatusCode::OK, dec!(40)),
+            ("41.00", payment_id, StatusCode::UNPROCESSABLE_ENTITY, dec!(40)),
+            ("60.00", Uuid::new_v4(), StatusCode::OK, dec!(100)),
+            ("40.00", payment_id, StatusCode::OK, dec!(100)),
+            ("1.00", Uuid::nil(), StatusCode::UNPROCESSABLE_ENTITY, dec!(100)),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post(format!("/invoices/{}/payments", invoice.id))
+                        .header("content-type", "application/json")
+                        .body(Body::from(
+                            serde_json::json!({"amount":amount,"payment_id":id}).to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status);
+            assert_eq!(
+                state.commerce().invoices().get(invoice.id.into()).unwrap().unwrap().amount_paid,
+                paid
+            );
+        }
+    }
+    #[tokio::test]
+    async fn invoice_lines_and_currency_are_exact_and_validated() {
+        let (app, state) = app_with_state();
+        let customer = state
+            .commerce()
+            .customers()
+            .create(stateset_core::CreateCustomer {
+                email: "invoice-lines@example.com".into(),
+                first_name: "Invoice".into(),
+                last_name: "Test".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        for (currency, quantity, expected) in [
+            ("USD", serde_json::json!("2"), StatusCode::CREATED),
+            ("BOGUS", serde_json::json!("2"), StatusCode::BAD_REQUEST),
+            ("USD", serde_json::json!(2), StatusCode::UNPROCESSABLE_ENTITY),
+        ] {
+            let body = serde_json::json!({"customer_id":customer.id,"currency":currency,"due_date":"2030-01-31T00:00:00Z","shipping_amount":"0.01","items":[{"description":"Exact item","quantity":quantity,"unit_price":"9007199254740.01","discount_amount":"0.01","tax_amount":"0.02"}]});
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post("/invoices")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+            if expected == StatusCode::CREATED {
+                let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+                let invoice: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(invoice["currency"], "USD");
+                assert_eq!(invoice["total"], "18014398509480.04");
+                assert_eq!(
+                    invoice["items"][0]["unit_price"]
+                        .as_str()
+                        .unwrap()
+                        .parse::<rust_decimal::Decimal>()
+                        .unwrap(),
+                    "9007199254740.01".parse::<rust_decimal::Decimal>().unwrap()
+                );
+                assert_eq!(invoice["due_date"], "2030-01-31T00:00:00Z");
+            }
+        }
     }
 }

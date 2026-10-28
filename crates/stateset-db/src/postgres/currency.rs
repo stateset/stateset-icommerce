@@ -340,6 +340,24 @@ impl PgCurrencyRepository {
 
         let rounding_str = settings.rounding_mode.to_string();
 
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        sqlx::query("SELECT pg_advisory_xact_lock(42420020)")
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        let current = super::ledger_fx::base_currency(&mut tx).await?;
+        if current.as_str() != settings.base_currency.code() {
+            let used: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM gl_journal_entries) OR EXISTS(SELECT 1 FROM cost_layers WHERE base_currency IS NOT NULL) OR EXISTS(SELECT 1 FROM cost_transactions WHERE currency IS NOT NULL)")
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            if used {
+                return Err(CommerceError::Conflict(
+                    "Cannot change functional currency after recording ledger or inventory costs"
+                        .into(),
+                ));
+            }
+        }
         sqlx::query(
             "INSERT INTO store_currency_settings (id, base_currency, enabled_currencies, auto_convert, rounding_mode, updated_at)
              VALUES ('default', $1, $2, $3, $4, NOW())
@@ -354,10 +372,11 @@ impl PgCurrencyRepository {
         .bind(enabled_json)
         .bind(settings.auto_convert)
         .bind(rounding_str)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
+        tx.commit().await.map_err(map_db_error)?;
         self.get_settings_async().await
     }
 

@@ -534,17 +534,19 @@ fn sqlite_backorder_fulfilment_from_inventory_needs_available_stock() {
     assert_eq!(after.quantity_fulfilled, dec!(0), "nothing recorded when stock is short");
     assert_eq!(balance(&db, "BO-4"), (dec!(2), dec!(0), dec!(2)));
 
-    // From a purchase-order receipt the units pass straight through.
-    db.backorder()
-        .fulfill_backorder(FulfillBackorder {
-            backorder_id: bo.id,
-            quantity: dec!(3),
-            source_type: FulfillmentSourceType::PurchaseOrder,
-            source_id: None,
-            notes: None,
-            fulfilled_by: None,
-        })
-        .expect("PO pass-through");
+    // A purchase-order fulfilment must name the PO whose received stock it
+    // consumes; there is no stock-free pass-through.
+    let err = db.backorder().fulfill_backorder(FulfillBackorder {
+        backorder_id: bo.id,
+        quantity: dec!(3),
+        source_type: FulfillmentSourceType::PurchaseOrder,
+        source_id: None,
+        notes: None,
+        fulfilled_by: None,
+    });
+    assert!(matches!(err, Err(CommerceError::ValidationError(_))), "got {err:?}");
+    let after = db.backorder().get_backorder(bo.id).unwrap().unwrap();
+    assert_eq!(after.quantity_fulfilled, dec!(0));
     assert_eq!(balance(&db, "BO-4"), (dec!(2), dec!(0), dec!(2)));
 }
 

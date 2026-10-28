@@ -36,15 +36,17 @@ async fn postgres_bom_list_and_count_compose_product_status_and_search() {
     let product_a = ProductId::new();
     let product_b = ProductId::new();
 
-    let make = |product: ProductId, name: &str| {
+    // Each BOM of a product needs its own revision.
+    let make = |product: ProductId, name: &str, revision: &str| {
         let bom = &bom;
         let name = name.to_string();
+        let revision = revision.to_string();
         async move {
             bom.create_async(CreateBom {
                 product_id: product,
                 name,
                 description: None,
-                revision: None,
+                revision: Some(revision),
                 components: None,
                 created_by: None,
             })
@@ -54,11 +56,11 @@ async fn postgres_bom_list_and_count_compose_product_status_and_search() {
     };
 
     // product_a: one Draft "Widget", one "Gadget" promoted to Active.
-    make(product_a, "Widget Assembly").await;
-    let gadget = make(product_a, "Gadget Assembly").await;
+    make(product_a, "Widget Assembly", "A").await;
+    let gadget = make(product_a, "Gadget Assembly", "B").await;
     bom.activate_async(gadget.id).await.expect("activate");
     // product_b: unrelated Draft "Widget" (must never leak into product_a queries).
-    make(product_b, "Widget Assembly").await;
+    make(product_b, "Widget Assembly", "A").await;
 
     // Assert list length and matching count for a filter in one shot.
     let check = |filter: BomFilter, expected: usize, label: &'static str| {

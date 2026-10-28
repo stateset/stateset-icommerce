@@ -166,9 +166,20 @@ pub struct BomFilter {
 // Work Orders
 // =============================================================================
 
+/// Explicit stock routing for a manufacturing job. Materials are reserved at
+/// the source location and completed units are received at the output location.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkOrderStock {
+    pub source_location_id: i32,
+    pub output_location_id: i32,
+    pub output_sku: String,
+}
+
 /// Work Order - a manufacturing job to build products
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkOrder {
+    /// Required before release; legacy document-only jobs have no mapping.
+    pub stock: Option<WorkOrderStock>,
     pub id: Uuid,
     /// Unique work order number (e.g., "WO-2024-001")
     pub work_order_number: String,
@@ -220,13 +231,18 @@ impl WorkOrder {
     /// Check if work order can be started
     #[must_use]
     pub const fn can_start(&self) -> bool {
-        matches!(self.status, WorkOrderStatus::Planned | WorkOrderStatus::OnHold)
+        matches!(
+            self.status,
+            WorkOrderStatus::Planned
+                | WorkOrderStatus::OnHold
+                | WorkOrderStatus::PartiallyCompleted
+        )
     }
 
     /// Check if work order can be completed
     #[must_use]
     pub fn can_complete(&self) -> bool {
-        matches!(self.status, WorkOrderStatus::InProgress)
+        matches!(self.status, WorkOrderStatus::InProgress | WorkOrderStatus::PartiallyCompleted)
             && self.quantity_to_build > Decimal::ZERO
             && self.quantity_completed >= Decimal::ZERO
             && self.quantity_completed <= self.quantity_to_build
@@ -348,6 +364,8 @@ pub enum WorkOrderPriority {
 /// Input for creating a work order
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateWorkOrder {
+    /// Explicit physical stock locations and finished-goods SKU.
+    pub stock: Option<WorkOrderStock>,
     pub product_id: ProductId,
     pub bom_id: Option<Uuid>,
     pub work_center_id: Option<String>,
@@ -364,6 +382,7 @@ pub struct CreateWorkOrder {
 impl Default for CreateWorkOrder {
     fn default() -> Self {
         Self {
+            stock: None,
             product_id: ProductId::nil(),
             bom_id: None,
             work_center_id: None,
@@ -381,6 +400,8 @@ impl Default for CreateWorkOrder {
 /// Input for updating a work order
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UpdateWorkOrder {
+    /// Stock routing may be changed only while planned.
+    pub stock: Option<WorkOrderStock>,
     pub work_center_id: Option<String>,
     pub assigned_to: Option<Uuid>,
     pub status: Option<WorkOrderStatus>,
@@ -586,6 +607,7 @@ mod tests {
     #[test]
     fn test_work_order_completion_percentage() {
         let wo = WorkOrder {
+            stock: None,
             id: Uuid::new_v4(),
             work_order_number: "WO-001".into(),
             product_id: ProductId::new(),

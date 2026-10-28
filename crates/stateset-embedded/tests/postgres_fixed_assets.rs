@@ -19,7 +19,12 @@ use stateset_core::{
     CreateGlPeriod, DepreciationEntryStatus, DepreciationMethod, FixedAssetCategory,
     FixedAssetFilter, FixedAssetStatus, JournalEntryFilter,
 };
-use stateset_embedded::AsyncCommerce;
+use stateset_embedded::{AsyncCommerce, AsyncGeneralLedger};
+
+/// Ledger posting settings are global and one test here turns posting on, so
+/// the tests in this binary run one at a time: an asset acquired with posting
+/// off cannot depreciate once it is on.
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn postgres_url() -> Option<String> {
     stateset_test_utils::postgres_url()
@@ -44,9 +49,65 @@ fn new_asset_input(name: &str) -> CreateFixedAsset {
         location_id: None,
         asset_account_id: None,
         accumulated_depreciation_account_id: None,
+        acquisition_offset_account_id: None,
+        disposal_gain_loss_account_id: None,
         depreciation_expense_account_id: None,
         currency: None,
     }
+}
+
+/// A posting account dedicated to one test run.
+const fn posting_account(
+    number: String,
+    name: String,
+    account_type: AccountType,
+    sub_type: AccountSubType,
+) -> CreateGlAccount {
+    CreateGlAccount {
+        account_number: number,
+        name,
+        description: None,
+        account_type,
+        account_sub_type: Some(sub_type),
+        parent_account_id: None,
+        is_header: None,
+        is_posting: Some(true),
+        currency: None,
+    }
+}
+
+/// Capitalization, accumulated-depreciation and expense accounts for one asset.
+/// Every binary here shares one database, so ledger posting may already be
+/// configured; acquisition and depreciation then post to these accounts.
+async fn asset_accounts(gl: &AsyncGeneralLedger) -> (uuid::Uuid, uuid::Uuid, uuid::Uuid) {
+    let suffix = &uuid::Uuid::new_v4().simple().to_string()[..8];
+    let create = |number: String, name: String, account_type, sub_type| {
+        let input = posting_account(number, name, account_type, sub_type);
+        async move { gl.create_account(input).await.expect("create asset account").id }
+    };
+    (
+        create(
+            format!("1A-{suffix}"),
+            format!("Equipment {suffix}"),
+            AccountType::Asset,
+            AccountSubType::FixedAsset,
+        )
+        .await,
+        create(
+            format!("1D-{suffix}"),
+            format!("Accumulated Depreciation {suffix}"),
+            AccountType::Asset,
+            AccountSubType::AccumulatedDepreciation,
+        )
+        .await,
+        create(
+            format!("6D-{suffix}"),
+            format!("Depreciation Expense {suffix}"),
+            AccountType::Expense,
+            AccountSubType::DepreciationExpense,
+        )
+        .await,
+    )
 }
 
 #[tokio::test]
@@ -55,10 +116,25 @@ async fn postgres_fixed_asset_lifecycle_and_schedule_persistence() {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping fixed asset lifecycle test");
         return;
     };
+    let _serial = SERIAL.lock().await;
     let commerce = AsyncCommerce::connect(&url).await.expect("connect + migrate");
     let assets = commerce.fixed_assets();
+    // Depreciation never posts a period that hasn't ended, so the whole
+    // schedule (Feb 2025 to Jan 2026) lies in the past, with open periods for
+    // the acquisition and every posting date.
+    let gl = commerce.general_ledger();
+    let (capitalization, accumulated, expense) = asset_accounts(&gl).await;
+    for month in 1..=12 {
+        common::ensure_open_month(&gl, 2025, month).await;
+    }
+    common::ensure_open_month(&gl, 2026, 1).await;
 
-    let asset = assets.create(new_asset_input("PG Lathe")).await.expect("create asset");
+    let mut input = new_asset_input("PG Lathe");
+    input.acquisition_date = date(2025, 1, 1);
+    input.asset_account_id = Some(capitalization);
+    input.accumulated_depreciation_account_id = Some(accumulated);
+    input.depreciation_expense_account_id = Some(expense);
+    let asset = assets.create(input).await.expect("create asset");
     assert_eq!(asset.status, FixedAssetStatus::Draft);
     assert!(!asset.asset_number.is_empty(), "asset number must be generated");
     assert_eq!(asset.accumulated_depreciation, Decimal::ZERO);
@@ -67,9 +143,9 @@ async fn postgres_fixed_asset_lifecycle_and_schedule_persistence() {
     assert!(assets.post_depreciation(asset.id, 1).await.is_err());
 
     let asset =
-        assets.place_in_service(asset.id, date(2026, 2, 1)).await.expect("place in service");
+        assets.place_in_service(asset.id, date(2025, 2, 1)).await.expect("place in service");
     assert_eq!(asset.status, FixedAssetStatus::InService);
-    assert_eq!(asset.in_service_date, Some(date(2026, 2, 1)));
+    assert_eq!(asset.in_service_date, Some(date(2025, 2, 1)));
 
     // Generate and persist the depreciation schedule.
     let schedule = assets.generate_schedule(asset.id).await.expect("generate schedule");
@@ -120,6 +196,7 @@ async fn postgres_fixed_asset_depreciation_auto_posts_journal_entry() {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping depreciation auto-post test");
         return;
     };
+    let _serial = SERIAL.lock().await;
     let commerce = AsyncCommerce::connect(&url).await.expect("connect + migrate");
     let gl = commerce.general_ledger();
     let assets = commerce.fixed_assets();
@@ -199,6 +276,10 @@ async fn postgres_fixed_asset_depreciation_auto_posts_journal_entry() {
         unearned_revenue_account_id: None,
         sales_revenue_account_id: acct("4010").await,
         shipping_revenue_account_id: None,
+        sales_tax_payable_account_id: None,
+        goods_received_not_invoiced_account_id: None,
+        inventory_adjustment_account_id: None,
+        work_in_progress_account_id: None,
         cogs_account_id: acct("5010").await,
         bad_debt_expense_account_id: None,
         fx_gain_loss_account_id: None,
@@ -208,7 +289,22 @@ async fn postgres_fixed_asset_depreciation_auto_posts_journal_entry() {
     .await
     .expect("set auto-posting config");
 
+    // Acquisition posts too: it needs a capitalization account and an open
+    // period on the acquisition date, as each depreciation month does.
+    let capitalization = gl
+        .create_account(posting_account(
+            format!("1A-{suffix}"),
+            format!("Equipment {suffix}"),
+            AccountType::Asset,
+            AccountSubType::FixedAsset,
+        ))
+        .await
+        .expect("create capitalization account");
+    for month in 1..=3 {
+        common::ensure_open_month(&gl, 2026, month).await;
+    }
     let mut input = new_asset_input("PG Auto-Post Press");
+    input.asset_account_id = Some(capitalization.id);
     input.depreciation_expense_account_id = Some(expense.id);
     input.accumulated_depreciation_account_id = Some(accumulated.id);
     let asset = assets.create(input).await.expect("create asset");
@@ -227,21 +323,22 @@ async fn postgres_fixed_asset_depreciation_auto_posts_journal_entry() {
         })
         .await
         .expect("list journal entries");
-    assert_eq!(entries.len(), 1, "exactly one depreciation entry for this posting");
+    assert_eq!(entries.len(), 2, "one entry per depreciation month");
     let entry = &entries[0];
-    assert_eq!(entry.total_debits, dec!(200));
-    assert_eq!(entry.total_credits, dec!(200));
+    assert_eq!(entry.total_debits, dec!(100));
+    assert_eq!(entry.total_credits, dec!(100));
 
     let lines = gl.get_journal_entry_lines(entry.id).await.expect("entry lines");
     assert_eq!(lines.len(), 2);
     assert!(
-        lines.iter().any(|l| l.account_id == expense.id && l.debit_amount == dec!(200)),
+        lines.iter().any(|l| l.account_id == expense.id && l.debit_amount == dec!(100)),
         "debit hits the asset's depreciation expense account"
     );
     assert!(
-        lines.iter().any(|l| l.account_id == accumulated.id && l.credit_amount == dec!(200)),
+        lines.iter().any(|l| l.account_id == accumulated.id && l.credit_amount == dec!(100)),
         "credit hits the asset's accumulated depreciation account"
     );
+    common::deactivate_posting(commerce.database().pool()).await;
 }
 
 #[tokio::test]
@@ -250,10 +347,33 @@ async fn postgres_fixed_asset_dispose_records_gain_loss() {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping fixed asset dispose test");
         return;
     };
+    let _serial = SERIAL.lock().await;
     let commerce = AsyncCommerce::connect(&url).await.expect("connect + migrate");
     let assets = commerce.fixed_assets();
+    // An earlier binary may have left ledger posting active: acquisition and
+    // disposal then post, needing accounts and open periods (Jan-Jun 2026).
+    let gl = commerce.general_ledger();
+    let (capitalization, accumulated, expense) = asset_accounts(&gl).await;
+    let suffix = &uuid::Uuid::new_v4().simple().to_string()[..8];
+    let gain_loss = gl
+        .create_account(posting_account(
+            format!("7G-{suffix}"),
+            format!("Gain or loss on disposal {suffix}"),
+            AccountType::Expense,
+            AccountSubType::OtherExpense,
+        ))
+        .await
+        .expect("create gain/loss account");
+    for month in 1..=6 {
+        common::ensure_open_month(&gl, 2026, month).await;
+    }
 
-    let asset = assets.create(new_asset_input("PG Forklift")).await.expect("create asset");
+    let mut input = new_asset_input("PG Forklift");
+    input.asset_account_id = Some(capitalization);
+    input.accumulated_depreciation_account_id = Some(accumulated);
+    input.depreciation_expense_account_id = Some(expense);
+    input.disposal_gain_loss_account_id = Some(gain_loss.id);
+    let asset = assets.create(input).await.expect("create asset");
     assets.place_in_service(asset.id, date(2026, 2, 1)).await.expect("place in service");
     assets.generate_schedule(asset.id).await.expect("generate schedule");
 

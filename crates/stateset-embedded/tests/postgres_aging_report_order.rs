@@ -40,7 +40,7 @@ async fn postgres_aging_report_orders_ties_by_customer_id() {
             })
             .await
             .expect("create customer");
-        commerce
+        let invoice = commerce
             .invoices()
             .create(CreateInvoice {
                 customer_id: customer.id,
@@ -55,6 +55,8 @@ async fn postgres_aging_report_orders_ties_by_customer_id() {
             })
             .await
             .expect("create invoice");
+        // Aging counts issued invoices only.
+        commerce.invoices().send(invoice.id.into_uuid()).await.expect("issue invoice");
         ids.push(customer.id.into_uuid());
     }
 

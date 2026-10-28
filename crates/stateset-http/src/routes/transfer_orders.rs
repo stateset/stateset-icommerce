@@ -16,6 +16,8 @@ use utoipa::{IntoParams, ToSchema};
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub(crate) struct CreateTransferOrderItemRequest {
+    pub sku: String,
+    pub lot_id: Option<String>,
     pub product_id: String,
     /// Decimal quantity as a string (e.g. `"10"`).
     pub quantity: String,
@@ -23,6 +25,8 @@ pub(crate) struct CreateTransferOrderItemRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub(crate) struct CreateTransferOrderRequest {
+    pub source_location_id: i32,
+    pub destination_location_id: i32,
     pub source_warehouse_id: String,
     pub destination_warehouse_id: String,
     pub items: Vec<CreateTransferOrderItemRequest>,
@@ -46,6 +50,10 @@ pub(crate) struct TransferOrderFilterParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub(crate) struct TransferOrderItemResponse {
+    pub sku: String,
+    pub lot_id: Option<String>,
+    pub quantity_shipped: String,
+    pub quantity_variance: String,
     pub id: String,
     pub product_id: String,
     pub quantity: String,
@@ -54,6 +62,8 @@ pub(crate) struct TransferOrderItemResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub(crate) struct TransferOrderResponse {
+    pub source_location_id: Option<i32>,
+    pub destination_location_id: Option<i32>,
     pub id: String,
     pub number: String,
     pub source_warehouse_id: String,
@@ -71,6 +81,8 @@ pub(crate) struct TransferOrderListResponse {
 
 fn to_resp(t: &stateset_core::TransferOrder) -> TransferOrderResponse {
     TransferOrderResponse {
+        source_location_id: t.source_location_id,
+        destination_location_id: t.destination_location_id,
         id: t.id.to_string(),
         number: t.number.clone(),
         source_warehouse_id: t.source_warehouse_id.to_string(),
@@ -80,6 +92,10 @@ fn to_resp(t: &stateset_core::TransferOrder) -> TransferOrderResponse {
             .items
             .iter()
             .map(|i| TransferOrderItemResponse {
+                sku: i.sku.clone(),
+                lot_id: i.lot_id.map(|id| id.to_string()),
+                quantity_shipped: i.quantity_shipped.to_string(),
+                quantity_variance: i.quantity_variance.to_string(),
                 id: i.id.to_string(),
                 product_id: i.product_id.to_string(),
                 quantity: i.quantity.to_string(),
@@ -101,6 +117,7 @@ pub fn router() -> Router<AppState> {
         .route("/transfer-orders/{id}/ship", post(ship))
         .route("/transfer-orders/{id}/receive", post(receive))
         .route("/transfer-orders/{id}/cancel", post(cancel))
+        .route("/transfer-orders/{id}/complete-receiving", post(complete_receiving))
 }
 
 #[utoipa::path(post, operation_id = "transfer_orders_create", path = "/api/v1/transfer-orders", tag = "transfer_orders",
@@ -118,11 +135,15 @@ pub(crate) async fn create(
             let mut items = Vec::with_capacity(req.items.len());
             for i in req.items {
                 items.push(stateset_core::CreateTransferOrderItem {
+                    sku: i.sku,
+                    lot_id: i.lot_id.as_deref().map(|id| parse_id(id, "lot_id")).transpose()?,
                     product_id: parse_id(&i.product_id, "product_id")?,
                     quantity: parse_decimal(&i.quantity)?,
                 });
             }
             let input = stateset_core::CreateTransferOrder {
+                source_location_id: req.source_location_id,
+                destination_location_id: req.destination_location_id,
                 source_warehouse_id: parse_id::<WarehouseId>(
                     &req.source_warehouse_id,
                     "source_warehouse_id",
@@ -248,6 +269,22 @@ pub(crate) async fn cancel(
         .await
 }
 
+#[utoipa::path(post, operation_id = "transfer_orders_complete_receiving", path = "/api/v1/transfer-orders/{id}/complete-receiving", tag = "transfer_orders",
+    params(("id" = String, Path, description = "Transfer order ID")),
+    responses((status = 200, body = TransferOrderResponse)))]
+pub(crate) async fn complete_receiving(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<TransferOrderId>,
+) -> Result<Json<TransferOrderResponse>, HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(to_resp(&c.transfer_orders().complete_receiving(id)?)))
+        })
+        .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,14 +295,72 @@ mod tests {
 
     #[tokio::test]
     async fn create_transfer_order() {
-        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        use stateset_core::{
+            AdjustLocationInventory, CreateLocation, CreateProduct, CreateProductVariant,
+            CreateWarehouse,
+        };
+        let commerce = Commerce::new(":memory:").unwrap();
+        let mut locations = Vec::new();
+        for code in ["SRC", "DST"] {
+            let warehouse = commerce
+                .warehouse()
+                .create_warehouse(CreateWarehouse {
+                    code: code.into(),
+                    name: code.into(),
+                    ..Default::default()
+                })
+                .unwrap();
+            locations.push(
+                commerce
+                    .warehouse()
+                    .create_location(CreateLocation {
+                        warehouse_id: warehouse.id,
+                        ..Default::default()
+                    })
+                    .unwrap()
+                    .id,
+            );
+        }
+        let product = commerce
+            .products()
+            .create(CreateProduct {
+                name: "Transfer stock".into(),
+                slug: None,
+                description: None,
+                attributes: None,
+                seo: None,
+                product_type: None,
+                variants: Some(vec![CreateProductVariant {
+                    sku: "TRANSFER-HTTP".into(),
+                    price: Decimal::ONE,
+                    ..Default::default()
+                }]),
+            })
+            .unwrap();
+        commerce
+            .warehouse()
+            .adjust_inventory(AdjustLocationInventory {
+                location_id: locations[0],
+                sku: "TRANSFER-HTTP".into(),
+                lot_id: None,
+                quantity: Decimal::from(10),
+                reason: "test stock".into(),
+                reference_type: None,
+                reference_id: None,
+                performed_by: None,
+            })
+            .unwrap();
+        let state = AppState::new(commerce);
         let app = router().with_state(state);
         let body = serde_json::json!({
             "source_warehouse_id": uuid::Uuid::new_v4().to_string(),
             "destination_warehouse_id": uuid::Uuid::new_v4().to_string(),
-            "items": [{"product_id": uuid::Uuid::new_v4().to_string(), "quantity": "10"}]
+            "source_location_id": locations[0],
+            "destination_location_id": locations[1],
+            "items": [{"product_id": product.id, "sku": "TRANSFER-HTTP", "quantity": "10"}]
         });
         let resp = app
+            .clone()
             .oneshot(
                 Request::post("/transfer-orders")
                     .header("content-type", "application/json")
@@ -275,5 +370,22 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::CREATED);
+        let json: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap(),
+        )
+        .unwrap();
+        let id = json["id"].as_str().unwrap();
+        for action in ["ship", "complete-receiving"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post(format!("/transfer-orders/{id}/{action}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
     }
 }

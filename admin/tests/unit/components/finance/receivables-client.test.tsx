@@ -1,3 +1,4 @@
+vi.mock('@/components/finance/receivable-actions', () => ({ default: () => null }));
 // Component test for the Finance > Receivables page client: AR aging cards,
 // DSO stat, and the per-customer aging table.
 

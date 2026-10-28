@@ -9,15 +9,17 @@
 #![allow(dead_code)]
 
 use chrono::NaiveDate;
-use stateset_core::{CreateGlPeriod, GlPeriod};
+use stateset_core::{CreateGlPeriod, GlPeriod, PeriodStatus};
 use stateset_embedded::AsyncGeneralLedger;
 
 /// Get-or-create a GL period and make sure it is open.
 ///
 /// If another test binary already created the same `(fiscal_year,
 /// period_number)`, the unique-constraint conflict is resolved by looking the
-/// period up by date instead. `open_period` is a no-op on an already-open
-/// period, so calling it unconditionally is safe.
+/// period up by date instead. Periods may not overlap, so binaries that post
+/// on the same dates must use the same period shape (see `ensure_open_month`).
+/// Opening an already-open period is a conflict, so an open one is reused,
+/// including one a concurrent test opened first.
 pub(crate) async fn ensure_open_period(gl: &AsyncGeneralLedger, input: CreateGlPeriod) -> GlPeriod {
     let probe_date = input.start_date;
     let period = match gl.create_period(input).await {
@@ -28,7 +30,20 @@ pub(crate) async fn ensure_open_period(gl: &AsyncGeneralLedger, input: CreateGlP
             .expect("look up existing period")
             .unwrap_or_else(|| panic!("period covering {probe_date} exists")),
     };
-    gl.open_period(period.id).await.expect("open period")
+    if period.status == PeriodStatus::Open {
+        return period;
+    }
+    match gl.open_period(period.id).await {
+        Ok(opened) => opened,
+        // Tests in one binary run concurrently: another may have opened it
+        // between the read above and this call.
+        Err(err) => gl
+            .get_period_for_date(probe_date)
+            .await
+            .expect("look up period")
+            .filter(|p| p.status == PeriodStatus::Open)
+            .unwrap_or_else(|| panic!("open period: {err:?}")),
+    }
 }
 
 /// Convenience wrapper: build the `CreateGlPeriod` from parts.
@@ -57,4 +72,15 @@ pub(crate) async fn ensure_open_month(
         },
     )
     .await
+}
+
+/// Deactivate the ledger posting settings a test configured. Settings are
+/// global to the store and every binary here shares one database; with posting
+/// active, stock moves and asset events post to the ledger and need accounts
+/// most binaries never set up.
+pub(crate) async fn deactivate_posting(pool: &sqlx::PgPool) {
+    sqlx::query("UPDATE gl_auto_posting_config SET is_active = FALSE WHERE is_active = TRUE")
+        .execute(pool)
+        .await
+        .expect("deactivate ledger posting");
 }

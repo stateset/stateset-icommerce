@@ -17,35 +17,116 @@ const dts = fs.readFileSync(path.join(__dirname, '..', 'index.d.ts'), 'utf8');
 
 /** Every union the g2 fragment declares. */
 const UNIONS = [
-  'LotStatus', 'LotStatusInput', 'SerialStatus', 'SerialStatusInput',
-  'InspectionType', 'InspectionTypeInput', 'InspectionStatus', 'NcrSource', 'NcrSourceInput',
-  'NcrSeverity', 'NcrSeverityInput', 'NcrStatus', 'NcrStatusInput', 'NcrDisposition',
-  'NcrDispositionInput', 'QualityHoldType', 'QualityHoldTypeInput',
-  'QualityHoldTypeFilter', 'QualityHoldStatus',
-  'WarehouseType', 'WarehouseTypeInput', 'WarehouseTypeFilter', 'WarehouseLocationType',
-  'WarehouseLocationTypeInput', 'ReceiptType', 'ReceiptTypeInput', 'ReceiptTypeFilter',
-  'ReceiptStatus', 'ReceiptStatusInput', 'WaveStatus', 'WaveStatusInput', 'PickTaskStatus',
+  'LotStatus',
+  'LotStatusInput',
+  'SerialStatus',
+  'SerialStatusInput',
+  'InspectionType',
+  'InspectionTypeInput',
+  'InspectionStatus',
+  'NcrSource',
+  'NcrSourceInput',
+  'NcrSeverity',
+  'NcrSeverityInput',
+  'NcrStatus',
+  'NcrStatusInput',
+  'NcrDisposition',
+  'NcrDispositionInput',
+  'QualityHoldType',
+  'QualityHoldTypeInput',
+  'QualityHoldTypeFilter',
+  'QualityHoldStatus',
+  'WarehouseType',
+  'WarehouseTypeInput',
+  'WarehouseTypeFilter',
+  'WarehouseLocationType',
+  'WarehouseLocationTypeInput',
+  'ReceiptType',
+  'ReceiptTypeInput',
+  'ReceiptTypeFilter',
+  'ReceiptStatus',
+  'ReceiptStatusInput',
+  'WaveStatus',
+  'WaveStatusInput',
+  'PickTaskStatus',
   'PickTaskStatusInput',
-  'BillStatus', 'BillStatusInput', 'ThreeWayMatchStatus', 'CreditMemoStatus', 'CreditMemoStatusInput',
-  'CreditMemoReason', 'CreditMemoReasonInput', 'CreditMemoReasonFilter', 'CostMethod', 'CostMethodInput',
-  'CostMethodFilter', 'CreditAccountStatus', 'CreditAccountStatusInput', 'BackorderStatus',
-  'BackorderStatusInput', 'BackorderPriority', 'BackorderPriorityInput', 'BackorderPriorityFilter',
-  'GlAccountType', 'GlAccountTypeInput', 'GlAccountTypeFilter', 'GlAccountStatus', 'GlAccountStatusInput',
-  'GlJournalEntryStatus', 'GlJournalEntryStatusInput', 'GlPeriodStatus', 'CloseMonthStepStatus',
+  'BillStatus',
+  'BillStatusInput',
+  'ThreeWayMatchStatus',
+  'CreditMemoStatus',
+  'CreditMemoStatusInput',
+  'CreditMemoReason',
+  'CreditMemoReasonInput',
+  'CreditMemoReasonFilter',
+  'CostMethod',
+  'CostMethodInput',
+  'CostMethodFilter',
+  'CreditAccountStatus',
+  'CreditAccountStatusInput',
+  'BackorderStatus',
+  'BackorderStatusInput',
+  'BackorderPriority',
+  'BackorderPriorityInput',
+  'BackorderPriorityFilter',
+  'GlAccountType',
+  'GlAccountTypeInput',
+  'GlAccountTypeFilter',
+  'GlAccountStatus',
+  'GlAccountStatusInput',
+  'GlJournalEntryStatus',
+  'GlJournalEntryStatusInput',
+  'GlPeriodStatus',
+  'CloseMonthStepStatus',
   'GlBalanceSide',
-  'SubscriptionPlanStatus', 'SubscriptionBillingInterval', 'SubscriptionBillingIntervalInput',
-  'SubscriptionStatus', 'BillingCycleStatus', 'SubscriptionEventType',
-  'PromotionType', 'PromotionTypeInput', 'PromotionTrigger', 'PromotionTriggerInput', 'PromotionTarget',
-  'PromotionTargetInput', 'PromotionStacking', 'PromotionStackingInput', 'PromotionStatus', 'CouponStatus',
-  'TaxType', 'ProductTaxCategory', 'TaxJurisdictionLevel', 'TaxExemptionType', 'TaxExemptionTypeInput',
-  'TaxCalculationMethod', 'TaxCompoundMethod',
-  'X402Network', 'X402NetworkInput', 'X402Asset', 'X402AssetInput', 'X402IntentStatus',
-  'X402IntentStatusInput', 'X402SignatureScheme', 'X402TrustLevel', 'X402TrustLevelInput', 'X402A2ASkill',
-  'X402A2ASkillInput', 'X402CreditDirection', 'X402CreditDirectionInput',
-  'VectorEntityType', 'VesHashDomain',
-  'GiftCardStatus', 'GiftCardTransactionType', 'StoreCreditStatus', 'StoreCreditReason',
-  'StoreCreditTransactionType', 'ReviewStatus', 'SegmentType', 'SegmentOperator', 'LoyaltyProgramStatus',
-  'LoyaltyTransactionType', 'LoyaltyRewardType',
+  'SubscriptionPlanStatus',
+  'SubscriptionBillingInterval',
+  'SubscriptionBillingIntervalInput',
+  'SubscriptionStatus',
+  'BillingCycleStatus',
+  'SubscriptionEventType',
+  'PromotionType',
+  'PromotionTypeInput',
+  'PromotionTrigger',
+  'PromotionTriggerInput',
+  'PromotionTarget',
+  'PromotionTargetInput',
+  'PromotionStacking',
+  'PromotionStackingInput',
+  'PromotionStatus',
+  'CouponStatus',
+  'TaxType',
+  'ProductTaxCategory',
+  'TaxJurisdictionLevel',
+  'TaxExemptionType',
+  'TaxExemptionTypeInput',
+  'TaxCalculationMethod',
+  'TaxCompoundMethod',
+  'X402Network',
+  'X402NetworkInput',
+  'X402Asset',
+  'X402AssetInput',
+  'X402IntentStatus',
+  'X402IntentStatusInput',
+  'X402SignatureScheme',
+  'X402TrustLevel',
+  'X402TrustLevelInput',
+  'X402A2ASkill',
+  'X402A2ASkillInput',
+  'X402CreditDirection',
+  'X402CreditDirectionInput',
+  'VectorEntityType',
+  'VesHashDomain',
+  'GiftCardStatus',
+  'GiftCardTransactionType',
+  'StoreCreditStatus',
+  'StoreCreditReason',
+  'StoreCreditTransactionType',
+  'ReviewStatus',
+  'SegmentType',
+  'SegmentOperator',
+  'LoyaltyProgramStatus',
+  'LoyaltyTransactionType',
+  'LoyaltyRewardType',
 ];
 
 /** `[interface, field, type]` triples that must render with the union. */
@@ -167,8 +248,14 @@ test('g2 declarations: generated interfaces reference the unions', () => {
 });
 
 test('g2 declarations: any-typed arguments are narrowed', () => {
-  assert.match(block('class', 'VectorSearch'), /clear\(entityType: VectorEntityType\): Promise<number>/);
-  assert.match(dts, /^export declare function domainHash\(domain: VesHashDomain, data: Buffer\): Buffer$/m);
+  assert.match(
+    block('class', 'VectorSearch'),
+    /clear\(entityType: VectorEntityType\): Promise<number>/,
+  );
+  assert.match(
+    dts,
+    /^export declare function domainHash\(domain: VesHashDomain, data: Buffer\): Buffer$/m,
+  );
   assert.match(
     block('class', 'X402'),
     /discoverAgents\(network\?: X402NetworkInput, asset\?: X402AssetInput, skill\?: X402A2ASkillInput, trustLevel\?: X402TrustLevelInput\)/,
@@ -180,7 +267,10 @@ test('g2 declarations: every paginated list takes an optional filter object', ()
     const body = block('class', cls);
     assert.match(
       body,
-      new RegExp(`^  ${method}\\(filter\\?: ${filter} \\| undefined \\| null\\): Promise<Array<${output}>>$`, 'm'),
+      new RegExp(
+        `^  ${method}\\(filter\\?: ${filter} \\| undefined \\| null\\): Promise<Array<${output}>>$`,
+        'm',
+      ),
       `${cls}.${method} accepts ${filter}`,
     );
     const filterBody = block('interface', filter);
@@ -266,7 +356,11 @@ test('g2 pagination: warehouse, quality holds, item costs, credit accounts', asy
   const commerce = new Commerce(':memory:');
 
   await t.test('warehouses', async () => {
-    await commerce.warehouse.createWarehouse({ code: 'G2-W1', name: 'One', warehouseType: 'retail' });
+    await commerce.warehouse.createWarehouse({
+      code: 'G2-W1',
+      name: 'One',
+      warehouseType: 'retail',
+    });
     await commerce.warehouse.createWarehouse({ code: 'G2-W2', name: 'Two' });
     assert.equal((await commerce.warehouse.listWarehouses()).length, 2);
     assert.equal((await commerce.warehouse.listWarehouses({ limit: 1 })).length, 1);
@@ -278,8 +372,18 @@ test('g2 pagination: warehouse, quality holds, item costs, credit accounts', asy
   });
 
   await t.test('quality holds', async () => {
-    await commerce.quality.createHold({ sku: 'G2-H', quantityHeld: 1, reason: 'a', holdType: 'damaged' });
-    await commerce.quality.createHold({ sku: 'G2-H', quantityHeld: 1, reason: 'b', holdType: 'recall' });
+    await commerce.quality.createHold({
+      sku: 'G2-H',
+      quantityHeld: 1,
+      reason: 'a',
+      holdType: 'damaged',
+    });
+    await commerce.quality.createHold({
+      sku: 'G2-H',
+      quantityHeld: 1,
+      reason: 'b',
+      holdType: 'recall',
+    });
     assert.equal((await commerce.quality.listHolds()).length, 2);
     assert.equal((await commerce.quality.listHolds({ limit: 1 })).length, 1);
     const damaged = await commerce.quality.listHolds({ holdType: 'Damaged' });
@@ -291,8 +395,16 @@ test('g2 pagination: warehouse, quality holds, item costs, credit accounts', asy
   });
 
   await t.test('item costs', async () => {
-    await commerce.costAccounting.setItemCost({ sku: 'G2-C1', costMethod: 'fifo', standardCost: 1 });
-    await commerce.costAccounting.setItemCost({ sku: 'G2-C2', costMethod: 'average', standardCost: 1 });
+    await commerce.costAccounting.setItemCost({
+      sku: 'G2-C1',
+      costMethod: 'fifo',
+      standardCost: '1',
+    });
+    await commerce.costAccounting.setItemCost({
+      sku: 'G2-C2',
+      costMethod: 'average',
+      standardCost: '1',
+    });
     assert.equal((await commerce.costAccounting.listItemCosts()).length, 2);
     assert.equal((await commerce.costAccounting.listItemCosts({ limit: 1 })).length, 1);
     const fifo = await commerce.costAccounting.listItemCosts({ costMethod: 'Fifo' });
@@ -306,7 +418,7 @@ test('g2 pagination: warehouse, quality holds, item costs, credit accounts', asy
     for (const email of ['g2a@example.com', 'g2b@example.com']) {
       const c = await commerce.customers.create({ email, firstName: 'G', lastName: 'Two' });
       ids.push(c.id);
-      await commerce.credit.createCreditAccount({ customerId: c.id, creditLimit: 100 });
+      await commerce.credit.createCreditAccount({ customerId: c.id, creditLimit: '100' });
     }
     assert.equal((await commerce.credit.listCreditAccounts()).length, 2);
     assert.equal((await commerce.credit.listCreditAccounts({ limit: 1 })).length, 1);
@@ -328,15 +440,27 @@ test('g2 pagination: general ledger', async (t) => {
     const assets = await commerce.generalLedger.listAccounts({ accountType: 'Asset' });
     assert.ok(assets.length > 0);
     assert.ok(assets.every((a) => a.accountType === 'Asset'));
-    assert.equal((await commerce.generalLedger.listAccounts({ accountType: 'asset' })).length, assets.length);
-    await rejectsWith('VALIDATION', commerce.generalLedger.listAccounts({ accountType: 'treasure' }));
+    assert.equal(
+      (await commerce.generalLedger.listAccounts({ accountType: 'asset' })).length,
+      assets.length,
+    );
+    await rejectsWith(
+      'VALIDATION',
+      commerce.generalLedger.listAccounts({ accountType: 'treasure' }),
+    );
     await rejectsWith('VALIDATION', commerce.generalLedger.listAccounts({ status: 'sleepy' }));
   });
 
   await t.test('journal entries', async () => {
     assert.deepEqual(await commerce.generalLedger.listJournalEntries(), []);
-    assert.deepEqual(await commerce.generalLedger.listJournalEntries({ status: 'Posted', limit: 5 }), []);
-    await rejectsWith('VALIDATION', commerce.generalLedger.listJournalEntries({ fromDate: '2026/01/01' }));
+    assert.deepEqual(
+      await commerce.generalLedger.listJournalEntries({ status: 'Posted', limit: 5 }),
+      [],
+    );
+    await rejectsWith(
+      'VALIDATION',
+      commerce.generalLedger.listJournalEntries({ fromDate: '2026/01/01' }),
+    );
     await rejectsWith('VALIDATION', commerce.generalLedger.listJournalEntries({ status: 'lost' }));
   });
 });
@@ -348,8 +472,14 @@ test('g2 pagination: empty stores still answer filtered lists', async () => {
   assert.deepEqual(await commerce.fulfillment.listWaves({ status: 'in_progress' }), []);
   assert.deepEqual(await commerce.fulfillment.listPicks({ status: 'InProgress', offset: 0 }), []);
   assert.deepEqual(await commerce.accountsPayable.listBills({ status: 'PartiallyPaid' }), []);
-  assert.deepEqual(await commerce.accountsReceivable.listCreditMemos({ reason: 'ReturnedGoods' }), []);
-  assert.deepEqual(await commerce.backorder.listBackorders({ status: 'ready_to_ship', priority: 'High' }), []);
+  assert.deepEqual(
+    await commerce.accountsReceivable.listCreditMemos({ reason: 'ReturnedGoods' }),
+    [],
+  );
+  assert.deepEqual(
+    await commerce.backorder.listBackorders({ status: 'ready_to_ship', priority: 'High' }),
+    [],
+  );
   await rejectsWith('VALIDATION', commerce.receiving.listReceipts({ status: 'teleported' }));
   await rejectsWith('VALIDATION', commerce.fulfillment.listPicks({ waveId: 'not-a-uuid' }));
   await rejectsWith('VALIDATION', commerce.accountsPayable.listBills({ fromDate: 'soon' }));

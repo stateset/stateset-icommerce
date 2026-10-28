@@ -4,7 +4,7 @@
     "coverageModel": "cli/src/coverage/mcp-api-coverage.js"
   },
   "totalDomainModules": 89,
-  "totalDomainTools": 951,
+  "totalDomainTools": 988,
   "totalCommerceGetters": 68,
   "mappedCommerceGetters": 68,
   "uncoveredCommerceGetters": [],
@@ -13,12 +13,12 @@
     {
       "getter": "accountsPayable",
       "module": "accounts-payable",
-      "toolCount": 11
+      "toolCount": 22
     },
     {
       "getter": "accountsReceivable",
       "module": "accounts-receivable",
-      "toolCount": 8
+      "toolCount": 15
     },
     {
       "getter": "activityLogs",
@@ -43,7 +43,7 @@
     {
       "getter": "bom",
       "module": "manufacturing",
-      "toolCount": 11
+      "toolCount": 12
     },
     {
       "getter": "carts",
@@ -118,7 +118,7 @@
     {
       "getter": "generalLedger",
       "module": "general-ledger",
-      "toolCount": 17
+      "toolCount": 26
     },
     {
       "getter": "giftCards",
@@ -233,7 +233,7 @@
     {
       "getter": "receiving",
       "module": "receiving",
-      "toolCount": 8
+      "toolCount": 16
     },
     {
       "getter": "returns",
@@ -308,7 +308,7 @@
     {
       "getter": "transferOrders",
       "module": "transfer-orders",
-      "toolCount": 7
+      "toolCount": 8
     },
     {
       "getter": "unitsOfMeasure",
@@ -343,7 +343,7 @@
     {
       "getter": "workOrders",
       "module": "manufacturing",
-      "toolCount": 11
+      "toolCount": 12
     },
     {
       "getter": "x402",
@@ -352,24 +352,24 @@
     }
   ],
   "totalAuditedClasses": 32,
-  "totalAuditedMethods": 421,
-  "mappedAuditedMethods": 421,
+  "totalAuditedMethods": 461,
+  "mappedAuditedMethods": 461,
   "uncoveredAuditedMethods": [],
   "staleAuditedMethodMappings": [],
   "invalidAuditedToolReferences": [],
   "auditedClasses": [
     {
       "className": "AccountsPayable",
-      "methodCount": 13,
-      "mappedMethodCount": 13,
+      "methodCount": 24,
+      "mappedMethodCount": 24,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
     },
     {
       "className": "AccountsReceivable",
-      "methodCount": 8,
-      "mappedMethodCount": 8,
+      "methodCount": 15,
+      "mappedMethodCount": 15,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
@@ -456,8 +456,8 @@
     },
     {
       "className": "GeneralLedger",
-      "methodCount": 18,
-      "mappedMethodCount": 18,
+      "methodCount": 27,
+      "mappedMethodCount": 27,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
@@ -472,8 +472,8 @@
     },
     {
       "className": "Invoices",
-      "methodCount": 8,
-      "mappedMethodCount": 8,
+      "methodCount": 9,
+      "mappedMethodCount": 9,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
@@ -496,8 +496,8 @@
     },
     {
       "className": "Payments",
-      "methodCount": 14,
-      "mappedMethodCount": 14,
+      "methodCount": 16,
+      "mappedMethodCount": 16,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
@@ -536,8 +536,8 @@
     },
     {
       "className": "Receiving",
-      "methodCount": 10,
-      "mappedMethodCount": 10,
+      "methodCount": 18,
+      "mappedMethodCount": 18,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []
@@ -600,8 +600,8 @@
     },
     {
       "className": "WorkOrders",
-      "methodCount": 7,
-      "mappedMethodCount": 7,
+      "methodCount": 9,
+      "mappedMethodCount": 9,
       "uncoveredMethods": [],
       "staleMappedMethods": [],
       "invalidToolReferences": []

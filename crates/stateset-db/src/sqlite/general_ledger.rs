@@ -9,17 +9,16 @@ use crate::sqlite::{
 use chrono::{NaiveDate, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{params, types::Type};
+use rusqlite::{OptionalExtension, params, types::Type};
 use rust_decimal::Decimal;
 use stateset_core::{
-    AccountStatus, AccountSubType, AccountType, AutoPostingConfig, BalanceSheet, BalanceSheetLine,
-    BalanceSide, BatchResult, CreateAutoPostingConfig, CreateGlAccount, CreateGlPeriod,
-    CreateJournalEntry, Currency, FX_REVALUATION_REFERENCE, GeneralLedgerRepository, GlAccount,
-    GlAccountFilter, GlPeriod, GlPeriodFilter, IncomeStatement, IncomeStatementLine, InvoiceId,
-    JournalEntry, JournalEntryFilter, JournalEntryLine, JournalEntrySource, JournalEntryStatus,
-    JournalEntryType, PeriodStatus, Result, RevaluationLine, RevaluationResult, TrialBalance,
-    TrialBalanceLine, UpdateGlAccount, create_default_chart_of_accounts,
-    generate_journal_entry_number,
+    AccountStatus, AccountSubType, AccountType, AutoPostingConfig, BalanceSheet, BalanceSide,
+    BatchResult, CreateAutoPostingConfig, CreateGlAccount, CreateGlPeriod, CreateJournalEntry,
+    Currency, GeneralLedgerRepository, GlAccount, GlAccountFilter, GlPeriod, GlPeriodFilter,
+    IncomeStatement, IncomeStatementLine, InvoiceId, JournalEntry, JournalEntryFilter,
+    JournalEntryLine, JournalEntrySource, JournalEntryStatus, JournalEntryType, PeriodStatus,
+    Result, RevaluationResult, TrialBalance, TrialBalanceLine, UpdateGlAccount,
+    create_default_chart_of_accounts, generate_journal_entry_number,
 };
 use uuid::Uuid;
 
@@ -151,6 +150,20 @@ impl SqliteGeneralLedgerRepository {
             reference_type: row.get(10)?,
             reference_id: parse_optional(row.get::<_, Option<String>>(11)?, 11)?,
             created_at: parse_required(row.get::<_, String>(12)?, 12)?,
+
+            transaction_currency: parse_optional(row.get::<_, Option<String>>(13)?, 13)?,
+            transaction_debit_amount: row
+                .get::<_, Option<String>>(14)?
+                .map(|v| parse_decimal_required(v, 14))
+                .transpose()?,
+            transaction_credit_amount: row
+                .get::<_, Option<String>>(15)?
+                .map(|v| parse_decimal_required(v, 15))
+                .transpose()?,
+            exchange_rate: row
+                .get::<_, Option<String>>(16)?
+                .map(|v| parse_decimal_required(v, 16))
+                .transpose()?,
         })
     }
 
@@ -165,6 +178,14 @@ impl SqliteGeneralLedgerRepository {
             unearned_revenue_account_id: parse_optional(row.get::<_, Option<String>>(6)?, 6)?,
             sales_revenue_account_id: parse_required(row.get::<_, String>(7)?, 7)?,
             shipping_revenue_account_id: parse_optional(row.get::<_, Option<String>>(8)?, 8)?,
+            sales_tax_payable_account_id: parse_optional(row.get::<_, Option<String>>(17)?, 17)?,
+            goods_received_not_invoiced_account_id: parse_optional(
+                row.get::<_, Option<String>>(18)?,
+                18,
+            )?,
+            inventory_adjustment_account_id: parse_optional(row.get::<_, Option<String>>(19)?, 19)?,
+            work_in_progress_account_id: parse_optional(row.get::<_, Option<String>>(20)?, 20)?,
+
             cogs_account_id: parse_required(row.get::<_, String>(9)?, 9)?,
             bad_debt_expense_account_id: parse_optional(row.get::<_, Option<String>>(10)?, 10)?,
             fx_gain_loss_account_id: parse_optional(row.get::<_, Option<String>>(11)?, 11)?,
@@ -176,12 +197,34 @@ impl SqliteGeneralLedgerRepository {
         })
     }
 
+    pub(crate) fn validate_posting_accounts(
+        conn: &rusqlite::Connection,
+        ids: Vec<Uuid>,
+    ) -> Result<()> {
+        for id in ids {
+            let (status, posting, header): (String, bool, bool) = conn
+                .query_row(
+                    "SELECT status,is_posting,is_header FROM gl_accounts WHERE id = ?1",
+                    [id.to_string()],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .map_err(map_db_error)?;
+            if status != "active" || !posting || header {
+                return Err(stateset_core::CommerceError::ValidationError(format!(
+                    "Account {id} must be active, posting and not a header"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn update_account_balance_with_conn(
         conn: &rusqlite::Connection,
         account_id: Uuid,
         debit: Decimal,
         credit: Decimal,
     ) -> Result<()> {
+        Self::validate_posting_accounts(conn, vec![account_id])?;
         // Get account to determine normal balance
         let account: GlAccount = conn
             .query_row(
@@ -195,7 +238,9 @@ impl SqliteGeneralLedgerRepository {
             .map_err(map_db_error)?;
 
         let balance_change = account.balance_effect(debit, credit);
-        let new_balance = account.current_balance + balance_change;
+        let new_balance = account.current_balance.checked_add(balance_change).ok_or_else(|| {
+            stateset_core::CommerceError::ValidationError("Account balance overflow".into())
+        })?;
 
         conn.execute(
             "UPDATE gl_accounts SET current_balance = ?1 WHERE id = ?2",
@@ -213,7 +258,7 @@ impl SqliteGeneralLedgerRepository {
         let mut stmt = conn.prepare(
             "SELECT id, journal_entry_id, line_number, account_id, account_number,
                     account_name, description, debit_amount, credit_amount, currency,
-                    reference_type, reference_id, created_at
+                    reference_type, reference_id, created_at, transaction_currency, transaction_debit_amount, transaction_credit_amount, exchange_rate
              FROM gl_journal_entry_lines WHERE journal_entry_id = ?1 ORDER BY line_number",
         )?;
         let rows = stmt
@@ -262,46 +307,18 @@ impl SqliteGeneralLedgerRepository {
         Ok(())
     }
 
-    /// Non-voided journal entry already recorded for a source document, if
-    /// any — the idempotency check for the `auto_post_*` family and for
-    /// `run_period_close`.
-    fn existing_entry_for_source(
-        &self,
-        source_document_type: &str,
-        source_document_id: Uuid,
-    ) -> Result<Option<JournalEntry>> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-        let id: String = match conn.query_row(
-            "SELECT id FROM gl_journal_entries
-             WHERE source_document_type = ?1 AND source_document_id = ?2
-               AND status != 'voided'
-             LIMIT 1",
-            params![source_document_type, source_document_id.to_string()],
-            |row| row.get(0),
-        ) {
-            Ok(id) => id,
-            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
-            Err(e) => return Err(map_db_error(e)),
-        };
-        drop(conn);
-        self.get_journal_entry(parse_uuid(&id, "gl_journal_entry", "id")?)
-    }
-
     /// Active auto-posting configuration, read on the caller's connection so
     /// subledger transactions can resolve accounts without leaving their
     /// transaction.
     pub(crate) fn get_auto_posting_config_with_conn(
-        conn: &rusqlite::Transaction<'_>,
+        conn: &rusqlite::Connection,
     ) -> rusqlite::Result<Option<AutoPostingConfig>> {
         match conn.query_row(
             "SELECT id, config_name, cash_account_id, accounts_receivable_account_id,
                     inventory_account_id, accounts_payable_account_id, unearned_revenue_account_id,
                     sales_revenue_account_id, shipping_revenue_account_id, cogs_account_id,
                     bad_debt_expense_account_id, fx_gain_loss_account_id, auto_post_depreciation,
-                    auto_post_revenue_recognition, is_active, created_at, updated_at
+                    auto_post_revenue_recognition, is_active, created_at, updated_at, sales_tax_payable_account_id, goods_received_not_invoiced_account_id, inventory_adjustment_account_id, work_in_progress_account_id
              FROM gl_auto_posting_config WHERE is_active = 1 LIMIT 1",
             [],
             Self::map_auto_posting_config_row,
@@ -315,7 +332,7 @@ impl SqliteGeneralLedgerRepository {
     /// Active auto-posting configuration or a typed "not configured" error,
     /// for the `auto_post_*` transaction bodies.
     fn require_auto_posting_config_with_conn(
-        conn: &rusqlite::Transaction<'_>,
+        conn: &rusqlite::Connection,
     ) -> rusqlite::Result<AutoPostingConfig> {
         Self::get_auto_posting_config_with_conn(conn)?.ok_or_else(|| {
             rusqlite::Error::ToSqlConversionFailure(Box::new(
@@ -326,60 +343,84 @@ impl SqliteGeneralLedgerRepository {
         })
     }
 
+    pub(super) fn posting_period(
+        conn: &rusqlite::Connection,
+        date: NaiveDate,
+    ) -> rusqlite::Result<String> {
+        let mut stmt = conn.prepare("SELECT id,status FROM gl_periods WHERE start_date <= ?1 AND end_date >= ?1 ORDER BY start_date,id LIMIT 2")?;
+        let rows = stmt
+            .query_map([date.to_string()], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if rows.len() != 1 {
+            return Err(super::bins::smuggle(stateset_core::CommerceError::ValidationError(
+                format!("Expected exactly one period for {date}; found {}", rows.len()),
+            )));
+        }
+        if rows[0].1 != "open" {
+            return Err(super::bins::smuggle(stateset_core::CommerceError::ValidationError(
+                "Period is not open for posting".into(),
+            )));
+        }
+        Ok(rows[0].0.clone())
+    }
+
     /// Create AND post a balanced journal entry entirely on the caller's
     /// connection/transaction: validation, the entry and line inserts, the
     /// account-balance updates, and the outbox event commit (or roll back)
     /// together with whatever else the caller is doing. This is what lets a
     /// subledger mutation and its GL posting be a single atomic fact.
     pub(crate) fn create_posted_entry_with_conn(
-        conn: &rusqlite::Transaction<'_>,
+        conn: &rusqlite::Connection,
         input: &CreateJournalEntry,
         posted_by: &str,
     ) -> rusqlite::Result<JournalEntry> {
         let to_rusqlite =
             |e: stateset_core::CommerceError| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
 
+        if conn.is_autocommit() {
+            return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(
+                "Ledger posting requires the source document transaction".into(),
+            )));
+        }
         let id = Uuid::new_v4();
         let now = Utc::now();
         let entry_number = generate_journal_entry_number();
 
-        let total_debits: Decimal = input.lines.iter().map(|l| l.debit_amount).sum();
-        let total_credits: Decimal = input.lines.iter().map(|l| l.credit_amount).sum();
-        if total_debits != total_credits {
-            return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(format!(
-                "Journal entry must balance to post: debits {total_debits} != credits {total_credits}"
-            ))));
-        }
         if let Some((index, _)) = input.lines.iter().enumerate().find(|(_, l)| {
-            !((l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
-                || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO))
+            !(input.source_document_type.as_deref() == Some("reversal")
+                && l.debit_amount.is_zero()
+                && l.credit_amount.is_zero())
+                && !((l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
+                    || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO))
         }) {
             return Err(to_rusqlite(stateset_core::CommerceError::JournalLineNotSingleSided {
                 entry_id: id,
                 line_number: i32::try_from(index + 1).unwrap_or(i32::MAX),
             }));
         }
-
-        let (period_id, period_status): (String, String) = match conn.query_row(
-            "SELECT id, status FROM gl_periods WHERE start_date <= ?1 AND end_date >= ?1",
-            params![input.entry_date.to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ) {
-            Ok(row) => row,
-            Err(rusqlite::Error::QueryReturnedNoRows) => {
-                return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(format!(
-                    "No period found for date {}",
-                    input.entry_date
-                ))));
-            }
-            Err(e) => return Err(e),
-        };
-        if period_status != "open" {
-            return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(
-                "Period is not open for posting".to_string(),
-            )));
+        super::ledger_source::validate(
+            conn,
+            input.source_document_type.as_deref(),
+            input.source_document_id,
+        )?;
+        let prepared = super::ledger_fx::prepare(conn, input)?;
+        let input = &prepared.input;
+        let total_debits: Decimal = input.lines.iter().map(|l| l.debit_amount).sum();
+        let total_credits: Decimal = input.lines.iter().map(|l| l.credit_amount).sum();
+        if !prepared.transaction_balanced || total_debits != total_credits {
+            return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(format!(
+                "Journal entry must balance to post: debits {total_debits} != credits {total_credits}"
+            ))));
         }
 
+        let period_id = Self::posting_period(conn, input.entry_date)?;
+        Self::validate_posting_accounts(
+            conn,
+            input.lines.iter().map(|line| line.account_id).collect(),
+        )
+        .map_err(to_rusqlite)?;
         conn.execute(
             "INSERT INTO gl_journal_entries (id, entry_number, entry_date, period_id,
              entry_type, source, source_document_type, source_document_id,
@@ -421,8 +462,8 @@ impl SqliteGeneralLedgerRepository {
             conn.execute(
                 "INSERT INTO gl_journal_entry_lines (id, journal_entry_id, line_number,
                  account_id, account_number, account_name, description, debit_amount,
-                 credit_amount, currency, reference_type, reference_id, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                 credit_amount, currency, reference_type, reference_id, created_at, transaction_currency, transaction_debit_amount, transaction_credit_amount, exchange_rate)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
                 params![
                     Uuid::new_v4().to_string(),
                     id.to_string(),
@@ -433,10 +474,14 @@ impl SqliteGeneralLedgerRepository {
                     line.description,
                     line.debit_amount.to_string(),
                     line.credit_amount.to_string(),
-                    account.currency,
+                    prepared.base_currency,
                     line.reference_type,
                     line.reference_id.map(|id| id.to_string()),
                     now.to_rfc3339(),
+prepared.transaction_currencies[line_num],
+prepared.amounts[line_num].transaction_debit.to_string(),
+prepared.amounts[line_num].transaction_credit.to_string(),
+prepared.rates[line_num].map(|v| v.to_string()),
                 ],
             )?;
             Self::update_account_balance_with_conn(
@@ -448,6 +493,12 @@ impl SqliteGeneralLedgerRepository {
             .map_err(to_rusqlite)?;
         }
 
+        super::ledger_source::link(
+            conn,
+            input.source_document_type.as_deref(),
+            input.source_document_id,
+            id,
+        )?;
         append_kernel_event_tx(
             conn,
             &KernelOutboxEvent::domain(
@@ -475,7 +526,7 @@ impl SqliteGeneralLedgerRepository {
     /// connection: inside an IMMEDIATE transaction this is a race-free
     /// idempotency check (SQLite serializes writers).
     pub(crate) fn existing_entry_for_source_with_conn(
-        conn: &rusqlite::Transaction<'_>,
+        conn: &rusqlite::Connection,
         source_document_type: &str,
         source_document_id: Uuid,
     ) -> rusqlite::Result<Option<JournalEntry>> {
@@ -494,69 +545,6 @@ impl SqliteGeneralLedgerRepository {
         let id = parse_uuid(&id, "gl_journal_entry", "id")
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         Self::load_journal_entry_with_conn(conn, id).map(Some)
-    }
-
-    /// Look up the exchange rate converting one `from` unit into `to` units,
-    /// falling back to the inverse of the reverse pair when only that is set.
-    fn lookup_rate_with_conn(
-        conn: &rusqlite::Connection,
-        from: &str,
-        to: &str,
-    ) -> Result<Option<Decimal>> {
-        let direct = conn.query_row(
-            "SELECT rate FROM exchange_rates WHERE base_currency = ?1 AND quote_currency = ?2",
-            params![from, to],
-            |row| row.get::<_, String>(0),
-        );
-        match direct {
-            Ok(rate) => Ok(Some(parse_decimal_required(rate, 0).map_err(map_db_error)?)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => {
-                let inverse = conn.query_row(
-                    "SELECT rate FROM exchange_rates
-                     WHERE base_currency = ?1 AND quote_currency = ?2",
-                    params![to, from],
-                    |row| row.get::<_, String>(0),
-                );
-                match inverse {
-                    Ok(rate) => {
-                        let rate = parse_decimal_required(rate, 0).map_err(map_db_error)?;
-                        if rate.is_zero() { Ok(None) } else { Ok(Some(Decimal::ONE / rate)) }
-                    }
-                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-                    Err(e) => Err(map_db_error(e)),
-                }
-            }
-            Err(e) => Err(map_db_error(e)),
-        }
-    }
-
-    /// Resolve the account receiving unrealized FX gains/losses: the
-    /// configured `fx_gain_loss_account_id`, else the first active posting
-    /// account with an Other Expense / Other Revenue sub-type.
-    fn resolve_fx_gain_loss_account(&self) -> Result<Uuid> {
-        if let Some(id) =
-            self.get_auto_posting_config()?.and_then(|config| config.fx_gain_loss_account_id)
-        {
-            return Ok(id);
-        }
-        for sub_type in [AccountSubType::OtherExpense, AccountSubType::OtherRevenue] {
-            let fallback = self
-                .list_accounts(GlAccountFilter {
-                    account_sub_type: Some(sub_type),
-                    status: Some(AccountStatus::Active),
-                    is_posting: Some(true),
-                    limit: Some(1),
-                    ..Default::default()
-                })?
-                .into_iter()
-                .next();
-            if let Some(account) = fallback {
-                return Ok(account.id);
-            }
-        }
-        Err(stateset_core::CommerceError::ValidationError(
-            "No FX gain/loss account configured for revaluation".to_string(),
-        ))
     }
 }
 
@@ -646,10 +634,28 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn update_account(&self, id: Uuid, input: UpdateGlAccount) -> Result<GlAccount> {
-        let conn = self
+        let mut conn = self
             .pool
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let balance: String = tx
+            .query_row(
+                "SELECT current_balance FROM gl_accounts WHERE id = ?1",
+                [id.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(map_db_error)?;
+        let balance = parse_decimal_required(balance, 0).map_err(map_db_error)?;
+        if input.status.is_some_and(|status| status != AccountStatus::Active) {
+            let foreign: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM gl_journal_entry_lines l JOIN gl_journal_entries e ON e.id=l.journal_entry_id WHERE l.account_id=?1 AND e.status IN ('posted','reversed') GROUP BY l.transaction_currency HAVING decimal_sum(l.transaction_debit_amount) != decimal_sum(l.transaction_credit_amount))",[id.to_string()],|r| r.get(0)).map_err(map_db_error)?;
+            if !balance.is_zero() || foreign {
+                return Err(stateset_core::CommerceError::ValidationError(
+                    "Cannot deactivate an account with a balance".into(),
+                ));
+            }
+        }
 
         let mut updates = Vec::new();
         let mut values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -676,9 +682,10 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             let sql = format!("UPDATE gl_accounts SET {} WHERE id = ?", updates.join(", "));
             let params: Vec<&dyn rusqlite::ToSql> =
                 values.iter().map(std::convert::AsRef::as_ref).collect();
-            conn.execute(&sql, params.as_slice()).map_err(map_db_error)?;
+            tx.execute(&sql, params.as_slice()).map_err(map_db_error)?;
         }
 
+        tx.commit().map_err(map_db_error)?;
         self.get_account(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
@@ -794,14 +801,32 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     // ========================================================================
 
     fn create_period(&self, input: CreateGlPeriod) -> Result<GlPeriod> {
-        let conn = self
+        let mut conn = self
             .pool
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        if input.start_date > input.end_date {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Period end must not precede its start".into(),
+            ));
+        }
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let overlaps: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM gl_periods WHERE start_date <= ?1 AND end_date >= ?2)",
+                params![input.end_date.to_string(), input.start_date.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(map_db_error)?;
+        if overlaps {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "GL periods must not overlap".into(),
+            ));
+        }
         let id = Uuid::new_v4();
         let now = Utc::now();
 
-        conn.execute(
+        tx.execute(
             "INSERT INTO gl_periods (id, period_name, fiscal_year, period_number,
              start_date, end_date, status, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -819,6 +844,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         )
         .map_err(map_db_error)?;
 
+        tx.commit().map_err(map_db_error)?;
         self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
@@ -865,21 +891,18 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             .pool
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
-        match conn.query_row(
-            "SELECT id, period_name, fiscal_year, period_number, start_date, end_date,
-                    status, closed_at, closed_by, locked_at, locked_by, created_at, updated_at
-             FROM gl_periods
-             WHERE start_date <= ?1 AND end_date >= ?1 AND status = 'open'
-             ORDER BY start_date DESC, period_number DESC
-             LIMIT 1",
-            params![date.to_string()],
-            Self::map_period_row,
-        ) {
-            Ok(period) => Ok(Some(period)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(map_db_error(e)),
+        let mut stmt = conn.prepare("SELECT id,period_name,fiscal_year,period_number,start_date,end_date,status,closed_at,closed_by,locked_at,locked_by,created_at,updated_at FROM gl_periods WHERE start_date <= ?1 AND end_date >= ?1 ORDER BY start_date,id LIMIT 2").map_err(map_db_error)?;
+        let rows = stmt
+            .query_map([date.to_string()], Self::map_period_row)
+            .map_err(map_db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_db_error)?;
+        if rows.len() > 1 {
+            return Err(stateset_core::CommerceError::ValidationError(
+                "Overlapping legacy periods require reconciliation".into(),
+            ));
         }
+        Ok(rows.into_iter().next())
     }
 
     fn list_periods(&self, filter: GlPeriodFilter) -> Result<Vec<GlPeriod>> {
@@ -922,68 +945,85 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn open_period(&self, id: Uuid) -> Result<GlPeriod> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
-        conn.execute(
-            "UPDATE gl_periods SET status = 'open' WHERE id = ?1 AND status = 'future'",
-            params![id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        with_immediate_transaction(&self.pool, |tx| {
+            let status = tx
+                .query_row(
+                    "SELECT status FROM gl_periods WHERE id = ?1",
+                    rusqlite::params![(id).to_string()],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()?
+                .ok_or_else(|| super::bins::smuggle(stateset_core::CommerceError::NotFound))?;
+            if status != "future" {
+                return Err(super::bins::smuggle(stateset_core::CommerceError::Conflict(format!(
+                    "Cannot open period in {status} state; expected future"
+                ))));
+            }
+            tx.execute("UPDATE gl_periods SET status = 'open', updated_at = CURRENT_TIMESTAMP WHERE id = ?1", rusqlite::params![(id).to_string()])?;
+            tx.query_row("SELECT id, period_name, fiscal_year, period_number, start_date, end_date, status, closed_at, closed_by, locked_at, locked_by, created_at, updated_at FROM gl_periods WHERE id = ?1", [id.to_string()], Self::map_period_row)
+        })
     }
 
     fn close_period(&self, id: Uuid, closed_by: &str) -> Result<GlPeriod> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-        let now = Utc::now();
-
-        conn.execute(
-            "UPDATE gl_periods SET status = 'closed', closed_at = ?1, closed_by = ?2
-             WHERE id = ?3 AND status = 'open'",
-            params![now.to_rfc3339(), closed_by, id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        with_immediate_transaction(&self.pool, |tx| {
+            let status = tx
+                .query_row(
+                    "SELECT status FROM gl_periods WHERE id = ?1",
+                    rusqlite::params![(id).to_string()],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()?
+                .ok_or_else(|| super::bins::smuggle(stateset_core::CommerceError::NotFound))?;
+            if status != "open" {
+                return Err(super::bins::smuggle(stateset_core::CommerceError::Conflict(format!(
+                    "Cannot close period in {status} state; expected open"
+                ))));
+            }
+            let now = chrono::Utc::now().to_rfc3339();
+            tx.execute("UPDATE gl_periods SET status = 'closed', updated_at = CURRENT_TIMESTAMP, closed_at = ?2, closed_by = ?3 WHERE id = ?1", rusqlite::params![(id).to_string(), now, closed_by])?;
+            tx.query_row("SELECT id, period_name, fiscal_year, period_number, start_date, end_date, status, closed_at, closed_by, locked_at, locked_by, created_at, updated_at FROM gl_periods WHERE id = ?1", [id.to_string()], Self::map_period_row)
+        })
     }
 
     fn lock_period(&self, id: Uuid, locked_by: &str) -> Result<GlPeriod> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-        let now = Utc::now();
-
-        conn.execute(
-            "UPDATE gl_periods SET status = 'locked', locked_at = ?1, locked_by = ?2
-             WHERE id = ?3 AND status = 'closed'",
-            params![now.to_rfc3339(), locked_by, id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        with_immediate_transaction(&self.pool, |tx| {
+            let status = tx
+                .query_row(
+                    "SELECT status FROM gl_periods WHERE id = ?1",
+                    rusqlite::params![(id).to_string()],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()?
+                .ok_or_else(|| super::bins::smuggle(stateset_core::CommerceError::NotFound))?;
+            if status != "closed" {
+                return Err(super::bins::smuggle(stateset_core::CommerceError::Conflict(format!(
+                    "Cannot lock period in {status} state; expected closed"
+                ))));
+            }
+            let now = chrono::Utc::now().to_rfc3339();
+            tx.execute("UPDATE gl_periods SET status = 'locked', updated_at = CURRENT_TIMESTAMP, locked_at = ?2, locked_by = ?3 WHERE id = ?1", rusqlite::params![(id).to_string(), now, locked_by])?;
+            tx.query_row("SELECT id, period_name, fiscal_year, period_number, start_date, end_date, status, closed_at, closed_by, locked_at, locked_by, created_at, updated_at FROM gl_periods WHERE id = ?1", [id.to_string()], Self::map_period_row)
+        })
     }
 
     fn reopen_period(&self, id: Uuid) -> Result<GlPeriod> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
-        conn.execute(
-            "UPDATE gl_periods SET status = 'open', closed_at = NULL, closed_by = NULL
-             WHERE id = ?1 AND status = 'closed'",
-            params![id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        self.get_period(id)?.ok_or(stateset_core::CommerceError::NotFound)
+        with_immediate_transaction(&self.pool, |tx| {
+            let status = tx
+                .query_row(
+                    "SELECT status FROM gl_periods WHERE id = ?1",
+                    rusqlite::params![(id).to_string()],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()?
+                .ok_or_else(|| super::bins::smuggle(stateset_core::CommerceError::NotFound))?;
+            if status != "closed" {
+                return Err(super::bins::smuggle(stateset_core::CommerceError::Conflict(format!(
+                    "Cannot reopen period in {status} state; expected closed"
+                ))));
+            }
+            tx.execute("UPDATE gl_periods SET status = 'open', updated_at = CURRENT_TIMESTAMP, closed_at = NULL, closed_by = NULL WHERE id = ?1", rusqlite::params![(id).to_string()])?;
+            tx.query_row("SELECT id, period_name, fiscal_year, period_number, start_date, end_date, status, closed_at, closed_by, locked_at, locked_by, created_at, updated_at FROM gl_periods WHERE id = ?1", [id.to_string()], Self::map_period_row)
+        })
     }
 
     // ========================================================================
@@ -991,6 +1031,14 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     // ========================================================================
 
     fn create_journal_entry(&self, input: CreateJournalEntry) -> Result<JournalEntry> {
+        self.create_journal_entry_as(input, "system")
+    }
+
+    fn create_journal_entry_as(
+        &self,
+        input: CreateJournalEntry,
+        actor: &str,
+    ) -> Result<JournalEntry> {
         let mut conn = self
             .pool
             .get()
@@ -1000,37 +1048,48 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         let entry_number = generate_journal_entry_number();
 
         // Get period for entry date
-        let period = self.get_period_for_date(input.entry_date)?.ok_or_else(|| {
-            stateset_core::CommerceError::ValidationError(format!(
-                "No period found for date {}",
-                input.entry_date
-            ))
-        })?;
-
-        if !period.can_post() {
-            return Err(stateset_core::CommerceError::ValidationError(
-                "Period is not open for posting".to_string(),
-            ));
-        }
-
-        // Calculate totals
-        let total_debits: Decimal = input.lines.iter().map(|l| l.debit_amount).sum();
-        let total_credits: Decimal = input.lines.iter().map(|l| l.credit_amount).sum();
-        let is_balanced = total_debits == total_credits;
-        // Invariant `commerce.ledger.line_not_single_sided`: a line is a pure
-        // debit or a pure credit, never both and never neither.
         if let Some((index, _)) = input.lines.iter().enumerate().find(|(_, l)| {
-            !((l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
-                || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO))
+            !(input.source_document_type.as_deref() == Some("reversal")
+                && l.debit_amount.is_zero()
+                && l.credit_amount.is_zero())
+                && !((l.debit_amount > Decimal::ZERO && l.credit_amount == Decimal::ZERO)
+                    || (l.debit_amount == Decimal::ZERO && l.credit_amount > Decimal::ZERO))
         }) {
             return Err(stateset_core::CommerceError::JournalLineNotSingleSided {
                 entry_id: id,
                 line_number: i32::try_from(index + 1).unwrap_or(i32::MAX),
             });
         }
-
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        super::ledger_source::validate(
+            &tx,
+            input.source_document_type.as_deref(),
+            input.source_document_id,
+        )
+        .map_err(map_db_error)?;
+        let period_id = Self::posting_period(&tx, input.entry_date).map_err(map_db_error)?;
+        if input.auto_post.unwrap_or(false)
+            && input.lines.iter().map(|l| l.debit_amount).sum::<Decimal>()
+                == input.lines.iter().map(|l| l.credit_amount).sum::<Decimal>()
+        {
+            let entry =
+                Self::create_posted_entry_with_conn(&tx, &input, actor).map_err(map_db_error)?;
+            tx.commit().map_err(map_db_error)?;
+            return Ok(entry);
+        }
 
+        let prepared = super::ledger_fx::prepare(&tx, &input).map_err(map_db_error)?;
+        let input = &prepared.input;
+        let total_debits: Decimal = input.lines.iter().map(|l| l.debit_amount).sum();
+        let total_credits: Decimal = input.lines.iter().map(|l| l.credit_amount).sum();
+        let is_balanced = prepared.transaction_balanced && total_debits == total_credits;
+        // Invariant `commerce.ledger.line_not_single_sided`: a line is a pure
+        // debit or a pure credit, never both and never neither.
+
+        Self::validate_posting_accounts(
+            &tx,
+            input.lines.iter().map(|line| line.account_id).collect(),
+        )?;
         tx.execute(
             "INSERT INTO gl_journal_entries (id, entry_number, entry_date, period_id,
              entry_type, source, source_document_type, source_document_id,
@@ -1041,7 +1100,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 id.to_string(),
                 entry_number,
                 input.entry_date.to_string(),
-                period.id.to_string(),
+                period_id,
                 input.entry_type.unwrap_or(JournalEntryType::Standard).to_string(),
                 JournalEntrySource::Manual.to_string(),
                 input.source_document_type,
@@ -1080,8 +1139,8 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             tx.execute(
                 "INSERT INTO gl_journal_entry_lines (id, journal_entry_id, line_number,
                  account_id, account_number, account_name, description, debit_amount,
-                 credit_amount, currency, reference_type, reference_id, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                 credit_amount, currency, reference_type, reference_id, created_at, transaction_currency, transaction_debit_amount, transaction_credit_amount, exchange_rate)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
                 params![
                     line_id.to_string(),
                     id.to_string(),
@@ -1092,10 +1151,14 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                     line.description,
                     line.debit_amount.to_string(),
                     line.credit_amount.to_string(),
-                    account.currency,
+                    prepared.base_currency,
                     line.reference_type,
                     line.reference_id.map(|id| id.to_string()),
                     now.to_rfc3339(),
+prepared.transaction_currencies[line_num],
+prepared.amounts[line_num].transaction_debit.to_string(),
+prepared.amounts[line_num].transaction_credit.to_string(),
+prepared.rates[line_num].map(|v| v.to_string()),
                 ],
             )
             .map_err(map_db_error)?;
@@ -1105,7 +1168,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
         // Auto-post if requested
         if input.auto_post.unwrap_or(false) && is_balanced {
-            return self.post_journal_entry(id, "system");
+            return self.post_journal_entry(id, actor);
         }
 
         self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)
@@ -1258,6 +1321,13 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(e)));
             }
 
+            crate::ledger_fx::validate_recorded_entry(&entry, super::ledger_fx::base_currency(tx)?)
+                .map_err(super::bins::smuggle)?;
+            super::ledger_source::validate(
+                tx,
+                entry.source_document_type.as_deref(),
+                entry.source_document_id,
+            )?;
             Self::ensure_period_open_with_conn(tx, entry.period_id, "post")?;
 
             for line in &entry.lines {
@@ -1285,6 +1355,12 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 )));
             }
 
+            super::ledger_source::link(
+                tx,
+                entry.source_document_type.as_deref(),
+                entry.source_document_id,
+                id,
+            )?;
             append_kernel_event_tx(
                 tx,
                 &KernelOutboxEvent::domain(
@@ -1379,111 +1455,9 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn reverse_journal_entry(&self, id: Uuid, reversal_date: NaiveDate) -> Result<JournalEntry> {
-        let entry = self.get_journal_entry(id)?.ok_or(stateset_core::CommerceError::NotFound)?;
-
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-        match entry.status {
-            JournalEntryStatus::Posted => {
-                // Claim the entry (posted -> reversed) before creating the
-                // reversing entry, which commits its own transactions; the
-                // status guard ensures concurrent reversals cannot both
-                // create (and auto-post) a reversal.
-                let claimed = conn
-                    .execute(
-                        "UPDATE gl_journal_entries SET status = 'reversed' WHERE id = ?1 AND status = 'posted'",
-                        params![id.to_string()],
-                    )
-                    .map_err(map_db_error)?;
-                if claimed == 0 {
-                    return Err(stateset_core::CommerceError::Conflict(
-                        "Journal entry was modified concurrently".to_string(),
-                    ));
-                }
-            }
-            JournalEntryStatus::Reversed => {
-                // A claim with no reversing entry is the stranded state left
-                // by a crash between the claim and the reversing entry's
-                // creation (the best-effort un-claim below can itself be
-                // lost). Resume it; an entry whose reversal exists stays a
-                // completed reversal and rejects a second one (repairing the
-                // cross-links first if a crash lost them).
-                if let Some(reversal) = self.existing_entry_for_source("reversal", id)? {
-                    conn.execute(
-                        "UPDATE gl_journal_entries SET reversing_entry_id = ?1
-                         WHERE id = ?2 AND reversing_entry_id IS NULL",
-                        params![reversal.id.to_string(), id.to_string()],
-                    )
-                    .map_err(map_db_error)?;
-                    conn.execute(
-                        "UPDATE gl_journal_entries SET reversed_entry_id = ?1
-                         WHERE id = ?2 AND reversed_entry_id IS NULL",
-                        params![id.to_string(), reversal.id.to_string()],
-                    )
-                    .map_err(map_db_error)?;
-                    return Err(stateset_core::CommerceError::Conflict(
-                        "Journal entry is already reversed".to_string(),
-                    ));
-                }
-            }
-            _ => {
-                return Err(stateset_core::CommerceError::ValidationError(
-                    "Can only reverse posted entries".to_string(),
-                ));
-            }
-        }
-
-        // Create reversing entry with swapped debits/credits
-        let reversing_lines: Vec<_> = entry
-            .lines
-            .iter()
-            .map(|l| stateset_core::CreateJournalEntryLine {
-                account_id: l.account_id,
-                description: Some(format!("Reversal of {}", entry.entry_number)),
-                debit_amount: l.credit_amount,
-                credit_amount: l.debit_amount,
-                reference_type: l.reference_type.clone(),
-                reference_id: l.reference_id,
-            })
-            .collect();
-
-        let reversing_entry = match self.create_journal_entry(stateset_core::CreateJournalEntry {
-            entry_date: reversal_date,
-            entry_type: Some(JournalEntryType::Reversing),
-            description: format!("Reversal of {}", entry.entry_number),
-            lines: reversing_lines,
-            source_document_type: Some("reversal".to_string()),
-            source_document_id: Some(entry.id),
-            auto_post: Some(true),
-        }) {
-            Ok(reversing_entry) => reversing_entry,
-            Err(e) => {
-                // Best-effort release of the claim so the entry is not left
-                // marked reversed without a reversing entry.
-                let _ = conn.execute(
-                    "UPDATE gl_journal_entries SET status = 'posted' WHERE id = ?1 AND status = 'reversed'",
-                    params![id.to_string()],
-                );
-                return Err(e);
-            }
-        };
-
-        // Link entries
-        conn.execute(
-            "UPDATE gl_journal_entries SET reversing_entry_id = ?1 WHERE id = ?2",
-            params![reversing_entry.id.to_string(), id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        conn.execute(
-            "UPDATE gl_journal_entries SET reversed_entry_id = ?1 WHERE id = ?2",
-            params![id.to_string(), reversing_entry.id.to_string()],
-        )
-        .map_err(map_db_error)?;
-
-        self.get_journal_entry(reversing_entry.id)?.ok_or(stateset_core::CommerceError::NotFound)
+        with_immediate_transaction(&self.pool, |tx| {
+            super::ledger_reversal::reverse(tx, id, reversal_date, "system", false)
+        })
     }
 
     fn get_journal_entry_lines(&self, journal_entry_id: Uuid) -> Result<Vec<JournalEntryLine>> {
@@ -1496,7 +1470,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             .prepare(
                 "SELECT id, journal_entry_id, line_number, account_id, account_number,
                     account_name, description, debit_amount, credit_amount, currency,
-                    reference_type, reference_id, created_at
+                    reference_type, reference_id, created_at, transaction_currency, transaction_debit_amount, transaction_credit_amount, exchange_rate
              FROM gl_journal_entry_lines WHERE journal_entry_id = ?1 ORDER BY line_number",
             )
             .map_err(map_db_error)?;
@@ -1527,7 +1501,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                     inventory_account_id, accounts_payable_account_id, unearned_revenue_account_id,
                     sales_revenue_account_id, shipping_revenue_account_id, cogs_account_id,
                     bad_debt_expense_account_id, fx_gain_loss_account_id, auto_post_depreciation,
-                    auto_post_revenue_recognition, is_active, created_at, updated_at
+                    auto_post_revenue_recognition, is_active, created_at, updated_at, sales_tax_payable_account_id, goods_received_not_invoiced_account_id, inventory_adjustment_account_id, work_in_progress_account_id
              FROM gl_auto_posting_config WHERE is_active = 1 LIMIT 1",
             [],
             Self::map_auto_posting_config_row,
@@ -1539,25 +1513,32 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn set_auto_posting_config(&self, input: CreateAutoPostingConfig) -> Result<AutoPostingConfig> {
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-        let id = Uuid::new_v4();
-        let now = Utc::now();
+        with_immediate_transaction(&self.pool, |conn| {
+            let accounts = crate::ledger_posting::config_accounts(&input)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            for (account, expected) in accounts {
+                let (kind, status, posting, header): (String, String, bool, bool) = conn.query_row(
+                "SELECT account_type, status, is_posting, is_header FROM gl_accounts WHERE id = ?1",
+                [account.to_string()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+                crate::ledger_posting::validate_config_account(
+                    &kind, &status, posting, header, expected,
+                )
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            }
+            let id = Uuid::new_v4();
+            let now = Utc::now();
 
-        // Deactivate existing configs
-        conn.execute("UPDATE gl_auto_posting_config SET is_active = 0", [])
-            .map_err(map_db_error)?;
+            // Deactivate existing configs
+            conn.execute("UPDATE gl_auto_posting_config SET is_active = 0", [])?;
 
-        conn.execute(
+            conn.execute(
             "INSERT INTO gl_auto_posting_config (id, config_name, cash_account_id,
              accounts_receivable_account_id, inventory_account_id, accounts_payable_account_id,
              unearned_revenue_account_id, sales_revenue_account_id, shipping_revenue_account_id,
              cogs_account_id, bad_debt_expense_account_id, fx_gain_loss_account_id,
              auto_post_depreciation,
-             auto_post_revenue_recognition, is_active, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+             auto_post_revenue_recognition, is_active, created_at, updated_at, sales_tax_payable_account_id, goods_received_not_invoiced_account_id, inventory_adjustment_account_id, work_in_progress_account_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
             params![
                 id.to_string(),
                 input.config_name,
@@ -1576,11 +1557,16 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 1,
                 now.to_rfc3339(),
                 now.to_rfc3339(),
-            ],
-        )
-        .map_err(map_db_error)?;
+                input.sales_tax_payable_account_id.map(|id| id.to_string()),
+                input.goods_received_not_invoiced_account_id.map(|id| id.to_string()),
+                input.inventory_adjustment_account_id.map(|id| id.to_string()),
+                input.work_in_progress_account_id.map(|id| id.to_string()),
 
-        self.get_auto_posting_config()?.ok_or(stateset_core::CommerceError::NotFound)
+            ],
+        )?;
+
+            Self::require_auto_posting_config_with_conn(conn)
+        })
     }
 
     fn auto_post_invoice(&self, invoice_id: InvoiceId) -> Result<JournalEntry> {
@@ -1588,21 +1574,27 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         // document read, and the posted entry: SQLite serializes writers, so
         // the same document can never post twice even under concurrent retry.
         with_immediate_transaction(&self.pool, |tx| {
+            super::ledger_source::validate(tx, Some("invoice"), Some(invoice_id.into()))?;
             if let Some(existing) =
                 Self::existing_entry_for_source_with_conn(tx, "invoice", invoice_id.into())?
             {
                 return Ok(existing);
             }
             let config = Self::require_auto_posting_config_with_conn(tx)?;
-            // The money column is `total` (not `total_amount`), and
-            // `invoice_date` is a full RFC3339 timestamp reduced to its date
-            // (matching Postgres, which reads a `DateTime<Utc>`).
-            let (total, invoice_date): (String, String) = tx.query_row(
-                "SELECT total, invoice_date FROM invoices WHERE id = ?1",
+            let (total, tax, shipping, invoice_date, invoice_type): (String, String, String, String, String) = tx.query_row(
+                "SELECT total, tax_amount, shipping_amount, invoice_date, invoice_type FROM invoices WHERE id = ?1",
                 params![invoice_id.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )?;
-            let amount = parse_decimal_required(total, 0)?;
+            let lines = crate::ledger_posting::invoice_lines(
+                &config,
+                parse_decimal_required(total, 0)?,
+                parse_decimal_required(tax, 1)?,
+                parse_decimal_required(shipping, 2)?,
+                super::revenue_invoice::is_deferred(tx, invoice_id.into())?,
+                invoice_type == "credit_memo",
+            )
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
             let entry_date = parse_rfc3339_date_with_conn(&invoice_date, "invoice_date")?;
             Self::create_posted_entry_with_conn(
                 tx,
@@ -1610,21 +1602,11 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                     entry_date,
                     entry_type: Some(JournalEntryType::Standard),
                     description: format!("Invoice {invoice_id}"),
-                    lines: vec![
-                        stateset_core::CreateJournalEntryLine::debit(
-                            config.accounts_receivable_account_id,
-                            amount,
-                            Some("Accounts Receivable".to_string()),
-                        ),
-                        stateset_core::CreateJournalEntryLine::credit(
-                            config.sales_revenue_account_id,
-                            amount,
-                            Some("Sales Revenue".to_string()),
-                        ),
-                    ],
+                    lines,
                     source_document_type: Some("invoice".to_string()),
                     source_document_id: Some(invoice_id.into()),
                     auto_post: Some(true),
+                    fx: None,
                 },
                 "system",
             )
@@ -1633,6 +1615,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
     fn auto_post_payment_received(&self, payment_id: Uuid) -> Result<JournalEntry> {
         with_immediate_transaction(&self.pool, |tx| {
+            super::ledger_source::validate(tx, Some("payment"), Some(payment_id))?;
             if let Some(existing) =
                 Self::existing_entry_for_source_with_conn(tx, "payment", payment_id)?
             {
@@ -1669,6 +1652,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                     source_document_type: Some("payment".to_string()),
                     source_document_id: Some(payment_id),
                     auto_post: Some(true),
+                    fx: None,
                 },
                 "system",
             )
@@ -1677,6 +1661,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
     fn auto_post_bill(&self, bill_id: Uuid) -> Result<JournalEntry> {
         with_immediate_transaction(&self.pool, |tx| {
+            super::ledger_source::validate(tx, Some("bill"), Some(bill_id))?;
             if let Some(existing) = Self::existing_entry_for_source_with_conn(tx, "bill", bill_id)?
             {
                 return Ok(existing);
@@ -1691,27 +1676,31 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             )?;
             let amount = parse_decimal_required(total, 0)?;
             let entry_date = parse_rfc3339_date_with_conn(&bill_date, "bill_date")?;
+            let items = {
+                let mut stmt = tx.prepare("SELECT i.account_code, a.id, i.amount, i.tax_amount FROM ap_bill_items i LEFT JOIN gl_accounts a ON a.account_number = i.account_code WHERE i.bill_id = ?1 ORDER BY i.line_number")?;
+                let rows = stmt.query_map(rusqlite::params![(bill_id).to_string()], |r| {
+                    Ok((
+                        r.get::<_, Option<String>>(0)?,
+                        super::parse_uuid_opt_row(r.get(1)?, "stock", "id")?,
+                        super::parse_decimal_row(&r.get::<_, String>(2)?, "stock", "quantity")?,
+                        super::parse_decimal_row(&r.get::<_, String>(3)?, "stock", "quantity")?,
+                    ))
+                })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            let lines = crate::ledger_posting::bill_lines(&config, amount, items)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
             Self::create_posted_entry_with_conn(
                 tx,
                 &stateset_core::CreateJournalEntry {
                     entry_date,
                     entry_type: Some(JournalEntryType::Standard),
                     description: format!("Bill {bill_id}"),
-                    lines: vec![
-                        stateset_core::CreateJournalEntryLine::debit(
-                            config.inventory_account_id,
-                            amount,
-                            Some("Inventory/Expense".to_string()),
-                        ),
-                        stateset_core::CreateJournalEntryLine::credit(
-                            config.accounts_payable_account_id,
-                            amount,
-                            Some("Accounts Payable".to_string()),
-                        ),
-                    ],
+                    lines,
                     source_document_type: Some("bill".to_string()),
                     source_document_id: Some(bill_id),
                     auto_post: Some(true),
+                    fx: None,
                 },
                 "system",
             )
@@ -1720,6 +1709,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
 
     fn auto_post_bill_payment(&self, payment_id: Uuid) -> Result<JournalEntry> {
         with_immediate_transaction(&self.pool, |tx| {
+            super::ledger_source::validate(tx, Some("bill_payment"), Some(payment_id))?;
             if let Some(existing) =
                 Self::existing_entry_for_source_with_conn(tx, "bill_payment", payment_id)?
             {
@@ -1756,20 +1746,21 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                     source_document_type: Some("bill_payment".to_string()),
                     source_document_id: Some(payment_id),
                     auto_post: Some(true),
+                    fx: None,
                 },
                 "system",
             )
         })
     }
 
-    fn auto_post_inventory_cost(&self, cost_transaction_id: Uuid) -> Result<JournalEntry> {
+    fn auto_post_inventory_cost(&self, cost_transaction_id: Uuid) -> Result<Option<JournalEntry>> {
         with_immediate_transaction(&self.pool, |tx| {
             if let Some(existing) = Self::existing_entry_for_source_with_conn(
                 tx,
                 "cost_transaction",
                 cost_transaction_id,
             )? {
-                return Ok(existing);
+                return Ok(Some(existing));
             }
             let config = Self::require_auto_posting_config_with_conn(tx)?;
             // The date column is `created_at`, a full RFC3339 timestamp
@@ -1781,45 +1772,43 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             )?;
             let cost = parse_decimal_required(cost_str, 0)?;
             let entry_date = parse_rfc3339_date_with_conn(&created_at, "created_at")?;
-            // An inventory issue/sale moves cost out of Inventory into COGS
-            // (debit COGS, credit Inventory); anything else (a receipt) does
-            // the reverse. Both `"issue"` and `"sale"` count as issues,
-            // matching Postgres.
-            let is_issue = transaction_type == "issue" || transaction_type == "sale";
-            let (debit_account, credit_account) = if is_issue {
-                (config.cogs_account_id, config.inventory_account_id)
+            let event = tx.query_row("SELECT kind, carrying_cost, actual_cost FROM stock_cost_events WHERE movement_id = ?1", rusqlite::params![(cost_transaction_id).to_string()], |r| Ok((r.get::<_, String>(0)?, super::parse_decimal_row(&r.get::<_, String>(1)?, "stock", "quantity")?, super::parse_decimal_row(&r.get::<_, String>(2)?, "stock", "quantity")?))).optional()?;
+            let lines = if let Some((kind, carrying, actual)) = event {
+                crate::ledger_posting::stock_lines(&config, &kind, carrying, actual)
+                    .map_err(super::bins::smuggle)?
             } else {
-                (config.inventory_account_id, config.cogs_account_id)
+                crate::ledger_posting::inventory_lines(&config, &transaction_type, cost)
+                    .map_err(super::bins::smuggle)?
+                    .unwrap_or_default()
             };
+            if lines.is_empty() {
+                return Ok(None);
+            }
             Self::create_posted_entry_with_conn(
                 tx,
                 &stateset_core::CreateJournalEntry {
                     entry_date,
                     entry_type: Some(JournalEntryType::Standard),
                     description: format!("Inventory Cost {cost_transaction_id}"),
-                    lines: vec![
-                        stateset_core::CreateJournalEntryLine::debit(
-                            debit_account,
-                            cost,
-                            Some(if is_issue { "COGS" } else { "Inventory" }.to_string()),
-                        ),
-                        stateset_core::CreateJournalEntryLine::credit(
-                            credit_account,
-                            cost,
-                            Some(if is_issue { "Inventory" } else { "COGS" }.to_string()),
-                        ),
-                    ],
+                    lines,
                     source_document_type: Some("cost_transaction".to_string()),
                     source_document_id: Some(cost_transaction_id),
                     auto_post: Some(true),
+                    fx: None,
                 },
                 "system",
             )
+            .map(Some)
         })
+    }
+
+    fn auto_post_credit_memo(&self, id: Uuid) -> Result<JournalEntry> {
+        with_immediate_transaction(&self.pool, |tx| super::ledger_credit::post(tx, id))
     }
 
     fn auto_post_write_off(&self, write_off_id: Uuid) -> Result<JournalEntry> {
         with_immediate_transaction(&self.pool, |tx| {
+            super::ledger_source::validate(tx, Some("write_off"), Some(write_off_id))?;
             if let Some(existing) =
                 Self::existing_entry_for_source_with_conn(tx, "write_off", write_off_id)?
             {
@@ -1839,7 +1828,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
             let amount = parse_decimal_required(amount_str, 0)?;
-            let entry_date: NaiveDate = parse_required(write_off_date, 1)?;
+            let entry_date = parse_rfc3339_date_with_conn(&write_off_date, "write_off_date")?;
             Self::create_posted_entry_with_conn(
                 tx,
                 &stateset_core::CreateJournalEntry {
@@ -1861,6 +1850,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                     source_document_type: Some("write_off".to_string()),
                     source_document_id: Some(write_off_id),
                     auto_post: Some(true),
+                    fx: None,
                 },
                 "system",
             )
@@ -1876,6 +1866,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             .pool
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        super::ledger_fx::require_reconciled(&conn, as_of_date).map_err(map_db_error)?;
 
         // Balances are derived from journal lines dated on or before the
         // requested date (posted and reversed entries carry balance effect;
@@ -1893,7 +1884,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
                  JOIN gl_journal_entries je ON l.journal_entry_id = je.id
                  WHERE je.status IN ('posted', 'reversed') AND je.entry_date <= ?1
              ) t ON t.account_id = a.id
-             WHERE a.is_posting = 1 AND a.status = 'active'
+             WHERE a.is_posting = 1
              GROUP BY a.id
              ORDER BY a.account_number",
             )
@@ -1948,108 +1939,37 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn get_balance_sheet(&self, as_of_date: NaiveDate) -> Result<BalanceSheet> {
-        let conn = self
+        let mut conn = self
             .pool
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
-        let mut assets = Vec::new();
-        let mut liabilities = Vec::new();
-        let mut equity = Vec::new();
-        let mut total_assets = Decimal::ZERO;
-        let mut total_liabilities = Decimal::ZERO;
-        let mut total_equity = Decimal::ZERO;
-
-        // Same as-of derivation as the trial balance: lines from posted and
-        // reversed entries dated on or before the requested date.
-        let mut stmt = conn
-            .prepare(
-                "SELECT a.id, a.account_number, a.name, a.account_type, a.account_sub_type,
-                    decimal_sum(t.debit_amount) AS debits,
-                    decimal_sum(t.credit_amount) AS credits,
-                    a.normal_balance
-             FROM gl_accounts a
-             LEFT JOIN (
-                 SELECT l.account_id, l.debit_amount, l.credit_amount
-                 FROM gl_journal_entry_lines l
-                 JOIN gl_journal_entries je ON l.journal_entry_id = je.id
-                 WHERE je.status IN ('posted', 'reversed') AND je.entry_date <= ?1
-             ) t ON t.account_id = a.id
-             WHERE a.is_posting = 1 AND a.status = 'active'
-               AND a.account_type IN ('asset', 'liability', 'equity')
-             GROUP BY a.id
-             ORDER BY a.account_number",
-            )
-            .map_err(map_db_error)?;
-
-        let rows = stmt
-            .query_map(params![as_of_date.to_string()], |row| {
-                let debits = parse_decimal_required(row.get::<_, String>(5)?, 5)?;
-                let credits = parse_decimal_required(row.get::<_, String>(6)?, 6)?;
-                let normal_balance: BalanceSide = parse_required(row.get::<_, String>(7)?, 7)?;
-
-                let display_balance = match normal_balance {
-                    BalanceSide::Credit => credits - debits,
-                    _ => debits - credits,
-                };
-
-                Ok((
-                    parse_required(row.get::<_, String>(0)?, 0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    parse_required(row.get::<_, String>(3)?, 3)?,
-                    parse_optional(row.get::<_, Option<String>>(4)?, 4)?,
-                    display_balance,
-                ))
-            })
-            .map_err(map_db_error)?;
-
-        for row in rows {
-            let (id, number, name, account_type, sub_type, balance): (
-                Uuid,
-                String,
-                String,
-                AccountType,
-                Option<AccountSubType>,
-                Decimal,
-            ) = row.map_err(map_db_error)?;
-
-            let line = BalanceSheetLine {
-                account_id: id,
-                account_number: number,
-                account_name: name,
-                account_sub_type: sub_type,
-                balance,
-                indent_level: 0,
-                is_total: false,
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let report = (|| -> rusqlite::Result<BalanceSheet> {
+            super::ledger_fx::require_reconciled(&tx, as_of_date)?;
+            let date = as_of_date.to_string();
+            let year_start = tx.query_row("SELECT CAST(MIN(start_date) AS TEXT) FROM gl_periods WHERE fiscal_year IN (SELECT fiscal_year FROM gl_periods WHERE start_date <= ?1 AND end_date >= ?1)", rusqlite::params![&date], |r| r.get::<_, Option<String>>(0))?.unwrap_or_else(|| format!("{}-01-01", chrono::Datelike::year(&as_of_date)));
+            let rows = {
+                let mut stmt = tx.prepare("SELECT a.id, a.account_number, a.name, a.account_type, a.account_sub_type,\n decimal_sum(t.debit_amount), decimal_sum(t.credit_amount),\n decimal_sum(CASE WHEN t.entry_date >= ?2 THEN t.debit_amount ELSE '0' END),\n decimal_sum(CASE WHEN t.entry_date >= ?2 THEN t.credit_amount ELSE '0' END)\n FROM gl_accounts a LEFT JOIN (SELECT l.account_id, l.debit_amount, l.credit_amount, je.entry_date\n FROM gl_journal_entry_lines l JOIN gl_journal_entries je ON je.id=l.journal_entry_id\n WHERE je.status IN ('posted','reversed') AND je.entry_date <= ?1) t ON t.account_id=a.id\n WHERE a.is_posting = 1 GROUP BY a.id ORDER BY a.account_number")?;
+                let rows = stmt.query_map(rusqlite::params![&date, &year_start], |r| {
+                    Ok((
+                        super::parse_uuid_row(&r.get::<_, String>(0)?, "stock", "id")?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, Option<String>>(4)?,
+                        super::parse_decimal_row(&r.get::<_, String>(5)?, "stock", "quantity")?,
+                        super::parse_decimal_row(&r.get::<_, String>(6)?, "stock", "quantity")?,
+                        super::parse_decimal_row(&r.get::<_, String>(7)?, "stock", "quantity")?,
+                        super::parse_decimal_row(&r.get::<_, String>(8)?, "stock", "quantity")?,
+                    ))
+                })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
             };
-
-            match account_type {
-                AccountType::Asset => {
-                    total_assets += balance;
-                    assets.push(line);
-                }
-                AccountType::Liability => {
-                    total_liabilities += balance;
-                    liabilities.push(line);
-                }
-                AccountType::Equity => {
-                    total_equity += balance;
-                    equity.push(line);
-                }
-                _ => {}
-            }
-        }
-
-        Ok(BalanceSheet {
-            as_of_date,
-            total_assets,
-            total_liabilities,
-            total_equity,
-            assets,
-            liabilities,
-            equity,
-        })
+            crate::ledger_reports::balance_sheet(as_of_date, rows).map_err(super::bins::smuggle)
+        })();
+        let report = report.map_err(map_db_error)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(report)
     }
 
     fn get_income_statement(
@@ -2061,6 +1981,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
             .pool
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
+        super::ledger_fx::require_reconciled(&conn, end_date).map_err(map_db_error)?;
 
         let mut revenue_lines = Vec::new();
         let mut expense_lines = Vec::new();
@@ -2081,9 +2002,9 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
              FROM gl_accounts a
              LEFT JOIN gl_journal_entry_lines l ON a.id = l.account_id
              LEFT JOIN gl_journal_entries je ON l.journal_entry_id = je.id
-             WHERE a.is_posting = 1 AND a.status = 'active'
+             WHERE a.is_posting = 1
                AND a.account_type IN ('revenue', 'expense')
-               AND (je.status = 'posted' OR je.id IS NULL)
+               AND (je.status IN ('posted', 'reversed') OR je.id IS NULL)
                AND (je.entry_type != 'closing' OR je.id IS NULL)
                AND (je.entry_date >= ?1 AND je.entry_date <= ?2 OR je.id IS NULL)
              GROUP BY a.id
@@ -2214,7 +2135,7 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
         let mut sql = String::from(
             "SELECT l.id, l.journal_entry_id, l.line_number, l.account_id, l.account_number,
                     l.account_name, l.description, l.debit_amount, l.credit_amount, l.currency,
-                    l.reference_type, l.reference_id, l.created_at
+                    l.reference_type, l.reference_id, l.created_at, l.transaction_currency, l.transaction_debit_amount, l.transaction_credit_amount, l.exchange_rate
              FROM gl_journal_entry_lines l
              JOIN gl_journal_entries je ON l.journal_entry_id = je.id
              WHERE l.account_id = ?1",
@@ -2255,248 +2176,32 @@ impl GeneralLedgerRepository for SqliteGeneralLedgerRepository {
     }
 
     fn run_period_close(&self, period_id: Uuid, closed_by: &str) -> Result<JournalEntry> {
-        let period = self.get_period(period_id)?.ok_or(stateset_core::CommerceError::NotFound)?;
-
-        if period.status != PeriodStatus::Open {
-            return Err(stateset_core::CommerceError::ValidationError(
-                "Period must be open to close".to_string(),
-            ));
-        }
-
-        // The income statement excludes closing entries, so a re-close would
-        // sweep the same revenue/expense again: while a closing entry stands
-        // (not voided), the period cannot be closed a second time.
-        if let Some(existing) = self.existing_entry_for_source("period_close", period_id)? {
-            return Err(stateset_core::CommerceError::ValidationError(format!(
-                "Period already has closing entry {}; void it before re-closing",
-                existing.entry_number
-            )));
-        }
-
-        // Generate income statement for the period
-        let income_statement = self.get_income_statement(period.start_date, period.end_date)?;
-
-        // Only create closing entry if there's income-statement activity.
-        if income_statement.net_income == Decimal::ZERO
-            && income_statement.revenue_lines.iter().all(|l| l.amount == Decimal::ZERO)
-            && income_statement.expense_lines.iter().all(|l| l.amount == Decimal::ZERO)
-        {
-            return Err(stateset_core::CommerceError::ValidationError(
-                "No net income to close".to_string(),
-            ));
-        }
-
-        // Get retained earnings account
-        let retained_earnings = self
-            .list_accounts(GlAccountFilter {
-                account_sub_type: Some(AccountSubType::RetainedEarnings),
-                ..Default::default()
-            })?
-            .into_iter()
-            .next()
-            .ok_or_else(|| {
-                stateset_core::CommerceError::ValidationError(
-                    "Retained earnings account not found".to_string(),
-                )
-            })?;
-
-        // Create closing entry - debit revenue accounts, credit expense accounts
-        // and net to retained earnings
-        let mut lines = Vec::new();
-
-        for rev in income_statement.revenue_lines {
-            // Revenue is credit-normal: a positive balance closes with a
-            // debit; a contra-normal (negative) balance closes with a credit.
-            let memo = Some(format!("Close {} to Retained Earnings", rev.account_name));
-            if rev.amount > Decimal::ZERO {
-                lines.push(stateset_core::CreateJournalEntryLine::debit(
-                    rev.account_id,
-                    rev.amount,
-                    memo,
-                ));
-            } else if rev.amount < Decimal::ZERO {
-                lines.push(stateset_core::CreateJournalEntryLine::credit(
-                    rev.account_id,
-                    rev.amount.abs(),
-                    memo,
-                ));
-            }
-        }
-
-        for exp in income_statement.expense_lines {
-            // Expenses are debit-normal: a positive balance closes with a
-            // credit; a contra-normal balance (e.g. a net FX gain sitting on
-            // an expense-type gain/loss account) closes with a debit.
-            let memo = Some(format!("Close {} to Retained Earnings", exp.account_name));
-            if exp.amount > Decimal::ZERO {
-                lines.push(stateset_core::CreateJournalEntryLine::credit(
-                    exp.account_id,
-                    exp.amount,
-                    memo,
-                ));
-            } else if exp.amount < Decimal::ZERO {
-                lines.push(stateset_core::CreateJournalEntryLine::debit(
-                    exp.account_id,
-                    exp.amount.abs(),
-                    memo,
-                ));
-            }
-        }
-
-        // Net to retained earnings (omitted when revenue and expenses offset
-        // exactly — the closing lines already balance).
-        if income_statement.net_income > Decimal::ZERO {
-            lines.push(stateset_core::CreateJournalEntryLine::credit(
-                retained_earnings.id,
-                income_statement.net_income,
-                Some("Net income to Retained Earnings".to_string()),
-            ));
-        } else if income_statement.net_income < Decimal::ZERO {
-            lines.push(stateset_core::CreateJournalEntryLine::debit(
-                retained_earnings.id,
-                income_statement.net_income.abs(),
-                Some("Net loss to Retained Earnings".to_string()),
-            ));
-        }
-
-        let closing_entry = self.create_journal_entry(stateset_core::CreateJournalEntry {
-            entry_date: period.end_date,
-            entry_type: Some(JournalEntryType::Closing),
-            description: format!("Closing entries for {}", period.period_name),
-            lines,
-            source_document_type: Some("period_close".to_string()),
-            source_document_id: Some(period_id),
-            auto_post: Some(true),
-        })?;
-
-        // Close the period
-        self.close_period(period_id, closed_by)?;
-
-        Ok(closing_entry)
+        with_immediate_transaction(&self.pool, |tx| {
+            super::ledger_close::close(tx, period_id, closed_by)
+        })
     }
 
     // ========================================================================
     // FX Revaluation
     // ========================================================================
 
+    fn preview_revaluation(
+        &self,
+        as_of_date: NaiveDate,
+        base_currency: Option<Currency>,
+    ) -> Result<RevaluationResult> {
+        with_immediate_transaction(&self.pool, |tx| {
+            super::ledger_fx::revalue(tx, as_of_date, base_currency, true)
+        })
+    }
+
     fn revalue(
         &self,
         as_of_date: NaiveDate,
         base_currency: Option<Currency>,
     ) -> Result<RevaluationResult> {
-        let base = match base_currency {
-            Some(base) => base,
-            None => {
-                let conn = self
-                    .pool
-                    .get()
-                    .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-                match conn.query_row(
-                    "SELECT base_currency FROM store_currency_settings LIMIT 1",
-                    [],
-                    |row| row.get::<_, String>(0),
-                ) {
-                    Ok(code) => code.parse::<Currency>().map_err(|e| {
-                        stateset_core::CommerceError::DatabaseError(format!(
-                            "Invalid store base currency {code:?}: {e}"
-                        ))
-                    })?,
-                    Err(rusqlite::Error::QueryReturnedNoRows) => Currency::default(),
-                    Err(e) => return Err(map_db_error(e)),
-                }
-            }
-        };
-        let base_code: stateset_core::CurrencyCode = base.code().parse().map_err(|e| {
-            stateset_core::CommerceError::ValidationError(format!(
-                "Base currency {} is not a valid ISO code: {e}",
-                base.code()
-            ))
-        })?;
-        let base_places = u32::from(base.decimal_places());
-
-        let accounts = self.list_accounts(GlAccountFilter {
-            status: Some(AccountStatus::Active),
-            is_posting: Some(true),
-            ..Default::default()
-        })?;
-
-        let mut lines: Vec<RevaluationLine> = Vec::new();
-        {
-            let conn = self
-                .pool
-                .get()
-                .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
-            for account in accounts {
-                if account.currency == base_code {
-                    continue;
-                }
-
-                // Outstanding foreign-currency balance: posted lines excluding
-                // prior base-currency FX revaluation adjustments.
-                let (debits, credits): (String, String) = conn
-                    .query_row(
-                        "SELECT decimal_sum(l.debit_amount), decimal_sum(l.credit_amount)
-                         FROM gl_journal_entry_lines l
-                         JOIN gl_journal_entries je ON l.journal_entry_id = je.id
-                         WHERE l.account_id = ?1 AND je.status = 'posted'
-                           AND (l.reference_type IS NULL OR l.reference_type != ?2)",
-                        params![account.id.to_string(), FX_REVALUATION_REFERENCE],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
-                    )
-                    .map_err(map_db_error)?;
-                let debits = parse_decimal_required(debits, 0).map_err(map_db_error)?;
-                let credits = parse_decimal_required(credits, 1).map_err(map_db_error)?;
-                let foreign_balance = account.balance_effect(debits, credits);
-
-                if foreign_balance.is_zero() && account.current_balance.is_zero() {
-                    continue;
-                }
-
-                let rate =
-                    Self::lookup_rate_with_conn(&conn, account.currency.as_str(), base.code())?
-                        .ok_or_else(|| {
-                            stateset_core::CommerceError::ValidationError(format!(
-                                "No exchange rate available for {} -> {}",
-                                account.currency,
-                                base.code()
-                            ))
-                        })?;
-
-                lines.push(stateset_core::compute_revaluation_line(
-                    &account,
-                    foreign_balance,
-                    rate,
-                    base_places,
-                ));
-            }
-        }
-
-        let total_unrealized_gain_loss: Decimal =
-            lines.iter().map(|l| l.unrealized_gain_loss).sum();
-
-        let journal_entry = if lines.iter().any(|l| !l.adjustment.is_zero()) {
-            let fx_account_id = self.resolve_fx_gain_loss_account()?;
-            let entry_lines = stateset_core::build_revaluation_journal_lines(&lines, fx_account_id);
-            Some(self.create_journal_entry(stateset_core::CreateJournalEntry {
-                entry_date: as_of_date,
-                entry_type: Some(JournalEntryType::Adjusting),
-                description: format!("FX revaluation as of {as_of_date}"),
-                lines: entry_lines,
-                source_document_type: Some(FX_REVALUATION_REFERENCE.to_string()),
-                source_document_id: None,
-                auto_post: Some(true),
-            })?)
-        } else {
-            None
-        };
-
-        Ok(RevaluationResult {
-            as_of_date,
-            base_currency: base_code,
-            total_unrealized_gain_loss,
-            lines,
-            journal_entry,
+        with_immediate_transaction(&self.pool, |tx| {
+            super::ledger_fx::revalue(tx, as_of_date, base_currency, false)
         })
     }
 
@@ -2576,36 +2281,24 @@ mod tests {
     }
 
     #[test]
-    fn get_period_for_date_prefers_open_when_overlapping() {
+    fn rejects_overlapping_periods_and_preserves_closed_lookup() {
         let repo = fresh_repo();
-        // Two overlapping periods around mid-July 2026.
-        let p1 = repo
-            .create_period(CreateGlPeriod {
-                period_name: "2026-07 A".into(),
+        let first = fy_period(&repo);
+        repo.close_period(first.id, "tester").unwrap();
+        assert!(
+            repo.create_period(CreateGlPeriod {
+                period_name: "overlap".into(),
                 fiscal_year: 2026,
-                period_number: 7,
-                start_date: NaiveDate::from_ymd_opt(2026, 7, 1).expect("date"),
-                end_date: NaiveDate::from_ymd_opt(2026, 7, 31).expect("date"),
+                period_number: 99,
+                start_date: first.start_date,
+                end_date: first.end_date
             })
-            .expect("create p1");
-        let p2 = repo
-            .create_period(CreateGlPeriod {
-                period_name: "2026-07 B".into(),
-                fiscal_year: 2026,
-                period_number: 70,
-                start_date: NaiveDate::from_ymd_opt(2026, 7, 10).expect("date"),
-                end_date: NaiveDate::from_ymd_opt(2026, 7, 20).expect("date"),
-            })
-            .expect("create p2");
-        // Open p1, open then close p2 — both cover the date, only p1 is open.
-        let p1 = repo.open_period(p1.id).expect("open p1");
-        let p2 = repo.open_period(p2.id).expect("open p2");
-        let _ = repo.close_period(p2.id, "tester").expect("close p2");
-
-        let date = NaiveDate::from_ymd_opt(2026, 7, 15).expect("date");
-        let selected = repo.get_period_for_date(date).expect("lookup").expect("some");
-        assert_eq!(selected.id, p1.id, "must select the open period covering the date");
-        assert!(selected.can_post(), "selected period is open");
+            .is_err()
+        );
+        assert_eq!(
+            repo.get_period_for_date(first.start_date).unwrap().unwrap().status,
+            PeriodStatus::Closed
+        );
     }
 
     #[test]
@@ -2675,6 +2368,7 @@ mod tests {
                 source_document_type: None,
                 source_document_id: None,
                 auto_post: Some(false),
+                fx: None,
             })
             .expect("create");
 
@@ -2707,6 +2401,7 @@ mod tests {
                 source_document_type: None,
                 source_document_id: Some(revenue.id),
                 auto_post: None,
+                fx: None,
             })
             .expect_err("err");
         assert!(
@@ -2737,6 +2432,7 @@ mod tests {
                 source_document_type: None,
                 source_document_id: None,
                 auto_post: None,
+                fx: None,
             })
             .expect("create draft");
         assert!(!entry.is_balanced);
@@ -2779,6 +2475,7 @@ mod tests {
                 source_document_type: None,
                 source_document_id: None,
                 auto_post: None,
+                fx: None,
             })
             .expect_err("err");
         assert!(matches!(err, CommerceError::ValidationError(_)));
@@ -2803,6 +2500,7 @@ mod tests {
                 source_document_type: None,
                 source_document_id: None,
                 auto_post: Some(false),
+                fx: None,
             })
             .expect("create");
 
@@ -2842,6 +2540,7 @@ mod tests {
                 source_document_type: None,
                 source_document_id: None,
                 auto_post: Some(false),
+                fx: None,
             })
             .expect("draft");
 
@@ -2857,6 +2556,7 @@ mod tests {
                 source_document_type: None,
                 source_document_id: None,
                 auto_post: Some(false),
+                fx: None,
             })
             .expect("post");
         repo.post_journal_entry(to_post.id, "tester").expect("post");
@@ -2930,6 +2630,7 @@ mod tests {
                 source_document_type: None,
                 source_document_id: None,
                 auto_post: None,
+                fx: None,
             })
             .expect_err("err");
         assert!(matches!(err, CommerceError::ValidationError(_)));
@@ -2952,6 +2653,12 @@ mod tests {
             source_document_type: None,
             source_document_id: None,
             auto_post: Some(false),
+            fx: (debit_account.currency != stateset_core::CurrencyCode::USD).then_some(
+                stateset_core::JournalEntryFx {
+                    currency: debit_account.currency,
+                    rate: Decimal::ONE,
+                },
+            ),
         })
         .expect("create entry")
     }
@@ -2976,6 +2683,7 @@ mod tests {
             source_document_type: Some(doc_type.to_string()),
             source_document_id: Some(doc_id),
             auto_post: Some(auto_post),
+            fx: None,
         })
     }
 
@@ -2991,20 +2699,20 @@ mod tests {
         // one is rejected by the unique index even though this path has no
         // application-level idempotency check — the database is the backstop.
         let first =
-            make_sourced_entry(&repo, &cash, &revenue, "invoice", doc, true).expect("first");
-        let dup = make_sourced_entry(&repo, &cash, &revenue, "invoice", doc, false);
+            make_sourced_entry(&repo, &cash, &revenue, "fx_revaluation", doc, true).expect("first");
+        let dup = make_sourced_entry(&repo, &cash, &revenue, "fx_revaluation", doc, false);
         assert!(dup.is_err(), "duplicate source document must be rejected: {dup:?}");
 
         // Voiding frees the document for a corrected re-post.
         repo.void_journal_entry(first.id).expect("void");
-        make_sourced_entry(&repo, &cash, &revenue, "invoice", doc, false)
+        make_sourced_entry(&repo, &cash, &revenue, "fx_revaluation", doc, false)
             .expect("re-post after void");
 
-        // Multi-entry families (recognition, depreciation) are exempt.
+        // Other source families permit multiple journal entries.
         let ob = Uuid::new_v4();
-        make_sourced_entry(&repo, &cash, &revenue, "revenue_recognition", ob, false)
+        make_sourced_entry(&repo, &cash, &revenue, "scheduled_adjustment", ob, false)
             .expect("first recognition");
-        make_sourced_entry(&repo, &cash, &revenue, "revenue_recognition", ob, false)
+        make_sourced_entry(&repo, &cash, &revenue, "scheduled_adjustment", ob, false)
             .expect("second recognition for the same obligation");
     }
 
@@ -3250,15 +2958,8 @@ mod tests {
     }
 
     fn set_rate(db: &SqliteDatabase, from: Currency, to: Currency, rate: rust_decimal::Decimal) {
-        use stateset_core::CurrencyRepository;
-        db.currency()
-            .set_rate(stateset_core::SetExchangeRate {
-                base_currency: from,
-                quote_currency: to,
-                rate,
-                source: Some("test".into()),
-            })
-            .expect("set rate");
+        let day = if rate == Decimal::ONE { "2026-01-01" } else { "2026-01-20" };
+        db.pool().get().unwrap().execute("INSERT INTO exchange_rate_history (id,base_currency,quote_currency,rate,source,rate_at) VALUES (?1,?2,?3,?4,'test',?5)", rusqlite::params![Uuid::new_v4().to_string(),from.code(),to.code(),rate.to_string(),format!("{day}T00:00:00Z")]).unwrap();
     }
 
     #[test]
@@ -3319,8 +3020,8 @@ mod tests {
         let again = repo
             .revalue(NaiveDate::from_ymd_opt(2026, 1, 31).expect("date"), None)
             .expect("revalue again");
-        assert!(again.journal_entry.is_none());
-        assert_eq!(again.total_unrealized_gain_loss, dec!(0.00));
+        assert_eq!(again.journal_entry.unwrap().id, je.id);
+        assert_eq!(again.total_unrealized_gain_loss, dec!(100.00));
         assert_eq!(account_balance(&repo, eur_cash.id), dec!(1100.00));
     }
 

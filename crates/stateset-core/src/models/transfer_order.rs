@@ -10,6 +10,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use stateset_primitives::{ProductId, TransferOrderId, TransferOrderItemId, WarehouseId};
 use strum::{Display, EnumString};
+use uuid::Uuid;
 
 /// Lifecycle status of a transfer order.
 #[derive(
@@ -53,6 +54,11 @@ pub struct TransferOrderItem {
     pub product_id: ProductId,
     /// SKU snapshot.
     pub sku: String,
+    /// Lot being transferred, when tracked.
+    pub lot_id: Option<Uuid>,
+    /// Missing units explicitly written off when receiving is closed.
+    #[serde(default)]
+    pub quantity_variance: Decimal,
     /// Quantity requested to transfer.
     pub quantity: Decimal,
     /// Quantity actually shipped from the source.
@@ -65,13 +71,13 @@ impl TransferOrderItem {
     /// Outstanding quantity still to be received.
     #[must_use]
     pub fn quantity_outstanding(&self) -> Decimal {
-        (self.quantity - self.quantity_received).max(Decimal::ZERO)
+        (self.quantity - self.quantity_received - self.quantity_variance).max(Decimal::ZERO)
     }
 
     /// Whether this line has been fully received.
     #[must_use]
     pub fn is_fully_received(&self) -> bool {
-        self.quantity_received >= self.quantity
+        self.quantity_received + self.quantity_variance >= self.quantity
     }
 }
 
@@ -82,10 +88,14 @@ pub struct TransferOrder {
     pub id: TransferOrderId,
     /// Human-readable transfer order number.
     pub number: String,
-    /// Source warehouse.
+    /// External source warehouse reference; physical stock is selected by `source_location_id`.
     pub source_warehouse_id: WarehouseId,
-    /// Destination warehouse.
+    /// External destination warehouse reference; stock is received into `destination_location_id`.
     pub destination_warehouse_id: WarehouseId,
+    /// Physical source location. Legacy documents may lack a stock mapping.
+    pub source_location_id: Option<i32>,
+    /// Physical receiving location.
+    pub destination_location_id: Option<i32>,
     /// Lifecycle status.
     pub status: TransferOrderStatus,
     /// Line items.
@@ -123,7 +133,8 @@ impl TransferOrder {
         if self.status == TransferOrderStatus::Cancelled {
             return TransferOrderStatus::Cancelled;
         }
-        let received = self.total_received();
+        let received =
+            self.total_received() + self.items.iter().map(|i| i.quantity_variance).sum::<Decimal>();
         let total = self.total_quantity();
         if received <= Decimal::ZERO {
             self.status
@@ -138,6 +149,10 @@ impl TransferOrder {
 /// A line on a create-transfer-order request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateTransferOrderItem {
+    /// SKU of the specific product variant being transferred.
+    pub sku: String,
+    /// Lot to move, if tracked.
+    pub lot_id: Option<Uuid>,
     /// Product to transfer.
     pub product_id: ProductId,
     /// Quantity to transfer.
@@ -147,9 +162,13 @@ pub struct CreateTransferOrderItem {
 /// Input for creating a transfer order. Source and destination must differ.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateTransferOrder {
-    /// Source warehouse.
+    /// Explicit physical source in the stock ledger.
+    pub source_location_id: i32,
+    /// Explicit destination in the stock ledger.
+    pub destination_location_id: i32,
+    /// External source warehouse reference; physical stock is selected by `source_location_id`.
     pub source_warehouse_id: WarehouseId,
-    /// Destination warehouse.
+    /// External destination warehouse reference; stock is received into `destination_location_id`.
     pub destination_warehouse_id: WarehouseId,
     /// Line items (at least one required).
     pub items: Vec<CreateTransferOrderItem>,
@@ -181,6 +200,8 @@ mod tests {
 
     fn make_item(qty: Decimal, received: Decimal) -> TransferOrderItem {
         TransferOrderItem {
+            lot_id: None,
+            quantity_variance: Decimal::ZERO,
             id: TransferOrderItemId::new(),
             transfer_order_id: TransferOrderId::new(),
             product_id: ProductId::new(),
@@ -193,6 +214,8 @@ mod tests {
 
     fn make_order(items: Vec<TransferOrderItem>, status: TransferOrderStatus) -> TransferOrder {
         TransferOrder {
+            source_location_id: Some(1),
+            destination_location_id: Some(2),
             id: TransferOrderId::new(),
             number: "TO-1".to_string(),
             source_warehouse_id: WarehouseId::new(),

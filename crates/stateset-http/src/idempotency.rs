@@ -312,12 +312,54 @@ fn request_fingerprint(method: &Method, path: &str, body: &[u8]) -> String {
     out
 }
 
-/// Whether a path is a `POST` create endpoint that participates in idempotency.
-///
-/// The set covers resource-creating collection endpoints plus the mutation
-/// sub-routes (`/refund`) that create new financial records. Action routes that
-/// only transition existing resources (`/complete`, `/cancel`, …) are excluded.
+/// ERP writes are retry-protected, including action routes and updates.
+/// Read-only calculations are excluded even when they use POST.
+fn is_erp_mutation_path(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix("/api/v1/") else {
+        return false;
+    };
+    let segments = rest.split('/').filter(|s| !s.is_empty()).collect::<Vec<_>>();
+    if matches!(segments.as_slice(), ["credit", "customers", _, "check"]) {
+        return false;
+    }
+    matches!(
+        segments.first().copied(),
+        Some(
+            "ap" | "ar"
+                | "gl"
+                | "invoices"
+                | "credit"
+                | "cost-accounting"
+                | "fixed-assets"
+                | "revenue-contracts"
+                | "revenue-obligations"
+                | "prepayments"
+                | "vendor-credits"
+                | "payment-obligations"
+                | "receipts"
+                | "put-aways"
+                | "warehouse-inventory"
+                | "warehouse-bins"
+                | "warehouse-locations"
+                | "backorders"
+                | "lots"
+                | "work-orders"
+                | "transfer-orders"
+                | "vendor-returns"
+                | "cycle-counts"
+                | "bins"
+                | "fulfillment"
+                | "purchase-orders"
+                | "production-batches"
+        )
+    )
+}
+
+/// Collection creates and ERP actions participate in durable retry handling.
 fn is_idempotent_post_path(path: &str) -> bool {
+    if is_erp_mutation_path(path) {
+        return true;
+    }
     let Some(rest) = path.strip_prefix("/api/v1/") else {
         return false;
     };
@@ -340,6 +382,11 @@ fn is_idempotent_post_path(path: &str) -> bool {
 }
 
 fn is_idempotent_endpoint(method: &Method, path: &str) -> bool {
+    if matches!(*method, Method::POST | Method::PUT | Method::PATCH | Method::DELETE)
+        && is_erp_mutation_path(path)
+    {
+        return true;
+    }
     if *method == Method::POST {
         return is_idempotent_post_path(path);
     }
@@ -356,6 +403,9 @@ fn is_idempotent_endpoint(method: &Method, path: &str) -> bool {
 /// Whether a `POST` path is a money-moving create that *requires* an
 /// `Idempotency-Key` when the required-key gate is enabled.
 fn requires_idempotency_key(path: &str) -> bool {
+    if is_erp_mutation_path(path) {
+        return true;
+    }
     let Some(rest) = path.strip_prefix("/api/v1/") else {
         return false;
     };
@@ -744,6 +794,33 @@ mod tests {
 
     fn durable_layer(commerce: &Arc<Commerce>) -> IdempotencyLayer {
         IdempotencyLayer::new().with_durable_store(commerce.clone())
+    }
+
+    #[test]
+    fn finance_and_stock_actions_are_retry_protected() {
+        for path in [
+            "/api/v1/invoices/id/payments",
+            "/api/v1/ar/credit-memos",
+            "/api/v1/ar/payment-applications",
+            "/api/v1/ar/write-offs",
+            "/api/v1/ap/payment-runs/id/process",
+            "/api/v1/gl/journal-entries/id/post",
+            "/api/v1/gl/close-month",
+            "/api/v1/gl/posting-config",
+            "/api/v1/revenue-obligations/id/recognize",
+            "/api/v1/prepayments/id/apply",
+            "/api/v1/vendor-credits/id/apply",
+            "/api/v1/receipts/id/receive",
+            "/api/v1/lots/id/split",
+            "/api/v1/work-orders/id/complete",
+        ] {
+            for method in [Method::POST, Method::PUT, Method::PATCH, Method::DELETE] {
+                assert!(is_idempotent_endpoint(&method, path), "{method} {path}");
+            }
+            assert!(requires_idempotency_key(path), "{path}");
+            assert!(!is_idempotent_endpoint(&Method::GET, path));
+        }
+        assert!(!is_idempotent_endpoint(&Method::POST, "/api/v1/credit/customers/id/check"));
     }
 
     #[test]

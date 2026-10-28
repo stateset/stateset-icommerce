@@ -478,7 +478,6 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
                 rusqlite::params![agent_registry, agent_id, client_address],
                 |row| row.get(0),
             )
-            .optional()
             .map_err(map_db_error)?;
 
         Ok(index.unwrap_or(0) as u64)

@@ -6,6 +6,7 @@
 
 pub(crate) mod backorders;
 pub(crate) mod general_ledger;
+pub(crate) mod invoices;
 pub(crate) mod lots;
 pub(crate) mod payments;
 pub(crate) mod returns;

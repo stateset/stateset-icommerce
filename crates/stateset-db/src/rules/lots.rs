@@ -1,6 +1,6 @@
 //! Backend-agnostic lots rules shared by the SQLite and Postgres repositories.
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use stateset_core::{CommerceError, Lot, LotStatus, Result};
 use uuid::Uuid;
@@ -22,6 +22,7 @@ use uuid::Uuid;
 /// `merge` additionally refuses any open reservation because it zeroes the
 /// source and would orphan the reservation rows.
 pub(crate) fn ensure_consolidatable_source(lot: &Lot, operation: &str) -> Result<()> {
+    ensure_unexpired(lot, Utc::now(), operation)?;
     if lot.status != LotStatus::Active {
         return Err(CommerceError::ValidationError(format!(
             "Cannot {operation} lot {} ({}): status is {} (only active lots may be {operation}d)",
@@ -32,6 +33,21 @@ pub(crate) fn ensure_consolidatable_source(lot: &Lot, operation: &str) -> Result
         return Err(CommerceError::ValidationError(format!(
             "Cannot {operation} lot {} ({}): {} units are quarantined",
             lot.lot_number, lot.id, lot.quantity_quarantined
+        )));
+    }
+    Ok(())
+}
+
+/// Expiry half of each backend's `ensure_consumable`, for `consume`/`reserve`, which keep
+/// reporting a non-`Active` status as `InsufficientStock` (nothing is
+/// available from a blocked lot) but must name an expired lot explicitly.
+pub(crate) fn ensure_unexpired(lot: &Lot, now: DateTime<Utc>, operation: &str) -> Result<()> {
+    if let Some(exp) = lot.expiration_date.filter(|exp| now > *exp) {
+        return Err(CommerceError::ValidationError(format!(
+            "Cannot {operation} from lot {} ({}): lot expired at {}",
+            lot.lot_number,
+            lot.id,
+            exp.to_rfc3339()
         )));
     }
     Ok(())

@@ -15,9 +15,9 @@ use super::*;
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreateInvoiceItemInput {
     pub description: String,
-    pub quantity: f64,
-    /// Float unit price. Optional: send `unit_price_exact` instead for exact money.
-    pub unit_price: Option<f64>,
+    pub quantity: String,
+    /// Exact decimal unit price; `unit_price_exact` remains an alias.
+    pub unit_price: Option<String>,
     /// Exact base-10 unit price. Takes precedence over `unit_price` when present.
     pub unit_price_exact: Option<String>,
     pub sku: Option<String>,
@@ -26,6 +26,8 @@ pub struct CreateInvoiceItemInput {
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreateInvoiceInput {
+    pub currency: Option<String>,
+    pub due_date: Option<String>,
     pub customer_id: String,
     pub order_id: Option<String>,
     pub items: Vec<CreateInvoiceItemInput>,
@@ -37,26 +39,28 @@ pub struct CreateInvoiceInput {
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct InvoiceOutput {
+    pub currency: String,
+    pub balance_due: String,
     pub id: String,
     pub invoice_number: String,
     pub customer_id: String,
     pub order_id: Option<String>,
     #[napi(ts_type = "InvoiceStatus")]
     pub status: String,
-    /// @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0.
-    pub subtotal: f64,
+    /// Exact decimal string.
+    pub subtotal: String,
     /// Exact base-10 subtotal, straight from the engine's `Decimal`. Prefer this field for money.
     pub subtotal_exact: String,
-    /// @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0.
-    pub tax_amount: f64,
+    /// Exact decimal string.
+    pub tax_amount: String,
     /// Exact base-10 tax amount, straight from the engine's `Decimal`. Prefer this field for money.
     pub tax_amount_exact: String,
-    /// @deprecated Use the `totalExact` twin; float money will be removed in 2.0.
-    pub total: f64,
+    /// Exact decimal string.
+    pub total: String,
     /// Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_exact: String,
-    /// @deprecated Use the `amountPaidExact` twin; float money will be removed in 2.0.
-    pub amount_paid: f64,
+    /// Exact decimal string.
+    pub amount_paid: String,
     /// Exact base-10 amount paid, straight from the engine's `Decimal`. Prefer this field for money.
     pub amount_paid_exact: String,
     pub due_date: String,
@@ -68,11 +72,17 @@ impl TryFrom<stateset_core::Invoice> for InvoiceOutput {
     type Error = Error;
 
     fn try_from(inv: stateset_core::Invoice) -> Result<Self> {
-        let (subtotal, subtotal_exact) = money_pair(inv.subtotal, "invoice subtotal")?;
-        let (tax_amount, tax_amount_exact) = money_pair(inv.tax_amount, "invoice tax amount")?;
-        let (total, total_exact) = money_pair(inv.total, "invoice total")?;
-        let (amount_paid, amount_paid_exact) = money_pair(inv.amount_paid, "invoice amount paid")?;
+        let subtotal = inv.subtotal.to_string();
+        let subtotal_exact = subtotal.clone();
+        let tax_amount = inv.tax_amount.to_string();
+        let tax_amount_exact = tax_amount.clone();
+        let total = inv.total.to_string();
+        let total_exact = total.clone();
+        let amount_paid = inv.amount_paid.to_string();
+        let amount_paid_exact = amount_paid.clone();
         Ok(Self {
+            currency: inv.currency.to_string(),
+            balance_due: inv.balance_due.to_string(),
             id: inv.id.to_string(),
             invoice_number: inv.invoice_number,
             customer_id: inv.customer_id.to_string(),
@@ -96,10 +106,12 @@ impl TryFrom<stateset_core::Invoice> for InvoiceOutput {
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct RecordPaymentInput {
-    /// Float amount. Optional: send `amount_exact` instead for exact money.
-    pub amount: Option<f64>,
+    /// Exact decimal amount; `amount_exact` remains an alias.
+    pub amount: Option<String>,
     /// Exact base-10 amount. Takes precedence over `amount` when present.
     pub amount_exact: Option<String>,
+    /// Stable nonzero UUID for retry-safe recording of this invoice payment.
+    pub payment_id: Option<String>,
     pub payment_method: Option<String>,
     pub reference: Option<String>,
 }
@@ -111,6 +123,12 @@ pub struct Invoices {
 
 #[napi]
 impl Invoices {
+    /// This binding consumes paymentId atomically and rejects amount conflicts.
+    #[napi]
+    pub fn supports_payment_idempotency(&self) -> bool {
+        true
+    }
+
     #[napi]
     pub async fn create(&self, input: CreateInvoiceInput) -> Result<InvoiceOutput> {
         let commerce = self.commerce.get()?;
@@ -132,8 +150,8 @@ impl Invoices {
             .map(|i| {
                 Ok(stateset_core::CreateInvoiceItem {
                     description: i.description,
-                    quantity: decimal_from_f64(i.quantity, "invoice item quantity")?,
-                    unit_price: money_input(
+                    quantity: parse_decimal_str(&i.quantity, "invoice item quantity")?,
+                    unit_price: finance_money_input(
                         i.unit_price_exact.as_deref(),
                         i.unit_price,
                         "invoice item unit price",
@@ -148,6 +166,8 @@ impl Invoices {
             .invoices()
             .create(stateset_core::CreateInvoice {
                 customer_id,
+                currency: parse_optional_enum(input.currency, "currency")?,
+                due_date: parse_optional_datetime(input.due_date, "due date")?,
                 order_id,
                 items,
                 billing_email: input.billing_email,
@@ -232,11 +252,19 @@ impl Invoices {
             .record_payment(
                 uuid,
                 stateset_core::RecordInvoicePayment {
-                    amount: money_input(
+                    amount: finance_money_input(
                         input.amount_exact.as_deref(),
                         input.amount,
                         "invoice payment amount",
                     )?,
+                    payment_id: input
+                        .payment_id
+                        .map(|value| {
+                            value
+                                .parse::<uuid::Uuid>()
+                                .map_err(|_| coded(ErrCode::Validation, "Invalid payment UUID"))
+                        })
+                        .transpose()?,
                     payment_method: input.payment_method,
                     reference: input.reference,
                     ..Default::default()

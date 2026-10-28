@@ -96,6 +96,8 @@ pub struct CreateFixedAssetInput {
     pub location_id: Option<String>,
     pub asset_account_id: Option<String>,
     pub accumulated_depreciation_account_id: Option<String>,
+    pub acquisition_offset_account_id: Option<String>,
+    pub disposal_gain_loss_account_id: Option<String>,
     pub depreciation_expense_account_id: Option<String>,
     /// Currency code, e.g. "USD"
     pub currency: Option<String>,
@@ -116,6 +118,8 @@ pub struct UpdateFixedAssetInput {
     pub location_id: Option<String>,
     pub asset_account_id: Option<String>,
     pub accumulated_depreciation_account_id: Option<String>,
+    pub acquisition_offset_account_id: Option<String>,
+    pub disposal_gain_loss_account_id: Option<String>,
     pub depreciation_expense_account_id: Option<String>,
 }
 
@@ -192,6 +196,8 @@ pub struct FixedAssetOutput {
     pub location_id: Option<String>,
     pub asset_account_id: Option<String>,
     pub accumulated_depreciation_account_id: Option<String>,
+    pub acquisition_offset_account_id: Option<String>,
+    pub disposal_gain_loss_account_id: Option<String>,
     pub depreciation_expense_account_id: Option<String>,
     /// Exact decimal string
     pub accumulated_depreciation: String,
@@ -226,6 +232,8 @@ impl From<stateset_core::FixedAsset> for FixedAssetOutput {
             accumulated_depreciation_account_id: a
                 .accumulated_depreciation_account_id
                 .map(|id| id.to_string()),
+            acquisition_offset_account_id: a.acquisition_offset_account_id.map(|id| id.to_string()),
+            disposal_gain_loss_account_id: a.disposal_gain_loss_account_id.map(|id| id.to_string()),
             depreciation_expense_account_id: a
                 .depreciation_expense_account_id
                 .map(|id| id.to_string()),
@@ -348,6 +356,14 @@ impl FixedAssets {
                     input.accumulated_depreciation_account_id,
                     "accumulated_depreciation_account_id",
                 )?,
+                acquisition_offset_account_id: parse_optional_uuid(
+                    input.acquisition_offset_account_id,
+                    "acquisition_offset_account_id",
+                )?,
+                disposal_gain_loss_account_id: parse_optional_uuid(
+                    input.disposal_gain_loss_account_id,
+                    "disposal_gain_loss_account_id",
+                )?,
                 depreciation_expense_account_id: parse_optional_uuid(
                     input.depreciation_expense_account_id,
                     "depreciation_expense_account_id",
@@ -464,6 +480,14 @@ impl FixedAssets {
                     accumulated_depreciation_account_id: parse_optional_uuid(
                         input.accumulated_depreciation_account_id,
                         "accumulated_depreciation_account_id",
+                    )?,
+                    acquisition_offset_account_id: parse_optional_uuid(
+                        input.acquisition_offset_account_id,
+                        "acquisition_offset_account_id",
+                    )?,
+                    disposal_gain_loss_account_id: parse_optional_uuid(
+                        input.disposal_gain_loss_account_id,
+                        "disposal_gain_loss_account_id",
                     )?,
                     depreciation_expense_account_id: parse_optional_uuid(
                         input.depreciation_expense_account_id,

@@ -1,173 +1,74 @@
 # Manufacturing & Supply Chain
 
-iCommerce includes full manufacturing and supply chain management: bills of materials, work orders, quality control, purchase orders, and supplier management.
+iCommerce supports bills of materials, stock-backed work orders, production batches, receiving and supplier returns. Quantities, state transitions and physical stock routing are enforced by the database transaction on SQLite and PostgreSQL.
 
-## Bills of Materials (BOM)
-
-Define the components needed to build a product:
+## Bills of materials
 
 ```javascript
-const bom = commerce.bom.create({
-    productId: product.id,
-    name: 'Widget Assembly',
-    version: '1.0',
-    items: [
-        { sku: 'PART-A', name: 'Housing', quantity: 1 },
-        { sku: 'PART-B', name: 'Circuit Board', quantity: 1 },
-        { sku: 'PART-C', name: 'Screw Set', quantity: 4 }
-    ]
+const bom = await commerce.bom.create({ productId: product.id, name: 'Widget assembly' });
+await commerce.bom.addComponent(bom.id, {
+  componentSku: 'PART-A', name: 'Housing', quantity: 2,
 });
+await commerce.bom.activate(bom.id);
 ```
 
-### BOM Explosion
+Components require valid identities and positive quantities. Revisions are unique, cycles are rejected, and published BOMs are immutable. Create a new revision for engineering changes. Recursive costing multiplies component quantities through nested assemblies and rejects cyclic graphs.
 
-Calculate total material requirements for a production run:
-
-```bash
-stateset "explode BOM for 500 Premium Widgets"
-```
-
-## Work Orders
-
-Track manufacturing jobs from draft through completion:
-
-```
-Draft → Scheduled → In Progress → Completed
-                       └────────→ On Hold → In Progress
-```
+## Stock-backed work orders
 
 ```javascript
-const workOrder = commerce.workOrders.create({
-    bomId: bom.id,
-    quantity: 500,
-    scheduledDate: '2026-04-01'
+const workOrder = await commerce.workOrders.create({
+  productId: product.id,
+  bomId: bom.id,
+  quantityToBuildExact: '1.5',
+  stock: {
+    sourceLocationId: componentShelf.id,
+    outputLocationId: finishedGoodsShelf.id,
+    outputSku: 'WIDGET',
+  },
 });
-
-commerce.workOrders.start(workOrder.id);
-commerce.workOrders.complete(workOrder.id, { yieldQuantity: 498 });
+await commerce.workOrders.start(workOrder.id);
+await commerce.workOrders.completeExact(workOrder.id, '0.75');
+await commerce.workOrders.completeExact(workOrder.id, '0.75');
 ```
 
-## Quality Control
+Creation snapshots the BOM materials. Release/start reserves components; consumption and finished output post atomically at explicit locations. Partial completion uses decimal quantities. Completion cannot exceed the remaining build quantity. Generic updates cannot reset lifecycle status or quantities already completed. Starting or completing from a prohibited state returns a conflict, including through HTTP.
+
+Work-order material routes support listing/adding materials and explicit consumption. Additions must respect the work-order state and stock requirements. Quality holds and lot quarantine are checked by the shared movement path, including manufacturing consumption.
+
+## Purchasing and receiving
 
 ```javascript
-const inspection = commerce.quality.createInspection({
-    workOrderId: workOrder.id,
-    type: 'final',
-    criteria: [
-        { name: 'Visual', target: 'No scratches', result: 'pass' },
-        { name: 'Dimension', target: '10.0mm ± 0.1', result: 'pass' }
-    ]
+const supplier = await commerce.purchaseOrders.createSupplier({ name: 'Acme Parts' });
+const po = await commerce.purchaseOrders.create({
+  supplierId: supplier.id,
+  items: [{ sku: 'PART-A', name: 'Housing', quantity: 100, unitCostExact: '2.50' }],
 });
+await commerce.purchaseOrders.submit(po.id);
+await commerce.purchaseOrders.approve(po.id, 'user:buyer');
+await commerce.purchaseOrders.send(po.id);
+const [line] = await commerce.purchaseOrders.getItems(po.id);
+await commerce.purchaseOrders.receive(
+  po.id, [{ itemId: line.id, quantityReceivedExact: '100' }],
+  warehouse.id, receivingLocation.id,
+);
 ```
 
-## Purchase Orders
+The convenience receive call requires an explicit warehouse and receiving location. It routes through canonical receiving and stock posting. PO lines can be edited only before approval. A receipt cannot exceed expected quantities, and accepted/rejected quantities determine line status at completion. Serial counts are validated; accepted serials are registered in the same transaction and remain unavailable for allocation until put-away.
 
-Manage procurement from suppliers:
+For separate receiving and shelf placement use `receiving.createReceiptFromPo`, `getReceiptItems`, `startReceiving`, `receiveItems`, `completeReceiving`, `createPutAway` and `completePutAway`. MCP exposes these steps, including put-away assignment, start and cancellation. `get_receipt` returns the line IDs needed by `receive_receipt_items`. See [Inventory & Warehousing](inventory.md).
+
+## Batches, costs and returns
 
 ```javascript
-const po = commerce.purchaseOrders.create({
-    supplierId: supplier.id,
-    items: [
-        { sku: 'PART-A', quantity: 1000, unitCost: 2.50 }
-    ],
-    expectedDelivery: '2026-03-25'
+const batch = await commerce.productionBatches.create({
+  name: 'Widget run', workOrderIds: [workOrder.id],
 });
-
-commerce.purchaseOrders.approve(po.id);
-commerce.purchaseOrders.receive(po.id, { receivedQuantity: 995 });
+const costs = await commerce.costAccounting.getItemCost('WIDGET');
 ```
 
-## Supplier Management
+Production batches store relational work-order membership and derive progress from their members. Invalid legacy links require reconciliation. The admin manufacturing setup screen lists component recipes and batch members and supports draft BOM creation, adding components, publication, batch creation and exact item-cost settings.
 
-```javascript
-const supplier = commerce.suppliers.create({
-    name: 'Acme Parts Co.',
-    email: 'orders@acmeparts.com',
-    leadTimeDays: 14
-});
-```
+Processing a vendor return requires a valid supplier, SKU and physical source location. It removes the returned stock atomically and can create one linked vendor credit. A quality hold or quarantine that blocks the stock must be resolved through its own workflow first. A vendor credit settles AP bills or payment obligations; it does not automatically represent every accounting treatment of a customer credit memo.
 
-## Traceability
-
-Track the complete genealogy of manufactured products:
-
-```javascript
-// Create lot during work order completion
-const lot = commerce.lots.create({
-    sku: 'WIDGET-001',
-    lotNumber: 'LOT-2026-03-A',
-    workOrderId: workOrder.id,
-    quantity: 498,
-    expirationDate: '2027-03-16'
-});
-
-// Assign serial numbers to individual units
-for (let i = 1; i <= 498; i++) {
-    commerce.serials.assign({
-        sku: 'WIDGET-001',
-        serialNumber: `SN-WGT-${String(i).padStart(5, '0')}`,
-        lotId: lot.id
-    });
-}
-
-// Later: trace a serial number back to its work order
-const serial = commerce.serials.get('SN-WGT-00042');
-// → { sku: 'WIDGET-001', lotId: 'lot-123', lotNumber: 'LOT-2026-03-A' }
-const lot = commerce.lots.get(serial.lotId);
-// → { workOrderId: 'wo-456', quantity: 498 }
-```
-
-## Cost Rollup
-
-Track total manufacturing cost per work order:
-
-```javascript
-const cost = commerce.costAccounting.getWorkOrderCost(workOrder.id);
-// → {
-//     materialCost: 6250.00,   // BOM components
-//     laborCost: 2500.00,      // Labor hours × rate
-//     overhead: 1250.00,       // Allocated overhead
-//     totalCost: 10000.00,
-//     costPerUnit: 20.08       // totalCost / yieldQuantity
-// }
-```
-
-## QC Failure Recovery
-
-When a quality inspection fails:
-
-```javascript
-// Inspection fails
-const inspection = commerce.quality.createInspection({
-    workOrderId: workOrder.id,
-    type: 'final',
-    result: 'fail',
-    criteria: [
-        { name: 'Dimension', target: '10.0mm ± 0.1', actual: '10.3mm', result: 'fail' }
-    ]
-});
-
-// Option 1: Rework — put the work order back to In Progress
-commerce.workOrders.rework(workOrder.id, { reason: 'Dimension out of spec' });
-
-// Option 2: Scrap — write off the units
-commerce.inventory.adjust(sku, -failedQuantity, 'QC scrap: dimension failure');
-```
-
-## MCP Tools
-
-| Tool | Description |
-|------|-------------|
-| `create_bom` | Create a bill of materials |
-| `explode_bom` | Calculate total material requirements |
-| `create_work_order` | Create a manufacturing job |
-| `start_work_order` | Begin production |
-| `complete_work_order` | Record completion with yield |
-| `create_purchase_order` | Create a PO for materials |
-| `approve_purchase_order` | Approve for procurement |
-| `receive_purchase_order` | Record receipt of materials |
-| `list_suppliers` | List all suppliers |
-| `create_quality_inspection` | Record a QC inspection |
-| `create_lot` | Create a lot number |
-| `assign_serial` | Assign a serial number |
-| `get_work_order_cost` | Cost rollup for a work order |
+Manufacturing routings, capacity planning, MRP, engineering-change approvals, automatic rework and generalized scrap/backflush accounting are not provided by these workflows. Do not use a completed work-order edit to undo production; use supported stock/accounting corrections with an audit trail.

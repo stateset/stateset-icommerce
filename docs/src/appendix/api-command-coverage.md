@@ -106,7 +106,7 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 | `sync` | custom | 20 | 2 | - |
 | `tax` | custom | 8 | 2 | - |
 | `topology-snapshots` | tool-backed | 5 | 0 | - |
-| `transfer-orders` | tool-backed | 7 | 0 | - |
+| `transfer-orders` | tool-backed | 8 | 0 | - |
 | `treasury` | custom | 6 | 2 | - |
 | `units-of-measure` | tool-backed | 10 | 0 | - |
 | `vector` | custom | 12 | 2 | - |

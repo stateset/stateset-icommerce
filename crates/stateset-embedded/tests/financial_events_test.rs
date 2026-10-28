@@ -10,14 +10,14 @@ use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use stateset_core::{
-    AccountSubType, AccountType, CommerceEvent, CreateAutoPostingConfig, CreateBill,
-    CreateBillItem, CreateCycleCount, CreateCycleCountLine, CreateFixedAsset, CreateGlAccount,
-    CreateGlPeriod, CreateJournalEntry, CreateJournalEntryLine, CreatePerformanceObligation,
-    CreatePurchaseOrder, CreatePurchaseOrderItem, CreateReceipt, CreateReceiptItem,
-    CreateRevenueContract, CreateSupplier, CreateWarehouse, Currency, DepreciationMethod,
-    FixedAssetCategory, JournalEntryType, ReceiptType, ReceiveItemLine, ReceiveItems,
-    RecognitionMethod, RecordCycleCountLine, RevenueContractStatus, SetExchangeRate,
-    UpdateRevenueContract, WarehouseAddress,
+    AccountSubType, AccountType, AdjustLocationInventory, CommerceEvent, CreateAutoPostingConfig,
+    CreateBill, CreateBillItem, CreateCycleCount, CreateCycleCountLine, CreateFixedAsset,
+    CreateGlAccount, CreateGlPeriod, CreateJournalEntry, CreateJournalEntryLine, CreateLocation,
+    CreatePerformanceObligation, CreatePurchaseOrder, CreatePurchaseOrderItem, CreateReceipt,
+    CreateReceiptItem, CreateRevenueContract, CreateSupplier, CreateWarehouse, Currency,
+    CurrencyCode, DepreciationMethod, FixedAssetCategory, JournalEntryFx, JournalEntryType,
+    ReceiptType, ReceiveItemLine, ReceiveItems, RecognitionMethod, RecordCycleCountLine,
+    RevenueContractStatus, SetExchangeRate, UpdateRevenueContract, WarehouseAddress,
 };
 use stateset_embedded::Commerce;
 use stateset_embedded::events::EventSubscription;
@@ -53,6 +53,8 @@ fn create_asset(commerce: &Commerce) -> stateset_core::FixedAsset {
             location_id: None,
             asset_account_id: None,
             accumulated_depreciation_account_id: None,
+            acquisition_offset_account_id: None,
+            disposal_gain_loss_account_id: None,
             depreciation_expense_account_id: None,
             currency: None,
         })
@@ -238,12 +240,31 @@ async fn cycle_count_completion_emits_variance_summary() {
             timezone: None,
         })
         .expect("create warehouse");
+    // A count compares against the location's stored stock, so it needs a
+    // location that holds the ten units the auditor will find.
+    let location = commerce
+        .warehouse()
+        .create_location(CreateLocation { warehouse_id: warehouse.id, ..Default::default() })
+        .expect("create location");
+    commerce
+        .warehouse()
+        .adjust_inventory(AdjustLocationInventory {
+            location_id: location.id,
+            sku: "WIDGET-001".into(),
+            quantity: dec!(10),
+            reason: "count fixture".into(),
+            lot_id: None,
+            reference_type: None,
+            reference_id: None,
+            performed_by: None,
+        })
+        .expect("stock the location");
 
     let count = commerce
         .warehouse()
         .create_cycle_count(CreateCycleCount {
             warehouse_id: warehouse.id,
-            location_id: None,
+            location_id: Some(location.id),
             scheduled_date: None,
             counted_by: Some("auditor".into()),
             lines: vec![CreateCycleCountLine {
@@ -312,6 +333,10 @@ async fn three_way_match_variance_emits_event() {
         .expect("po");
     let po_id: Uuid = po.id.into();
     let po_line_id = po.items[0].id;
+    // Goods are received only against a sent purchase order.
+    commerce.purchase_orders().submit(po_id).expect("submit po");
+    commerce.purchase_orders().approve(po_id, "buyer").expect("approve po");
+    commerce.purchase_orders().send(po_id).expect("send po");
 
     let warehouse = commerce
         .warehouse()
@@ -486,6 +511,10 @@ fn setup_gl_with_fx(commerce: &Commerce) -> Uuid {
         unearned_revenue_account_id: None,
         sales_revenue_account_id: by_number("4010"),
         shipping_revenue_account_id: None,
+        sales_tax_payable_account_id: None,
+        goods_received_not_invoiced_account_id: None,
+        inventory_adjustment_account_id: None,
+        work_in_progress_account_id: None,
         cogs_account_id: by_number("5010"),
         bad_debt_expense_account_id: None,
         fx_gain_loss_account_id: Some(fx_id),
@@ -515,7 +544,8 @@ fn setup_gl_with_fx(commerce: &Commerce) -> Uuid {
         })
         .expect("set rate");
     gl.create_journal_entry(CreateJournalEntry {
-        entry_date: date(2026, 6, 15),
+        // Rates are recorded as they occur, so the test works in the present.
+        entry_date: chrono::Utc::now().date_naive(),
         entry_type: Some(JournalEntryType::Standard),
         description: "Seed EUR balance".into(),
         lines: vec![
@@ -539,6 +569,9 @@ fn setup_gl_with_fx(commerce: &Commerce) -> Uuid {
         source_document_type: None,
         source_document_id: None,
         auto_post: Some(true),
+        // A real EUR posting at the current rate; without it the amounts are
+        // base currency and there is no foreign balance to revalue.
+        fx: Some(JournalEntryFx { currency: CurrencyCode::EUR, rate: dec!(1.00) }),
     })
     .expect("seed EUR entry");
 
@@ -562,7 +595,9 @@ async fn fx_revaluation_and_month_end_close_emit_events() {
         .expect("set rate");
 
     let mut sub = commerce.events().subscribe();
-    let result = commerce.general_ledger().revalue(date(2026, 6, 30), None).expect("revalue");
+    // Revaluation uses the rate in force on its date: both rates above are today's.
+    let today = chrono::Utc::now().date_naive();
+    let result = commerce.general_ledger().revalue(today, None).expect("revalue");
     assert!(result.journal_entry.is_some());
 
     let events = drain(&mut sub);
@@ -574,7 +609,7 @@ async fn fx_revaluation_and_month_end_close_emit_events() {
             journal_entry_id,
             ..
         } => {
-            assert_eq!(*as_of_date, date(2026, 6, 30));
+            assert_eq!(*as_of_date, today);
             assert_eq!(*total_unrealized_gain_loss, result.total_unrealized_gain_loss);
             assert_eq!(*journal_entry_id, result.journal_entry.as_ref().map(|e| e.id));
         }
@@ -585,7 +620,16 @@ async fn fx_revaluation_and_month_end_close_emit_events() {
     // runs through `revalue`, so an FX event may accompany it.
     let report = commerce
         .general_ledger()
-        .close_month(period_id, stateset_core::CloseMonthOptions::default())
+        .close_month(
+            period_id,
+            // Close needs each step configured or explicitly skipped; this
+            // store has no assets or contracts to post.
+            stateset_core::CloseMonthOptions {
+                skip_depreciation: true,
+                skip_revenue_recognition: true,
+                ..Default::default()
+            },
+        )
         .expect("close month");
     assert!(!report.dry_run);
 
@@ -608,7 +652,12 @@ async fn fx_revaluation_and_month_end_close_emit_events() {
     drain(&mut sub);
     gl.close_month(
         period_id,
-        stateset_core::CloseMonthOptions { dry_run: true, ..Default::default() },
+        stateset_core::CloseMonthOptions {
+            dry_run: true,
+            skip_depreciation: true,
+            skip_revenue_recognition: true,
+            ..Default::default()
+        },
     )
     .expect("dry run close");
     assert!(

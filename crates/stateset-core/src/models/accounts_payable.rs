@@ -17,6 +17,12 @@ use uuid::Uuid;
 /// A bill/invoice from a supplier.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bill {
+    /// Trusted application identity recorded at creation.
+    #[serde(default)]
+    pub created_by: Option<String>,
+    /// Trusted approver; must differ from the creator.
+    #[serde(default)]
+    pub approved_by: Option<String>,
     /// Unique identifier for this bill.
     pub id: Uuid,
     /// System-generated or supplier-provided bill reference (e.g. `"BILL-20240101-ABC123"`).
@@ -55,6 +61,9 @@ pub struct Bill {
     pub reference_number: Option<String>,
     /// Free-text notes for internal use.
     pub memo: Option<String>,
+    /// Explicit reason for accepting a purchase/receipt match variance.
+    #[serde(default)]
+    pub match_override_reason: Option<String>,
     /// Timestamp of record creation.
     pub created_at: DateTime<Utc>,
     /// Timestamp of the last update.
@@ -129,6 +138,9 @@ pub struct PaymentRun {
     pub status: PaymentRunStatus,
     pub payment_date: DateTime<Utc>,
     pub payment_method: PaymentMethodAP,
+    /// Denomination of the run total; absent only on unreconciled legacy runs.
+    #[serde(default)]
+    pub currency: Option<CurrencyCode>,
     pub total_amount: Decimal,
     pub payment_count: i32,
     pub notes: Option<String>,
@@ -562,6 +574,8 @@ mod tests {
 /// Input for creating a bill.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateBill {
+    /// Set by the trusted host, never by an untrusted request body.
+    pub created_by: Option<String>,
     pub bill_number: Option<String>,
     pub supplier_id: Uuid,
     pub purchase_order_id: Option<Uuid>,
@@ -819,6 +833,65 @@ pub fn perform_three_way_match(
     po_items: &[crate::PurchaseOrderItem],
     receipt_items: &[crate::ReceiptItem],
     bill_lines: &[BillItem],
+    tolerance_percent: Decimal,
+) -> ThreeWayMatchResult {
+    perform_three_way_match_values(
+        &po_items
+            .iter()
+            .map(|p| MatchPurchaseLine {
+                id: p.id,
+                quantity_ordered: p.quantity_ordered,
+                unit_cost: p.unit_cost,
+            })
+            .collect::<Vec<_>>(),
+        &receipt_items
+            .iter()
+            .map(|r| MatchReceiptLine {
+                po_line_id: r.po_line_id,
+                received_quantity: r.received_quantity - r.rejected_quantity,
+            })
+            .collect::<Vec<_>>(),
+        &bill_lines
+            .iter()
+            .map(|b| MatchBillLine {
+                id: b.id,
+                po_line_id: b.po_line_id,
+                description: b.description.clone(),
+                quantity: b.quantity,
+                unit_price: b.unit_price,
+            })
+            .collect::<Vec<_>>(),
+        tolerance_percent,
+    )
+}
+/// Minimal values required for matching, usable on a repository transaction.
+#[derive(Debug, Clone)]
+pub struct MatchPurchaseLine {
+    pub id: Uuid,
+    pub quantity_ordered: Decimal,
+    pub unit_cost: Decimal,
+}
+/// Accepted receipt quantities grouped by purchase-order line.
+#[derive(Debug, Clone)]
+pub struct MatchReceiptLine {
+    pub po_line_id: Option<Uuid>,
+    pub received_quantity: Decimal,
+}
+/// Supplier invoice quantities and prices grouped by purchase-order line.
+#[derive(Debug, Clone)]
+pub struct MatchBillLine {
+    pub id: Uuid,
+    pub po_line_id: Option<Uuid>,
+    pub description: String,
+    pub quantity: Decimal,
+    pub unit_price: Decimal,
+}
+/// Match a consistent snapshot of purchase, receipt and bill values.
+#[must_use]
+pub fn perform_three_way_match_values(
+    po_items: &[MatchPurchaseLine],
+    receipt_items: &[MatchReceiptLine],
+    bill_lines: &[MatchBillLine],
     tolerance_percent: Decimal,
 ) -> ThreeWayMatchResult {
     let tolerance_percent = tolerance_percent.max(Decimal::ZERO);

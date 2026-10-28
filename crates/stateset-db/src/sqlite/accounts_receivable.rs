@@ -19,14 +19,11 @@ use stateset_core::{
     CollectionActivityType, CollectionStatus, CreateCollectionActivity, CreateCreditMemo,
     CreateWriteOff, CreditMemo, CreditMemoFilter, CreditMemoStatus, CustomerArAging,
     CustomerArSummary, CustomerId, CustomerStatement, DunningLetterType, GenerateStatementRequest,
-    Invoice, InvoiceId, OrderId, Result, StatementLineItem, StatementTransactionType, WriteOff,
-    WriteOffFilter, generate_credit_memo_number, generate_write_off_number,
+    Invoice, InvoiceId, OrderId, Result, WriteOff, WriteOffFilter, generate_credit_memo_number,
+    generate_write_off_number,
 };
 use std::collections::HashMap;
 use uuid::Uuid;
-
-/// One statement-visible event: (date, type, reference, description, amount).
-type StatementActivityRow = (String, StatementTransactionType, String, String, Decimal);
 
 #[derive(Debug)]
 
@@ -224,7 +221,7 @@ impl SqliteAccountsReceivableRepository {
         parse_uuid_row(&customer_id, "invoice", "customer_id").map_err(map_db_error)
     }
 
-    fn recalculate_invoice_with_conn(
+    pub(super) fn recalculate_invoice_with_conn(
         conn: &rusqlite::Transaction<'_>,
         invoice_id: InvoiceId,
     ) -> Result<()> {
@@ -262,20 +259,22 @@ impl SqliteAccountsReceivableRepository {
         let direct_dec = parse_decimal_safe(&direct_amount_paid, "invoice", "direct_amount_paid")?;
         let total_applied = direct_dec + paid_dec + credits_dec;
 
+        let written_off = sum_decimal_query(
+            conn,
+            "SELECT amount FROM ar_write_offs WHERE invoice_id=?1 AND reversed_at IS NULL",
+            &[&inv as &dyn rusqlite::ToSql],
+            "write_off",
+            "amount",
+        )?;
         let total_dec = parse_decimal_safe(&total, "invoice", "total")?;
-        let balance_due = total_dec - total_applied;
+        let balance_due = total_dec - total_applied - written_off;
 
-        // Derive the status from the money WITHOUT discarding an operator's
-        // own classification. This branch used to hard-code `sent` while its
-        // comment claimed to keep the original status, so unapplying the last
-        // payment silently cleared an `overdue` flag (dropping a past-due
-        // invoice out of collections) and applying one cleared a `disputed`
-        // flag — bypassing the guarded `dispute` transition in `invoices.rs`.
-        //
-        // Terminal statuses ARE reset: `reverse_write_off` relies on this
-        // recalculation to bring a `written_off` invoice back to a live state.
-        let status = if balance_due <= Decimal::ZERO {
-            "paid"
+        // Only explicit write-off reversal may restore a written-off balance.
+        // Voided/cancelled states never change as a side effect of recalculation.
+        let status = if matches!(current_status.as_str(), "voided" | "cancelled") {
+            current_status.as_str()
+        } else if balance_due <= Decimal::ZERO {
+            if written_off > Decimal::ZERO { "written_off" } else { "paid" }
         } else if total_applied > Decimal::ZERO {
             // A partly paid invoice that is under dispute is still disputed.
             if current_status == "disputed" { "disputed" } else { "partially_paid" }
@@ -286,12 +285,12 @@ impl SqliteAccountsReceivableRepository {
             // Nothing applied: genuinely keep the original status.
             current_status.as_str()
         } else {
-            // A stale paid/partially_paid or a terminal status is reset.
+            // A reversed write-off or released payment restores an issued receivable.
             "sent"
         };
 
         conn.execute(
-            "UPDATE invoices SET amount_paid = ?1, balance_due = ?2, status = ?3 WHERE id = ?4",
+            "UPDATE invoices SET amount_paid = ?1, balance_due = ?2, status = ?3, collection_status = CASE WHEN ?3='written_off' THEN 'written_off' WHEN collection_status='written_off' THEN 'none' ELSE collection_status END, paid_at = CASE WHEN ?3='paid' THEN COALESCE(paid_at,CURRENT_TIMESTAMP) ELSE NULL END, updated_at=CURRENT_TIMESTAMP WHERE id = ?4",
             params![
                 total_applied.to_string(),
                 balance_due.to_string(),
@@ -350,7 +349,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         let mut days_over_90 = Decimal::ZERO;
 
         let mut stmt = conn.prepare(
-            "SELECT due_date, balance_due FROM invoices WHERE status NOT IN ('paid', 'voided', 'written_off')",
+            "SELECT due_date, balance_due FROM invoices WHERE status NOT IN ('draft', 'paid', 'voided', 'written_off', 'cancelled')",
         ).map_err(map_db_error)?;
         let mut rows = stmt.query([]).map_err(map_db_error)?;
 
@@ -424,7 +423,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                 "SELECT due_date, balance_due, created_at
              FROM invoices
              WHERE customer_id = ?1
-               AND status NOT IN ('paid', 'voided', 'written_off')",
+               AND status NOT IN ('draft', 'paid', 'voided', 'written_off', 'cancelled')",
             )
             .map_err(map_db_error)?;
         let mut rows = stmt.query(params![customer_id.to_string()]).map_err(map_db_error)?;
@@ -497,7 +496,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                 i.created_at
              FROM invoices i
              LEFT JOIN customers c ON i.customer_id = c.id
-             WHERE i.status NOT IN ('paid', 'voided', 'written_off')",
+             WHERE i.status NOT IN ('draft', 'paid', 'voided', 'written_off', 'cancelled')",
         );
 
         if filter.customer_id.is_some() {
@@ -806,7 +805,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         let mut stmt = conn.prepare(
             "SELECT id, invoice_number, order_id, customer_id, status, invoice_date, due_date, subtotal, tax_amount, shipping_amount, discount_amount, total, amount_paid, balance_due, currency, notes, terms, created_at, updated_at
              FROM invoices
-             WHERE status NOT IN ('paid', 'voided', 'written_off')
+             WHERE status NOT IN ('draft', 'paid', 'voided', 'written_off', 'cancelled')
                AND due_date < datetime('now')
                AND (last_dunning_date IS NULL OR last_dunning_date < datetime('now', '-7 days'))
              ORDER BY due_date ASC"
@@ -978,7 +977,10 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
 
             // A voided/cancelled invoice cannot be written off; an already
             // written-off invoice is rejected by the guarded UPDATE below.
-            if matches!(invoice_status.as_str(), "voided" | "cancelled") {
+            if !matches!(
+                invoice_status.as_str(),
+                "sent" | "viewed" | "overdue" | "disputed" | "partially_paid"
+            ) {
                 return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(format!(
                     "Cannot write off invoice {} with status {invoice_status}",
                     input.invoice_id
@@ -992,17 +994,6 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                     "Write-off amount ({}) exceeds invoice balance due ({balance_due})",
                     input.amount
                 ))));
-            }
-
-            let rows = tx.execute(
-                "UPDATE invoices SET status = 'written_off', collection_status = 'written_off'
-                 WHERE id = ?1 AND status != 'written_off'",
-                params![input.invoice_id.to_string()],
-            )?;
-            if rows == 0 {
-                return Err(to_rusqlite(stateset_core::CommerceError::Conflict(
-                    "Invoice not found or already written off".into(),
-                )));
             }
 
             tx.execute(
@@ -1023,6 +1014,8 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                 ],
             )?;
 
+            Self::recalculate_invoice_with_conn(tx, input.invoice_id.into())
+                .map_err(to_rusqlite)?;
             Ok(customer_id)
         })?;
 
@@ -1121,6 +1114,16 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                 rusqlite::Error::ToSqlConversionFailure(Box::new(e))
             };
 
+            let invoice_status: String = tx.query_row(
+                "SELECT status FROM invoices WHERE id=?1",
+                [wo.invoice_id.to_string()],
+                |r| r.get(0),
+            )?;
+            if matches!(invoice_status.as_str(), "voided" | "cancelled") {
+                return Err(to_rusqlite(stateset_core::CommerceError::Conflict(
+                    "Cannot reverse a write-off on a terminal invoice".into(),
+                )));
+            }
             let rows = tx.execute(
                 "UPDATE ar_write_offs SET reversed_at = ?1 WHERE id = ?2 AND reversed_at IS NULL",
                 params![now.to_rfc3339(), id.to_string()],
@@ -1143,10 +1146,16 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             Self::recalculate_invoice_with_conn(tx, wo.invoice_id.into()).map_err(to_rusqlite)?;
             tx.execute(
                 "UPDATE invoices SET status = 'overdue'
-                 WHERE id = ?1 AND due_date < datetime('now') AND status NOT IN ('paid', 'voided')",
+                 WHERE id = ?1 AND due_date < datetime('now') AND status NOT IN ('paid', 'voided', 'written_off', 'cancelled')",
                 params![wo.invoice_id.to_string()],
             )?;
 
+            super::ledger_reversal::reverse_source(
+                tx,
+                "write_off",
+                id,
+                chrono::Utc::now().date_naive(),
+            )?;
             Ok(())
         })?;
 
@@ -1160,14 +1169,15 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             ));
         }
 
-        let conn = self
+        let mut conn = self
             .pool
             .get()
             .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
 
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         // `ar_credit_memos.customer_id` carries no FK, so an unknown customer
         // would otherwise yield an Open memo for nobody.
-        let customer_exists: Option<i64> = conn
+        let customer_exists: Option<i64> = tx
             .query_row(
                 "SELECT 1 FROM customers WHERE id = ?1",
                 params![input.customer_id.to_string()],
@@ -1183,7 +1193,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         let now = Utc::now();
         let credit_memo_number = generate_credit_memo_number();
 
-        conn.execute(
+        tx.execute(
             "INSERT INTO ar_credit_memos (id, credit_memo_number, customer_id, original_invoice_id, reason, amount, applied_amount, unapplied_amount, status, notes, issue_date, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, '0', ?7, 'open', ?8, ?9, ?10, ?11)",
             params![
@@ -1201,22 +1211,16 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             ],
         ).map_err(map_db_error)?;
 
-        Ok(CreditMemo {
-            id,
-            credit_memo_number,
-            customer_id: input.customer_id,
-            original_invoice_id: input.original_invoice_id,
-            reason: input.reason,
-            amount: input.amount,
-            applied_amount: Decimal::ZERO,
-            unapplied_amount: input.amount,
-            status: CreditMemoStatus::Open,
-            notes: input.notes,
-            issue_date: now,
-            gl_journal_entry_id: None,
-            created_at: now,
-            updated_at: now,
-        })
+        if super::general_ledger::SqliteGeneralLedgerRepository::get_auto_posting_config_with_conn(
+            &tx,
+        )
+        .map_err(map_db_error)?
+        .is_some()
+        {
+            super::ledger_credit::post(&tx, id).map_err(map_db_error)?;
+        }
+        tx.commit().map_err(map_db_error)?;
+        self.get_credit_memo(id)?.ok_or(stateset_core::CommerceError::NotFound)
     }
 
     fn get_credit_memo(&self, id: Uuid) -> Result<Option<CreditMemo>> {
@@ -1279,6 +1283,18 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             sql.push_str(" AND status = ?");
             params_vec.push(Value::Text(status.to_string()));
         }
+        if let Some(reason) = filter.reason {
+            sql.push_str(" AND reason = ?");
+            params_vec.push(Value::Text(reason.to_string()));
+        }
+        if let Some(from) = filter.from_date {
+            sql.push_str(" AND substr(issue_date,1,10) >= ?");
+            params_vec.push(Value::Text(from.date_naive().to_string()));
+        }
+        if let Some(to) = filter.to_date {
+            sql.push_str(" AND substr(issue_date,1,10) <= ?");
+            params_vec.push(Value::Text(to.date_naive().to_string()));
+        }
         // `unapplied_amount` is a TEXT decimal, so the has_unapplied filter is
         // applied below on the exact parsed `Decimal` (a SQL CAST(... AS REAL)
         // comparison coerces to IEEE-754 floats), and the LIMIT after it so
@@ -1291,13 +1307,12 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         // made the two backends answer the same filter differently.
         let has_unapplied = filter.has_unapplied;
 
-        sql.push_str(" ORDER BY issue_date DESC");
+        sql.push_str(" ORDER BY substr(issue_date,1,10) DESC, created_at DESC, id DESC");
 
         if has_unapplied.is_none() {
-            if let Some(limit) = filter.limit {
-                sql.push_str(" LIMIT ?");
-                params_vec.push(Value::Integer(i64::from(limit)));
-            }
+            sql.push_str(" LIMIT ? OFFSET ?");
+            params_vec.push(Value::Integer(i64::from(super::effective_limit(filter.limit))));
+            params_vec.push(Value::Integer(i64::from(filter.offset.unwrap_or(0))));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;
@@ -1311,9 +1326,11 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                     && memo.status != CreditMemoStatus::Voided;
                 unapplied == want_unapplied
             });
-            if let Some(limit) = filter.limit {
-                memos.truncate(limit as usize);
-            }
+            memos = memos
+                .into_iter()
+                .skip(filter.offset.unwrap_or(0) as usize)
+                .take(super::effective_limit(filter.limit) as usize)
+                .collect();
         }
         Ok(memos)
     }
@@ -1505,6 +1522,12 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
                     "Credit memo not found or already voided".into(),
                 )));
             }
+            super::ledger_reversal::reverse_source(
+                tx,
+                "credit_memo",
+                id,
+                chrono::Utc::now().date_naive(),
+            )?;
             Ok(())
         })?;
 
@@ -1523,142 +1546,7 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         &self,
         input: ApplyPaymentToInvoices,
     ) -> Result<Vec<ArPaymentApplication>> {
-        if input.applications.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let now = Utc::now();
-
-        // Immediate (write-locked) transaction so concurrent payments against the
-        // same invoice serialize: each application re-reads the invoice balance
-        // under the lock, so a second payment sees the balance the first already
-        // reduced and cannot over-apply. `with_immediate_transaction` also retries
-        // on SQLITE_BUSY, which a raw deferred `super::begin_immediate(&mut conn)` did not.
-        let applications = with_immediate_transaction(&self.pool, |tx| {
-            let to_rusqlite = |e: stateset_core::CommerceError| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-            };
-            let mut applications = Vec::new();
-            let mut expected_customer_id: Option<Uuid> = None;
-
-            // The payment itself bounds the total that can be applied: read its
-            // amount and what is already applied under the same write lock, so a
-            // payment can never be applied beyond its own value.
-            let payment_id_str = input.payment_id.to_string();
-            let payment_amount_str: String = match tx.query_row(
-                "SELECT amount FROM payments WHERE id = ?1",
-                params![payment_id_str],
-                |row| row.get(0),
-            ) {
-                Ok(amount) => amount,
-                Err(rusqlite::Error::QueryReturnedNoRows) => {
-                    return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(
-                        format!("Payment {} not found", input.payment_id),
-                    )));
-                }
-                Err(e) => return Err(e),
-            };
-            let payment_amount = parse_decimal_safe(&payment_amount_str, "payment", "amount")
-                .map_err(to_rusqlite)?;
-            let existing_applied = sum_decimal_query(
-                tx,
-                "SELECT applied_amount FROM ar_payment_applications WHERE payment_id = ?1",
-                &[&payment_id_str],
-                "payment_application",
-                "applied_amount",
-            )
-            .map_err(to_rusqlite)?;
-
-            let mut total_new = Decimal::ZERO;
-            for app in &input.applications {
-                if app.amount <= Decimal::ZERO {
-                    return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(
-                        "Payment application amount must be greater than zero".into(),
-                    )));
-                }
-                total_new += app.amount;
-            }
-            if existing_applied + total_new > payment_amount {
-                return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(format!(
-                    "Payment applications ({total_new}) plus already applied ({existing_applied}) exceed payment amount ({payment_amount})"
-                ))));
-            }
-
-            for app in &input.applications {
-                // Read the customer id and status on the transaction's own
-                // connection — a nested `self.pool.get()` here would take a
-                // second pooled connection while this one is held, deadlocking
-                // the pool under concurrency.
-                let (customer_str, invoice_status): (String, String) = tx.query_row(
-                    "SELECT customer_id, status FROM invoices WHERE id = ?1",
-                    params![app.invoice_id.to_string()],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )?;
-                if matches!(invoice_status.as_str(), "voided" | "cancelled" | "written_off") {
-                    return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(
-                        format!(
-                            "Cannot apply payment to invoice {} with status {invoice_status}",
-                            app.invoice_id
-                        ),
-                    )));
-                }
-                let invoice_customer_id = parse_uuid_row(&customer_str, "invoice", "customer_id")?;
-                if let Some(expected) = expected_customer_id {
-                    if expected != invoice_customer_id {
-                        return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(
-                            "All invoice applications for a payment must belong to the same customer"
-                                .into(),
-                        )));
-                    }
-                } else {
-                    expected_customer_id = Some(invoice_customer_id);
-                }
-
-                let balance_str: String = tx.query_row(
-                    "SELECT balance_due FROM invoices WHERE id = ?1",
-                    params![app.invoice_id.to_string()],
-                    |row| row.get(0),
-                )?;
-                let balance_due = parse_decimal_safe(&balance_str, "invoice", "balance_due")
-                    .map_err(to_rusqlite)?;
-                if app.amount > balance_due {
-                    return Err(to_rusqlite(stateset_core::CommerceError::ValidationError(
-                        "Payment application amount exceeds invoice balance due".into(),
-                    )));
-                }
-
-                let app_id = Uuid::new_v4();
-
-                tx.execute(
-                    "INSERT INTO ar_payment_applications (id, payment_id, invoice_id, applied_amount, applied_date, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![
-                        app_id.to_string(),
-                        input.payment_id.to_string(),
-                        app.invoice_id.to_string(),
-                        app.amount.to_string(),
-                        now.to_rfc3339(),
-                        now.to_rfc3339()
-                    ],
-                )?;
-
-                Self::recalculate_invoice_with_conn(tx, app.invoice_id.into())
-                    .map_err(to_rusqlite)?;
-
-                applications.push(ArPaymentApplication {
-                    id: app_id,
-                    payment_id: input.payment_id,
-                    invoice_id: app.invoice_id,
-                    applied_amount: app.amount,
-                    applied_date: now,
-                    created_at: now,
-                });
-            }
-
-            Ok(applications)
-        })?;
-
-        Ok(applications)
+        with_immediate_transaction(&self.pool, |tx| super::ar_settlement::apply_payment(tx, &input))
     }
 
     fn get_payment_applications(&self, payment_id: Uuid) -> Result<Vec<ArPaymentApplication>> {
@@ -1681,37 +1569,9 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn unapply_payment(&self, application_id: Uuid) -> Result<()> {
-        // Atomic: read the application, delete it, and recalculate the invoice
-        // in one immediate transaction. Previously three autocommit statements —
-        // a recalculation failure after the DELETE committed left the
-        // application gone while the invoice still showed the old
-        // amount_paid/status.
         with_immediate_transaction(&self.pool, |tx| {
-            let to_rusqlite = |e: stateset_core::CommerceError| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
-            };
-
-            // Missing application id -> QueryReturnedNoRows -> NotFound.
-            let invoice_id: String = tx.query_row(
-                "SELECT invoice_id FROM ar_payment_applications WHERE id = ?1",
-                params![application_id.to_string()],
-                |row| row.get(0),
-            )?;
-
-            tx.execute(
-                "DELETE FROM ar_payment_applications WHERE id = ?1",
-                params![application_id.to_string()],
-            )?;
-
-            let parsed_invoice_id =
-                parse_uuid_row(&invoice_id, "payment_application", "invoice_id")?;
-            Self::recalculate_invoice_with_conn(tx, parsed_invoice_id.into())
-                .map_err(to_rusqlite)?;
-
-            Ok(())
-        })?;
-
-        Ok(())
+            super::ar_settlement::unapply_payment(tx, application_id)
+        })
     }
 
     fn get_customer_summary(&self, customer_id: Uuid) -> Result<Option<CustomerArSummary>> {
@@ -1742,221 +1602,14 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
     }
 
     fn generate_statement(&self, request: GenerateStatementRequest) -> Result<CustomerStatement> {
-        let conn = self
+        let mut conn = self
             .pool
             .get()
-            .map_err(|e| stateset_core::CommerceError::DatabaseError(e.to_string()))?;
-
-        let now = Utc::now();
-        let period_start = request.period_start.unwrap_or_else(|| now - chrono::Duration::days(30));
-        let period_end = request.period_end.unwrap_or(now);
-
-        // Get customer info
-        let (customer_name, customer_email): (String, Option<String>) = conn
-            .query_row(
-                "SELECT first_name || ' ' || last_name, email FROM customers WHERE id = ?1",
-                params![request.customer_id.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .map_err(map_db_error)?;
-
-        // Get aging
-        let aging = self
-            .get_customer_aging(request.customer_id)?
-            .ok_or(stateset_core::CommerceError::NotFound)?;
-
-        // Gather statement-visible activity — invoices (debits), payment and
-        // credit-memo applications and non-reversed write-offs (credits) — as
-        // (date, type, ref, description, amount) rows for one window.
-        let collect_activity = |from: &str, to: &str| -> Result<Vec<StatementActivityRow>> {
-            let mut rows: Vec<StatementActivityRow> = Vec::new();
-            let customer = request.customer_id.to_string();
-
-            let mut stmt = conn
-                .prepare(
-                    "SELECT created_at, invoice_number, total FROM invoices
-                     WHERE customer_id = ?1 AND created_at >= ?2 AND created_at <= ?3",
-                )
-                .map_err(map_db_error)?;
-            let invoices = stmt
-                .query_map(params![customer, from, to], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                    ))
-                })
-                .map_err(map_db_error)?;
-            for inv in invoices {
-                let (date, number, total) = inv.map_err(map_db_error)?;
-                let amount = parse_decimal_safe(&total, "statement_invoice", "total")?;
-                rows.push((
-                    date,
-                    StatementTransactionType::Invoice,
-                    number,
-                    "Invoice".into(),
-                    amount,
-                ));
-            }
-
-            let mut stmt = conn
-                .prepare(
-                    "SELECT pa.applied_date, p.id, pa.applied_amount
-                     FROM ar_payment_applications pa
-                     JOIN payments p ON pa.payment_id = p.id
-                     JOIN invoices i ON pa.invoice_id = i.id
-                     WHERE i.customer_id = ?1 AND pa.applied_date >= ?2 AND pa.applied_date <= ?3",
-                )
-                .map_err(map_db_error)?;
-            let payments = stmt
-                .query_map(params![customer, from, to], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                    ))
-                })
-                .map_err(map_db_error)?;
-            for pay in payments {
-                let (date, id, amount_str) = pay.map_err(map_db_error)?;
-                let amount =
-                    parse_decimal_safe(&amount_str, "statement_payment", "applied_amount")?;
-                rows.push((
-                    date,
-                    StatementTransactionType::Payment,
-                    id[..8].to_string(),
-                    "Payment".into(),
-                    amount,
-                ));
-            }
-
-            let mut stmt = conn
-                .prepare(
-                    "SELECT ca.applied_date, cm.credit_memo_number, ca.applied_amount
-                     FROM ar_credit_memo_applications ca
-                     JOIN ar_credit_memos cm ON ca.credit_memo_id = cm.id
-                     JOIN invoices i ON ca.invoice_id = i.id
-                     WHERE i.customer_id = ?1 AND ca.applied_date >= ?2 AND ca.applied_date <= ?3",
-                )
-                .map_err(map_db_error)?;
-            let credits = stmt
-                .query_map(params![customer, from, to], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                    ))
-                })
-                .map_err(map_db_error)?;
-            for credit in credits {
-                let (date, number, amount_str) = credit.map_err(map_db_error)?;
-                let amount = parse_decimal_safe(&amount_str, "statement_credit", "applied_amount")?;
-                rows.push((
-                    date,
-                    StatementTransactionType::CreditMemo,
-                    number,
-                    "Credit Memo".into(),
-                    amount,
-                ));
-            }
-
-            let mut stmt = conn
-                .prepare(
-                    "SELECT write_off_date, write_off_number, amount FROM ar_write_offs
-                     WHERE customer_id = ?1 AND reversed_at IS NULL
-                       AND write_off_date >= ?2 AND write_off_date <= ?3",
-                )
-                .map_err(map_db_error)?;
-            let write_offs = stmt
-                .query_map(params![customer, from, to], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                    ))
-                })
-                .map_err(map_db_error)?;
-            for wo in write_offs {
-                let (date, number, amount_str) = wo.map_err(map_db_error)?;
-                let amount = parse_decimal_safe(&amount_str, "statement_write_off", "amount")?;
-                rows.push((
-                    date,
-                    StatementTransactionType::WriteOff,
-                    number,
-                    "Write-off".into(),
-                    amount,
-                ));
-            }
-
-            rows.sort_by(|a, b| a.0.cmp(&b.0));
-            Ok(rows)
-        };
-
-        // Opening balance: everything statement-visible before the period.
-        let epoch = "1970-01-01T00:00:00+00:00".to_string();
-        let opening_balance = collect_activity(&epoch, &period_start.to_rfc3339())?
-            .into_iter()
-            // Pre-period rows exactly at period_start belong to the period.
-            .filter(|(date, ..)| date.as_str() < period_start.to_rfc3339().as_str())
-            .map(|(_, kind, _, _, amount)| match kind {
-                StatementTransactionType::Invoice => amount,
-                _ => -amount,
-            })
-            .sum::<Decimal>();
-
-        let activity = collect_activity(&period_start.to_rfc3339(), &period_end.to_rfc3339())?;
-
-        let mut line_items: Vec<StatementLineItem> = Vec::new();
-        let mut running_balance = opening_balance;
-        let mut total_invoices = Decimal::ZERO;
-        let mut total_payments = Decimal::ZERO;
-        let mut total_credits = Decimal::ZERO;
-        for (date, kind, reference_number, description, amount) in activity {
-            let (debit, credit) = match kind {
-                StatementTransactionType::Invoice => {
-                    running_balance += amount;
-                    total_invoices += amount;
-                    (Some(amount), None)
-                }
-                other => {
-                    running_balance -= amount;
-                    match other {
-                        StatementTransactionType::Payment => total_payments += amount,
-                        StatementTransactionType::CreditMemo => total_credits += amount,
-                        _ => {}
-                    }
-                    (None, Some(amount))
-                }
-            };
-            line_items.push(StatementLineItem {
-                date: parse_datetime_safe(&date, "statement_line", "date")?,
-                transaction_type: kind,
-                reference_number,
-                description,
-                debit,
-                credit,
-                balance: running_balance,
-            });
-        }
-
-        Ok(CustomerStatement {
-            customer_id: request.customer_id,
-            customer_name,
-            customer_email,
-            billing_address: None,
-            statement_date: now,
-            period_start,
-            period_end,
-            opening_balance,
-            total_invoices,
-            total_payments,
-            total_credits,
-            // The live aging total; matches the running balance when every
-            // balance-affecting event is statement-visible for the window.
-            closing_balance: aging.total_outstanding,
-            aging,
-            line_items,
-        })
+            .map_err(|error| stateset_core::CommerceError::DatabaseError(error.to_string()))?;
+        let tx = conn.transaction().map_err(map_db_error)?;
+        let statement = super::ar_statement::generate(&tx, request).map_err(map_db_error)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(statement)
     }
 
     fn get_total_outstanding(&self) -> Result<Decimal> {
@@ -1973,14 +1626,14 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
         // DSO = (Accounts Receivable / Total Credit Sales) × Number of Days
         let ar_balance = sum_decimal_query(
             &conn,
-            "SELECT balance_due FROM invoices WHERE status NOT IN ('paid', 'voided', 'written_off')",
+            "SELECT balance_due FROM invoices WHERE status NOT IN ('draft', 'paid', 'voided', 'written_off', 'cancelled')",
             &[],
             "invoices",
             "balance_due",
         )?;
 
         let sales_sql = format!(
-            "SELECT total FROM invoices WHERE created_at >= datetime('now', '-{days} days')"
+            "SELECT total FROM invoices WHERE status NOT IN ('draft', 'voided', 'cancelled') AND julianday(COALESCE(sent_at, invoice_date)) >= julianday('now', '-{days} days')"
         );
         let total_sales = sum_decimal_query(&conn, &sales_sql, &[], "invoices", "total")?;
 
@@ -2711,14 +2364,15 @@ mod tests {
         repo: &SqliteAccountsReceivableRepository,
         number: &str,
         amount: &str,
+        customer: Uuid,
     ) -> Uuid {
         let id = Uuid::new_v4();
         let conn = repo.pool.get().expect("conn");
         let now = Utc::now();
         conn.execute(
-            "INSERT INTO payments (id, payment_number, amount, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?4)",
-            params![id.to_string(), number, amount, now.to_rfc3339()],
+            "INSERT INTO payments (id, payment_number, amount, created_at, updated_at, customer_id, status)
+             VALUES (?1, ?2, ?3, ?4, ?4, ?5, 'completed')",
+            params![id.to_string(), number, amount, now.to_rfc3339(), customer.to_string()],
         )
         .expect("insert payment");
         id
@@ -2734,7 +2388,7 @@ mod tests {
         // Invoice with a balance of exactly 100.
         let invoice_id = insert_invoice_for(&repo, cust, "INV-PAY-RACE", "100");
         // One payment parent row (FK target); all attempts apply against it.
-        let payment_id = insert_payment(&repo, "PAY-RACE", "1000");
+        let payment_id = insert_payment(&repo, "PAY-RACE", "1000", cust);
 
         const THREADS: usize = 10;
         let barrier = Arc::new(Barrier::new(THREADS));

@@ -1057,7 +1057,7 @@
       "module": "transfer-orders",
       "toolModulePresent": true,
       "commandFilePresent": true,
-      "actionCount": 7,
+      "actionCount": 8,
       "aliasCount": 0,
       "coverageStyle": "tool-backed",
       "toolBacked": false,

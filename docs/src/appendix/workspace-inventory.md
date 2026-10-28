@@ -96,9 +96,9 @@ workspace membership because they require host runtimes or headers.
 | `mcp` | 36 |
 | `channels` | 29 |
 | `sync` | 26 |
+| `simulation` | 21 |
 | `adapters` | 20 |
-| `simulation` | 20 |
-| `utils` | 16 |
+| `utils` | 17 |
 | `harness` | 14 |
 | `chains` | 10 |
 | `x402` | 10 |

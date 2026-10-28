@@ -69,6 +69,8 @@ export interface CommerceEngine {
     getAnalytics: () => Promise<SubscriptionAnalytics>;
   };
   generalLedger: {
+    getAutoPostingConfig: () => Promise<AutoPostingConfig | null>;
+    setAutoPostingConfig: (input: AutoPostingConfigInput) => Promise<AutoPostingConfig>;
     listAccounts: () => Promise<GlAccount[]>;
     getTrialBalance: (asOfDate: string) => Promise<TrialBalance>;
     listJournalEntries: () => Promise<JournalEntry[]>;
@@ -83,7 +85,7 @@ export interface CommerceEngine {
   accountsReceivable: {
     getAgingSummary: () => Promise<ArAgingSummary>;
     /** Optional: not every engine build exposes DSO. */
-    getDso?: (days: number) => Promise<number>;
+    getDso?: (days: number) => Promise<string | number>;
   };
   invoices: {
     list: () => Promise<Invoice[]>;
@@ -162,7 +164,7 @@ export interface CommerceEngine {
 }
 
 // Dynamic import to prevent bundling issues
-let StateSetCommerce: (new (config: { databasePath: string }) => CommerceEngine) | null = null;
+let StateSetCommerce: (new (databasePath: string) => CommerceEngine) | null = null;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -253,11 +255,11 @@ async function loadCommerceModule() {
   try {
     const mod = await import('@stateset/embedded');
     const moduleExports = mod as Record<string, unknown>;
-    const candidate = (moduleExports.default || moduleExports.Commerce || moduleExports) as unknown;
+    const candidate = (moduleExports.Commerce || moduleExports.default || moduleExports) as unknown;
     if (typeof candidate !== 'function') {
       throw new Error('Embedded module did not export a constructor');
     }
-    StateSetCommerce = candidate as new (config: { databasePath: string }) => CommerceEngine;
+    StateSetCommerce = candidate as new (databasePath: string) => CommerceEngine;
     return StateSetCommerce;
   } catch (error) {
     if (!shouldAllowMockEngine()) {
@@ -277,7 +279,7 @@ export async function getCommerceEngine(): Promise<CommerceEngine> {
   if (!commerceInstance) {
     const CommerceModule = await loadCommerceModule();
     if (CommerceModule) {
-      commerceInstance = new CommerceModule({ databasePath: DEFAULT_DATABASE_PATH });
+      commerceInstance = new CommerceModule(DEFAULT_DATABASE_PATH);
       await commerceInstance.initialize?.();
     } else {
       commerceInstance = createMockCommerceEngine();
@@ -1199,6 +1201,10 @@ function createMockCommerceEngine(): CommerceEngine {
       getAnalytics: async () => getMockData().subscriptionAnalytics,
     },
     generalLedger: {
+      getAutoPostingConfig: async () => null,
+      setAutoPostingConfig: async () => {
+        throw new Error('Posting settings require a live commerce engine');
+      },
       listAccounts: async () => getMockFinanceData().glAccounts,
       getTrialBalance: async (asOfDate: string) => ({
         ...getMockFinanceData().trialBalance,
@@ -1894,7 +1900,36 @@ export interface SubscriptionAnalytics {
 // Finance API (General Ledger + Accounts Payable)
 // ============================================================================
 
+export interface AutoPostingConfigInput {
+  configName: string;
+  cashAccountId: string;
+  accountsReceivableAccountId: string;
+  inventoryAccountId: string;
+  accountsPayableAccountId: string;
+  unearnedRevenueAccountId?: string;
+  salesRevenueAccountId: string;
+  shippingRevenueAccountId?: string;
+  salesTaxPayableAccountId?: string;
+  goodsReceivedNotInvoicedAccountId?: string;
+  inventoryAdjustmentAccountId?: string;
+  workInProgressAccountId?: string;
+  cogsAccountId: string;
+  badDebtExpenseAccountId?: string;
+  fxGainLossAccountId?: string;
+  autoPostDepreciation: boolean;
+  autoPostRevenueRecognition: boolean;
+}
+export interface AutoPostingConfig extends AutoPostingConfigInput {
+  id: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface GlAccount {
+  isHeader?: boolean;
+  isPosting?: boolean;
+  currency?: string;
   id: string;
   accountNumber: string;
   name: string;
@@ -1967,42 +2002,45 @@ export interface Bill {
   id: string;
   billNumber: string;
   supplierId: string;
+  currency?: string;
   status: string;
-  totalAmount: number;
-  amountPaid: number;
-  amountDue: number;
+  totalAmount: string | number;
+  amountPaid: string | number;
+  amountDue: string | number;
   dueDate: string;
   createdAt: string;
 }
 
 export interface ApAgingSummary {
-  current: number;
-  days130: number;
-  days3160: number;
-  days6190: number;
-  daysOver90: number;
-  total: number;
+  current: string | number;
+  days130: string | number;
+  days3160: string | number;
+  days6190: string | number;
+  daysOver90: string | number;
+  total: string | number;
 }
 
 export interface ArAgingSummary {
-  current: number;
-  days130: number;
-  days3160: number;
-  days6190: number;
-  daysOver90: number;
-  total: number;
+  current: string | number;
+  days130: string | number;
+  days3160: string | number;
+  days6190: string | number;
+  daysOver90: string | number;
+  total: string | number;
 }
 
 export interface Invoice {
   id: string;
   invoiceNumber: string;
   customerId: string;
+  currency?: string;
+  balanceDue?: string;
   orderId?: string;
   status: string;
-  subtotal: number;
-  taxAmount: number;
-  total: number;
-  amountPaid: number;
+  subtotal: string | number;
+  taxAmount: string | number;
+  total: string | number;
+  amountPaid: string | number;
   dueDate: string;
   createdAt: string;
   updatedAt: string;
@@ -2564,6 +2602,20 @@ function buildMockCloseMonthReport(
 }
 
 export const generalLedgerApi = {
+  async getAutoPostingConfig(): Promise<AutoPostingConfig | null> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.generalLedger.getAutoPostingConfig !== 'function') {
+      throw new Error('This engine build does not expose posting settings');
+    }
+    return commerce.generalLedger.getAutoPostingConfig();
+  },
+  async setAutoPostingConfig(input: AutoPostingConfigInput): Promise<AutoPostingConfig> {
+    const commerce = await getCommerceEngine();
+    if (typeof commerce.generalLedger.setAutoPostingConfig !== 'function') {
+      throw new Error('This engine build does not expose posting settings');
+    }
+    return commerce.generalLedger.setAutoPostingConfig(input);
+  },
   async listAccounts(): Promise<GlAccount[]> {
     const commerce = await getCommerceEngine();
     return commerce.generalLedger.listAccounts();
@@ -2618,7 +2670,7 @@ export const accountsReceivableApi = {
    * build exposes DSO yet; degrade to `null` so the page can hide the stat
    * rather than crash.
    */
-  async getDso(days: number): Promise<number | null> {
+  async getDso(days: number): Promise<string | number | null> {
     const commerce = await getCommerceEngine();
     if (typeof commerce.accountsReceivable.getDso !== 'function') {
       return null;

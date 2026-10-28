@@ -54,6 +54,9 @@ jobs:
       - name: Install CLI dependencies
         working-directory: cli
         run: npm ci
+      - name: Gate finance and operations MCP profiles
+        working-directory: cli
+        run: node --test test/integration/mcp-erp-profiles.test.js test/integration/mcp-erp-workflows.test.js
       - name: Check integration contracts and performance
         run: npm run check:omarchy
       - name: Build standalone plugin artifact

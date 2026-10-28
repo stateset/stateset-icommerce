@@ -20,6 +20,8 @@ pub struct CreateLotInput {
     pub production_date: Option<String>,
     pub expiration_date: Option<String>,
     pub supplier_lot_number: Option<String>,
+    /// Warehouse receiving the initial stock into its unassigned location.
+    pub initial_location_id: Option<i32>,
 }
 
 #[napi(object)]
@@ -193,6 +195,7 @@ impl Lots {
                 production_date: parse_optional_datetime(input.production_date, "production date")?,
                 expiration_date: parse_optional_datetime(input.expiration_date, "expiration date")?,
                 supplier_lot: input.supplier_lot_number,
+                initial_location_id: input.initial_location_id,
                 ..Default::default()
             })
             .map_err(|e| wrap(ErrCode::Internal, "Failed to create lot", e))?;

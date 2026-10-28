@@ -24,6 +24,7 @@ struct VendorReturnRow {
     number: String,
     supplier_id: Uuid,
     purchase_order_id: Option<Uuid>,
+    warehouse_id: Option<i32>,
     status: String,
     currency: String,
     credit_generated: bool,
@@ -39,6 +40,8 @@ struct VendorReturnItemRow {
     vendor_return_id: Uuid,
     product_id: Uuid,
     sku: String,
+    source_location_id: Option<i32>,
+    lot_id: Option<Uuid>,
     quantity: Decimal,
     unit_cost: Decimal,
     reason: String,
@@ -64,6 +67,7 @@ impl PgVendorReturnRepository {
             number: row.number,
             supplier_id: row.supplier_id,
             purchase_order_id: row.purchase_order_id,
+            warehouse_id: row.warehouse_id,
             status: Self::parse_field::<VendorReturnStatus>(&row.status, "status")?,
             currency: Self::parse_field::<CurrencyCode>(&row.currency, "currency")?,
             items: Vec::new(),
@@ -81,6 +85,8 @@ impl PgVendorReturnRepository {
             vendor_return_id: row.vendor_return_id.into(),
             product_id: row.product_id.into(),
             sku: row.sku,
+            source_location_id: row.source_location_id,
+            lot_id: row.lot_id,
             quantity: row.quantity,
             unit_cost: row.unit_cost,
             reason: Self::parse_field::<VendorReturnReason>(&row.reason, "items.reason")?,
@@ -166,9 +172,10 @@ impl PgVendorReturnRepository {
         let number = format!("VR-{}", &id_uuid.to_string()[..8]);
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
+        super::vendor_return_stock::validate_create(&mut tx, &input, currency, now).await?;
         sqlx::query(
-            "INSERT INTO vendor_returns (id, number, supplier_id, purchase_order_id, status, currency, credit_generated, notes, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, 'draft', $5, FALSE, $6, $7, $7)",
+            "INSERT INTO vendor_returns (id, number, supplier_id, purchase_order_id, status, currency, credit_generated, notes, created_at, updated_at, warehouse_id)
+             VALUES ($1, $2, $3, $4, 'draft', $5, FALSE, $6, $7, $7, $8)",
         )
         .bind(id_uuid)
         .bind(&number)
@@ -177,14 +184,15 @@ impl PgVendorReturnRepository {
         .bind(currency.to_string())
         .bind(&input.notes)
         .bind(now)
+        .bind(input.warehouse_id)
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
         for item in &input.items {
             sqlx::query(
-                "INSERT INTO vendor_return_items (id, vendor_return_id, product_id, sku, quantity, unit_cost, reason)
-                 VALUES ($1, $2, $3, '', $4, $5, $6)",
+                "INSERT INTO vendor_return_items (id, vendor_return_id, product_id, sku, quantity, unit_cost, reason, source_location_id, lot_id)
+                 VALUES ($1, $2, $3, $7, $4, $5, $6, $8, $9)",
             )
             .bind(Uuid::from(VendorReturnItemId::new()))
             .bind(id_uuid)
@@ -192,6 +200,9 @@ impl PgVendorReturnRepository {
             .bind(item.quantity)
             .bind(item.unit_cost)
             .bind(item.reason.to_string())
+            .bind(&item.sku)
+            .bind(item.source_location_id)
+            .bind(item.lot_id)
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
@@ -277,22 +288,18 @@ impl PgVendorReturnRepository {
     ) -> Result<VendorReturn> {
         let id_uuid = Uuid::from(id);
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let status = Self::current_status_locked(&mut tx, id_uuid).await?;
-        if status.is_terminal() {
-            return Err(CommerceError::Conflict(
-                "vendor return is already in a terminal state".into(),
+        if !generate_credit {
+            return Err(CommerceError::ValidationError(
+                "Processing a vendor return requires its linked credit; enable generate_credit"
+                    .into(),
             ));
         }
-        let now = Utc::now();
-        sqlx::query(
-            "UPDATE vendor_returns SET status = 'processed', credit_generated = $1, processed_at = $2, updated_at = $2 WHERE id = $3",
-        )
-        .bind(generate_credit)
-        .bind(now)
-        .bind(id_uuid)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        if Self::current_status_locked(&mut tx, id_uuid).await? != VendorReturnStatus::Pending {
+            return Err(CommerceError::Conflict(
+                "Only submitted vendor returns can be processed".into(),
+            ));
+        }
+        super::vendor_return_stock::process(&mut tx, id_uuid, Utc::now()).await?;
         tx.commit().await.map_err(map_db_error)?;
         self.load_full_async(id_uuid).await?.ok_or(CommerceError::NotFound)
     }

@@ -1,185 +1,102 @@
 # Accounting & Finance
 
-iCommerce includes core accounting modules: accounts payable, accounts receivable, cost accounting, credit management, and general ledger.
+iCommerce provides a general ledger, accounts payable and receivable, customer credit, inventory costing, fixed assets and revenue recognition on SQLite and PostgreSQL. Finance amounts at the Node and MCP boundaries are decimal strings. See the [ERP upgrade guide](../guides/erp-upgrade.md) before opening an existing store with this release.
 
-## Accounts Payable (A/P)
-
-Track what you owe suppliers:
+## Invoices and customer settlements
 
 ```javascript
-// List outstanding payables
-const bills = commerce.accountsPayable.list();
-
-// Aging report
-const aging = commerce.accountsPayable.aging();
-```
-
-## Accounts Receivable (A/R)
-
-Track what customers owe you:
-
-```javascript
-// List outstanding receivables
-const invoices = commerce.accountsReceivable.list();
-
-// Aging report
-const aging = commerce.accountsReceivable.aging();
-```
-
-## Invoicing
-
-Create and manage B2B invoices:
-
-```javascript
-const invoice = commerce.invoices.create({
-    customerId: customer.id,
-    items: [
-        { description: 'Consulting Services', amount: 5000.00 }
-    ],
-    dueDate: '2026-04-15',
-    terms: 'Net 30'
+const invoice = await commerce.invoices.create({
+  customerId: customer.id,
+  currency: 'USD',
+  dueDate: '2026-12-01T00:00:00Z',
+  items: [{ description: 'Consulting', quantity: '1', unitPrice: '5000.00' }],
 });
-
-// Mark as paid
-commerce.invoices.markPaid(invoice.id);
+await commerce.invoices.send(invoice.id);
+await commerce.invoices.recordPayment(invoice.id, {
+  paymentId: crypto.randomUUID(), // Persist this ID and reuse it for retries.
+  amount: '1250.00',
+  paymentMethod: 'wire',
+  reference: 'BANK-42',
+});
+const current = await commerce.invoices.get(invoice.id);
+console.log(current.currency, current.balanceDue);
 ```
 
-The heartbeat monitor detects overdue invoices:
+Only drafts can be edited. Issued invoices use credit memos, settlements or write-offs. Direct payment receipts survive subsequent recalculation. A payment allocated through `accountsReceivable.applyPaymentToInvoices` must be completed, belong to the same customer, have the same currency, and have enough funds after refunds and previous allocations. Unapply those allocations before refunding their funding.
 
-```json
-{
-    "id": "overdue-invoices",
-    "checker": "overdue-invoices",
-    "intervalMs": 86400000,
-    "enabled": true
-}
-```
+`accountsReceivable.createWriteOff({ invoiceId, amount, reason }, actor)` reduces only the stated amount. An invoice becomes written off only when its remaining balance reaches zero. `reverseWriteOff(id)` restores that amount and reverses the associated bad-debt posting. Terminal invoices refuse payment unapplication until the write-off is reversed.
 
-## Cost Accounting
+Customer statements use dated issued activity, direct receipts, allocations, credits and write-offs, retaining reversal history. Closing balance is the running balance. Specify a currency when a customer has multiple denominations. Legacy direct receipts without dated evidence require reconciliation; the engine does not invent their dates.
 
-Track standard costs, variances, and COGS:
+## Supplier bills
 
 ```javascript
-// Get cost breakdown for a product
-const costs = commerce.costAccounting.getProductCost('WIDGET-001');
-// → { materialCost: 12.50, laborCost: 5.00, overhead: 2.50, totalCost: 20.00 }
-```
-
-## Credit Management
-
-Manage customer credit limits:
-
-```javascript
-// Set credit limit
-commerce.credit.setLimit(customer.id, { limit: 10000.00, currency: 'USD' });
-
-// Check available credit
-const credit = commerce.credit.check(customer.id);
-// → { limit: 10000.00, used: 3500.00, available: 6500.00 }
-
-// Place a credit hold
-commerce.credit.hold(customer.id, { reason: 'Payment overdue' });
-```
-
-## General Ledger
-
-Journal entries and financial reporting:
-
-```javascript
-// Create a journal entry
-commerce.generalLedger.createEntry({
-    date: '2026-03-16',
-    description: 'Monthly revenue accrual',
-    lines: [
-        { account: '4000', debit: 0, credit: 50000.00 },
-        { account: '1200', debit: 50000.00, credit: 0 }
-    ]
+const bill = await commerce.accountsPayable.createBill({
+  supplierId: supplier.id,
+  createdBy: 'user:buyer', // Trusted host identity; never use agent arguments.
+  dueDate: '2026-12-01T00:00:00Z',
+  currency: 'EUR',
+  items: [{ description: 'Supplies', quantity: '1', unitPrice: '250.00' }],
+});
+await commerce.accountsPayable.approveBill(bill.id, undefined, 'user:controller');
+await commerce.accountsPayable.createPayment({
+  supplierId: supplier.id,
+  amount: '250.00',
+  paymentMethod: 'wire',
+  allocations: [{ billId: bill.id, amount: '250.00' }],
 });
 ```
 
-## Money-Integrity Guarantees
+Bill approval runs cumulative three-way matching against the purchase order and accepted receipts. A mismatch requires an explicit override reason. The maker cannot approve their own bill or payment run. A supplier payment derives its currency from the bills and rejects mixed currencies; each payment run has one currency.
 
-The finance modules enforce these invariants on both storage backends
-(SQLite and Postgres):
+Prepayments and vendor credits are settlements: applying or reversing one updates the bill or payment obligation in the same transaction, validating supplier, currency, status and remaining balance. Later cash-payment voids preserve these settlements. A settled bill cannot be cancelled. Resolving a dispute restores its prior state, adjusted for its current balance. Prepayment refunds record the refunded amount and time separately from applications.
 
-**General ledger**
-- Journal entries must balance exactly (decimal-exact debits == credits)
-  and every line is a pure debit or a pure credit.
-- Auto-posting is idempotent and race-free: the duplicate check, the source
-  document read, and the posted entry share one write transaction, so
-  retrying (or concurrently invoking) `auto_post_invoice`,
-  `auto_post_payment_received`, `auto_post_bill`, `auto_post_bill_payment`,
-  `auto_post_inventory_cost`, or `auto_post_write_off` for the same source
-  document returns the existing journal entry instead of posting twice.
-  A unique index on the journal's source-document key backs this at the
-  database level, so even writers that bypass the application layer cannot
-  double-post a single-entry document (voiding frees the key for a
-  corrected re-post).
-- Posting or voiding an entry requires its accounting period to be open —
-  including through the governed kernel `ledger.post` command, which
-  rejects durably with `commerce.ledger.period_not_open`.
-- A period with a standing closing entry cannot be closed again. To adjust
-  a closed period: reopen it, post adjustments, and call `reclose_period`,
-  which voids the standing closing entry and closes again in one operation.
-- The income statement excludes closing entries, so a closed period's P&L
-  reports its actual activity.
-- Trial balance, balance sheet, and dated account balances derive from
-  posted journal lines dated on or before the requested date; an undated
-  account-balance read returns the live running balance.
-- A crashed reversal (claimed but never posted) resumes on retry; a
-  completed reversal rejects a second attempt.
-
-**Accounts payable**
-- Bill line items can only be added or removed on draft/pending bills;
-  bill creation commits header, lines, and totals in one transaction.
-- Payments are bounded by the bill balance, serialized under a write
-  lock, and payment/bill lifecycle transitions (clear, cancel, dispute,
-  approve) are status-guarded.
-- Payment runs follow a state machine (draft/pending → approved →
-  completed, cancellable until processing). Processing atomically creates
-  a real payment plus allocation per bill, re-reading each balance under
-  lock; bills paid since run creation are skipped and recorded on the run.
-- Three-way matching aggregates billed quantities per purchase-order line
-  across the whole bill, so split or duplicated lines cannot pass
-  over-billing through the match.
-
-**Accounts receivable & revenue recognition**
-- A payment can never be applied beyond its own amount, and applications
-  and credit memos are rejected on voided or written-off invoices.
-- Write-offs must be positive and bounded by the invoice balance;
-  reversing a write-off restores the status the balance and due date
-  actually imply.
-- Direct payments recorded on an invoice survive later credit-memo and
-  payment-application recalculations (`amount_paid` = direct payments +
-  applications + applied credits).
-- Customer statements list invoices, payments, credit memos, and
-  write-offs in one dated running balance that starts from a derived
-  opening balance.
-- Revenue is only recognized on active contracts (never draft or
-  cancelled), and a recognition or depreciation posts its GL entry inside
-  the same transaction as the subledger update — the two commit or roll
-  back together, so they can never diverge.
-
-## Treasury
-
-Fund management and cash flow:
+## Ledger posting and close
 
 ```javascript
-const forecast = await toolkit.executeTool('cash_flow_forecast', {
-    period: '30d'
-});
+const accounts = await commerce.generalLedger.initializeChartOfAccounts();
+const cash = accounts.find(a => a.accountNumber === '1010');
+const sales = accounts.find(a => a.accountNumber === '4010');
+// First create and open an accounting period containing this date.
+const draft = await commerce.generalLedger.createJournalEntry({
+  entryDate: '2026-10-15',
+  description: 'Cash sale',
+  lines: [
+    { accountId: cash.id, debitAmount: '123.45' },
+    { accountId: sales.id, creditAmount: '123.45' },
+  ],
+}, 'user:controller');
+await commerce.generalLedger.postJournalEntry(draft.id, 'user:controller');
 ```
 
-## MCP Tools
+Posting checks exact balance, active posting accounts, valid account types and an open nonoverlapping period. Headers cannot receive postings. SQLite transactions and PostgreSQL parent/period locks keep these checks atomic. Reversals retain the original entry in dated reports; the reversing entry offsets it on its own date. Source-linked postings and their reversals preserve retry identity.
 
-| Tool | Description |
-|------|-------------|
-| `list_invoices` | List all invoices |
-| `create_invoice` | Create an invoice |
-| `mark_invoice_paid` | Record payment |
-| `ap_aging_report` | A/P aging |
-| `ar_aging_report` | A/R aging |
-| `get_product_cost` | Cost breakdown |
-| `check_credit` | Check customer credit |
-| `create_journal_entry` | GL journal entry |
-| `cash_flow_forecast` | Cash flow projection |
+Configure automatic posting with `getAutoPostingConfig` and `setAutoPostingConfig`. Tax, shipping, deferred revenue, received-but-unbilled goods, inventory adjustments and work in progress have explicit account mappings. Invalid or incomplete required mappings fail; the engine does not silently substitute unrelated accounts. Invoice and bill postings separate their net amounts and mapped components. Operational stock postings maintain inventory and cost layers together. Fixed-asset and revenue-recognition postings commit with their subledger changes.
+
+Python exposes the same configuration through `general_ledger.get_auto_posting_config()` and `set_auto_posting_config(config_json)`. They exchange JSON with snake_case account fields. Configure the required mappings before `close_month`; assets also need explicit asset, accumulated-depreciation and depreciation-expense accounts.
+
+Dated balances include activity through the requested date. Balance sheets include unclosed earnings. Income statements exclude closing entries and retain reversed originals. Reopen a closed period to adjust it, then use `reclosePeriod(id, actor)` when a closing entry already exists. Close/lock/reopen on an invalid state returns a conflict. FX valuation uses dated rates and the functional currency becomes immutable after posting activity.
+
+## Costing and credit
+
+```javascript
+await commerce.costAccounting.setItemCost({
+  sku: 'WIDGET', costMethod: 'fifo', standardCost: '20.00',
+  materialCost: '12.50', laborCost: '5.00', overheadCost: '2.50',
+});
+const costs = await commerce.costAccounting.getItemCost('WIDGET');
+await commerce.credit.createCreditAccount({ customerId: customer.id, creditLimit: '10000.00' });
+const eligibility = await commerce.credit.checkCredit(customer.id, '250.00');
+```
+
+Receipts create cost layers; issues consume them according to each SKU's method. Valuation includes owned stock in transit. Recursive BOM costing rejects cycles and applies component quantities through nested assemblies. Historical reports reconstruct stored movements and layer history.
+
+A configured credit account applies to all unpaid orders and issued invoices, as well as manual charges and reservations. Related order/invoice exposure is not counted twice. Suspended/closed accounts and active holds refuse new credit exposure. Manual charges with no document linkage are conservatively included separately; reconcile them before relying on available headroom.
+
+## HTTP, MCP and admin
+
+HTTP finance approvals, payments, applications, write-offs and postings require `ManageFinance` (Admin). Posting and approval identities come from the authenticated principal. ERP mutation requests require an `Idempotency-Key`; reuse the same key and identical body for a retry. An unresolved prior execution refuses a retry for operator reconciliation.
+
+MCP finance and operations profiles are smoke-gated and have seeded workflow tests. Use `--profile finance` or `--profile operations`, `--apply` for mutations and an operator-configured `--actor` (`STATESET_ERP_ACTOR`) for finance identity. Configure separate authenticated endpoints/principals for makers and approvers. Governed `post_journal_entry` additionally requires trusted kernel configuration and stamps its kernel principal. Strict kernel mode exposes only governed writes; it does not expose every legacy ERP action. See the [generated tool catalog](https://github.com/stateset/stateset-icommerce/blob/master/cli/docs/TOOLS.md).
+
+The admin bills and receivables pages provide reviewed settlement actions. Mutations verify the signed-in user's administrator role and use that user's identity. The ledger page exposes posting settings, and the manufacturing setup page provides BOMs, batches and item costs. Demo engines do not execute these ERP mutations.

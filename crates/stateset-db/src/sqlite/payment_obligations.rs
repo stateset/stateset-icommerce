@@ -260,30 +260,11 @@ impl PaymentObligationRepository for SqlitePaymentObligationRepository {
     }
 
     fn dashboard(&self, today: NaiveDate) -> Result<PaymentObligationDashboard> {
-        // Open (non-terminal) obligations only.
-        let open = self.list(PaymentObligationFilter {
-            status: Some(PaymentObligationStatus::Pending),
-            ..Default::default()
-        })?;
-        let scheduled = self.list(PaymentObligationFilter {
-            status: Some(PaymentObligationStatus::Scheduled),
-            ..Default::default()
-        })?;
-        let partial = self.list(PaymentObligationFilter {
-            status: Some(PaymentObligationStatus::PartiallyPaid),
-            ..Default::default()
-        })?;
-
-        let mut dash = PaymentObligationDashboard::default();
-        for o in open.iter().chain(scheduled.iter()).chain(partial.iter()) {
-            dash.open_count += 1;
-            dash.total_outstanding += o.outstanding();
-            if o.is_overdue(today) {
-                dash.overdue_count += 1;
-                dash.overdue_amount += o.outstanding();
-            }
-        }
-        Ok(dash)
+        let conn = self.conn()?;
+        conn.query_row("SELECT COUNT(*),decimal_sum(amount),decimal_sum(amount_paid),COUNT(CASE WHEN due_date<?1 THEN 1 END),decimal_sum(CASE WHEN due_date<?1 THEN amount END),decimal_sum(CASE WHEN due_date<?1 THEN amount_paid END) FROM payment_obligations WHERE status IN ('pending','scheduled','partially_paid')",[today.to_string()],|row|{
+            let amount=|column|parse_decimal_row(&row.get::<_,String>(column)?,"payment_obligation","aggregate");
+            Ok(PaymentObligationDashboard{open_count:row.get::<_,i64>(0)? as u64,total_outstanding:amount(1)?-amount(2)?,overdue_count:row.get::<_,i64>(3)? as u64,overdue_amount:amount(4)?-amount(5)?})
+        }).map_err(map_db_error)
     }
 }
 

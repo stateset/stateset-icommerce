@@ -9,6 +9,10 @@ export interface OpenOptions {
   maxConnections?: number
 }
 export interface CreateBillInput {
+  /** Trusted host identity. Remote adapters must supply this from authentication. */
+  createdBy?: string
+  currency?: string
+  purchaseOrderId?: string
   supplierId: string
   dueDate: string
   paymentTerms?: string
@@ -22,21 +26,21 @@ export interface CreateBillInput {
 }
 /**
  * A bill line. Money follows the binding convention: send the `...Exact`
- * base-10 string (preferred) or the float.
+ * base-10 string or its legacy Exact alias.
  */
 export interface CreateBillItemInput {
   description: string
   accountCode?: string
-  /** Float quantity. Optional: send `quantity_exact` instead. */
-  quantity?: number
+  /** Exact decimal quantity; `quantity_exact` remains an alias. */
+  quantity?: string
   /** Exact base-10 quantity. Takes precedence over `quantity` when present. */
   quantityExact?: string
-  /** Float unit price. Optional: send `unit_price_exact` instead for exact money. */
-  unitPrice?: number
+  /** Exact decimal unit price; `unit_price_exact` remains an alias. */
+  unitPrice?: string
   /** Exact base-10 unit price. Takes precedence over `unit_price` when present. */
   unitPriceExact?: string
-  /** Tax rate as a fraction (`0.08` = 8%). */
-  taxRate?: number
+  /** Tax rate as a percentage (`"8"` = 8%). */
+  taxRate?: string
   /** Exact base-10 tax rate. Takes precedence over `tax_rate` when present. */
   taxRateExact?: string
   poLineId?: string
@@ -50,66 +54,70 @@ export interface BillItemOutput {
   accountCode?: string
   /** Exact base-10 quantity. */
   quantityExact: string
-  /** @deprecated Use the `unitPriceExact` twin; float money will be removed in 2.0. */
-  unitPrice: number
+  /** Exact decimal string. */
+  unitPrice: string
   /** Exact base-10 unit price. */
   unitPriceExact: string
-  /** @deprecated Use the `amountExact` twin; float money will be removed in 2.0. */
-  amount: number
+  /** Exact decimal string. */
+  amount: string
   /** Exact base-10 line amount (quantity x unit price). */
   amountExact: string
   /** Exact base-10 tax rate (a fraction), when set. */
   taxRateExact?: string
-  /** @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0. */
-  taxAmount: number
+  /** Exact decimal string. */
+  taxAmount: string
   /** Exact base-10 line tax. */
   taxAmountExact: string
   poLineId?: string
   createdAt: string
 }
 export interface BillOutput {
+  currency: string
+  createdBy?: string
+  approvedBy?: string
+  matchOverrideReason?: string
   id: string
   billNumber: string
   supplierId: string
   status: BillStatus
-  /** @deprecated Use the `totalAmountExact` twin; float money will be removed in 2.0. */
-  totalAmount: number
+  /** Exact decimal string. */
+  totalAmount: string
   /** Exact base-10 total amount, straight from the engine's `Decimal`. Prefer this field for money. */
   totalAmountExact: string
-  /** @deprecated Use the `amountPaidExact` twin; float money will be removed in 2.0. */
-  amountPaid: number
+  /** Exact decimal string. */
+  amountPaid: string
   /** Exact base-10 amount paid, straight from the engine's `Decimal`. Prefer this field for money. */
   amountPaidExact: string
-  /** @deprecated Use the `amountDueExact` twin; float money will be removed in 2.0. */
-  amountDue: number
+  /** Exact decimal string. */
+  amountDue: string
   /** Exact base-10 amount due, straight from the engine's `Decimal`. Prefer this field for money. */
   amountDueExact: string
   dueDate: string
   createdAt: string
 }
 export interface ApAgingSummaryOutput {
-  /** @deprecated Use the `currentExact` twin; float money will be removed in 2.0. */
-  current: number
+  /** Exact decimal string. */
+  current: string
   /** Exact base-10 current, straight from the engine's `Decimal`. Prefer this field for money. */
   currentExact: string
-  /** @deprecated Use the `days130Exact` twin; float money will be removed in 2.0. */
-  days130: number
+  /** Exact decimal string. */
+  days130: string
   /** Exact base-10 days 1 30, straight from the engine's `Decimal`. Prefer this field for money. */
   days130Exact: string
-  /** @deprecated Use the `days3160Exact` twin; float money will be removed in 2.0. */
-  days3160: number
+  /** Exact decimal string. */
+  days3160: string
   /** Exact base-10 days 31 60, straight from the engine's `Decimal`. Prefer this field for money. */
   days3160Exact: string
-  /** @deprecated Use the `days6190Exact` twin; float money will be removed in 2.0. */
-  days6190: number
+  /** Exact decimal string. */
+  days6190: string
   /** Exact base-10 days 61 90, straight from the engine's `Decimal`. Prefer this field for money. */
   days6190Exact: string
-  /** @deprecated Use the `daysOver90Exact` twin; float money will be removed in 2.0. */
-  daysOver90: number
+  /** Exact decimal string. */
+  daysOver90: string
   /** Exact base-10 days over 90, straight from the engine's `Decimal`. Prefer this field for money. */
   daysOver90Exact: string
-  /** @deprecated Use the `totalExact` twin; float money will be removed in 2.0. */
-  total: number
+  /** Exact decimal string. */
+  total: string
   /** Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money. */
   totalExact: string
 }
@@ -157,29 +165,91 @@ export interface BillFilterInput {
   limit?: number
   offset?: number
 }
+export interface CreateBillPaymentInput {
+  supplierId: string
+  paymentDate?: string
+  paymentMethod: string
+  amount: string
+  currency?: string
+  referenceNumber?: string
+  bankAccount?: string
+  checkNumber?: string
+  memo?: string
+  allocations: Array<BillPaymentAllocationInput>
+}
+export interface BillPaymentAllocationInput {
+  billId: string
+  amount: string
+}
+export interface CreateApPaymentRunInput {
+  paymentDate: string
+  paymentMethod: string
+  billIds: Array<string>
+  notes?: string
+}
+export interface ApPaymentRunFilterInput {
+  status?: string
+  fromDate?: string
+  toDate?: string
+  limit?: number
+  offset?: number
+}
+export interface BillPaymentOutput {
+  id: string
+  supplierId: string
+  paymentMethod: string
+  amount: string
+  currency: string
+  status: string
+  paymentNumber: string
+  referenceNumber?: string
+  bankAccount?: string
+  checkNumber?: string
+  memo?: string
+  paymentDate: string
+  createdAt: string
+  updatedAt: string
+}
+export interface ApPaymentRunOutput {
+  id: string
+  status: string
+  paymentMethod: string
+  totalAmount: string
+  currency?: string
+  runNumber: string
+  paymentCount: number
+  notes?: string
+  createdBy?: string
+  approvedBy?: string
+  approvedAt?: string
+  processedAt?: string
+  paymentDate: string
+  createdAt: string
+  updatedAt: string
+}
 export interface ArAgingSummaryOutput {
-  /** @deprecated Use the `currentExact` twin; float money will be removed in 2.0. */
-  current: number
+  /** Exact decimal string. */
+  current: string
   /** Exact base-10 current, straight from the engine's `Decimal`. Prefer this field for money. */
   currentExact: string
-  /** @deprecated Use the `days130Exact` twin; float money will be removed in 2.0. */
-  days130: number
+  /** Exact decimal string. */
+  days130: string
   /** Exact base-10 days 1 30, straight from the engine's `Decimal`. Prefer this field for money. */
   days130Exact: string
-  /** @deprecated Use the `days3160Exact` twin; float money will be removed in 2.0. */
-  days3160: number
+  /** Exact decimal string. */
+  days3160: string
   /** Exact base-10 days 31 60, straight from the engine's `Decimal`. Prefer this field for money. */
   days3160Exact: string
-  /** @deprecated Use the `days6190Exact` twin; float money will be removed in 2.0. */
-  days6190: number
+  /** Exact decimal string. */
+  days6190: string
   /** Exact base-10 days 61 90, straight from the engine's `Decimal`. Prefer this field for money. */
   days6190Exact: string
-  /** @deprecated Use the `daysOver90Exact` twin; float money will be removed in 2.0. */
-  daysOver90: number
+  /** Exact decimal string. */
+  daysOver90: string
   /** Exact base-10 days over 90, straight from the engine's `Decimal`. Prefer this field for money. */
   daysOver90Exact: string
-  /** @deprecated Use the `totalExact` twin; float money will be removed in 2.0. */
-  total: number
+  /** Exact decimal string. */
+  total: string
   /** Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money. */
   totalExact: string
 }
@@ -187,15 +257,15 @@ export interface CreateCreditMemoInput {
   customerId: string
   originalInvoiceId?: string
   reason: CreditMemoReasonInput
-  amount: number
+  amount: string
   notes?: string
 }
 export interface CreditMemoOutput {
   id: string
   creditMemoNumber: string
   customerId: string
-  /** @deprecated Use the `amountExact` twin; float money will be removed in 2.0. */
-  amount: number
+  /** Exact decimal string. */
+  amount: string
   /** Exact base-10 amount, straight from the engine's `Decimal`. Prefer this field for money. */
   amountExact: string
   status: CreditMemoStatus
@@ -216,6 +286,58 @@ export interface CreditMemoFilterInput {
   toDate?: string
   limit?: number
   offset?: number
+}
+export interface ApplyArPaymentInput {
+  paymentId: string
+  applications: Array<ArPaymentLineInput>
+}
+export interface ArPaymentLineInput {
+  invoiceId: string
+  amount: string
+}
+export interface ApplyCreditMemoInput {
+  creditMemoId: string
+  invoiceId: string
+  amount: string
+}
+export interface CreateWriteOffInput {
+  invoiceId: string
+  amount: string
+  reason: string
+  notes?: string
+}
+export interface ArWriteOffFilterInput {
+  customerId?: string
+  invoiceId?: string
+  reason?: string
+  includeReversed?: boolean
+  fromDate?: string
+  toDate?: string
+  limit?: number
+  offset?: number
+}
+export interface ArPaymentApplicationOutput {
+  id: string
+  paymentId: string
+  invoiceId: string
+  appliedAmount: string
+  appliedDate: string
+  createdAt: string
+}
+export interface ArWriteOffOutput {
+  id: string
+  invoiceId: string
+  customerId: string
+  amount: string
+  reason: string
+  writeOffNumber: string
+  notes?: string
+  approvedBy?: string
+  approvedAt?: string
+  reversedAt?: string
+  glJournalEntryId?: string
+  writeOffDate: string
+  createdAt: string
 }
 export interface RecordActivityInput {
   /** Subject record type (e.g. "sales_order") */
@@ -886,37 +1008,37 @@ export interface ContactOutput {
 export interface SetItemCostInput {
   sku: string
   costMethod?: CostMethodInput
-  standardCost?: number
-  materialCost?: number
-  laborCost?: number
-  overheadCost?: number
+  standardCost?: string
+  materialCost?: string
+  laborCost?: string
+  overheadCost?: string
 }
 export interface ItemCostOutput {
   id: string
   sku: string
   costMethod: CostMethod
-  /** @deprecated Use the `standardCostExact` twin; float money will be removed in 2.0. */
-  standardCost: number
+  /** Exact decimal string. */
+  standardCost: string
   /** Exact base-10 standard cost, straight from the engine's `Decimal`. Prefer this field for money. */
   standardCostExact: string
-  /** @deprecated Use the `averageCostExact` twin; float money will be removed in 2.0. */
-  averageCost: number
+  /** Exact decimal string. */
+  averageCost: string
   /** Exact base-10 average cost, straight from the engine's `Decimal`. Prefer this field for money. */
   averageCostExact: string
-  /** @deprecated Use the `lastCostExact` twin; float money will be removed in 2.0. */
-  lastCost: number
+  /** Exact decimal string. */
+  lastCost: string
   /** Exact base-10 last cost, straight from the engine's `Decimal`. Prefer this field for money. */
   lastCostExact: string
-  /** @deprecated Use the `materialCostExact` twin; float money will be removed in 2.0. */
-  materialCost: number
+  /** Exact decimal string. */
+  materialCost: string
   /** Exact base-10 material cost, straight from the engine's `Decimal`. Prefer this field for money. */
   materialCostExact: string
-  /** @deprecated Use the `laborCostExact` twin; float money will be removed in 2.0. */
-  laborCost: number
+  /** Exact decimal string. */
+  laborCost: string
   /** Exact base-10 labor cost, straight from the engine's `Decimal`. Prefer this field for money. */
   laborCostExact: string
-  /** @deprecated Use the `overheadCostExact` twin; float money will be removed in 2.0. */
-  overheadCost: number
+  /** Exact decimal string. */
+  overheadCost: string
   /** Exact base-10 overhead cost, straight from the engine's `Decimal`. Prefer this field for money. */
   overheadCostExact: string
 }
@@ -930,23 +1052,23 @@ export interface ItemCostFilterInput {
 }
 export interface CreateCreditAccountInput {
   customerId: string
-  creditLimit: number
+  creditLimit: string
   paymentTerms?: string
   notes?: string
 }
 export interface CreditAccountOutput {
   id: string
   customerId: string
-  /** @deprecated Use the `creditLimitExact` twin; float money will be removed in 2.0. */
-  creditLimit: number
+  /** Exact decimal string. */
+  creditLimit: string
   /** Exact base-10 credit limit, straight from the engine's `Decimal`. Prefer this field for money. */
   creditLimitExact: string
-  /** @deprecated Use the `creditUsedExact` twin; float money will be removed in 2.0. */
-  creditUsed: number
+  /** Exact decimal string. */
+  creditUsed: string
   /** Exact base-10 credit used, straight from the engine's `Decimal`. Prefer this field for money. */
   creditUsedExact: string
-  /** @deprecated Use the `creditAvailableExact` twin; float money will be removed in 2.0. */
-  creditAvailable: number
+  /** Exact decimal string. */
+  creditAvailable: string
   /** Exact base-10 credit available, straight from the engine's `Decimal`. Prefer this field for money. */
   creditAvailableExact: string
   status: CreditAccountStatus
@@ -955,8 +1077,8 @@ export interface CreditAccountOutput {
 export interface CreditCheckOutput {
   approved: boolean
   reason?: string
-  /** @deprecated Use the `availableCreditExact` twin; float money will be removed in 2.0. */
-  availableCredit: number
+  /** Exact decimal string. */
+  availableCredit: string
   /** Exact base-10 available credit, straight from the engine's `Decimal`. Prefer this field for money. */
   availableCreditExact: string
   requiresApproval: boolean
@@ -1181,8 +1303,8 @@ export interface CustomerAddressOutput {
 export interface CreateCycleCountLineInput {
   sku: string
   lotId?: string
-  /** Exact decimal string */
-  expectedQuantity: string
+  /** Deprecated and ignored; expected stock is read from the ledger. */
+  expectedQuantity?: string
 }
 export interface CreateCycleCountInput {
   warehouseId: number
@@ -1216,7 +1338,7 @@ export interface CycleCountLineOutput {
   expectedQuantity: string
   /** Exact decimal string */
   countedQuantity?: string
-  /** Exact decimal string: counted_quantity - expected_quantity */
+  /** Exact decimal string: provisional snapshot variance, or actual stock adjustment after completion */
   variance?: string
 }
 export interface CycleCountOutput {
@@ -1583,6 +1705,8 @@ export interface CreateFixedAssetInput {
   locationId?: string
   assetAccountId?: string
   accumulatedDepreciationAccountId?: string
+  acquisitionOffsetAccountId?: string
+  disposalGainLossAccountId?: string
   depreciationExpenseAccountId?: string
   /** Currency code, e.g. "USD" */
   currency?: string
@@ -1599,6 +1723,8 @@ export interface UpdateFixedAssetInput {
   locationId?: string
   assetAccountId?: string
   accumulatedDepreciationAccountId?: string
+  acquisitionOffsetAccountId?: string
+  disposalGainLossAccountId?: string
   depreciationExpenseAccountId?: string
 }
 export interface FixedAssetFilterInput {
@@ -1649,6 +1775,8 @@ export interface FixedAssetOutput {
   locationId?: string
   assetAccountId?: string
   accumulatedDepreciationAccountId?: string
+  acquisitionOffsetAccountId?: string
+  disposalGainLossAccountId?: string
   depreciationExpenseAccountId?: string
   /** Exact decimal string */
   accumulatedDepreciation: string
@@ -1805,6 +1933,48 @@ export interface PickTaskFilterInput {
   limit?: number
   offset?: number
 }
+export interface AutoPostingConfigInput {
+  configName: string
+  cashAccountId: string
+  accountsReceivableAccountId: string
+  inventoryAccountId: string
+  accountsPayableAccountId: string
+  unearnedRevenueAccountId?: string
+  salesRevenueAccountId: string
+  shippingRevenueAccountId?: string
+  salesTaxPayableAccountId?: string
+  goodsReceivedNotInvoicedAccountId?: string
+  inventoryAdjustmentAccountId?: string
+  workInProgressAccountId?: string
+  cogsAccountId: string
+  badDebtExpenseAccountId?: string
+  fxGainLossAccountId?: string
+  autoPostDepreciation?: boolean
+  autoPostRevenueRecognition?: boolean
+}
+export interface AutoPostingConfigOutput {
+  id: string
+  configName: string
+  cashAccountId: string
+  accountsReceivableAccountId: string
+  inventoryAccountId: string
+  accountsPayableAccountId: string
+  unearnedRevenueAccountId?: string
+  salesRevenueAccountId: string
+  shippingRevenueAccountId?: string
+  salesTaxPayableAccountId?: string
+  goodsReceivedNotInvoicedAccountId?: string
+  inventoryAdjustmentAccountId?: string
+  workInProgressAccountId?: string
+  cogsAccountId: string
+  badDebtExpenseAccountId?: string
+  fxGainLossAccountId?: string
+  autoPostDepreciation: boolean
+  autoPostRevenueRecognition: boolean
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
 export interface CreateGlAccountInput {
   accountNumber: string
   name: string
@@ -1817,61 +1987,79 @@ export interface GlAccountOutput {
   accountNumber: string
   name: string
   accountType: GlAccountType
-  /** @deprecated Use the `balanceExact` twin; float money will be removed in 2.0. */
-  balance: number
+  /** Exact decimal string. */
+  balance: string
   /** Exact base-10 balance, straight from the engine's `Decimal`. Prefer this field for money. */
   balanceExact: string
   status: GlAccountStatus
   description?: string
+  isHeader: boolean
+  isPosting: boolean
+  currency: string
+}
+export interface JournalEntryLineOutput {
+  id: string
+  accountId: string
+  debitAmount: string
+  creditAmount: string
+  currency: string
+  transactionCurrency?: string
+  transactionDebitAmount?: string
+  transactionCreditAmount?: string
+  exchangeRate?: string
 }
 export interface JournalEntryOutput {
+  postedBy?: string
   id: string
   entryNumber: string
   entryDate: string
   description: string
   status: GlJournalEntryStatus
   createdAt: string
+  lines: Array<JournalEntryLineOutput>
+  totalDebits: string
+  totalCredits: string
 }
 export interface TrialBalanceOutput {
   asOfDate: string
-  /** @deprecated Use the `totalDebitsExact` twin; float money will be removed in 2.0. */
-  totalDebits: number
+  /** Exact decimal string. */
+  totalDebits: string
   /** Exact base-10 total debits, straight from the engine's `Decimal`. Prefer this field for money. */
   totalDebitsExact: string
-  /** @deprecated Use the `totalCreditsExact` twin; float money will be removed in 2.0. */
-  totalCredits: number
+  /** Exact decimal string. */
+  totalCredits: string
   /** Exact base-10 total credits, straight from the engine's `Decimal`. Prefer this field for money. */
   totalCreditsExact: string
   isBalanced: boolean
 }
 export interface BalanceSheetOutput {
   asOfDate: string
-  /** @deprecated Use the `totalAssetsExact` twin; float money will be removed in 2.0. */
-  totalAssets: number
+  /** Exact decimal string. */
+  totalAssets: string
   /** Exact base-10 total assets, straight from the engine's `Decimal`. Prefer this field for money. */
   totalAssetsExact: string
-  /** @deprecated Use the `totalLiabilitiesExact` twin; float money will be removed in 2.0. */
-  totalLiabilities: number
+  /** Exact decimal string. */
+  totalLiabilities: string
   /** Exact base-10 total liabilities, straight from the engine's `Decimal`. Prefer this field for money. */
   totalLiabilitiesExact: string
-  /** @deprecated Use the `totalEquityExact` twin; float money will be removed in 2.0. */
-  totalEquity: number
+  /** Exact decimal string. */
+  totalEquity: string
   /** Exact base-10 total equity, straight from the engine's `Decimal`. Prefer this field for money. */
   totalEquityExact: string
 }
 export interface IncomeStatementOutput {
   periodStart: string
   periodEnd: string
-  /** @deprecated Use the `totalRevenueExact` twin; float money will be removed in 2.0. */
-  totalRevenue: number
+  /** Exact decimal string. */
+  totalRevenue: string
   /** Exact base-10 total revenue, straight from the engine's `Decimal`. Prefer this field for money. */
   totalRevenueExact: string
-  /** @deprecated Use the `totalExpensesExact` twin; float money will be removed in 2.0. */
-  totalExpenses: number
+  /** Exact decimal string. */
+  totalExpenses: string
   /** Exact base-10 total expenses, straight from the engine's `Decimal`. Prefer this field for money. */
   totalExpensesExact: string
-  /** @deprecated Use the `netIncomeExact` twin; float money will be removed in 2.0. */
-  netIncome: number
+  /** Exact decimal string. */
+  netIncome: string
   /** Exact base-10 net income, straight from the engine's `Decimal`. Prefer this field for money. */
   netIncomeExact: string
 }
@@ -2014,6 +2202,21 @@ export interface CloseMonthReportOutput {
   closingEntry?: JournalEntryOutput
   /** Period status after the run (`closed` after a real close) */
   periodStatus: GlPeriodStatus
+}
+export interface CreateJournalEntryInput {
+  entryDate: string
+  entryType?: string
+  description: string
+  lines: Array<CreateJournalEntryLineInput>
+  autoPost?: boolean
+  currency?: string
+  exchangeRate?: string
+}
+export interface CreateJournalEntryLineInput {
+  accountId: string
+  description?: string
+  debitAmount?: string
+  creditAmount?: string
 }
 export interface CreateGiftCardInput {
   /** Redemption code (auto-generated if omitted) */
@@ -2224,14 +2427,16 @@ export interface ReservationOutput {
 }
 export interface CreateInvoiceItemInput {
   description: string
-  quantity: number
-  /** Float unit price. Optional: send `unit_price_exact` instead for exact money. */
-  unitPrice?: number
+  quantity: string
+  /** Exact decimal unit price; `unit_price_exact` remains an alias. */
+  unitPrice?: string
   /** Exact base-10 unit price. Takes precedence over `unit_price` when present. */
   unitPriceExact?: string
   sku?: string
 }
 export interface CreateInvoiceInput {
+  currency?: string
+  dueDate?: string
   customerId: string
   orderId?: string
   items: Array<CreateInvoiceItemInput>
@@ -2240,25 +2445,27 @@ export interface CreateInvoiceInput {
   notes?: string
 }
 export interface InvoiceOutput {
+  currency: string
+  balanceDue: string
   id: string
   invoiceNumber: string
   customerId: string
   orderId?: string
   status: InvoiceStatus
-  /** @deprecated Use the `subtotalExact` twin; float money will be removed in 2.0. */
-  subtotal: number
+  /** Exact decimal string. */
+  subtotal: string
   /** Exact base-10 subtotal, straight from the engine's `Decimal`. Prefer this field for money. */
   subtotalExact: string
-  /** @deprecated Use the `taxAmountExact` twin; float money will be removed in 2.0. */
-  taxAmount: number
+  /** Exact decimal string. */
+  taxAmount: string
   /** Exact base-10 tax amount, straight from the engine's `Decimal`. Prefer this field for money. */
   taxAmountExact: string
-  /** @deprecated Use the `totalExact` twin; float money will be removed in 2.0. */
-  total: number
+  /** Exact decimal string. */
+  total: string
   /** Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money. */
   totalExact: string
-  /** @deprecated Use the `amountPaidExact` twin; float money will be removed in 2.0. */
-  amountPaid: number
+  /** Exact decimal string. */
+  amountPaid: string
   /** Exact base-10 amount paid, straight from the engine's `Decimal`. Prefer this field for money. */
   amountPaidExact: string
   dueDate: string
@@ -2266,10 +2473,12 @@ export interface InvoiceOutput {
   updatedAt: string
 }
 export interface RecordPaymentInput {
-  /** Float amount. Optional: send `amount_exact` instead for exact money. */
-  amount?: number
+  /** Exact decimal amount; `amount_exact` remains an alias. */
+  amount?: string
   /** Exact base-10 amount. Takes precedence over `amount` when present. */
   amountExact?: string
+  /** Stable nonzero UUID for retry-safe recording of this invoice payment. */
+  paymentId?: string
   paymentMethod?: string
   reference?: string
 }
@@ -2548,6 +2757,8 @@ export interface CreateLotInput {
   productionDate?: string
   expirationDate?: string
   supplierLotNumber?: string
+  /** Warehouse receiving the initial stock into its unassigned location. */
+  initialLocationId?: number
 }
 export interface LotOutput {
   id: string
@@ -3020,6 +3231,8 @@ export interface PrepaymentOutput {
   amount: string
   /** Exact decimal string */
   remaining: string
+  refundedAmount: string
+  refundedAt?: string
   currency: string
   /** open, applied, refunded, cancelled */
   status: PrepaymentStatus
@@ -3837,6 +4050,7 @@ export interface CreateReceiptInput {
   receiptType: ReceiptTypeInput
   warehouseId: number
   purchaseOrderId?: string
+  supplierId?: string
   carrier?: string
   trackingNumber?: string
   /**
@@ -3846,19 +4060,19 @@ export interface CreateReceiptInput {
   items?: Array<CreateReceiptItemInput>
 }
 /**
- * An expected receipt line. Money follows the binding convention: send the
- * `...Exact` base-10 string (preferred) or the float.
+ * An expected receipt line. Money follows the binding convention: send a decimal string
+ * through the canonical field or its `...Exact` alias.
  */
 export interface CreateReceiptItemInput {
   sku: string
   description?: string
   poLineId?: string
-  /** Float quantity. Optional: send `expected_quantity_exact` instead. */
-  expectedQuantity?: number
+  /** Decimal string quantity. Optional: send `expected_quantity_exact` instead. */
+  expectedQuantity?: string
   /** Exact base-10 quantity. Takes precedence over `expected_quantity`. */
   expectedQuantityExact?: string
-  /** Float unit cost. Optional: send `unit_cost_exact` instead for exact money. */
-  unitCost?: number
+  /** Decimal string unit cost. Optional: send `unit_cost_exact` instead for exact money. */
+  unitCost?: string
   /** Exact base-10 unit cost. Takes precedence over `unit_cost` when present. */
   unitCostExact?: string
   lotNumber?: string
@@ -3877,8 +4091,8 @@ export interface ReceiptItemOutput {
   expectedQuantityExact: string
   receivedQuantityExact: string
   rejectedQuantityExact: string
-  /** @deprecated Use the `unitCostExact` twin; float money will be removed in 2.0. */
-  unitCost?: number
+  /** Exact decimal unit cost. */
+  unitCost?: string
   /** Exact base-10 unit cost, when set. */
   unitCostExact?: string
   lotNumber?: string
@@ -3913,6 +4127,63 @@ export interface ReceiptFilterInput {
   toDate?: string
   limit?: number
   offset?: number
+}
+export interface ReceiveItemsInput {
+  receiptId: string
+  receivingLocationId: number
+  receivedBy?: string
+  items: Array<ReceiveItemLineInput>
+}
+export interface ReceiveItemLineInput {
+  receiptItemId: string
+  quantityReceived: string
+  quantityRejected?: string
+  rejectionReason?: string
+  lotNumber?: string
+  serialNumbers?: Array<string>
+  expirationDate?: string
+  notes?: string
+}
+export interface CreatePutAwayInput {
+  receiptId: string
+  receiptItemId: string
+  sku: string
+  fromLocationId?: number
+  toLocationId: number
+  quantity: string
+  lotId?: string
+  assignedTo?: string
+  notes?: string
+}
+export interface CompletePutAwayInput {
+  putAwayId: string
+  actualLocationId?: number
+  completedBy?: string
+  notes?: string
+}
+export interface PutAwayFilterInput {
+  receiptId?: string
+  warehouseId?: number
+  status?: string
+  assignedTo?: string
+  limit?: number
+  offset?: number
+}
+export interface PutAwayOutput {
+  id: string
+  receiptId: string
+  receiptItemId: string
+  sku: string
+  fromLocationId?: number
+  toLocationId: number
+  quantity: string
+  lotId?: string
+  status: string
+  assignedTo?: string
+  startedAt?: string
+  completedAt?: string
+  notes?: string
+  createdAt: string
 }
 export interface CreateReturnItemInput {
   orderItemId: string
@@ -4461,7 +4732,7 @@ export interface CaptureStockLineInput {
 }
 export interface CaptureStockSnapshotInput {
   label?: string
-  lines: Array<CaptureStockLineInput>
+  lines?: Array<CaptureStockLineInput>
 }
 export interface StockSnapshotFilterInput {
   limit?: number
@@ -4470,7 +4741,7 @@ export interface StockSnapshotFilterInput {
 export interface StockSnapshotLineOutput {
   id: string
   stockSnapshotId: string
-  productId: string
+  productId?: string
   sku: string
   /** Exact decimal string */
   quantityOnHand: string
@@ -5099,11 +5370,15 @@ export interface TopologySnapshotOutput {
   capturedAt: string
 }
 export interface CreateTransferOrderItemInput {
+  sku: string
+  lotId?: string
   productId: string
   /** Exact decimal string */
   quantity: string
 }
 export interface CreateTransferOrderInput {
+  sourceLocationId: number
+  destinationLocationId: number
   sourceWarehouseId: string
   destinationWarehouseId: string
   items: Array<CreateTransferOrderItemInput>
@@ -5120,6 +5395,8 @@ export interface TransferOrderFilterInput {
   offset?: number
 }
 export interface TransferOrderItemOutput {
+  lotId?: string
+  quantityVariance: string
   id: string
   transferOrderId: string
   productId: string
@@ -5132,6 +5409,8 @@ export interface TransferOrderItemOutput {
   quantityReceived: string
 }
 export interface TransferOrderOutput {
+  sourceLocationId?: number
+  destinationLocationId?: number
   id: string
   number: string
   sourceWarehouseId: string
@@ -5306,6 +5585,9 @@ export interface VendorCreditApplicationOutput {
 }
 export interface CreateVendorReturnItemInput {
   productId: string
+  sku: string
+  sourceLocationId: number
+  lotId?: string
   /** Exact decimal string */
   quantity: string
   /** Exact decimal string */
@@ -5315,6 +5597,7 @@ export interface CreateVendorReturnItemInput {
 }
 export interface CreateVendorReturnInput {
   supplierId: string
+  warehouseId: number
   purchaseOrderId?: string
   currency?: string
   items: Array<CreateVendorReturnItemInput>
@@ -5332,6 +5615,8 @@ export interface VendorReturnItemOutput {
   vendorReturnId: string
   productId: string
   sku: string
+  sourceLocationId?: number
+  lotId?: string
   /** Exact decimal string */
   quantity: string
   /** Exact decimal string */
@@ -5345,6 +5630,7 @@ export interface VendorReturnOutput {
   id: string
   number: string
   supplierId: string
+  warehouseId?: number
   purchaseOrderId?: string
   /** Snake-case status */
   status: VendorReturnStatus
@@ -5562,15 +5848,25 @@ export interface WishlistOutput {
   createdAt: string
   updatedAt: string
 }
+export interface WorkOrderStockInput {
+  sourceLocationId: number
+  outputLocationId: number
+  outputSku: string
+}
 export interface CreateWorkOrderInput {
+  stock?: WorkOrderStockInput
+  quantityToBuildExact?: string
   productId: string
   bomId?: string
-  quantityToBuild: number
+  quantityToBuild?: number
   /** Anything other than a recognised priority uses the engine default (`normal`). */
   priority?: WorkOrderPriority
   notes?: string
 }
 export interface WorkOrderOutput {
+  stock?: WorkOrderStockInput
+  quantityToBuildExact: string
+  quantityCompletedExact: string
   id: string
   workOrderNumber: string
   productId: string
@@ -6003,6 +6299,15 @@ export declare class Commerce {
   vector(apiKey: string): VectorSearch
 }
 export declare class AccountsPayable {
+  createPayment(input: CreateBillPaymentInput): Promise<BillPaymentOutput>
+  getPayment(id: string): Promise<BillPaymentOutput | null>
+  voidPayment(id: string): Promise<BillPaymentOutput>
+  createPaymentRun(input: CreateApPaymentRunInput, actor: string): Promise<ApPaymentRunOutput>
+  getPaymentRun(id: string): Promise<ApPaymentRunOutput | null>
+  listPaymentRuns(filter?: ApPaymentRunFilterInput | undefined | null): Promise<Array<ApPaymentRunOutput>>
+  approvePaymentRun(id: string, actor: string): Promise<ApPaymentRunOutput>
+  processPaymentRun(id: string): Promise<ApPaymentRunOutput>
+  cancelPaymentRun(id: string): Promise<ApPaymentRunOutput>
   /** Create a bill */
   createBill(input: CreateBillInput): Promise<BillOutput>
   /** The lines of a bill, in line order. */
@@ -6014,7 +6319,11 @@ export declare class AccountsPayable {
   /** List bills, optionally filtered and paginated. No argument lists all. */
   listBills(filter?: BillFilterInput | undefined | null): Promise<Array<BillOutput>>
   /** Approve a bill */
-  approveBill(id: string): Promise<BillOutput>
+  approveBill(id: string, overrideReason?: string | undefined | null, actor?: string | undefined | null): Promise<BillOutput>
+  /** Dispute a bill. */
+  disputeBill(id: string): Promise<BillOutput>
+  /** Resolve a bill dispute. */
+  resolveBillDispute(id: string): Promise<BillOutput>
   /** Cancel a bill */
   cancelBill(id: string): Promise<BillOutput>
   /** Get overdue bills */
@@ -6024,7 +6333,7 @@ export declare class AccountsPayable {
   /** Get aging summary */
   getAgingSummary(): Promise<ApAgingSummaryOutput>
   /** Get total outstanding */
-  getTotalOutstanding(): Promise<number>
+  getTotalOutstanding(): Promise<string>
   /** Count bills */
   countBills(): Promise<number>
   /**
@@ -6036,12 +6345,19 @@ export declare class AccountsPayable {
   threeWayMatch(billId: string, tolerancePercent?: string | undefined | null): Promise<ThreeWayMatchOutput>
 }
 export declare class AccountsReceivable {
+  applyPaymentToInvoices(input: ApplyArPaymentInput): Promise<Array<ArPaymentApplicationOutput>>
+  getPaymentApplications(paymentId: string): Promise<Array<ArPaymentApplicationOutput>>
+  unapplyPayment(id: string): Promise<void>
+  applyCreditMemo(input: ApplyCreditMemoInput): Promise<CreditMemoOutput>
+  createWriteOff(input: CreateWriteOffInput, actor: string): Promise<ArWriteOffOutput>
+  reverseWriteOff(id: string): Promise<ArWriteOffOutput>
+  listWriteOffs(filter?: ArWriteOffFilterInput | undefined | null): Promise<Array<ArWriteOffOutput>>
   /** Get AR aging summary */
   getAgingSummary(): Promise<ArAgingSummaryOutput>
   /** Get total outstanding */
-  getTotalOutstanding(): Promise<number>
+  getTotalOutstanding(): Promise<string>
   /** Get Days Sales Outstanding (DSO) */
-  getDso(days: number): Promise<number>
+  getDso(days: number): Promise<string>
   /** Create a credit memo */
   createCreditMemo(input: CreateCreditMemoInput): Promise<CreditMemoOutput>
   /** Get a credit memo by ID */
@@ -6283,9 +6599,9 @@ export declare class CostAccounting {
   /** List item costs, optionally filtered and paginated. No argument lists all. */
   listItemCosts(filter?: ItemCostFilterInput | undefined | null): Promise<Array<ItemCostOutput>>
   /** Update average cost */
-  updateAverageCost(sku: string, quantity: number, unitCost: number): Promise<ItemCostOutput>
+  updateAverageCost(sku: string, quantity: string, unitCost: string): Promise<ItemCostOutput>
   /** Get total inventory value */
-  getTotalInventoryValue(): Promise<number>
+  getTotalInventoryValue(): Promise<string>
 }
 export declare class Credit {
   /** Create a credit account */
@@ -6297,9 +6613,9 @@ export declare class Credit {
   /** List credit accounts, optionally filtered and paginated. No argument lists all. */
   listCreditAccounts(filter?: CreditAccountFilterInput | undefined | null): Promise<Array<CreditAccountOutput>>
   /** Check credit */
-  checkCredit(customerId: string, orderAmount: number): Promise<CreditCheckOutput>
+  checkCredit(customerId: string, orderAmount: string): Promise<CreditCheckOutput>
   /** Adjust credit limit */
-  adjustCreditLimit(customerId: string, newLimit: number, reason: string): Promise<CreditAccountOutput>
+  adjustCreditLimit(customerId: string, newLimit: string, reason: string): Promise<CreditAccountOutput>
   /** Suspend credit account */
   suspendCreditAccount(customerId: string, reason: string): Promise<CreditAccountOutput>
   /** Reactivate credit account */
@@ -6597,6 +6913,10 @@ export declare class Fulfillment {
   countWaves(): Promise<number>
 }
 export declare class GeneralLedger {
+  /** Read the active automatic ledger posting settings. */
+  getAutoPostingConfig(): Promise<AutoPostingConfigOutput | null>
+  /** Replace automatic posting settings atomically. */
+  setAutoPostingConfig(input: AutoPostingConfigInput): Promise<AutoPostingConfigOutput>
   /** Create a GL account */
   createAccount(input: CreateGlAccountInput): Promise<GlAccountOutput>
   /** Get a GL account by ID */
@@ -6607,6 +6927,14 @@ export declare class GeneralLedger {
   listAccounts(filter?: GlAccountFilterInput | undefined | null): Promise<Array<GlAccountOutput>>
   /** Initialize standard chart of accounts */
   initializeChartOfAccounts(): Promise<Array<GlAccountOutput>>
+  /** Create a balanced draft or post it atomically using a trusted host identity. */
+  createJournalEntry(i: CreateJournalEntryInput, actor?: string | undefined | null): Promise<JournalEntryOutput>
+  reverseJournalEntry(id: string, reversalDate: string): Promise<JournalEntryOutput>
+  getPeriod(id: string): Promise<GlPeriodOutput | null>
+  closePeriod(id: string, actor: string): Promise<GlPeriodOutput>
+  lockPeriod(id: string, actor: string): Promise<GlPeriodOutput>
+  reopenPeriod(id: string): Promise<GlPeriodOutput>
+  reclosePeriod(id: string, actor: string): Promise<JournalEntryOutput>
   /** Get a journal entry by ID */
   getJournalEntry(id: string): Promise<JournalEntryOutput | null>
   /** List journal entries, optionally filtered and paginated. No argument lists all. */
@@ -6622,7 +6950,7 @@ export declare class GeneralLedger {
   /** Get income statement */
   getIncomeStatement(startDate: string, endDate: string): Promise<IncomeStatementOutput>
   /** Get account balance */
-  getAccountBalance(accountId: string, asOfDate?: string | undefined | null): Promise<number>
+  getAccountBalance(accountId: string, asOfDate?: string | undefined | null): Promise<string>
   /**
    * Revalue foreign-currency account balances at the as-of exchange rate.
    *
@@ -6716,6 +7044,8 @@ export declare class Inventory {
   releaseReservation(reservationId: string): Promise<void>
 }
 export declare class Invoices {
+  /** This binding consumes paymentId atomically and rejects amount conflicts. */
+  supportsPaymentIdempotency(): boolean
   create(input: CreateInvoiceInput): Promise<InvoiceOutput>
   get(id: string): Promise<InvoiceOutput | null>
   /**
@@ -6809,6 +7139,10 @@ export declare class PaymentObligations {
   dashboard(today: string): Promise<PaymentObligationDashboardOutput>
 }
 export declare class Payments {
+  /** Atomic request-key deduplication and guarded completion for payment write-back. */
+  supportsPaymentIdempotency(): boolean
+  /** Immutable-key refund replay and atomic, idempotent refund completion. */
+  supportsRefundIdempotency(): boolean
   create(input: CreatePaymentInput): Promise<PaymentOutput>
   /** Create a payment without any floating-point conversion. */
   createExact(input: CreatePaymentExactInput): Promise<PaymentOutput>
@@ -7029,11 +7363,8 @@ export declare class PurchaseOrders {
   cancel(id: string): Promise<PurchaseOrderOutput>
   /** Read the persisted purchase-order lines with exact decimal fields. */
   getItems(id: string): Promise<Array<PurchaseOrderItemOutput>>
-  /**
-   * Record received quantities on a sent purchase order. This updates the PO;
-   * warehouse stock must be posted separately through inventory/receiving.
-   */
-  receive(id: string, items: Array<ReceivePurchaseOrderItemInput>): Promise<PurchaseOrderOutput>
+  /** Receive sent PO lines into an explicit warehouse location, atomically posting stock. */
+  receive(id: string, items: Array<ReceivePurchaseOrderItemInput>, warehouseId: number, receivingLocationId: number): Promise<PurchaseOrderOutput>
   count(): Promise<number>
 }
 export declare class Purgatory {
@@ -7120,6 +7451,15 @@ export declare class Receiving {
   cancelReceipt(id: string): Promise<ReceiptOutput>
   /** Create a receipt from a purchase order */
   createReceiptFromPo(poId: string, warehouseId: number): Promise<ReceiptOutput>
+  /** Receive stock into the explicitly selected warehouse location. */
+  receiveItems(input: ReceiveItemsInput): Promise<ReceiptOutput>
+  createPutAway(i: CreatePutAwayInput): Promise<PutAwayOutput>
+  listPutAways(filter?: PutAwayFilterInput | undefined | null): Promise<Array<PutAwayOutput>>
+  getPutAway(id: string): Promise<PutAwayOutput | null>
+  assignPutAway(id: string, assignedTo: string): Promise<PutAwayOutput>
+  completePutAway(i: CompletePutAwayInput): Promise<PutAwayOutput>
+  startPutAway(id: string): Promise<PutAwayOutput>
+  cancelPutAway(id: string): Promise<PutAwayOutput>
   /** Count receipts */
   countReceipts(): Promise<number>
 }
@@ -7271,7 +7611,7 @@ export declare class ShippingZones {
 export declare class StockSnapshots {
   /** Whether the stock-snapshots backend is available on this engine build. */
   isSupported(): Promise<boolean>
-  /** Capture a new snapshot; totals are computed from the supplied lines. */
+  /** Capture a new snapshot from stored inventory balances. */
   capture(input: CaptureStockSnapshotInput): Promise<StockSnapshotOutput>
   get(id: string): Promise<StockSnapshotOutput | null>
   /** Most recent snapshot, if any. */
@@ -7415,6 +7755,8 @@ export declare class TransferOrders {
    * destination.
    */
   receiveLine(id: string, itemId: string, quantity: string): Promise<TransferOrderOutput>
+  /** Close receiving, recording outstanding in-transit units as shortage. */
+  completeReceiving(id: string): Promise<TransferOrderOutput>
   /** Cancel a transfer order. */
   cancel(id: string): Promise<TransferOrderOutput>
 }
@@ -7494,8 +7836,8 @@ export declare class VendorReturns {
   list(filter?: VendorReturnFilterInput | undefined | null): Promise<Array<VendorReturnOutput>>
   /** Submit a draft vendor return to the supplier. */
   submit(id: string): Promise<VendorReturnOutput>
-  /** Process a vendor return, optionally generating a vendor credit. */
-  process(id: string, generateCredit: boolean): Promise<VendorReturnOutput>
+  /** Process stock and its linked vendor credit atomically. Disabling the credit is refused. */
+  process(id: string, generateCredit?: boolean | undefined | null): Promise<VendorReturnOutput>
   /** Cancel a vendor return. */
   cancel(id: string): Promise<VendorReturnOutput>
 }
@@ -7551,6 +7893,10 @@ export declare class Wishlists {
 }
 export declare class WorkOrders {
   create(input: CreateWorkOrderInput): Promise<WorkOrderOutput>
+  /** Configure explicit stock routing for a planned work order. */
+  configureStock(id: string, stock: WorkOrderStockInput): Promise<WorkOrderOutput>
+  /** Complete an exact decimal quantity without a floating-point conversion. */
+  completeExact(id: string, quantityCompleted: string): Promise<WorkOrderOutput>
   get(id: string): Promise<WorkOrderOutput | null>
   /**
    * List work orders, optionally filtered/paginated.

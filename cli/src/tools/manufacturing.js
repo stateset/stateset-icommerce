@@ -207,8 +207,8 @@ export const manufacturingTools = [
           productId: wo.productId,
           status: wo.status,
           priority: wo.priority,
-          quantityToBuild: wo.quantityToBuild,
-          quantityCompleted: wo.quantityCompleted,
+          quantityToBuild: wo.quantityToBuildExact ?? wo.quantityToBuild,
+          quantityCompleted: wo.quantityCompletedExact ?? wo.quantityCompleted,
           scheduledStart: wo.scheduledStart,
           scheduledEnd: wo.scheduledEnd,
         })),
@@ -239,7 +239,16 @@ export const manufacturingTools = [
     inputSchema: {
       productId: z.string().min(1).describe('Product ID to manufacture'),
       bomId: z.string().optional().describe('BOM ID to use (optional)'),
-      quantityToBuild: z.number().int().min(1).describe('Number of units to produce'),
+      quantityToBuild: z
+        .union([z.string().regex(/^\d+(\.\d+)?$/), z.number().positive()])
+        .describe('Exact decimal quantity to produce; prefer a string'),
+      stock: z
+        .object({
+          sourceLocationId: z.number().int().positive(),
+          outputLocationId: z.number().int().positive(),
+          outputSku: z.string().min(1),
+        })
+        .describe('Explicit component source and finished-goods destination'),
       priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('Priority level'),
       scheduledStart: z.string().optional().describe('Scheduled start date (ISO format)'),
       scheduledEnd: z.string().optional().describe('Scheduled end date (ISO format)'),
@@ -258,7 +267,10 @@ export const manufacturingTools = [
       const wo = await commerce.workOrders.create({
         productId: params.productId,
         bomId: params.bomId,
-        quantityToBuild: params.quantityToBuild,
+        ...(typeof params.quantityToBuild === 'string'
+          ? { quantityToBuildExact: params.quantityToBuild }
+          : { quantityToBuild: params.quantityToBuild }),
+        stock: params.stock,
         priority: params.priority || 'normal',
         scheduledStart: params.scheduledStart,
         scheduledEnd: params.scheduledEnd,
@@ -271,7 +283,45 @@ export const manufacturingTools = [
           id: wo.id,
           workOrderNumber: wo.workOrderNumber,
           status: wo.status,
-          quantityToBuild: wo.quantityToBuild,
+          quantityToBuild: wo.quantityToBuildExact ?? wo.quantityToBuild,
+        },
+      };
+    },
+  },
+
+  {
+    name: 'configure_work_order_stock',
+    description:
+      'Set the component source and finished-goods destination of a planned work order, such as one created before stock routing was required.',
+    inputSchema: {
+      workOrderId: z.string().min(1).describe('Planned work order ID'),
+      stock: z
+        .object({
+          sourceLocationId: z.number().int().positive(),
+          outputLocationId: z.number().int().positive(),
+          outputSku: z.string().min(1),
+        })
+        .describe('Explicit component source and finished-goods destination'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      const { workOrderId, stock } = params;
+      if (!allowApply) {
+        return {
+          success: false,
+          error: 'Configure work order stock operation not allowed. The --apply flag must be set.',
+          wouldConfigure: { workOrderId, stock },
+        };
+      }
+
+      const wo = await commerce.workOrders.configureStock(workOrderId, stock);
+      return {
+        success: true,
+        message: 'Work order stock routing configured',
+        workOrder: {
+          id: wo.id,
+          workOrderNumber: wo.workOrderNumber,
+          status: wo.status,
         },
       };
     },
@@ -312,7 +362,9 @@ export const manufacturingTools = [
     description: 'Complete a work order with the quantity produced.',
     inputSchema: {
       workOrderId: z.string().min(1).describe('Work order ID to complete'),
-      quantityCompleted: z.number().int().min(0).describe('Number of units actually produced'),
+      quantityCompleted: z
+        .union([z.string().regex(/^\d+(\.\d+)?$/), z.number().positive()])
+        .describe('Exact decimal quantity produced; prefer a string'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -325,7 +377,10 @@ export const manufacturingTools = [
         };
       }
 
-      const wo = await commerce.workOrders.complete(workOrderId, quantityCompleted);
+      const wo =
+        typeof quantityCompleted === 'string'
+          ? await commerce.workOrders.completeExact(workOrderId, quantityCompleted)
+          : await commerce.workOrders.complete(workOrderId, quantityCompleted);
       return {
         success: true,
         message: `Work order completed - ${quantityCompleted} units produced`,
@@ -333,7 +388,7 @@ export const manufacturingTools = [
           id: wo.id,
           workOrderNumber: wo.workOrderNumber,
           status: wo.status,
-          quantityCompleted: wo.quantityCompleted,
+          quantityCompleted: wo.quantityCompletedExact ?? wo.quantityCompleted,
         },
       };
     },

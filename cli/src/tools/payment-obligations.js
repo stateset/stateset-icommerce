@@ -74,7 +74,7 @@ export const paymentObligationTools = withPolicyDomain('payment-obligations', [
       currency: z.string().min(1).optional().describe('Currency code'),
       notes: z.string().min(1).optional().describe('Notes'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Create payment obligation', params);
@@ -97,7 +97,7 @@ export const paymentObligationTools = withPolicyDomain('payment-obligations', [
       id: z.string().min(1).describe('Payment obligation ID'),
       amount: z.string().min(1).describe('Payment amount (exact decimal string)'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Record payment obligation payment', params);
@@ -113,7 +113,7 @@ export const paymentObligationTools = withPolicyDomain('payment-obligations', [
       id: z.string().min(1).describe('Payment obligation ID'),
       status: statusSchema,
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Set payment obligation status', params);
@@ -129,7 +129,7 @@ export const paymentObligationTools = withPolicyDomain('payment-obligations', [
       id: z.string().min(1).describe('Payment obligation ID'),
       billId: z.string().min(1).describe('AP bill ID'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Link payment obligation bill', params);

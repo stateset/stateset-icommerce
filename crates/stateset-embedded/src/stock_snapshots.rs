@@ -32,7 +32,16 @@ impl StockSnapshots {
         self.db.ensure_capability(DatabaseCapability::StockSnapshots)
     }
 
-    /// Capture a new stock snapshot (totals computed from lines).
+    /// Inventory aging from stored cost layers, reconciled to stock movements.
+    pub fn inventory_aging(
+        &self,
+        as_of: chrono::NaiveDate,
+    ) -> Result<stateset_core::InventoryAgingReport> {
+        self.ensure()?;
+        self.db.stock_snapshots().inventory_aging(as_of)
+    }
+
+    /// Capture a new stock snapshot from the stored inventory balances.
     pub fn capture(&self, input: CaptureStockSnapshot) -> Result<StockSnapshot> {
         self.ensure()?;
         self.db.stock_snapshots().capture(input)

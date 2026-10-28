@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub(crate) struct CreateSupplierSkuRequest {
+    pub currency: Option<String>,
     pub product_id: String,
     pub supplier_id: String,
     pub sku: String,
@@ -76,7 +77,7 @@ fn parse_decimal_opt(s: Option<&str>) -> Result<Option<Decimal>, HttpError> {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/supplier-skus", post(create).get(list))
-        .route("/supplier-skus/{id}", axum::routing::get(get_one).delete(delete_one))
+        .route("/supplier-skus/{id}", axum::routing::get(get_one).put(update).delete(delete_one))
 }
 
 #[utoipa::path(post, operation_id = "supplier_skus_create", path = "/api/v1/supplier-skus", tag = "supplier_skus",
@@ -96,7 +97,7 @@ pub(crate) async fn create(
                 supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
                 sku: req.sku,
                 unit_cost: parse_decimal_opt(req.unit_cost.as_deref())?,
-                currency: None,
+                currency: req.currency.as_deref().map(|v| parse_id(v, "currency")).transpose()?,
                 min_order_qty: parse_decimal_opt(req.min_order_qty.as_deref())?,
                 lead_time_days: req.lead_time_days,
             };
@@ -225,4 +226,36 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json["total"], 1);
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub(crate) struct UpdateSupplierSkuRequest {
+    pub sku: Option<String>,
+    pub unit_cost: Option<String>,
+    pub currency: Option<String>,
+    pub min_order_qty: Option<String>,
+    pub lead_time_days: Option<i32>,
+    pub is_preferred: Option<bool>,
+}
+#[utoipa::path(put, operation_id="supplier_skus_update",path="/api/v1/supplier-skus/{id}",tag="supplier_skus",params(("id"=String,Path,description="Supplier SKU ID")),request_body=UpdateSupplierSkuRequest,responses((status=200,body=SupplierSkuResponse),(status=400,body=ErrorBody),(status=404,body=ErrorBody)))]
+pub(crate) async fn update(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<SupplierSkuId>,
+    Json(req): Json<UpdateSupplierSkuRequest>,
+) -> Result<Json<SupplierSkuResponse>, HttpError> {
+    let tenant = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tenant.as_deref())?;
+    let item = c.supplier_skus().update(
+        id,
+        stateset_core::UpdateSupplierSku {
+            sku: req.sku,
+            unit_cost: parse_decimal_opt(req.unit_cost.as_deref())?,
+            currency: req.currency.as_deref().map(|v| parse_id(v, "currency")).transpose()?,
+            min_order_qty: parse_decimal_opt(req.min_order_qty.as_deref())?,
+            lead_time_days: req.lead_time_days,
+            is_preferred: req.is_preferred,
+        },
+    )?;
+    Ok(Json(to_resp(&item)))
 }

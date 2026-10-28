@@ -13,10 +13,38 @@ use super::*;
 
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
+pub struct WorkOrderStockInput {
+    pub source_location_id: i32,
+    pub output_location_id: i32,
+    pub output_sku: String,
+}
+impl From<WorkOrderStockInput> for stateset_core::WorkOrderStock {
+    fn from(value: WorkOrderStockInput) -> Self {
+        Self {
+            source_location_id: value.source_location_id,
+            output_location_id: value.output_location_id,
+            output_sku: value.output_sku,
+        }
+    }
+}
+impl From<stateset_core::WorkOrderStock> for WorkOrderStockInput {
+    fn from(value: stateset_core::WorkOrderStock) -> Self {
+        Self {
+            source_location_id: value.source_location_id,
+            output_location_id: value.output_location_id,
+            output_sku: value.output_sku,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct CreateWorkOrderInput {
+    pub stock: Option<WorkOrderStockInput>,
+    pub quantity_to_build_exact: Option<String>,
     pub product_id: String,
     pub bom_id: Option<String>,
-    pub quantity_to_build: f64,
+    pub quantity_to_build: Option<f64>,
     /// Anything other than a recognised priority uses the engine default (`normal`).
     #[napi(ts_type = "WorkOrderPriority")]
     pub priority: Option<String>,
@@ -26,6 +54,9 @@ pub struct CreateWorkOrderInput {
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct WorkOrderOutput {
+    pub stock: Option<WorkOrderStockInput>,
+    pub quantity_to_build_exact: String,
+    pub quantity_completed_exact: String,
     pub id: String,
     pub work_order_number: String,
     pub product_id: String,
@@ -46,6 +77,9 @@ impl TryFrom<stateset_core::WorkOrder> for WorkOrderOutput {
 
     fn try_from(wo: stateset_core::WorkOrder) -> Result<Self> {
         Ok(Self {
+            stock: wo.stock.map(Into::into),
+            quantity_to_build_exact: wo.quantity_to_build.to_string(),
+            quantity_completed_exact: wo.quantity_completed.to_string(),
             id: wo.id.to_string(),
             work_order_number: wo.work_order_number,
             product_id: wo.product_id.to_string(),
@@ -107,12 +141,20 @@ impl WorkOrders {
         let wo = commerce
             .work_orders()
             .create(stateset_core::CreateWorkOrder {
+                stock: input.stock.map(Into::into),
                 product_id,
                 bom_id,
-                quantity_to_build: decimal_from_f64(
-                    input.quantity_to_build,
-                    "work order quantity to build",
-                )?,
+                quantity_to_build: match input.quantity_to_build_exact {
+                    Some(value) => value
+                        .parse::<Decimal>()
+                        .map_err(|_| coded(ErrCode::Validation, "Invalid exact build quantity"))?,
+                    None => decimal_from_f64(
+                        input.quantity_to_build.ok_or_else(|| {
+                            coded(ErrCode::Validation, "Build quantity is required")
+                        })?,
+                        "work order quantity to build",
+                    )?,
+                },
                 priority,
                 notes: input.notes,
                 ..Default::default()
@@ -120,6 +162,49 @@ impl WorkOrders {
             .map_err(|e| wrap(ErrCode::Internal, "Failed to create work order", e))?;
 
         convert_output(wo)
+    }
+
+    /// Configure explicit stock routing for a planned work order.
+    #[napi]
+    pub async fn configure_stock(
+        &self,
+        id: String,
+        stock: WorkOrderStockInput,
+    ) -> Result<WorkOrderOutput> {
+        let commerce = self.commerce.get()?;
+        let id = id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid work order UUID"))?;
+        convert_output(
+            commerce
+                .work_orders()
+                .update(
+                    id,
+                    stateset_core::UpdateWorkOrder {
+                        stock: Some(stock.into()),
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to configure work order", e))?,
+        )
+    }
+
+    /// Complete an exact decimal quantity without a floating-point conversion.
+    #[napi]
+    pub async fn complete_exact(
+        &self,
+        id: String,
+        quantity_completed: String,
+    ) -> Result<WorkOrderOutput> {
+        let commerce = self.commerce.get()?;
+        let id = id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid work order UUID"))?;
+        let quantity = quantity_completed
+            .parse::<Decimal>()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid completed quantity"))?;
+        convert_output(
+            commerce
+                .work_orders()
+                .complete(id, quantity)
+                .map_err(|e| wrap(ErrCode::Internal, "Failed to complete work order", e))?,
+        )
     }
 
     #[napi]

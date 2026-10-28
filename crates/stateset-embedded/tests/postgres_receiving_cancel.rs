@@ -13,8 +13,9 @@
 
 use rust_decimal_macros::dec;
 use stateset_core::{
-    CreateReceipt, CreateReceiptItem, CreateWarehouse, ReceiptItemStatus, ReceiptStatus,
-    ReceiptType, WarehouseType,
+    CostMethod, CreateLocation, CreateReceipt, CreateReceiptItem, CreateWarehouse, LocationType,
+    ReceiptItemStatus, ReceiptStatus, ReceiptType, ReceiveItemLine, ReceiveItems, SetItemCost,
+    WarehouseType,
 };
 use stateset_embedded::AsyncCommerce;
 
@@ -103,6 +104,30 @@ async fn postgres_complete_receiving_marks_items_received() {
         })
         .await
         .expect("create warehouse");
+    // Received stock posts to a receiving location, and the shared database
+    // may have ledger posting configured, so the received SKU carries a cost.
+    let sku_a = format!("ITEM-A-{}", &unique[..8]);
+    let sku_b = format!("ITEM-B-{}", &unique[..8]);
+    commerce
+        .cost_accounting()
+        .set_item_cost(SetItemCost {
+            sku: sku_a.clone(),
+            cost_method: Some(CostMethod::Average),
+            standard_cost: Some(dec!(1)),
+            ..Default::default()
+        })
+        .await
+        .expect("cost ITEM-A");
+    let dock = commerce
+        .warehouse()
+        .create_location(CreateLocation {
+            warehouse_id: warehouse.id,
+            location_type: LocationType::Receiving,
+            is_receivable: Some(true),
+            ..Default::default()
+        })
+        .await
+        .expect("create receiving location");
 
     let receipt = commerce
         .receiving()
@@ -111,12 +136,12 @@ async fn postgres_complete_receiving_marks_items_received() {
             warehouse_id: warehouse.id,
             items: vec![
                 CreateReceiptItem {
-                    sku: "ITEM-A".into(),
+                    sku: sku_a.clone(),
                     expected_quantity: dec!(5),
                     ..Default::default()
                 },
                 CreateReceiptItem {
-                    sku: "ITEM-B".into(),
+                    sku: sku_b.clone(),
                     expected_quantity: dec!(3),
                     ..Default::default()
                 },
@@ -127,17 +152,35 @@ async fn postgres_complete_receiving_marks_items_received() {
         .expect("create receipt with items");
 
     commerce.receiving().start_receiving(receipt.id).await.expect("start");
+    let lines =
+        commerce.receiving().get_receipt_items(receipt.id).await.expect("get receipt items");
+    let item_a = lines.iter().find(|i| i.sku == sku_a).expect("ITEM-A line").id;
+    commerce
+        .receiving()
+        .receive_items(ReceiveItems {
+            receipt_id: receipt.id,
+            items: vec![ReceiveItemLine {
+                receipt_item_id: item_a,
+                quantity_received: dec!(5),
+                quantity_rejected: None,
+                rejection_reason: None,
+                lot_number: None,
+                serial_numbers: None,
+                expiration_date: None,
+                notes: None,
+            }],
+            receiving_location_id: Some(dock.id),
+            received_by: None,
+        })
+        .await
+        .expect("receive ITEM-A");
     commerce.receiving().complete_receiving(receipt.id).await.expect("complete");
 
+    // A line is received only if it received stock; an untouched line stays pending.
     let items =
         commerce.receiving().get_receipt_items(receipt.id).await.expect("get receipt items");
     assert_eq!(items.len(), 2);
-    for item in &items {
-        assert_eq!(
-            item.status,
-            ReceiptItemStatus::Received,
-            "item {} must be marked received on completion",
-            item.sku
-        );
-    }
+    let status = |sku: &str| items.iter().find(|i| i.sku == sku).expect("line").status;
+    assert_eq!(status(&sku_a), ReceiptItemStatus::Received);
+    assert_eq!(status(&sku_b), ReceiptItemStatus::Pending);
 }

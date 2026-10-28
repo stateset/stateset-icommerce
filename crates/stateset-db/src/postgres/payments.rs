@@ -442,10 +442,17 @@ pub(crate) async fn order_has_payments_pg(
 /// re-derives the order's payment status from the ledger. Returns the ledger
 /// row's id.
 pub(crate) async fn record_lost_chargeback_pg(
-    conn: &mut sqlx::PgConnection,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     payment: &Payment,
     now: DateTime<Utc>,
 ) -> Result<Uuid> {
+    super::ar_settlement::require_unallocated(
+        tx,
+        payment.id.into_uuid(),
+        rust_decimal::Decimal::ZERO,
+    )
+    .await?;
+    let conn = tx.as_mut();
     let reversed = (payment.amount - payment.amount_refunded).max(Decimal::ZERO);
     let id = Uuid::new_v4();
     let refund_number = generate_refund_number();
@@ -501,6 +508,7 @@ pub(crate) async fn record_lost_chargeback_pg(
         ),
     )
     .await?;
+    super::ledger_payment::refund(tx, id).await?;
     Ok(id)
 }
 
@@ -582,10 +590,11 @@ struct PaymentMethodRow {
 /// [`PgPaymentRepository::mark_completed_async`] and the governed
 /// `payments.complete` kernel command).
 pub(crate) async fn mark_completed_pg(
-    conn: &mut sqlx::PgConnection,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     id: Uuid,
     now: DateTime<Utc>,
 ) -> Result<()> {
+    let conn = tx.as_mut();
     let target = PaymentTransactionStatus::Completed;
 
     // Two guards, in this order (same as SQLite):
@@ -635,6 +644,7 @@ pub(crate) async fn mark_completed_pg(
     if let Some(order_id) = order_id {
         sync_order_payment_status_pg(&mut *conn, order_id, now).await?;
     }
+    super::ledger_payment::payment(tx, id).await?;
     Ok(())
 }
 
@@ -1086,8 +1096,16 @@ impl PgPaymentRepository {
         if rows == 0 {
             return Err(transition_conflict(current, target));
         }
+        if target == PaymentTransactionStatus::Cancelled {
+            let gl = super::general_ledger::PgGeneralLedgerRepository::new(self.pool.clone());
+            super::ledger_reversal::reverse_source(&mut tx, &gl, "payment", id, now.date_naive())
+                .await?;
+        }
+        if target == PaymentTransactionStatus::Completed {
+            super::ledger_payment::payment(&mut tx, id).await?;
+        }
         if let Some(disputed) = &chargeback {
-            record_lost_chargeback_pg(tx.as_mut(), disputed, now).await?;
+            record_lost_chargeback_pg(&mut tx, disputed, now).await?;
         }
         if current != target {
             if let Some(order_id) = payment.order_id {
@@ -1197,7 +1215,7 @@ impl PgPaymentRepository {
     /// Mark payment as completed (async)
     pub async fn mark_completed_async(&self, id: Uuid) -> Result<Payment> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        mark_completed_pg(tx.as_mut(), id, Utc::now()).await?;
+        mark_completed_pg(&mut tx, id, Utc::now()).await?;
         tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
@@ -1538,6 +1556,12 @@ impl PgPaymentRepository {
             })?;
 
         let new_refunded = current_refunded + refund.amount;
+        super::ar_settlement::require_unallocated(
+            &mut tx,
+            payment_id,
+            payment_amount - new_refunded,
+        )
+        .await?;
         let new_status = if new_refunded >= payment_amount {
             PaymentTransactionStatus::Refunded
         } else {
@@ -1560,6 +1584,7 @@ impl PgPaymentRepository {
         if rows == 0 {
             return Err(transition_conflict(payment_status, new_status));
         }
+        super::ledger_payment::refund(&mut tx, id).await?;
         sync_order_payment_status_for_payment_pg(tx.as_mut(), payment_id, now).await?;
 
         super::kernel_outbox::record_outbox_fact(
@@ -2078,8 +2103,22 @@ impl PgPaymentRepository {
             if rows == 0 {
                 return Err(transition_conflict(current, target));
             }
+            if target == PaymentTransactionStatus::Cancelled {
+                let gl = super::general_ledger::PgGeneralLedgerRepository::new(self.pool.clone());
+                super::ledger_reversal::reverse_source(
+                    &mut tx,
+                    &gl,
+                    "payment",
+                    raw_id,
+                    now.date_naive(),
+                )
+                .await?;
+            }
+            if target == PaymentTransactionStatus::Completed {
+                super::ledger_payment::payment(&mut tx, id.into()).await?;
+            }
             if let Some(disputed) = &chargeback {
-                record_lost_chargeback_pg(tx.as_mut(), disputed, now).await?;
+                record_lost_chargeback_pg(&mut tx, disputed, now).await?;
             }
             if current != target {
                 if let Some(order_id) = payment.order_id {

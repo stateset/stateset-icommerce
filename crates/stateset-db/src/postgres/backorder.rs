@@ -411,7 +411,7 @@ impl PgBackorderRepository {
     /// allocations first (their reservations are fulfilled: on-hand and
     /// allocated both decrement, `shipment` ledger row), then any remainder
     /// straight from available stock when fulfilling from `Inventory` and the
-    /// SKU has an inventory master. Other sources (PO, transfer, production)
+    /// SKU has an inventory master. Other sources (transfer, production)
     /// and SKUs without an inventory item pass through untouched. Mirrors the
     /// SQLite backend.
     async fn consume_stock_for_fulfilment_in_tx(
@@ -811,8 +811,21 @@ impl PgBackorderRepository {
             BackorderStatus::PartiallyFulfilled
         };
 
-        Self::consume_stock_for_fulfilment_in_tx(&mut tx, &input, &sku, source_location_id, now)
+        if input.source_type == FulfillmentSourceType::PurchaseOrder {
+            let po = super::backorder_receipt::validate_source(&mut tx, &input, &sku, now).await?;
+            self.release_open_allocations_in_tx(&mut tx, &[input.backorder_id]).await?;
+            super::backorder_receipt::consume(&mut tx, &input, &sku, source_location_id, po, now)
+                .await?;
+        } else {
+            Self::consume_stock_for_fulfilment_in_tx(
+                &mut tx,
+                &input,
+                &sku,
+                source_location_id,
+                now,
+            )
             .await?;
+        }
 
         sqlx::query(
             "UPDATE backorders SET quantity_fulfilled = $1, quantity_remaining = $2, status = $3, updated_at = $4 WHERE id = $5",

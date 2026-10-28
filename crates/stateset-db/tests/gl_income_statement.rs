@@ -56,6 +56,7 @@ fn sqlite_income_statement_sums_revenue_exactly() {
                 source_document_type: None,
                 source_document_id: None,
                 auto_post: Some(false),
+                fx: None,
             })
             .expect("create journal entry");
         gl.post_journal_entry(entry.id, "tester").expect("post journal entry");

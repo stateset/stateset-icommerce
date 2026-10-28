@@ -34,6 +34,7 @@ pub(crate) struct CreateApBillItemRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub(crate) struct CreateApBillRequest {
+    pub currency: Option<String>,
     pub supplier_id: String,
     pub purchase_order_id: Option<String>,
     /// RFC 3339 due date, e.g. `2026-08-01T00:00:00Z`.
@@ -46,6 +47,9 @@ pub(crate) struct CreateApBillRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub(crate) struct ApBillResponse {
+    pub created_by: Option<String>,
+    pub approved_by: Option<String>,
+    pub match_override_reason: Option<String>,
     pub id: String,
     pub bill_number: String,
     pub supplier_id: String,
@@ -91,6 +95,8 @@ pub(crate) struct CreateApPaymentRequest {
     pub payment_method: String,
     /// Decimal amount as a string.
     pub amount: String,
+    /// Defaults to the allocated bills' currency. Mixed currencies are refused.
+    pub currency: Option<String>,
     pub reference_number: Option<String>,
     pub bank_account: Option<String>,
     pub check_number: Option<String>,
@@ -124,7 +130,8 @@ pub(crate) struct CreateApPaymentRunRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub(crate) struct ApprovePaymentRunRequest {
-    pub approved_by: String,
+    /// Deprecated and ignored; approval identity comes from authentication.
+    pub approved_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -134,6 +141,7 @@ pub(crate) struct ApPaymentRunResponse {
     pub status: String,
     pub payment_date: String,
     pub payment_method: String,
+    pub currency: Option<String>,
     pub total_amount: String,
     pub payment_count: i32,
     pub approved_by: Option<String>,
@@ -197,6 +205,9 @@ fn parse_datetime(s: &str, what: &str) -> Result<DateTime<Utc>, HttpError> {
 
 fn bill_resp(b: &stateset_core::Bill) -> ApBillResponse {
     ApBillResponse {
+        created_by: b.created_by.clone(),
+        approved_by: b.approved_by.clone(),
+        match_override_reason: b.match_override_reason.clone(),
         id: b.id.to_string(),
         bill_number: b.bill_number.clone(),
         supplier_id: b.supplier_id.to_string(),
@@ -232,6 +243,7 @@ fn run_resp(r: &stateset_core::PaymentRun) -> ApPaymentRunResponse {
         status: r.status.to_string(),
         payment_date: r.payment_date.to_rfc3339(),
         payment_method: r.payment_method.to_string(),
+        currency: r.currency.map(|code| code.to_string()),
         total_amount: r.total_amount.to_string(),
         payment_count: r.payment_count,
         approved_by: r.approved_by.clone(),
@@ -250,6 +262,7 @@ pub fn router() -> Router<AppState> {
         .route("/ap/bills/{id}/approve", post(approve_bill))
         .route("/ap/bills/{id}/cancel", post(cancel_bill))
         .route("/ap/bills/{id}/dispute", post(dispute_bill))
+        .route("/ap/bills/{id}/resolve-dispute", post(resolve_bill_dispute))
         .route("/ap/bills/{id}/three-way-match", get(three_way_match_bill))
         .route("/ap/payments", post(create_payment))
         .route("/ap/payments/{id}/void", post(void_payment))
@@ -271,6 +284,7 @@ pub fn router() -> Router<AppState> {
 pub(crate) async fn create_bill(
     State(state): State<AppState>,
     headers: HeaderMap,
+    actor: crate::middleware::FinanceActor,
     Json(req): Json<CreateApBillRequest>,
 ) -> Result<(StatusCode, Json<ApBillResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
@@ -299,13 +313,18 @@ pub(crate) async fn create_bill(
                 });
             }
             let input = stateset_core::CreateBill {
+                created_by: Some(actor.0),
                 bill_number: None,
                 supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
                 purchase_order_id,
                 bill_date: None,
                 due_date: parse_datetime(&req.due_date, "due_date")?,
                 payment_terms: req.payment_terms,
-                currency: None,
+                currency: req
+                    .currency
+                    .as_deref()
+                    .map(|code| parse_id(code, "currency"))
+                    .transpose()?,
                 reference_number: req.reference_number,
                 memo: req.memo,
                 items,
@@ -375,19 +394,28 @@ pub(crate) async fn get_bill(
         .await
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub(crate) struct ApproveApBillRequest {
+    pub override_reason: Option<String>,
+}
 #[utoipa::path(post, operation_id = "ap_approve_bill", path = "/api/v1/ap/bills/{id}/approve", tag = "accounts_payable",
+    request_body=Option<ApproveApBillRequest>,
     params(("id" = String, Path, description = "Bill ID")),
     responses((status = 200, body = ApBillResponse), (status = 409, body = ErrorBody)))]
-#[tracing::instrument(skip(state, headers))]
+#[tracing::instrument(skip(state, headers, req))]
 pub(crate) async fn approve_bill(
     State(state): State<AppState>,
     headers: HeaderMap,
+    actor: crate::middleware::FinanceActor,
     Path(id): Path<Uuid>,
+    req: Option<Json<ApproveApBillRequest>>,
 ) -> Result<Json<ApBillResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            Ok(Json(bill_resp(&c.accounts_payable().approve_bill(id)?)))
+            let reason = req.and_then(|Json(req)| req.override_reason);
+            let bill = c.accounts_payable().approve_bill_as(id, &actor.0, reason.as_deref())?;
+            Ok(Json(bill_resp(&bill)))
         })
         .await
 }
@@ -422,6 +450,23 @@ pub(crate) async fn dispute_bill(
     state
         .run_blocking(tid.as_deref(), move |c| {
             Ok(Json(bill_resp(&c.accounts_payable().dispute_bill(id)?)))
+        })
+        .await
+}
+
+#[utoipa::path(post, operation_id = "ap_resolve_bill_dispute", path = "/api/v1/ap/bills/{id}/resolve-dispute", tag = "accounts_payable",
+    params(("id" = String, Path, description = "Bill ID")),
+    responses((status = 200, body = ApBillResponse), (status = 409, body = ErrorBody)))]
+#[tracing::instrument(skip(state, headers))]
+pub(crate) async fn resolve_bill_dispute(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ApBillResponse>, HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    state
+        .run_blocking(tid.as_deref(), move |c| {
+            Ok(Json(bill_resp(&c.accounts_payable().resolve_bill_dispute(id)?)))
         })
         .await
 }
@@ -515,7 +560,11 @@ pub(crate) async fn create_payment(
                 payment_date: None,
                 payment_method: parse_id(&req.payment_method, "payment_method")?,
                 amount: parse_decimal(&req.amount, "amount")?,
-                currency: None,
+                currency: req
+                    .currency
+                    .as_deref()
+                    .map(|code| parse_id(code, "currency"))
+                    .transpose()?,
                 reference_number: req.reference_number,
                 bank_account: req.bank_account,
                 check_number: req.check_number,
@@ -556,6 +605,7 @@ pub(crate) async fn void_payment(
 pub(crate) async fn create_payment_run(
     State(state): State<AppState>,
     headers: HeaderMap,
+    actor: crate::middleware::FinanceActor,
     Json(req): Json<CreateApPaymentRunRequest>,
 ) -> Result<(StatusCode, Json<ApPaymentRunResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
@@ -570,7 +620,7 @@ pub(crate) async fn create_payment_run(
                 payment_method: parse_id(&req.payment_method, "payment_method")?,
                 bill_ids,
                 notes: req.notes,
-                created_by: req.created_by,
+                created_by: Some(actor.0),
             };
             let run = c.accounts_payable().create_payment_run(input)?;
             Ok((StatusCode::CREATED, Json(run_resp(&run))))
@@ -586,13 +636,15 @@ pub(crate) async fn create_payment_run(
 pub(crate) async fn approve_payment_run(
     State(state): State<AppState>,
     headers: HeaderMap,
+    actor: crate::middleware::FinanceActor,
     Path(id): Path<Uuid>,
     Json(req): Json<ApprovePaymentRunRequest>,
 ) -> Result<Json<ApPaymentRunResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            Ok(Json(run_resp(&c.accounts_payable().approve_payment_run(id, &req.approved_by)?)))
+            let _ = req; // Legacy body identity is ignored.
+            Ok(Json(run_resp(&c.accounts_payable().approve_payment_run(id, &actor.0)?)))
         })
         .await
 }
@@ -666,9 +718,21 @@ mod tests {
     use stateset_embedded::Commerce;
     use tower::ServiceExt;
 
+    async fn test_identity(
+        mut request: Request<Body>,
+        next: axum::middleware::Next,
+    ) -> axum::response::Response {
+        let identity =
+            if request.uri().path().ends_with("/approve") { "test-checker" } else { "test-maker" };
+        request
+            .extensions_mut()
+            .insert(crate::middleware::AuthenticatedActorIdentity(identity.into()));
+        next.run(request).await
+    }
+
     fn app() -> Router {
         let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
-        router().with_state(state)
+        router().layer(axum::middleware::from_fn(test_identity)).with_state(state)
     }
 
     async fn json_body(resp: axum::response::Response) -> serde_json::Value {
@@ -712,6 +776,8 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let approved = json_body(resp).await;
         assert_eq!(approved["status"], "approved");
+        assert_eq!(approved["created_by"], "test-maker");
+        assert_eq!(approved["approved_by"], "test-checker");
 
         let resp = app
             .oneshot(Request::get("/ap/bills?status=approved").body(Body::empty()).unwrap())
@@ -800,6 +866,9 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
+        commerce.purchase_orders().submit(po.id.into()).unwrap();
+        commerce.purchase_orders().approve(po.id.into(), "test").unwrap();
+        commerce.purchase_orders().send(po.id.into()).unwrap();
         let po_id: uuid::Uuid = po.id.into();
         let po_line_id = po.items[0].id;
 
@@ -861,7 +930,7 @@ mod tests {
             .unwrap();
 
         let state = AppState::new(commerce);
-        let app = router().with_state(state);
+        let app = router().layer(axum::middleware::from_fn(test_identity)).with_state(state);
 
         // Bill that matches the PO exactly.
         let body = serde_json::json!({

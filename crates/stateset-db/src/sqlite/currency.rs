@@ -349,7 +349,20 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
         let rounding_str = settings.rounding_mode.to_string();
 
         {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let mut connection =
+                self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            let conn = super::begin_immediate(&mut connection).map_err(map_db_error)?;
+            let current = super::ledger_fx::base_currency(&conn).map_err(map_db_error)?;
+            if current.as_str() != settings.base_currency.code() {
+                let count: i64 = conn
+                    .query_row("SELECT (SELECT COUNT(*) FROM gl_journal_entries) + (SELECT COUNT(*) FROM cost_layers WHERE base_currency IS NOT NULL) + (SELECT COUNT(*) FROM cost_transactions WHERE currency IS NOT NULL)", [], |r| r.get(0))
+                    .map_err(map_db_error)?;
+                if count > 0 {
+                    return Err(CommerceError::Conflict(
+                        "Cannot change functional currency after recording ledger or inventory costs".into(),
+                    ));
+                }
+            }
 
             conn.execute(
                 "INSERT INTO store_currency_settings (id, base_currency, enabled_currencies, auto_convert, rounding_mode, updated_at)
@@ -368,6 +381,7 @@ impl stateset_core::CurrencyRepository for SqliteCurrencyRepository {
                 ],
             )
             .map_err(map_db_error)?;
+            conn.commit().map_err(map_db_error)?;
         }
 
         self.get_settings()

@@ -12,9 +12,9 @@
 
 #![cfg(feature = "postgres")]
 
-use chrono::{Datelike, NaiveDate, Utc};
+use chrono::{Datelike, Utc};
 use rust_decimal_macros::dec;
-use stateset_core::{CreateAutoPostingConfig, CreateGlPeriod, CreatePayment};
+use stateset_core::{CreateAutoPostingConfig, CreatePayment};
 use stateset_embedded::AsyncCommerce;
 
 mod common;
@@ -46,17 +46,8 @@ async fn postgres_auto_post_payment_received_posts_balanced_entry() {
     };
 
     let today = Utc::now().date_naive();
-    let _period = common::ensure_open_period(
-        &gl,
-        CreateGlPeriod {
-            period_name: format!("{}-full", today.year()),
-            fiscal_year: today.year(),
-            period_number: 1,
-            start_date: NaiveDate::from_ymd_opt(today.year(), 1, 1).unwrap(),
-            end_date: NaiveDate::from_ymd_opt(today.year(), 12, 31).unwrap(),
-        },
-    )
-    .await;
+    // The current month, shared with the other binaries that post today.
+    let _period = common::ensure_open_month(&gl, today.year(), today.month()).await;
 
     gl.set_auto_posting_config(CreateAutoPostingConfig {
         config_name: "default".into(),
@@ -67,6 +58,10 @@ async fn postgres_auto_post_payment_received_posts_balanced_entry() {
         unearned_revenue_account_id: None,
         sales_revenue_account_id: acct("4010").await,
         shipping_revenue_account_id: None,
+        sales_tax_payable_account_id: None,
+        goods_received_not_invoiced_account_id: None,
+        inventory_adjustment_account_id: None,
+        work_in_progress_account_id: None,
         cogs_account_id: acct("5010").await,
         bad_debt_expense_account_id: None,
         fx_gain_loss_account_id: None,
@@ -82,6 +77,7 @@ async fn postgres_auto_post_payment_received_posts_balanced_entry() {
         .await
         .expect("create payment");
 
+    commerce.payments().mark_completed(payment.id.into()).await.expect("complete payment");
     let entry = gl
         .auto_post_payment_received(payment.id.into())
         .await
@@ -90,4 +86,5 @@ async fn postgres_auto_post_payment_received_posts_balanced_entry() {
     assert_eq!(entry.total_debits, dec!(100.00), "Cash debit should equal the payment amount");
     assert_eq!(entry.total_credits, dec!(100.00), "AR credit should equal the payment amount");
     assert_eq!(entry.entry_date, today, "entry date should be the payment date");
+    common::deactivate_posting(commerce.database().pool()).await;
 }

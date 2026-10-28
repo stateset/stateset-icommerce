@@ -661,7 +661,15 @@ async fn disposition_transitions_serials_and_restores_lot() {
     for id in &serials {
         let serial = db.serials().get_async(*id).await.unwrap().unwrap();
         assert_eq!(serial.status, SerialStatus::Available);
-        assert_eq!(serial.current_location_id, Some(wh));
+        assert_eq!(
+            db.warehouse()
+                .get_location_async(serial.current_location_id.unwrap())
+                .await
+                .unwrap()
+                .unwrap()
+                .warehouse_id,
+            wh
+        );
     }
     let lot_after = db.lots().get_async(lot.id).await.unwrap().unwrap();
     assert_eq!(lot_after.quantity_remaining, lot.quantity_remaining + dec!(2));

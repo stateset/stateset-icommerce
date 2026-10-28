@@ -349,6 +349,7 @@ impl AccountsReceivable {
     ///         period_start: None, // defaults to 30 days ago
     ///         period_end: None,   // defaults to now
     ///         include_paid_invoices: Some(false),
+    ///         currency: None, // the customer's invoice currency
     ///     }
     /// )?;
     ///

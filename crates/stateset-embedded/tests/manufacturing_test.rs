@@ -2,6 +2,9 @@
 
 //! Integration tests for manufacturing features (BOM and Work Orders)
 
+#[path = "support/manufacturing.rs"]
+mod manufacturing_fixture;
+
 use rust_decimal_macros::dec;
 use stateset_embedded::{
     AddWorkOrderMaterial, BomStatus, Commerce, CreateBom, CreateBomComponent, CreateWorkOrder,
@@ -91,7 +94,8 @@ fn test_work_order_lifecycle() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
     // Create a product
-    let product_id = Uuid::new_v4().into();
+    let input = manufacturing_fixture::input(&commerce, dec!(100));
+    let product_id = input.product_id;
 
     // Create a work order
     let wo = commerce
@@ -122,7 +126,7 @@ fn test_work_order_lifecycle() {
                     ..Default::default()
                 },
             ]),
-            ..Default::default()
+            ..input
         })
         .expect("Failed to create work order");
 
@@ -149,6 +153,8 @@ fn test_work_order_lifecycle() {
         .expect("Failed to add material");
 
     assert_eq!(material.component_name, "Raw Steel Plate");
+
+    manufacturing_fixture::seed(&commerce, wo.stock.as_ref().unwrap(), "RAW-STEEL-001", dec!(50));
 
     // Start the work order
     let wo = commerce.work_orders().start(wo.id).expect("Failed to start work order");
@@ -193,11 +199,7 @@ fn test_work_order_hold_and_cancel() {
 
     let wo = commerce
         .work_orders()
-        .create(CreateWorkOrder {
-            product_id: Uuid::new_v4().into(),
-            quantity_to_build: dec!(50),
-            ..Default::default()
-        })
+        .create(manufacturing_fixture::input(&commerce, dec!(50)))
         .expect("Failed to create work order");
 
     // Start it
@@ -223,7 +225,8 @@ fn test_work_order_hold_and_cancel() {
 fn test_bom_and_work_order_integration() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
 
-    let product_id = Uuid::new_v4().into();
+    let input = manufacturing_fixture::input(&commerce, dec!(25));
+    let product_id = input.product_id;
 
     // Create a BOM
     let bom = commerce

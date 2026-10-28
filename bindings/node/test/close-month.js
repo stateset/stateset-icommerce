@@ -12,7 +12,34 @@ const { test } = require('node:test');
 
 async function setup(commerce) {
   const gl = commerce.generalLedger;
-  await gl.initializeChartOfAccounts();
+  const accounts = await gl.initializeChartOfAccounts();
+  const account = (number) => accounts.find((a) => a.accountNumber === number).id;
+  await gl.setAutoPostingConfig({
+    configName: 'Close test',
+    cashAccountId: account('1010'),
+    accountsReceivableAccountId: account('1100'),
+    inventoryAccountId: account('1200'),
+    accountsPayableAccountId: account('2010'),
+    salesRevenueAccountId: account('4010'),
+    cogsAccountId: account('5010'),
+    autoPostDepreciation: true,
+    autoPostRevenueRecognition: true,
+  });
+  const capital = await gl.createAccount({
+    accountNumber: '1500',
+    name: 'Equipment',
+    accountType: 'asset',
+  });
+  const accumulated = await gl.createAccount({
+    accountNumber: '1590',
+    name: 'Accumulated depreciation',
+    accountType: 'asset',
+  });
+  const expense = await gl.createAccount({
+    accountNumber: '6100',
+    name: 'Depreciation expense',
+    accountType: 'expense',
+  });
 
   // Wide open period covering today: GL auto-posting stamps entries with
   // today's date, which must fall inside an open period.
@@ -30,14 +57,17 @@ async function setup(commerce) {
   // Asset: $1200 over 12 months straight-line; all periods due by period end.
   const asset = await commerce.fixedAssets.create({
     name: 'Espresso machine',
+    assetAccountId: capital.id,
+    accumulatedDepreciationAccountId: accumulated.id,
+    depreciationExpenseAccountId: expense.id,
     category: 'machinery',
-    acquisitionDate: '2026-01-01',
+    acquisitionDate: '2020-01-01',
     acquisitionCost: '1200.00',
     salvageValue: '0',
     usefulLifeMonths: 12,
     depreciationMethod: 'straight_line',
   });
-  await commerce.fixedAssets.placeInService(asset.id, '2026-01-01');
+  await commerce.fixedAssets.placeInService(asset.id, '2020-01-01');
   await commerce.fixedAssets.generateSchedule(asset.id);
   return { period, asset };
 }
@@ -52,7 +82,7 @@ test('GeneralLedger.closeMonth', async (t) => {
     assert.equal(report.periodId, period.id);
     assert.equal(report.periodName, 'FY-wide');
     assert.equal(report.depreciation.status, 'dry_run');
-    assert.equal(report.depreciation.entryCount, 12);
+    assert.equal(report.depreciation.entryCount, 12, JSON.stringify(report.depreciation));
     assert.equal(report.depreciation.totalAmount, '1200.00');
     assert.equal(report.revenueRecognition.status, 'dry_run');
     assert.equal(report.fxRevaluation.status, 'skipped');
@@ -86,16 +116,14 @@ test('GeneralLedger.closeMonth', async (t) => {
     const commerce = new Commerce(':memory:');
     const { period, asset } = await setup(commerce);
 
-    // Without GL auto-posting there is no P&L activity, so skip the final
-    // period close (which requires net income) and exercise the wet path
-    // for the depreciation step.
+    // Exercise depreciation postings without closing the period in this case.
     const report = await commerce.generalLedger.closeMonth(period.id, {
       closedBy: 'binding-test',
       skipPeriodClose: true,
     });
     assert.equal(report.dryRun, false);
     assert.equal(report.depreciation.status, 'executed');
-    assert.equal(report.depreciation.entryCount, 12);
+    assert.equal(report.depreciation.entryCount, 12, JSON.stringify(report.depreciation));
     assert.equal(report.depreciation.totalAmount, '1200.00');
     assert.deepEqual(report.depreciation.warnings, []);
     assert.equal(report.fxRevaluation.status, 'skipped');
@@ -109,9 +137,6 @@ test('GeneralLedger.closeMonth', async (t) => {
 
   await t.test('rejects an invalid period id', async () => {
     const commerce = new Commerce(':memory:');
-    await assert.rejects(
-      () => commerce.generalLedger.closeMonth('not-a-uuid'),
-      /Invalid UUID/,
-    );
+    await assert.rejects(() => commerce.generalLedger.closeMonth('not-a-uuid'), /Invalid UUID/);
   });
 });

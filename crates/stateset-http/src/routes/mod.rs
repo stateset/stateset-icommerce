@@ -10,9 +10,12 @@ pub mod bom;
 pub mod carts;
 pub mod channels;
 pub mod companies;
+pub mod cost_accounting;
+pub mod credit;
 pub mod currency;
 pub mod customers;
 pub mod edi_documents;
+pub mod erp_operations;
 pub mod events;
 pub mod fixed_assets;
 pub mod fulfillment;
@@ -120,6 +123,8 @@ pub fn api_router_with_idempotency(
 fn v1_router() -> Router<AppState> {
     Router::new()
         .merge(orders::router())
+        .merge(erp_operations::router())
+        .merge(cost_accounting::router())
         .merge(customers::router())
         .merge(products::router())
         .merge(inventory::router())
@@ -166,6 +171,7 @@ fn v1_router() -> Router<AppState> {
         .merge(kernel::router())
         .merge(x402::router())
         .merge(prepayments::router())
+        .merge(credit::router())
         .merge(purchase_orders::router())
         .merge(general_ledger::router())
         .merge(fixed_assets::router())

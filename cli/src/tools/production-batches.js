@@ -97,9 +97,11 @@ export const productionBatchTools = withPolicyDomain('production_batches', [
       name: z.string().min(1).optional().describe('New name'),
       vendorId: z.string().min(1).optional().describe('New vendor ID'),
       status: z
-        .enum(['planned', 'in_progress', 'completed', 'cancelled'])
+        .enum(['cancelled'])
         .optional()
-        .describe('New status'),
+        .describe(
+          'Cancel an empty batch or one whose work orders are cancelled; other states are derived',
+        ),
       notes: z.string().max(2000).optional().describe('New notes'),
       scheduledStart: z.string().optional().describe('New scheduled start timestamp in ISO 8601'),
       scheduledEnd: z.string().optional().describe('New scheduled end timestamp in ISO 8601'),

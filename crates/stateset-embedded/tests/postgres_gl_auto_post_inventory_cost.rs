@@ -14,10 +14,10 @@
 
 #![cfg(feature = "postgres")]
 
-use chrono::{Datelike, NaiveDate, Utc};
+use chrono::{Datelike, Utc};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use stateset_core::{CostTransactionType, CreateAutoPostingConfig, CreateGlPeriod};
+use stateset_core::{CostTransactionType, CreateAutoPostingConfig};
 use stateset_embedded::AsyncCommerce;
 
 mod common;
@@ -49,17 +49,8 @@ async fn postgres_auto_post_inventory_cost_issue_posts_cogs_debit() {
     };
 
     let today = Utc::now().date_naive();
-    let _period = common::ensure_open_period(
-        &gl,
-        CreateGlPeriod {
-            period_name: format!("{}-full", today.year()),
-            fiscal_year: today.year(),
-            period_number: 1,
-            start_date: NaiveDate::from_ymd_opt(today.year(), 1, 1).unwrap(),
-            end_date: NaiveDate::from_ymd_opt(today.year(), 12, 31).unwrap(),
-        },
-    )
-    .await;
+    // The current month, shared with the other binaries that post today.
+    let _period = common::ensure_open_month(&gl, today.year(), today.month()).await;
 
     gl.set_auto_posting_config(CreateAutoPostingConfig {
         config_name: "default".into(),
@@ -70,6 +61,10 @@ async fn postgres_auto_post_inventory_cost_issue_posts_cogs_debit() {
         unearned_revenue_account_id: None,
         sales_revenue_account_id: acct("4010").await,
         shipping_revenue_account_id: None,
+        sales_tax_payable_account_id: None,
+        goods_received_not_invoiced_account_id: None,
+        inventory_adjustment_account_id: None,
+        work_in_progress_account_id: None,
         cogs_account_id: acct("5010").await,
         bad_debt_expense_account_id: None,
         fx_gain_loss_account_id: None,
@@ -95,8 +90,11 @@ async fn postgres_auto_post_inventory_cost_issue_posts_cogs_debit() {
         .expect("record cost transaction");
     assert_eq!(txn.total_cost, dec!(100.00), "total cost should be quantity * unit cost");
 
-    let entry =
-        gl.auto_post_inventory_cost(txn.id).await.expect("auto_post_inventory_cost must succeed");
+    let entry = gl
+        .auto_post_inventory_cost(txn.id)
+        .await
+        .expect("auto_post_inventory_cost must succeed")
+        .expect("issue must post");
 
     assert_eq!(entry.total_debits, dec!(100.00));
     assert_eq!(entry.total_credits, dec!(100.00));
@@ -116,4 +114,5 @@ async fn postgres_auto_post_inventory_cost_issue_posts_cogs_debit() {
     let inventory = line_for("1200");
     assert_eq!(inventory.credit_amount, dec!(100.00), "Inventory must be credited for an issue");
     assert_eq!(inventory.debit_amount, Decimal::ZERO, "Inventory must not be debited for an issue");
+    common::deactivate_posting(commerce.database().pool()).await;
 }

@@ -13,7 +13,8 @@
  *                 manufacturing, warehouse management, B2B, engagement
  *                 (subscriptions, reviews, loyalty), integration plumbing.
  *                 Opt in with `--profile <name>`, `--domains a,b` or
- *                 `--profile all`.
+ *                 `--profile all`. Finance and operations profiles also run
+ *                 mandatory fresh-store and seeded workflow gates.
  *   experimental  Demo, external-stack-dependent, or known-incomplete tools:
  *                 anything that needs a wallet, a chain, an API key, a demo
  *                 stack or a database handle the binding does not expose, and
