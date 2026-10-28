@@ -63,7 +63,7 @@ export const checkoutTools = [
         .min(1)
         .optional()
         .describe('Customer ID to pre-associate with the link'),
-      metadata: z.record(z.string()).optional().describe('Custom key-value metadata'),
+      metadata: z.record(z.string(), z.string()).optional().describe('Custom key-value metadata'),
     },
     permission: 'write',
     handler: async ({ params, ...ctx }) => {
