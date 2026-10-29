@@ -212,7 +212,7 @@ This adapter ships with the handler crate so the default deployment is
 
 ## Build, version, ship
 
-- Rust 1.85, edition 2024 (matches engine).
+- Rust 1.88, edition 2024 (matches engine).
 - Workspace lints inherited from engine workspace.
 - Cargo features: `transport-http` (default), `transport-grpc`,
   `transport-mcp`, `backend-stateset` (default), `pqc-hybrid`.

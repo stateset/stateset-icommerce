@@ -194,13 +194,13 @@ pub(crate) fn apply_bin_delta_tx(
             available: (on_hand - allocated).to_string(),
         }));
     }
-    if let Some(capacity) = bin.capacity {
-        if new_on_hand > capacity {
-            return Err(smuggle(CommerceError::ValidationError(format!(
-                "Bin {} capacity {} exceeded: {} on hand after adjustment",
-                bin.code, capacity, new_on_hand
-            ))));
-        }
+    if let Some(capacity) = bin.capacity
+        && new_on_hand > capacity
+    {
+        return Err(smuggle(CommerceError::ValidationError(format!(
+            "Bin {} capacity {} exceeded: {} on hand after adjustment",
+            bin.code, capacity, new_on_hand
+        ))));
     }
     if current.is_some() {
         tx.execute(
@@ -484,10 +484,10 @@ impl BinRepository for SqliteBinRepository {
     }
 
     fn update_bin(&self, id: i32, input: UpdateWarehouseBin) -> Result<WarehouseBin> {
-        if let Some(Some(c)) = input.capacity {
-            if c <= Decimal::ZERO {
-                return Err(CommerceError::ValidationError("Bin capacity must be positive".into()));
-            }
+        if let Some(Some(c)) = input.capacity
+            && c <= Decimal::ZERO
+        {
+            return Err(CommerceError::ValidationError("Bin capacity must be positive".into()));
         }
         let conn = self.conn()?;
         let mut sets: Vec<String> = vec!["updated_at = ?".into()];

@@ -316,10 +316,10 @@ impl SqliteVectorRepository {
                 .optional()
                 .map_err(map_db_error)?;
 
-            if let Some(len) = length {
-                if len > 0 {
-                    return Ok(Some((len as usize) / 4));
-                }
+            if let Some(len) = length
+                && len > 0
+            {
+                return Ok(Some((len as usize) / 4));
             }
         }
 

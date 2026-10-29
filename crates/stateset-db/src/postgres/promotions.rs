@@ -905,10 +905,10 @@ impl PgPromotionRepository {
             sql.push_str(&format!(" AND trigger = ${}", param_idx));
             param_idx += 1;
         }
-        if let Some(is_active) = filter.is_active {
-            if is_active {
-                sql.push_str(" AND status = 'active' AND starts_at <= NOW() AND (ends_at IS NULL OR ends_at >= NOW())");
-            }
+        if let Some(is_active) = filter.is_active
+            && is_active
+        {
+            sql.push_str(" AND status = 'active' AND starts_at <= NOW() AND (ends_at IS NULL OR ends_at >= NOW())");
         }
         if filter.search.is_some() {
             sql.push_str(&format!(

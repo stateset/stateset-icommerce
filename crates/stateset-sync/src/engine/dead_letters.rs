@@ -9,7 +9,7 @@ impl SyncEngine {
 
     /// Return the number of dead-lettered events retained by the engine.
     #[must_use]
-    pub fn dead_letter_count(&self) -> usize {
+    pub const fn dead_letter_count(&self) -> usize {
         self.dead_letters.len()
     }
 

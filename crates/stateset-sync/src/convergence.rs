@@ -110,20 +110,20 @@ impl CommandConvergence {
         let mut rejection_codes = Vec::new();
         let mut rejection_reasons = Vec::new();
         for receipt in &receipts {
-            if let Some(remote_receipt) = receipt.remote_receipt.as_ref() {
-                if !remote_receipts.contains(remote_receipt) {
-                    remote_receipts.push(remote_receipt.clone());
-                }
+            if let Some(remote_receipt) = receipt.remote_receipt.as_ref()
+                && !remote_receipts.contains(remote_receipt)
+            {
+                remote_receipts.push(remote_receipt.clone());
             }
-            if let Some(code) = receipt.rejection_code.as_ref() {
-                if !rejection_codes.contains(code) {
-                    rejection_codes.push(code.clone());
-                }
+            if let Some(code) = receipt.rejection_code.as_ref()
+                && !rejection_codes.contains(code)
+            {
+                rejection_codes.push(code.clone());
             }
-            if let Some(reason) = receipt.rejection_reason.as_ref() {
-                if !rejection_reasons.contains(reason) {
-                    rejection_reasons.push(reason.clone());
-                }
+            if let Some(reason) = receipt.rejection_reason.as_ref()
+                && !rejection_reasons.contains(reason)
+            {
+                rejection_reasons.push(reason.clone());
             }
         }
 

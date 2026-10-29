@@ -290,11 +290,13 @@ fn format_spans(source: &str) -> Vec<FormatSpan> {
             i = skip_quoted(&bytes, i);
             continue;
         }
-        if bytes[i] == 'r' && i + 1 < bytes.len() && (bytes[i + 1] == '"' || bytes[i + 1] == '#') {
-            if let Some(end) = skip_raw_string(&bytes, i) {
-                i = end;
-                continue;
-            }
+        if bytes[i] == 'r'
+            && i + 1 < bytes.len()
+            && (bytes[i + 1] == '"' || bytes[i + 1] == '#')
+            && let Some(end) = skip_raw_string(&bytes, i)
+        {
+            i = end;
+            continue;
         }
         if matches_at(&format_word, i) {
             let mut j = i + format_word.len();
@@ -325,11 +327,13 @@ fn format_spans(source: &str) -> Vec<FormatSpan> {
                         k = skip_quoted(&bytes, k);
                         continue;
                     }
-                    if bytes[k] == 'r' && k + 1 < bytes.len() && bytes[k + 1] == '#' {
-                        if let Some(end) = skip_raw_string(&bytes, k) {
-                            k = end;
-                            continue;
-                        }
+                    if bytes[k] == 'r'
+                        && k + 1 < bytes.len()
+                        && bytes[k + 1] == '#'
+                        && let Some(end) = skip_raw_string(&bytes, k)
+                    {
+                        k = end;
+                        continue;
                     }
                     match bytes[k] {
                         '(' => depth += 1,
@@ -576,22 +580,23 @@ fn span_args(span: &str) -> Option<Vec<String>> {
                 k += 1;
             }
         }
-    } else if i < chars.len() && chars[i] == 'r' {
-        if let Some((hashes, start)) = raw_open(&chars, i) {
-            let mut k = start;
-            while k < chars.len() {
-                if chars[k] == '"' {
-                    let mut h = 0;
-                    while k + 1 + h < chars.len() && chars[k + 1 + h] == '#' {
-                        h += 1;
-                    }
-                    if h == hashes {
-                        lit_end = Some(k + 1 + h);
-                        break;
-                    }
+    } else if i < chars.len()
+        && chars[i] == 'r'
+        && let Some((hashes, start)) = raw_open(&chars, i)
+    {
+        let mut k = start;
+        while k < chars.len() {
+            if chars[k] == '"' {
+                let mut h = 0;
+                while k + 1 + h < chars.len() && chars[k + 1 + h] == '#' {
+                    h += 1;
                 }
-                k += 1;
+                if h == hashes {
+                    lit_end = Some(k + 1 + h);
+                    break;
+                }
             }
+            k += 1;
         }
     }
     let mut args_text: String = chars[lit_end?..].iter().collect();
@@ -728,11 +733,10 @@ fn dynamic_sql_is_pinned() {
                 // Explicit `name = expr` bindings for named targets.
                 let mut bindings = std::collections::BTreeMap::new();
                 for a in &all_args {
-                    if is_named_arg(a) {
-                        if let Some(eq) = a.find('=') {
-                            bindings
-                                .insert(a[..eq].trim().to_string(), a[eq + 1..].trim().to_string());
-                        }
+                    if is_named_arg(a)
+                        && let Some(eq) = a.find('=')
+                    {
+                        bindings.insert(a[..eq].trim().to_string(), a[eq + 1..].trim().to_string());
                     }
                 }
                 let mut needs_entry = false;

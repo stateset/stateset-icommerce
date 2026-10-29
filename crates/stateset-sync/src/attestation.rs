@@ -345,7 +345,7 @@ fn verify_merkle_path(
 ) -> bool {
     let mut current = leaf_hash;
     for sibling_hash in sibling_hashes {
-        current = if leaf_index % 2 == 0 {
+        current = if leaf_index.is_multiple_of(2) {
             compute_node_hash(&current, sibling_hash)
         } else {
             compute_node_hash(sibling_hash, &current)

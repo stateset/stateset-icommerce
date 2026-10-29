@@ -332,16 +332,16 @@ pub(crate) fn insert_return_tx(
         let existing_id: Option<String> = tx
             .query_row("SELECT id FROM returns WHERE idempotency_key = ?1", [key], |row| row.get(0))
             .optional()?;
-        if let Some(existing_id) = existing_id {
-            if let Some(existing) = load_return_conn(tx, &existing_id)? {
-                if same_return_request(&existing, input) {
-                    return Ok(existing);
-                }
-                return Err(smuggle(CommerceError::Conflict(format!(
-                    "Idempotency key {key} was already used for return {existing_id} with a \
-                     different payload"
-                ))));
+        if let Some(existing_id) = existing_id
+            && let Some(existing) = load_return_conn(tx, &existing_id)?
+        {
+            if same_return_request(&existing, input) {
+                return Ok(existing);
             }
+            return Err(smuggle(CommerceError::Conflict(format!(
+                "Idempotency key {key} was already used for return {existing_id} with a \
+                     different payload"
+            ))));
         }
     }
 

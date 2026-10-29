@@ -87,12 +87,11 @@ impl AsyncOrders {
     /// order's payments and refunds (see the sync `Orders::update_status`).
     pub async fn update_status(&self, id: Uuid, status: OrderStatus) -> Result<Order> {
         let mut tracking_number = None;
-        if status == OrderStatus::Shipped {
-            if let Some(order) = self.get(id).await? {
-                if order.tracking_number.is_none() {
-                    tracking_number = Some(format!("AUTO-{}", id));
-                }
-            }
+        if status == OrderStatus::Shipped
+            && let Some(order) = self.get(id).await?
+            && order.tracking_number.is_none()
+        {
+            tracking_number = Some(format!("AUTO-{}", id));
         }
         self.update(id, UpdateOrder { status: Some(status), tracking_number, ..Default::default() })
             .await
@@ -239,10 +238,10 @@ impl AsyncInventory {
         let delta = input.quantity.to_f64().unwrap_or(0.0);
         let transaction = self.db.inventory().adjust_async(input).await?;
         self.metrics.record_inventory_adjusted(&sku, delta);
-        if received {
-            if let Err(error) = self.db.backorder().auto_allocate_inventory_async(&sku).await {
-                tracing::warn!(%error, %sku, "automatic backorder allocation after receipt failed");
-            }
+        if received
+            && let Err(error) = self.db.backorder().auto_allocate_inventory_async(&sku).await
+        {
+            tracing::warn!(%error, %sku, "automatic backorder allocation after receipt failed");
         }
         Ok(transaction)
     }

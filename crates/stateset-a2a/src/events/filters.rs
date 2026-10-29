@@ -48,10 +48,10 @@ pub fn matches_event_filter(event_type: &str, filters: &[String]) -> bool {
         }
 
         // Prefix wildcard: "a2a_payment.*" -> prefix = "a2a_payment."
-        if let Some(prefix) = filter.strip_suffix('*') {
-            if event_type.starts_with(prefix) {
-                return true;
-            }
+        if let Some(prefix) = filter.strip_suffix('*')
+            && event_type.starts_with(prefix)
+        {
+            return true;
         }
     }
 
@@ -76,10 +76,10 @@ pub fn matches_event_filter_str(event_type: &str, filters: &[&str]) -> bool {
             return true;
         }
 
-        if let Some(prefix) = filter.strip_suffix('*') {
-            if event_type.starts_with(prefix) {
-                return true;
-            }
+        if let Some(prefix) = filter.strip_suffix('*')
+            && event_type.starts_with(prefix)
+        {
+            return true;
         }
     }
 

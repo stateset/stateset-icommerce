@@ -362,20 +362,20 @@ impl Scheduler {
         }
         actions.push(TickAction::Timeout { job_id });
 
-        if let Some(def) = self.definitions.get(&instance.definition_name) {
-            if instance.should_retry(def.max_retries) {
-                let retry_at = instance.next_retry_at(&def.retry_backoff, now);
-                let timed_out_instance = instance.clone();
-                if instance.mark_retrying(retry_at).is_ok() {
-                    if let Err(err) = self.persist_retry(&instance, &timed_out_instance) {
-                        self.record_internal_error(format!(
-                            "failed to schedule timeout retry for job {job_id}: {err}"
-                        ));
-                        return true;
-                    }
-                    actions.push(TickAction::Retry { job_id, retry_at });
+        if let Some(def) = self.definitions.get(&instance.definition_name)
+            && instance.should_retry(def.max_retries)
+        {
+            let retry_at = instance.next_retry_at(&def.retry_backoff, now);
+            let timed_out_instance = instance.clone();
+            if instance.mark_retrying(retry_at).is_ok() {
+                if let Err(err) = self.persist_retry(&instance, &timed_out_instance) {
+                    self.record_internal_error(format!(
+                        "failed to schedule timeout retry for job {job_id}: {err}"
+                    ));
                     return true;
                 }
+                actions.push(TickAction::Retry { job_id, retry_at });
+                return true;
             }
         }
 
@@ -455,15 +455,15 @@ impl Scheduler {
         self.running.remove(&job_id);
 
         let def = self.definitions.get(&instance.definition_name);
-        if let Some(def) = def {
-            if instance.should_retry(def.max_retries) {
-                let retry_at = instance.next_retry_at(&def.retry_backoff, now);
-                let failed_instance = instance.clone();
-                instance.mark_retrying(retry_at)?;
-                self.persist_retry(&instance, &failed_instance)?;
+        if let Some(def) = def
+            && instance.should_retry(def.max_retries)
+        {
+            let retry_at = instance.next_retry_at(&def.retry_backoff, now);
+            let failed_instance = instance.clone();
+            instance.mark_retrying(retry_at)?;
+            self.persist_retry(&instance, &failed_instance)?;
 
-                return Ok(Some(TickAction::Retry { job_id, retry_at }));
-            }
+            return Ok(Some(TickAction::Retry { job_id, retry_at }));
         }
 
         self.reschedule_recurring(&instance, now)?;
@@ -480,11 +480,11 @@ impl Scheduler {
         self.running.remove(&job_id);
         self.queue.cancel(job_id);
 
-        if let Some(mut instance) = self.store.get(&job_id)? {
-            if !instance.status.is_terminal() {
-                instance.mark_cancelled()?;
-                self.store.save(&instance)?;
-            }
+        if let Some(mut instance) = self.store.get(&job_id)?
+            && !instance.status.is_terminal()
+        {
+            instance.mark_cancelled()?;
+            self.store.save(&instance)?;
         }
 
         Ok(())

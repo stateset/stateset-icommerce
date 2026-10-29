@@ -73,7 +73,7 @@ default-members = [
 [workspace.package]
 version = "1.40.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/stateset/stateset-icommerce"
 repository = "https://github.com/stateset/stateset-icommerce"

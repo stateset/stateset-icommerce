@@ -1254,10 +1254,10 @@ pub(crate) fn sum_decimal_query(
 
     while let Some(row) = rows.next().map_err(map_db_error)? {
         let raw: Option<String> = row.get(0).map_err(map_db_error)?;
-        if let Some(raw) = raw {
-            if !raw.is_empty() {
-                total += parse_decimal_strict(&raw, entity, field)?;
-            }
+        if let Some(raw) = raw
+            && !raw.is_empty()
+        {
+            total += parse_decimal_strict(&raw, entity, field)?;
         }
     }
 

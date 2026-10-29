@@ -874,7 +874,7 @@ impl Promotion {
     /// Whether this promotion restricts which products it applies to
     /// (any applicability or exclusion list is non-empty).
     #[must_use]
-    pub fn has_product_scoping(&self) -> bool {
+    pub const fn has_product_scoping(&self) -> bool {
         !self.applicable_product_ids.is_empty()
             || !self.applicable_category_ids.is_empty()
             || !self.applicable_skus.is_empty()
@@ -942,15 +942,15 @@ impl Promotion {
         if now < self.starts_at {
             return Err("Promotion has not started yet".to_string());
         }
-        if let Some(ends_at) = self.ends_at {
-            if now > ends_at {
-                return Err("Promotion has expired".to_string());
-            }
+        if let Some(ends_at) = self.ends_at
+            && now > ends_at
+        {
+            return Err("Promotion has expired".to_string());
         }
-        if let Some(limit) = self.total_usage_limit {
-            if self.usage_count >= limit {
-                return Err("Promotion usage limit reached".to_string());
-            }
+        if let Some(limit) = self.total_usage_limit
+            && self.usage_count >= limit
+        {
+            return Err("Promotion usage limit reached".to_string());
         }
         Ok(())
     }

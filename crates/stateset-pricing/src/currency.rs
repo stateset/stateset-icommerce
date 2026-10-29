@@ -227,15 +227,15 @@ impl CurrencyConverter {
 
     /// Find the effective rate from -> to, trying direct then inverse.
     fn find_effective_rate(&self, from: &str, to: &str) -> Option<Decimal> {
-        if let Some(rate) = self.find_rate(from, to) {
-            if is_valid_rate_value(rate.rate) {
-                return Some(rate.rate);
-            }
+        if let Some(rate) = self.find_rate(from, to)
+            && is_valid_rate_value(rate.rate)
+        {
+            return Some(rate.rate);
         }
-        if let Some(rate) = self.find_rate(to, from) {
-            if is_valid_rate_value(rate.rate) {
-                return Decimal::ONE.checked_div(rate.rate);
-            }
+        if let Some(rate) = self.find_rate(to, from)
+            && is_valid_rate_value(rate.rate)
+        {
+            return Decimal::ONE.checked_div(rate.rate);
         }
         None
     }

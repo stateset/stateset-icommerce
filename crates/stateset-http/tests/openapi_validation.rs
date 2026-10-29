@@ -379,16 +379,16 @@ fn every_operation_has_a_tag() {
 
     for (path, path_item) in paths {
         for method in &methods {
-            if let Some(operation) = path_item.get(method) {
-                if operation.is_object() {
-                    let tags = operation["tags"].as_array();
-                    assert!(
-                        tags.is_some() && !tags.unwrap().is_empty(),
-                        "{} {} should have at least one tag",
-                        method.to_uppercase(),
-                        path
-                    );
-                }
+            if let Some(operation) = path_item.get(method)
+                && operation.is_object()
+            {
+                let tags = operation["tags"].as_array();
+                assert!(
+                    tags.is_some() && !tags.unwrap().is_empty(),
+                    "{} {} should have at least one tag",
+                    method.to_uppercase(),
+                    path
+                );
             }
         }
     }
@@ -409,18 +409,18 @@ fn operation_tags_match_defined_tags() {
 
     for (path, path_item) in paths {
         for method in &methods {
-            if let Some(operation) = path_item.get(method) {
-                if let Some(tags) = operation["tags"].as_array() {
-                    for tag in tags {
-                        let tag_name = tag.as_str().unwrap_or_default();
-                        assert!(
-                            defined_tags.contains(&tag_name.to_string()),
-                            "{} {} uses undefined tag: {}",
-                            method.to_uppercase(),
-                            path,
-                            tag_name
-                        );
-                    }
+            if let Some(operation) = path_item.get(method)
+                && let Some(tags) = operation["tags"].as_array()
+            {
+                for tag in tags {
+                    let tag_name = tag.as_str().unwrap_or_default();
+                    assert!(
+                        defined_tags.contains(&tag_name.to_string()),
+                        "{} {} uses undefined tag: {}",
+                        method.to_uppercase(),
+                        path,
+                        tag_name
+                    );
                 }
             }
         }
@@ -666,17 +666,17 @@ fn request_bodies_use_json_content_type() {
                 if !operation.is_object() {
                     continue;
                 }
-                if let Some(request_body) = operation.get("requestBody") {
-                    if request_body.is_object() {
-                        let content = &request_body["content"];
-                        if content.is_object() {
-                            assert!(
-                                content["application/json"].is_object(),
-                                "{} {} requestBody should have application/json content type",
-                                method.to_uppercase(),
-                                path
-                            );
-                        }
+                if let Some(request_body) = operation.get("requestBody")
+                    && request_body.is_object()
+                {
+                    let content = &request_body["content"];
+                    if content.is_object() {
+                        assert!(
+                            content["application/json"].is_object(),
+                            "{} {} requestBody should have application/json content type",
+                            method.to_uppercase(),
+                            path
+                        );
                     }
                 }
             }

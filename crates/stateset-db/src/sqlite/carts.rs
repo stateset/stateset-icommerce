@@ -476,12 +476,12 @@ impl CartRepository for SqliteCartRepository {
 
     fn update(&self, id: CartId, input: UpdateCart) -> Result<Cart> {
         let now = Utc::now();
-        if let Some(discount) = input.discount_amount {
-            if discount < Decimal::ZERO {
-                return Err(CommerceError::ValidationError(format!(
-                    "Cart discount must not be negative, got {discount}"
-                )));
-            }
+        if let Some(discount) = input.discount_amount
+            && discount < Decimal::ZERO
+        {
+            return Err(CommerceError::ValidationError(format!(
+                "Cart discount must not be negative, got {discount}"
+            )));
         }
 
         let mut updates = vec!["updated_at = ?"];
@@ -1001,18 +1001,17 @@ impl CartRepository for SqliteCartRepository {
 
         let cart = self.get(id)?.ok_or(CommerceError::NotFound)?;
 
-        if cart.status == CartStatus::Completed {
-            if let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
-            {
-                return Ok(X402CheckoutResult::Completed(CheckoutResult {
-                    cart_id: id,
-                    order_id,
-                    order_number,
-                    payment_id: None,
-                    total_charged: cart.grand_total,
-                    currency: cart.currency,
-                }));
-            }
+        if cart.status == CartStatus::Completed
+            && let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
+        {
+            return Ok(X402CheckoutResult::Completed(CheckoutResult {
+                cart_id: id,
+                order_id,
+                order_number,
+                payment_id: None,
+                total_charged: cart.grand_total,
+                currency: cart.currency,
+            }));
         }
 
         // A cancelled/abandoned/expired cart must never be minted into an order.
@@ -2339,18 +2338,17 @@ impl SqliteCartRepository {
         cart.items = Self::load_cart_items_with_conn(tx, cart_id)
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
 
-        if cart.status == CartStatus::Completed {
-            if let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
-            {
-                return Ok(CheckoutResult {
-                    cart_id,
-                    order_id,
-                    order_number,
-                    payment_id: None,
-                    total_charged: cart.grand_total,
-                    currency: cart.currency,
-                });
-            }
+        if cart.status == CartStatus::Completed
+            && let (Some(order_id), Some(order_number)) = (cart.order_id, cart.order_number.clone())
+        {
+            return Ok(CheckoutResult {
+                cart_id,
+                order_id,
+                order_number,
+                payment_id: None,
+                total_charged: cart.grand_total,
+                currency: cart.currency,
+            });
         }
 
         // A cancelled/abandoned/expired cart must never be minted into an order.
@@ -2733,12 +2731,12 @@ pub(crate) fn ensure_cart_coupon_consumable_with_conn(
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(map_db_error)?;
-    if let (Some(limit), used) = coupon {
-        if used >= limit {
-            return Err(CommerceError::ValidationError(
-                "Coupon not found or usage limit reached".to_string(),
-            ));
-        }
+    if let (Some(limit), used) = coupon
+        && used >= limit
+    {
+        return Err(CommerceError::ValidationError(
+            "Coupon not found or usage limit reached".to_string(),
+        ));
     }
     Ok(())
 }
@@ -2800,13 +2798,13 @@ pub(crate) fn guard_cart_line_with_conn(
     unit_price: Decimal,
 ) -> Result<()> {
     super::products::variant_is_purchasable_with_conn(conn, sku)?.ensure_sellable(sku)?;
-    if let Some(catalog) = catalog_unit_price_with_conn(conn, variant_id, sku)? {
-        if catalog != unit_price {
-            return Err(CommerceError::ValidationError(format!(
-                "unit_price {unit_price} for SKU '{sku}' does not match the catalog price \
+    if let Some(catalog) = catalog_unit_price_with_conn(conn, variant_id, sku)?
+        && catalog != unit_price
+    {
+        return Err(CommerceError::ValidationError(format!(
+            "unit_price {unit_price} for SKU '{sku}' does not match the catalog price \
                  {catalog}; catalog lines are priced from the catalog"
-            )));
-        }
+        )));
     }
     Ok(())
 }

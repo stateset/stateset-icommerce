@@ -190,7 +190,7 @@ fn cron_field_matches(field: &str, value: u32) -> bool {
 fn cron_token_matches(token: &str, value: u32) -> bool {
     if let Some(step_str) = token.strip_prefix("*/") {
         if let Ok(step) = step_str.parse::<u32>() {
-            return step != 0 && value % step == 0;
+            return step != 0 && value.is_multiple_of(step);
         }
         return false;
     }

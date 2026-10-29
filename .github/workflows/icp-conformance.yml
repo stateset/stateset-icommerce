@@ -82,7 +82,7 @@ jobs:
           node-version: '20'
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: '1.85'
+          toolchain: '1.90.0' # matches rust-toolchain.toml, which wins over this input
       - uses: Swatinem/rust-cache@v2
       - name: Build Rust IUT
         run: cargo build -p stateset-icp-iut --release
@@ -148,7 +148,7 @@ jobs:
           node-version: '20'
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: '1.85'
+          toolchain: '1.90.0' # matches rust-toolchain.toml, which wins over this input
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-go@v7
         with:

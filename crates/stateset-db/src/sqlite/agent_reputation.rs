@@ -230,13 +230,13 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
             conditions.push("agent_id = ?".to_string());
             params.push(Box::new(agent_id.clone()));
         }
-        if let Some(ref clients) = filter.client_addresses {
-            if !clients.is_empty() {
-                let placeholders = build_in_clause(clients.len());
-                conditions.push(format!("client_address IN ({placeholders})"));
-                for client in clients {
-                    params.push(Box::new(client.clone()));
-                }
+        if let Some(ref clients) = filter.client_addresses
+            && !clients.is_empty()
+        {
+            let placeholders = build_in_clause(clients.len());
+            conditions.push(format!("client_address IN ({placeholders})"));
+            for client in clients {
+                params.push(Box::new(client.clone()));
             }
         }
         if let Some(ref tag1) = filter.tag1 {
@@ -421,13 +421,13 @@ impl AgentReputationRepository for SqliteAgentReputationRepository {
             Box::new(feedback_index as i64),
         ];
 
-        if let Some(responders) = responders {
-            if !responders.is_empty() {
-                let placeholders = build_in_clause(responders.len());
-                conditions.push(format!("responder_address IN ({placeholders})"));
-                for responder in responders {
-                    params.push(Box::new(responder));
-                }
+        if let Some(responders) = responders
+            && !responders.is_empty()
+        {
+            let placeholders = build_in_clause(responders.len());
+            conditions.push(format!("responder_address IN ({placeholders})"));
+            for responder in responders {
+                params.push(Box::new(responder));
             }
         }
 

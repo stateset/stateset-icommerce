@@ -190,25 +190,25 @@ impl AuditFilter {
     }
 
     fn matches(&self, record: &AuditRecord) -> bool {
-        if let Some(ref actor) = self.actor_id {
-            if record.actor_id != *actor {
-                return false;
-            }
+        if let Some(ref actor) = self.actor_id
+            && record.actor_id != *actor
+        {
+            return false;
         }
-        if let Some(ref rt) = self.resource_type {
-            if record.resource.resource_type() != rt.as_str() {
-                return false;
-            }
+        if let Some(ref rt) = self.resource_type
+            && record.resource.resource_type() != rt.as_str()
+        {
+            return false;
         }
-        if let Some(since) = self.since {
-            if record.timestamp < since {
-                return false;
-            }
+        if let Some(since) = self.since
+            && record.timestamp < since
+        {
+            return false;
         }
-        if let Some(until) = self.until {
-            if record.timestamp > until {
-                return false;
-            }
+        if let Some(until) = self.until
+            && record.timestamp > until
+        {
+            return false;
         }
         true
     }

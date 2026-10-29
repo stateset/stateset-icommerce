@@ -541,17 +541,17 @@ impl PgSerialRepository {
         if let Some(status) = &filter.status {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
-        if let Some(statuses) = &filter.statuses {
-            if !statuses.is_empty() {
-                builder.push(" AND status IN (");
-                {
-                    let mut separated = builder.separated(", ");
-                    for status in statuses {
-                        separated.push_bind(status.to_string());
-                    }
+        if let Some(statuses) = &filter.statuses
+            && !statuses.is_empty()
+        {
+            builder.push(" AND status IN (");
+            {
+                let mut separated = builder.separated(", ");
+                for status in statuses {
+                    separated.push_bind(status.to_string());
                 }
-                builder.push(")");
             }
+            builder.push(")");
         }
         if let Some(lot_id) = &filter.lot_id {
             builder.push(" AND lot_id = ").push_bind(lot_id);
@@ -1676,17 +1676,17 @@ impl PgSerialRepository {
         if let Some(status) = &filter.status {
             builder.push(" AND status = ").push_bind(status.to_string());
         }
-        if let Some(statuses) = &filter.statuses {
-            if !statuses.is_empty() {
-                builder.push(" AND status IN (");
-                {
-                    let mut separated = builder.separated(", ");
-                    for status in statuses {
-                        separated.push_bind(status.to_string());
-                    }
+        if let Some(statuses) = &filter.statuses
+            && !statuses.is_empty()
+        {
+            builder.push(" AND status IN (");
+            {
+                let mut separated = builder.separated(", ");
+                for status in statuses {
+                    separated.push_bind(status.to_string());
                 }
-                builder.push(")");
             }
+            builder.push(")");
         }
         if let Some(lot_id) = &filter.lot_id {
             builder.push(" AND lot_id = ").push_bind(lot_id);

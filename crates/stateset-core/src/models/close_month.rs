@@ -108,7 +108,7 @@ impl CloseMonthStepReport {
 
     /// Number of warning strings on this step.
     #[must_use]
-    pub fn warning_count(&self) -> usize {
+    pub const fn warning_count(&self) -> usize {
         self.warnings.len()
     }
 
@@ -146,7 +146,7 @@ pub struct CloseMonthReport {
 impl CloseMonthReport {
     /// Total warning strings across all four steps.
     #[must_use]
-    pub fn total_warnings(&self) -> usize {
+    pub const fn total_warnings(&self) -> usize {
         self.depreciation.warning_count()
             + self.revenue_recognition.warning_count()
             + self.fx_revaluation.warning_count()
@@ -164,7 +164,7 @@ impl CloseMonthReport {
 
     /// Whether any step reported any warning.
     #[must_use]
-    pub fn has_warnings(&self) -> bool {
+    pub const fn has_warnings(&self) -> bool {
         self.total_warnings() > 0
     }
 }

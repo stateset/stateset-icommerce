@@ -290,10 +290,10 @@ pub(crate) async fn insert_return_pg(
     input: &CreateReturn,
     now: DateTime<Utc>,
 ) -> Result<Return> {
-    if let Some(key) = input.idempotency_key.as_deref() {
-        if let Some(existing) = replay_by_key(conn, key, input).await? {
-            return Ok(existing);
-        }
+    if let Some(key) = input.idempotency_key.as_deref()
+        && let Some(existing) = replay_by_key(conn, key, input).await?
+    {
+        return Ok(existing);
     }
     if input.items.is_empty() {
         return Err(CommerceError::ValidationError("Return must have at least one item".into()));

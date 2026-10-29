@@ -498,26 +498,26 @@ impl PgCustomObjectRepository {
         })?;
 
         let next_handle = input.handle.clone().or(existing.handle.clone());
-        if let Some(h) = next_handle.as_deref() {
-            if existing.handle.as_deref() != Some(h) {
-                let dup: (i64,) = sqlx::query_as(
-                    "SELECT COUNT(*)
+        if let Some(h) = next_handle.as_deref()
+            && existing.handle.as_deref() != Some(h)
+        {
+            let dup: (i64,) = sqlx::query_as(
+                "SELECT COUNT(*)
                      FROM custom_object_records r
                      JOIN custom_object_types t ON t.id = r.type_id
                      WHERE t.handle = $1 AND r.handle = $2 AND r.id != $3",
-                )
-                .bind(&existing.type_handle)
-                .bind(h)
-                .bind(id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(map_db_error)?;
-                if dup.0 > 0 {
-                    return Err(CommerceError::Conflict(format!(
-                        "custom_object.handle already exists for type {}: {}",
-                        existing.type_handle, h
-                    )));
-                }
+            )
+            .bind(&existing.type_handle)
+            .bind(h)
+            .bind(id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+            if dup.0 > 0 {
+                return Err(CommerceError::Conflict(format!(
+                    "custom_object.handle already exists for type {}: {}",
+                    existing.type_handle, h
+                )));
             }
         }
 

@@ -94,13 +94,13 @@ pub struct WishlistFilter {
 impl Wishlist {
     /// Number of items in this wishlist
     #[must_use]
-    pub fn item_count(&self) -> usize {
+    pub const fn item_count(&self) -> usize {
         self.items.len()
     }
 
     /// Whether this wishlist is empty
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
 

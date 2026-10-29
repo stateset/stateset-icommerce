@@ -451,10 +451,10 @@ impl SqliteProductRepository {
                 .query_row("SELECT id FROM products WHERE slug = ?", [slug], |row| row.get(0))
                 .optional()
                 .map_err(map_db_error)?;
-            if let Some(existing_id) = existing_id {
-                if existing_id != id.to_string() {
-                    return Err(CommerceError::DuplicateSlug(slug.clone()));
-                }
+            if let Some(existing_id) = existing_id
+                && existing_id != id.to_string()
+            {
+                return Err(CommerceError::DuplicateSlug(slug.clone()));
             }
             updates.push("slug = ?");
             params.push(Box::new(slug.clone()));

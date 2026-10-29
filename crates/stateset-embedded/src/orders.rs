@@ -162,12 +162,11 @@ impl Orders {
     pub fn update_status(&self, id: OrderId, status: OrderStatus) -> Result<Order> {
         tracing::info!("updating order status");
         let mut tracking_number = None;
-        if status == OrderStatus::Shipped {
-            if let Some(order) = self.get(id)? {
-                if order.tracking_number.is_none() {
-                    tracking_number = Some(format!("AUTO-{id}"));
-                }
-            }
+        if status == OrderStatus::Shipped
+            && let Some(order) = self.get(id)?
+            && order.tracking_number.is_none()
+        {
+            tracking_number = Some(format!("AUTO-{id}"));
         }
         self.update(id, UpdateOrder { status: Some(status), tracking_number, ..Default::default() })
     }

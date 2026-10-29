@@ -67,16 +67,16 @@ impl Inventory {
                 timestamp: transaction.created_at,
             });
 
-            if let Some(reorder_point) = balance.reorder_point {
-                if balance.quantity_available < reorder_point {
-                    self.emit(CommerceEvent::LowStockAlert {
-                        sku: sku.to_string(),
-                        location_id: transaction.location_id,
-                        current_quantity: balance.quantity_available,
-                        reorder_point,
-                        timestamp: transaction.created_at,
-                    });
-                }
+            if let Some(reorder_point) = balance.reorder_point
+                && balance.quantity_available < reorder_point
+            {
+                self.emit(CommerceEvent::LowStockAlert {
+                    sku: sku.to_string(),
+                    location_id: transaction.location_id,
+                    current_quantity: balance.quantity_available,
+                    reorder_point,
+                    timestamp: transaction.created_at,
+                });
             }
         }
     }
@@ -307,16 +307,16 @@ impl Inventory {
             // reservation that is durably allocated).
             match self.db.inventory().get_balance(reservation.item_id, reservation.location_id) {
                 Ok(Some(balance)) => {
-                    if let Some(reorder_point) = balance.reorder_point {
-                        if balance.quantity_available < reorder_point {
-                            self.emit(CommerceEvent::LowStockAlert {
-                                sku: sku.to_string(),
-                                location_id: reservation.location_id,
-                                current_quantity: balance.quantity_available,
-                                reorder_point,
-                                timestamp: reservation.created_at,
-                            });
-                        }
+                    if let Some(reorder_point) = balance.reorder_point
+                        && balance.quantity_available < reorder_point
+                    {
+                        self.emit(CommerceEvent::LowStockAlert {
+                            sku: sku.to_string(),
+                            location_id: reservation.location_id,
+                            current_quantity: balance.quantity_available,
+                            reorder_point,
+                            timestamp: reservation.created_at,
+                        });
                     }
                 }
                 Ok(None) => {}

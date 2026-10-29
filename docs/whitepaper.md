@@ -1333,7 +1333,7 @@ StateSet iCommerce is the engine that makes autonomous commerce possible.
 - **Source**: `github.com/stateset/stateset-icommerce`
 - **License**: MIT OR Apache-2.0
 - **Version**: 0.7.15
-- **Rust Edition**: 2024 (rust-version 1.85)
+- **Rust Edition**: 2024 (rust-version 1.88)
 - **Node.js**: 20.20.0+
 
 ## Appendix B: Crate Dependency Graph

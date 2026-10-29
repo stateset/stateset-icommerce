@@ -286,14 +286,14 @@ impl EventSystem {
     /// Broadcast delivery is non-blocking. Webhook delivery is dispatched to a background task.
     /// Event persistence (if enabled) is best-effort and may block depending on the configured store.
     pub fn emit(&self, event: CommerceEvent) {
-        if let Some(store) = &self.event_store {
-            if let Err(err) = store.append(&event) {
-                tracing::error!(
-                    error = %err,
-                    event_type = event.event_type(),
-                    "Failed to persist event"
-                );
-            }
+        if let Some(store) = &self.event_store
+            && let Err(err) = store.append(&event)
+        {
+            tracing::error!(
+                error = %err,
+                event_type = event.event_type(),
+                "Failed to persist event"
+            );
         }
 
         // Send to broadcast channel (non-blocking)

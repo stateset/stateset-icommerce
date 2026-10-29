@@ -57,7 +57,7 @@ pub struct ProductionBatch {
 impl ProductionBatch {
     /// Number of work orders linked to the batch.
     #[must_use]
-    pub fn work_order_count(&self) -> usize {
+    pub const fn work_order_count(&self) -> usize {
         self.work_order_ids.len()
     }
 

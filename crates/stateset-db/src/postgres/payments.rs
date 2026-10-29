@@ -838,11 +838,11 @@ impl PgPaymentRepository {
         // A duplicate idempotency key is only a replay when it carries the
         // SAME request (`Payment::check_idempotent_replay`); a different
         // amount/order/currency/method under a reused key is a `Conflict`.
-        if let Some(key) = input.idempotency_key.as_deref() {
-            if let Some(existing) = self.get_by_idempotency_key_async(key).await? {
-                existing.check_idempotent_replay(&input)?;
-                return Ok(existing);
-            }
+        if let Some(key) = input.idempotency_key.as_deref()
+            && let Some(existing) = self.get_by_idempotency_key_async(key).await?
+        {
+            existing.check_idempotent_replay(&input)?;
+            return Ok(existing);
         }
 
         let id = Uuid::new_v4();
@@ -1050,17 +1050,18 @@ impl PgPaymentRepository {
         // order status, currency). Today no legal edge does this (every
         // non-capturing status is terminal), so this is the guard that keeps
         // `update` honest if the state machine ever grows one.
-        if !is_capturing(current) && is_capturing(target) {
-            if let Some(order_id) = payment.order_id {
-                check_order_capture_capacity_pg(
-                    tx.as_mut(),
-                    order_id.into_uuid(),
-                    Some(id),
-                    payment.amount,
-                    payment.currency,
-                )
-                .await?;
-            }
+        if !is_capturing(current)
+            && is_capturing(target)
+            && let Some(order_id) = payment.order_id
+        {
+            check_order_capture_capacity_pg(
+                tx.as_mut(),
+                order_id.into_uuid(),
+                Some(id),
+                payment.amount,
+                payment.currency,
+            )
+            .await?;
         }
 
         // A lost chargeback is recorded on the ledger after the status write;
@@ -1089,10 +1090,10 @@ impl PgPaymentRepository {
         if let Some(disputed) = &chargeback {
             record_lost_chargeback_pg(tx.as_mut(), disputed, now).await?;
         }
-        if current != target {
-            if let Some(order_id) = payment.order_id {
-                sync_order_payment_status_pg(tx.as_mut(), order_id.into_uuid(), now).await?;
-            }
+        if current != target
+            && let Some(order_id) = payment.order_id
+        {
+            sync_order_payment_status_pg(tx.as_mut(), order_id.into_uuid(), now).await?;
         }
         tx.commit().await.map_err(map_db_error)?;
 
@@ -1283,11 +1284,11 @@ impl PgPaymentRepository {
     /// payment once both were completed — the TOCTOU race that the SQLite
     /// backend already closed with its `IMMEDIATE` transaction.)
     pub async fn create_refund_async(&self, input: CreateRefund) -> Result<Refund> {
-        if let Some(key) = input.idempotency_key.as_deref() {
-            if let Some(existing) = self.get_refund_by_idempotency_key_async(key).await? {
-                crate::refund_replay::check_refund_replay(&existing, &input)?;
-                return Ok(existing);
-            }
+        if let Some(key) = input.idempotency_key.as_deref()
+            && let Some(existing) = self.get_refund_by_idempotency_key_async(key).await?
+        {
+            crate::refund_replay::check_refund_replay(&existing, &input)?;
+            return Ok(existing);
         }
 
         let raw_payment_id = input.payment_id.into_uuid();
@@ -2045,17 +2046,18 @@ impl PgPaymentRepository {
             ensure_not_refund_by_status_flip(current, target)?;
             // Same order guards as the single-row `update_async` when the
             // write re-acquires a slice of the order total.
-            if !is_capturing(current) && is_capturing(target) {
-                if let Some(order_id) = payment.order_id {
-                    check_order_capture_capacity_pg(
-                        tx.as_mut(),
-                        order_id.into_uuid(),
-                        Some(raw_id),
-                        payment.amount,
-                        payment.currency,
-                    )
-                    .await?;
-                }
+            if !is_capturing(current)
+                && is_capturing(target)
+                && let Some(order_id) = payment.order_id
+            {
+                check_order_capture_capacity_pg(
+                    tx.as_mut(),
+                    order_id.into_uuid(),
+                    Some(raw_id),
+                    payment.amount,
+                    payment.currency,
+                )
+                .await?;
             }
             let chargeback = current.is_lost_chargeback(target).then(|| payment.clone());
             let rows = sqlx::query(
@@ -2081,10 +2083,10 @@ impl PgPaymentRepository {
             if let Some(disputed) = &chargeback {
                 record_lost_chargeback_pg(tx.as_mut(), disputed, now).await?;
             }
-            if current != target {
-                if let Some(order_id) = payment.order_id {
-                    sync_order_payment_status_pg(tx.as_mut(), order_id.into_uuid(), now).await?;
-                }
+            if current != target
+                && let Some(order_id) = payment.order_id
+            {
+                sync_order_payment_status_pg(tx.as_mut(), order_id.into_uuid(), now).await?;
             }
 
             // Fetch the updated payment

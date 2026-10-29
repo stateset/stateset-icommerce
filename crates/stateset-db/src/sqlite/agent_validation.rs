@@ -216,13 +216,13 @@ impl AgentValidationRepository for SqliteAgentValidationRepository {
         let mut params: Vec<Box<dyn rusqlite::ToSql>> =
             vec![Box::new(agent_registry.to_string()), Box::new(agent_id.to_string())];
 
-        if let Some(validators) = validator_addresses {
-            if !validators.is_empty() {
-                let placeholders = build_in_clause(validators.len());
-                conditions.push(format!("validator_address IN ({placeholders})"));
-                for validator in validators {
-                    params.push(Box::new(validator));
-                }
+        if let Some(validators) = validator_addresses
+            && !validators.is_empty()
+        {
+            let placeholders = build_in_clause(validators.len());
+            conditions.push(format!("validator_address IN ({placeholders})"));
+            for validator in validators {
+                params.push(Box::new(validator));
             }
         }
 

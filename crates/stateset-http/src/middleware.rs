@@ -285,13 +285,12 @@ async fn require_bearer_auth(
             .and_then(|value| value.to_str().ok())
             .map(str::trim)
             .filter(|value| !value.is_empty())
+            && !constant_time_eq(provided_actor_id, bound_actor_id)
         {
-            if !constant_time_eq(provided_actor_id, bound_actor_id) {
-                return HttpError::Forbidden(
-                    "actor is not authorized for supplied bearer token".to_string(),
-                )
-                .into_response();
-            }
+            return HttpError::Forbidden(
+                "actor is not authorized for supplied bearer token".to_string(),
+            )
+            .into_response();
         }
 
         let actor_header_value = match HeaderValue::from_str(bound_actor_id) {
@@ -314,13 +313,13 @@ async fn require_bearer_auth(
 
     match tenant_id {
         Some(value) if is_valid_tenant_id(value) => {
-            if let Some(bound_tenant_id) = binding.bound_tenant_id.as_deref() {
-                if !constant_time_eq(value, bound_tenant_id) {
-                    return HttpError::Forbidden(
-                        "tenant is not authorized for supplied bearer token".to_string(),
-                    )
-                    .into_response();
-                }
+            if let Some(bound_tenant_id) = binding.bound_tenant_id.as_deref()
+                && !constant_time_eq(value, bound_tenant_id)
+            {
+                return HttpError::Forbidden(
+                    "tenant is not authorized for supplied bearer token".to_string(),
+                )
+                .into_response();
             }
             next.run(request).await
         }
@@ -548,12 +547,11 @@ impl KeyedRateLimiter {
     fn evict(buckets: &mut HashMap<IpAddr, TokenBucket>) {
         let before = buckets.len();
         buckets.retain(|_, bucket| !bucket.is_idle());
-        if buckets.len() == before {
-            if let Some(oldest) =
+        if buckets.len() == before
+            && let Some(oldest) =
                 buckets.iter().min_by_key(|(_, b)| b.last_refill).map(|(ip, _)| *ip)
-            {
-                buckets.remove(&oldest);
-            }
+        {
+            buckets.remove(&oldest);
         }
     }
 
@@ -616,10 +614,8 @@ fn forwarded_client_ip(request: &Request<Body>) -> Option<IpAddr> {
 fn rate_limit_key(request: &Request<Body>, trust_proxy_headers: bool) -> IpAddr {
     static FALLBACK_WARNED: std::sync::Once = std::sync::Once::new();
 
-    if trust_proxy_headers {
-        if let Some(ip) = forwarded_client_ip(request) {
-            return ip;
-        }
+    if trust_proxy_headers && let Some(ip) = forwarded_client_ip(request) {
+        return ip;
     }
     if let Some(ci) = request.extensions().get::<axum::extract::ConnectInfo<SocketAddr>>() {
         return ci.0.ip();

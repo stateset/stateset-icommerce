@@ -826,11 +826,11 @@ fn methods(source: &str) -> Vec<(String, String)> {
                 out.push(finished);
             }
             current = Some((name.to_string(), String::new()));
-        } else if let Some((_, code)) = current.as_mut() {
-            if !line.trim_start().starts_with("//") {
-                code.push_str(line);
-                code.push('\n');
-            }
+        } else if let Some((_, code)) = current.as_mut()
+            && !line.trim_start().starts_with("//")
+        {
+            code.push_str(line);
+            code.push('\n');
         }
     }
     if let Some(finished) = current {

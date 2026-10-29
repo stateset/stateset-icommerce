@@ -396,19 +396,18 @@ fn restore_image(
         copy_and_hash(&mut source, staged.as_file_mut()).map_err(io(staged.path()))?;
     staged.as_file().sync_all().map_err(io(staged.path()))?;
     if let Some(expected) = manifest.map(|manifest| manifest.checksum.as_str()).or(legacy_checksum)
+        && checksum != expected
     {
-        if checksum != expected {
-            return Err(MaintenanceError::ChecksumMismatch {
-                path: backup_path.to_path_buf(),
-                expected: expected.to_owned(),
-                actual: checksum,
-            });
-        }
+        return Err(MaintenanceError::ChecksumMismatch {
+            path: backup_path.to_path_buf(),
+            expected: expected.to_owned(),
+            actual: checksum,
+        });
     }
-    if let Some(manifest) = manifest {
-        if size_bytes != manifest.size_bytes {
-            return Err(MaintenanceError::Manifest("backup size differs from manifest".into()));
-        }
+    if let Some(manifest) = manifest
+        && size_bytes != manifest.size_bytes
+    {
+        return Err(MaintenanceError::Manifest("backup size differs from manifest".into()));
     }
 
     let (schema_version, migration_count) = inspect_image(staged.path())?;
@@ -419,13 +418,13 @@ fn restore_image(
             known: crate::migrations::latest_known_migration().to_owned(),
         });
     }
-    if let Some(manifest) = manifest {
-        if manifest.schema_version != schema_version || manifest.migration_count != migration_count
-        {
-            return Err(MaintenanceError::Manifest(
-                "backup schema or migration count differs from manifest".into(),
-            ));
-        }
+    if let Some(manifest) = manifest
+        && (manifest.schema_version != schema_version
+            || manifest.migration_count != migration_count)
+    {
+        return Err(MaintenanceError::Manifest(
+            "backup schema or migration count differs from manifest".into(),
+        ));
     }
 
     // Repeat the sidecar/type check immediately before installation. Default

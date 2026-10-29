@@ -440,21 +440,19 @@ impl NegotiationEngine {
         let is_from_seller = from_agent_id == negotiation.seller_agent_id;
 
         // Buyer's offer triggers seller's auto-accept rule.
-        if is_from_buyer {
-            if let Some(threshold) = negotiation.auto_accept_below {
-                if offer_amount >= threshold {
-                    return AutoDecision::Accept;
-                }
-            }
+        if is_from_buyer
+            && let Some(threshold) = negotiation.auto_accept_below
+            && offer_amount >= threshold
+        {
+            return AutoDecision::Accept;
         }
 
         // Seller's counter-offer triggers buyer's auto-reject rule.
-        if is_from_seller {
-            if let Some(threshold) = negotiation.auto_reject_above {
-                if offer_amount >= threshold {
-                    return AutoDecision::Reject;
-                }
-            }
+        if is_from_seller
+            && let Some(threshold) = negotiation.auto_reject_above
+            && offer_amount >= threshold
+        {
+            return AutoDecision::Reject;
         }
 
         AutoDecision::Continue

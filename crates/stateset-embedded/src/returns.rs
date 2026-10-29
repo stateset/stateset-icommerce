@@ -113,47 +113,47 @@ impl Returns {
         let updated = self.db.returns().update(id, input)?;
 
         #[cfg(feature = "events")]
-        if let Some(previous) = previous {
-            if previous.status != updated.status {
-                self.emit_status_change(&previous, &updated);
-                match updated.status {
-                    ReturnStatus::Approved => {
-                        self.emit(CommerceEvent::ReturnApproved {
-                            return_id: updated.id,
-                            order_id: updated.order_id,
-                            timestamp: updated.updated_at,
-                        });
-                    }
-                    ReturnStatus::Rejected => {
-                        self.emit(CommerceEvent::ReturnRejected {
-                            return_id: updated.id,
-                            order_id: updated.order_id,
-                            reason: updated.notes.clone().unwrap_or_default(),
-                            timestamp: updated.updated_at,
-                        });
-                    }
-                    ReturnStatus::Completed => {
-                        let refund_amount = updated.refund_amount.unwrap_or(Decimal::ZERO);
-                        self.emit(CommerceEvent::ReturnCompleted {
-                            return_id: updated.id,
-                            order_id: updated.order_id,
-                            refund_amount,
-                            timestamp: updated.updated_at,
-                        });
-                        if let (Some(amount), Some(method)) =
-                            (updated.refund_amount, updated.refund_method.clone())
-                        {
-                            self.emit(CommerceEvent::RefundIssued {
-                                return_id: updated.id,
-                                order_id: updated.order_id,
-                                amount,
-                                method,
-                                timestamp: updated.updated_at,
-                            });
-                        }
-                    }
-                    _ => {}
+        if let Some(previous) = previous
+            && previous.status != updated.status
+        {
+            self.emit_status_change(&previous, &updated);
+            match updated.status {
+                ReturnStatus::Approved => {
+                    self.emit(CommerceEvent::ReturnApproved {
+                        return_id: updated.id,
+                        order_id: updated.order_id,
+                        timestamp: updated.updated_at,
+                    });
                 }
+                ReturnStatus::Rejected => {
+                    self.emit(CommerceEvent::ReturnRejected {
+                        return_id: updated.id,
+                        order_id: updated.order_id,
+                        reason: updated.notes.clone().unwrap_or_default(),
+                        timestamp: updated.updated_at,
+                    });
+                }
+                ReturnStatus::Completed => {
+                    let refund_amount = updated.refund_amount.unwrap_or(Decimal::ZERO);
+                    self.emit(CommerceEvent::ReturnCompleted {
+                        return_id: updated.id,
+                        order_id: updated.order_id,
+                        refund_amount,
+                        timestamp: updated.updated_at,
+                    });
+                    if let (Some(amount), Some(method)) =
+                        (updated.refund_amount, updated.refund_method.clone())
+                    {
+                        self.emit(CommerceEvent::RefundIssued {
+                            return_id: updated.id,
+                            order_id: updated.order_id,
+                            amount,
+                            method,
+                            timestamp: updated.updated_at,
+                        });
+                    }
+                }
+                _ => {}
             }
         }
 

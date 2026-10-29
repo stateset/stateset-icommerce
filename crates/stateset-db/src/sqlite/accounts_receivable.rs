@@ -667,10 +667,10 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
             Vec::new()
         } else {
             let mut sliced = results.split_off(offset);
-            if let Some(limit) = limit {
-                if sliced.len() > limit {
-                    sliced.truncate(limit);
-                }
+            if let Some(limit) = limit
+                && sliced.len() > limit
+            {
+                sliced.truncate(limit);
             }
             sliced
         };
@@ -1293,11 +1293,11 @@ impl AccountsReceivableRepository for SqliteAccountsReceivableRepository {
 
         sql.push_str(" ORDER BY issue_date DESC");
 
-        if has_unapplied.is_none() {
-            if let Some(limit) = filter.limit {
-                sql.push_str(" LIMIT ?");
-                params_vec.push(Value::Integer(i64::from(limit)));
-            }
+        if has_unapplied.is_none()
+            && let Some(limit) = filter.limit
+        {
+            sql.push_str(" LIMIT ?");
+            params_vec.push(Value::Integer(i64::from(limit)));
         }
 
         let mut stmt = conn.prepare(&sql).map_err(map_db_error)?;

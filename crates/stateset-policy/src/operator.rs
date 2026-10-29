@@ -197,14 +197,11 @@ impl Operator {
 
             // -- Numeric --
             Self::Between => {
-                if let (Some(val), Value::Array(range)) = (as_decimal(field_value), compare_value) {
-                    if range.len() == 2 {
-                        if let (Some(min), Some(max)) =
-                            (as_decimal(&range[0]), as_decimal(&range[1]))
-                        {
-                            return val >= min && val <= max;
-                        }
-                    }
+                if let (Some(val), Value::Array(range)) = (as_decimal(field_value), compare_value)
+                    && range.len() == 2
+                    && let (Some(min), Some(max)) = (as_decimal(&range[0]), as_decimal(&range[1]))
+                {
+                    return val >= min && val <= max;
                 }
                 false
             }

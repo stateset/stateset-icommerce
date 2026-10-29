@@ -585,19 +585,19 @@ impl Cart {
 
     /// Validate a quote's snapshot commitment without mutating commerce state.
     pub fn verify_checkout_fingerprint(&self, expected: Option<&str>) -> Result<()> {
-        if let Some(expected) = expected {
-            if expected != self.checkout_fingerprint()? {
-                return Err(crate::CommerceError::Conflict(
-                    "quoted cart fingerprint does not match current cart".into(),
-                ));
-            }
+        if let Some(expected) = expected
+            && expected != self.checkout_fingerprint()?
+        {
+            return Err(crate::CommerceError::Conflict(
+                "quoted cart fingerprint does not match current cart".into(),
+            ));
         }
         Ok(())
     }
 
     /// Check if cart has items
     #[must_use]
-    pub fn has_items(&self) -> bool {
+    pub const fn has_items(&self) -> bool {
         !self.items.is_empty()
     }
 

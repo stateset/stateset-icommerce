@@ -377,11 +377,10 @@ impl JobRunner {
                                 }
                             }
                             for (job_id, pending_reply) in replies {
-                                if !active.contains(&job_id) {
-                                    if let Err(error) = self.scheduler.cancel(job_id) {
+                                if !active.contains(&job_id)
+                                    && let Err(error) = self.scheduler.cancel(job_id) {
                                         tracing::error!(%job_id, %error, "failed to cancel queued trigger");
                                     }
-                                }
                                 let _ = pending_reply.send(Err(JobError::ExecutionFailed(RUNNER_GONE.into())));
                             }
                             commands.close();

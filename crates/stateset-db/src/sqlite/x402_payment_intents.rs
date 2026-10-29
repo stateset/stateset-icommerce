@@ -458,19 +458,17 @@ impl X402PaymentIntentRepository for SqliteX402PaymentIntentRepository {
         // concurrent creates for one cart both passed it. Re-checking under
         // this IMMEDIATE transaction, with the claim-key unique indexes
         // (migration 094) as the backstop, makes the second one lose.
-        if let Some(cart_id) = input.cart_id {
-            if let Some((existing_id, status)) =
+        if let Some(cart_id) = input.cart_id
+            && let Some((existing_id, status)) =
                 Self::claiming_intent_in_tx(&tx, "cart_id", &cart_id.to_string())?
-            {
-                return Err(duplicate_claim_error("cart", cart_id, &existing_id, &status));
-            }
+        {
+            return Err(duplicate_claim_error("cart", cart_id, &existing_id, &status));
         }
-        if let Some(order_id) = input.order_id {
-            if let Some((existing_id, status)) =
+        if let Some(order_id) = input.order_id
+            && let Some((existing_id, status)) =
                 Self::claiming_intent_in_tx(&tx, "order_id", &order_id.to_string())?
-            {
-                return Err(duplicate_claim_error("order", order_id, &existing_id, &status));
-            }
+        {
+            return Err(duplicate_claim_error("order", order_id, &existing_id, &status));
         }
         let row = Self::new_intent_row(&input, id, now, nonce);
         Self::insert_new_intent(&tx, &input, row)?;

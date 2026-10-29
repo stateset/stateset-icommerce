@@ -296,10 +296,10 @@ impl TaxJurisdiction {
         if !self.active || !same(&self.country_code, &address.country) {
             return false;
         }
-        if let Some(state) = &self.state_code {
-            if !address.state.as_deref().is_some_and(|a| same(a, state)) {
-                return false;
-            }
+        if let Some(state) = &self.state_code
+            && !address.state.as_deref().is_some_and(|a| same(a, state))
+        {
+            return false;
         }
         let city_matched = match &self.city {
             Some(city) => {

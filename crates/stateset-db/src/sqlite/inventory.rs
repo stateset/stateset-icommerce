@@ -893,19 +893,12 @@ impl SqliteInventoryRepository {
             return Ok(());
         }
 
-        if let Some(expires_at) = expires_at {
-            if expires_at < now {
-                Self::expire_reservation_in_tx(
-                    tx,
-                    reservation_id,
-                    item_id,
-                    location_id,
-                    quantity,
-                    now,
-                )
+        if let Some(expires_at) = expires_at
+            && expires_at < now
+        {
+            Self::expire_reservation_in_tx(tx, reservation_id, item_id, location_id, quantity, now)
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-                return Ok(());
-            }
+            return Ok(());
         }
 
         tx.execute(
@@ -996,19 +989,12 @@ impl SqliteInventoryRepository {
             return Ok(ReservationConfirmOutcome::Confirmed);
         }
 
-        if let Some(expires_at) = expires_at {
-            if expires_at < now {
-                Self::expire_reservation_in_tx(
-                    tx,
-                    reservation_id,
-                    item_id,
-                    location_id,
-                    quantity,
-                    now,
-                )
+        if let Some(expires_at) = expires_at
+            && expires_at < now
+        {
+            Self::expire_reservation_in_tx(tx, reservation_id, item_id, location_id, quantity, now)
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-                return Ok(ReservationConfirmOutcome::Expired);
-            }
+            return Ok(ReservationConfirmOutcome::Expired);
         }
 
         tx.execute(
@@ -1145,19 +1131,12 @@ impl SqliteInventoryRepository {
         if !parsed_status.holds_stock() || parsed_status == ReservationStatus::Confirmed {
             return Ok(ReservationConfirmOutcome::Confirmed);
         }
-        if let Some(expires_at) = expires_at {
-            if expires_at < now {
-                Self::expire_reservation_in_tx(
-                    tx,
-                    reservation_id,
-                    item_id,
-                    location_id,
-                    reserved,
-                    now,
-                )
+        if let Some(expires_at) = expires_at
+            && expires_at < now
+        {
+            Self::expire_reservation_in_tx(tx, reservation_id, item_id, location_id, reserved, now)
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-                return Ok(ReservationConfirmOutcome::Expired);
-            }
+            return Ok(ReservationConfirmOutcome::Expired);
         }
         if quantity <= Decimal::ZERO {
             return Ok(ReservationConfirmOutcome::Confirmed);
@@ -1249,19 +1228,12 @@ impl SqliteInventoryRepository {
             return Ok(false);
         }
 
-        if let Some(expires_at) = expires_at {
-            if expires_at < now {
-                Self::expire_reservation_in_tx(
-                    tx,
-                    reservation_id,
-                    item_id,
-                    location_id,
-                    quantity,
-                    now,
-                )
+        if let Some(expires_at) = expires_at
+            && expires_at < now
+        {
+            Self::expire_reservation_in_tx(tx, reservation_id, item_id, location_id, quantity, now)
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-                return Ok(true);
-            }
+            return Ok(true);
         }
 
         Ok(false)

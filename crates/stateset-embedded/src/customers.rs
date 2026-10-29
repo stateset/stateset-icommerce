@@ -139,15 +139,15 @@ impl Customers {
                 });
             }
 
-            if let Some(previous) = previous {
-                if previous.status != updated.status {
-                    self.emit(CommerceEvent::CustomerStatusChanged {
-                        customer_id: updated.id,
-                        from_status: previous.status,
-                        to_status: updated.status,
-                        timestamp: updated.updated_at,
-                    });
-                }
+            if let Some(previous) = previous
+                && previous.status != updated.status
+            {
+                self.emit(CommerceEvent::CustomerStatusChanged {
+                    customer_id: updated.id,
+                    from_status: previous.status,
+                    to_status: updated.status,
+                    timestamp: updated.updated_at,
+                });
             }
         }
 
@@ -180,15 +180,15 @@ impl Customers {
 
         #[cfg(feature = "events")]
         {
-            if let Some(previous) = previous {
-                if previous.status != scrubbed.status {
-                    self.emit(CommerceEvent::CustomerStatusChanged {
-                        customer_id: scrubbed.id,
-                        from_status: previous.status,
-                        to_status: scrubbed.status,
-                        timestamp: scrubbed.updated_at,
-                    });
-                }
+            if let Some(previous) = previous
+                && previous.status != scrubbed.status
+            {
+                self.emit(CommerceEvent::CustomerStatusChanged {
+                    customer_id: scrubbed.id,
+                    from_status: previous.status,
+                    to_status: scrubbed.status,
+                    timestamp: scrubbed.updated_at,
+                });
             }
         }
 

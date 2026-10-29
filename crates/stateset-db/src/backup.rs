@@ -250,15 +250,16 @@ impl BackupManager {
                 .map_err(|e| CommerceError::DatabaseError(format!("Failed to read entry: {e}")))?;
             let path = entry.path();
 
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("db") {
-                if let Some(metadata) = self.load_metadata(&path) {
-                    // Never let an edited metadata filename redirect retention
-                    // deletion outside the actual file discovered in this directory.
-                    if path.file_name().and_then(|name| name.to_str())
-                        == Some(metadata.filename.as_str())
-                    {
-                        backups.push(metadata);
-                    }
+            if path.is_file()
+                && path.extension().and_then(|s| s.to_str()) == Some("db")
+                && let Some(metadata) = self.load_metadata(&path)
+            {
+                // Never let an edited metadata filename redirect retention
+                // deletion outside the actual file discovered in this directory.
+                if path.file_name().and_then(|name| name.to_str())
+                    == Some(metadata.filename.as_str())
+                {
+                    backups.push(metadata);
                 }
             }
         }
