@@ -57,7 +57,9 @@ export function createEventStreamPublisher(mcpEventStream) {
 
 /**
  * @typedef {Object} ReplayLogOptions
- * @property {string} logPath - Absolute path to the JSONL file.
+ * @property {string|null} logPath - Absolute path to the JSONL file, or `null`
+ *   to keep events in the in-memory buffer only (a server with no durable
+ *   store, e.g. `:memory:`, must not leave a log of every call on disk).
  * @property {number} [bufferSize] - Max events held in memory (default 400).
  * @property {Object|null} [telemetry] - Optional telemetry sink; calls
  *   `.logCustomEvent('agentic_replay_read_error', { error, path })` on
@@ -78,8 +80,8 @@ export function createReplayLog({
   signAuditArtifact,
   mcpEventStream = null,
 }) {
-  if (typeof logPath !== 'string' || !logPath) {
-    throw new TypeError('createReplayLog requires `logPath` (absolute path)');
+  if (logPath !== null && (typeof logPath !== 'string' || !logPath)) {
+    throw new TypeError('createReplayLog requires `logPath` (absolute path or null)');
   }
   if (typeof signAuditArtifact !== 'function') {
     throw new TypeError('createReplayLog requires `signAuditArtifact(payload)`');
@@ -90,6 +92,7 @@ export function createReplayLog({
   const publishToEventStream = createEventStreamPublisher(mcpEventStream);
 
   const persistEvent = async (event) => {
+    if (logPath === null) return pendingAppend;
     pendingAppend = pendingAppend
       .catch((err) => {
         console.debug('replay log append failed:', err.message);
@@ -164,7 +167,7 @@ export function createReplayLog({
 
     let fileEvents = [];
     try {
-      const raw = await fs.readFile(logPath, 'utf8');
+      const raw = logPath === null ? '' : await fs.readFile(logPath, 'utf8');
       if (raw?.trim()) {
         fileEvents = raw
           .split('\n')

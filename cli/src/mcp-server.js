@@ -356,8 +356,11 @@ export function createStatesetMcpServer({
   // JSONL append log, and filtered listing — all live in
   // `./mcp/replay-log.js`. We instantiate one per server with `signAuditArtifact`
   // (module-level) and the active stream injected.
-  const fallbackAgenticDir = resolvePolicyPath || path.join(process.cwd(), '.stateset');
-  const agenticReplayLogPath = path.join(fallbackAgenticDir, AGENTIC_REPLAY_LOG_FILE);
+  // The replay log persists beside the A2A checkpoints: an explicit policy
+  // store, or the directory of a file-backed database. An in-memory store
+  // keeps it in the ring buffer only, so an ephemeral server never leaves a
+  // file of every call's arguments and results in its working directory.
+  const agenticReplayLogPath = a2aStateDir ? path.join(a2aStateDir, AGENTIC_REPLAY_LOG_FILE) : null;
 
   const replayLog = createReplayLog({
     logPath: agenticReplayLogPath,
