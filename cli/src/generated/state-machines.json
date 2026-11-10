@@ -1426,6 +1426,231 @@
           "terminal": true
         }
       ]
+    },
+    {
+      "domain": "warranties",
+      "initial": "submitted",
+      "name": "warranty_claim",
+      "rust_type": "ClaimStatus",
+      "states": [
+        {
+          "name": "submitted",
+          "next": [
+            "under_review",
+            "info_requested",
+            "approved",
+            "denied",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "under_review",
+          "next": [
+            "info_requested",
+            "approved",
+            "denied",
+            "in_progress",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "info_requested",
+          "next": [
+            "under_review",
+            "approved",
+            "denied",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "approved",
+          "next": [
+            "in_progress",
+            "completed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "denied",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "in_progress",
+          "next": [
+            "completed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "a2a",
+      "initial": "pending",
+      "name": "skill_quote",
+      "rust_type": "QuoteStatus",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "quoted",
+            "rejected",
+            "expired"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "quoted",
+          "next": [
+            "accepted",
+            "rejected",
+            "expired",
+            "purchased"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "accepted",
+          "next": [
+            "purchased"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "rejected",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "expired",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "purchased",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "a2a",
+      "initial": "initiated",
+      "name": "skill_purchase",
+      "rust_type": "PurchaseStatus",
+      "states": [
+        {
+          "name": "initiated",
+          "next": [
+            "payment_pending",
+            "cancelled",
+            "disputed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "payment_pending",
+          "next": [
+            "paid",
+            "shipped",
+            "cancelled",
+            "disputed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "paid",
+          "next": [
+            "fulfilling",
+            "shipped",
+            "completed",
+            "cancelled",
+            "disputed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "fulfilling",
+          "next": [
+            "shipped",
+            "cancelled",
+            "disputed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "shipped",
+          "next": [
+            "delivered",
+            "completed",
+            "cancelled",
+            "disputed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "delivered",
+          "next": [
+            "completed",
+            "cancelled",
+            "disputed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "disputed",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
     }
   ]
 }

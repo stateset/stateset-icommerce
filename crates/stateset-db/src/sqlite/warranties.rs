@@ -254,46 +254,7 @@ impl SqliteWarrantyRepository {
     }
 
     fn ensure_claim_transition(current: ClaimStatus, next: ClaimStatus) -> Result<()> {
-        if current == next {
-            return Ok(());
-        }
-
-        let allowed = match current {
-            ClaimStatus::Submitted => matches!(
-                next,
-                ClaimStatus::UnderReview
-                    | ClaimStatus::InfoRequested
-                    | ClaimStatus::Approved
-                    | ClaimStatus::Denied
-                    | ClaimStatus::Cancelled
-            ),
-            ClaimStatus::UnderReview => matches!(
-                next,
-                ClaimStatus::InfoRequested
-                    | ClaimStatus::Approved
-                    | ClaimStatus::Denied
-                    | ClaimStatus::InProgress
-                    | ClaimStatus::Cancelled
-            ),
-            ClaimStatus::InfoRequested => matches!(
-                next,
-                ClaimStatus::UnderReview
-                    | ClaimStatus::Approved
-                    | ClaimStatus::Denied
-                    | ClaimStatus::Cancelled
-            ),
-            ClaimStatus::Approved => matches!(
-                next,
-                ClaimStatus::InProgress | ClaimStatus::Completed | ClaimStatus::Cancelled
-            ),
-            ClaimStatus::InProgress => {
-                matches!(next, ClaimStatus::Completed | ClaimStatus::Cancelled)
-            }
-            ClaimStatus::Denied | ClaimStatus::Completed | ClaimStatus::Cancelled => false,
-            _ => false,
-        };
-
-        if allowed {
+        if current.can_transition_to(next) {
             Ok(())
         } else {
             Err(CommerceError::ValidationError(format!(

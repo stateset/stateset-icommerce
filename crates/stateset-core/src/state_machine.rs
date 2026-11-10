@@ -35,11 +35,11 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::models::{
-    A2APaymentStatus, A2AQuoteStatus, BillingCycleStatus, CartStatus, CustomerStatus,
+    A2APaymentStatus, A2AQuoteStatus, BillingCycleStatus, CartStatus, ClaimStatus, CustomerStatus,
     CycleCountStatus, FixedAssetStatus, LotStatus, OrderStatus, PaymentRequestStatus,
-    PaymentTransactionStatus, PlanStatus, ProductStatus, PurchaseOrderStatus, RefundStatus,
-    ReturnStatus, RevenueContractStatus, RevenueEntryStatus, SerialStatus, ShipmentStatus,
-    SubscriptionStatus, WorkOrderStatus,
+    PaymentTransactionStatus, PlanStatus, ProductStatus, PurchaseOrderStatus, PurchaseStatus,
+    QuoteStatus, RefundStatus, ReturnStatus, RevenueContractStatus, RevenueEntryStatus,
+    SerialStatus, ShipmentStatus, SubscriptionStatus, WorkOrderStatus,
 };
 
 /// A status enum whose legal transitions are written down in one place.
@@ -397,6 +397,29 @@ state_machines![
         "a2a",
         [Requested, Quoted, CounterOffered, Accepted, Declined, Expired, Fulfilled, Cancelled]
     ),
+    (
+        ClaimStatus,
+        "warranty_claim",
+        "warranties",
+        [Submitted, UnderReview, InfoRequested, Approved, Denied, InProgress, Completed, Cancelled]
+    ),
+    (QuoteStatus, "skill_quote", "a2a", [Pending, Quoted, Accepted, Rejected, Expired, Purchased]),
+    (
+        PurchaseStatus,
+        "skill_purchase",
+        "a2a",
+        [
+            Initiated,
+            PaymentPending,
+            Paid,
+            Fulfilling,
+            Shipped,
+            Delivered,
+            Completed,
+            Cancelled,
+            Disputed
+        ]
+    ),
 ];
 
 /// Look up one machine by [`StateMachine::NAME`].
@@ -514,6 +537,59 @@ mod tests {
             ["shipment delivered: is_terminal()=true but next=[\"returned\"]"],
             "is_terminal() and the transition rule disagree"
         );
+    }
+
+    /// The three rules lifted out of the repositories, written out edge by
+    /// edge. These were private, duplicated tables in the SQLite and Postgres
+    /// backends; this pins that the shared rule is the same table.
+    #[test]
+    fn lifted_repository_rules_are_unchanged() {
+        fn graph<M: StateMachine>(expected: &[(&str, &[&str])]) {
+            let actual: Vec<(String, Vec<String>)> = M::STATES
+                .iter()
+                .map(|s| (s.to_string(), s.next_states().iter().map(ToString::to_string).collect()))
+                .collect();
+            let expected: Vec<(String, Vec<String>)> = expected
+                .iter()
+                .map(|(from, next)| {
+                    ((*from).to_owned(), next.iter().map(|n| (*n).to_owned()).collect())
+                })
+                .collect();
+            assert_eq!(actual, expected, "{}", M::NAME);
+            for &state in M::STATES {
+                assert!(state.is_reentrant(), "{} {state}: same-status is a no-op", M::NAME);
+            }
+        }
+
+        graph::<ClaimStatus>(&[
+            ("submitted", &["under_review", "info_requested", "approved", "denied", "cancelled"]),
+            ("under_review", &["info_requested", "approved", "denied", "in_progress", "cancelled"]),
+            ("info_requested", &["under_review", "approved", "denied", "cancelled"]),
+            ("approved", &["in_progress", "completed", "cancelled"]),
+            ("denied", &[]),
+            ("in_progress", &["completed", "cancelled"]),
+            ("completed", &[]),
+            ("cancelled", &[]),
+        ]);
+        graph::<QuoteStatus>(&[
+            ("pending", &["quoted", "rejected", "expired"]),
+            ("quoted", &["accepted", "rejected", "expired", "purchased"]),
+            ("accepted", &["purchased"]),
+            ("rejected", &[]),
+            ("expired", &[]),
+            ("purchased", &[]),
+        ]);
+        graph::<PurchaseStatus>(&[
+            ("initiated", &["payment_pending", "cancelled", "disputed"]),
+            ("payment_pending", &["paid", "shipped", "cancelled", "disputed"]),
+            ("paid", &["fulfilling", "shipped", "completed", "cancelled", "disputed"]),
+            ("fulfilling", &["shipped", "cancelled", "disputed"]),
+            ("shipped", &["delivered", "completed", "cancelled", "disputed"]),
+            ("delivered", &["completed", "cancelled", "disputed"]),
+            ("completed", &[]),
+            ("cancelled", &[]),
+            ("disputed", &[]),
+        ]);
     }
 
     #[test]

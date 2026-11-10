@@ -190,6 +190,29 @@ pub enum QuoteStatus {
     Purchased,
 }
 
+impl QuoteStatus {
+    /// Whether a quote may move from `self` to `next`.
+    ///
+    /// This is the one rule both repositories enforce. A move to the current
+    /// status is accepted as a no-op. `Purchased` is reachable from `Quoted`
+    /// as well as `Accepted`: creating a purchase consumes a `Quoted` quote
+    /// directly (the buyer's purchase is its acceptance).
+    #[must_use]
+    pub const fn can_transition_to(self, next: Self) -> bool {
+        if self as u8 == next as u8 {
+            return true;
+        }
+        match self {
+            Self::Pending => matches!(next, Self::Quoted | Self::Rejected | Self::Expired),
+            Self::Quoted => {
+                matches!(next, Self::Accepted | Self::Rejected | Self::Expired | Self::Purchased)
+            }
+            Self::Accepted => matches!(next, Self::Purchased),
+            Self::Rejected | Self::Expired | Self::Purchased => false,
+        }
+    }
+}
+
 /// Item availability status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -287,6 +310,41 @@ pub enum PurchaseStatus {
     Cancelled,
     /// Purchase is disputed
     Disputed,
+}
+
+impl PurchaseStatus {
+    /// Whether a purchase may move from `self` to `next`.
+    ///
+    /// This is the one rule both repositories enforce. A move to the current
+    /// status is accepted as a no-op.
+    #[must_use]
+    pub const fn can_transition_to(self, next: Self) -> bool {
+        if self as u8 == next as u8 {
+            return true;
+        }
+        match self {
+            Self::Initiated => {
+                matches!(next, Self::PaymentPending | Self::Cancelled | Self::Disputed)
+            }
+            Self::PaymentPending => {
+                matches!(next, Self::Paid | Self::Shipped | Self::Cancelled | Self::Disputed)
+            }
+            Self::Paid => matches!(
+                next,
+                Self::Fulfilling
+                    | Self::Shipped
+                    | Self::Completed
+                    | Self::Cancelled
+                    | Self::Disputed
+            ),
+            Self::Fulfilling => matches!(next, Self::Shipped | Self::Cancelled | Self::Disputed),
+            Self::Shipped => {
+                matches!(next, Self::Delivered | Self::Completed | Self::Cancelled | Self::Disputed)
+            }
+            Self::Delivered => matches!(next, Self::Completed | Self::Cancelled | Self::Disputed),
+            Self::Completed | Self::Cancelled | Self::Disputed => false,
+        }
+    }
 }
 
 // =============================================================================

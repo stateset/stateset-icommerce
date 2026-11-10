@@ -91,9 +91,9 @@ existing stores before upgrading; see
   write off and reverse, edit posting settings, and manage BOMs, production
   batches and item costs.
 - Migrations: SQLite 102–123, Postgres 108–131.
-- `stateset_core::StateMachine`: one trait over the 22 status enums that
+- `stateset_core::StateMachine`: one trait over the 25 status enums that
   own a transition rule (order, cart, payment, refund, return, shipment,
-  subscription, purchase order, ...), with `next_states()`,
+  subscription, purchase order, warranty claim, ...), with `next_states()`,
   `is_terminal_state()`, `check_transition()` (the refusal names the allowed
   next states) and `state_machine::catalog()`. It is derived from each
   enum's existing `can_transition_to`, so no transition rule changes.
@@ -103,6 +103,10 @@ existing stores before upgrading; see
   route. Generated from the Rust rules
   (`cli/src/generated/state-machines.json`); a Rust test fails when it is
   stale. Reference page: `docs/src/appendix/state-machines.md`.
+- `ClaimStatus`, `QuoteStatus` and `PurchaseStatus` gain
+  `can_transition_to`. The rule was a private table copied into both the
+  SQLite and Postgres repositories; both now call the one in
+  `stateset-core`. The accepted transitions are unchanged.
 
 ## [1.40.1] - 2026-10-27
 
