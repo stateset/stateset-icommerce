@@ -420,7 +420,7 @@
       "module": "explain",
       "toolModulePresent": true,
       "commandFilePresent": true,
-      "actionCount": 2,
+      "actionCount": 3,
       "aliasCount": 0,
       "coverageStyle": "tool-backed",
       "toolBacked": false,

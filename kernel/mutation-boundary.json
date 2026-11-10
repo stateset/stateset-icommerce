@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:13d876cb6e264b18070ab2a10331476b7e989986492e2620895538a1258c34c7",
+  "digest": "sha256:9c6fe4b8678ad2b6db19dd3b48b9d18e5cd9608378b96484b8fd1c47d6063d99",
   "counts": {
-    "total": 1003,
-    "readOnly": 487,
+    "total": 1004,
+    "readOnly": 488,
     "mutations": 516,
     "governed": 36,
     "governedComposite": 1,
@@ -3351,6 +3351,13 @@
     },
     {
       "name": "explain_policy_denial",
+      "permission": "read",
+      "mutation": false,
+      "disposition": "read_only",
+      "commandType": null
+    },
+    {
+      "name": "explain_state_machine",
       "permission": "read",
       "mutation": false,
       "disposition": "read_only",

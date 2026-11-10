@@ -5,13 +5,13 @@
 
 Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/tool-tiers.js` (tiers).
 
-**988 tools** across **89 domains**, plus 15 agentic runtime tools.
+**989 tools** across **89 domains**, plus 15 agentic runtime tools.
 
 ## Stability tiers
 
 | Tier | Tools | Meaning |
 | --- | ---: | --- |
-| core | 209 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
+| core | 210 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
 | extended | 530 | Real, specialised domains (finance, manufacturing, WMS, B2B, engagement). Opt in with `--profile` or `--domains`. |
 | experimental | 264 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete. Only `--profile all`, a curated profile naming the domain, or `--domains`. |
 
@@ -19,8 +19,8 @@ Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/t
 
 | Profile | Tools | Domains |
 | --- | ---: | --- |
-| all | 1003 | every domain |
-| core (default) | 209 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain, simulations |
+| all | 1004 | every domain |
+| core (default) | 210 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain, simulations |
 | operations | 214 | inventory, simulations, manufacturing, shipments, suppliers, warranties, warehouse, receiving, fulfillment, quality, lots, serials, cycle-counts, transfer-orders, production-batches, supplier-skus, inbound-shipments, backorders, vendor-returns |
 | finance | 161 | payments, invoices, treasury, accounts-payable, accounts-receivable, cost-accounting, credit, general-ledger, fixed-assets, revenue-recognition, prepayments, vendor-credits, payment-obligations |
 | agents | 257 | simulations, agent-runtime, agent-cards, agent-receipt, a2a, a2a-platform, a2a-automation, a2a-observability, a2a-intelligence, x402, stablecoin, erc8004, treasury, payment-obligations, proofs, audit, policies |
@@ -119,7 +119,7 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | [production-batches](#production-batches) | extended | 8 |
 | [supplier-skus](#supplier-skus) | extended | 7 |
 | [inbound-shipments](#inbound-shipments) | extended | 8 |
-| [explain](#explain) | core | 2 |
+| [explain](#explain) | core | 3 |
 | [simulations](#simulations) | core | 6 |
 
 ## customers
@@ -1719,6 +1719,7 @@ Tier: **core**
 | --- | --- | --- | --- |
 | `explain_order` | core | read | Explain an order to a customer or merchant: one chronological timeline (checkout, payments, shipments, returns, refunds, fraud, activity), the money charged/refunded/net as exact strings, tax recomputed from the address, and flags for inconsistencies (e.g. paid but paymentStatus pending, refunded more than charged). Read-only; lists what it cannot see. |
 | `explain_cart_pricing` | core | read | Explain why a cart costs what it costs: lines, subtotal, promotions applied and REFUSED with reason codes, tax by jurisdiction, shipping, and a check that the explained total equals the stored grand total. Pass couponCodes to ask why a code does or does not apply. Read-only: nothing is written to the cart. |
+| `explain_state_machine` | core | read | Ask what a record can do next BEFORE trying to change its status. With no arguments, lists every status lifecycle the engine enforces (order, payment, refund, return, shipment, cart, subscription, purchase_order, ...). With `machine`, returns its full transition graph. With `machine` + `from`, the statuses reachable next. With `machine` + `from` + `to`, whether that move is allowed and, if not, the shortest route. Generated from the engine rules; read-only and touches no data. A status reached only by an operation (e.g. shipping an order) still needs that operation, not a plain status update. |
 
 ## simulations
 

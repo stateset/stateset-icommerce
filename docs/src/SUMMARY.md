@@ -165,6 +165,7 @@
 - [MCP Tool Inventory](appendix/mcp-tool-inventory.md)
 - [HTTP Gateway Inventory](appendix/http-gateway-inventory.md)
 - [Rust OpenAPI Inventory](appendix/rust-openapi-inventory.md)
+- [State Machines (generated)](appendix/state-machines.md)
 - [Workspace Inventory](appendix/workspace-inventory.md)
 - [Troubleshooting](appendix/troubleshooting.md)
 - [Operation and Maintenance Manual (ASD-STE100)](appendix/ste-manual.md)

@@ -91,6 +91,18 @@ existing stores before upgrading; see
   write off and reverse, edit posting settings, and manage BOMs, production
   batches and item costs.
 - Migrations: SQLite 102–123, Postgres 108–131.
+- `stateset_core::StateMachine`: one trait over the 22 status enums that
+  own a transition rule (order, cart, payment, refund, return, shipment,
+  subscription, purchase order, ...), with `next_states()`,
+  `is_terminal_state()`, `check_transition()` (the refusal names the allowed
+  next states) and `state_machine::catalog()`. It is derived from each
+  enum's existing `can_transition_to`, so no transition rule changes.
+- `explain_state_machine` MCP tool (core tier, read-only) and
+  `stateset explain state-machine`: list the lifecycles, read a full graph,
+  ask what can follow a status, or check a move and get the shortest legal
+  route. Generated from the Rust rules
+  (`cli/src/generated/state-machines.json`); a Rust test fails when it is
+  stale. Reference page: `docs/src/appendix/state-machines.md`.
 
 ## [1.40.1] - 2026-10-27
 
