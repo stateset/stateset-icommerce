@@ -36,6 +36,9 @@ Ask the same question at runtime:
 | [`a2a_payment`](#a2a_payment) | a2a | `A2APaymentStatus` | `pending` | cancelled, refunded |
 | [`a2a_payment_request`](#a2a_payment_request) | a2a | `PaymentRequestStatus` | `pending` | paid, declined, expired, cancelled |
 | [`a2a_quote`](#a2a_quote) | a2a | `A2AQuoteStatus` | `requested` | declined, expired, fulfilled, cancelled |
+| [`warranty_claim`](#warranty_claim) | warranties | `ClaimStatus` | `submitted` | denied, completed, cancelled |
+| [`skill_quote`](#skill_quote) | a2a | `QuoteStatus` | `pending` | rejected, expired, purchased |
+| [`skill_purchase`](#skill_purchase) | a2a | `PurchaseStatus` | `initiated` | completed, cancelled, disputed |
 
 ## order
 
@@ -738,3 +741,114 @@ stateDiagram-v2
 | `expired` | _terminal_ |
 | `fulfilled` | _terminal_ |
 | `cancelled` | _terminal_ |
+
+## warranty_claim
+
+```mermaid
+stateDiagram-v2
+    [*] --> submitted
+    submitted --> under_review
+    submitted --> info_requested
+    submitted --> approved
+    submitted --> denied
+    submitted --> cancelled
+    under_review --> info_requested
+    under_review --> approved
+    under_review --> denied
+    under_review --> in_progress
+    under_review --> cancelled
+    info_requested --> under_review
+    info_requested --> approved
+    info_requested --> denied
+    info_requested --> cancelled
+    approved --> in_progress
+    approved --> completed
+    approved --> cancelled
+    denied --> [*]
+    in_progress --> completed
+    in_progress --> cancelled
+    completed --> [*]
+    cancelled --> [*]
+```
+
+| From | Allowed next |
+| --- | --- |
+| `submitted` | under_review, info_requested, approved, denied, cancelled |
+| `under_review` | info_requested, approved, denied, in_progress, cancelled |
+| `info_requested` | under_review, approved, denied, cancelled |
+| `approved` | in_progress, completed, cancelled |
+| `denied` | _terminal_ |
+| `in_progress` | completed, cancelled |
+| `completed` | _terminal_ |
+| `cancelled` | _terminal_ |
+
+## skill_quote
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> quoted
+    pending --> rejected
+    pending --> expired
+    quoted --> accepted
+    quoted --> rejected
+    quoted --> expired
+    quoted --> purchased
+    accepted --> purchased
+    rejected --> [*]
+    expired --> [*]
+    purchased --> [*]
+```
+
+| From | Allowed next |
+| --- | --- |
+| `pending` | quoted, rejected, expired |
+| `quoted` | accepted, rejected, expired, purchased |
+| `accepted` | purchased |
+| `rejected` | _terminal_ |
+| `expired` | _terminal_ |
+| `purchased` | _terminal_ |
+
+## skill_purchase
+
+```mermaid
+stateDiagram-v2
+    [*] --> initiated
+    initiated --> payment_pending
+    initiated --> cancelled
+    initiated --> disputed
+    payment_pending --> paid
+    payment_pending --> shipped
+    payment_pending --> cancelled
+    payment_pending --> disputed
+    paid --> fulfilling
+    paid --> shipped
+    paid --> completed
+    paid --> cancelled
+    paid --> disputed
+    fulfilling --> shipped
+    fulfilling --> cancelled
+    fulfilling --> disputed
+    shipped --> delivered
+    shipped --> completed
+    shipped --> cancelled
+    shipped --> disputed
+    delivered --> completed
+    delivered --> cancelled
+    delivered --> disputed
+    completed --> [*]
+    cancelled --> [*]
+    disputed --> [*]
+```
+
+| From | Allowed next |
+| --- | --- |
+| `initiated` | payment_pending, cancelled, disputed |
+| `payment_pending` | paid, shipped, cancelled, disputed |
+| `paid` | fulfilling, shipped, completed, cancelled, disputed |
+| `fulfilling` | shipped, cancelled, disputed |
+| `shipped` | delivered, completed, cancelled, disputed |
+| `delivered` | completed, cancelled, disputed |
+| `completed` | _terminal_ |
+| `cancelled` | _terminal_ |
+| `disputed` | _terminal_ |

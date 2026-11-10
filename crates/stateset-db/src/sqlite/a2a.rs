@@ -150,97 +150,6 @@ impl SqliteA2ARepository {
         }
     }
 
-    fn is_valid_quote_status_transition(current: QuoteStatus, next: QuoteStatus) -> bool {
-        if current == next {
-            return true;
-        }
-
-        match current {
-            QuoteStatus::Pending => {
-                matches!(next, QuoteStatus::Quoted | QuoteStatus::Rejected | QuoteStatus::Expired)
-            }
-            // `Purchased` is reachable from `Quoted` as well as `Accepted`:
-            // `create_purchase` consumes a `Quoted` quote directly (the buyer's
-            // purchase is its acceptance), so the transition table must agree
-            // with what the purchase path actually does.
-            QuoteStatus::Quoted => {
-                matches!(
-                    next,
-                    QuoteStatus::Accepted
-                        | QuoteStatus::Rejected
-                        | QuoteStatus::Expired
-                        | QuoteStatus::Purchased
-                )
-            }
-            QuoteStatus::Accepted => matches!(next, QuoteStatus::Purchased),
-            QuoteStatus::Rejected | QuoteStatus::Expired | QuoteStatus::Purchased => false,
-            _ => false,
-        }
-    }
-
-    fn is_valid_purchase_status_transition(current: PurchaseStatus, next: PurchaseStatus) -> bool {
-        if current == next {
-            return true;
-        }
-
-        match current {
-            PurchaseStatus::Initiated => {
-                matches!(
-                    next,
-                    PurchaseStatus::PaymentPending
-                        | PurchaseStatus::Cancelled
-                        | PurchaseStatus::Disputed
-                )
-            }
-            PurchaseStatus::PaymentPending => {
-                matches!(
-                    next,
-                    PurchaseStatus::Paid
-                        | PurchaseStatus::Shipped
-                        | PurchaseStatus::Cancelled
-                        | PurchaseStatus::Disputed
-                )
-            }
-            PurchaseStatus::Paid => {
-                matches!(
-                    next,
-                    PurchaseStatus::Fulfilling
-                        | PurchaseStatus::Shipped
-                        | PurchaseStatus::Completed
-                        | PurchaseStatus::Cancelled
-                        | PurchaseStatus::Disputed
-                )
-            }
-            PurchaseStatus::Fulfilling => {
-                matches!(
-                    next,
-                    PurchaseStatus::Shipped | PurchaseStatus::Cancelled | PurchaseStatus::Disputed
-                )
-            }
-            PurchaseStatus::Shipped => {
-                matches!(
-                    next,
-                    PurchaseStatus::Delivered
-                        | PurchaseStatus::Completed
-                        | PurchaseStatus::Cancelled
-                        | PurchaseStatus::Disputed
-                )
-            }
-            PurchaseStatus::Delivered => {
-                matches!(
-                    next,
-                    PurchaseStatus::Completed
-                        | PurchaseStatus::Cancelled
-                        | PurchaseStatus::Disputed
-                )
-            }
-            PurchaseStatus::Completed | PurchaseStatus::Cancelled | PurchaseStatus::Disputed => {
-                false
-            }
-            _ => false,
-        }
-    }
-
     #[allow(dead_code)]
     fn parse_json<T: DeserializeOwned>(
         value: Value,
@@ -766,7 +675,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let existing = Self::get_quote_on(&tx, id)?.ok_or(CommerceError::NotFound)?;
 
-        if !Self::is_valid_quote_status_transition(existing.status, status) {
+        if !existing.status.can_transition_to(status) {
             return Err(CommerceError::ValidationError(format!(
                 "invalid quote status transition: {:?} -> {:?}",
                 existing.status, status
@@ -983,7 +892,7 @@ impl A2ACommerceRepository for SqliteA2ARepository {
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
         let existing = Self::get_purchase_on(&tx, id)?.ok_or(CommerceError::NotFound)?;
 
-        if !Self::is_valid_purchase_status_transition(existing.status, status) {
+        if !existing.status.can_transition_to(status) {
             return Err(CommerceError::ValidationError(format!(
                 "invalid purchase status transition: {:?} -> {:?}",
                 existing.status, status
