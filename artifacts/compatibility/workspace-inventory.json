@@ -825,6 +825,10 @@
         "count": 1
       },
       {
+        "name": "generated",
+        "count": 1
+      },
+      {
         "name": "google-chat",
         "count": 1
       },
@@ -974,6 +978,10 @@
       },
       {
         "name": "standalone.js",
+        "count": 1
+      },
+      {
+        "name": "state-machine-catalog.js",
         "count": 1
       },
       {

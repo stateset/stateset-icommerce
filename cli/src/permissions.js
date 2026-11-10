@@ -961,6 +961,7 @@ export const TOOL_PERMISSIONS = {
   simulate_inventory_plan: 'read',
   compare_inventory_plans: 'read',
   explain_cart_pricing: 'read',
+  explain_state_machine: 'read',
 
   // Agentic Runtime
   discover_tools: 'read',

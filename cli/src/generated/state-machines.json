@@ -1,0 +1,1431 @@
+{
+  "generated_by": "cargo test -p stateset-core --test state_machine_catalog",
+  "machines": [
+    {
+      "domain": "orders",
+      "initial": "pending",
+      "name": "order",
+      "rust_type": "OrderStatus",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "confirmed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "confirmed",
+          "next": [
+            "processing",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "processing",
+          "next": [
+            "partially_shipped",
+            "shipped",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "partially_shipped",
+          "next": [
+            "shipped"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "shipped",
+          "next": [
+            "delivered"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "delivered",
+          "next": [
+            "refunded"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "refunded",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "carts",
+      "initial": "active",
+      "name": "cart",
+      "rust_type": "CartStatus",
+      "states": [
+        {
+          "name": "active",
+          "next": [
+            "ready_for_payment",
+            "payment_pending",
+            "completed",
+            "abandoned",
+            "cancelled",
+            "expired"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "ready_for_payment",
+          "next": [
+            "payment_pending",
+            "completed",
+            "abandoned",
+            "cancelled",
+            "expired"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "payment_pending",
+          "next": [
+            "ready_for_payment",
+            "completed",
+            "abandoned",
+            "cancelled",
+            "expired"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "abandoned",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "expired",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "payments",
+      "initial": "pending",
+      "name": "payment",
+      "rust_type": "PaymentTransactionStatus",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "processing",
+            "failed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "processing",
+          "next": [
+            "requires_action",
+            "completed",
+            "failed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "requires_action",
+          "next": [
+            "processing",
+            "completed",
+            "failed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "completed",
+          "next": [
+            "refunded",
+            "partially_refunded",
+            "disputed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "failed",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "refunded",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "partially_refunded",
+          "next": [
+            "refunded",
+            "disputed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "disputed",
+          "next": [
+            "completed",
+            "cancelled",
+            "refunded"
+          ],
+          "reentrant": true,
+          "terminal": false
+        }
+      ]
+    },
+    {
+      "domain": "payments",
+      "initial": "pending",
+      "name": "refund",
+      "rust_type": "RefundStatus",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "processing",
+            "failed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "processing",
+          "next": [
+            "completed",
+            "failed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "failed",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "returns",
+      "initial": "requested",
+      "name": "return",
+      "rust_type": "ReturnStatus",
+      "states": [
+        {
+          "name": "requested",
+          "next": [
+            "approved",
+            "rejected",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "approved",
+          "next": [
+            "in_transit",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "rejected",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "in_transit",
+          "next": [
+            "received"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "received",
+          "next": [
+            "inspecting",
+            "completed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "inspecting",
+          "next": [
+            "rejected",
+            "completed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "shipments",
+      "initial": "pending",
+      "name": "shipment",
+      "rust_type": "ShipmentStatus",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "processing",
+            "cancelled",
+            "on_hold"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "processing",
+          "next": [
+            "ready_to_ship",
+            "cancelled",
+            "on_hold"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "ready_to_ship",
+          "next": [
+            "shipped",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "shipped",
+          "next": [
+            "in_transit"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "in_transit",
+          "next": [
+            "out_for_delivery",
+            "failed"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "out_for_delivery",
+          "next": [
+            "delivered",
+            "failed"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "delivered",
+          "next": [
+            "returned"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "failed",
+          "next": [
+            "in_transit",
+            "returned"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "returned",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "on_hold",
+          "next": [
+            "processing",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        }
+      ]
+    },
+    {
+      "domain": "customers",
+      "initial": "active",
+      "name": "customer",
+      "rust_type": "CustomerStatus",
+      "states": [
+        {
+          "name": "active",
+          "next": [
+            "inactive",
+            "suspended",
+            "deleted"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "inactive",
+          "next": [
+            "active",
+            "suspended",
+            "deleted"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "suspended",
+          "next": [
+            "active",
+            "inactive",
+            "deleted"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "deleted",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "products",
+      "initial": "draft",
+      "name": "product",
+      "rust_type": "ProductStatus",
+      "states": [
+        {
+          "name": "draft",
+          "next": [
+            "active",
+            "archived"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "active",
+          "next": [
+            "draft",
+            "archived"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "archived",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "subscriptions",
+      "initial": "active",
+      "name": "subscription",
+      "rust_type": "SubscriptionStatus",
+      "states": [
+        {
+          "name": "trial",
+          "next": [
+            "active",
+            "cancelled",
+            "expired"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "active",
+          "next": [
+            "paused",
+            "past_due",
+            "cancelled",
+            "expired"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "paused",
+          "next": [
+            "active",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "past_due",
+          "next": [
+            "active",
+            "cancelled",
+            "expired"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "expired",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "pending",
+          "next": [
+            "trial",
+            "active",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        }
+      ]
+    },
+    {
+      "domain": "subscriptions",
+      "initial": "active",
+      "name": "subscription_plan",
+      "rust_type": "PlanStatus",
+      "states": [
+        {
+          "name": "draft",
+          "next": [
+            "active",
+            "archived"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "active",
+          "next": [
+            "archived"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "archived",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "subscriptions",
+      "initial": "scheduled",
+      "name": "billing_cycle",
+      "rust_type": "BillingCycleStatus",
+      "states": [
+        {
+          "name": "scheduled",
+          "next": [
+            "processing",
+            "paid",
+            "failed",
+            "skipped",
+            "voided"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "processing",
+          "next": [
+            "scheduled",
+            "paid",
+            "failed",
+            "voided"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "paid",
+          "next": [
+            "refunded",
+            "voided"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "failed",
+          "next": [
+            "scheduled",
+            "processing",
+            "paid",
+            "skipped",
+            "voided"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "skipped",
+          "next": [
+            "voided"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "refunded",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "voided",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "purchase_orders",
+      "initial": "draft",
+      "name": "purchase_order",
+      "rust_type": "PurchaseOrderStatus",
+      "states": [
+        {
+          "name": "draft",
+          "next": [
+            "pending_approval",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "pending_approval",
+          "next": [
+            "approved",
+            "cancelled",
+            "on_hold"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "approved",
+          "next": [
+            "sent",
+            "cancelled",
+            "on_hold"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "sent",
+          "next": [
+            "acknowledged",
+            "partially_received",
+            "received",
+            "cancelled",
+            "on_hold"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "acknowledged",
+          "next": [
+            "partially_received",
+            "received",
+            "cancelled",
+            "on_hold"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "partially_received",
+          "next": [
+            "received",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "received",
+          "next": [
+            "completed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "on_hold",
+          "next": [
+            "pending_approval",
+            "approved",
+            "sent",
+            "acknowledged",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        }
+      ]
+    },
+    {
+      "domain": "manufacturing",
+      "initial": "planned",
+      "name": "work_order",
+      "rust_type": "WorkOrderStatus",
+      "states": [
+        {
+          "name": "planned",
+          "next": [
+            "in_progress",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "in_progress",
+          "next": [
+            "completed",
+            "partially_completed",
+            "cancelled",
+            "on_hold"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "partially_completed",
+          "next": [
+            "in_progress",
+            "completed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "on_hold",
+          "next": [
+            "in_progress",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        }
+      ]
+    },
+    {
+      "domain": "inventory",
+      "initial": "draft",
+      "name": "cycle_count",
+      "rust_type": "CycleCountStatus",
+      "states": [
+        {
+          "name": "draft",
+          "next": [
+            "in_progress",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "in_progress",
+          "next": [
+            "completed",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "lots",
+      "initial": "active",
+      "name": "lot",
+      "rust_type": "LotStatus",
+      "states": [
+        {
+          "name": "active",
+          "next": [
+            "quarantine",
+            "expired",
+            "consumed",
+            "on_hold",
+            "recalled",
+            "scrapped"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "quarantine",
+          "next": [
+            "active",
+            "recalled",
+            "scrapped"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "expired",
+          "next": [
+            "recalled",
+            "scrapped"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "consumed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "on_hold",
+          "next": [
+            "active",
+            "quarantine",
+            "expired",
+            "recalled",
+            "scrapped"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "recalled",
+          "next": [
+            "scrapped"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "scrapped",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "serials",
+      "initial": "available",
+      "name": "serial",
+      "rust_type": "SerialStatus",
+      "states": [
+        {
+          "name": "in_production",
+          "next": [
+            "available",
+            "quarantined",
+            "scrapped",
+            "lost"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "available",
+          "next": [
+            "reserved",
+            "shipped",
+            "sold",
+            "in_service",
+            "quarantined",
+            "scrapped",
+            "recalled",
+            "lost",
+            "transferred"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "reserved",
+          "next": [
+            "available",
+            "shipped",
+            "sold",
+            "quarantined",
+            "scrapped",
+            "recalled",
+            "lost"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "shipped",
+          "next": [
+            "sold",
+            "returned",
+            "in_service",
+            "in_warranty",
+            "recalled",
+            "lost",
+            "transferred"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "sold",
+          "next": [
+            "returned",
+            "in_service",
+            "in_warranty",
+            "recalled",
+            "lost",
+            "transferred"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "returned",
+          "next": [
+            "available",
+            "in_service",
+            "quarantined",
+            "scrapped",
+            "recalled",
+            "lost"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "in_service",
+          "next": [
+            "available",
+            "shipped",
+            "sold",
+            "quarantined",
+            "scrapped",
+            "lost"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "in_warranty",
+          "next": [
+            "shipped",
+            "sold",
+            "returned",
+            "in_service",
+            "scrapped",
+            "lost"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "quarantined",
+          "next": [
+            "available",
+            "in_service",
+            "scrapped",
+            "recalled",
+            "lost"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "scrapped",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "recalled",
+          "next": [
+            "available",
+            "returned",
+            "quarantined",
+            "scrapped",
+            "lost"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "lost",
+          "next": [
+            "available",
+            "scrapped"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "transferred",
+          "next": [
+            "returned",
+            "lost"
+          ],
+          "reentrant": false,
+          "terminal": false
+        }
+      ]
+    },
+    {
+      "domain": "fixed_assets",
+      "initial": "draft",
+      "name": "fixed_asset",
+      "rust_type": "FixedAssetStatus",
+      "states": [
+        {
+          "name": "draft",
+          "next": [
+            "in_service"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "in_service",
+          "next": [
+            "fully_depreciated",
+            "disposed",
+            "written_off"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "fully_depreciated",
+          "next": [
+            "disposed",
+            "written_off"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "disposed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "written_off",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "revenue_recognition",
+      "initial": "draft",
+      "name": "revenue_contract",
+      "rust_type": "RevenueContractStatus",
+      "states": [
+        {
+          "name": "draft",
+          "next": [
+            "active",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "active",
+          "next": [
+            "completed",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "revenue_recognition",
+      "initial": "deferred",
+      "name": "revenue_entry",
+      "rust_type": "RevenueEntryStatus",
+      "states": [
+        {
+          "name": "deferred",
+          "next": [
+            "recognized"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "recognized",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "a2a",
+      "initial": "pending",
+      "name": "a2a_payment",
+      "rust_type": "A2APaymentStatus",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "submitted",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "submitted",
+          "next": [
+            "completed",
+            "failed"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "completed",
+          "next": [
+            "refunded"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "failed",
+          "next": [
+            "pending"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "refunded",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "a2a",
+      "initial": "pending",
+      "name": "a2a_payment_request",
+      "rust_type": "PaymentRequestStatus",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "viewed",
+            "processing",
+            "declined",
+            "expired",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "viewed",
+          "next": [
+            "processing",
+            "declined",
+            "expired",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "processing",
+          "next": [
+            "paid",
+            "declined"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "paid",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "declined",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "expired",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "a2a",
+      "initial": "requested",
+      "name": "a2a_quote",
+      "rust_type": "A2AQuoteStatus",
+      "states": [
+        {
+          "name": "requested",
+          "next": [
+            "quoted",
+            "expired",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "quoted",
+          "next": [
+            "counter_offered",
+            "accepted",
+            "declined",
+            "expired",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "counter_offered",
+          "next": [
+            "quoted",
+            "accepted",
+            "declined",
+            "expired",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "accepted",
+          "next": [
+            "fulfilled",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "declined",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "expired",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "fulfilled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    }
+  ]
+}

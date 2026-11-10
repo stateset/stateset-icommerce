@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 1021,
+  "totalTools": 1022,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 1003
+      "count": 1004
     },
     {
       "name": "stateset-scaffold",
@@ -147,7 +147,7 @@
     },
     {
       "name": "explain",
-      "count": 2
+      "count": 3
     },
     {
       "name": "fixed_assets",
@@ -397,7 +397,7 @@
     },
     {
       "name": "read",
-      "count": 496
+      "count": 497
     },
     {
       "name": "write",
@@ -407,7 +407,7 @@
   "permissionCounts": {
     "admin": 102,
     "delete": 20,
-    "read": 496,
+    "read": 497,
     "write": 403
   },
   "tools": [
@@ -4711,6 +4711,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__explain_policy_denial",
       "policyDomain": "policies",
+      "permission": "read"
+    },
+    {
+      "name": "explain_state_machine",
+      "description": "Ask what a record can do next BEFORE trying to change its status. With no arguments, lists every status lifecycle the engine enforces (order, payment, refund, return, shipment, cart, subscription, purchase_order, ...). With `machine`, returns its full transition graph. With `machine` + `from`, the statuses reachable next. With `machine` + `from` + `to`, whether that move is allowed and, if not, the shortest route. Generated from the engine rules; read-only and touches no data. A status reached only by an operation (e.g. shipping an order) still needs that operation, not a plain status update.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__explain_state_machine",
+      "policyDomain": "explain",
       "permission": "read"
     },
     {

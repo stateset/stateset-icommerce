@@ -73,6 +73,10 @@ In other languages, IDs are represented as strings but validated by the engine.
 
 Every domain aggregate has an explicit state machine. Invalid transitions produce typed errors rather than silently corrupting state.
 
+> The diagrams below are simplified sketches. The authoritative graphs, generated from the
+> engine's transition rules, are in [State Machines (generated)](../appendix/state-machines.md);
+> agents can ask the `explain_state_machine` tool the same question.
+
 ### Order States
 ```
 Pending → Processing → Shipped → Delivered

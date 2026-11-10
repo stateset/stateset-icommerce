@@ -11,6 +11,8 @@
  *    promotions applied and refused (with reason codes), tax by jurisdiction,
  *    shipping, and a reconciliation of the explained total against the stored
  *    grand total.
+ *  - `explain_state_machine` (../state-machine-catalog.js) answers "what can this
+ *    record's status move to next?" from the engine's own transition rules.
  *
  * Nothing here writes: `tax.calculate` and `promotions.apply` evaluate without
  * persisting. Every section degrades on its own -- a domain that is missing or
@@ -29,6 +31,7 @@ import {
   roundDecimal,
   subtractDecimals,
 } from '../utils/exact-decimal.js';
+import { stateMachineTool } from '../state-machine-catalog.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -996,6 +999,7 @@ export const explainTools = [
     permission: 'read',
     handler: explainCartPricing,
   },
+  stateMachineTool,
 ];
 
 export default explainTools;

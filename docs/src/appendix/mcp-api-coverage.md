@@ -15,7 +15,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | Metric | Value |
 | --- | --- |
 | Domain tool modules | 89 |
-| Domain tools | 988 |
+| Domain tools | 989 |
 | Commerce getters | 68 |
 | Mapped getters | 68 |
 | Audited classes | 32 |
