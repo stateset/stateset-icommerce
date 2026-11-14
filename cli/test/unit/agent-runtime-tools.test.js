@@ -154,11 +154,22 @@ describe('Agent Runtime Tools — tool registration', () => {
       'agent_subscribe_to_service',
       'agent_rate_counterparty',
       'agent_create_split_deal',
+      // Scoring persists each response's score, status and rank.
+      'agent_collect_rfq_responses',
     ];
     for (const name of writeTools) {
       assert.strictEqual(getTool(name).permission, 'write', `${name} should be write`);
     }
     assert.strictEqual(getTool('agent_destroy_runtime').permission, 'delete');
+  });
+
+  it('agent_collect_rfq_responses requires --apply', async () => {
+    const result = await getTool('agent_collect_rfq_responses').handler({
+      params: { name: 'buyer', rfqId: 'rfq-1' },
+      allowApply: false,
+    });
+    assert.equal(result.success, false);
+    assert.match(result.error, /--apply/);
   });
 
   it('_getRuntimeRegistry returns a Map', () => {

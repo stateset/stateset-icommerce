@@ -15,7 +15,9 @@
  *
  * All three write operations are gated behind `--apply`: restore replaces a
  * database file, import mutates the store, and backup writes to the filesystem
- * outside the store.
+ * outside the store. `export_full_data` also writes a file; it is declared
+ * `admin`, so the dispatch-level gates hold it back, but its handler has no
+ * `--apply` check of its own.
  */
 
 import { z } from 'zod';
@@ -127,7 +129,10 @@ export const maintenanceTools = withPolicyDomain('maintenance', [
         .optional()
         .describe('Restrict the export to these domains (default: all)'),
     },
-    permission: 'read',
+    // Admin, not read: it writes every customer's records to a caller-chosen
+    // path. Bulk personal-data exports (export_gdpr_data, audit_export) are
+    // admin too.
+    permission: 'admin',
     handler: async ({ commerce, params }) => {
       const resolved = resolveMaintenance(commerce);
       if (!resolved.ok) {

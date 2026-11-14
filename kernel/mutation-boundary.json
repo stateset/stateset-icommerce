@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:a2b8949d925d43684f1d7af9fe7cbc0040e923fc4cf4e32a0cb18a0ccec2bd61",
+  "digest": "sha256:2de091f22e02a6f0b9f08c7d105745a48a2b34b41436e7b0b8a071fa2adbcd07",
   "counts": {
     "total": 966,
-    "readOnly": 478,
-    "mutations": 488,
+    "readOnly": 475,
+    "mutations": 491,
     "governed": 36,
-    "governedComposite": 1,
-    "blocked": 451
+    "governedComposite": 2,
+    "blocked": 453
   },
   "entries": [
     {
@@ -1125,9 +1125,9 @@
     },
     {
       "name": "agent_collect_rfq_responses",
-      "permission": "read",
-      "mutation": false,
-      "disposition": "read_only",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
       "commandType": null
     },
     {
@@ -1524,9 +1524,9 @@
     },
     {
       "name": "agentic_replay_mutation",
-      "permission": "read",
-      "mutation": false,
-      "disposition": "read_only",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed_composite",
       "commandType": null
     },
     {
@@ -3274,9 +3274,9 @@
     },
     {
       "name": "export_full_data",
-      "permission": "read",
-      "mutation": false,
-      "disposition": "read_only",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
       "commandType": null
     },
     {

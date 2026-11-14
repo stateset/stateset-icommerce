@@ -516,13 +516,13 @@ export const TOOL_PERMISSIONS = {
   agentic_prepare_payment: 'read',
   agentic_plan: 'read',
   agentic_simulate_mutation: 'read',
-  agentic_replay_mutation: 'read',
+  agentic_replay_mutation: 'write',
   agentic_replay: 'read',
   agentic_subscribe_events: 'read',
   agentic_unsubscribe_events: 'read',
   agentic_list_event_subscriptions: 'read',
   agentic_get_event_history: 'read',
-  agentic_execute_plan: 'read',
+  agentic_execute_plan: 'write',
 
   // Sync / VES
   sync_status: 'read',
@@ -712,7 +712,7 @@ export const TOOL_PERMISSIONS = {
   agent_enable_settlement: 'write',
   agent_get_chain_balance: 'read',
   agent_broadcast_rfq: 'write',
-  agent_collect_rfq_responses: 'read',
+  agent_collect_rfq_responses: 'write',
   agent_award_rfq: 'write',
   agent_get_marketplace_metrics: 'read',
   agent_attach_sla: 'write',
@@ -1027,7 +1027,7 @@ export const TOOL_PERMISSIONS = {
   // maintenance.js
   backup_database: 'write',
   restore_database: 'write',
-  export_full_data: 'read',
+  export_full_data: 'admin',
   import_full_data: 'write',
   list_portable_domains: 'read',
   // payment-obligations.js

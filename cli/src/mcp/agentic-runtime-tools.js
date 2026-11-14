@@ -211,7 +211,9 @@ export const AGENTIC_RUNTIME_TOOLS = [
         .describe('Include before/after hook execution during replay'),
       sessionId: z.string().optional().describe('Optional correlation session id'),
     },
-    permission: 'read',
+    // A write: with dryRun:false it re-executes the logged mutation, so it must
+    // not be declared read (kernel strict mode exposes read tools ungoverned).
+    permission: 'write',
     policyDomain: 'agentic',
     handler: async ({ params, replayMutationToolCall }) => {
       return replayMutationToolCall({

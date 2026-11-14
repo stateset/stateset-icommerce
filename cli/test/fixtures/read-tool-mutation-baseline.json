@@ -1,25 +1,17 @@
 {
-  "_why": "permission: 'read' MCP tools known to change persisted state (see test/integration/mcp-read-tools-do-not-mutate.test.js). This list only shrinks: fix a tool, then remove it here. kind 'write' changes data; kind 'init' only creates empty structure (a table or index, a database with no rows, a directory) on first use, and the test fails if an 'init' tool ever changes more than that.",
+  "_why": "permission: 'read' MCP tools known to change persisted state (see test/integration/mcp-read-tools-do-not-mutate.test.js). This list only shrinks: fix a tool, then remove it here. kind 'write' changes rows of the tables in its 'tables' list, and the test fails if it changes anything else or stops writing a listed table; kind 'init' only creates empty structure (a table or index, a database with no rows, a directory) on first use, and the test fails if an 'init' tool ever changes more than that.",
   "violations": [
-    {
-      "tool": "agentic_replay_mutation",
-      "kind": "write",
-      "reason": "With dryRun:false it re-executes the newest logged write (here create_payment_link -> a new payment_links row): a composite write declared read and not in KERNEL_GOVERNED_COMPOSITE_TOOLS."
-    },
     {
       "tool": "x402_credit_balance",
       "kind": "write",
+      "tables": ["x402_credit_accounts"],
       "reason": "getCreditBalance -> x402_credits().get_balance -> get_or_create_account inserts an x402_credit_accounts row for every payer/asset/network queried."
     },
     {
       "tool": "resolve_payment_link",
       "kind": "write",
+      "tables": ["payment_links"],
       "reason": "Every hit increments payment_links.views and bumps updated_at (src/checkout/express.js resolvePaymentLink)."
-    },
-    {
-      "tool": "export_full_data",
-      "kind": "write",
-      "reason": "Writes a JSON export of the whole store to the caller-supplied exportPath: an arbitrary filesystem write."
     },
     {
       "tool": "treasury_balance",

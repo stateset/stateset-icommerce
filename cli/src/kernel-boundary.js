@@ -9,7 +9,13 @@ export const KERNEL_BOUNDARY_SCHEMA_VERSION = 1;
 // closed unless it has a typed kernel command mapping. Keep this allow-list
 // deliberately small and explicit so an orchestration surface cannot masquerade
 // as a read merely to remain discoverable.
-export const KERNEL_GOVERNED_COMPOSITE_TOOLS = Object.freeze(['agentic_execute_plan']);
+//
+// agentic_replay_mutation re-executes one logged write through the same step
+// executor (src/mcp/mutation-simulator.js), and refuses admin and delete tools.
+export const KERNEL_GOVERNED_COMPOSITE_TOOLS = Object.freeze([
+  'agentic_execute_plan',
+  'agentic_replay_mutation',
+]);
 const KERNEL_GOVERNED_COMPOSITE_TOOL_SET = new Set(KERNEL_GOVERNED_COMPOSITE_TOOLS);
 
 /**
