@@ -2046,13 +2046,13 @@ describe('SequencerClient — verifyInclusion', () => {
 
     const leafA = makeLeafHash(envelope, 5);
     const siblingBuf = Buffer.alloc(32, 0xcc);
-    // leafIndex=4 → bit0=0 → sibling right → root = node(leafA, sibling)
+    // leafIndex=0 → bit0=0 → sibling right → root = node(leafA, sibling)
     const root = computeNodeHash(leafA, siblingBuf).toString('hex');
 
     assert.strictEqual(
       client.verifyInclusion(
         envelope,
-        { merkleRoot: root, leafIndex: 4, proofHashes: [siblingBuf.toString('hex')], leafCount: 2 },
+        { merkleRoot: root, leafIndex: 0, proofHashes: [siblingBuf.toString('hex')], leafCount: 2 },
         root,
       ),
       true,
@@ -2062,7 +2062,7 @@ describe('SequencerClient — verifyInclusion', () => {
     assert.strictEqual(
       client.verifyInclusion(
         envelope,
-        { merkleRoot: root, leafIndex: 4, proofHashes: [siblingBuf.toString('hex')], leafCount: 2 },
+        { merkleRoot: root, leafIndex: 0, proofHashes: [siblingBuf.toString('hex')], leafCount: 2 },
         'dead'.padEnd(64, 'beef'),
       ),
       false,
@@ -2070,8 +2070,8 @@ describe('SequencerClient — verifyInclusion', () => {
   });
 
   it('returns true for zero-sibling proof using envelope.sequenceNumber over proof.leafIndex', () => {
-    // verifyInclusion uses envelope.sequenceNumber when present, falling back to
-    // proof.leafIndex only when the field is absent.
+    // The leaf binds the sequence number, which verifyInclusion takes from the
+    // envelope (or the caller) and never from proof.leafIndex.
     const client = new SequencerClient(makeConfig());
 
     // Attach sequenceNumber directly on the envelope (as a SequencedEvent caller would)
@@ -2080,10 +2080,10 @@ describe('SequencerClient — verifyInclusion', () => {
     // Build root using sequence 42
     const root = makeLeafHash(envelope, 42).toString('hex');
 
-    // Pass a different leafIndex — it must be ignored because envelope.sequenceNumber wins
+    // The leafIndex (a position in the batch) differs from the sequence number
     const result = client.verifyInclusion(
       envelope,
-      { merkleRoot: root, leafIndex: 99, proofHashes: [], leafCount: 1 },
+      { merkleRoot: root, leafIndex: 0, proofHashes: [], leafCount: 1 },
       root,
     );
     assert.strictEqual(result, true);
@@ -2113,7 +2113,7 @@ describe('SequencerClient — verifyInclusion', () => {
     assert.strictEqual(
       client.verifyInclusion(
         encryptedEnvelope,
-        { merkleRoot: encryptedRoot, leafIndex: 7, proofHashes: [], leafCount: 1 },
+        { merkleRoot: encryptedRoot, leafIndex: 0, proofHashes: [], leafCount: 1 },
         encryptedRoot,
       ),
       true,
@@ -2121,7 +2121,7 @@ describe('SequencerClient — verifyInclusion', () => {
     assert.strictEqual(
       client.verifyInclusion(
         plaintextEnvelope,
-        { merkleRoot: plaintextRoot, leafIndex: 7, proofHashes: [], leafCount: 1 },
+        { merkleRoot: plaintextRoot, leafIndex: 0, proofHashes: [], leafCount: 1 },
         plaintextRoot,
       ),
       true,
@@ -2131,7 +2131,7 @@ describe('SequencerClient — verifyInclusion', () => {
     assert.strictEqual(
       client.verifyInclusion(
         plaintextEnvelope,
-        { merkleRoot: encryptedRoot, leafIndex: 7, proofHashes: [], leafCount: 1 },
+        { merkleRoot: encryptedRoot, leafIndex: 0, proofHashes: [], leafCount: 1 },
         encryptedRoot,
       ),
       false,
@@ -2139,7 +2139,7 @@ describe('SequencerClient — verifyInclusion', () => {
     assert.strictEqual(
       client.verifyInclusion(
         encryptedEnvelope,
-        { merkleRoot: plaintextRoot, leafIndex: 7, proofHashes: [], leafCount: 1 },
+        { merkleRoot: plaintextRoot, leafIndex: 0, proofHashes: [], leafCount: 1 },
         plaintextRoot,
       ),
       false,

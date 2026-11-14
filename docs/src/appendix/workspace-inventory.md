@@ -95,10 +95,10 @@ workspace membership because they require host runtimes or headers.
 | `a2a` | 62 |
 | `mcp` | 35 |
 | `channels` | 29 |
-| `sync` | 26 |
+| `sync` | 29 |
 | `adapters` | 20 |
 | `simulation` | 20 |
-| `utils` | 16 |
+| `utils` | 17 |
 | `harness` | 14 |
 | `chains` | 10 |
 | `x402` | 10 |

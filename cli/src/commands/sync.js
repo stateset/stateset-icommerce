@@ -9,6 +9,7 @@ import { createSequencerClient } from '../sync/client.js';
 import { getPayloadWrapScheme, assertEventMatchesSecurityProfile } from '../sync/pqc.js';
 import { resolveReceiveScope, matchesReceiveScope } from '../sync/receive-scope.js';
 import { readSyncStatus } from '../sync/status.js';
+import { takeOption } from '../utils/cli-options.js';
 
 function parseJsonArg(value, label) {
   try {
@@ -515,34 +516,37 @@ export async function execute(action, args, context) {
     }
 
     case 'verify-inclusion': {
-      const [envelopeJson, proofJson, expectedRoot] = args;
+      const usage =
+        'Usage: sync verify-inclusion <envelopeJson> <proofJson> <expectedRoot> [--leaf-count <n>]';
+      // --leaf-count is the batch size as the caller knows it, independently
+      // of the proof. Only it binds the path (pathBound); a leafCount inside
+      // proofJson is the proof's own claim and is applied as a sanity bound.
+      const { value: leafCountArg, rest } = takeOption(args, '--leaf-count', usage);
+      const [envelopeJson, proofJson, expectedRoot] = rest;
       if (!envelopeJson || !proofJson || !expectedRoot) {
-        throw new Error('Usage: sync verify-inclusion <envelopeJson> <proofJson> <expectedRoot>');
+        throw new Error(usage);
       }
-      const { computeNodeHash, hexToBuffer } = await import('../sync/crypto.js');
-      const crypto = await import('node:crypto');
-      const envelope = parseJsonArg(envelopeJson, 'envelope');
-      const proof = parseJsonArg(proofJson, 'proof');
-      const leafHash = crypto
-        .createHash('sha256')
-        .update(hexToBuffer(envelope.payloadPlainHash))
-        .update(hexToBuffer(envelope.agentSignature))
-        .digest();
-      let currentHash = leafHash;
-      let index = proof.leafIndex;
-      for (const siblingHex of proof.proofHashes) {
-        const sibling = hexToBuffer(siblingHex);
-        currentHash =
-          index % 2 === 0
-            ? computeNodeHash(currentHash, sibling)
-            : computeNodeHash(sibling, currentHash);
-        index = Math.floor(index / 2);
+      const { merklePathDepth, parseTreeInteger } = await import('../sync/merkle-shape.js');
+      if (leafCountArg !== undefined && merklePathDepth(leafCountArg) === null) {
+        throw new Error(`${usage}\n--leaf-count must be an integer from 1 to 4294967295`);
       }
-      const valid = currentHash.equals(hexToBuffer(expectedRoot));
-      const result = { valid, eventId: envelope.eventId, expectedRoot };
+      const { verifyInlineInclusion } = await import('../sync/inline-inclusion.js');
+      const result = verifyInlineInclusion({
+        envelope: parseJsonArg(envelopeJson, 'envelope'),
+        proof: parseJsonArg(proofJson, 'proof'),
+        expectedRoot,
+        leafCount: leafCountArg === undefined ? undefined : parseTreeInteger(leafCountArg),
+      });
+      // Same wording as `proofs verify-proof`: an unbound "valid" says so.
+      const unbound = result.valid && !result.pathBound;
       return jsonOutput
         ? result
-        : { result, formatted: `Inclusion proof: ${valid ? 'valid' : 'invalid'}` };
+        : {
+            result,
+            formatted:
+              `Inclusion proof: ${result.valid ? 'valid' : 'invalid'}` +
+              (unbound ? ' (path not bound to a tree size; pass --leaf-count <n> to bind it)' : ''),
+          };
     }
 
     case 'commitment': {
@@ -731,7 +735,7 @@ export async function execute(action, args, context) {
           '  resolve <conflictId> [strategy]                      Resolve conflict\n' +
           '  rebase [strategy]                                    Rebase all conflicts\n' +
           '  verify-receipt <envelopeJson> [publicKeyHex] [publicKeyBundleJson]  Verify receipt\n' +
-          '  verify-inclusion <envelopeJson> <proofJson> <expectedRoot>  Verify inclusion proof\n' +
+          '  verify-inclusion <envelopeJson> <proofJson> <expectedRoot> [--leaf-count <n>]  Verify inclusion proof\n' +
           '  commitment <batchId>                                 Inspect batch commitment\n' +
           '  key-generate <agentId> <keyType> [securityProfile]   Generate agent key\n' +
           '  key-list <agentId> [keyType] [securityProfile]       List agent keys\n' +
@@ -974,7 +978,7 @@ export const metadata = {
     },
     'verify-inclusion': {
       description: 'Verify inclusion proof',
-      args: ['<envelopeJson>', '<proofJson>', '<expectedRoot>'],
+      args: ['<envelopeJson>', '<proofJson>', '<expectedRoot>', '[--leaf-count <n>]'],
     },
     commitment: { description: 'Inspect batch commitment', args: ['<batchId>'] },
     'key-generate': {
