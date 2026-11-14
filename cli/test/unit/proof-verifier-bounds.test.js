@@ -284,6 +284,21 @@ describe('proof generator: canonical path shape', () => {
     assert.equal(pg.verifyMerkleProof(a, [{ hash: hex(b) }], root), false);
   });
 
+  it('rejects a leaf or root that is not exactly a 32-byte hash', () => {
+    const [a, b] = [1, 2].map((n) => Buffer.alloc(32, n));
+    const root = computeNodeHash(b, a);
+    const proof = [{ position: 'left', hash: hex(b) }];
+    assert.equal(pg.verifyMerkleProof(hex(a), proof, hex(root)), true);
+    assert.equal(pg.verifyMerkleProof(`0x${hex(a)}`, proof, `0x${hex(root)}`), true);
+    // Buffer.from(hex) stops at the first non-hex pair; these used to verify.
+    assert.equal(pg.verifyMerkleProof(`${hex(a)}zz`, proof, hex(root)), false);
+    assert.equal(pg.verifyMerkleProof(hex(a), proof, `${hex(root)}zz`), false);
+    assert.equal(pg.verifyMerkleProof(hex(a).slice(0, 62), proof, hex(root)), false);
+    assert.equal(pg.verifyMerkleProof(Buffer.alloc(31, 1), proof, root), false);
+    assert.equal(pg.verifyMerkleProof(null, proof, root), false);
+    assert.equal(pg.verifyMerkleProof(a, proof, 'not-hex'), false);
+  });
+
   it('rejects a path deeper than any tree can be, even with no tree size', () => {
     let node = Buffer.alloc(32, 1);
     const leaf = node;

@@ -329,7 +329,12 @@ export function createProofGenerator(cryptoModule) {
       return false;
     }
 
-    let current = Buffer.isBuffer(leafHash) ? leafHash : Buffer.from(leafHash, 'hex');
+    // The leaf and root are held to the same 32-byte rule as the siblings.
+    // Buffer.from(s, 'hex') stops at the first non-hex pair, so "<hash>zz"
+    // used to verify as "<hash>" and a non-hex root decoded to a short buffer.
+    let current = decodeHash32(leafHash);
+    const root = decodeHash32(expectedRoot);
+    if (current === null || root === null) return false;
 
     for (const [i, step] of proof.entries()) {
       if (step.position === 'right') {
@@ -339,7 +344,6 @@ export function createProofGenerator(cryptoModule) {
       }
     }
 
-    const root = Buffer.isBuffer(expectedRoot) ? expectedRoot : Buffer.from(expectedRoot, 'hex');
     return current.equals(root);
   }
 
