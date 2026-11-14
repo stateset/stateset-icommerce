@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:dcaae380cdbafd3b05012cfae1226f1e09c4266643a2d5b55d7ccc1a6b41d6ae",
+  "digest": "sha256:48c7d0387d6d8645f06bb459bc5ca8dcda5ae3bf725933161eee946a2da6a187",
   "counts": {
     "total": 966,
     "readOnly": 476,
     "mutations": 490,
     "governed": 36,
-    "governedComposite": 1,
-    "blocked": 453
+    "governedComposite": 2,
+    "blocked": 452
   },
   "entries": [
     {
@@ -1526,7 +1526,7 @@
       "name": "agentic_replay_mutation",
       "permission": "write",
       "mutation": true,
-      "disposition": "blocked",
+      "disposition": "governed_composite",
       "commandType": null
     },
     {

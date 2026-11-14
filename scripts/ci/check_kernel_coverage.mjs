@@ -162,11 +162,11 @@ if (
 ) {
   errors.push('one or more mutations are neither governed nor blocked');
 }
-const planComposite = derivedBoundary.entries.find(
-  (entry) => entry.name === 'agentic_execute_plan',
-);
-if (planComposite?.permission !== 'write' || planComposite?.disposition !== 'governed_composite') {
-  errors.push('agentic_execute_plan must be an explicit governed composite mutation');
+for (const compositeName of ['agentic_execute_plan', 'agentic_replay_mutation']) {
+  const composite = derivedBoundary.entries.find((entry) => entry.name === compositeName);
+  if (composite?.permission !== 'write' || composite?.disposition !== 'governed_composite') {
+    errors.push(`${compositeName} must be an explicit governed composite mutation`);
+  }
 }
 
 if (manifest.schemaVersion !== 1) errors.push('unsupported schemaVersion');

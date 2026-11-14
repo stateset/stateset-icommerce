@@ -56,12 +56,18 @@ describe('kernel mutation boundary', () => {
     assert.equal(exposedNames.has('backup_database'), false);
     assert.equal(exposedNames.has('set_exchange_rate'), false);
     assert.equal(exposedNames.has('create_payment'), true);
-    assert.equal(exposedNames.has('agentic_execute_plan'), true);
-    const composite = classifyKernelToolBoundary(ALL_TOOLS).entries.find(
-      (entry) => entry.name === 'agentic_execute_plan',
+    const entries = classifyKernelToolBoundary(ALL_TOOLS).entries;
+    for (const name of ['agentic_execute_plan', 'agentic_replay_mutation']) {
+      assert.equal(exposedNames.has(name), true, name);
+      const composite = entries.find((entry) => entry.name === name);
+      assert.equal(composite.permission, 'write', name);
+      assert.equal(composite.disposition, 'governed_composite', name);
+    }
+    assert.deepEqual(
+      [...KERNEL_GOVERNED_COMPOSITE_TOOLS].sort(),
+      ['agentic_execute_plan', 'agentic_replay_mutation'],
+      'the governed composite allow-list stays small and explicit',
     );
-    assert.equal(composite.permission, 'write');
-    assert.equal(composite.disposition, 'governed_composite');
   });
 
   it('treats missing and future permission classes as mutations', () => {
