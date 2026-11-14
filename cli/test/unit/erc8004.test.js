@@ -7,6 +7,7 @@
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -230,3 +231,204 @@ describe('listIdentities', () => {
     assert.equal(byWallet.agent_id, 'agent-001');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Process isolation: a file path is usually the native engine's live store, so
+// SQLite must never open it in the calling process (see src/erc8004/index.js).
+// ---------------------------------------------------------------------------
+
+describe('process isolation', () => {
+  beforeEach(setup);
+  afterEach(cleanup);
+
+  it('never loads better-sqlite3 or opens the store file in the calling process', () => {
+    const moduleUrl = new URL('../../src/erc8004/index.js', import.meta.url).href;
+    const script = `
+      import fs from 'node:fs';
+      import { createRequire } from 'node:module';
+      const opened = [];
+      for (const name of ['openSync', 'closeSync', 'writeFileSync', 'renameSync']) {
+        const original = fs[name];
+        fs[name] = (...args) => { opened.push(String(args[0])); return original(...args); };
+      }
+      const erc8004 = await import(${JSON.stringify(moduleUrl)});
+      const dbPath = process.argv[1];
+      erc8004.registerIdentity(dbPath, { agentRegistry: 'r', agentId: 'a', agentUri: 'u' });
+      erc8004.setAgentWallet(dbPath, { agentRegistry: 'r', agentId: 'a', agentWallet: '0xw' });
+      erc8004.getIdentity(dbPath, 'r', 'a');
+      erc8004.getIdentityByWallet(dbPath, '0xw');
+      const rows = erc8004.listIdentities(dbPath);
+      const loaded = Object.keys(createRequire(import.meta.url).cache)
+        .filter((key) => key.includes('better-sqlite3'));
+      process.stdout.write(JSON.stringify({ rows: rows.length, loaded, opened }));
+    `;
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', script, dbPath], {
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    assert.equal(child.status, 0, child.stderr);
+    const report = JSON.parse(child.stdout);
+    assert.equal(report.rows, 1);
+    assert.deepEqual(report.loaded, []);
+    assert.deepEqual(
+      report.opened.filter((file) => file.startsWith(dbPath)),
+      [],
+    );
+    assert.ok(fs.existsSync(dbPath), 'the worker created the store');
+  });
+
+  it('keeps :memory: in-process, where an injected constructor is still honoured', () => {
+    const constructed = [];
+    function FakeDatabase(file) {
+      constructed.push(file);
+      return {
+        pragma() {},
+        exec() {},
+        prepare: () => ({ get: () => undefined }),
+        close() {},
+      };
+    }
+    assert.equal(getIdentity(':memory:', 'r', 'a', { databaseCtor: FakeDatabase }), null);
+    assert.deepEqual(constructed, [':memory:']);
+  });
+
+  it('refuses an injected constructor for a file path instead of opening it here', () => {
+    assert.throws(
+      () => getIdentity(dbPath, 'r', 'a', { databaseCtor: function Database() {} }),
+      /databaseCtor must be null or undefined for a file-backed ERC-8004 store/,
+    );
+    assert.equal(fs.existsSync(dbPath), false);
+  });
+
+  it('rethrows store errors with their message, name and code', () => {
+    assert.throws(
+      () =>
+        setAgentWallet(dbPath, {
+          agentRegistry: 'stateset',
+          agentId: 'nonexistent',
+          agentWallet: '0x123',
+        }),
+      (error) =>
+        error.constructor === Error &&
+        error.message === 'Agent identity not found for stateset:nonexistent',
+    );
+    assert.throws(() => registerIdentity(dbPath, { agentRegistry: 'r', agentId: 'a' }), {
+      name: 'SqliteError',
+      code: 'SQLITE_CONSTRAINT_NOTNULL',
+      message: 'NOT NULL constraint failed: agent_identities.agent_uri',
+    });
+  });
+
+  it('hands argument values to better-sqlite3 unchanged', () => {
+    // A Date is not bindable; JSON would have turned it into a string.
+    assert.throws(() => registerIdentity(dbPath, baseInput({ walletProofDeadline: new Date(0) })), {
+      name: 'TypeError',
+      message: /can only bind numbers, strings, bigints, buffers, and null/,
+    });
+    const stored = registerIdentity(dbPath, baseInput({ walletProofChainId: 8453n }));
+    assert.equal(stored.wallet_proof_chain_id, 8453);
+  });
+
+  it('surfaces the JSON-fallback warning in the calling process', (t) => {
+    const warn = t.mock.method(console, 'warn', () => {});
+    registerIdentity(dbPath, baseInput(), { databaseCtor: null });
+    assert.equal(warn.mock.callCount(), 1);
+    assert.match(
+      String(warn.mock.calls[0].arguments[0]),
+      /^\[erc8004\] better-sqlite3 unavailable; using durable JSON fallback at .*identities\.db\.fallback\.json$/,
+    );
+  });
+
+  it('reads the worker reply correctly even when a NODE_OPTIONS preload writes to stdout', (t) => {
+    withPreload(t, 'process.stdout.write("preload noise\\n"); console.log("more noise");');
+    const registered = registerIdentity(dbPath, baseInput({ agentWallet: '0xabc' }));
+    assert.equal(registered.agent_id, 'agent-001');
+    assert.equal(registered.agent_wallet, '0xabc');
+    const fetched = getIdentity(dbPath, 'stateset', 'agent-001');
+    assert.equal(fetched.id, registered.id);
+    assert.equal(fetched.agent_wallet, '0xabc');
+  });
+
+  it('shows worker stderr only when the call fails', (t) => {
+    withPreload(t, 'process.stderr.write("preload stderr noise\\n");');
+    const savedDebug = process.env.DEBUG;
+    delete process.env.DEBUG;
+    t.after(() => {
+      if (savedDebug !== undefined) process.env.DEBUG = savedDebug;
+    });
+    const warn = t.mock.method(console, 'warn', () => {});
+
+    registerIdentity(dbPath, baseInput());
+    assert.ok(getIdentity(dbPath, 'stateset', 'agent-001'));
+    assert.equal(warn.mock.callCount(), 0);
+
+    assert.throws(
+      () => setAgentWallet(dbPath, baseInput({ agentId: 'nonexistent', agentWallet: '0x1' })),
+      /Agent identity not found/,
+    );
+    assert.equal(warn.mock.callCount(), 1);
+    assert.match(String(warn.mock.calls[0].arguments[0]), /preload stderr noise/);
+  });
+
+  it('names an unreadable reply as the cause and keeps writes outcome-unknown', (t) => {
+    // Garbage ahead of the reply on its pipe; the worker still exits 0.
+    withPreload(t, 'require("node:fs").writeSync(3, "not a v8 reply");');
+    assert.throws(
+      () => registerIdentity(dbPath, baseInput()),
+      (error) =>
+        error.code === 'ERC8004_OUTCOME_UNKNOWN' &&
+        /may or may not have been applied/.test(error.message) &&
+        /exited cleanly but its reply was unreadable/.test(error.cause?.message) &&
+        error.cause.cause instanceof Error,
+    );
+    assert.throws(
+      () => getIdentity(dbPath, 'stateset', 'agent-001'),
+      (error) => error.code === 'ERC8004_WORKER_FAILED',
+    );
+  });
+
+  for (const memoryPath of [
+    'file::memory:',
+    'file::memory:?cache=shared',
+    'file:ids.db?mode=memory',
+  ]) {
+    it(`keeps ${memoryPath} in-process without creating a file`, (t) => {
+      const cwd = process.cwd();
+      process.chdir(tmpDir);
+      t.after(() => process.chdir(cwd));
+
+      const constructed = [];
+      function FakeDatabase(file) {
+        constructed.push(file);
+        return {
+          pragma() {},
+          exec() {},
+          prepare: () => ({ get: () => undefined }),
+          close() {},
+        };
+      }
+      assert.equal(getIdentity(memoryPath, 'r', 'a', { databaseCtor: FakeDatabase }), null);
+      assert.deepEqual(constructed, [':memory:']);
+
+      const registered = registerIdentity(memoryPath, baseInput());
+      assert.equal(registered.agent_id, 'agent-001');
+      registerIdentity(memoryPath, baseInput(), { databaseCtor: null });
+      assert.deepEqual(fs.readdirSync(tmpDir), []);
+    });
+  }
+});
+
+/**
+ * Run each worker for the rest of this test with a NODE_OPTIONS preload whose
+ * body is `source`.
+ */
+function withPreload(t, source) {
+  const preload = path.join(tmpDir, 'preload.cjs');
+  fs.writeFileSync(preload, source);
+  const saved = process.env.NODE_OPTIONS;
+  process.env.NODE_OPTIONS = `${saved ? `${saved} ` : ''}--require ${JSON.stringify(preload)}`;
+  t.after(() => {
+    if (saved === undefined) delete process.env.NODE_OPTIONS;
+    else process.env.NODE_OPTIONS = saved;
+  });
+}
