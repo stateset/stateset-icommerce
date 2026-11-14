@@ -712,7 +712,7 @@ export const TOOL_PERMISSIONS = {
   agent_enable_settlement: 'write',
   agent_get_chain_balance: 'read',
   agent_broadcast_rfq: 'write',
-  agent_collect_rfq_responses: 'read',
+  agent_collect_rfq_responses: 'write',
   agent_award_rfq: 'write',
   agent_get_marketplace_metrics: 'read',
   agent_attach_sla: 'write',

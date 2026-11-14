@@ -16,8 +16,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | Total tools | 984 |
 | MCP servers | 3 |
 | Policy domains | 91 |
-| Read tools | 485 |
-| Write tools | 430 |
+| Read tools | 484 |
+| Write tools | 431 |
 | Delete tools | 21 |
 | Admin tools | 48 |
 | Unknown permission | 0 |
@@ -132,8 +132,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | --- | --- |
 | admin | 48 |
 | delete | 21 |
-| read | 485 |
-| write | 430 |
+| read | 484 |
+| write | 431 |
 
 ## Tool Registry
 
@@ -298,7 +298,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `agent_award_rfq` | `stateset-commerce` | `agent_runtime` | `write` |
 | `agent_broadcast_rfq` | `stateset-commerce` | `agent_runtime` | `write` |
 | `agent_check_sla_compliance` | `stateset-commerce` | `agent_runtime` | `read` |
-| `agent_collect_rfq_responses` | `stateset-commerce` | `agent_runtime` | `read` |
+| `agent_collect_rfq_responses` | `stateset-commerce` | `agent_runtime` | `write` |
 | `agent_create_escrow_deal` | `stateset-commerce` | `agent_runtime` | `write` |
 | `agent_create_runtime` | `stateset-commerce` | `agent_runtime` | `write` |
 | `agent_create_split_deal` | `stateset-commerce` | `agent_runtime` | `write` |

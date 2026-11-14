@@ -620,7 +620,7 @@ Tier: **experimental** — autonomous agent loops over wallets, escrow and on-ch
 | `agent_enable_settlement` | experimental | write | Enable on-chain payment settlement for an agent runtime. The agent will settle payments on the specified blockchain using derived wallets. |
 | `agent_get_chain_balance` | experimental | read | Get the on-chain payment-token balance for an agent runtime with settlement enabled. |
 | `agent_broadcast_rfq` | experimental | write | Broadcast a Request for Quotation (RFQ) to multiple sellers in the marketplace. Sellers matching the filter will receive quote requests. |
-| `agent_collect_rfq_responses` | experimental | read | Collect and score all responses for an RFQ broadcast. |
+| `agent_collect_rfq_responses` | experimental | write | Collect and score all responses for an RFQ broadcast. |
 | `agent_award_rfq` | experimental | write | Award an RFQ to the best-scored (or specified) seller. Accepts the winner's quote and declines all others. |
 | `agent_get_marketplace_metrics` | experimental | read | Get marketplace performance metrics for a registered service (success rate, response time, etc.). |
 | `agent_attach_sla` | experimental | write | Attach a Service Level Agreement to a registered service. Defines performance thresholds and penalties. |

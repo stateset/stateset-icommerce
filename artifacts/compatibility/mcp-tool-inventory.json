@@ -397,18 +397,18 @@
     },
     {
       "name": "read",
-      "count": 485
+      "count": 484
     },
     {
       "name": "write",
-      "count": 430
+      "count": 431
     }
   ],
   "permissionCounts": {
     "admin": 48,
     "delete": 21,
-    "read": 485,
-    "write": 430
+    "read": 484,
+    "write": 431
   },
   "tools": [
     {
@@ -1849,7 +1849,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__agent_collect_rfq_responses",
       "policyDomain": "agent_runtime",
-      "permission": "read"
+      "permission": "write"
     },
     {
       "name": "agent_create_escrow_deal",

@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:48c7d0387d6d8645f06bb459bc5ca8dcda5ae3bf725933161eee946a2da6a187",
+  "digest": "sha256:2de091f22e02a6f0b9f08c7d105745a48a2b34b41436e7b0b8a071fa2adbcd07",
   "counts": {
     "total": 966,
-    "readOnly": 476,
-    "mutations": 490,
+    "readOnly": 475,
+    "mutations": 491,
     "governed": 36,
     "governedComposite": 2,
-    "blocked": 452
+    "blocked": 453
   },
   "entries": [
     {
@@ -1125,9 +1125,9 @@
     },
     {
       "name": "agent_collect_rfq_responses",
-      "permission": "read",
-      "mutation": false,
-      "disposition": "read_only",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
       "commandType": null
     },
     {
