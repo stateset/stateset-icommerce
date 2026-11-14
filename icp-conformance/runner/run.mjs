@@ -6,7 +6,9 @@
 //
 // Usage:
 //   node runner/run.mjs [--profile <name>] [--iut <name>] [--vector <name>]
-//                       [--registry <path>] [--fail-on-skip] [--verbose]
+//                       [--registry <path>] [--report <path>]
+//                       [--fail-on-skip] [--verbose]
+//   node runner/run.mjs --version
 //
 // Defaults:
 //   --profile icp-1.0-core
@@ -19,12 +21,17 @@
 // registry.json while implementing none of it. CI runs every IUT with this
 // flag: claiming a profile and passing it are then the same statement.
 //
+// --report <path> additionally writes a machine-readable JSON conformance
+// report (format: CONFORMANCE-REPORT.md). It changes neither stdout nor the
+// exit code. --version prints the suite version (package.json) and exits 0.
+//
 // Exit codes:
 //   0 — all selected tests pass
 //   1 — at least one test failed (or was skipped, under --fail-on-skip)
-//   2 — runner error (vector not found, adapter not found, etc.)
+//   2 — runner error (unknown IUT or profile, unreadable registry, report
+//       could not be written, etc.)
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +41,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 
 const args = parseArgs(process.argv.slice(2));
+
+// Answered before anything else is loaded, so it works even when the registry
+// or profile named on the same command line is unreadable.
+if ('version' in args) {
+  console.log(loadJson(join(ROOT, 'package.json')).version);
+  process.exit(0);
+}
+
 const profileName = args.profile ?? 'icp-1.0-core';
 const iutName = args.iut ?? 'reference-demo';
 const onlyVector = args.vector ?? null;
@@ -47,6 +62,12 @@ const failOnSkip =
 const registryPath = args.registry
   ? resolve(process.cwd(), String(args.registry))
   : join(ROOT, 'iut-adapters', 'registry.json');
+// A bare `--report` parses to `true`. Refuse it up front rather than run the
+// whole profile and leave the caller without the report they asked for.
+if ('report' in args && (typeof args.report !== 'string' || args.report === '')) {
+  fatal('--report requires a file path (e.g. --report results/report.json)');
+}
+const reportPath = 'report' in args ? resolve(process.cwd(), args.report) : null;
 
 const profile = loadJson(join(ROOT, 'profiles', `${profileName}.json`));
 const registry = loadJson(registryPath);
@@ -68,10 +89,12 @@ console.log('');
 let passCount = 0;
 let failCount = 0;
 let skipCount = 0;
+const reportVectors = [];
 
 for (const vectorName of vectors) {
   const result = runVector(vectorName, iut);
   printResult(vectorName, result);
+  reportVectors.push(reportEntry(vectorName, result));
   if (result.kind === 'pass') passCount++;
   else if (result.kind === 'skip') skipCount++;
   else failCount++;
@@ -79,6 +102,9 @@ for (const vectorName of vectors) {
 
 console.log('');
 console.log(`Result: ${passCount} PASS, ${failCount} FAIL, ${skipCount} SKIP (of ${vectors.length} total)`);
+
+const exitCode = failCount > 0 || (skipCount > 0 && failOnSkip) ? 1 : 0;
+if (reportPath) writeReport(reportPath, exitCode);
 
 if (skipCount > 0 && failOnSkip) {
   console.log('');
@@ -90,7 +116,7 @@ if (skipCount > 0 && failOnSkip) {
   process.exit(1);
 }
 
-process.exit(failCount > 0 ? 1 : 0);
+process.exit(exitCode);
 
 // ===========================================================================
 // Vector execution
@@ -207,6 +233,55 @@ function printResult(vectorName, result) {
     }
     if (result.stderr) console.log(`           stderr: ${truncate(result.stderr, 200)}`);
     if (result.stdout) console.log(`           stdout: ${truncate(result.stdout, 200)}`);
+  }
+}
+
+// One per-vector entry of the --report document. Unlike the console output,
+// nothing here is truncated: a report is for a machine (or a reviewer) that
+// needs the whole divergence.
+function reportEntry(vectorName, result) {
+  if (result.kind === 'pass') {
+    return { name: vectorName, result: 'pass', checks_passed: result.checks.length };
+  }
+  if (result.kind === 'skip') {
+    return { name: vectorName, result: 'skip', reason: result.reason };
+  }
+  const entry = { name: vectorName, result: 'fail', reason: result.reason };
+  if (result.checks) entry.failures = result.checks;
+  if (result.stderr) entry.stderr = result.stderr;
+  if (result.stdout) entry.stdout = result.stdout;
+  return entry;
+}
+
+function writeReport(path, exitCode) {
+  const pkg = loadJson(join(ROOT, 'package.json'));
+  const report = {
+    report_format: 'icp-conformance-report/1',
+    suite: { name: pkg.name, version: pkg.version },
+    spec_version: profile.spec_version,
+    profile: profileName,
+    // False when --vector narrowed the run: such a report says nothing about
+    // the profile as a whole.
+    complete_profile: onlyVector === null,
+    // The implementation identifier exactly as given: the --iut name plus the
+    // registry entry's self-description. The runner does not verify any of it.
+    iut: {
+      name: iutName,
+      implementation: iut.implementation ?? null,
+      language: iut.language ?? null,
+      version: iut.version ?? null,
+    },
+    timestamp: new Date().toISOString(),
+    fail_on_skip: failOnSkip,
+    vectors: reportVectors,
+    totals: { pass: passCount, fail: failCount, skip: skipCount, total: vectors.length },
+    exit_code: exitCode,
+  };
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(report, null, 2)}\n`);
+  } catch (err) {
+    fatal(`could not write report ${path}: ${err.message}`);
   }
 }
 
