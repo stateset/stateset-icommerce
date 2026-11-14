@@ -34,7 +34,11 @@
  * twice: the record above, then the ordinary wrapper event for the tool call,
  * whose tool result carries the record's `requestId`
  * (`result.structuredContent.result.requestId`, or `result.requestId` on the
- * toolkit path). The report counts such a call once.
+ * toolkit path). The report counts such a call once, in the wrapper's
+ * session: the record and a plan's steps take their `sessionId` only from the
+ * tool's `sessionId` parameter, defaulting to their own `requestId`, so a
+ * session given through the MCP request or the `executeTool` options reaches
+ * only the wrapper.
  *
  * Kernel decisions:
  *   - A governed call's tool result carries the kernel receipt (`status`,
@@ -81,8 +85,10 @@ const COMPOSITE_TOOLS = new Set([
   'agentic_replay_mutation',
 ]);
 
-/** Most composite records awaiting their wrapper event. */
-const MAX_PENDING_COMPOSITES = 10_000;
+/** Most events of plan, simulate and replay calls held back awaiting their wrapper. */
+export const MAX_PENDING_COMPOSITE_EVENTS = 5_000;
+/** Most request ids of calls counted before any wrapper claimed them, remembered for a late one. */
+const MAX_UNCLAIMED_COMPOSITES = 10_000;
 /** Most (commandId, receipt status) pairs remembered to recognise a retry. */
 export const MAX_TRACKED_RECEIPTS = 200_000;
 
@@ -427,6 +433,7 @@ function createAccumulator() {
       byToken: new Map(),
     },
     principals: new Set(),
+    firstSeq: Infinity,
     firstAt: null,
     lastAt: null,
     firstMs: Infinity,
@@ -462,9 +469,11 @@ function accumulateCharge(acc, event, replayed) {
  *
  * @param {ReturnType<typeof createAccumulator>} acc
  * @param {object} event
- * @param {{ kind: string, collapsed: boolean, replayed: boolean }} how
+ * @param {{ kind: string, collapsed?: boolean, replayed?: boolean }} how
+ * @param {number} seq - the event's position in the log
  */
-function accumulate(acc, event, { kind, collapsed, replayed }) {
+function accumulate(acc, event, { kind, collapsed = false, replayed = false }, seq) {
+  if (seq < acc.firstSeq) acc.firstSeq = seq;
   if (collapsed) {
     // The composite record already counted this call; keep what only the
     // wrapper has: the charge for the tool call itself.
@@ -568,10 +577,13 @@ function summarize(acc) {
 
 const isMalformed = (event) => !isPlainObject(event) || '_parseError' in event;
 
+const isRecordEntry = (entry) => entry.kind === 'plan' || entry.kind === 'record';
+
 /**
  * Incremental report builder, for callers that stream. Memory grows with the
  * number of real sessions, not events: unsessioned events share one bucket,
- * and retry and wrapper matching remember bounded windows.
+ * retry matching remembers a bounded window, and the events of plan,
+ * simulate and replay calls wait for their wrapper in a bounded buffer.
  *
  * @param {{ sessionId?: string|null }} [options] - report only this session
  *   (`"(unsessioned)"` selects the unsessioned bucket)
@@ -579,10 +591,61 @@ const isMalformed = (event) => !isPlainObject(event) || '_parseError' in event;
 export function createSessionReportBuilder({ sessionId = null } = {}) {
   const sessions = new Map();
   const totals = createAccumulator();
-  const pendingComposites = createBoundedSet(MAX_PENDING_COMPOSITES);
+  // A composite call's own events -- a plan's steps and record, a simulate
+  // or replay record -- are logged before its wrapper, and only the wrapper
+  // carries the caller's session. They wait here, by request id, until the
+  // wrapper claims them; past the window, or at the end, a call no wrapper
+  // claimed is counted in the session its record names.
+  const pending = new Map();
+  let pendingEvents = 0;
+  const unclaimed = createBoundedSet(MAX_UNCLAIMED_COMPOSITES);
   const seenReceipts = createBoundedSet(MAX_TRACKED_RECEIPTS);
   let malformedLines = 0;
   let filteredOut = 0;
+  let lateCompositeEvents = 0;
+  let seq = 0;
+
+  const count = (key, entry, how) => {
+    if (sessionId && key !== sessionId) {
+      filteredOut += 1;
+      return;
+    }
+    let acc = sessions.get(key);
+    if (!acc) {
+      acc = createAccumulator();
+      sessions.set(key, acc);
+    }
+    accumulate(acc, entry.event, how, entry.seq);
+    accumulate(totals, entry.event, how, entry.seq);
+  };
+
+  /** Count every event of a composite call in one session. */
+  const countGroup = (group, key) => {
+    for (const entry of group.entries) {
+      count(key, entry, { kind: entry.kind, replayed: entry.replayed });
+    }
+  };
+
+  /** The session a composite call's record names (its first event's, if the record is missing). */
+  const ownKeyOf = (group) =>
+    sessionKeyOf((group.entries.find(isRecordEntry) ?? group.entries[0]).event);
+
+  const release = (requestId) => {
+    const group = pending.get(requestId);
+    pending.delete(requestId);
+    pendingEvents -= group.entries.length;
+    return group;
+  };
+
+  /** Past the window, count the oldest unclaimed calls as they stand. */
+  const evict = () => {
+    while (pendingEvents > MAX_PENDING_COMPOSITE_EVENTS) {
+      const requestId = pending.keys().next().value;
+      const group = release(requestId);
+      unclaimed.add(requestId);
+      countGroup(group, ownKeyOf(group));
+    }
+  };
 
   return {
     /** Add one parsed event. Anything that is not an event object is counted, not thrown. */
@@ -591,55 +654,83 @@ export function createSessionReportBuilder({ sessionId = null } = {}) {
         malformedLines += 1;
         return;
       }
+      seq += 1;
       const kind = eventKind(event);
+      const entry = { event, kind, seq, replayed: false };
 
       // Matching happens before the session filter, so a filtered report
       // classifies each event exactly as the full report does.
-      let collapsed = false;
+      let key = null;
       if (kind === 'wrapper') {
         const linked = linkedRequestIdOf(event);
-        collapsed = Boolean(linked) && pendingComposites.delete(linked);
-      } else if (kind === 'plan' || kind === 'record') {
-        const requestId = nonEmptyString(event.requestId);
-        if (requestId) pendingComposites.add(requestId);
+        if (linked && pending.has(linked)) {
+          // The call is counted once, in the caller's session: the wrapper's,
+          // when it has one, else the one its record names.
+          const group = release(linked);
+          const own = sessionKeyOf(event);
+          key = own !== UNSESSIONED ? own : ownKeyOf(group);
+          countGroup(group, key);
+          if (group.entries.some(isRecordEntry)) {
+            count(key, entry, { kind, collapsed: true });
+            return;
+          }
+          // Steps without their plan's record: the wrapper is the call.
+        } else if (linked && unclaimed.delete(linked)) {
+          // Its record was already counted, in the session the record names.
+          lateCompositeEvents += 1;
+          count(sessionKeyOf(event), entry, { kind, collapsed: true });
+          return;
+        }
+        // No record: the call was refused before it ran. Count it as a call.
       }
-      let replayed = false;
-      if (!collapsed && kind !== 'plan') {
+
+      if (kind !== 'plan') {
         const receiptKey = receiptKeyOf(event);
         if (receiptKey) {
-          replayed = seenReceipts.has(receiptKey);
+          entry.replayed = seenReceipts.has(receiptKey);
           seenReceipts.add(receiptKey);
         }
       }
 
-      const key = sessionKeyOf(event);
-      if (sessionId && key !== sessionId) {
-        filteredOut += 1;
+      const requestId =
+        kind === 'step' || isRecordEntry(entry) ? nonEmptyString(event.requestId) : null;
+      if (requestId && unclaimed.has(requestId)) {
+        // The rest of its call was counted already, past the window.
+        lateCompositeEvents += 1;
+      } else if (requestId) {
+        let group = pending.get(requestId);
+        if (!group) {
+          group = { entries: [] };
+          pending.set(requestId, group);
+        }
+        group.entries.push(entry);
+        pendingEvents += 1;
+        evict();
         return;
       }
-      let acc = sessions.get(key);
-      if (!acc) {
-        acc = createAccumulator();
-        sessions.set(key, acc);
-      }
-      const how = { kind, collapsed, replayed };
-      accumulate(acc, event, how);
-      accumulate(totals, event, how);
+      count(key ?? sessionKeyOf(event), entry, { kind, replayed: entry.replayed });
     },
     finish() {
+      for (const requestId of [...pending.keys()]) {
+        const group = release(requestId);
+        countGroup(group, ownKeyOf(group));
+      }
       return {
         filter: { sessionId: sessionId || null },
         malformedLines,
         filteredOut,
         sessionCount: sessions.size,
         retryWindowExceeded: seenReceipts.evicted > 0,
+        lateCompositeEvents,
         totals: summarize(totals),
-        // First-seen order.
-        sessions: [...sessions.entries()].map(([key, acc]) => ({
-          sessionId: key,
-          unsessioned: key === UNSESSIONED,
-          ...summarize(acc),
-        })),
+        // In the order of each session's first event in the log.
+        sessions: [...sessions.entries()]
+          .sort(([, a], [, b]) => a.firstSeq - b.firstSeq)
+          .map(([key, acc]) => ({
+            sessionId: key,
+            unsessioned: key === UNSESSIONED,
+            ...summarize(acc),
+          })),
       };
     },
   };
@@ -820,6 +911,13 @@ export function formatSessionReport(report, { logPath = null } = {}) {
     notes.push(
       `${t.charges.onReplayedReceipts} charge(s) were taken on replayed calls; the treasury ` +
         'recorded each one, so they are in the charge totals.',
+    );
+  }
+  if (report.lateCompositeEvents > 0) {
+    notes.push(
+      `${report.lateCompositeEvents} plan, simulate or replay event(s) arrived after their call ` +
+        `was counted (more than ${MAX_PENDING_COMPOSITE_EVENTS} such events were awaiting their ` +
+        "wrapper); they are counted in the session they name, which may not be their caller's.",
     );
   }
   if (report.retryWindowExceeded) {

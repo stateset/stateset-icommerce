@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import {
+  MAX_PENDING_COMPOSITE_EVENTS,
   UNSESSIONED,
   buildSessionReport,
   buildSessionReportFromFile,
@@ -892,6 +893,105 @@ describe('plans, simulations and replays', () => {
     assert.deepEqual(r.totals.byTool, { cancel_order: 1 });
     assert.equal(r.totals.steps, 1);
     assert.equal(r.totals.calls, 0);
+  });
+
+  // The writers default a record's (and a plan step's) session to its own
+  // request id; a session given through the MCP request or the executeTool
+  // options reaches only the wrapper. The real-server case is in
+  // test/integration/session-report-replay-log.test.js.
+  const simRecord = (requestId, overrides = {}) =>
+    base({
+      tool: 'agentic_simulate_mutation',
+      source: 'agentic_simulate_mutation',
+      status: 'dry_run_success',
+      requestId,
+      sessionId: requestId,
+      elapsedMs: 3,
+      ...overrides,
+    });
+  const simWrapper = (requestId, sessionId, overrides = {}) =>
+    base({
+      tool: 'agentic_simulate_mutation',
+      status: 'success',
+      requestId: null,
+      sessionId,
+      elapsedMs: 4,
+      result: mcpResult({ ok: true, preview: false, result: { requestId } }),
+      ...overrides,
+    });
+
+  it("counts a plan and its steps in the wrapper's session, ordered by their first event", () => {
+    const unsessioned = (event) => ({ ...event, sessionId: event.requestId });
+    const r = buildSessionReport([
+      ...PLAN_EVENTS.slice(0, 3).map(unsessioned),
+      base({ tool: 'get_order', status: 'success', sessionId: 'sess-B' }),
+      { ...PLAN_EVENTS[3], sessionId: 'sess-W' },
+    ]);
+    assert.deepEqual(
+      r.sessions.map((s) => [s.sessionId, s.calls, s.steps, s.collapsedWrappers]),
+      [
+        ['sess-W', 1, 2, 1],
+        ['sess-B', 1, 0, 0],
+      ],
+    );
+    assert.deepEqual(sessionOf(r, 'sess-W').outcomes, outcomes({ executed: 1, denied: 1 }));
+    // filtering on the caller's session finds the whole call
+    const filtered = buildSessionReport(
+      [...PLAN_EVENTS.slice(0, 3).map(unsessioned), { ...PLAN_EVENTS[3], sessionId: 'sess-W' }],
+      { sessionId: 'sess-W' },
+    );
+    assert.equal(filtered.filteredOut, 0);
+    assert.deepEqual([filtered.totals.calls, filtered.totals.steps], [1, 2]);
+  });
+
+  it("counts the wrapper as the call when the plan's own record is missing", () => {
+    const r = buildSessionReport([
+      ...PLAN_EVENTS.slice(0, 2).map((event) => ({ ...event, sessionId: event.requestId })),
+      { ...PLAN_EVENTS[3], sessionId: 'sess-W' },
+    ]);
+    assert.deepEqual(
+      r.sessions.map((s) => [s.sessionId, s.calls, s.steps, s.collapsedWrappers]),
+      [['sess-W', 1, 2, 0]],
+    );
+  });
+
+  it('keeps the session a record names when its wrapper has none', () => {
+    const r = buildSessionReport([
+      simRecord('sim-own', { sessionId: 'sess-own' }),
+      simWrapper('sim-own', null),
+    ]);
+    assert.deepEqual(
+      r.sessions.map((s) => [s.sessionId, s.calls, s.collapsedWrappers]),
+      [['sess-own', 1, 1]],
+    );
+  });
+
+  it('counts a call whose wrapper comes past the window in the session its record names', () => {
+    const builder = createSessionReportBuilder();
+    for (let i = 0; i <= MAX_PENDING_COMPOSITE_EVENTS; i += 1) builder.add(simRecord(`sim-${i}`));
+    const charge = {
+      charged: true,
+      rule: {
+        tool: 'agentic_simulate_mutation',
+        chainId: 'base',
+        tokenSymbol: 'USDC',
+        amount: '0.1',
+      },
+    };
+    // sim-0 was counted when the window filled; sim-1 is still waiting
+    builder.add(simWrapper('sim-0', 'sess-W', { charge }));
+    builder.add(simWrapper('sim-1', 'sess-W', { charge }));
+    const r = builder.finish();
+    assert.equal(r.lateCompositeEvents, 1);
+    assert.equal(r.totals.calls, MAX_PENDING_COMPOSITE_EVENTS + 1);
+    assert.equal(r.totals.collapsedWrappers, 2);
+    const w = sessionOf(r, 'sess-W');
+    assert.deepEqual([w.calls, w.collapsedWrappers, w.charges.count], [1, 2, 2]);
+    assert.equal(sessionOf(r, UNSESSIONED).calls, MAX_PENDING_COMPOSITE_EVENTS);
+    assert.match(
+      formatSessionReport(r),
+      /1 plan, simulate or replay event\(s\) arrived after their call was counted/,
+    );
   });
 });
 

@@ -10,9 +10,12 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 import { createStatesetMcpServer } from '../../src/mcp-server.js';
 import { getCommerce } from '../../src/database.js';
@@ -21,6 +24,15 @@ import {
   classifyEvent,
   findKernelReceipt,
 } from '../../src/mcp/session-report.js';
+
+const exec = promisify(execFile);
+const BIN = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  'bin',
+  'stateset-agent-report.js',
+);
 
 const NO_OUTCOMES = Object.freeze({
   executed: 0,
@@ -241,5 +253,111 @@ describe('simulation refusals', () => {
     assert.deepEqual(s.outcomes, outcomes({ denied: 2, previewed: 1 }));
     assert.deepEqual(s.denials.byReason, { 'kernel.policy_denied': 2 });
     assert.equal(s.denials.reasonCodesUnavailable, 2);
+  });
+});
+
+describe('composite calls keep the caller session', () => {
+  it('counts a plan, simulation and replay in the session given only to the call', async (t) => {
+    const { server, mcp, events, logPath } = await realServer(t, {
+      allowApply: true,
+      kernel: {
+        ...KERNEL,
+        principal: { ...KERNEL.principal, capabilities: ['customers.create'] },
+      },
+    });
+    const options = { sessionId: 'sess-42' };
+    const direct = await server.executeTool('create_customer', CUSTOMER, options);
+    assert.equal(direct.status, 'success', direct.error);
+    const plan = await server.executeTool(
+      'agentic_execute_plan',
+      {
+        steps: [{ tool: 'create_customer', params: { ...CUSTOMER, email: 'b@example.com' } }],
+        dryRun: false,
+      },
+      options,
+    );
+    assert.equal(plan.result.finalStatus, 'success', JSON.stringify(plan.result.steps));
+    const simulated = await server.executeTool(
+      SIMULATE,
+      { tool: 'create_customer', params: { ...CUSTOMER, email: 'c@example.com' } },
+      options,
+    );
+    assert.equal(simulated.result.success, true);
+    const replayed = await server.executeTool(
+      'agentic_replay_mutation',
+      { tool: 'create_customer' },
+      options,
+    );
+    assert.equal(replayed.result.success, true, replayed.result.error);
+    // The MCP path: the session comes with the request, not the arguments.
+    const mcpSimulated = await mcp(
+      SIMULATE,
+      { tool: 'create_customer', params: { ...CUSTOMER, email: 'd@example.com' } },
+      { sessionId: 'sess-mcp' },
+    );
+    assert.equal(mcpSimulated.structuredContent.ok, true);
+    // A session given only as the tool's parameter reaches the record, not
+    // the toolkit wrapper (whose session defaults to its request id).
+    const paramPlan = await server.executeTool('agentic_execute_plan', {
+      steps: [{ tool: 'create_customer', params: { ...CUSTOMER, email: 'e@example.com' } }],
+      dryRun: false,
+      sessionId: 'sess-param',
+    });
+    assert.equal(paramPlan.result.finalStatus, 'success');
+
+    const logged = events();
+    // The writers as they are: the records and steps name their own request
+    // id as their session; only the wrappers carry sess-42 / sess-mcp.
+    const records = logged.filter(
+      (e) => e.source !== 'embedded_agent_toolkit' && e.source !== 'mcp_server',
+    );
+    // two plans (a step and a record each), two simulations, one replay
+    assert.equal(records.length, 7);
+    for (const record of records.filter((e) => e.sessionId !== 'sess-param')) {
+      assert.equal(record.sessionId, record.requestId, `${record.source} ${record.status}`);
+    }
+    assert.equal(records.filter((e) => e.sessionId === 'sess-param').length, 2);
+
+    const report = buildSessionReport(logged);
+    assert.deepEqual(
+      report.sessions.map((s) => s.sessionId),
+      ['sess-42', 'sess-mcp', 'sess-param'],
+    );
+    const s = sessionOf(report, 'sess-42');
+    assert.equal(s.calls, 4);
+    assert.equal(s.steps, 1);
+    assert.equal(s.collapsedWrappers, 3);
+    assert.deepEqual(s.plans, { count: 1, byFinalStatus: { success: 1 } });
+    assert.deepEqual(s.byTool, {
+      create_customer: 2,
+      agentic_execute_plan: 1,
+      agentic_replay_mutation: 1,
+      agentic_simulate_mutation: 1,
+    });
+    // the direct and the plan's create_customer committed; the simulation
+    // and the (default dry-run) replay did not
+    assert.deepEqual(s.outcomes, outcomes({ executed: 2, dryRun: 2 }));
+    const m = sessionOf(report, 'sess-mcp');
+    assert.deepEqual([m.calls, m.collapsedWrappers], [1, 1]);
+    assert.deepEqual(m.outcomes, outcomes({ dryRun: 1 }));
+    const p = sessionOf(report, 'sess-param');
+    assert.deepEqual([p.calls, p.steps, p.collapsedWrappers], [1, 1, 1]);
+
+    // A filtered report, and the bin, find the same calls.
+    const filtered = buildSessionReport(logged, { sessionId: 'sess-42' });
+    assert.deepEqual(filtered.sessions, [{ ...s }]);
+    const { stdout } = await exec(
+      process.execPath,
+      [BIN, '--log', logPath, '--session', 'sess-42', '--json'],
+      {
+        env: { ...process.env, NODE_NO_WARNINGS: '1' },
+      },
+    );
+    const fromBin = JSON.parse(stdout);
+    assert.deepEqual(
+      fromBin.sessions.map((x) => [x.sessionId, x.calls, x.steps]),
+      [['sess-42', 4, 1]],
+    );
+    assert.deepEqual(fromBin.sessions[0].outcomes, s.outcomes);
   });
 });
