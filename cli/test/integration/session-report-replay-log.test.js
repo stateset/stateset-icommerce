@@ -22,6 +22,7 @@ import { getCommerce } from '../../src/database.js';
 import {
   buildSessionReport,
   classifyEvent,
+  eventKind,
   findKernelReceipt,
 } from '../../src/mcp/session-report.js';
 
@@ -359,5 +360,89 @@ describe('composite calls keep the caller session', () => {
       [['sess-42', 4, 1]],
     );
     assert.deepEqual(fromBin.sessions[0].outcomes, s.outcomes);
+  });
+});
+
+describe('composite calls run as plan steps', () => {
+  it('counts each nested simulate, replay and plan outcome once', async (t) => {
+    const { server, events } = await realServer(t, {
+      allowApply: true,
+      kernel: {
+        ...KERNEL,
+        principal: { ...KERNEL.principal, capabilities: ['customers.create'] },
+      },
+    });
+    const options = { sessionId: 'sess-nest' };
+    // the replay step's source: a direct (non-plan) write
+    const direct = await server.executeTool('create_customer', CUSTOMER, options);
+    assert.equal(direct.status, 'success', direct.error);
+    const customer = (email) => ({ ...CUSTOMER, email });
+    const plan = await server.executeTool(
+      'agentic_execute_plan',
+      {
+        steps: [
+          { tool: 'create_customer', params: customer('b@example.com') },
+          {
+            tool: SIMULATE,
+            params: { tool: 'create_customer', params: customer('c@example.com') },
+          },
+          { tool: 'agentic_replay_mutation', params: { tool: 'create_customer' } },
+          {
+            tool: 'agentic_execute_plan',
+            params: {
+              steps: [{ tool: 'create_customer', params: customer('d@example.com') }],
+              dryRun: false,
+            },
+          },
+        ],
+        dryRun: false,
+      },
+      options,
+    );
+    assert.equal(plan.result.finalStatus, 'success', JSON.stringify(plan.result.steps));
+
+    const logged = events();
+    // Each nested call logged its own record before the plan step that ran it.
+    assert.deepEqual(
+      logged.map((e) => `${e.source}:${eventKind(e)}`),
+      [
+        'embedded_agent_toolkit:call',
+        'agentic_execute_plan:step', // create_customer
+        'agentic_simulate_mutation:record',
+        'agentic_execute_plan:step', // ran the simulation
+        'agentic_replay_mutation:record',
+        'agentic_execute_plan:step', // ran the replay
+        'agentic_execute_plan:step', // the nested plan's create_customer
+        'agentic_execute_plan:plan', // the nested plan's record
+        'agentic_execute_plan:step', // ran the nested plan
+        'agentic_execute_plan:plan',
+        'embedded_agent_toolkit:wrapper',
+      ],
+    );
+
+    const report = buildSessionReport(logged);
+    assert.deepEqual(
+      report.sessions.map((s) => s.sessionId),
+      ['sess-nest'],
+    );
+    const s = sessionOf(report, 'sess-nest');
+    // the direct write and the outer plan
+    assert.equal(s.calls, 2);
+    // four outer steps and the nested plan's one
+    assert.equal(s.steps, 5);
+    assert.equal(s.collapsedWrappers, 1);
+    assert.equal(s.nestedRecords, 3);
+    assert.deepEqual(s.plans, { count: 1, byFinalStatus: { success: 1 } });
+    // three committed create_customer (direct, outer step, nested step); the
+    // simulation and the default dry-run replay, once each
+    assert.deepEqual(s.outcomes, outcomes({ executed: 3, dryRun: 2 }));
+    assert.deepEqual(s.byTool, {
+      create_customer: 3,
+      agentic_execute_plan: 2,
+      agentic_replay_mutation: 1,
+      agentic_simulate_mutation: 1,
+    });
+    assert.equal(s.latencyMs.count, 2);
+    assert.deepEqual(report.totals.outcomes, s.outcomes);
   });
 });

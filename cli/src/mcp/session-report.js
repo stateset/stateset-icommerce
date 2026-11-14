@@ -39,6 +39,12 @@
  * tool's `sessionId` parameter, defaulting to their own `requestId`, so a
  * session given through the MCP request or the `executeTool` options reaches
  * only the wrapper.
+ * A plan step can itself run a plan, simulate or replay call. That call logs
+ * its record (and a nested plan its steps) before the step, whose result is
+ * the call's response (`result.result.requestId`). The step is counted with
+ * that call's outcome -- none of its own for a nested plan, whose steps carry
+ * them -- and the nested record adds only the charge it recorded
+ * (`nestedRecords`).
  *
  * Kernel decisions:
  *   - A governed call's tool result carries the kernel receipt (`status`,
@@ -273,6 +279,19 @@ function linkedRequestIdOf(event) {
   return text ? (REQUEST_ID_IN_TEXT.exec(text)?.[1] ?? null) : null;
 }
 
+/**
+ * The `requestId` of the composite call a plan step ran: such a step's
+ * result is that call's response (`result.result.requestId`), and the call
+ * logged its own record, and a nested plan its own steps, before the step.
+ */
+function nestedRequestIdOf(event) {
+  if (event.notes?.phase === 'rollback' || !COMPOSITE_TOOLS.has(attributedTool(event))) {
+    return null;
+  }
+  const response = event.result?.result;
+  return isPlainObject(response) ? nonEmptyString(response.requestId) : null;
+}
+
 /** The (commandId, receipt status) pair a governed event carries, or null. */
 function receiptKeyOf(event) {
   const kernel = findKernelBlock(event);
@@ -418,6 +437,7 @@ function createAccumulator() {
     calls: 0,
     steps: 0,
     collapsedWrappers: 0,
+    nestedRecords: 0,
     byStatus: new Map(),
     byTool: new Map(),
     bySource: new Map(),
@@ -467,18 +487,39 @@ function accumulateCharge(acc, event, replayed) {
 /**
  * Add one event to an accumulator.
  *
+ *   collapsed   - a wrapper whose record counts the call
+ *   nested      - the record of a call a plan step ran, which that step counts
+ *   outcomeFrom - for a step that ran a simulate or replay call: that call's
+ *                 record, which holds the outcome
+ *   noOutcome   - for a step that ran a plan: that plan's steps hold the outcomes
+ *
  * @param {ReturnType<typeof createAccumulator>} acc
  * @param {object} event
- * @param {{ kind: string, collapsed?: boolean, replayed?: boolean }} how
+ * @param {{ kind: string, collapsed?: boolean, nested?: boolean, replayed?: boolean,
+ *           outcomeFrom?: object|null, noOutcome?: boolean }} how
  * @param {number} seq - the event's position in the log
  */
-function accumulate(acc, event, { kind, collapsed = false, replayed = false }, seq) {
+function accumulate(
+  acc,
+  event,
+  {
+    kind,
+    collapsed = false,
+    nested = false,
+    replayed = false,
+    outcomeFrom = null,
+    noOutcome = false,
+  },
+  seq,
+) {
   if (seq < acc.firstSeq) acc.firstSeq = seq;
-  if (collapsed) {
-    // The composite record already counted this call; keep what only the
-    // wrapper has: the charge for the tool call itself.
-    acc.collapsedWrappers += 1;
-    accumulateCharge(acc, event, false);
+  if (collapsed || nested) {
+    // Another event counts this call; keep what only this one has: the
+    // charge it recorded (a wrapper's for the tool call itself, a nested
+    // record's for the command it ran).
+    if (collapsed) acc.collapsedWrappers += 1;
+    else acc.nestedRecords += 1;
+    accumulateCharge(acc, event, replayed);
     return;
   }
 
@@ -492,10 +533,12 @@ function accumulate(acc, event, { kind, collapsed = false, replayed = false }, s
   if (kind === 'plan') {
     acc.plans.count += 1;
     bump(acc.plans.byFinalStatus, status);
+  } else if (noOutcome) {
+    // Like a plan's own record: the outcomes are its steps'.
   } else if (replayed) {
     acc.outcomes.replayed += 1;
   } else {
-    const verdict = classifyEvent(event);
+    const verdict = classifyEvent(outcomeFrom ?? event);
     acc.outcomes[verdict.outcome] += 1;
     if (verdict.outcome === 'denied') {
       acc.denials.total += 1;
@@ -510,10 +553,12 @@ function accumulate(acc, event, { kind, collapsed = false, replayed = false }, s
 
   accumulateCharge(acc, event, replayed);
 
-  const principalId =
-    nonEmptyString(findKernelBlock(event)?.principalId) ||
-    nonEmptyString(findKernelReceipt(event)?.economic_context?.principal?.id);
-  if (principalId) acc.principals.add(principalId);
+  for (const source of outcomeFrom ? [event, outcomeFrom] : [event]) {
+    const principalId =
+      nonEmptyString(findKernelBlock(source)?.principalId) ||
+      nonEmptyString(findKernelReceipt(source)?.economic_context?.principal?.id);
+    if (principalId) acc.principals.add(principalId);
+  }
 
   const at = nonEmptyString(event.occurredAt);
   const ms = at ? Date.parse(at) : NaN;
@@ -540,6 +585,7 @@ function summarize(acc) {
     calls: acc.calls,
     steps: acc.steps,
     collapsedWrappers: acc.collapsedWrappers,
+    nestedRecords: acc.nestedRecords,
     outcomes: { ...acc.outcomes },
     plans: { count: acc.plans.count, byFinalStatus: sortedCounts(acc.plans.byFinalStatus) },
     byStatus: sortedCounts(acc.byStatus),
@@ -619,10 +665,28 @@ export function createSessionReportBuilder({ sessionId = null } = {}) {
     accumulate(totals, entry.event, how, entry.seq);
   };
 
-  /** Count every event of a composite call in one session. */
-  const countGroup = (group, key) => {
+  /**
+   * Count every event of a composite call in one session. A step that ran a
+   * composite call is counted with that call's outcome; the call's own record
+   * then adds only its charge (`nested`), and a nested plan's steps count as
+   * steps.
+   */
+  const countGroup = (group, key, nested = false) => {
     for (const entry of group.entries) {
-      count(key, entry, { kind: entry.kind, replayed: entry.replayed });
+      if (nested && isRecordEntry(entry)) {
+        count(key, entry, { kind: entry.kind, nested: true, replayed: entry.replayed });
+      } else if (entry.child) {
+        const record = entry.child.entries.find(isRecordEntry);
+        count(key, entry, {
+          kind: entry.kind,
+          replayed: record?.kind === 'record' ? record.replayed : entry.replayed,
+          outcomeFrom: record?.kind === 'record' ? record.event : null,
+          noOutcome: record?.kind === 'plan',
+        });
+        countGroup(entry.child, key, true);
+      } else {
+        count(key, entry, { kind: entry.kind, replayed: entry.replayed });
+      }
     }
   };
 
@@ -633,7 +697,7 @@ export function createSessionReportBuilder({ sessionId = null } = {}) {
   const release = (requestId) => {
     const group = pending.get(requestId);
     pending.delete(requestId);
-    pendingEvents -= group.entries.length;
+    pendingEvents -= group.size;
     return group;
   };
 
@@ -656,7 +720,7 @@ export function createSessionReportBuilder({ sessionId = null } = {}) {
       }
       seq += 1;
       const kind = eventKind(event);
-      const entry = { event, kind, seq, replayed: false };
+      const entry = { event, kind, seq, replayed: false, child: null };
 
       // Matching happens before the session filter, so a filtered report
       // classifies each event exactly as the full report does.
@@ -700,10 +764,21 @@ export function createSessionReportBuilder({ sessionId = null } = {}) {
       } else if (requestId) {
         let group = pending.get(requestId);
         if (!group) {
-          group = { entries: [] };
+          group = { entries: [], size: 0 };
           pending.set(requestId, group);
         }
+        // A step that ran a plan, simulate or replay call claims that call's
+        // events, logged just before it, so each outcome is counted once.
+        const nestedId = kind === 'step' ? nestedRequestIdOf(event) : null;
+        if (nestedId && nestedId !== requestId && pending.has(nestedId)) {
+          entry.child = pending.get(nestedId);
+          pending.delete(nestedId);
+          group.size += entry.child.size;
+        } else if (nestedId && unclaimed.has(nestedId)) {
+          lateCompositeEvents += 1;
+        }
         group.entries.push(entry);
+        group.size += 1;
         pendingEvents += 1;
         evict();
         return;
@@ -892,7 +967,8 @@ export function formatSessionReport(report, { logPath = null } = {}) {
     'EXEC counts committed writes; PREVIEW counts previews and dry runs (a tool run with ' +
       'dryRun: true included); OK counts other ' +
       'successes (reads, and writes the log cannot attribute). A plan counts as one call; ' +
-      'its steps are counted under STEPS and in the outcome columns.',
+      'its steps are counted under STEPS and in the outcome columns, a step that ran a ' +
+      "simulate or replay call with that call's outcome.",
   ];
   const unsessioned = report.sessions.find((s) => s.unsessioned);
   if (unsessioned) {

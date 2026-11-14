@@ -993,6 +993,69 @@ describe('plans, simulations and replays', () => {
       /1 plan, simulate or replay event\(s\) arrived after their call was counted/,
     );
   });
+
+  // A plan step that runs agentic_simulate_mutation: the simulation logs its
+  // record, then the plan logs the step with the simulation's response as
+  // its result. The real-server case (simulate, replay and a nested plan) is
+  // in test/integration/session-report-replay-log.test.js.
+  it('counts a refused simulation run as a plan step once, keeping every charge', () => {
+    const usdc = (amount) => ({
+      charged: true,
+      rule: { chainId: 'base', tokenSymbol: 'USDC', amount },
+    });
+    const nested = simRecord('sim-in-plan', {
+      status: 'dry_run_blocked',
+      permission: { allowed: false, preview: true },
+      charge: usdc('0.01'),
+      result: {
+        simulation: {
+          status: 'dry_run_blocked',
+          result: {
+            receipt: receipt({
+              command_id: 'cmd-nested',
+              status: 'rejected',
+              error_code: 'kernel.policy_denied',
+              economic_context: { principal: { id: 'agent:nested' } },
+              policy: { allowed: false, reason_codes: ['policy.capability_missing:y'] },
+            }),
+          },
+        },
+      },
+    });
+    const step = planStep(0, 'agentic_simulate_mutation', {
+      sessionId: PLAN_REQUEST,
+      charge: usdc('0.02'),
+      notes: {
+        executedBy: 'agentic_execute_plan',
+        index: 0,
+        sourceStep: 'agentic_simulate_mutation',
+      },
+      result: {
+        index: 0,
+        tool: 'agentic_simulate_mutation',
+        status: 'success',
+        result: { success: true, requestId: 'sim-in-plan', targetTool: 'create_customer' },
+      },
+    });
+    const planRecord = { ...PLAN_EVENTS[2], sessionId: PLAN_REQUEST, status: 'success' };
+    const wrapper = { ...PLAN_EVENTS[3], sessionId: 'sess-W' };
+    const r = buildSessionReport([nested, step, planRecord, wrapper]);
+    const w = sessionOf(r, 'sess-W');
+    assert.deepEqual(
+      r.sessions.map((s) => s.sessionId),
+      ['sess-W'],
+    );
+    assert.deepEqual([w.calls, w.steps, w.collapsedWrappers, w.nestedRecords], [1, 1, 1, 1]);
+    // the step carries the simulation's refusal; nothing else has an outcome
+    assert.deepEqual(w.outcomes, outcomes({ denied: 1 }));
+    assert.deepEqual(w.denials.byReason, { 'policy.capability_missing:y': 1 });
+    assert.deepEqual(w.principals, ['agent:nested']);
+    assert.deepEqual(w.byTool, { agentic_execute_plan: 1, agentic_simulate_mutation: 1 });
+    // the nested record's, the step's and the wrapper's charges
+    assert.deepEqual(w.charges.byToken, [
+      { tokenSymbol: 'USDC', chainId: 'base', count: 3, total: '0.53' },
+    ]);
+  });
 });
 
 describe('retries that replay a receipt', () => {
