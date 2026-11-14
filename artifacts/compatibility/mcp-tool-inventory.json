@@ -8882,7 +8882,7 @@
     },
     {
       "name": "verify_chain_anchor",
-      "description": "Verify that an event proof matches an expected on-chain anchor transaction hash and Merkle root. Confirms the event was committed to the chain.",
+      "description": "Verify that a Merkle proof reaches the Merkle root of an on-chain anchor transaction. Pass leafCount (the anchored batch event count, known independently of the proof) to bind the path to the tree (pathBound: true) and confirm the leaf was committed; without leafCount, anchored: true only proves that some node of the anchored tree hashes to the root, not that an event was committed. The leaf hash is taken on trust.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__verify_chain_anchor",
@@ -8891,7 +8891,7 @@
     },
     {
       "name": "verify_inclusion_proof",
-      "description": "Verify a Merkle inclusion proof — confirms that a leaf hash is included in a Merkle root.",
+      "description": "Verify a Merkle inclusion proof — checks that a leaf hash walks up to a Merkle root. The leaf hash is taken on trust. Pass leafCount (the batch event count, known independently of the proof) to bind the path to the tree (pathBound: true); without leafCount a valid result only proves that some node of the tree, possibly an interior node rather than a leaf, hashes to the root.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__verify_inclusion_proof",

@@ -598,7 +598,7 @@
       },
       {
         "name": "sync",
-        "count": 28
+        "count": 29
       },
       {
         "name": "adapters",
@@ -610,7 +610,7 @@
       },
       {
         "name": "utils",
-        "count": 16
+        "count": 17
       },
       {
         "name": "harness",

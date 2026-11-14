@@ -9,6 +9,7 @@ import { createSequencerClient } from '../sync/client.js';
 import { getPayloadWrapScheme, assertEventMatchesSecurityProfile } from '../sync/pqc.js';
 import { resolveReceiveScope, matchesReceiveScope } from '../sync/receive-scope.js';
 import { readSyncStatus } from '../sync/status.js';
+import { takeOption } from '../utils/cli-options.js';
 
 function parseJsonArg(value, label) {
   try {
@@ -16,34 +17,6 @@ function parseJsonArg(value, label) {
   } catch (error) {
     throw new Error(`Invalid ${label} JSON: ${error.message}`);
   }
-}
-
-/**
- * Take a `--name <value>` or `--name=<value>` option out of positional args.
- * @param {string[]} args
- * @param {string} name - e.g. '--leaf-count'
- * @param {string} usage - thrown when the option is repeated or has no value
- * @returns {{ value: string|undefined, rest: string[] }}
- */
-function takeOption(args, name, usage) {
-  let value;
-  const rest = [];
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    let found;
-    if (arg === name) {
-      if (i + 1 >= args.length) throw new Error(usage);
-      found = String(args[++i]);
-    } else if (typeof arg === 'string' && arg.startsWith(`${name}=`)) {
-      found = arg.slice(name.length + 1);
-    } else {
-      rest.push(arg);
-      continue;
-    }
-    if (value !== undefined) throw new Error(usage);
-    value = found;
-  }
-  return { value, rest };
 }
 
 function parseOptionalInt(value, usage) {
