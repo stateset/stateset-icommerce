@@ -156,6 +156,7 @@ export function buildSummary({ config, records, procResults, oracle, timings }) 
       chainValid: invariants.chainValid,
       budgetLedgerMismatches: invariants.budgetLedgerMismatches,
       expectationFailures: invariants.expectationFailures,
+      crashedActors: invariants.crashedActors,
       passed: invariants.passed,
     },
     stock: {
@@ -218,11 +219,11 @@ export function buildSummary({ config, records, procResults, oracle, timings }) 
     commandsPerSecond:
       timings.swarmMs > 0 ? Math.round((commandCount / timings.swarmMs) * 1000 * 10) / 10 : null,
     digest: outcomeDigest(records, oracle),
-    failures: invariants.passed ? null : failureDetails(oracle, records),
+    failures: invariants.passed ? null : failureDetails(oracle),
   };
 }
 
-function failureDetails(oracle, records) {
+function failureDetails(oracle) {
   return {
     stock: oracle.stock.violations,
     overspent: oracle.budgets.overspent,
@@ -236,9 +237,7 @@ function failureDetails(oracle, records) {
           materializedMismatches: oracle.chain.materializedMismatches,
         },
     expectations: oracle.expectations.failures,
-    crashedActors: records
-      .filter((record) => record.outcome === 'crashed')
-      .map((record) => record.thrown),
+    crashedActors: oracle.crashes.actors,
   };
 }
 
@@ -254,9 +253,11 @@ export function renderText(summary) {
     `budgets: committed ${summary.budgets.committedTotal} across ${summary.budgets.principals}, exhausted ${summary.budgets.exhausted}`,
     `contention: busy ${summary.contention.busy}, timeouts ${summary.contention.timeouts}, other thrown ${summary.contention.otherThrown}, retries ${summary.contention.retries}`,
     `latency ms: p50 ${lat.p50} p95 ${lat.p95} p99 ${lat.p99} max ${lat.max} over ${lat.count} commands; wall ${summary.wallMs} ms (${summary.commandsPerSecond}/s)`,
-    `invariants: oversold=${inv.oversold} overspent=${inv.overspent} receiptMismatches=${inv.receiptMismatches} duplicateApplies=${inv.duplicateApplies} chainValid=${inv.chainValid} budgetLedger=${inv.budgetLedgerMismatches} expectations=${inv.expectationFailures} -> ${inv.passed ? 'PASS' : 'FAIL'}`,
+    `invariants: oversold=${inv.oversold} overspent=${inv.overspent} receiptMismatches=${inv.receiptMismatches} duplicateApplies=${inv.duplicateApplies} chainValid=${inv.chainValid} budgetLedger=${inv.budgetLedgerMismatches} expectations=${inv.expectationFailures} crashedActors=${inv.crashedActors} -> ${inv.passed ? 'PASS' : 'FAIL'}`,
     `digest: ${summary.digest}`,
   ];
   if (summary.failures) lines.push(`failures: ${JSON.stringify(summary.failures, null, 2)}`);
+  if (summary.processFailures)
+    lines.push(`process failures: ${JSON.stringify(summary.processFailures, null, 2)}`);
   return lines.join('\n');
 }

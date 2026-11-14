@@ -65,6 +65,7 @@ After the swarm stops, the oracle reads the database directly and read-only,
 | `duplicateApplies`       | No idempotency key is sealed twice. No cart has two orders. A key never returns two different receipts. Every replay returns the original receipt. No conflicting reuse applies.                                                                                                                                           |
 | `chainValid`             | The receipt audit chain recomputes (sha256 over JCS of `{algorithm, previous_audit_hash, request_hash, receipt}`), and every materialized receipt equals the sealed entry it claims.                                                                                                                                       |
 | `expectationFailures`    | Capability-less actors, and only they, are denied with the expected code. Every conflicting reuse is rejected with `kernel.idempotency_conflict`.                                                                                                                                                                          |
+| `crashedActors`          | No actor's journey threw. A journey that throws before its first write leaves a consistent store that passes every other check, so a crash fails the run by itself, and `failures.crashedActors` carries each crashed actor's recorded exceptions.                                                                         |
 
 The Node binding on master has no receipt-chain verification API. Rust has
 `Commerce::kernel_audit().verify_chain()`, but it is not bound. So the oracle
@@ -106,6 +107,8 @@ keep it, or `--db PATH` to use (and keep) a fresh file. Other knobs:
 - `SIM_TMPDIR` moves the temp directory.
 - `SIM_TRACE=1` writes phase markers to stderr synchronously, so they survive
   a native crash.
+- `SIM_CRASH_ACTORS=2,5` (test-only) makes those actors' journeys throw before
+  their first step, to check that a crashed actor fails the run.
 
 To report a failure, the seed plus the full command line reproduces it.
 `--procs 1 --inflight 1` reproduces it exactly. Shrink `--agents` while the

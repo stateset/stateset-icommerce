@@ -31,6 +31,23 @@ const ADDRESS = Object.freeze({
   email: null,
 });
 
+/**
+ * Test-only fault injection: `SIM_CRASH_ACTORS=2,5` makes those actors'
+ * journeys throw before their first step, so no write of theirs ever lands
+ * and the store stays consistent. The harness must still fail the run. Read
+ * from the environment so forked shards inherit it.
+ */
+const CRASH_ACTORS = new Set(
+  (process.env.SIM_CRASH_ACTORS ?? '')
+    .split(',')
+    .filter((value) => value.trim() !== '')
+    .map(Number),
+);
+
+function* crashingJourney(index) {
+  throw new Error(`injected journey crash for actor ${index} (SIM_CRASH_ACTORS)`);
+}
+
 export function createActor({ plan, principal, config }) {
   const record = {
     index: plan.index,
@@ -57,7 +74,7 @@ export function createActor({ plan, principal, config }) {
     done: false,
     lastResult: undefined,
   };
-  actor.gen = journey(actor);
+  actor.gen = CRASH_ACTORS.has(plan.index) ? crashingJourney(plan.index) : journey(actor);
   return actor;
 }
 

@@ -18,6 +18,10 @@
  *                       `Commerce::kernel_audit().verify_chain()` is not
  *                       bound), so this recomputes the same sha256-jcs-v1
  *                       links independently.
+ *   crashedActors     - no actor's journey threw. A journey that throws
+ *                       before its first write leaves a consistent store, so
+ *                       no store invariant can catch it; it fails the verdict
+ *                       on its own, and its exceptions travel with the result.
  */
 import { fork } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -83,6 +87,7 @@ export async function runOracle({ dbPath, config, records, budgetStatuses }) {
     const stock = checkStock(db, config, records);
     const budgets = checkBudgets(config, audit, records, budgetStatuses, db);
     const expectations = checkExpectations(records, observed);
+    const crashes = checkCrashes(records);
 
     const invariants = {
       oversold: stock.violations.length > 0,
@@ -92,6 +97,7 @@ export async function runOracle({ dbPath, config, records, budgetStatuses }) {
       duplicateApplies: idempotency.issueCount,
       chainValid: chain.valid,
       expectationFailures: expectations.failureCount,
+      crashedActors: crashes.count,
     };
     invariants.passed =
       !invariants.oversold &&
@@ -100,7 +106,8 @@ export async function runOracle({ dbPath, config, records, budgetStatuses }) {
       invariants.receiptMismatches === 0 &&
       invariants.duplicateApplies === 0 &&
       invariants.chainValid &&
-      invariants.expectationFailures === 0;
+      invariants.expectationFailures === 0 &&
+      invariants.crashedActors === 0;
 
     return {
       invariants,
@@ -110,6 +117,7 @@ export async function runOracle({ dbPath, config, records, budgetStatuses }) {
       stock,
       budgets,
       expectations,
+      crashes,
       reader: db.driver,
     };
   } finally {
@@ -514,5 +522,18 @@ function checkExpectations(records, observed) {
     conflictsRejected,
     failureCount: failures.length,
     failures: failures.slice(0, 50),
+  };
+}
+
+/**
+ * Actors whose journey threw (the scheduler marks them `crashed`), with every
+ * exception they recorded: the journey's own, plus any thrown engine calls
+ * before it.
+ */
+function checkCrashes(records) {
+  const crashed = records.filter((record) => record.outcome === 'crashed');
+  return {
+    count: crashed.length,
+    actors: crashed.slice(0, 50).map((record) => ({ actor: record.index, thrown: record.thrown })),
   };
 }

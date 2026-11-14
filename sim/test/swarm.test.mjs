@@ -18,12 +18,50 @@ import { promisify } from 'node:util';
 import { SIM_DIR, bindingAvailable } from '../lib/engine.mjs';
 import { runOracleIsolated } from '../lib/oracle.mjs';
 import { EXPECTED_DENIAL, normalizeConfig } from '../lib/plan.mjs';
+import { createRng } from '../lib/rng.mjs';
+import { runActors } from '../lib/scheduler.mjs';
 import { executeSwarm, runSimulation } from '../runner.mjs';
 
 const RUNNER = path.join(SIM_DIR, 'runner.mjs');
 const TAMPER = fileURLToPath(new URL('../lib/tamper.mjs', import.meta.url));
 const skip = bindingAvailable() ? false : 'the StateSet Node binding is not built (bindings/node)';
 const TIMEOUT = 60_000;
+
+describe('the scheduler', () => {
+  it('records a journey that throws as a crashed actor and keeps running the others', async () => {
+    const actorWith = (index, journey) => {
+      const actor = { index, done: false, lastResult: undefined };
+      actor.record = { index, outcome: null, thrown: [] };
+      actor.gen = journey(actor);
+      return actor;
+    };
+    const healthy = actorWith(0, function* (actor) {
+      yield { kind: 'step' };
+      yield { kind: 'step' };
+      actor.record.outcome = 'completed';
+    });
+    const crashing = actorWith(1, function* () {
+      yield { kind: 'step' };
+      throw new Error('journey bug');
+    });
+    let steps = 0;
+    await runActors({
+      actors: [healthy, crashing],
+      rng: createRng('scheduler-test', 'crash'),
+      inflight: 1,
+      execute: async () => {
+        steps += 1;
+        return {};
+      },
+    });
+    assert.equal(steps, 3);
+    assert.equal(healthy.record.outcome, 'completed');
+    assert.equal(crashing.record.outcome, 'crashed');
+    assert.equal(crashing.record.thrown.length, 1);
+    assert.equal(crashing.record.thrown[0].kind, 'harness');
+    assert.match(crashing.record.thrown[0].message, /journey bug/);
+  });
+});
 
 describe('agent swarm', { skip }, () => {
   const runs = new Map();
@@ -120,6 +158,45 @@ describe('agent swarm', { skip }, () => {
       await assert.rejects(
         promisify(execFile)(process.execPath, [RUNNER, '--agents', '0']),
         (error) => error.code === 2,
+      );
+    },
+  );
+
+  it(
+    'exits 1 and reports the exception when an actor crashes before its first write',
+    { timeout: TIMEOUT },
+    async () => {
+      // The crashed actor never writes, so the store is consistent and every
+      // store invariant holds: only the crash itself can fail this run. Two
+      // processes, so the forked shards must carry the crash back too.
+      const failure = await promisify(execFile)(
+        process.execPath,
+        [RUNNER, '--agents', '8', '--seed', '3', '--stock', '4', '--procs', '2', '--json'],
+        { env: { ...process.env, SIM_CRASH_ACTORS: '5' } },
+      ).then(
+        () => null,
+        (error) => error,
+      );
+      assert.ok(failure, 'a run with a crashed actor must not exit 0');
+      assert.equal(failure.code, 1, failure.stderr);
+      const summary = JSON.parse(failure.stdout);
+      assert.equal(summary.invariants.passed, false);
+      assert.equal(summary.invariants.crashedActors, 1);
+      assert.equal(summary.actors.byOutcome.crashed, 1);
+      assert.equal(summary.invariants.oversold, false);
+      assert.equal(summary.invariants.receiptMismatches, 0);
+      assert.equal(summary.invariants.duplicateApplies, 0);
+      assert.equal(summary.invariants.chainValid, true);
+      assert.equal(summary.invariants.expectationFailures, 0);
+      assert.equal(summary.failures.crashedActors.length, 1);
+      const [crash] = summary.failures.crashedActors;
+      assert.equal(crash.actor, 5);
+      assert.ok(
+        crash.thrown.some(
+          (thrown) =>
+            thrown.label === 'journey' && /injected journey crash for actor 5/.test(thrown.message),
+        ),
+        JSON.stringify(crash),
       );
     },
   );
