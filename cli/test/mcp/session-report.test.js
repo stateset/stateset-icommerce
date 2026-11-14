@@ -1128,6 +1128,61 @@ describe('classifyEvent / findKernelReceipt', () => {
     );
     assert.deepEqual(classifyEvent({ status: 'something_new' }), { outcome: 'other' });
   });
+
+  // A simulate record as simulateMutationToolCall writes it (see the real-server
+  // test in test/integration/session-report-replay-log.test.js): the kernel's
+  // preview receipt is at result.simulation.result.receipt. Here the receipt
+  // keeps its policy decision and principal, as a writer without the depth cut
+  // would log them.
+  const simulationRecord = (receiptOverrides) =>
+    base({
+      tool: 'agentic_simulate_mutation',
+      source: 'agentic_simulate_mutation',
+      status: 'dry_run_blocked',
+      sessionId: 'sess-S',
+      permission: { allowed: false, preview: true },
+      notes: { simulation: true, targetTool: 'create_customer' },
+      result: {
+        source: 'agentic_simulate_mutation',
+        targetTool: 'create_customer',
+        simulation: {
+          tool: 'create_customer',
+          status: 'dry_run_blocked',
+          preview: true,
+          result: {
+            success: false,
+            kernel: true,
+            receipt: receipt({
+              command_id: 'cmd-sim-1',
+              status: 'rejected',
+              error_code: 'kernel.policy_denied',
+              economic_context: { principal: { id: 'agent:sim', kind: 'agent' } },
+              policy: { allowed: false, reason_codes: ['policy.capability_missing:x'] },
+              ...receiptOverrides,
+            }),
+          },
+        },
+      },
+    });
+
+  it('reads a simulation receipt for the verdict, reasons, principal and retries', () => {
+    const refused = simulationRecord();
+    assert.equal(findKernelReceipt(refused).command_id, 'cmd-sim-1');
+    assert.deepEqual(classifyEvent(refused), {
+      outcome: 'denied',
+      reasons: ['policy.capability_missing:x'],
+    });
+    const s = sessionOf(
+      buildSessionReport([refused, { ...simulationRecord(), eventId: 'evt-sim-retry' }]),
+      'sess-S',
+    );
+    // the second record repeats the receipt: a retry, not a second refusal
+    assert.deepEqual(s.outcomes, outcomes({ denied: 1, replayed: 1 }));
+    assert.deepEqual(s.principals, ['agent:sim']);
+    assert.deepEqual(classifyEvent(simulationRecord({ status: 'previewed' })), {
+      outcome: 'previewed',
+    });
+  });
 });
 
 describe('the top-level kernel block', () => {

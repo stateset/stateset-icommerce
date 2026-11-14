@@ -16,7 +16,11 @@ import path from 'node:path';
 
 import { createStatesetMcpServer } from '../../src/mcp-server.js';
 import { getCommerce } from '../../src/database.js';
-import { buildSessionReport } from '../../src/mcp/session-report.js';
+import {
+  buildSessionReport,
+  classifyEvent,
+  findKernelReceipt,
+} from '../../src/mcp/session-report.js';
 
 const NO_OUTCOMES = Object.freeze({
   executed: 0,
@@ -150,5 +154,92 @@ describe('tool-level dry runs (close_month, import_full_data)', () => {
     assert.deepEqual(s.outcomes, outcomes({ dryRun: 4, executed: 1 }));
     assert.equal(s.calls, 5);
     assert.equal(s.steps, 1);
+  });
+});
+
+/**
+ * A trusted kernel that governs customer and inventory creation; the
+ * principal holds only the inventory capability, so the kernel refuses a
+ * customers.create command (policy.capability_missing).
+ */
+const commandRule = (capability) => ({
+  required_capabilities: [capability],
+  requires_approval: false,
+  requires_tenant: true,
+  requires_store: true,
+  requires_agent_delegation: true,
+  requires_signed_authority: false,
+});
+const KERNEL = {
+  strict: false,
+  storeId: 'store:report',
+  principal: {
+    id: 'agent:report',
+    kind: 'agent',
+    tenantId: 'tenant:report',
+    delegatedBy: 'user:report',
+    capabilities: ['inventory.item.create'],
+  },
+  policy: {
+    version: 'report-v1',
+    commands: {
+      'customers.create': commandRule('customers.create'),
+      'inventory.item.create': commandRule('inventory.item.create'),
+    },
+    trusted_authority_keys: {},
+  },
+};
+const SIMULATE = 'agentic_simulate_mutation';
+const CUSTOMER = { email: 'ada@example.com', firstName: 'Ada', lastName: 'L' };
+
+describe('simulation refusals', () => {
+  it('reports a kernel refusal inside a simulation as a denial, not a preview', async (t) => {
+    // No --apply: a simulated governed write runs as a kernel preview.
+    const { server, mcp, events } = await realServer(t, { kernel: KERNEL });
+    const refusedMcp = await mcp(
+      SIMULATE,
+      { tool: 'create_customer', params: CUSTOMER, sessionId: 'sess-sim' },
+      { sessionId: 'sess-sim' },
+    );
+    assert.equal(refusedMcp.structuredContent.ok, true);
+    const refused = await server.executeTool(
+      SIMULATE,
+      { tool: 'create_customer', params: CUSTOMER, sessionId: 'sess-sim' },
+      { sessionId: 'sess-sim' },
+    );
+    assert.equal(refused.result.outcome.result.receipt.status, 'rejected');
+    const previewed = await server.executeTool(
+      SIMULATE,
+      {
+        tool: 'create_inventory_item',
+        params: { sku: 'SKU-1', name: 'Widget', initialQuantity: '5' },
+        sessionId: 'sess-sim',
+      },
+      { sessionId: 'sess-sim' },
+    );
+    assert.equal(previewed.result.outcome.result.receipt.status, 'previewed');
+
+    const records = events().filter((e) => e.source === SIMULATE);
+    assert.equal(records.length, 3);
+    // The writer logged the refusals as blocked previews; only the receipt
+    // at result.simulation.result.receipt says the kernel refused them.
+    for (const record of records.slice(0, 2)) {
+      assert.equal(record.status, 'dry_run_blocked');
+      assert.equal(record.permission.preview, true);
+      assert.equal(findKernelReceipt(record).status, 'rejected');
+      assert.deepEqual(classifyEvent(record), {
+        outcome: 'denied',
+        reasons: ['kernel.policy_denied'],
+        // the replay sanitizer cut the receipt's policy decision
+        reasonCodesUnavailable: true,
+      });
+    }
+    assert.equal(findKernelReceipt(records[2]).status, 'previewed');
+
+    const s = sessionOf(buildSessionReport(events()), 'sess-sim');
+    assert.equal(s.calls, 3);
+    assert.deepEqual(s.outcomes, outcomes({ denied: 2, previewed: 1 }));
+    assert.deepEqual(s.denials.byReason, { 'kernel.policy_denied': 2 });
+    assert.equal(s.denials.reasonCodesUnavailable, 2);
   });
 });

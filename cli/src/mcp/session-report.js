@@ -26,7 +26,9 @@
  *     compensation (`notes.phase: "rollback"`), then the plan's own record
  *     (`notes.final: true`, `status` = success | failed | dry_run).
  *   - `agentic_simulate_mutation` / `agentic_replay_mutation`: the record of
- *     one simulate/replay call (a replay's outcome is at
+ *     one simulate/replay call (a simulation's step outcome is at
+ *     `result.simulation`, so a governed preview's or refusal's receipt is at
+ *     `result.simulation.result.receipt`; a replay's outcome is at
  *     `result.replayOutcome`).
  * A plan, simulate or replay call made through MCP or `executeTool` is logged
  * twice: the record above, then the ordinary wrapper event for the tool call,
@@ -179,6 +181,10 @@ export function findKernelReceipt(event) {
   // A replay logs `{ replayOutcome, deterministic }`; the outcome is a step.
   const replayed = result.replayOutcome?.result;
   if (isPlainObject(replayed) && looksLikeReceipt(replayed.receipt)) return replayed.receipt;
+  // A simulation logs its replay contract, whose `simulation` is the step
+  // outcome: a governed preview's receipt, or refusal's, is at its result.
+  const simulated = result.simulation?.result;
+  if (isPlainObject(simulated) && looksLikeReceipt(simulated.receipt)) return simulated.receipt;
   return null;
 }
 
