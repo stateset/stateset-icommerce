@@ -8900,7 +8900,7 @@
     },
     {
       "name": "verify_receipt",
-      "description": "Verify a VES commerce receipt — checks signature, hash, and Merkle inclusion proof.",
+      "description": "Verify a VES commerce receipt — checks signature, hash, and Merkle inclusion proof. Pass leafCount (the batch event count, known independently of the bundle) to bind the inclusion path to the tree (pathBound: true); the bundle's own leafCount is only a sanity bound. A legacy-v0 leaf is not recomputed from the event (leafBound: false), so without leafCount its inclusion check only proves that some node of the tree hashes to the root.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__verify_receipt",

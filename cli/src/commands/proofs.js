@@ -21,30 +21,43 @@ async function getProofGenerator() {
 }
 
 /**
- * Take `--leaf-count <n>` and `--leaf-index <i>` out of the arguments.
+ * Take `--leaf-count <n>` out of the arguments: the batch size as the caller
+ * knows it, independently of the proof or bundle. Only it binds the path
+ * (pathBound).
  *
- * --leaf-count is the batch size as the caller knows it, independently of the
- * proof; only it binds the path (pathBound). --leaf-index is the position the
- * caller expects; the proof's positions must spell it.
+ * @param {string[]} args
+ * @param {string} usage
+ * @returns {Promise<{ leafCount: number|undefined, rest: string[] }>}
+ */
+async function takeLeafCount(args, usage) {
+  const { merklePathDepth, parseTreeInteger } = await import('../sync/merkle-shape.js');
+  const { value, rest } = takeOption(args, '--leaf-count', usage);
+  if (value !== undefined && merklePathDepth(value) === null) {
+    throw new Error(`${usage}\n--leaf-count must be an integer from 1 to 4294967295`);
+  }
+  return { leafCount: value === undefined ? undefined : parseTreeInteger(value), rest };
+}
+
+/**
+ * Take `--leaf-count <n>` and `--leaf-index <i>` out of the arguments.
+ * --leaf-index is the position the caller expects; the proof's positions
+ * must spell it.
  *
  * @param {string[]} args
  * @param {string} usage
  * @returns {Promise<{ leafCount: number|undefined, leafIndex: number|undefined, rest: string[] }>}
  */
 async function takeTreeOptions(args, usage) {
-  const { merklePathDepth, parseTreeInteger } = await import('../sync/merkle-shape.js');
-  const count = takeOption(args, '--leaf-count', usage);
-  const index = takeOption(count.rest, '--leaf-index', usage);
-  if (count.value !== undefined && merklePathDepth(count.value) === null) {
-    throw new Error(`${usage}\n--leaf-count must be an integer from 1 to 4294967295`);
-  }
-  if (index.value !== undefined && parseTreeInteger(index.value) === null) {
+  const { parseTreeInteger } = await import('../sync/merkle-shape.js');
+  const count = await takeLeafCount(args, usage);
+  const { value, rest } = takeOption(count.rest, '--leaf-index', usage);
+  if (value !== undefined && parseTreeInteger(value) === null) {
     throw new Error(`${usage}\n--leaf-index must be a nonnegative integer`);
   }
   return {
-    leafCount: count.value === undefined ? undefined : parseTreeInteger(count.value),
-    leafIndex: index.value === undefined ? undefined : parseTreeInteger(index.value),
-    rest: index.rest,
+    leafCount: count.leafCount,
+    leafIndex: value === undefined ? undefined : parseTreeInteger(value),
+    rest,
   };
 }
 
@@ -53,12 +66,15 @@ export async function execute(action, args, { jsonOutput }) {
 
   switch (action) {
     case 'verify-receipt': {
-      const [receiptBundleJson, publicKeyHex] = args;
-      if (!receiptBundleJson)
-        throw new Error('Usage: proofs verify-receipt <receiptBundleJson> [publicKeyHex]');
+      const usage =
+        'Usage: proofs verify-receipt <receiptBundleJson> [publicKeyHex] [--leaf-count <n>]';
+      const { leafCount, rest } = await takeLeafCount(args, usage);
+      const [receiptBundleJson, publicKeyHex] = rest;
+      if (!receiptBundleJson) throw new Error(usage);
       const result = pg.verifyReceiptBundle(
         parseJsonArg(receiptBundleJson, 'receiptBundle'),
         publicKeyHex || undefined,
+        { leafCount },
       );
       return jsonOutput
         ? result
@@ -191,7 +207,7 @@ export async function execute(action, args, { jsonOutput }) {
       throw new Error(
         `Unknown action: proofs ${action}\n\n` +
           'Available actions:\n' +
-          '  verify-receipt <receiptBundleJson> [publicKeyHex]     Verify receipt bundle\n' +
+          '  verify-receipt <receiptBundleJson> [publicKeyHex] [--leaf-count <n>]  Verify receipt bundle\n' +
           '  generate-proof <eventId> <eventsJson> [batchId] [anchorTxHash]  Generate inclusion proof\n' +
           '  verify-proof <leafHash> <proofJson> <expectedRoot> [eventId] [--leaf-count <n>] [--leaf-index <i>]  Verify inclusion proof\n' +
           '  bundle <eventJson> <batchEventsJson> [batchId] [anchorTxHash]   Generate receipt bundle\n' +
@@ -209,7 +225,7 @@ export const metadata = {
   actions: {
     'verify-receipt': {
       description: 'Verify receipt bundle',
-      args: ['<receiptBundleJson>', '[publicKeyHex]'],
+      args: ['<receiptBundleJson>', '[publicKeyHex]', '[--leaf-count <n>]'],
     },
     'generate-proof': {
       description: 'Generate inclusion proof',

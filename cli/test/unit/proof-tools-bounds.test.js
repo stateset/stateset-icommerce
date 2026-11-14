@@ -332,3 +332,105 @@ describe('proofs verify-proof / verify-anchor commands: --leaf-count', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// verify_receipt / proofs verify-receipt
+//
+// A legacy-v0 bundle's leaf binds a batch position the bundle does not carry,
+// so it is not recomputed (leafBound: false) and the bundle's leafHash is
+// taken on trust, exactly like the raw leaf above. The bundle's own leafCount
+// is only a sanity bound, and whoever wrote the bundle can leave it out.
+// ---------------------------------------------------------------------------
+
+describe('verify_receipt / proofs verify-receipt: interior-node forgery in a legacy-v0 bundle', () => {
+  const genuine = pg.generateReceiptBundle(EVENTS[0], EVENTS);
+  // The bundle's own leafCount is dropped: the forger writes the bundle.
+  const { leafCount: _dropped, ...unsized } = genuine;
+  const forged = {
+    ...unsized,
+    leafHash: hex(N01),
+    inclusionProof: genuine.inclusionProof.slice(1),
+  };
+
+  it('the bundles are what they claim', () => {
+    assert.equal(genuine.format, 'legacy-v0');
+    assert.equal(genuine.leafCount, 4);
+    assert.equal(pg.verifyReceiptBundle(forged).leafBound, false);
+  });
+
+  it('verify_receipt: without leafCount the forgery passes, unbound', async () => {
+    const verdict = await callTool('verify_receipt', { receiptBundle: JSON.stringify(forged) });
+    assert.equal(verdict.success, true);
+    assert.equal(verdict.valid, true);
+    assert.equal(verdict.pathBound, false);
+    assert.equal(verdict.leafBound, false);
+    assert.equal(verdict.leafCountSource, null);
+  });
+
+  it("verify_receipt: the caller's leafCount refuses the forgery and binds the genuine bundle", async () => {
+    for (const leafCount of [4, '4']) {
+      const refused = await callTool('verify_receipt', {
+        receiptBundle: JSON.stringify(forged),
+        leafCount,
+      });
+      assert.equal(refused.valid, false, `leafCount ${JSON.stringify(leafCount)}`);
+      assert.equal(refused.pathBound, true);
+      assert.equal(refused.leafCountSource, 'caller');
+
+      const bound = await callTool('verify_receipt', {
+        receiptBundle: JSON.stringify(genuine),
+        leafCount,
+      });
+      assert.equal(bound.valid, true);
+      assert.equal(bound.pathBound, true);
+      assert.equal(bound.leafCountSource, 'caller');
+    }
+    // A bundle stating a different size than the caller's is refused.
+    const disagreeing = await callTool('verify_receipt', {
+      receiptBundle: JSON.stringify(genuine),
+      leafCount: 8,
+    });
+    assert.equal(disagreeing.valid, false);
+  });
+
+  it('verify_receipt declares an optional leafCount input and explains it', () => {
+    const { inputSchema, description } = toolNamed('verify_receipt');
+    assert.ok(inputSchema.leafCount);
+    assert.equal(inputSchema.leafCount.safeParse(undefined).success, true);
+    assert.equal(inputSchema.leafCount.safeParse('4').success, true);
+    assert.equal(inputSchema.leafCount.safeParse(0).success, false);
+    assert.match(description, /leafCount/);
+  });
+
+  it('proofs verify-receipt: --leaf-count refuses the forgery and binds the genuine bundle', async () => {
+    const unbound = await runCommand('verify-receipt', [JSON.stringify(forged)]);
+    assert.equal(unbound.valid, true);
+    assert.equal(unbound.pathBound, false);
+
+    for (const args of [
+      [JSON.stringify(forged), '--leaf-count', '4'],
+      ['--leaf-count=4', JSON.stringify(forged)],
+    ]) {
+      const refused = await runCommand('verify-receipt', args);
+      assert.equal(refused.valid, false);
+      assert.equal(refused.pathBound, true);
+    }
+    const bound = await runCommand('verify-receipt', [
+      JSON.stringify(genuine),
+      '--leaf-count',
+      '4',
+    ]);
+    assert.equal(bound.valid, true);
+    assert.equal(bound.pathBound, true);
+    assert.equal(bound.leafCountSource, 'caller');
+
+    await assert.rejects(
+      runCommand('verify-receipt', [JSON.stringify(genuine), '--leaf-count']),
+      /Usage/,
+    );
+    await assert.rejects(
+      runCommand('verify-receipt', [JSON.stringify(genuine), '--leaf-count=04']),
+      /--leaf-count must be/,
+    );
+  });
+});

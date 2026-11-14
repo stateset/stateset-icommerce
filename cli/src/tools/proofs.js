@@ -44,13 +44,23 @@ export const proofTools = [
   {
     name: 'verify_receipt',
     description:
-      'Verify a VES commerce receipt — checks signature, hash, and Merkle inclusion proof.',
+      'Verify a VES commerce receipt — checks signature, hash, and Merkle inclusion proof. Pass ' +
+      'leafCount (the batch event count, known independently of the bundle) to bind the ' +
+      "inclusion path to the tree (pathBound: true); the bundle's own leafCount is only a " +
+      'sanity bound. A legacy-v0 leaf is not recomputed from the event (leafBound: false), so ' +
+      'without leafCount its inclusion check only proves that some node of the tree hashes to ' +
+      'the root.',
     inputSchema: {
       receiptBundle: z.string().min(1).describe('JSON-encoded receipt bundle'),
       publicKeyHex: z
         .string()
         .optional()
         .describe('Optional hex-encoded Ed25519 public key for signature verification'),
+      leafCount: leafCountInput.describe(
+        'Number of events in the batch, as you know it independently of the bundle (e.g. from ' +
+          'the batch commitment or anchor record). Only this binds the inclusion path: pathBound ' +
+          'is true only when it is given, and a bundle stating a different leafCount fails.',
+      ),
     },
     permission: 'read',
     handler: async ({ params }) => {
@@ -60,7 +70,7 @@ export const proofTools = [
         const pg = createProofGenerator(cryptoMod);
         const bundle = JSON.parse(params.receiptBundle);
         const publicKey = params.publicKeyHex || undefined;
-        const result = pg.verifyReceiptBundle(bundle, publicKey);
+        const result = pg.verifyReceiptBundle(bundle, publicKey, { leafCount: params.leafCount });
         return { success: true, ...result };
       } catch (error) {
         return { success: false, error: error.message };
