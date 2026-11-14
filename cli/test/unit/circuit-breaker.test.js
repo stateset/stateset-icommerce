@@ -142,6 +142,60 @@ describe('Circuit Breaker', () => {
   });
 
   // =========================================================================
+  // 2b. Bounded state map
+  // =========================================================================
+  describe('state map bound', () => {
+    const names = (breaker) => breaker.getAllStates().map((s) => s.agentName);
+
+    it('caps the map at DEFAULT_MAX_TRACKED_AGENTS by default', async () => {
+      const { DEFAULT_MAX_TRACKED_AGENTS } = await import('../../src/a2a/circuit-breaker.js');
+      assert.equal(DEFAULT_MAX_TRACKED_AGENTS, 10_000);
+      for (let i = 0; i < DEFAULT_MAX_TRACKED_AGENTS + 50; i += 1) cb.getState(`probe-${i}`);
+      assert.equal(cb.getAllStates().length, DEFAULT_MAX_TRACKED_AGENTS);
+    });
+
+    it('evicts the oldest closed entries first', () => {
+      const breaker = createCircuitBreaker(makeStore(), {}, { maxTrackedAgents: 3 });
+      breaker.getState('a');
+      breaker.getState('b');
+      breaker.getState('c');
+      breaker.getState('d');
+      assert.deepEqual(names(breaker), ['b', 'c', 'd']);
+    });
+
+    it('never evicts an open or half-open entry', async () => {
+      const breaker = createCircuitBreaker(
+        makeStore(),
+        { cooldownMs: 10 },
+        { maxTrackedAgents: 2 },
+      );
+      breaker.trip('recovering', 'test');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(breaker.getState('recovering').state, 'half_open');
+      // Tripped after the wait, so its cooldown has not elapsed below.
+      breaker.updateConfig({ cooldownMs: 60_000 });
+      breaker.trip('tripped', 'test');
+      for (let i = 0; i < 5; i += 1) breaker.getState(`probe-${i}`);
+      const byName = new Map(breaker.getAllStates().map((s) => [s.agentName, s.state]));
+      assert.equal(byName.get('recovering'), 'half_open');
+      assert.equal(byName.get('tripped'), 'open');
+      // Only the newest closed probe is kept beside them; the map exceeds the
+      // cap only by the entries it may not drop.
+      assert.deepEqual([...byName.keys()], ['recovering', 'tripped', 'probe-4']);
+      const check = breaker.checkTransaction('tripped', 1);
+      assert.equal(check.allowed, false);
+      assert.match(check.reason, /Circuit is open/);
+    });
+
+    it('rejects a non-positive cap', () => {
+      assert.throws(
+        () => createCircuitBreaker(makeStore(), {}, { maxTrackedAgents: 0 }),
+        /maxTrackedAgents must be a positive integer/,
+      );
+    });
+  });
+
+  // =========================================================================
   // 3. checkTransaction
   // =========================================================================
   describe('checkTransaction', () => {
