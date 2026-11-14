@@ -42,6 +42,7 @@ import {
   extractKernelReplayFields,
   resolveKernelCorrelationId,
 } from '../../src/mcp/replay-kernel-fields.js';
+import { createMcpEventStreamer } from '../../src/mcp-event-streamer.js';
 import { createEventStreamPublisher } from '../../src/mcp/replay-log.js';
 import { createToolDispatch } from '../../src/mcp/tool-dispatch.js';
 import {
@@ -362,6 +363,27 @@ describe('replay event stream publisher', () => {
     publish({ tool: 'list_customers', status: 'success', result: {} });
     assert.deepEqual(published[0].kernel, kernel);
     assert.equal('kernel' in published[1], false);
+  });
+
+  it('keeps the kernel block through the real streamer: history and subscribers', async () => {
+    const streamer = createMcpEventStreamer();
+    const delivered = [];
+    const unsubscribe = streamer.onEvent((event) => delivered.push(event));
+    const publish = createEventStreamPublisher(streamer);
+    const kernel = { commandId: 'c-1', receiptStatus: 'succeeded', reasonCodes: [] };
+    publish({ tool: 'create_customer', status: 'success', result: {}, kernel });
+    publish({ tool: 'list_customers', status: 'success', result: {} });
+    unsubscribe();
+
+    const history = await streamer.getEventHistory({});
+    const byTool = (events, tool) => events.find((event) => event.tool === tool);
+    for (const events of [history, delivered]) {
+      assert.deepEqual(byTool(events, 'create_customer').kernel, kernel);
+      assert.equal('kernel' in byTool(events, 'list_customers'), false);
+    }
+    // A clone, not the caller's object.
+    kernel.reasonCodes.push('mutated-later');
+    assert.deepEqual(byTool(history, 'create_customer').kernel.reasonCodes, []);
   });
 });
 
