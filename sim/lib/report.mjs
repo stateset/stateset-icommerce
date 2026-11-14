@@ -235,7 +235,8 @@ function failureDetails(oracle) {
       ? null
       : {
           firstInvalidSequence: oracle.chain.firstInvalidSequence,
-          materializedMismatches: oracle.chain.materializedMismatches,
+          issueCount: oracle.chain.issueCount,
+          issues: oracle.chain.issues,
         },
     expectations: oracle.expectations.failures,
     crashedActors: oracle.crashes.actors,

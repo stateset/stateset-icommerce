@@ -271,6 +271,38 @@ describe('agent swarm', { skip }, () => {
       assert.equal(oracle.invariants.passed, false);
     });
 
+    it('a sealed outcome whose materialized row is deleted', { timeout: TIMEOUT }, async () => {
+      const oracle = await tampered(
+        'materialized-deleted',
+        'DELETE FROM kernel_receipts WHERE rowid = (SELECT MAX(rowid) FROM kernel_receipts)',
+      );
+      assert.equal(oracle.invariants.chainValid, false);
+      assert.equal(oracle.chain.materializedRows, oracle.chain.entries - 1);
+      assert.deepEqual(
+        oracle.chain.issues.map((issue) => issue.kind),
+        ['missing_materialized_receipt'],
+      );
+      assert.equal(oracle.invariants.passed, false);
+    });
+
+    it(
+      'a materialized receipt moved to another idempotency key',
+      { timeout: TIMEOUT },
+      async () => {
+        const oracle = await tampered(
+          'materialized-key',
+          `UPDATE kernel_receipts SET idempotency_key = idempotency_key || ':forged'
+            WHERE rowid = (SELECT MIN(rowid) FROM kernel_receipts)`,
+        );
+        assert.equal(oracle.invariants.chainValid, false);
+        assert.deepEqual(oracle.chain.issues.map((issue) => issue.kind).sort(), [
+          'materialized_without_sealed_entry',
+          'missing_materialized_receipt',
+        ]);
+        assert.equal(oracle.invariants.passed, false);
+      },
+    );
+
     it(
       'a budget whose counter disagrees with its receipts is a ledger mismatch',
       { timeout: TIMEOUT },

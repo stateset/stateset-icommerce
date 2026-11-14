@@ -16,8 +16,11 @@
  *   duplicateApplies  - one idempotency key, at most one sealed outcome; one
  *                       cart, at most one order; every answer under one key,
  *                       and every replay, is the original receipt in full.
- *   chainValid        - the receipt audit chain recomputes. The Node binding
- *                       on master exposes no verify API (the Rust
+ *   chainValid        - the receipt audit chain recomputes, and sealed
+ *                       entries and materialized `kernel_receipts` rows
+ *                       correspond one to one (same key, request hash and
+ *                       receipt). The Node binding on master exposes no
+ *                       verify API (the Rust
  *                       `Commerce::kernel_audit().verify_chain()` is not
  *                       bound), so this recomputes the same sha256-jcs-v1
  *                       links independently.
@@ -74,13 +77,17 @@ export function runOracleIsolated(input) {
 export async function runOracle({ dbPath, config, records, budgetStatuses }) {
   const db = await openReader(dbPath);
   try {
+    // Column names per crates/stateset-migrations/migrations/069_kernel_outbox.sql
+    // and 071_kernel_receipt_audit_chain.sql.
     const auditRows = db.all(
-      `SELECT sequence, receipt_id, idempotency_key, request_hash, previous_audit_hash, audit_hash, receipt
+      `SELECT sequence, receipt_id, command_id, idempotency_key, request_hash,
+              previous_audit_hash, audit_hash, receipt
          FROM kernel_receipt_audit_log ORDER BY sequence`,
     );
     const audit = auditRows.map((row) => ({ ...row, parsed: JSON.parse(row.receipt) }));
     const materialized = db.all(
-      'SELECT idempotency_key, request_hash, status, receipt FROM kernel_receipts',
+      `SELECT command_id, idempotency_key, command_type, contract_version, request_hash, status, receipt
+         FROM kernel_receipts`,
     );
     const observed = records.flatMap((record) => record.observed);
 
@@ -146,30 +153,86 @@ function verifyChain(audit, materialized) {
     }
     previous = row.audit_hash;
   }
-  // A materialized receipt must be byte-for-byte the sealed entry it claims.
-  const byHash = new Map(audit.map((row) => [row.audit_hash, row]));
-  const materializedMismatches = [];
-  for (const row of materialized) {
-    const sealed = JSON.parse(row.receipt);
-    const entry = byHash.get(sealed.audit_hash);
-    sealed.audit_hash = null;
-    if (
-      !entry ||
-      entry.request_hash !== row.request_hash ||
-      canonicalJson(entry.parsed) !== canonicalJson(sealed)
-    ) {
-      materializedMismatches.push(row.idempotency_key);
+  const issues = [];
+  // The hash covers request_hash and the receipt, not the entry's own key
+  // columns, so those must agree with the receipt they file.
+  for (const entry of audit) {
+    const fields = ['receipt_id', 'command_id', 'idempotency_key'].filter(
+      (field) => entry[field] !== entry.parsed[field],
+    );
+    if (fields.length > 0)
+      issues.push({
+        kind: 'sealed_entry_columns_disagree',
+        sequence: entry.sequence,
+        key: entry.idempotency_key,
+        fields,
+      });
+  }
+  // The swarm only applies (it never previews), so every sealed outcome is
+  // materialized exactly once under its own idempotency key and every
+  // materialized row is one sealed outcome: a one-to-one correspondence.
+  // Checking only the rows that survive would pass a deleted row, and a row
+  // moved to another key (which a replay under the real key would then miss).
+  const rowsByKey = new Map(materialized.map((row) => [row.idempotency_key, row]));
+  const claimed = new Set();
+  for (const entry of audit) {
+    const row = rowsByKey.get(entry.idempotency_key);
+    if (!row) {
+      issues.push({
+        kind: 'missing_materialized_receipt',
+        sequence: entry.sequence,
+        key: entry.idempotency_key,
+      });
+      continue;
     }
+    claimed.add(entry.idempotency_key);
+    const fields = materializedDifferences(row, entry);
+    if (fields.length > 0)
+      issues.push({
+        kind: 'materialized_receipt_differs',
+        sequence: entry.sequence,
+        key: entry.idempotency_key,
+        fields,
+      });
+  }
+  for (const row of materialized) {
+    if (!claimed.has(row.idempotency_key))
+      issues.push({ kind: 'materialized_without_sealed_entry', key: row.idempotency_key });
   }
   return {
     verifier: 'js-recompute:sha256-jcs-v1',
-    valid: firstInvalidSequence === null && materializedMismatches.length === 0,
+    valid: firstInvalidSequence === null && issues.length === 0,
     entries: audit.length,
     headHash: previous,
     firstInvalidSequence,
     materializedRows: materialized.length,
-    materializedMismatches: materializedMismatches.slice(0, 20),
+    issueCount: issues.length,
+    issues: issues.slice(0, 20),
   };
+}
+
+/**
+ * How a `kernel_receipts` row departs from the sealed entry under its key:
+ * its request hash, its columns versus its own receipt, and its receipt
+ * versus the sealed receipt with `audit_hash` filled in (which binds the
+ * row's audit hash, receipt id, command id and key to the entry's).
+ */
+function materializedDifferences(row, entry) {
+  let receipt;
+  try {
+    receipt = JSON.parse(row.receipt);
+  } catch {
+    return ['receipt'];
+  }
+  const fields = [];
+  if (row.request_hash !== entry.request_hash) fields.push('request_hash');
+  for (const column of ['command_id', 'idempotency_key', 'command_type', 'contract_version']) {
+    if (row[column] !== receipt[column]) fields.push(column);
+  }
+  if (row.status !== receipt.status) fields.push('status');
+  for (const field of differingFields(receipt, sealedAsReturned(entry)))
+    fields.push(`receipt.${field}`);
+  return fields;
 }
 
 /**
