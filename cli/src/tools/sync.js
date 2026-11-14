@@ -953,6 +953,12 @@ export const syncTools = [
         .object({
           leafIndex: z.number().int().min(0),
           proofHashes: z.array(z.string()),
+          leafCount: z
+            .number()
+            .int()
+            .min(1)
+            .optional()
+            .describe('Number of events in the committed batch; holds the path to its shape'),
         })
         .describe('Merkle inclusion proof with leaf index and sibling hashes'),
       expectedRoot: z.string().min(1).describe('Hex-encoded Merkle root from the commitment'),
@@ -960,7 +966,24 @@ export const syncTools = [
     permission: 'read',
     handler: async ({ params }) => {
       const { computeNodeHash, hexToBuffer } = await import('../sync/crypto.js');
+      const { checkIndexedPath } = await import('../sync/merkle-shape.js');
       const { envelope, proof, expectedRoot } = params;
+
+      // Canonical path shape, as in the Rust verifier. Without a leafCount the
+      // path cannot be held to a tree; pathBound reports that.
+      const shape = checkIndexedPath({
+        leafIndex: proof.leafIndex,
+        siblings: proof.proofHashes,
+        leafCount: proof.leafCount,
+      });
+      if (!shape.ok) {
+        return {
+          valid: false,
+          pathBound: shape.pathBound,
+          eventId: envelope.eventId,
+          expectedRoot,
+        };
+      }
 
       // The leaf hash is H(payloadPlainHash || agentSignature) — simplified for verification
       const crypto = await import('crypto');
@@ -988,6 +1011,7 @@ export const syncTools = [
 
       return {
         valid,
+        pathBound: shape.pathBound,
         eventId: envelope.eventId,
         expectedRoot,
       };

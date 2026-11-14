@@ -521,8 +521,25 @@ export async function execute(action, args, context) {
       }
       const { computeNodeHash, hexToBuffer } = await import('../sync/crypto.js');
       const crypto = await import('node:crypto');
+      const { checkIndexedPath } = await import('../sync/merkle-shape.js');
       const envelope = parseJsonArg(envelopeJson, 'envelope');
       const proof = parseJsonArg(proofJson, 'proof');
+      // Canonical path shape, as in the Rust verifier. Without a leafCount the
+      // path cannot be held to a tree; pathBound reports that.
+      const shape = checkIndexedPath({
+        leafIndex: proof.leafIndex,
+        siblings: proof.proofHashes,
+        leafCount: proof.leafCount,
+      });
+      if (!shape.ok) {
+        const result = {
+          valid: false,
+          pathBound: shape.pathBound,
+          eventId: envelope.eventId,
+          expectedRoot,
+        };
+        return jsonOutput ? result : { result, formatted: 'Inclusion proof: invalid' };
+      }
       const leafHash = crypto
         .createHash('sha256')
         .update(hexToBuffer(envelope.payloadPlainHash))
@@ -539,7 +556,7 @@ export async function execute(action, args, context) {
         index = Math.floor(index / 2);
       }
       const valid = currentHash.equals(hexToBuffer(expectedRoot));
-      const result = { valid, eventId: envelope.eventId, expectedRoot };
+      const result = { valid, pathBound: shape.pathBound, eventId: envelope.eventId, expectedRoot };
       return jsonOutput
         ? result
         : { result, formatted: `Inclusion proof: ${valid ? 'valid' : 'invalid'}` };

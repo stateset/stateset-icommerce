@@ -36,3 +36,36 @@ export function merklePathDepth(leafCount) {
   }
   return depth;
 }
+
+/**
+ * Check an index-addressed path (a leaf index plus a list of sibling hashes)
+ * against the canonical shape.
+ *
+ * Always: at most MAX_MERKLE_DEPTH siblings, and a nonnegative integer index
+ * the path can address (below 2^siblings), so no bit of it goes unread.
+ * With a tree size: exactly `merklePathDepth(leafCount)` siblings and an
+ * index inside the tree. Without one the path cannot be held to a tree, and
+ * `pathBound` is false so the caller can say so.
+ *
+ * @param {{ leafIndex: unknown, siblings: unknown, leafCount?: unknown }} shape
+ * @returns {{ ok: boolean, pathBound: boolean }}
+ */
+export function checkIndexedPath({ leafIndex, siblings, leafCount }) {
+  const pathBound = (leafCount ?? null) !== null;
+  if (
+    !Array.isArray(siblings) ||
+    siblings.length > MAX_MERKLE_DEPTH ||
+    !Number.isSafeInteger(leafIndex) ||
+    leafIndex < 0 ||
+    leafIndex >= 2 ** siblings.length
+  ) {
+    return { ok: false, pathBound };
+  }
+  if (pathBound) {
+    const depth = merklePathDepth(leafCount);
+    if (depth === null || siblings.length !== depth || leafIndex >= leafCount) {
+      return { ok: false, pathBound };
+    }
+  }
+  return { ok: true, pathBound };
+}
