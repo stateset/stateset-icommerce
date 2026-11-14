@@ -1003,6 +1003,49 @@ describe('executed versus previewed', () => {
       preview: 1,
     });
   });
+
+  // The real-server cases (close_month and import_full_data through MCP, the
+  // toolkit and a plan step) are in test/integration/session-report-replay-log.test.js.
+  it("counts a tool's own dry run as a dry run unless the kernel committed it", () => {
+    const write = { mutationManifest: { tool: 'close_month', sideEffect: 'write' } };
+    const r = buildSessionReport([
+      // only the result says so (close_month's report)
+      base({
+        tool: 'close_month',
+        status: 'success',
+        sessionId: 's',
+        notes: write,
+        result: mcpResult({ ok: true, result: { success: true, report: { dryRun: true } } }),
+      }),
+      // a dry run that failed is still an error
+      base({
+        tool: 'close_month',
+        status: 'error',
+        sessionId: 's',
+        notes: write,
+        params: { dryRun: true },
+        result: mcpResult({ ok: false, error: { code: 'VALIDATION', message: 'x' } }),
+      }),
+      // a succeeded receipt is a commit whatever the parameters said
+      base({
+        tool: 'create_order',
+        status: 'success',
+        sessionId: 's',
+        notes: write,
+        params: { dryRun: true },
+        kernel: kernelBlock({ receiptStatus: 'succeeded' }),
+      }),
+      // dryRun: false is an applied write
+      base({
+        tool: 'import_full_data',
+        status: 'success',
+        sessionId: 's',
+        notes: write,
+        params: { dryRun: false },
+      }),
+    ]);
+    assert.deepEqual(sessionOf(r, 's').outcomes, outcomes({ dryRun: 1, error: 1, executed: 2 }));
+  });
 });
 
 describe('count keys that are Object.prototype names', () => {

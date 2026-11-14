@@ -302,6 +302,32 @@ function committedWrite(event, kind, receiptStatus) {
   return isPlainObject(event.notes?.mutationManifest);
 }
 
+/** The tool result an event logged: a plan step logs its step outcome, whose `result` it is. */
+function toolResultOf(event, kind) {
+  const result = event?.result;
+  if (!isPlainObject(result)) return null;
+  if (isPlainObject(result.structuredContent)) return result.structuredContent.result;
+  return kind === 'step' ? result.result : result;
+}
+
+/**
+ * Whether a call that succeeded was the tool's own dry run: its parameters
+ * asked for one (`dryRun: true`, as `close_month` and the import tools take),
+ * or its result says it was one (`dryRun: true`, or `report.dryRun: true` as
+ * `close_month` reports). Such a call is logged as an ordinary success, with
+ * a mutation manifest on the MCP path, although it wrote nothing.
+ */
+function toolDryRun(event, kind) {
+  const params = kind === 'step' ? event?.params?.params : event?.params;
+  if (isPlainObject(params) && params.dryRun === true) return true;
+  const toolResult = toolResultOf(event, kind);
+  return (
+    isPlainObject(toolResult) &&
+    (toolResult.dryRun === true ||
+      (isPlainObject(toolResult.report) && toolResult.report.dryRun === true))
+  );
+}
+
 /**
  * Classify one operation (anything but a plan's own record, whose outcome is
  * its steps').
@@ -362,6 +388,8 @@ export function classifyEvent(event) {
   }
   if (DRY_RUN_STATUSES.has(status)) return { outcome: 'dryRun' };
   if (SUCCESS_STATUSES.has(status)) {
+    // A succeeded kernel receipt is a commit whatever the parameters said.
+    if (receiptStatus !== 'succeeded' && toolDryRun(event, kind)) return { outcome: 'dryRun' };
     return { outcome: committedWrite(event, kind, receiptStatus) ? 'executed' : 'ok' };
   }
   return { outcome: 'other' };
@@ -764,7 +792,8 @@ export function formatSessionReport(report, { logPath = null } = {}) {
   }
 
   const notes = [
-    'EXEC counts committed writes; PREVIEW counts previews and dry runs; OK counts other ' +
+    'EXEC counts committed writes; PREVIEW counts previews and dry runs (a tool run with ' +
+      'dryRun: true included); OK counts other ' +
       'successes (reads, and writes the log cannot attribute). A plan counts as one call; ' +
       'its steps are counted under STEPS and in the outcome columns.',
   ];
