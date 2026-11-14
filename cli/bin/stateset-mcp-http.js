@@ -167,6 +167,7 @@ async function main() {
     { createStatesetMcpServer },
     { createStatesetV2McpServer },
     { seedDemoData },
+    { A2AStore },
   ] = await Promise.all([
     import('@stateset/embedded'),
     import('@modelcontextprotocol/server'),
@@ -174,6 +175,7 @@ async function main() {
     import('../src/mcp-server.js'),
     import('../src/mcp/v2-server.js'),
     import('../src/seeds/demo.js'),
+    import('../src/a2a/store.js'),
   ]);
 
   const dbPath = values.db || ':memory:';
@@ -260,6 +262,23 @@ async function main() {
     await seedDemoData(commerce, { quiet: true });
   }
 
+  // Side stores: one set per PROCESS, never closed per request (stopgap).
+  // The A2A runtime keeps its tables in the engine's store file (escrow
+  // atomicity) and reaches them through better-sqlite3, a second copy of SQLite
+  // in this process. POSIX locks belong to the process, so that copy cannot see
+  // the engine's: when a per-request server closed its own connection, the copy
+  // took itself for the last user, checkpointed and unlinked -wal/-shm, and the
+  // close dropped the engine's locks, leaving later engine commits invisible to
+  // new connections. The connection now opens lazily on the first side-store
+  // call and closes once, at shutdown (see runMain below). Known limits, NOT
+  // fixed: that first open can still truncate -shm under the engine; both
+  // copies can take the WAL write lock at once, and an unlock by one releases
+  // the other's lock on the same bytes; stateset-mcp (stdio) still runs a second
+  // copy for its lifetime. Real fix (owner-pending): route side stores through
+  // the engine binding.
+  const sharedStores = { a2aStore: new A2AStore({ dbPath: storageDbPath }) };
+  runtime.sharedStores = sharedStores;
+
   // Per-request server factory: this is what makes the endpoint stateless. The
   // same factory backs both the 2026-07-28 path and the legacy stateless leg.
   const handler = createMcpHandler(
@@ -276,6 +295,7 @@ async function main() {
               .map((value) => value.trim())
               .filter(Boolean)
           : [],
+        sharedStores,
         createServer: createStatesetMcpServer,
       }),
     {
@@ -299,6 +319,7 @@ async function main() {
           .map((value) => value.trim())
           .filter(Boolean)
       : [],
+    sharedStores,
     createServer: createStatesetMcpServer,
   });
   await warmupServer.close();
@@ -392,4 +413,14 @@ async function main() {
   );
 }
 
-runMain('stateset-mcp-http', main);
+/** Process-lifetime resources that the shutdown handler releases. */
+const runtime = { sharedStores: null };
+
+runMain('stateset-mcp-http', main, {
+  // Close the shared side stores exactly once (a second signal finds none).
+  cleanup: async () => {
+    const stores = runtime.sharedStores;
+    runtime.sharedStores = null;
+    stores?.a2aStore.close();
+  },
+});
