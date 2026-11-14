@@ -18,6 +18,34 @@ function parseJsonArg(value, label) {
   }
 }
 
+/**
+ * Take a `--name <value>` or `--name=<value>` option out of positional args.
+ * @param {string[]} args
+ * @param {string} name - e.g. '--leaf-count'
+ * @param {string} usage - thrown when the option is repeated or has no value
+ * @returns {{ value: string|undefined, rest: string[] }}
+ */
+function takeOption(args, name, usage) {
+  let value;
+  const rest = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    let found;
+    if (arg === name) {
+      if (i + 1 >= args.length) throw new Error(usage);
+      found = String(args[++i]);
+    } else if (typeof arg === 'string' && arg.startsWith(`${name}=`)) {
+      found = arg.slice(name.length + 1);
+    } else {
+      rest.push(arg);
+      continue;
+    }
+    if (value !== undefined) throw new Error(usage);
+    value = found;
+  }
+  return { value, rest };
+}
+
 function parseOptionalInt(value, usage) {
   if (value === undefined) return undefined;
   const parsed = Number.parseInt(value, 10);
@@ -515,51 +543,30 @@ export async function execute(action, args, context) {
     }
 
     case 'verify-inclusion': {
-      const [envelopeJson, proofJson, expectedRoot] = args;
+      const usage =
+        'Usage: sync verify-inclusion <envelopeJson> <proofJson> <expectedRoot> [--leaf-count <n>]';
+      // --leaf-count is the batch size as the caller knows it, independently
+      // of the proof. Only it binds the path (pathBound); a leafCount inside
+      // proofJson is the proof's own claim and is applied as a sanity bound.
+      const { value: leafCountArg, rest } = takeOption(args, '--leaf-count', usage);
+      const [envelopeJson, proofJson, expectedRoot] = rest;
       if (!envelopeJson || !proofJson || !expectedRoot) {
-        throw new Error('Usage: sync verify-inclusion <envelopeJson> <proofJson> <expectedRoot>');
+        throw new Error(usage);
       }
-      const { computeNodeHash, hexToBuffer } = await import('../sync/crypto.js');
-      const crypto = await import('node:crypto');
-      const { checkIndexedPath } = await import('../sync/merkle-shape.js');
-      const envelope = parseJsonArg(envelopeJson, 'envelope');
-      const proof = parseJsonArg(proofJson, 'proof');
-      // Canonical path shape, as in the Rust verifier. Without a leafCount the
-      // path cannot be held to a tree; pathBound reports that.
-      const shape = checkIndexedPath({
-        leafIndex: proof.leafIndex,
-        siblings: proof.proofHashes,
-        leafCount: proof.leafCount,
+      const { merklePathDepth, parseTreeInteger } = await import('../sync/merkle-shape.js');
+      if (leafCountArg !== undefined && merklePathDepth(leafCountArg) === null) {
+        throw new Error(`${usage}\n--leaf-count must be an integer from 1 to 4294967295`);
+      }
+      const { verifyInlineInclusion } = await import('../sync/inline-inclusion.js');
+      const result = verifyInlineInclusion({
+        envelope: parseJsonArg(envelopeJson, 'envelope'),
+        proof: parseJsonArg(proofJson, 'proof'),
+        expectedRoot,
+        leafCount: leafCountArg === undefined ? undefined : parseTreeInteger(leafCountArg),
       });
-      if (!shape.ok) {
-        const result = {
-          valid: false,
-          pathBound: shape.pathBound,
-          eventId: envelope.eventId,
-          expectedRoot,
-        };
-        return jsonOutput ? result : { result, formatted: 'Inclusion proof: invalid' };
-      }
-      const leafHash = crypto
-        .createHash('sha256')
-        .update(hexToBuffer(envelope.payloadPlainHash))
-        .update(hexToBuffer(envelope.agentSignature))
-        .digest();
-      let currentHash = leafHash;
-      let index = proof.leafIndex;
-      for (const siblingHex of proof.proofHashes) {
-        const sibling = hexToBuffer(siblingHex);
-        currentHash =
-          index % 2 === 0
-            ? computeNodeHash(currentHash, sibling)
-            : computeNodeHash(sibling, currentHash);
-        index = Math.floor(index / 2);
-      }
-      const valid = currentHash.equals(hexToBuffer(expectedRoot));
-      const result = { valid, pathBound: shape.pathBound, eventId: envelope.eventId, expectedRoot };
       return jsonOutput
         ? result
-        : { result, formatted: `Inclusion proof: ${valid ? 'valid' : 'invalid'}` };
+        : { result, formatted: `Inclusion proof: ${result.valid ? 'valid' : 'invalid'}` };
     }
 
     case 'commitment': {
@@ -748,7 +755,7 @@ export async function execute(action, args, context) {
           '  resolve <conflictId> [strategy]                      Resolve conflict\n' +
           '  rebase [strategy]                                    Rebase all conflicts\n' +
           '  verify-receipt <envelopeJson> [publicKeyHex] [publicKeyBundleJson]  Verify receipt\n' +
-          '  verify-inclusion <envelopeJson> <proofJson> <expectedRoot>  Verify inclusion proof\n' +
+          '  verify-inclusion <envelopeJson> <proofJson> <expectedRoot> [--leaf-count <n>]  Verify inclusion proof\n' +
           '  commitment <batchId>                                 Inspect batch commitment\n' +
           '  key-generate <agentId> <keyType> [securityProfile]   Generate agent key\n' +
           '  key-list <agentId> [keyType] [securityProfile]       List agent keys\n' +
@@ -991,7 +998,7 @@ export const metadata = {
     },
     'verify-inclusion': {
       description: 'Verify inclusion proof',
-      args: ['<envelopeJson>', '<proofJson>', '<expectedRoot>'],
+      args: ['<envelopeJson>', '<proofJson>', '<expectedRoot>', '[--leaf-count <n>]'],
     },
     commitment: { description: 'Inspect batch commitment', args: ['<batchId>'] },
     'key-generate': {

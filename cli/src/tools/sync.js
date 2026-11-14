@@ -945,76 +945,49 @@ export const syncTools = [
       envelope: z
         .object({
           eventId: z.string().min(1),
-          payloadPlainHash: z.string().min(1),
-          agentSignature: z.string().min(1),
+          payloadPlainHash: z
+            .string()
+            .min(1)
+            .describe('Hex-encoded 32-byte payload hash (optional 0x prefix)'),
+          agentSignature: z
+            .string()
+            .min(1)
+            .describe(
+              'Hex-encoded agent signature (optional 0x prefix): 64 bytes (Ed25519) or 3309 bytes (ML-DSA-65)',
+            ),
         })
         .describe('Partial VES event envelope (eventId, payloadPlainHash, agentSignature)'),
       proof: z
         .object({
           leafIndex: z.number().int().min(0),
-          proofHashes: z.array(z.string()),
+          proofHashes: z
+            .array(z.string())
+            .describe('Hex-encoded 32-byte sibling hashes, lowest level first'),
           leafCount: z
             .number()
             .int()
             .min(1)
             .optional()
-            .describe('Number of events in the committed batch; holds the path to its shape'),
+            .describe(
+              'Batch size as the proof states it. Applied as a sanity bound, but it does not bind the path (pathBound stays false); pass the top-level leafCount for that',
+            ),
         })
         .describe('Merkle inclusion proof with leaf index and sibling hashes'),
       expectedRoot: z.string().min(1).describe('Hex-encoded Merkle root from the commitment'),
+      leafCount: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe(
+          'Number of events in the committed batch, as you know it independently of the proof (e.g. from the commitment). Only this binds the path to the tree: pathBound is true only when it is given. A proof stating a different leafCount is rejected',
+        ),
     },
     permission: 'read',
     handler: async ({ params }) => {
-      const { computeNodeHash, hexToBuffer } = await import('../sync/crypto.js');
-      const { checkIndexedPath } = await import('../sync/merkle-shape.js');
-      const { envelope, proof, expectedRoot } = params;
-
-      // Canonical path shape, as in the Rust verifier. Without a leafCount the
-      // path cannot be held to a tree; pathBound reports that.
-      const shape = checkIndexedPath({
-        leafIndex: proof.leafIndex,
-        siblings: proof.proofHashes,
-        leafCount: proof.leafCount,
-      });
-      if (!shape.ok) {
-        return {
-          valid: false,
-          pathBound: shape.pathBound,
-          eventId: envelope.eventId,
-          expectedRoot,
-        };
-      }
-
-      // The leaf hash is H(payloadPlainHash || agentSignature) — simplified for verification
-      const crypto = await import('crypto');
-      const leafHash = crypto
-        .createHash('sha256')
-        .update(hexToBuffer(envelope.payloadPlainHash))
-        .update(hexToBuffer(envelope.agentSignature))
-        .digest();
-
-      // Walk up the proof tree
-      let currentHash = leafHash;
-      let index = proof.leafIndex;
-      for (const siblingHex of proof.proofHashes) {
-        const sibling = hexToBuffer(siblingHex);
-        if (index % 2 === 0) {
-          currentHash = computeNodeHash(currentHash, sibling);
-        } else {
-          currentHash = computeNodeHash(sibling, currentHash);
-        }
-        index = Math.floor(index / 2);
-      }
-
-      const expectedRootBuf = hexToBuffer(expectedRoot);
-      const valid = currentHash.equals(expectedRootBuf);
-
-      return {
-        valid,
-        pathBound: shape.pathBound,
-        eventId: envelope.eventId,
-        expectedRoot,
-      };
+      const { verifyInlineInclusion } = await import('../sync/inline-inclusion.js');
+      const { envelope, proof, expectedRoot, leafCount } = params;
+      return verifyInlineInclusion({ envelope, proof, expectedRoot, leafCount });
     },
   },
   {

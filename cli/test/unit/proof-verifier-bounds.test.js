@@ -9,6 +9,11 @@
  * `sync_verify_inclusion` tool and the `sync verify-inclusion` command -- to
  * the same rule, and check that a verification result says what was and was
  * not checked.
+ *
+ * A tree size binds a path only when the caller supplies it. A size the
+ * proof (or bundle) states about itself is chosen by whoever made the proof:
+ * it is applied as a sanity bound, but `pathBound` stays false and
+ * `leafCountSource` says 'proof' (or 'bundle').
  */
 
 import { describe, it } from 'node:test';
@@ -20,6 +25,12 @@ import { SequencerClient } from '../../src/sync/client.js';
 import * as cryptoMod from '../../src/sync/crypto.js';
 import { syncTools } from '../../src/tools/sync.js';
 import { execute as executeSyncCommand } from '../../src/commands/sync.js';
+import {
+  decodeHash32,
+  merklePathDepth,
+  parseTreeInteger,
+  resolveLeafCount,
+} from '../../src/sync/merkle-shape.js';
 
 const {
   computeEventSigningHash,
@@ -153,14 +164,32 @@ describe('proof generator: canonical path shape', () => {
             leafIndex: proof.leafIndex,
           });
           assert.equal(verdict.valid, true, `${format} ${size} leaves, index ${i}`);
-          assert.equal(verdict.pathBound, true);
+          // The proof's own leafCount bounds the path but does not bind it.
+          assert.equal(verdict.pathBound, false);
+          assert.equal(verdict.leafCountSource, 'proof');
+          const callerBound = pg.verifyInclusionProof(
+            {
+              format: proof.format,
+              leafHash: proof.leaf,
+              proof: proof.proof,
+              expectedRoot: proof.root,
+            },
+            { leafCount: size },
+          );
+          assert.equal(callerBound.valid, true);
+          assert.equal(callerBound.pathBound, true);
+          assert.equal(callerBound.leafCountSource, 'caller');
 
           const bundle = pg.generateReceiptBundle(evt, events);
           const receipt = pg.verifyReceiptBundle(bundle);
           assert.equal(receipt.valid, true, `${format} bundle, ${size} leaves, index ${i}`);
-          assert.equal(receipt.pathBound, true);
-          // A caller that knows the batch size independently gets the same answer.
-          assert.equal(pg.verifyReceiptBundle(bundle, undefined, { leafCount: size }).valid, true);
+          assert.equal(receipt.pathBound, false);
+          assert.equal(receipt.leafCountSource, 'bundle');
+          // A caller that knows the batch size independently binds the path.
+          const bound = pg.verifyReceiptBundle(bundle, undefined, { leafCount: size });
+          assert.equal(bound.valid, true);
+          assert.equal(bound.pathBound, true);
+          assert.equal(bound.leafCountSource, 'caller');
         }
       }
     });
@@ -195,23 +224,29 @@ describe('proof generator: canonical path shape', () => {
 
   it('rejects an empty path with leaf == root unless the tree has exactly one leaf', () => {
     const leaf = Buffer.alloc(32, 7);
+    const bare = { leafHash: hex(leaf), proof: [], expectedRoot: hex(leaf) };
     for (const leafCount of [2, 3, 8]) {
-      const verdict = pg.verifyInclusionProof({
-        leafHash: hex(leaf),
-        proof: [],
-        expectedRoot: hex(leaf),
-        leafCount,
-      });
-      assert.equal(verdict.valid, false, `${leafCount} leaves`);
+      assert.equal(pg.verifyInclusionProof({ ...bare, leafCount }).valid, false, `${leafCount}`);
+      assert.equal(
+        pg.verifyInclusionProof(bare, { leafCount }).valid,
+        false,
+        `caller ${leafCount}`,
+      );
     }
-    const single = pg.verifyInclusionProof({
-      leafHash: hex(leaf),
-      proof: [],
-      expectedRoot: hex(leaf),
-      leafCount: 1,
-    });
+    // A proof that calls itself a one-leaf tree is self-consistent, and says
+    // only that: the size came from the proof, so the path is not bound.
+    const selfStated = pg.verifyInclusionProof({ ...bare, leafCount: 1 });
+    assert.equal(selfStated.valid, true);
+    assert.equal(selfStated.pathBound, false);
+    assert.equal(selfStated.leafCountSource, 'proof');
+    const single = pg.verifyInclusionProof(bare, { leafCount: 1 });
     assert.equal(single.valid, true);
     assert.equal(single.pathBound, true);
+    assert.equal(single.leafCountSource, 'caller');
+    // A caller who knows the tree is bigger refuses the self-stated size.
+    const disagreeing = pg.verifyInclusionProof({ ...bare, leafCount: 1 }, { leafCount: 4 });
+    assert.equal(disagreeing.valid, false);
+    assert.match(disagreeing.reason, /disagrees/);
   });
 
   it('rejects a leaf index at or beyond the tree size', () => {
@@ -274,12 +309,14 @@ describe('proof generator: canonical path shape', () => {
     });
     assert.equal(verdict.valid, true);
     assert.equal(verdict.pathBound, false);
+    assert.equal(verdict.leafCountSource, null);
 
     const bundle = pg.generateReceiptBundle(events[1], events);
     delete bundle.leafCount;
     const receipt = pg.verifyReceiptBundle(bundle);
     assert.equal(receipt.valid, true);
     assert.equal(receipt.pathBound, false);
+    assert.equal(receipt.leafCountSource, null);
   });
 
   it('an independently known tree size overrides what the bundle claims', () => {
@@ -296,10 +333,51 @@ describe('proof generator: canonical path shape', () => {
       leafIndex: 0,
       leafCount: 1,
     };
-    assert.equal(pg.verifyReceiptBundle(forged).valid, true, 'self-consistent on its own word');
+    const onItsWord = pg.verifyReceiptBundle(forged);
+    assert.equal(onItsWord.valid, true, 'self-consistent on its own word');
+    // ...which the result does not pass off as a bound path.
+    assert.equal(onItsWord.pathBound, false);
+    assert.equal(onItsWord.leafCountSource, 'bundle');
     const verdict = pg.verifyReceiptBundle(forged, undefined, { leafCount: 4 });
     assert.equal(verdict.valid, false);
     assert.ok(verdict.checks.some((c) => c.check === 'inclusion_proof' && !c.passed));
+  });
+
+  it('a bundle size written as a canonical decimal string agrees with the same number', () => {
+    const events = [0, 1, 2].map(legacyEvent);
+    const bundle = {
+      ...pg.generateReceiptBundle(events[1], events),
+      leafCount: '3',
+      leafIndex: '1',
+    };
+    assert.equal(pg.verifyReceiptBundle(bundle).valid, true);
+    assert.equal(pg.verifyReceiptBundle(bundle, undefined, { leafCount: 3 }).valid, true);
+    const noncanonical = { ...bundle, leafCount: '03' };
+    const verdict = pg.verifyReceiptBundle(noncanonical, undefined, { leafCount: 3 });
+    assert.equal(verdict.valid, false);
+    const detail = verdict.checks.find((c) => c.check === 'inclusion_proof').detail;
+    assert.match(detail, /not a usable tree size/);
+  });
+
+  it('rejects a sibling that is not exactly 32 bytes of hex instead of truncating it', () => {
+    const [a, b] = [1, 2].map((n) => Buffer.alloc(32, n));
+    const root = computeNodeHash(a, b);
+    const step = (hash) => [{ position: 'right', hash }];
+    assert.equal(pg.verifyMerkleProof(a, step(hex(b)), root, { leafCount: 2 }), true);
+    assert.equal(pg.verifyMerkleProof(a, step(`0x${hex(b)}`), root, { leafCount: 2 }), true);
+    // Buffer.from(s, 'hex') stops at the first non-hex character, so each of
+    // these used to hash as `b` (or a prefix of it) and could verify.
+    for (const hash of [
+      `${hex(b)}zz`,
+      `${hex(b)}0`,
+      hex(b).slice(0, 63),
+      `${hex(b)}00`,
+      'zz',
+      '',
+    ]) {
+      assert.equal(pg.verifyMerkleProof(a, step(hash), root), false, JSON.stringify(hash));
+    }
+    assert.equal(pg.verifyMerkleProof(a, step(undefined), root), false);
   });
 });
 
@@ -480,11 +558,18 @@ describe('SequencerClient.verifyInclusion: canonical path shape', () => {
   it('rejects a proof with no usable tree size', () => {
     const env = envelope(0);
     const root = hex(specLeaf(env));
-    for (const leafCount of [undefined, 0, -1, 1.5, '1', 2 ** 32]) {
+    const unusable = [undefined, null, 0, -1, 1.5, NaN, 1n, '01', ' 1', '1.0', '0x1', 2 ** 32];
+    for (const leafCount of unusable) {
       assert.equal(
         client().verifyInclusion(env, { leafIndex: 0, proofHashes: [], leafCount }, root),
         false,
-        `leafCount ${String(leafCount)}`,
+        `proof leafCount ${String(leafCount)}`,
+      );
+      if (leafCount === undefined || leafCount === null) continue;
+      assert.equal(
+        client().verifyInclusion(env, { leafIndex: 0, proofHashes: [] }, root, { leafCount }),
+        false,
+        `caller leafCount ${String(leafCount)}`,
       );
     }
     assert.equal(client().verifyInclusion(env, { leafIndex: 0, leafCount: 1 }, root), false);
@@ -500,6 +585,100 @@ describe('SequencerClient.verifyInclusion: canonical path shape', () => {
       client().verifyInclusion(env, { ...bare, leafCount: 1 }, root, { leafCount: 4 }),
       false,
     );
+  });
+
+  it('reports pathBound only for a caller-supplied tree size', () => {
+    const env = envelope(0);
+    const root = hex(specLeaf(env));
+    const bare = { leafIndex: 0, proofHashes: [] };
+    const c = client();
+    assert.deepEqual(c.verifyInclusionDetailed(env, bare, root, { leafCount: 1 }), {
+      valid: true,
+      pathBound: true,
+      leafCountSource: 'caller',
+    });
+    assert.deepEqual(c.verifyInclusionDetailed(env, { ...bare, leafCount: 1 }, root), {
+      valid: true,
+      pathBound: false,
+      leafCountSource: 'proof',
+    });
+    assert.deepEqual(
+      c.verifyInclusionDetailed(env, { ...bare, leafCount: 1 }, root, { leafCount: 1 }),
+      { valid: true, pathBound: true, leafCountSource: 'caller' },
+    );
+    const disagreeing = c.verifyInclusionDetailed(env, { ...bare, leafCount: 1 }, root, {
+      leafCount: 2,
+    });
+    assert.equal(disagreeing.valid, false);
+    assert.match(disagreeing.reason, /disagrees/);
+    const none = c.verifyInclusionDetailed(env, bare, root);
+    assert.equal(none.valid, false);
+    assert.equal(none.leafCountSource, null);
+  });
+
+  it('accepts canonical decimal strings for leafIndex and leafCount, as gRPC loads uint64', () => {
+    const env = envelope(1);
+    const sibling = Buffer.alloc(32, 0xee);
+    const root = hex(computeNodeHash(sibling, specLeaf(env)));
+    // The gRPC client loads longs as strings and proof_hashes as bytes.
+    const grpcStyle = { leafIndex: '1', leafCount: '2', proofHashes: [sibling] };
+    assert.equal(client().verifyInclusion(env, grpcStyle, root), true);
+    assert.equal(client().verifyInclusion(env, grpcStyle, root, { leafCount: '2' }), true);
+    assert.equal(client().verifyInclusion(env, grpcStyle, root, { leafCount: 2 }), true);
+    for (const leafIndex of ['01', ' 1', '1 ', '+1', '1.0', '0x1', '1e0', '', 1n]) {
+      assert.equal(
+        client().verifyInclusion(env, { ...grpcStyle, leafIndex }, root),
+        false,
+        `leafIndex ${JSON.stringify(String(leafIndex))}`,
+      );
+    }
+    assert.equal(client().verifyInclusion(env, { ...grpcStyle, leafCount: '02' }, root), false);
+  });
+
+  it('rejects a sibling that is not exactly 32 bytes of hex instead of truncating it', () => {
+    const env = envelope(0);
+    const sibling = Buffer.alloc(32, 0xab);
+    const root = hex(computeNodeHash(specLeaf(env), sibling));
+    const proof = (hash) => ({ leafIndex: 0, leafCount: 2, proofHashes: [hash] });
+    assert.equal(client().verifyInclusion(env, proof(hex(sibling)), root), true);
+    assert.equal(client().verifyInclusion(env, proof(`0x${hex(sibling)}`), root), true);
+    assert.equal(client().verifyInclusion(env, proof(sibling), root), true);
+    // Each of these used to be cut down to `sibling` (or a prefix) by
+    // Buffer.from(s, 'hex'); the first two would then have verified.
+    for (const hash of [
+      `${hex(sibling)}zz`,
+      `${hex(sibling)}0`,
+      `${hex(sibling)}00`,
+      hex(sibling).slice(0, 62),
+      Buffer.alloc(31, 0xab),
+      42,
+      null,
+    ]) {
+      assert.equal(
+        client().verifyInclusion(env, proof(hash), root),
+        false,
+        `sibling ${String(hash).slice(0, 20)}`,
+      );
+    }
+  });
+
+  it('returns invalid instead of throwing on a null proof, options or envelope', () => {
+    const env = envelope(0);
+    const root = hex(specLeaf(env));
+    const proof = { leafIndex: 0, proofHashes: [], leafCount: 1 };
+    const c = client();
+    assert.equal(c.verifyInclusion(env, null, root, { leafCount: 1 }), false);
+    assert.equal(c.verifyInclusion(env, undefined, root), false);
+    assert.equal(c.verifyInclusion(env, 'not-a-proof', root, { leafCount: 1 }), false);
+    // null options are no options: the proof's own size still applies.
+    assert.equal(c.verifyInclusion(env, proof, root, null), true);
+    assert.equal(c.verifyInclusion(null, proof, root, { leafCount: 1 }), false);
+    assert.deepEqual(c.verifyInclusionDetailed(env, null, root, null), {
+      valid: false,
+      pathBound: false,
+      leafCountSource: null,
+      reason: 'no usable leaf count',
+    });
   });
 
   it('does not walk index bits past 31 back onto low bits', () => {
@@ -541,8 +720,9 @@ describe('SequencerClient.verifyInclusion: canonical path shape', () => {
 
 /**
  * The leaf these two inline verifiers compute: SHA-256(payloadPlainHash ||
- * agentSignature). It is not the VES v1.0 leaf; these tests pin the path
- * shape only and deliberately leave the leaf as it is.
+ * agentSignature). It is not the VES v1.0 leaf. It has no domain prefix, so
+ * the verifiers fix the lengths of its inputs (32-byte payload hash, 64- or
+ * 3309-byte signature) to keep its preimage from ever spelling a node's.
  */
 function inlineLeaf(payloadPlainHash, agentSignature) {
   return nodeCrypto.createHash('sha256').update(payloadPlainHash).update(agentSignature).digest();
@@ -570,15 +750,25 @@ function inlineTree(leaf, size, index) {
   return { proofHashes: proof.map((step) => step.hash), root: hex(root) };
 }
 
+/**
+ * Each inline verifier, called the way its users call it. `leafCount` is the
+ * caller-supplied tree size: the tool's top-level `leafCount` input, the
+ * command's `--leaf-count` option.
+ */
 const INLINE_VERIFIERS = {
-  'sync_verify_inclusion tool': async (envelope, proof, expectedRoot) => {
+  'sync_verify_inclusion tool': async (envelope, proof, expectedRoot, leafCount) => {
     const tool = syncTools.find((t) => t.name === 'sync_verify_inclusion');
-    return tool.handler({ params: { envelope, proof, expectedRoot } });
+    return tool.handler({ params: { envelope, proof, expectedRoot, leafCount } });
   },
-  'sync verify-inclusion command': async (envelope, proof, expectedRoot) =>
+  'sync verify-inclusion command': async (envelope, proof, expectedRoot, leafCount) =>
     executeSyncCommand(
       'verify-inclusion',
-      [JSON.stringify(envelope), JSON.stringify(proof), expectedRoot],
+      [
+        JSON.stringify(envelope),
+        JSON.stringify(proof),
+        expectedRoot,
+        ...(leafCount === undefined ? [] : ['--leaf-count', String(leafCount)]),
+      ],
       { jsonOutput: true, output: () => {} },
     ),
 };
@@ -586,26 +776,141 @@ const INLINE_VERIFIERS = {
 for (const [name, verify] of Object.entries(INLINE_VERIFIERS)) {
   describe(`${name}: canonical path shape`, () => {
     for (const size of TREE_SIZES) {
-      it(`accepts every legitimate proof of a ${size}-leaf tree, with and without a tree size`, async () => {
+      it(`accepts every legitimate proof of a ${size}-leaf tree, however the size is known`, async () => {
         for (let index = 0; index < size; index++) {
           const { envelope, leaf } = inlineEnvelope(`${size}-${index}`);
           const { proofHashes, root } = inlineTree(leaf, size, index);
+          const proof = { leafIndex: index, proofHashes };
+          const label = `${size} leaves, index ${index}`;
 
-          const bound = await verify(
-            envelope,
-            { leafIndex: index, proofHashes, leafCount: size },
-            root,
-          );
-          assert.equal(bound.valid, true, `${size} leaves, index ${index}`);
+          // The caller's own count binds the path.
+          const bound = await verify(envelope, proof, root, size);
+          assert.equal(bound.valid, true, label);
           assert.equal(bound.pathBound, true);
+          assert.equal(bound.leafCountSource, 'caller');
 
-          // A proof with no tree size verifies as before, and says so.
-          const unbound = await verify(envelope, { leafIndex: index, proofHashes }, root);
-          assert.equal(unbound.valid, true, `${size} leaves, index ${index}, no tree size`);
+          // The proof's own count bounds the path, but does not bind it.
+          const selfStated = await verify(envelope, { ...proof, leafCount: size }, root);
+          assert.equal(selfStated.valid, true, `${label}, proof leafCount`);
+          assert.equal(selfStated.pathBound, false);
+          assert.equal(selfStated.leafCountSource, 'proof');
+
+          // Both, agreeing: the caller's is the one that counts.
+          const both = await verify(envelope, { ...proof, leafCount: size }, root, size);
+          assert.equal(both.valid, true, `${label}, both`);
+          assert.equal(both.pathBound, true);
+          assert.equal(both.leafCountSource, 'caller');
+
+          // Neither: verifies as before, and says so.
+          const unbound = await verify(envelope, proof, root);
+          assert.equal(unbound.valid, true, `${label}, no tree size`);
           assert.equal(unbound.pathBound, false);
+          assert.equal(unbound.leafCountSource, null);
         }
       });
     }
+
+    it('rejects a proof whose leafCount disagrees with the caller-supplied one', async () => {
+      const { envelope, leaf } = inlineEnvelope('disagree');
+      const { proofHashes, root } = inlineTree(leaf, 4, 1);
+      const proof = { leafIndex: 1, proofHashes, leafCount: 4 };
+      assert.equal((await verify(envelope, proof, root, 4)).valid, true);
+      for (const callerCount of [3, 5]) {
+        const verdict = await verify(envelope, proof, root, callerCount);
+        assert.equal(verdict.valid, false, `caller says ${callerCount}`);
+        assert.equal(verdict.pathBound, true);
+        assert.equal(verdict.leafCountSource, 'caller');
+        assert.match(verdict.reason, /disagrees/);
+      }
+    });
+
+    it('accepts 0x-prefixed and upper-case hex, and a 3309-byte ML-DSA-65 signature', async () => {
+      const payloadPlainHash = Buffer.alloc(32, 0x5a);
+      for (const signatureLength of [64, 3309]) {
+        const agentSignature = Buffer.alloc(signatureLength, 0xc3);
+        const leaf = inlineLeaf(payloadPlainHash, agentSignature);
+        const sibling = Buffer.alloc(32, 0x11);
+        const root = hex(computeNodeHash(leaf, sibling));
+        const spellings = [
+          { p: hex(payloadPlainHash), s: hex(agentSignature), sib: hex(sibling) },
+          {
+            p: `0x${hex(payloadPlainHash)}`,
+            s: `0x${hex(agentSignature)}`,
+            sib: `0x${hex(sibling)}`,
+          },
+          {
+            p: hex(payloadPlainHash).toUpperCase(),
+            s: hex(agentSignature).toUpperCase(),
+            sib: hex(sibling).toUpperCase(),
+          },
+        ];
+        for (const { p, s, sib } of spellings) {
+          const verdict = await verify(
+            { eventId: 'evt-spelling', payloadPlainHash: p, agentSignature: s },
+            { leafIndex: 0, proofHashes: [sib] },
+            root,
+            2,
+          );
+          assert.equal(verdict.valid, true, `${signatureLength}-byte signature, ${p.slice(0, 4)}`);
+        }
+      }
+    });
+
+    it('rejects leaf material of any other length, even when the walk itself matches', async () => {
+      // Each case hashes to a leaf that the root really is built on, so only
+      // the length rule can refuse it.
+      const cases = [
+        ['31-byte payload hash', Buffer.alloc(31, 1), Buffer.alloc(64, 2)],
+        ['33-byte payload hash', Buffer.alloc(33, 1), Buffer.alloc(64, 2)],
+        ['11-byte payload hash (a domain tag)', Buffer.from('VES_NODE_V1'), Buffer.alloc(64, 2)],
+        ['32-byte signature (the REST placeholder)', Buffer.alloc(32, 1), Buffer.alloc(32, 0)],
+        ['43-byte signature', Buffer.alloc(32, 1), Buffer.alloc(43, 2)],
+        ['63-byte signature', Buffer.alloc(32, 1), Buffer.alloc(63, 2)],
+        ['65-byte signature', Buffer.alloc(32, 1), Buffer.alloc(65, 2)],
+        ['3308-byte signature', Buffer.alloc(32, 1), Buffer.alloc(3308, 2)],
+      ];
+      for (const [label, payloadPlainHash, agentSignature] of cases) {
+        const root = hex(inlineLeaf(payloadPlainHash, agentSignature));
+        const verdict = await verify(
+          {
+            eventId: 'evt-length',
+            payloadPlainHash: hex(payloadPlainHash),
+            agentSignature: hex(agentSignature),
+          },
+          { leafIndex: 0, proofHashes: [] },
+          root,
+          1,
+        );
+        assert.equal(verdict.valid, false, label);
+        assert.match(verdict.reason, /payloadPlainHash|agentSignature/, label);
+      }
+      // Malformed hex is refused rather than cut short.
+      const { envelope, leaf } = inlineEnvelope('malformed');
+      for (const field of ['payloadPlainHash', 'agentSignature']) {
+        for (const spoil of [(v) => `${v}zz`, (v) => `${v}0`, (v) => v.slice(1), () => '']) {
+          const verdict = await verify(
+            { ...envelope, [field]: spoil(envelope[field]) },
+            { leafIndex: 0, proofHashes: [] },
+            hex(leaf),
+            1,
+          );
+          assert.equal(verdict.valid, false, `${field} ${spoil.toString()}`);
+        }
+      }
+    });
+
+    it('rejects a sibling that is not exactly 32 bytes of hex instead of truncating it', async () => {
+      const { envelope, leaf } = inlineEnvelope('sibling');
+      const sibling = Buffer.alloc(32, 0x42);
+      const root = hex(computeNodeHash(leaf, sibling));
+      const verdictFor = (hash) => verify(envelope, { leafIndex: 0, proofHashes: [hash] }, root, 2);
+      assert.equal((await verdictFor(hex(sibling))).valid, true);
+      for (const hash of [`${hex(sibling)}zz`, `${hex(sibling)}0`, hex(sibling).slice(0, 62), '']) {
+        const verdict = await verdictFor(hash);
+        assert.equal(verdict.valid, false, JSON.stringify(hash));
+        assert.match(verdict.reason, /32-byte/);
+      }
+    });
 
     it('rejects a path longer than the tree size allows', async () => {
       const { envelope, leaf } = inlineEnvelope('long');
@@ -638,10 +943,21 @@ for (const [name, verify] of Object.entries(INLINE_VERIFIERS)) {
       for (const leafCount of [2, 3, 8]) {
         const verdict = await verify(envelope, { leafIndex: 0, proofHashes: [], leafCount }, root);
         assert.equal(verdict.valid, false, `${leafCount} leaves`);
+        const caller = await verify(envelope, { leafIndex: 0, proofHashes: [] }, root, leafCount);
+        assert.equal(caller.valid, false, `caller: ${leafCount} leaves`);
       }
-      const single = await verify(envelope, { leafIndex: 0, proofHashes: [], leafCount: 1 }, root);
+      const selfStated = await verify(
+        envelope,
+        { leafIndex: 0, proofHashes: [], leafCount: 1 },
+        root,
+      );
+      assert.equal(selfStated.valid, true);
+      assert.equal(selfStated.pathBound, false);
+      assert.equal(selfStated.leafCountSource, 'proof');
+      const single = await verify(envelope, { leafIndex: 0, proofHashes: [] }, root, 1);
       assert.equal(single.valid, true);
       assert.equal(single.pathBound, true);
+      assert.equal(single.leafCountSource, 'caller');
     });
 
     it('rejects a leaf index outside the tree', async () => {
@@ -675,13 +991,270 @@ for (const [name, verify] of Object.entries(INLINE_VERIFIERS)) {
     it('rejects an unusable tree size', async () => {
       const { envelope, leaf } = inlineEnvelope('size');
       const root = hex(leaf);
-      for (const leafCount of [0, -1, 1.5, 2 ** 32]) {
+      for (const leafCount of [0, -1, 1.5, 2 ** 32, '01', ' 1', 'one']) {
         const verdict = await verify(envelope, { leafIndex: 0, proofHashes: [], leafCount }, root);
         assert.equal(verdict.valid, false, `leafCount ${leafCount}`);
       }
     });
   });
 }
+
+describe('sync_verify_inclusion tool: an unusable caller-supplied tree size', () => {
+  it('is invalid, not trusted', async () => {
+    const { envelope, leaf } = inlineEnvelope('caller-size');
+    const verify = INLINE_VERIFIERS['sync_verify_inclusion tool'];
+    for (const leafCount of [0, -1, 1.5, 2 ** 32, '01']) {
+      const verdict = await verify(
+        envelope,
+        { leafIndex: 0, proofHashes: [] },
+        hex(leaf),
+        leafCount,
+      );
+      assert.equal(verdict.valid, false, `leafCount ${leafCount}`);
+      assert.equal(verdict.leafCountSource, 'caller');
+    }
+  });
+
+  it('declares the caller-supplied leafCount as its own input', () => {
+    const tool = syncTools.find((t) => t.name === 'sync_verify_inclusion');
+    assert.ok(tool.inputSchema.leafCount, 'top-level leafCount input');
+    assert.equal(tool.inputSchema.leafCount.safeParse(undefined).success, true);
+    assert.equal(tool.inputSchema.leafCount.safeParse(4).success, true);
+    assert.equal(tool.inputSchema.leafCount.safeParse(0).success, false);
+  });
+});
+
+describe('sync verify-inclusion command: --leaf-count', () => {
+  const { envelope, leaf } = inlineEnvelope('flag');
+  const sibling = Buffer.alloc(32, 0x77);
+  const root = hex(computeNodeHash(leaf, sibling));
+  const proofJson = JSON.stringify({ leafIndex: 0, proofHashes: [hex(sibling)] });
+  const run = (args) =>
+    executeSyncCommand('verify-inclusion', args, { jsonOutput: true, output: () => {} });
+
+  it('takes --leaf-count <n>, --leaf-count=<n>, before or after the positionals', async () => {
+    const env = JSON.stringify(envelope);
+    for (const args of [
+      [env, proofJson, root, '--leaf-count', '2'],
+      [env, proofJson, root, '--leaf-count=2'],
+      ['--leaf-count', '2', env, proofJson, root],
+    ]) {
+      const verdict = await run(args);
+      assert.equal(verdict.valid, true, args.join(' ').slice(-20));
+      assert.equal(verdict.pathBound, true);
+      assert.equal(verdict.leafCountSource, 'caller');
+    }
+    const wrongSize = await run([env, proofJson, root, '--leaf-count', '4']);
+    assert.equal(wrongSize.valid, false);
+  });
+
+  it('refuses a missing, repeated or unusable --leaf-count with a usage error', async () => {
+    const env = JSON.stringify(envelope);
+    await assert.rejects(run([env, proofJson, root, '--leaf-count']), /Usage/);
+    await assert.rejects(
+      run([env, proofJson, root, '--leaf-count', '2', '--leaf-count=2']),
+      /Usage/,
+    );
+    for (const value of ['0', '-1', '1.5', '02', 'abc', '', '4294967296']) {
+      await assert.rejects(
+        run([env, proofJson, root, `--leaf-count=${value}`]),
+        /--leaf-count must be/,
+        `--leaf-count=${value}`,
+      );
+    }
+  });
+});
+
+describe('interior-node forgery against the inline verifiers (review finding #1)', () => {
+  // A real 4-leaf tree.
+  const L = [1, 2, 3, 4].map((n) => Buffer.alloc(32, n));
+  const n01 = computeNodeHash(L[0], L[1]);
+  const n23 = computeNodeHash(L[2], L[3]);
+  const root = hex(computeNodeHash(n01, n23));
+  const NODE_DOMAIN = Buffer.from('VES_NODE_V1');
+
+  for (const [name, verify] of Object.entries(INLINE_VERIFIERS)) {
+    it(`${name}: refuses the root itself passed off as an envelope's leaf`, async () => {
+      // SHA-256(payloadPlainHash || agentSignature) with these fields is
+      // computeNodeHash(n01, n23), the root, for an eventId of the forger's choosing.
+      const agentSignature = Buffer.concat([n01, n23]);
+      assert.equal(hex(inlineLeaf(NODE_DOMAIN, agentSignature)), root, 'the forgery is real');
+      const forged = {
+        eventId: 'forged-1',
+        payloadPlainHash: hex(NODE_DOMAIN),
+        agentSignature: hex(agentSignature),
+      };
+      // The exact scenario from the review: before the fix this returned
+      // { valid: true, pathBound: true }.
+      const reviewed = await verify(forged, { leafIndex: 0, proofHashes: [], leafCount: 1 }, root);
+      assert.equal(reviewed.valid, false);
+      assert.equal(reviewed.pathBound, false);
+      assert.equal(reviewed.leafCountSource, 'proof');
+      assert.match(reviewed.reason, /payloadPlainHash/);
+      assert.equal((await verify(forged, { leafIndex: 0, proofHashes: [] }, root)).valid, false);
+      // And the true batch size from the caller refuses it on shape alone.
+      const trueSize = await verify(
+        forged,
+        { leafIndex: 0, proofHashes: [], leafCount: 1 },
+        root,
+        4,
+      );
+      assert.equal(trueSize.valid, false);
+    });
+
+    it(`${name}: refuses an interior node passed off as a leaf one level down`, async () => {
+      const agentSignature = Buffer.concat([L[0], L[1]]);
+      assert.ok(inlineLeaf(NODE_DOMAIN, agentSignature).equals(n01), 'the forgery is real');
+      const forged = {
+        eventId: 'forged-2',
+        payloadPlainHash: hex(NODE_DOMAIN),
+        agentSignature: hex(agentSignature),
+      };
+      const proof = { leafIndex: 0, proofHashes: [hex(n23)], leafCount: 2 };
+      const verdict = await verify(forged, proof, root);
+      assert.equal(verdict.valid, false);
+      assert.equal(verdict.pathBound, false);
+    });
+
+    it(`${name}: refuses the forgery re-cut around a 32-byte payload hash`, async () => {
+      // NODE_DOMAIN || L0 || L1 split as 32 + 43 bytes: the payload hash has
+      // the right length, so only the signature length rule stops it.
+      const preimage = Buffer.concat([NODE_DOMAIN, L[0], L[1]]);
+      const payloadPlainHash = preimage.subarray(0, 32);
+      const agentSignature = preimage.subarray(32);
+      assert.equal(agentSignature.length, 43);
+      assert.ok(inlineLeaf(payloadPlainHash, agentSignature).equals(n01), 'the forgery is real');
+      const verdict = await verify(
+        {
+          eventId: 'forged-3',
+          payloadPlainHash: hex(payloadPlainHash),
+          agentSignature: hex(agentSignature),
+        },
+        { leafIndex: 0, proofHashes: [hex(n23)] },
+        root,
+        2,
+      );
+      assert.equal(verdict.valid, false);
+      assert.match(verdict.reason, /agentSignature/);
+    });
+  }
+});
+
+describe('merkle-shape: the one parser for leaf indexes and counts', () => {
+  it('accepts nonnegative safe integers and their canonical decimal spelling', () => {
+    for (const [value, expected] of [
+      [0, 0],
+      [-0, 0],
+      [5, 5],
+      ['0', 0],
+      ['5', 5],
+      ['4294967295', 4294967295],
+      [String(Number.MAX_SAFE_INTEGER), Number.MAX_SAFE_INTEGER],
+      [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER],
+    ]) {
+      assert.equal(parseTreeInteger(value), expected, JSON.stringify(String(value)));
+    }
+    assert.ok(Object.is(parseTreeInteger(-0), 0));
+  });
+
+  it('refuses every other value', () => {
+    const refused = [
+      '05',
+      '00',
+      ' 5',
+      '5 ',
+      '+5',
+      '-5',
+      '-0',
+      '5.0',
+      '5.',
+      '0x5',
+      '1e3',
+      '',
+      '٥', // a non-ASCII digit
+      '9007199254740992',
+      '9007199254740993',
+      '1'.repeat(400),
+      -1,
+      1.5,
+      NaN,
+      Infinity,
+      -Infinity,
+      2 ** 53,
+      5n,
+      null,
+      undefined,
+      true,
+      {},
+      [5],
+    ];
+    for (const value of refused) {
+      assert.equal(
+        parseTreeInteger(value),
+        null,
+        typeof value === 'string' ? JSON.stringify(value) : String(value),
+      );
+    }
+  });
+
+  it('merklePathDepth reads its argument with the same parser', () => {
+    assert.equal(merklePathDepth('4'), 2);
+    assert.equal(merklePathDepth('5'), 3);
+    assert.equal(merklePathDepth('04'), null);
+    assert.equal(merklePathDepth(4n), null);
+    assert.equal(merklePathDepth('4294967296'), null);
+  });
+
+  it('decodeHash32 takes exactly 32 bytes', () => {
+    const bytes = Buffer.alloc(32, 0x9c);
+    assert.ok(decodeHash32(hex(bytes)).equals(bytes));
+    assert.ok(decodeHash32(`0x${hex(bytes)}`).equals(bytes));
+    assert.ok(decodeHash32(hex(bytes).toUpperCase()).equals(bytes));
+    assert.ok(decodeHash32(new Uint8Array(bytes)).equals(bytes));
+    for (const bad of [
+      `${hex(bytes)}0`,
+      hex(bytes).slice(2),
+      `0X${hex(bytes)}`,
+      `${hex(bytes)}zz`,
+      Buffer.alloc(33),
+      7,
+      null,
+    ]) {
+      assert.equal(decodeHash32(bad), null);
+    }
+  });
+
+  it('resolveLeafCount reports where the size came from, and binds only the caller', () => {
+    assert.deepEqual(resolveLeafCount({}), {
+      ok: true,
+      leafCount: null,
+      depth: null,
+      leafCountSource: null,
+      pathBound: false,
+    });
+    assert.deepEqual(resolveLeafCount({ statedLeafCount: 5 }), {
+      ok: true,
+      leafCount: 5,
+      depth: 3,
+      leafCountSource: 'proof',
+      pathBound: false,
+    });
+    assert.equal(
+      resolveLeafCount({ statedLeafCount: '5', statedSource: 'bundle' }).leafCountSource,
+      'bundle',
+    );
+    assert.deepEqual(resolveLeafCount({ callerLeafCount: '5', statedLeafCount: 5 }), {
+      ok: true,
+      leafCount: 5,
+      depth: 3,
+      leafCountSource: 'caller',
+      pathBound: true,
+    });
+    assert.equal(resolveLeafCount({ callerLeafCount: 4, statedLeafCount: 5 }).ok, false);
+    assert.equal(resolveLeafCount({ callerLeafCount: 5, statedLeafCount: 'x' }).ok, false);
+    assert.equal(resolveLeafCount({ callerLeafCount: 0 }).ok, false);
+  });
+});
 
 describe('sync verify-inclusion command: human-readable output', () => {
   it('keeps its text line and carries pathBound on the structured result', async () => {

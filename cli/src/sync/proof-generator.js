@@ -15,7 +15,13 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { MAX_MERKLE_DEPTH, merklePathDepth } from './merkle-shape.js';
+import {
+  MAX_MERKLE_DEPTH,
+  decodeHash32,
+  merklePathDepth,
+  parseTreeInteger,
+  resolveLeafCount,
+} from './merkle-shape.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -279,11 +285,14 @@ export function createProofGenerator(cryptoModule) {
    * @param {Buffer|string} leafHash — the leaf to verify
    * @param {Array<{position: 'left'|'right', hash: string}>} proof — sibling path
    * @param {Buffer|string} expectedRoot — expected Merkle root
-   * @param {{ leafCount?: number, leafIndex?: number }} [shape] — what is known
-   *   about the tree. With `leafCount` the path must be exactly as long as a
-   *   tree of that size makes it and must lead to a leaf inside the tree, as
-   *   the Rust verifier requires; with `leafIndex` the positions must spell
-   *   that index. Without `leafCount` only the absolute depth cap applies.
+   * @param {{ leafCount?: number|string, leafIndex?: number|string }} [shape] —
+   *   what is known about the tree, taken as given (this function does not
+   *   ask where it came from; see verifyInclusionProof / verifyReceiptBundle).
+   *   With `leafCount` the path must be exactly as long as a tree of that size
+   *   makes it and must lead to a leaf inside the tree, as the Rust verifier
+   *   requires; with `leafIndex` the positions must spell that index. Without
+   *   `leafCount` only the absolute depth cap applies. Both may be numbers or
+   *   canonical decimal strings. Every sibling must be a 32-byte hash.
    * @returns {boolean}
    */
   function verifyMerkleProof(leafHash, proof, expectedRoot, shape = {}) {
@@ -293,6 +302,7 @@ export function createProofGenerator(cryptoModule) {
     // The positions spell the leaf index, lowest level first.
     let pathIndex = 0;
     let weight = 1;
+    const siblings = [];
     for (const step of proof) {
       if (step?.position === 'left') {
         pathIndex += weight;
@@ -300,27 +310,32 @@ export function createProofGenerator(cryptoModule) {
         return false;
       }
       weight *= 2;
+      const sibling = decodeHash32(step.hash);
+      if (sibling === null) return false;
+      siblings.push(sibling);
     }
-    const leafCount = shape.leafCount ?? null;
-    if (leafCount !== null) {
-      const depth = merklePathDepth(leafCount);
-      if (depth === null || proof.length !== depth || pathIndex >= leafCount) {
+    const shapeIn = shape ?? {};
+    if ((shapeIn.leafCount ?? null) !== null) {
+      const depth = merklePathDepth(shapeIn.leafCount);
+      if (
+        depth === null ||
+        proof.length !== depth ||
+        pathIndex >= parseTreeInteger(shapeIn.leafCount)
+      ) {
         return false;
       }
     }
-    const leafIndex = shape.leafIndex ?? null;
-    if (leafIndex !== null && leafIndex !== pathIndex) {
+    if ((shapeIn.leafIndex ?? null) !== null && parseTreeInteger(shapeIn.leafIndex) !== pathIndex) {
       return false;
     }
 
     let current = Buffer.isBuffer(leafHash) ? leafHash : Buffer.from(leafHash, 'hex');
 
-    for (const step of proof) {
-      const sibling = Buffer.from(step.hash, 'hex');
+    for (const [i, step] of proof.entries()) {
       if (step.position === 'right') {
-        current = crypto.computeNodeHash(current, sibling);
+        current = crypto.computeNodeHash(current, siblings[i]);
       } else {
-        current = crypto.computeNodeHash(sibling, current);
+        current = crypto.computeNodeHash(siblings[i], current);
       }
     }
 
@@ -373,43 +388,50 @@ export function createProofGenerator(cryptoModule) {
    *
    * `valid` means only that `leafHash` walks to `expectedRoot`. The leaf is
    * taken on trust and no signature is looked at, so `leafBound` and
-   * `signatureChecked` are always false here; `pathBound` says whether a
-   * `leafCount` was supplied to hold the path to the tree's shape.
+   * `signatureChecked` are always false here.
    *
-   * @param {{ leafHash: string, proof: Array, expectedRoot: string, leafCount?: number, leafIndex?: number }} proofData
-   * @returns {{ valid: boolean, format: string, pathBound: boolean, leafBound: boolean, signatureChecked: boolean, eventId?: string, root: string }}
+   * The path is held to a tree size when one is known. `options.leafCount` is
+   * the size as the caller knows it, independently of the proof
+   * (`leafCountSource` 'caller', `pathBound` true). `proofData.leafCount` is
+   * the size the proof states about itself: it is applied as a sanity bound
+   * and must agree with the caller's, but it leaves `pathBound` false
+   * (`leafCountSource` 'proof'), because whoever made the proof chose it.
+   *
+   * @param {{ leafHash: string, proof: Array, expectedRoot: string, leafCount?: number|string, leafIndex?: number|string }} proofData
+   * @param {{ leafCount?: number|string }} [options]
+   * @returns {{ valid: boolean, format: string, pathBound: boolean, leafCountSource: 'caller'|'proof'|null, leafBound: boolean, signatureChecked: boolean, eventId?: string, root: string, reason?: string }}
    */
-  function verifyInclusionProof(proofData) {
+  function verifyInclusionProof(proofData, options = {}) {
     const { leafHash, proof, expectedRoot, eventId } = proofData;
+    const count = resolveLeafCount({
+      callerLeafCount: options?.leafCount,
+      statedLeafCount: proofData.leafCount,
+      statedSource: 'proof',
+    });
+    const verdict = (valid, reason) => ({
+      valid,
+      format,
+      pathBound: count.pathBound,
+      leafCountSource: count.leafCountSource,
+      leafBound: false,
+      signatureChecked: false,
+      ...(reason && { reason }),
+      ...(eventId && { eventId }),
+      root: expectedRoot,
+    });
     // No `format` means a proof generated before formats existed: legacy-v0.
     const format = proofData.format ?? PROOF_FORMATS.LEGACY_V0;
     if (!Object.values(PROOF_FORMATS).includes(format)) {
-      return {
-        valid: false,
-        format,
-        pathBound: false,
-        leafBound: false,
-        signatureChecked: false,
-        reason: `Unknown proof format '${format}'`,
-        ...(eventId && { eventId }),
-        root: expectedRoot,
-      };
+      return verdict(false, `Unknown proof format '${format}'`);
     }
+    if (!count.ok) return verdict(false, count.reason);
     // Node hashing is identical in both formats, so the walk is the same; the
     // formats differ only in how the leaf and the padding were built.
     const valid = verifyMerkleProof(leafHash, proof, expectedRoot, {
-      leafCount: proofData.leafCount,
+      leafCount: count.leafCount,
       leafIndex: proofData.leafIndex,
     });
-    return {
-      valid,
-      format,
-      pathBound: (proofData.leafCount ?? null) !== null,
-      leafBound: false,
-      signatureChecked: false,
-      ...(eventId && { eventId }),
-      root: expectedRoot,
-    };
+    return verdict(valid);
   }
 
   /**
@@ -476,15 +498,19 @@ export function createProofGenerator(cryptoModule) {
    * on the bundle and on `publicKey`. The result therefore also says what was
    * established: `leafBound` (the leaf was recomputed from the event; never
    * true for legacy-v0), `signatureChecked` (a signature was verified against
-   * `publicKey`), and `pathBound` (the path was held to the tree's shape).
+   * `publicKey`), and `pathBound` (the path was held to a tree size the
+   * caller supplied). `leafCountSource` is where the size the path was held
+   * to came from: 'caller' (`options.leafCount`), 'bundle' (the bundle's own
+   * `leafCount`, applied as a sanity bound only, since whoever made the bundle
+   * chose it), or null (no size).
    *
    * @param {object} bundle — a receipt bundle from `generateReceiptBundle`
    * @param {Buffer|string} [publicKey] — optional Ed25519 public key for signature verification
-   * @param {{ leafCount?: number }} [options] — `leafCount`: the batch size as
-   *   the caller knows it independently (e.g. the commitment's event count).
-   *   It takes the place of the bundle's own `leafCount`, and a bundle that
-   *   states a different one fails.
-   * @returns {{ valid: boolean, format: string, leafBound: boolean, signatureChecked: boolean, pathBound: boolean, checks: Array<{ check: string, passed: boolean, detail?: string }> }}
+   * @param {{ leafCount?: number|string }} [options] — `leafCount`: the batch
+   *   size as the caller knows it independently (e.g. the commitment's event
+   *   count). It takes the place of the bundle's own `leafCount`, and a bundle
+   *   that states a different one fails.
+   * @returns {{ valid: boolean, format: string, leafBound: boolean, signatureChecked: boolean, pathBound: boolean, leafCountSource: 'caller'|'bundle'|null, checks: Array<{ check: string, passed: boolean, detail?: string }> }}
    */
   function verifyReceiptBundle(bundle, publicKey, options = {}) {
     const checks = [];
@@ -520,17 +546,19 @@ export function createProofGenerator(cryptoModule) {
       }
     }
 
-    // Check 1: inclusion proof. Bundles written before `leafCount` existed
-    // carry no tree size, so their path cannot be held to a shape unless the
-    // caller supplies one; `pathBound` reports which case this was.
-    const statedLeafCount = bundle.leafCount ?? null;
-    const leafCount = options.leafCount ?? statedLeafCount;
-    const pathBound = leafCount !== null;
-    const leafCountAgrees = statedLeafCount === null || statedLeafCount === leafCount;
+    // Check 1: inclusion proof. The bundle's own `leafCount` is applied as a
+    // sanity bound, but only a size the caller knows independently binds the
+    // path (`pathBound`); bundles written before `leafCount` existed carry
+    // none at all. `leafCountSource` reports which case this was.
+    const count = resolveLeafCount({
+      callerLeafCount: options?.leafCount,
+      statedLeafCount: bundle.leafCount,
+      statedSource: 'bundle',
+    });
     const inclusionValid =
-      leafCountAgrees &&
+      count.ok &&
       verifyMerkleProof(bundle.leafHash, bundle.inclusionProof, bundle.merkleRoot, {
-        leafCount,
+        leafCount: count.leafCount,
         leafIndex: bundle.leafIndex,
       });
     checks.push({
@@ -538,7 +566,9 @@ export function createProofGenerator(cryptoModule) {
       passed: inclusionValid,
       detail: inclusionValid
         ? 'Leaf is included in the Merkle root'
-        : 'Inclusion proof verification failed',
+        : count.ok
+          ? 'Inclusion proof verification failed'
+          : `Inclusion proof verification failed: ${count.reason}`,
     });
 
     // Check 2: payload hash consistency (if payloadHash present)
@@ -573,7 +603,15 @@ export function createProofGenerator(cryptoModule) {
     }
 
     const valid = checks.every((c) => c.passed);
-    return { valid, format, leafBound, signatureChecked, pathBound, checks };
+    return {
+      valid,
+      format,
+      leafBound,
+      signatureChecked,
+      pathBound: count.pathBound,
+      leafCountSource: count.leafCountSource,
+      checks,
+    };
   }
 
   /**
