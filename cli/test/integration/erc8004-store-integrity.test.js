@@ -1,14 +1,15 @@
 /**
  * ERC-8004 tools must not disturb the live commerce store.
  *
- * The erc8004 tools receive the server's own `dbPath`, which is the native
- * engine's store file. The JS module opened that file with a second bundled
- * SQLite (better-sqlite3) in the engine's process. POSIX fcntl locks belong to
- * the process, so that copy cannot see the engine's locks, and closing any
- * descriptor on the file drops all of them. The second copy then believes it is
- * the last connection and may checkpoint and unlink `-wal`/`-shm` while the
- * engine still has them open; later engine commits go to an unlinked WAL that
- * no new connection can read.
+ * The erc8004 tools and the treasury identity resolver receive the server's
+ * own `dbPath`, which is the native engine's store file. The JS module used to
+ * open that file with a second bundled SQLite (better-sqlite3) in the engine's
+ * process. POSIX fcntl locks belong to the process, so that copy could not see
+ * the engine's locks, and closing any descriptor on the file dropped all of
+ * them. The second copy then believed it was the last connection and
+ * checkpointed and unlinked `-wal`/`-shm` while the engine still had them open;
+ * later engine commits went to an unlinked WAL that no new connection could
+ * read. The module now does that work in a child process.
  *
  * This drives the real MCP server on a file-backed store and inspects the
  * store only from a separate process (`sqlite-process.js`). It never opens the
@@ -20,6 +21,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createTreasuryIdentityResolver } from '../../src/mcp/tool-wrappers.js';
 import { sqliteOperations } from '../helpers/sqlite-process.js';
 
 // HOME must be isolated before any module computes a path from it.
@@ -94,86 +96,96 @@ after(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-// Reproduces deterministically on master (Linux, better-sqlite3 3.49.x): the
-// erc8004 calls unlink store.db-wal/-shm and drop the engine's lock, and the
-// next engine write never reaches other connections. The fix (route the tools
-// through `commerce.erc8004`) is blocked on stored-encoding differences between
-// the JS module and the engine: wallet_proof_type 'eip712' vs 'eip_712',
-// free-form wallet_proof_deadline, REAL/negative wallet_proof_chain_id and
-// caller-chosen ids that the engine cannot read. Drop `todo` with the fix.
-const BLOCKED =
-  'erc8004 tools open the engine store with a second SQLite; fix blocked on legacy row encodings';
-
 describe('erc8004 tools on a live engine store', () => {
-  it(
-    'keep the engine WAL, its locks and every engine write visible to other processes',
-    { todo: BLOCKED },
-    async () => {
-      await call('create_customer', {
-        email: 'before@example.com',
-        firstName: 'Before',
-        lastName: 'Identity',
-      });
+  it('keep the engine WAL, its locks and every engine write visible to other processes', async () => {
+    await call('create_customer', {
+      email: 'before@example.com',
+      firstName: 'Before',
+      lastName: 'Identity',
+    });
 
-      const locksBefore = storeLocksHeldByThisProcess();
-      if (locksBefore !== null) {
-        assert.ok(
-          locksBefore.length > 0,
-          'precondition: the engine holds a POSIX lock on its WAL-mode store',
-        );
+    const locksBefore = storeLocksHeldByThisProcess();
+    if (locksBefore !== null) {
+      assert.ok(
+        locksBefore.length > 0,
+        'precondition: the engine holds a POSIX lock on its WAL-mode store',
+      );
+    }
+    assert.ok(existsSync(`${dbPath}-wal`), 'precondition: the engine store has a WAL');
+    assert.ok(existsSync(`${dbPath}-shm`), 'precondition: the engine store has a WAL index');
+
+    const registered = await call('erc8004_register_identity', {
+      registry: REGISTRY,
+      agentId: AGENT_ID,
+      agentUri: 'https://agents.example/42.json',
+    });
+    assert.equal(registered.identity.agent_id, AGENT_ID);
+    assert.equal(registered.identity.agent_wallet, null);
+
+    const linked = await call('erc8004_link_wallet', {
+      registry: REGISTRY,
+      agentId: AGENT_ID,
+      agentWallet: WALLET,
+      walletProofType: 'eip712',
+      walletProofChainId: 8453,
+    });
+    assert.equal(linked.identity.agent_wallet, WALLET);
+
+    const fetched = await call('erc8004_get_identity', { registry: REGISTRY, agentId: AGENT_ID });
+    assert.equal(fetched.identity.agent_wallet, WALLET);
+    assert.equal(fetched.identity.wallet_proof_chain_id, 8453);
+    assert.equal(fetched.identity.active, true);
+
+    const byWallet = await call('erc8004_get_by_wallet', { wallet: WALLET });
+    assert.equal(byWallet.identity.agent_id, AGENT_ID);
+    const listed = await call('erc8004_list_identities', { registry: REGISTRY });
+    assert.equal(listed.count, 1);
+
+    // The treasury charger resolves its identity from the same store.
+    const resolver = createTreasuryIdentityResolver({
+      registry: REGISTRY,
+      dbPath,
+      agentId: AGENT_ID,
+    });
+    assert.deepEqual(await resolver.getMetadata(), {
+      erc8004: { registry: REGISTRY, agentId: AGENT_ID, wallet: WALLET, owner: null },
+    });
+
+    const problems = [];
+    for (const suffix of ['-wal', '-shm']) {
+      if (!existsSync(`${dbPath}${suffix}`)) {
+        problems.push(`the engine ${suffix} file was unlinked while the engine still had it open`);
       }
-      assert.ok(existsSync(`${dbPath}-wal`), 'precondition: the engine store is in WAL mode');
+    }
+    const locksAfter = storeLocksHeldByThisProcess();
+    if (locksAfter !== null && locksAfter.length === 0) {
+      problems.push('the engine POSIX lock on its own store was released');
+    }
 
-      const registered = await call('erc8004_register_identity', {
-        registry: REGISTRY,
-        agentId: AGENT_ID,
-        agentUri: 'https://agents.example/42.json',
-        agentWallet: WALLET,
-        walletProofType: 'eip712',
-        walletProofChainId: 8453,
-      });
-      assert.equal(registered.identity.agent_id, AGENT_ID);
+    // A separate process reads (and then closes) the store. If the engine's
+    // locks were gone, that close could also checkpoint and unlink the WAL.
+    const middle = inspect();
+    assert.deepEqual(middle.emails, ['before@example.com']);
+    assert.equal(middle.identity?.agent_wallet, WALLET);
 
-      const fetched = await call('erc8004_get_identity', { registry: REGISTRY, agentId: AGENT_ID });
-      assert.equal(fetched.identity.agent_wallet, WALLET);
-      assert.equal(fetched.identity.wallet_proof_chain_id, 8453);
-      assert.equal(fetched.identity.active, true);
+    await call('create_customer', {
+      email: 'after@example.com',
+      firstName: 'After',
+      lastName: 'Identity',
+    });
 
-      const problems = [];
-      if (!existsSync(`${dbPath}-wal`)) {
-        problems.push('the engine WAL was unlinked while the engine still had it open');
-      }
-      const locksAfter = storeLocksHeldByThisProcess();
-      if (locksAfter !== null && locksAfter.length === 0) {
-        problems.push('the engine POSIX lock on its own store was released');
-      }
+    const final = inspect();
+    if (!final.emails.includes('after@example.com')) {
+      problems.push('an engine write made after the erc8004 calls is invisible to new connections');
+    }
+    assert.deepEqual(problems, []);
 
-      // A separate process reads (and then closes) the store. If the engine's
-      // locks are gone, that close may also checkpoint and unlink the WAL.
-      const middle = inspect();
-      assert.deepEqual(middle.emails, ['before@example.com']);
-      assert.equal(middle.identity?.agent_wallet, WALLET);
-
-      await call('create_customer', {
-        email: 'after@example.com',
-        firstName: 'After',
-        lastName: 'Identity',
-      });
-
-      const final = inspect();
-      if (!final.emails.includes('after@example.com')) {
-        problems.push(
-          'an engine write made after the erc8004 calls is invisible to new connections',
-        );
-      }
-      assert.deepEqual(problems, []);
-
-      assert.deepEqual(final.emails, ['after@example.com', 'before@example.com']);
-      assert.equal(final.identity?.agent_wallet, WALLET);
-      // The JS module stores 'eip712'; the engine stores 'eip_712'.
-      assert.match(final.identity?.wallet_proof_type ?? '', /^eip_?712$/);
-      assert.equal(final.identity?.wallet_proof_chain_id, 8453);
-      assert.equal(final.identity?.active, 1);
-    },
-  );
+    assert.deepEqual(final.emails, ['after@example.com', 'before@example.com']);
+    // Stored exactly as the JS module always stored it.
+    assert.equal(final.identity?.agent_wallet, WALLET);
+    assert.equal(final.identity?.wallet_proof_type, 'eip712');
+    assert.equal(final.identity?.wallet_proof_chain_id, 8453);
+    assert.equal(final.identity?.active, 1);
+    assert.match(final.identity?.created_at ?? '', /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  });
 });
