@@ -402,16 +402,17 @@ export class UnifiedSequencerClient extends EventEmitter {
    * @param {Object} envelope
    * @param {Object} proof
    * @param {string} expectedRoot
+   * @param {{ sequenceNumber?: number|bigint, leafCount?: number }} [options]
    * @returns {boolean}
    */
-  verifyInclusion(envelope, proof, expectedRoot) {
+  verifyInclusion(envelope, proof, expectedRoot, options) {
     // Verification is client-side only, works for both transports
     if (this._transport === 'rest') {
-      return this._client.verifyInclusion(envelope, proof, expectedRoot);
+      return this._client.verifyInclusion(envelope, proof, expectedRoot, options);
     }
     // For gRPC, use the REST client's verification logic
     const restClient = new SequencerClient(this.config);
-    return restClient.verifyInclusion(envelope, proof, expectedRoot);
+    return restClient.verifyInclusion(envelope, proof, expectedRoot, options);
   }
 
   /**

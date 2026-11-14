@@ -11,6 +11,7 @@ import { verifyPayloadIntegrity } from './payload-integrity.js';
 import { assertOutgoingScope } from './receive-scope.js';
 import { validatePullRequest, validatePullPage } from './pull-page.js';
 import { DEFAULT_REQUEST_TIMEOUT_MS } from './config.js';
+import { merklePathDepth } from './merkle-shape.js';
 import {
   canonicalizeJson,
   computeEventSigningHash,
@@ -821,9 +822,39 @@ export class SequencerClient {
    * @param {EventEnvelope} envelope - The event envelope
    * @param {InclusionProof} proof
    * @param {string} expectedRoot - Expected merkle root (hex)
+   * @param {{ sequenceNumber?: number|bigint, leafCount?: number }} [options] -
+   *   Values the caller knows independently of the proof. `sequenceNumber`
+   *   stands in for `envelope.sequenceNumber` (a SequencedEvent carries it
+   *   beside the envelope, not on it). `leafCount` is the committed batch
+   *   size; it takes the place of `proof.leafCount`, and a proof stating a
+   *   different one fails.
    * @returns {boolean}
    */
-  verifyInclusion(envelope, proof, expectedRoot) {
+  verifyInclusion(envelope, proof, expectedRoot, options = {}) {
+    // The sequence number is bound into the leaf, so it must come from the
+    // caller. The proof's leafIndex is a position in the batch, chosen by
+    // whoever produced the proof; it is not a sequence number.
+    const sequenceNumber = options.sequenceNumber ?? envelope.sequenceNumber ?? null;
+    if (sequenceNumber === null) return false;
+
+    // Canonical path shape, as in the Rust verifier: the leaf is inside the
+    // tree and the path has exactly one sibling per level. A shorter path
+    // would let a leaf hash pass for the root of a larger tree.
+    const statedLeafCount = proof?.leafCount ?? null;
+    const leafCount = options.leafCount ?? statedLeafCount;
+    const depth = merklePathDepth(leafCount);
+    if (
+      depth === null ||
+      (statedLeafCount !== null && statedLeafCount !== leafCount) ||
+      !Number.isSafeInteger(proof.leafIndex) ||
+      proof.leafIndex < 0 ||
+      proof.leafIndex >= leafCount ||
+      !Array.isArray(proof.proofHashes) ||
+      proof.proofHashes.length !== depth
+    ) {
+      return false;
+    }
+
     // Reconstruct the event signing hash (same computation as verifyEventSignature).
     // payloadKind MUST be bound here: it is part of the canonical event signing
     // preimage (computeEventSigningHash hashes u32BE(payloadKind)). Omitting it
@@ -851,21 +882,24 @@ export class SequencerClient {
     let hash = computeLeafHash({
       tenantId: envelope.tenantId,
       storeId: envelope.storeId,
-      sequenceNumber: envelope.sequenceNumber ?? proof.leafIndex,
+      sequenceNumber,
       eventSigningHash,
       agentSignature: hexToBuffer(envelope.agentSignature),
     });
 
-    // Walk up the proof using VES v1.0 node hashing
-    for (let i = 0; i < proof.proofHashes.length; i++) {
-      const sibling = Buffer.from(proof.proofHashes[i], 'hex');
-      const isLeftSibling = (proof.leafIndex >> i) & 1;
+    // Walk up the proof using VES v1.0 node hashing. The index is halved
+    // rather than shifted: `>>` works on 32 bits and wraps past level 31.
+    let index = proof.leafIndex;
+    for (const siblingHex of proof.proofHashes) {
+      const sibling = Buffer.from(siblingHex, 'hex');
+      const isLeftSibling = index % 2 === 1;
 
       if (isLeftSibling) {
         hash = computeNodeHash(sibling, hash);
       } else {
         hash = computeNodeHash(hash, sibling);
       }
+      index = Math.floor(index / 2);
     }
 
     return hash.toString('hex') === expectedRoot;

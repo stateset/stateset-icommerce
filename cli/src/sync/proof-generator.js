@@ -15,6 +15,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { MAX_MERKLE_DEPTH, merklePathDepth } from './merkle-shape.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -278,9 +279,40 @@ export function createProofGenerator(cryptoModule) {
    * @param {Buffer|string} leafHash — the leaf to verify
    * @param {Array<{position: 'left'|'right', hash: string}>} proof — sibling path
    * @param {Buffer|string} expectedRoot — expected Merkle root
+   * @param {{ leafCount?: number, leafIndex?: number }} [shape] — what is known
+   *   about the tree. With `leafCount` the path must be exactly as long as a
+   *   tree of that size makes it and must lead to a leaf inside the tree, as
+   *   the Rust verifier requires; with `leafIndex` the positions must spell
+   *   that index. Without `leafCount` only the absolute depth cap applies.
    * @returns {boolean}
    */
-  function verifyMerkleProof(leafHash, proof, expectedRoot) {
+  function verifyMerkleProof(leafHash, proof, expectedRoot, shape = {}) {
+    if (!Array.isArray(proof) || proof.length > MAX_MERKLE_DEPTH) {
+      return false;
+    }
+    // The positions spell the leaf index, lowest level first.
+    let pathIndex = 0;
+    let weight = 1;
+    for (const step of proof) {
+      if (step?.position === 'left') {
+        pathIndex += weight;
+      } else if (step?.position !== 'right') {
+        return false;
+      }
+      weight *= 2;
+    }
+    const leafCount = shape.leafCount ?? null;
+    if (leafCount !== null) {
+      const depth = merklePathDepth(leafCount);
+      if (depth === null || proof.length !== depth || pathIndex >= leafCount) {
+        return false;
+      }
+    }
+    const leafIndex = shape.leafIndex ?? null;
+    if (leafIndex !== null && leafIndex !== pathIndex) {
+      return false;
+    }
+
     let current = Buffer.isBuffer(leafHash) ? leafHash : Buffer.from(leafHash, 'hex');
 
     for (const step of proof) {
@@ -325,6 +357,8 @@ export function createProofGenerator(cryptoModule) {
       // The spec verifier walks `proofHashes` by the bits of `leafIndex`;
       // `proof` keeps the positional form this module has always returned.
       leafIndex: targetIndex,
+      // The tree size fixes the path length a verifier may accept.
+      leafCount: events.length,
       proofHashes: proof.map((step) => step.hash),
       proof,
       root: root.toString('hex'),
@@ -337,8 +371,13 @@ export function createProofGenerator(cryptoModule) {
   /**
    * Verify a previously generated inclusion proof.
    *
-   * @param {{ leafHash: string, proof: Array, expectedRoot: string }} proofData
-   * @returns {{ valid: boolean, eventId?: string, root: string }}
+   * `valid` means only that `leafHash` walks to `expectedRoot`. The leaf is
+   * taken on trust and no signature is looked at, so `leafBound` and
+   * `signatureChecked` are always false here; `pathBound` says whether a
+   * `leafCount` was supplied to hold the path to the tree's shape.
+   *
+   * @param {{ leafHash: string, proof: Array, expectedRoot: string, leafCount?: number, leafIndex?: number }} proofData
+   * @returns {{ valid: boolean, format: string, pathBound: boolean, leafBound: boolean, signatureChecked: boolean, eventId?: string, root: string }}
    */
   function verifyInclusionProof(proofData) {
     const { leafHash, proof, expectedRoot, eventId } = proofData;
@@ -348,6 +387,9 @@ export function createProofGenerator(cryptoModule) {
       return {
         valid: false,
         format,
+        pathBound: false,
+        leafBound: false,
+        signatureChecked: false,
         reason: `Unknown proof format '${format}'`,
         ...(eventId && { eventId }),
         root: expectedRoot,
@@ -355,10 +397,16 @@ export function createProofGenerator(cryptoModule) {
     }
     // Node hashing is identical in both formats, so the walk is the same; the
     // formats differ only in how the leaf and the padding were built.
-    const valid = verifyMerkleProof(leafHash, proof, expectedRoot);
+    const valid = verifyMerkleProof(leafHash, proof, expectedRoot, {
+      leafCount: proofData.leafCount,
+      leafIndex: proofData.leafIndex,
+    });
     return {
       valid,
       format,
+      pathBound: (proofData.leafCount ?? null) !== null,
+      leafBound: false,
+      signatureChecked: false,
       ...(eventId && { eventId }),
       root: expectedRoot,
     };
@@ -383,6 +431,7 @@ export function createProofGenerator(cryptoModule) {
       format: inclusionProof.format,
       ...(inclusionProof.warning && { warning: inclusionProof.warning }),
       leafIndex: inclusionProof.leafIndex,
+      leafCount: inclusionProof.leafCount,
       event: {
         // A ves-v1 leaf binds these, so a verifier can recompute it from the
         // event instead of trusting the bundle's leafHash.
@@ -423,13 +472,25 @@ export function createProofGenerator(cryptoModule) {
    * 2. Payload hash is consistent (when payload + payloadHash present)
    * 3. Event signature is valid (when signature + publicKey present)
    *
+   * `valid` means every check that ran passed, and which checks run depends
+   * on the bundle and on `publicKey`. The result therefore also says what was
+   * established: `leafBound` (the leaf was recomputed from the event; never
+   * true for legacy-v0), `signatureChecked` (a signature was verified against
+   * `publicKey`), and `pathBound` (the path was held to the tree's shape).
+   *
    * @param {object} bundle — a receipt bundle from `generateReceiptBundle`
    * @param {Buffer|string} [publicKey] — optional Ed25519 public key for signature verification
-   * @returns {{ valid: boolean, checks: Array<{ check: string, passed: boolean, detail?: string }> }}
+   * @param {{ leafCount?: number }} [options] — `leafCount`: the batch size as
+   *   the caller knows it independently (e.g. the commitment's event count).
+   *   It takes the place of the bundle's own `leafCount`, and a bundle that
+   *   states a different one fails.
+   * @returns {{ valid: boolean, format: string, leafBound: boolean, signatureChecked: boolean, pathBound: boolean, checks: Array<{ check: string, passed: boolean, detail?: string }> }}
    */
-  function verifyReceiptBundle(bundle, publicKey) {
+  function verifyReceiptBundle(bundle, publicKey, options = {}) {
     const checks = [];
     const format = bundle.format ?? PROOF_FORMATS.LEGACY_V0;
+    let leafBound = false;
+    let signatureChecked = false;
 
     // Check 0: the leaf really is this event's leaf. A ves-v1 leaf binds the
     // tenant, store, sequence number, signing hash and agent signature, all
@@ -448,6 +509,7 @@ export function createProofGenerator(cryptoModule) {
       } else {
         const recomputed = leafFor(bundle.event, bundle.leafIndex, format).toString('hex');
         const leafMatch = recomputed === bundle.leafHash;
+        leafBound = leafMatch;
         checks.push({
           check: 'leaf_hash',
           passed: leafMatch,
@@ -458,12 +520,19 @@ export function createProofGenerator(cryptoModule) {
       }
     }
 
-    // Check 1: inclusion proof
-    const inclusionValid = verifyMerkleProof(
-      bundle.leafHash,
-      bundle.inclusionProof,
-      bundle.merkleRoot,
-    );
+    // Check 1: inclusion proof. Bundles written before `leafCount` existed
+    // carry no tree size, so their path cannot be held to a shape unless the
+    // caller supplies one; `pathBound` reports which case this was.
+    const statedLeafCount = bundle.leafCount ?? null;
+    const leafCount = options.leafCount ?? statedLeafCount;
+    const pathBound = leafCount !== null;
+    const leafCountAgrees = statedLeafCount === null || statedLeafCount === leafCount;
+    const inclusionValid =
+      leafCountAgrees &&
+      verifyMerkleProof(bundle.leafHash, bundle.inclusionProof, bundle.merkleRoot, {
+        leafCount,
+        leafIndex: bundle.leafIndex,
+      });
     checks.push({
       check: 'inclusion_proof',
       passed: inclusionValid,
@@ -495,6 +564,7 @@ export function createProofGenerator(cryptoModule) {
         bundle.event.signatureBundle || null,
         publicKey,
       );
+      signatureChecked = sigValid !== null;
       checks.push({
         check: 'signature',
         passed: Boolean(sigValid),
@@ -503,7 +573,7 @@ export function createProofGenerator(cryptoModule) {
     }
 
     const valid = checks.every((c) => c.passed);
-    return { valid, checks };
+    return { valid, format, leafBound, signatureChecked, pathBound, checks };
   }
 
   /**
