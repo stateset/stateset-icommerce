@@ -22,10 +22,11 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import {
-  NO_SESSION,
+  UNSESSIONED,
   buildSessionReport,
   buildSessionReportFromFile,
   classifyEvent,
+  createSessionReportBuilder,
   findKernelReceipt,
   formatSessionReport,
   readReplayLogEvents,
@@ -248,7 +249,7 @@ const EVENTS = [
     },
     result: mcpResult({ ok: true, preview: false, result: { customers: [] } }),
   }),
-  // no session: a preview
+  // unsessioned: a preview
   base({
     tool: 'create_customer',
     status: 'preview',
@@ -399,10 +400,128 @@ const KERNEL_EVENTS = [
 ];
 
 // One session spanning the upgrade: an old-format refusal (reason codes
-// truncated away) and a new-format refusal carrying a kernel block.
+// truncated away) and a new-format refusal carrying a kernel block. The copy
+// gets its own commandId: the same commandId again would be a retry.
 const MIXED_SESSION = [
   { ...EVENTS[4], eventId: 'evt-mixed-old', sessionId: 'sess-M' },
-  { ...KERNEL_EVENTS[1], eventId: 'evt-mixed-new', sessionId: 'sess-M' },
+  {
+    ...KERNEL_EVENTS[1],
+    eventId: 'evt-mixed-new',
+    sessionId: 'sess-M',
+    kernel: { ...KERNEL_EVENTS[1].kernel, commandId: 'cmd-mixed' },
+  },
+];
+
+const NO_OUTCOMES = Object.freeze({
+  executed: 0,
+  previewed: 0,
+  dryRun: 0,
+  ok: 0,
+  denied: 0,
+  error: 0,
+  replayed: 0,
+  other: 0,
+});
+const outcomes = (counts) => ({ ...NO_OUTCOMES, ...counts });
+
+/** A session of a report, by id. */
+const sessionOf = (report, id) => report.sessions.find((s) => s.sessionId === id);
+
+// A plan run through MCP, as plan-executor.js and tool-dispatch.js write it:
+// one event per step (the step's tool in notes.sourceStep / params.step, the
+// step outcome in `result`), the plan's own record (notes.final), then the
+// MCP wrapper event, whose tool result names the plan's requestId.
+const PLAN_REQUEST = '0f6c1a52-6a43-4c4f-9e57-0d1a8c1f9a10';
+const planEvent = (overrides) =>
+  base({
+    tool: 'agentic_execute_plan',
+    source: 'agentic_execute_plan',
+    requestId: PLAN_REQUEST,
+    sessionId: 'sess-P',
+    policyDomain: 'agentic',
+    ...overrides,
+  });
+const planStep = (index, tool, overrides = {}) =>
+  planEvent({
+    status: 'success',
+    elapsedMs: 10,
+    params: { step: tool, params: {}, resolved: true, source: { step: index } },
+    notes: {
+      dryRun: false,
+      executedBy: 'agentic_execute_plan',
+      index,
+      sourceStep: tool,
+      mutationManifest: { version: '1.0.0', tool, sideEffect: 'write', phase: 'success' },
+    },
+    ...overrides,
+  });
+
+// A governed step refused by the kernel: the receipt is at
+// result.result.receipt, and a second sanitising pass has cut its reason codes.
+const REFUSED_STEP_RESULT = {
+  index: 1,
+  tool: 'create_inventory_item',
+  status: 'error',
+  result: {
+    success: false,
+    kernel: true,
+    commandType: 'inventory.item.create',
+    receipt: receipt({
+      command_id: '68d049e5-81b9-48e9-9129-0bca2f91bdc7',
+      command_type: 'inventory.item.create',
+      status: 'rejected',
+      error_code: 'kernel.policy_denied',
+      economic_context: { principal: '[truncated]', store_id: 'store:p' },
+      policy: { allowed: false, policy_version: 'p1', reason_codes: '[truncated]' },
+    }),
+    result: null,
+  },
+  error: 'policy denied command: policy.capability_missing:inventory.item.create',
+};
+
+const PLAN_EVENTS = [
+  planStep(0, 'create_customer', {
+    result: {
+      index: 0,
+      tool: 'create_customer',
+      status: 'success',
+      result: {
+        success: true,
+        kernel: true,
+        receipt: receipt({ command_id: 'b7b1d0f2-5f0c-4b8e-9a43-3c8c6e1f0a01' }),
+      },
+    },
+  }),
+  planStep(1, 'create_inventory_item', {
+    status: 'error',
+    error: REFUSED_STEP_RESULT.error,
+    result: REFUSED_STEP_RESULT,
+  }),
+  planEvent({
+    status: 'failed',
+    elapsedMs: 40,
+    params: { dryRun: false, totalSteps: 2, completedSteps: 1, failedSteps: 1 },
+    result: { finalStatus: 'failed', stepStatuses: ['success', 'error'] },
+    charge: null,
+    notes: { final: true, planSignature: 'p', executionSignature: 'e' },
+  }),
+  base({
+    tool: 'agentic_execute_plan',
+    status: 'success',
+    sessionId: 'sess-P',
+    requestId: null,
+    elapsedMs: 45,
+    charge: {
+      charged: true,
+      rule: { tool: 'agentic_execute_plan', chainId: 'base', tokenSymbol: 'USDC', amount: '0.5' },
+    },
+    notes: { mutationManifest: { tool: 'agentic_execute_plan', sideEffect: 'write' } },
+    result: mcpResult({
+      ok: true,
+      preview: false,
+      result: { tool: 'agentic_execute_plan', requestId: PLAN_REQUEST, finalStatus: 'failed' },
+    }),
+  }),
 ];
 
 let dir;
@@ -429,16 +548,24 @@ after(() => {
 
 describe('buildSessionReport', () => {
   const report = buildSessionReport(EVENTS);
-  const a = report.sessions['sess-A'];
-  const b = report.sessions['sess-B'];
+  const a = sessionOf(report, 'sess-A');
+  const b = sessionOf(report, 'sess-B');
 
-  it('groups calls by session, with an explicit key for events without one', () => {
-    assert.deepEqual(Object.keys(report.sessions), ['sess-A', 'sess-B', NO_SESSION]);
+  it('groups calls by session in first-seen order, with one bucket for the unsessioned', () => {
+    assert.deepEqual(
+      report.sessions.map((s) => s.sessionId),
+      ['sess-A', 'sess-B', UNSESSIONED],
+    );
+    assert.deepEqual(
+      report.sessions.map((s) => s.unsessioned),
+      [false, false, true],
+    );
     assert.equal(report.sessionCount, 3);
     assert.equal(a.calls, 7);
     assert.equal(b.calls, 3);
-    assert.equal(report.sessions[NO_SESSION].calls, 1);
+    assert.equal(sessionOf(report, UNSESSIONED).calls, 1);
     assert.equal(report.totals.calls, 11);
+    assert.equal(report.totals.steps, 0);
     assert.equal(report.malformedLines, 0);
   });
 
@@ -463,15 +590,11 @@ describe('buildSessionReport', () => {
     });
   });
 
-  it('separates refusals from errors although both are logged as status "error"', () => {
-    assert.deepEqual(a.outcomes, { ok: 3, denied: 3, error: 1, other: 0 });
-    assert.deepEqual(b.outcomes, { ok: 1, denied: 1, error: 1, other: 0 });
-    assert.deepEqual(report.sessions[NO_SESSION].outcomes, {
-      ok: 1,
-      denied: 0,
-      error: 0,
-      other: 0,
-    });
+  it('separates committed writes, previews, refusals and errors', () => {
+    // create_order's receipt succeeded: executed; the two reads are ok.
+    assert.deepEqual(a.outcomes, outcomes({ executed: 1, ok: 2, denied: 3, error: 1 }));
+    assert.deepEqual(b.outcomes, outcomes({ ok: 1, denied: 1, error: 1 }));
+    assert.deepEqual(sessionOf(report, UNSESSIONED).outcomes, outcomes({ previewed: 1 }));
   });
 
   it('groups denials by kernel reason code, else error_code, else the gate outcome', () => {
@@ -500,6 +623,7 @@ describe('buildSessionReport', () => {
     assert.deepEqual(a.charges, {
       count: 2,
       byToken: [{ tokenSymbol: 'USDC', chainId: 'base', count: 2, total: '0.30' }],
+      onReplayedReceipts: 0,
       numericAmounts: 1,
       unparseableAmounts: 0,
     });
@@ -571,8 +695,8 @@ describe('buildSessionReport', () => {
     ]);
     assert.equal(r.malformedLines, 5);
     assert.equal(r.totals.calls, 2);
-    assert.equal(r.sessions[NO_SESSION].byStatus['(unknown)'], 1);
-    assert.deepEqual(r.sessions[NO_SESSION].latencyMs, {
+    assert.equal(sessionOf(r, UNSESSIONED).byStatus['(unknown)'], 1);
+    assert.deepEqual(sessionOf(r, UNSESSIONED).latencyMs, {
       count: 0,
       p50: null,
       p95: null,
@@ -582,17 +706,349 @@ describe('buildSessionReport', () => {
 
   it('filters to one session', () => {
     const r = buildSessionReport(EVENTS, { sessionId: 'sess-B' });
-    assert.deepEqual(Object.keys(r.sessions), ['sess-B']);
+    assert.deepEqual(
+      r.sessions.map((s) => s.sessionId),
+      ['sess-B'],
+    );
     assert.equal(r.totals.calls, 3);
     assert.equal(r.filteredOut, 8);
-    assert.equal(buildSessionReport(EVENTS, { sessionId: NO_SESSION }).totals.calls, 1);
+    assert.equal(buildSessionReport(EVENTS, { sessionId: UNSESSIONED }).totals.calls, 1);
+  });
+});
+
+describe('unsessioned calls', () => {
+  // The embedded toolkit's default: sessionId = requestId, one per call.
+  const toolkitCall = (i, overrides = {}) => ({
+    eventId: `evt-tk-${i}`,
+    tool: 'get_order',
+    status: 'success',
+    requestId: `req-tk-${i}`,
+    sessionId: `req-tk-${i}`,
+    occurredAt: '2026-11-14T12:00:00.000Z',
+    elapsedMs: i % 50,
+    result: { order: null },
+    charge: { charged: false },
+    notes: { directExecution: true, dryRun: false, includeHooks: true },
+    source: 'embedded_agent_toolkit',
+    ...overrides,
+  });
+
+  it('puts 100k per-call pseudo-sessions in one bucket', () => {
+    const builder = createSessionReportBuilder();
+    const N = 100_000;
+    for (let i = 0; i < N; i += 1) {
+      builder.add(toolkitCall(i, i % 1000 === 999 ? { sessionId: `sess-${i % 3}` } : {}));
+    }
+    const r = builder.finish();
+    // the unsessioned bucket plus the three real sessions
+    assert.equal(r.sessionCount, 4);
+    assert.equal(r.sessions[0].sessionId, UNSESSIONED);
+    assert.equal(r.sessions[0].calls, N - N / 1000);
+    assert.equal(r.totals.calls, N);
+    assert.equal(r.totals.latencyMs.count, N);
+  });
+
+  it('treats a missing, blank or request-id session id as unsessioned', () => {
+    const r = buildSessionReport([
+      toolkitCall(1),
+      toolkitCall(2, { sessionId: null }),
+      toolkitCall(3, { sessionId: '  ' }),
+      toolkitCall(4, { sessionId: undefined, requestId: undefined }),
+      toolkitCall(5, { sessionId: 'sess-real' }),
+    ]);
+    assert.deepEqual(
+      r.sessions.map((s) => [s.sessionId, s.calls]),
+      [
+        [UNSESSIONED, 4],
+        ['sess-real', 1],
+      ],
+    );
+    assert.match(formatSessionReport(r), /"\(unsessioned\)" groups the 4 call\(s\)/);
+  });
+});
+
+describe('plans, simulations and replays', () => {
+  const report = buildSessionReport(PLAN_EVENTS);
+  const p = sessionOf(report, 'sess-P');
+
+  it('counts a plan once and each step under its own tool', () => {
+    assert.equal(p.calls, 1);
+    assert.equal(p.steps, 2);
+    assert.equal(p.collapsedWrappers, 1);
+    assert.deepEqual(p.byTool, {
+      agentic_execute_plan: 1,
+      create_customer: 1,
+      create_inventory_item: 1,
+    });
+    assert.deepEqual(p.plans, { count: 1, byFinalStatus: { failed: 1 } });
+    // the plan's record is its outcome-free call; the steps carry outcomes
+    assert.deepEqual(p.outcomes, outcomes({ executed: 1, denied: 1 }));
+  });
+
+  it('times the plan once, from its own record', () => {
+    assert.deepEqual(p.latencyMs, { count: 1, p50: 40, p95: 40, max: 40 });
+  });
+
+  it('keeps the charge the wrapper event recorded', () => {
+    assert.deepEqual(p.charges.byToken, [
+      { tokenSymbol: 'USDC', chainId: 'base', count: 1, total: '0.50' },
+    ]);
+  });
+
+  it('reads a refused step from result.result.receipt as a denial', () => {
+    assert.deepEqual(classifyEvent(PLAN_EVENTS[1]), {
+      outcome: 'denied',
+      reasons: ['kernel.policy_denied'],
+      reasonCodesUnavailable: true,
+    });
+    assert.equal(p.denials.reasonCodesUnavailable, 1);
+    // when the codes survived, they name the denial
+    const withCodes = structuredClone(PLAN_EVENTS[1]);
+    withCodes.result.result.receipt.policy.reason_codes = ['policy.capability_missing:x'];
+    assert.deepEqual(classifyEvent(withCodes), {
+      outcome: 'denied',
+      reasons: ['policy.capability_missing:x'],
+    });
+  });
+
+  it('collapses the wrapper of a simulate or replay call into its record', () => {
+    for (const tool of ['agentic_simulate_mutation', 'agentic_replay_mutation']) {
+      const requestId = `00000000-0000-4000-8000-${tool.length.toString().padStart(12, '0')}`;
+      const r = buildSessionReport([
+        base({
+          tool,
+          source: tool,
+          status: 'dry_run_success',
+          requestId,
+          sessionId: requestId,
+          elapsedMs: 3,
+          result: { simulation: true },
+          notes: { simulation: true },
+        }),
+        base({
+          tool,
+          status: 'success',
+          requestId: null,
+          sessionId: null,
+          elapsedMs: 4,
+          result: mcpResult({ ok: true, preview: false, result: { requestId } }),
+        }),
+      ]);
+      assert.equal(r.totals.calls, 1, tool);
+      assert.equal(r.totals.collapsedWrappers, 1, tool);
+      assert.deepEqual(r.totals.outcomes, outcomes({ dryRun: 1 }), tool);
+      assert.deepEqual(r.totals.latencyMs.count, 1, tool);
+    }
+  });
+
+  it('links an older wrapper through the request id at the head of its text content', () => {
+    const requestId = 'b1b3a494-917c-4de6-b548-66af72638ac0';
+    const r = buildSessionReport([
+      base({
+        tool: 'agentic_replay_mutation',
+        source: 'agentic_replay_mutation',
+        status: 'dry_run_success',
+        requestId,
+        sessionId: requestId,
+      }),
+      base({
+        tool: 'agentic_replay_mutation',
+        status: 'success',
+        requestId: null,
+        sessionId: null,
+        result: {
+          content: {
+            0: { type: 'text', text: `{\n  "requestId": "${requestId}",\n  "dryRun": tru...` },
+          },
+        },
+      }),
+    ]);
+    assert.equal(r.totals.calls, 1);
+    assert.equal(r.totals.collapsedWrappers, 1);
+  });
+
+  it('counts a wrapper without a record (refused before it ran) as a call', () => {
+    const r = buildSessionReport([
+      base({
+        tool: 'agentic_execute_plan',
+        status: 'policy_block',
+        sessionId: 's',
+        error: 'Tool execution blocked by policy',
+      }),
+    ]);
+    assert.equal(r.totals.calls, 1);
+    assert.equal(r.totals.collapsedWrappers, 0);
+    assert.deepEqual(r.totals.outcomes, outcomes({ denied: 1 }));
+  });
+
+  it('attributes a rollback compensation to the compensating tool', () => {
+    const r = buildSessionReport([
+      planEvent({
+        status: 'rollback_success',
+        params: { source: 'create_order', compensationTool: 'cancel_order' },
+        notes: { phase: 'rollback', compensated: true, index: 0, source: 'create_order' },
+      }),
+    ]);
+    assert.deepEqual(r.totals.byTool, { cancel_order: 1 });
+    assert.equal(r.totals.steps, 1);
+    assert.equal(r.totals.calls, 0);
+  });
+});
+
+describe('retries that replay a receipt', () => {
+  const applied = (overrides = {}) =>
+    base({
+      tool: 'create_refund',
+      status: 'success',
+      sessionId: 'sess-R',
+      source: 'embedded_agent_toolkit',
+      kernel: kernelBlock({ commandId: 'cmd-refund-1', receiptStatus: 'succeeded' }),
+      charge: {
+        charged: true,
+        rule: { tool: 'create_refund', chainId: 'base', tokenSymbol: 'USDC', amount: '0.10' },
+      },
+      ...overrides,
+    });
+
+  it('counts the replayed receipt as replayed, not as a second write, and keeps both charges', () => {
+    const r = buildSessionReport([applied(), applied()]);
+    const s = sessionOf(r, 'sess-R');
+    assert.equal(s.calls, 2);
+    assert.deepEqual(s.outcomes, outcomes({ executed: 1, replayed: 1 }));
+    assert.equal(s.charges.count, 2);
+    assert.equal(s.charges.onReplayedReceipts, 1);
+    assert.equal(s.charges.byToken[0].total, '0.20');
+    const text = formatSessionReport(r);
+    assert.match(text, /1 call\(s\) replayed an earlier kernel receipt/);
+    assert.match(text, /1 charge\(s\) were taken on replayed calls/);
+  });
+
+  it('does not count a replayed refusal as a second denial', () => {
+    const refused = () =>
+      applied({
+        status: 'error',
+        charge: null,
+        kernel: kernelBlock({
+          commandId: 'cmd-refund-2',
+          receiptStatus: 'rejected',
+          errorCode: 'kernel.policy_denied',
+          reasonCodes: ['policy.approval_required'],
+        }),
+      });
+    const s = sessionOf(buildSessionReport([refused(), refused()]), 'sess-R');
+    assert.deepEqual(s.outcomes, outcomes({ denied: 1, replayed: 1 }));
+    assert.equal(s.denials.total, 1);
+  });
+
+  it('recognises a retry from the receipt when no kernel block was written', () => {
+    const governed = () =>
+      base({
+        tool: 'create_customer',
+        status: 'success',
+        sessionId: 'sess-R',
+        result: truncatedGoverned({ status: 'succeeded', command_id: 'cmd-old-1' }, { ok: true }),
+      });
+    const s = sessionOf(buildSessionReport([governed(), governed()]), 'sess-R');
+    assert.deepEqual(s.outcomes, outcomes({ executed: 1, replayed: 1 }));
+  });
+
+  it('does not treat a preview promoted to an applied command as a retry', () => {
+    const r = buildSessionReport([
+      applied({
+        status: 'preview',
+        charge: null,
+        kernel: kernelBlock({ commandId: 'cmd-refund-3', receiptStatus: 'previewed' }),
+      }),
+      applied({
+        kernel: kernelBlock({ commandId: 'cmd-refund-3', receiptStatus: 'succeeded' }),
+      }),
+    ]);
+    assert.deepEqual(sessionOf(r, 'sess-R').outcomes, outcomes({ previewed: 1, executed: 1 }));
+  });
+});
+
+describe('executed versus previewed', () => {
+  it('reports committed writes apart from previews and dry runs', () => {
+    const write = { mutationManifest: { tool: 'create_order', sideEffect: 'write' } };
+    const r = buildSessionReport([
+      // an ungoverned MCP write: the mutation manifest marks it
+      base({ tool: 'create_order', status: 'success', sessionId: 's', notes: write }),
+      // a read
+      base({ tool: 'get_order', status: 'success', sessionId: 's' }),
+      // a preview without --apply
+      base({ tool: 'create_order', status: 'preview', sessionId: 's', notes: write }),
+      // a governed command the kernel previewed although the call succeeded
+      base({
+        tool: 'create_order',
+        status: 'success',
+        sessionId: 's',
+        notes: write,
+        kernel: kernelBlock({ receiptStatus: 'previewed' }),
+      }),
+      // a dry-run plan step and a blocked dry run that was only a preview
+      planStep(0, 'create_order', { status: 'dry_run_success', sessionId: 's' }),
+      base({
+        tool: 'create_order',
+        status: 'dry_run_blocked',
+        sessionId: 's',
+        permission: { allowed: false, preview: true },
+      }),
+    ]);
+    const s = sessionOf(r, 's');
+    assert.deepEqual(s.outcomes, outcomes({ executed: 1, ok: 1, previewed: 3, dryRun: 1 }));
+    assert.deepEqual(s.byStatus, {
+      success: 3,
+      dry_run_blocked: 1,
+      dry_run_success: 1,
+      preview: 1,
+    });
+  });
+});
+
+describe('count keys that are Object.prototype names', () => {
+  it('counts constructor, toString and __proto__ like any other key', () => {
+    const r = buildSessionReport([
+      base({ tool: 'constructor', status: '__proto__', sessionId: 's' }),
+      base({ tool: 'constructor', status: 'toString', sessionId: 's' }),
+      base({
+        tool: '__proto__',
+        status: 'error',
+        sessionId: 's',
+        result: mcpResult({ ok: false, error: { code: 'hasOwnProperty' } }),
+      }),
+      base({
+        tool: 'toString',
+        status: 'error',
+        sessionId: 's',
+        kernel: kernelBlock({ receiptStatus: 'rejected', reasonCodes: ['valueOf'] }),
+      }),
+    ]);
+    const s = sessionOf(r, 's');
+    assert.equal(s.calls, 4);
+    assert.deepEqual(JSON.parse(JSON.stringify(s.byTool)), {
+      constructor: 2,
+      ['__proto__']: 1,
+      toString: 1,
+    });
+    assert.equal(Object.getOwnPropertyDescriptor(s.byStatus, '__proto__')?.value, 1);
+    assert.equal(s.byStatus.toString, 1);
+    assert.equal(Object.getOwnPropertyDescriptor(s.errors.byCode, 'hasOwnProperty')?.value, 1);
+    assert.equal(Object.getOwnPropertyDescriptor(s.denials.byReason, 'valueOf')?.value, 1);
+    for (const counts of [s.byTool, s.byStatus, s.errors.byCode, s.denials.byReason]) {
+      for (const value of Object.values(counts)) assert.equal(typeof value, 'number');
+    }
   });
 });
 
 describe('classifyEvent / findKernelReceipt', () => {
-  it('finds the receipt in both logged shapes', () => {
+  it('finds the receipt in every logged shape', () => {
     assert.equal(findKernelReceipt(EVENTS[3]).error_code, 'kernel.policy_denied');
     assert.equal(findKernelReceipt(EVENTS[4]).error_code, 'kernel.policy_denied');
+    assert.equal(findKernelReceipt(PLAN_EVENTS[1]).status, 'rejected');
+    assert.equal(
+      findKernelReceipt({ result: { replayOutcome: { result: { receipt: receipt() } } } }).status,
+      'succeeded',
+    );
     assert.equal(findKernelReceipt(EVENTS[0]), null);
     assert.equal(findKernelReceipt({ result: '[truncated]' }), null);
   });
@@ -633,10 +1089,10 @@ describe('classifyEvent / findKernelReceipt', () => {
 
 describe('the top-level kernel block', () => {
   const report = buildSessionReport(KERNEL_EVENTS);
-  const k = report.sessions['sess-K'];
+  const k = sessionOf(report, 'sess-K');
 
   it('keys a refusal by the block reason codes although the receipt policy was truncated', () => {
-    assert.deepEqual(k.outcomes, { ok: 1, denied: 3, error: 1, other: 0 });
+    assert.deepEqual(k.outcomes, outcomes({ executed: 1, denied: 3, error: 1 }));
     assert.equal(k.denials.total, 3);
     assert.deepEqual(k.denials.byReason, {
       // the MCP-path denial (2 codes) and the executeTool denial, counted once
@@ -675,7 +1131,7 @@ describe('the top-level kernel block', () => {
   });
 
   it('counts the reason codes the writer omitted', () => {
-    const cap = report.sessions['sess-cap'];
+    const cap = sessionOf(report, 'sess-cap');
     assert.equal(cap.denials.total, 1);
     assert.equal(Object.keys(cap.denials.byReason).length, 16);
     assert.equal(cap.denials.reasonCodesOmitted, 3);
@@ -699,16 +1155,16 @@ describe('the top-level kernel block', () => {
   it('reports old-format events exactly as before in a mixed log', () => {
     const old = buildSessionReport(EVENTS);
     const mixed = buildSessionReport([...EVENTS, ...KERNEL_EVENTS, ...MIXED_SESSION]);
-    for (const key of ['sess-A', 'sess-B', NO_SESSION]) {
-      assert.deepEqual(mixed.sessions[key], old.sessions[key], key);
+    for (const key of ['sess-A', 'sess-B', UNSESSIONED]) {
+      assert.deepEqual(sessionOf(mixed, key), sessionOf(old, key), key);
     }
-    assert.equal(old.sessions['sess-A'].denials.reasonCodesUnavailable, 1);
-    assert.equal(old.sessions['sess-A'].denials.reasonCodesOmitted, 0);
+    assert.equal(sessionOf(old, 'sess-A').denials.reasonCodesUnavailable, 1);
+    assert.equal(sessionOf(old, 'sess-A').denials.reasonCodesOmitted, 0);
   });
 
   it('counts reasonCodesUnavailable only for the old-format refusal of a mixed session', () => {
     const mixed = buildSessionReport([...EVENTS, ...KERNEL_EVENTS, ...MIXED_SESSION]);
-    const m = mixed.sessions['sess-M'];
+    const m = sessionOf(mixed, 'sess-M');
     assert.equal(m.denials.total, 2);
     assert.deepEqual(m.denials.byReason, {
       'kernel.policy_denied': 1,
@@ -752,15 +1208,25 @@ describe('formatSessionReport', () => {
   it('prints a row per session, the denial reasons and the charge caveat', () => {
     const text = formatSessionReport(buildSessionReport(EVENTS), { logPath: 'x.jsonl' });
     assert.match(text, /^Agent session report - x\.jsonl/);
-    assert.match(text, /sess-A\s+7\s+3\s+3\s+1\s+30\s+100\s+100\s+0\.30 USDC@base/);
     assert.match(
       text,
-      /TOTAL\s+11\s+5\s+4\s+2\s+10\s+100\s+100\s+0\.0001 BTC@bitcoin, 0\.30 USDC@base/,
+      /SESSION\s+CALLS\s+STEPS\s+EXEC\s+PREVIEW\s+OK\s+DENIED\s+ERRORS\s+REPLAYED\s+P50ms/,
+    );
+    // calls steps exec preview ok denied errors replayed p50 p95 max charges
+    assert.match(text, /sess-A\s+7\s+0\s+1\s+0\s+2\s+3\s+1\s+0\s+30\s+100\s+100\s+0\.30 USDC@base/);
+    assert.match(
+      text,
+      /TOTAL\s+11\s+0\s+1\s+1\s+3\s+4\s+2\s+0\s+10\s+100\s+100\s+0\.0001 BTC@bitcoin, 0\.30 USDC@base/,
     );
     assert.match(text, /denials: {2}.*policy\.approval_required 1/);
     assert.match(text, /1 kernel refusal\(s\) logged without reason codes/);
     assert.match(text, /2 charge amount\(s\) were logged as JSON numbers/);
-    assert.match(text, /\(no session\)/);
+    assert.match(text, /\(unsessioned\)/);
+  });
+
+  it('shows plans with their step count', () => {
+    const text = formatSessionReport(buildSessionReport(PLAN_EVENTS));
+    assert.match(text, /plans: {4}1 \(failed 1\), 2 step\(s\)/);
   });
 });
 
@@ -785,18 +1251,42 @@ describe('stateset-agent-report bin', () => {
     assert.equal(report.logPath, logPath);
     assert.equal(report.malformedLines, 1);
     assert.equal(report.totals.calls, 11);
-    assert.equal(report.sessions['sess-A'].charges.byToken[0].total, '0.30');
-    assert.equal(typeof report.sessions['sess-A'].charges.byToken[0].total, 'string');
-    assert.equal(report.sessions['sess-A'].denials.byReason['kernel.policy_denied'], 1);
-    assert.deepEqual(report.sessions['sess-A'].latencyMs, {
-      count: 7,
-      p50: 30,
-      p95: 100,
-      max: 100,
-    });
-    assert.ok(report.sessions[NO_SESSION]);
+    const a = sessionOf(report, 'sess-A');
+    assert.equal(a.charges.byToken[0].total, '0.30');
+    assert.equal(typeof a.charges.byToken[0].total, 'string');
+    assert.equal(a.denials.byReason['kernel.policy_denied'], 1);
+    assert.deepEqual(a.latencyMs, { count: 7, p50: 30, p95: 100, max: 100 });
+    assert.ok(sessionOf(report, UNSESSIONED));
     assert.ok(readFileSync(logPath).equals(before.bytes));
     assert.equal(statSync(logPath).mtimeMs, before.mtimeMs);
+  });
+
+  it('emits sessions as an array in first-seen order, whatever the ids look like', async () => {
+    const orderPath = path.join(dir, 'order.jsonl');
+    const ids = ['zeta', '42', '7', 'alpha'];
+    writeFileSync(
+      orderPath,
+      `${ids
+        .map((sessionId, i) =>
+          JSON.stringify(
+            base({
+              tool: 't',
+              status: 'success',
+              sessionId,
+              occurredAt: `2026-11-14T0${9 - i}:00:00.000Z`,
+            }),
+          ),
+        )
+        .join('\n')}\n`,
+    );
+    const { stdout, exitCode } = await run(['--log', orderPath, '--json']);
+    assert.equal(exitCode, 0);
+    const report = JSON.parse(stdout);
+    assert.ok(Array.isArray(report.sessions));
+    assert.deepEqual(
+      report.sessions.map((s) => s.sessionId),
+      ids,
+    );
   });
 
   it('groups kernel-block refusals by reason code in a mixed log', async () => {
@@ -808,7 +1298,7 @@ describe('stateset-agent-report bin', () => {
       '--json',
     ]);
     assert.equal(exitCode, 0);
-    const k = JSON.parse(stdout).sessions['sess-K'];
+    const k = sessionOf(JSON.parse(stdout), 'sess-K');
     assert.equal(k.denials.byReason['policy.approval_required'], 2);
     assert.equal(k.denials.reasonCodesUnavailable, 0);
     assert.deepEqual(k.principals, ['agent:explore']);
@@ -817,8 +1307,8 @@ describe('stateset-agent-report bin', () => {
   it('prints a table by default and honours --session', async () => {
     const { stdout, exitCode } = await run(['--log', logPath, '--session', 'sess-B']);
     assert.equal(exitCode, 0);
-    assert.match(stdout, /SESSION\s+CALLS\s+OK\s+DENIED\s+ERRORS/);
-    assert.match(stdout, /sess-B\s+3\s+1\s+1\s+1/);
+    assert.match(stdout, /SESSION\s+CALLS\s+STEPS\s+EXEC\s+PREVIEW\s+OK\s+DENIED\s+ERRORS/);
+    assert.match(stdout, /sess-B\s+3\s+0\s+0\s+0\s+1\s+1\s+1\s+0/);
     assert.doesNotMatch(stdout, /sess-A/);
   });
 
@@ -829,6 +1319,11 @@ describe('stateset-agent-report bin', () => {
     assert.match(unknown.stderr, /no events for session nope/);
     assert.equal((await run([])).exitCode, 2);
     assert.equal((await run(['--bogus'])).exitCode, 2);
+    for (const empty of ['', '   ']) {
+      const result = await run(['--log', logPath, '--session', empty]);
+      assert.equal(result.exitCode, 2, JSON.stringify(empty));
+      assert.match(result.stderr, /--session needs a session id/);
+    }
   });
 
   it('shows help and version', async () => {

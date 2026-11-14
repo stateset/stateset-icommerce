@@ -20,9 +20,10 @@ import { buildSessionReportFromFile, formatSessionReport } from '../src/mcp/sess
 const HELP = `
 StateSet Agent Report - what each agent session did
 
-Reads the MCP server's replay log and reports, per session: calls by status
-and tool, refusals grouped by reason code, errors by code, charges, and
-latency (p50 / p95 / max). Read-only.
+Reads the MCP server's replay log and reports, per session: calls and plan
+steps by status and tool, committed writes apart from previews and dry runs,
+refusals grouped by reason code, errors by code, retries that replayed an
+earlier kernel receipt, charges, and latency (p50 / p95 / max). Read-only.
 
 Usage:
   stateset-agent-report --log <path> [--session <id>] [--json]
@@ -30,16 +31,18 @@ Usage:
 Options:
   --log <path>       Replay log to read (agentic-tool-calls.jsonl; the MCP
                      server writes it under ./.stateset by default)
-  --session <id>     Report one session only ("(no session)" selects events
-                     logged without a session id)
-  --json             Print the report object as JSON
+  --session <id>     Report one session only ("(unsessioned)" selects events
+                     logged without a session id, or whose session id is only
+                     their own request id)
+  --json             Print the report object as JSON (sessions as an array,
+                     in the order they first appear in the log)
   -h, --help         Show this help
   -v, --version      Show version
 
 Exit codes:
   0  report printed
   1  the log could not be read, or --session matched no events
-  2  bad usage
+  2  bad usage (including an empty --session)
 
 Examples:
   stateset-agent-report --log .stateset/agentic-tool-calls.jsonl
@@ -76,6 +79,12 @@ async function main() {
   }
   if (!values.log) {
     console.error('stateset-agent-report: --log <path> is required.');
+    console.error('Run stateset-agent-report --help for usage.');
+    process.exitCode = 2;
+    return;
+  }
+  if (values.session !== undefined && !values.session.trim()) {
+    console.error('stateset-agent-report: --session needs a session id.');
     console.error('Run stateset-agent-report --help for usage.');
     process.exitCode = 2;
     return;
