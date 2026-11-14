@@ -5,7 +5,6 @@
  * with permission checks, telemetry, treasury charging, and error handling.
  */
 
-import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import path from 'path';
 // `z` (zod) is now only used inside `./mcp/agentic-runtime-tools.js` and
 // the per-domain tool modules; mcp-server.js no longer needs it directly.
@@ -29,6 +28,7 @@ import {
   createReplayLog,
 } from './mcp/replay-log.js';
 import { buildToolRuntimeMeta, createPricingCache } from './mcp/pricing.js';
+import { createAnnotatedSdkMcpServer } from './mcp/sdk-mcp-server.js';
 import {
   AGENTIC_TOOL_RESULT_SCHEMA_VERSION as RESULT_SCHEMA_VERSION,
   attachStructuredToolMetadataToResponse as attachStructuredToolMetadataToResponseImpl,
@@ -649,7 +649,9 @@ export function createStatesetMcpServer({
   // server, so the two can never drift apart.
   const adaptedTools = exposedToolDefs.map(adaptTool);
 
-  const server = createSdkMcpServer({
+  // Not createSdkMcpServer itself: the agent-sdk releases package.json allows
+  // drop each tool's `annotations` from tools/list (see ./mcp/sdk-mcp-server.js).
+  const server = createAnnotatedSdkMcpServer({
     name: 'stateset-commerce',
     version: '1.0.0',
     tools: adaptedTools,

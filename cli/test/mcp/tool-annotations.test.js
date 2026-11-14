@@ -4,12 +4,20 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createMcpHandler } from '@modelcontextprotocol/server';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
 
 import {
   KNOWN_TOOL_PERMISSIONS,
   READ_TOOLS_THAT_WRITE,
   deriveToolAnnotations,
 } from '../../src/mcp/tool-annotations.js';
+import {
+  createAnnotatedSdkMcpServer,
+  sdkForwardsToolAnnotations,
+} from '../../src/mcp/sdk-mcp-server.js';
 import { createStatesetV2McpServer } from '../../src/mcp/v2-server.js';
 import { createStatesetMcpServer } from '../../src/mcp-server.js';
 import { ALL_DOMAIN_TOOLS } from '../../src/tools/domain-registry.js';
@@ -356,5 +364,234 @@ describe('tools/list annotations on the real server', () => {
     )) {
       assert.equal(listed.get(toolDef.name).annotations.title, toolDef.annotations.title);
     }
+  });
+});
+
+/** Connect a real MCP client to an McpServer over an in-memory transport. */
+async function connectClient(mcpServer) {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await mcpServer.connect(serverTransport);
+  const client = new Client({ name: 'annotations-test', version: '1' });
+  await client.connect(clientTransport);
+  return client;
+}
+
+/** Every page of tools/list, by name. */
+async function listToolsByName(client) {
+  const tools = [];
+  let cursor;
+  do {
+    const page = await client.listTools(cursor ? { cursor } : {});
+    tools.push(...page.tools);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return new Map(tools.map((tool) => [tool.name, tool]));
+}
+
+// agent-sdk before 0.2.27, including the 0.1.72 that package-lock.json pins:
+// its tool() and createSdkMcpServer(), copied verbatim, on the MCP SDK's
+// McpServer. The four-argument server.tool() has nowhere to put annotations.
+const LEGACY_AGENT_SDK = Object.freeze({
+  sdkTool: (name, description, inputSchema, handler) => ({
+    name,
+    description,
+    inputSchema,
+    handler,
+  }),
+  createSdkMcpServer: (options) => {
+    const server = new McpServer(
+      { name: options.name, version: options.version ?? '1.0.0' },
+      { capabilities: { tools: options.tools ? {} : undefined } },
+    );
+    options.tools?.forEach((toolDef) => {
+      server.tool(toolDef.name, toolDef.description, toolDef.inputSchema, toolDef.handler);
+    });
+    return { type: 'sdk', name: options.name, instance: server };
+  },
+});
+
+// agent-sdk 0.2.27 and later: tool() keeps `extras.annotations`.
+const forwardingSdkTool = (name, description, inputSchema, handler, extras) => ({
+  name,
+  description,
+  inputSchema,
+  handler,
+  annotations: extras?.annotations,
+});
+
+/** Drop `annotations` from listed tools, to compare everything else. */
+const withoutAnnotations = (listed) =>
+  new Map([...listed].map(([name, { annotations: _annotations, ...rest }]) => [name, rest]));
+
+describe('tools/list annotations on the in-process agent-sdk server', () => {
+  let dir;
+  let stateset;
+  let client;
+  /** @type {Map<string, any>} tools/list from the agent-sdk server instance */
+  let listed;
+
+  before(async () => {
+    dir = mkdtempSync(path.join(os.tmpdir(), 'mcp-sdk-annotations-'));
+    stateset = createStatesetMcpServer({ dbPath: path.join(dir, 'store.db'), toolProfile: 'all' });
+    // The McpServer the agent-sdk built: what query() talks to in-process.
+    client = await connectClient(stateset.instance);
+    listed = await listToolsByName(client);
+  });
+
+  after(async () => {
+    await client?.close().catch(() => {});
+    await stateset?.close?.().catch(() => {});
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('lists every tool with the derived annotations', () => {
+    assert.equal(listed.size, EVERY_TOOL.length);
+    for (const toolDef of EVERY_TOOL) {
+      assert.deepEqual(
+        listed.get(toolDef.name)?.annotations,
+        deriveToolAnnotations(toolDef),
+        toolDef.name,
+      );
+    }
+  });
+
+  it('advertises read, delete and write tools with the hints their permission allows', () => {
+    assert.equal(TOOL_BY_NAME.get('get_order').permission, 'read');
+    assert.deepEqual(listed.get('get_order').annotations, { readOnlyHint: true });
+
+    for (const name of ['cancel_order', 'delete_cart']) {
+      assert.equal(TOOL_BY_NAME.get(name).permission, 'delete', name);
+      assert.deepEqual(
+        listed.get(name).annotations,
+        { readOnlyHint: false, destructiveHint: true },
+        name,
+      );
+    }
+
+    for (const name of ['create_customer', 'delete_customer', 'refund_payment_intent']) {
+      assert.equal(TOOL_BY_NAME.get(name).permission, 'write', name);
+      const annotations = listed.get(name).annotations;
+      assert.equal(annotations.readOnlyHint, false, name);
+      assert.ok(!('destructiveHint' in annotations), `${name} must not claim destructiveHint`);
+    }
+  });
+
+  it('calls the wrapped tool handler', async () => {
+    const result = await client.callTool({ name: 'list_customers', arguments: {} });
+    assert.notEqual(result.isError, true, JSON.stringify(result));
+    assert.equal(result.content[0].type, 'text');
+    assert.ok(JSON.parse(result.content[0].text));
+  });
+
+  it('registers every tool as a legacy agent-sdk would, plus its annotations', async () => {
+    const tools = stateset.getAdaptedTools();
+    const legacy = LEGACY_AGENT_SDK.createSdkMcpServer({ name: 'parity', tools });
+    const annotated = createAnnotatedSdkMcpServer({ name: 'parity', tools }, LEGACY_AGENT_SDK);
+    const legacyClient = await connectClient(legacy.instance);
+    const annotatedClient = await connectClient(annotated.instance);
+    try {
+      const legacyListed = await listToolsByName(legacyClient);
+      const annotatedListed = await listToolsByName(annotatedClient);
+
+      // The bug: a legacy agent-sdk lists no hints at all.
+      assert.deepEqual(
+        [...legacyListed.values()].filter((tool) => tool.annotations),
+        [],
+      );
+      // Same names, descriptions and input schemas; only annotations added.
+      assert.deepEqual(withoutAnnotations(annotatedListed), withoutAnnotations(legacyListed));
+      for (const tool of tools) {
+        assert.deepEqual(annotatedListed.get(tool.name).annotations, tool.annotations, tool.name);
+      }
+    } finally {
+      await legacyClient.close();
+      await annotatedClient.close();
+    }
+  });
+});
+
+describe('createAnnotatedSdkMcpServer', () => {
+  const sampleTools = () => [
+    {
+      name: 'get_thing',
+      description: 'Read a thing',
+      inputSchema: { id: z.string().describe('Thing id') },
+      handler: async (args) => ({ content: [{ type: 'text', text: `got ${args.id}` }] }),
+      annotations: { readOnlyHint: true },
+    },
+    {
+      name: 'ping',
+      description: 'No arguments',
+      inputSchema: {},
+      handler: async (args) => ({ content: [{ type: 'text', text: JSON.stringify(args) }] }),
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    },
+  ];
+
+  it('tells an agent-sdk that forwards annotations from one that drops them', () => {
+    assert.equal(sdkForwardsToolAnnotations(LEGACY_AGENT_SDK.sdkTool), false);
+    assert.equal(sdkForwardsToolAnnotations(forwardingSdkTool), true);
+    assert.equal(
+      sdkForwardsToolAnnotations(() => {
+        throw new Error('unexpected arguments');
+      }),
+      false,
+    );
+  });
+
+  it('on an agent-sdk that drops annotations, lists them and keeps the handlers', async () => {
+    const tools = sampleTools();
+    const server = createAnnotatedSdkMcpServer(
+      { name: 'sample', version: '2.0.0', tools },
+      LEGACY_AGENT_SDK,
+    );
+    assert.equal(server.type, 'sdk');
+    assert.equal(server.name, 'sample');
+    const client = await connectClient(server.instance);
+    try {
+      assert.deepEqual(client.getServerVersion(), { name: 'sample', version: '2.0.0' });
+      const listed = await listToolsByName(client);
+      assert.deepEqual(listed.get('get_thing').annotations, { readOnlyHint: true });
+      assert.deepEqual(listed.get('ping').annotations, {
+        readOnlyHint: false,
+        destructiveHint: true,
+      });
+      assert.equal(listed.get('get_thing').inputSchema.properties.id.description, 'Thing id');
+      assert.deepEqual(listed.get('get_thing').inputSchema.required, ['id']);
+
+      const got = await client.callTool({ name: 'get_thing', arguments: { id: 'a1' } });
+      assert.deepEqual(got.content, [{ type: 'text', text: 'got a1' }]);
+      const pinged = await client.callTool({ name: 'ping', arguments: {} });
+      assert.deepEqual(pinged.content, [{ type: 'text', text: '{}' }]);
+      const invalid = await client.callTool({ name: 'get_thing', arguments: {} });
+      assert.equal(invalid.isError, true);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('hands the tools to an agent-sdk that forwards annotations untouched', () => {
+    const calls = [];
+    const createSdkMcpServer = (options) => {
+      calls.push(options);
+      return { type: 'sdk', name: options.name, instance: {} };
+    };
+    const options = { name: 'sample', version: '2.0.0', tools: sampleTools() };
+    createAnnotatedSdkMcpServer(options, { createSdkMcpServer, sdkTool: forwardingSdkTool });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0], options);
+  });
+
+  it('leaves a tool list without annotations to the agent-sdk', () => {
+    const calls = [];
+    const createSdkMcpServer = (options) => {
+      calls.push(options);
+      return { type: 'sdk', name: options.name, instance: {} };
+    };
+    const tools = sampleTools().map(({ annotations: _annotations, ...rest }) => rest);
+    const options = { name: 'sample', tools };
+    createAnnotatedSdkMcpServer(options, { ...LEGACY_AGENT_SDK, createSdkMcpServer });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0], options);
   });
 });

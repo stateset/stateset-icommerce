@@ -648,8 +648,9 @@ export function createToolDispatch({
         );
       }
     });
-    // Both transports read `annotations` off the adapted tool: the agent-sdk
-    // server forwards it as-is and the v2 server passes it to `registerTool`.
+    // Both transports read `annotations` off the adapted tool and pass it to
+    // `registerTool`: the agent-sdk server through createAnnotatedSdkMcpServer
+    // (./sdk-mcp-server.js), the v2 server through registerAdaptedTool.
     return { ...adapted, annotations: deriveToolAnnotations(toolDef) };
   };
 
