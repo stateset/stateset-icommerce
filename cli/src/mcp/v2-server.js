@@ -107,18 +107,18 @@ function standardSchemaFor(inputSchema) {
  * Convert one agent-sdk tool object into a v2 `registerTool` call.
  *
  * @param {import('@modelcontextprotocol/server').McpServer} server
- * @param {{name: string, description: string, inputSchema: object, handler: Function}} toolDef
+ * @param {{name: string, description: string, inputSchema: object, handler: Function, annotations?: object}} toolDef
  * @param {Promise<void>|undefined} servicesReady
  */
 function registerAdaptedTool(server, toolDef, servicesReady) {
-  const { name, description, inputSchema, handler } = toolDef;
+  const { name, description, inputSchema, handler, annotations } = toolDef;
 
   // An empty object is a legitimate no-argument tool and becomes `z.object({})`.
   const schema = inputSchema && typeof inputSchema === 'object' ? inputSchema : EMPTY_SCHEMA;
 
   server.registerTool(
     name,
-    { description, inputSchema: standardSchemaFor(schema) },
+    { description, inputSchema: standardSchemaFor(schema), ...(annotations && { annotations }) },
     async (args, ctx) => {
       // Each HTTP request creates a fresh runtime whose optional services are
       // loaded asynchronously. Discovery can run immediately; execution must
