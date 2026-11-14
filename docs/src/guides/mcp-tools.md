@@ -30,7 +30,7 @@ The registry spans commerce, A2A, compliance, connectors, sync, checkout, search
 ### Via MCP Client (Claude Desktop, Cursor)
 
 ```bash
-npx -y @stateset/cli@latest stateset-setup --yes --quickstart --db ./store.db
+npx -y -p @stateset/cli@latest stateset-setup --yes --quickstart --db ./store.db
 ```
 
 This registers the MCP server with your client. Tools appear automatically in the tool palette.
