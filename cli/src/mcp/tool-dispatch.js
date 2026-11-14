@@ -32,6 +32,7 @@ import {
   normalizeToolError,
   normalizeToolResult,
 } from './tool-result-contract.js';
+import { deriveToolAnnotations } from './tool-annotations.js';
 
 /**
  * Build the dispatch helpers for one server instance.
@@ -607,7 +608,7 @@ export function createToolDispatch({
     const _policyDomain =
       toolDef?.policyDomain || TOOL_DOMAIN_BY_TOOL_NAME[name] || inferPolicyDomain(name);
 
-    return wrapTool(name, description, inputSchema, async (args, extra) => {
+    const adapted = wrapTool(name, description, inputSchema, async (args, extra) => {
       try {
         const governed = executeGovernedTool
           ? await executeGovernedTool(name, args, {
@@ -647,6 +648,9 @@ export function createToolDispatch({
         );
       }
     });
+    // Both transports read `annotations` off the adapted tool: the agent-sdk
+    // server forwards it as-is and the v2 server passes it to `registerTool`.
+    return { ...adapted, annotations: deriveToolAnnotations(toolDef) };
   };
 
   return { wrapTool, executeTool, executeToolWithPayment, adaptTool };
