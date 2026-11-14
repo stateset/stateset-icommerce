@@ -59,8 +59,16 @@ export function createSandbox(prefix = 'mcp-read-sweep-') {
   // Credentials and endpoints of external services (vector search, chain
   // RPCs, the agent-receipt demo stack, the sync sequencer) are removed for
   // the sweep, so a developer's shell cannot change which tools run or what
-  // they reach. installSweepGuard blocks the connections anyway.
-  const scrubbed = Object.keys(process.env).filter((key) => EXTERNAL_ENV.test(key));
+  // they reach. installSweepGuard blocks the connections anyway. Variables
+  // that move the CLI's own state elsewhere (STATESET_CONNECTOR_HOME,
+  // STATESET_POLICY_DIR, STATESET_CONFIG_DIR, STATESET_DB_PATH, ...) or move
+  // XDG files out of HOME are removed too, so every seed write lands in the
+  // sandbox and cleanup removes it: a developer's STATESET_CONNECTOR_HOME used
+  // to receive the seeded test connector and keep a catalog entry pointing at
+  // the deleted temporary WASM.
+  const scrubbed = Object.keys(process.env).filter(
+    (key) => EXTERNAL_ENV.test(key) || LOCAL_STATE_ENV.test(key),
+  );
   const saved = {
     cwd: process.cwd(),
     env: Object.fromEntries(
@@ -90,6 +98,9 @@ export function createSandbox(prefix = 'mcp-read-sweep-') {
     },
   };
 }
+
+/** Environment variables that move the CLI's own state, or XDG files, outside the sandbox. */
+const LOCAL_STATE_ENV = /^STATESET_|^XDG_(?:CONFIG|DATA|STATE|CACHE)_HOME$/;
 
 /** Environment variables that point a tool at an external service or hold its credentials. */
 const EXTERNAL_ENV =
