@@ -266,6 +266,77 @@ test('a toolkit without capabilities keeps exposing every tool', async (t) => {
   assert.doesNotMatch(String(result.steps[0].error), OUT_OF_SCOPE);
 });
 
+test('a Set scope binds like an array, and an unreadable scope throws', async (t) => {
+  const { commerce, customer, directory, toolkit, customerStatus } = await fixture(t);
+  // A Set used to read as "no scope": every tool, in preview mode.
+  const scoped = toolkit({
+    allowApply: true,
+    capabilities: new Set(['read:*', 'agentic_execute_plan']),
+  });
+  assert.ok(scoped.getRawTool('list_customers'));
+  assert.equal(scoped.getRawTool('delete_customer'), undefined);
+  await assert.rejects(
+    scoped.executeTool('delete_customer', { customerId: customer.id }),
+    OUT_OF_SCOPE,
+  );
+  const plan = await scoped.executePlan({ dryRun: false, steps: [deleteStep(customer)] });
+  assert.equal(plan.steps[0].status, 'permission_block');
+  assert.equal(await customerStatus(), 'active');
+
+  const dbPath = join(directory, 'store.db');
+  for (const capabilities of ['read:*', { 0: 'read:*', length: 1 }, 42, true]) {
+    assert.throws(
+      () => createEmbeddedAgentToolkit({ commerce, dbPath, capabilities }),
+      (error) =>
+        error instanceof TypeError && /capabilities must be an array or a Set/.test(error.message),
+      JSON.stringify(capabilities),
+    );
+  }
+});
+
+test('toolCapabilities is the same scope, and passing both throws', async (t) => {
+  const { commerce, customer, directory, toolkit, customerStatus } = await fixture(t);
+  const dbPath = join(directory, 'store.db');
+  assert.throws(
+    () =>
+      createEmbeddedAgentToolkit({
+        commerce,
+        dbPath,
+        capabilities: ['read:*'],
+        toolCapabilities: ['*'],
+      }),
+    /capabilities or toolCapabilities, not both/,
+  );
+  assert.throws(
+    () => createEmbeddedAgentToolkit({ commerce, dbPath, toolCapabilities: 'read:*' }),
+    /toolCapabilities must be an array or a Set/,
+  );
+
+  // Given alone, toolCapabilities is the toolkit's scope: it satisfies the
+  // allowApply requirement, and the boundary and the server agree on it.
+  const scoped = toolkit({
+    allowApply: true,
+    toolCapabilities: ['read:*', 'agentic_execute_plan'],
+  });
+  const listed = scoped.getRawTools().map((tool) => tool.name);
+  assert.deepEqual(
+    listed,
+    scoped.server.getRawToolDefinitions().map((tool) => tool.name),
+  );
+  assert.ok(listed.includes('agentic_execute_plan'));
+  assert.ok(!listed.includes('delete_customer'));
+  await assert.rejects(
+    scoped.executeTool('delete_customer', { customerId: customer.id }),
+    OUT_OF_SCOPE,
+  );
+  const plan = await scoped.executeTool('agentic_execute_plan', {
+    dryRun: false,
+    steps: [deleteStep(customer)],
+  });
+  assert.equal(plan.result.steps[0].status, 'permission_block');
+  assert.equal(await customerStatus(), 'active');
+});
+
 test('the server tool profile binds nested plan steps', async (t) => {
   const { customer, server, customerStatus } = await fixture(t);
   // `finance` exposes the agentic runtime tools but not the customers domain.
