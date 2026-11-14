@@ -1272,15 +1272,29 @@ describe('merkle-shape: the one parser for leaf indexes and counts', () => {
 });
 
 describe('sync verify-inclusion command: human-readable output', () => {
-  it('keeps its text line and carries pathBound on the structured result', async () => {
+  it('says when a valid path was not bound to a tree size', async () => {
     const { envelope, leaf } = inlineEnvelope('text');
-    const out = await executeSyncCommand(
-      'verify-inclusion',
-      [JSON.stringify(envelope), JSON.stringify({ leafIndex: 0, proofHashes: [] }), hex(leaf)],
-      { jsonOutput: false, output: () => {} },
+    const args = [
+      JSON.stringify(envelope),
+      JSON.stringify({ leafIndex: 0, proofHashes: [] }),
+      hex(leaf),
+    ];
+    const unbound = await executeSyncCommand('verify-inclusion', args, {
+      jsonOutput: false,
+      output: () => {},
+    });
+    assert.equal(
+      unbound.formatted,
+      'Inclusion proof: valid (path not bound to a tree size; pass --leaf-count <n> to bind it)',
     );
-    assert.equal(out.formatted, 'Inclusion proof: valid');
-    assert.equal(out.result.valid, true);
-    assert.equal(out.result.pathBound, false);
+    assert.equal(unbound.result.valid, true);
+    assert.equal(unbound.result.pathBound, false);
+
+    const bound = await executeSyncCommand('verify-inclusion', [...args, '--leaf-count', '1'], {
+      jsonOutput: false,
+      output: () => {},
+    });
+    assert.equal(bound.formatted, 'Inclusion proof: valid');
+    assert.equal(bound.result.pathBound, true);
   });
 });

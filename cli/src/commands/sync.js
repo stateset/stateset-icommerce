@@ -537,9 +537,16 @@ export async function execute(action, args, context) {
         expectedRoot,
         leafCount: leafCountArg === undefined ? undefined : parseTreeInteger(leafCountArg),
       });
+      // Same wording as `proofs verify-proof`: an unbound "valid" says so.
+      const unbound = result.valid && !result.pathBound;
       return jsonOutput
         ? result
-        : { result, formatted: `Inclusion proof: ${result.valid ? 'valid' : 'invalid'}` };
+        : {
+            result,
+            formatted:
+              `Inclusion proof: ${result.valid ? 'valid' : 'invalid'}` +
+              (unbound ? ' (path not bound to a tree size; pass --leaf-count <n> to bind it)' : ''),
+          };
     }
 
     case 'commitment': {
