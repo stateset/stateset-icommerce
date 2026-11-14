@@ -294,6 +294,18 @@ const customer = await toolkit.executeTool('create_customer', {
 const revenue = await toolkit.executeTool('get_sales_summary', { period: 'month' });
 ```
 
+`capabilities` scopes every path to a tool, not only direct calls. Composite
+tools resolve their nested tools inside the same scope: an
+`agentic_execute_plan` step, an `agentic_plan` or `agentic_simulate_mutation`
+simulation, an `agentic_replay_mutation` replay, and a rollback compensation
+that names a tool outside the scope is refused with "outside this toolkit's
+capability scope" and never runs. The tool catalog, payment discovery and
+runtime contract list only in-scope tools. When a plan fails and the
+compensation for a completed step is out of scope, that step is reported as
+`rollback_failed` (with `refusedCompensationTools`) rather than reverted, so
+grant the compensation tools a plan may need. Omit `capabilities` to expose
+every tool in the profile.
+
 ## Autonomous Delegation
 
 When your runtime includes the autonomous engine, the toolkit can delegate work to the shared specialist-agent registry:
@@ -314,6 +326,8 @@ const delegation = await toolkit.executeTool('delegate_to_agent', {
 ```
 
 `delegate_to_agent` is a write-gated runtime tool. With `allowApply: false`, the toolkit returns a preview payload instead of executing the delegation.
+
+The delegated agent runs inside the autonomous engine with whatever tools that engine's agent executor was given; the toolkit's `capabilities` do not narrow it. Grant `delegate_to_agent` (directly, or through `permission:write` or `agentic.*`) only when the engine's own scope is acceptable.
 
 ## Configuration Options
 

@@ -17,6 +17,7 @@ import { compactReplayValue } from './replay-sanitizer.js';
  *
  * @param {{
  *   toolDefsByName: Map<string, object>,
+ *   describeUnavailableTool?: (toolName: string) => ({ reason: string, message: string } | null),
  *   inferPolicyDomain: (toolName: string) => string,
  *   executeToolStepInPlan: (input: object) => Promise<object>,
  *   addAgenticReplayEvent: (event: object) => Promise<unknown>,
@@ -36,6 +37,7 @@ import { compactReplayValue } from './replay-sanitizer.js';
  */
 export function createRunPlanRollback({
   toolDefsByName: TOOL_DEFS_BY_NAME,
+  describeUnavailableTool = null,
   inferPolicyDomain,
   executeToolStepInPlan,
   addAgenticReplayEvent,
@@ -63,11 +65,25 @@ export function createRunPlanRollback({
         const availableCompensationTools = compensationTools.filter((candidate) =>
           TOOL_DEFS_BY_NAME.has(candidate),
         );
+        // A compensation the capability scope excludes is never run. It is
+        // reported, so the caller learns why the step was not reverted.
+        const refusedCompensationTools = compensationTools
+          .filter((candidate) => !TOOL_DEFS_BY_NAME.has(candidate))
+          .map((candidate) => ({ tool: candidate, refusal: describeUnavailableTool?.(candidate) }))
+          .filter((entry) => entry.refusal)
+          .map(({ tool, refusal }) => ({ tool, reason: refusal.message }));
         let compensated = false;
-        let lastCompensationResult = {
-          status: 'rollback_failed',
-          reason: 'No compensation tool candidates',
-        };
+        let lastCompensationResult = refusedCompensationTools.length
+          ? {
+              status: 'rollback_failed',
+              tool: refusedCompensationTools[0].tool,
+              reason: refusedCompensationTools[0].reason,
+              error: refusedCompensationTools[0].reason,
+            }
+          : {
+              status: 'rollback_failed',
+              reason: 'No compensation tool candidates',
+            };
         let lastCompensationParams = null;
         for (const compensationTool of availableCompensationTools) {
           const compensationParams = buildCompensationParams(
@@ -124,6 +140,7 @@ export function createRunPlanRollback({
           source: completed.step.tool,
           compensationTools: availableCompensationTools,
           compensationParams: lastCompensationParams,
+          ...(refusedCompensationTools.length ? { refusedCompensationTools } : {}),
         });
         await addAgenticReplayEvent({
           eventId: randomUUID(),

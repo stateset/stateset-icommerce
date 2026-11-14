@@ -62,6 +62,7 @@ import { createExecuteToolStepInPlan } from './mcp/plan-step-executor.js';
 import { createRunPlanRollback } from './mcp/plan-rollback.js';
 import { createExecuteAgenticPlan } from './mcp/plan-executor.js';
 import { createToolDispatch } from './mcp/tool-dispatch.js';
+import { applyToolCapabilityScope } from './mcp/capability-scope.js';
 import { routeToAgentWithConfidence } from './agent-router.js';
 import { adaptCommerceApis } from './commerce.js';
 import { getCommerce } from './database.js';
@@ -204,6 +205,7 @@ function autoIndexEntity(entityType, entity) {
  * @param {Object} options
  * @param {import('@stateset/embedded').Commerce} [options.commerce] - Optional Commerce instance. When omitted, a cached instance is created from dbPath.
  * @param {boolean} options.allowApply - Whether to execute write tools instead of returning preview metadata
+ * @param {string[]|Set<string>|null} [options.toolCapabilities] - Capability scope (see ./mcp/capability-scope.js); every path, nested plan steps included, resolves tools inside it. Omit to expose the whole profile.
  * @param {Object|null} options.autonomousEngine - Optional autonomous engine used by runtime tools such as delegate_to_agent
  * @param {import('./telemetry.js').AgentTelemetry} options.telemetry - Telemetry instance
  * @param {import('./permissions.js').PermissionGate} options.permissionGate - Permission gate instance
@@ -222,6 +224,7 @@ function autoIndexEntity(entityType, entity) {
 export function createStatesetMcpServer({
   commerce,
   allowApply = false,
+  toolCapabilities = null,
   autonomousEngine = null,
   telemetry = null,
   permissionGate = null,
@@ -240,9 +243,15 @@ export function createStatesetMcpServer({
   const strictKernelBoundary = Boolean(kernel && kernel.strict !== false);
   const isToolInProfile = resolveMcpToolFilter({ profile: toolProfile, domains: toolDomains });
   const profileToolDefs = ALL_TOOL_DEFS.filter((tool) => isToolInProfile(tool.name));
-  const exposedToolDefs = strictKernelBoundary
-    ? selectStrictKernelToolDefinitions(profileToolDefs, KERNEL_CAPABILITY_BY_TOOL)
-    : profileToolDefs;
+  const capabilityScope = applyToolCapabilityScope({
+    toolDefs: strictKernelBoundary
+      ? selectStrictKernelToolDefinitions(profileToolDefs, KERNEL_CAPABILITY_BY_TOOL)
+      : profileToolDefs,
+    capabilities: toolCapabilities,
+    toolDomainByName: TOOL_DOMAIN_BY_TOOL_NAME,
+    inferPolicyDomain,
+  });
+  const exposedToolDefs = capabilityScope.toolDefs;
   const exposedToolDefsByName = new Map(
     exposedToolDefs.map((tool) => [tool?.name, tool]).filter(([name]) => Boolean(name)),
   );
@@ -385,6 +394,7 @@ export function createStatesetMcpServer({
       toolDomainByName: TOOL_DOMAIN_BY_TOOL_NAME,
       compensationHints: AGENTIC_COMPENSATION_HINTS,
       idempotencyHints: AGENTIC_IDEMPOTENCY_HINTS,
+      describeUnavailableTool: capabilityScope.describeExcludedTool,
     });
 
   // MPP payment context + `prepare_payment` live in ./mcp/mpp-payment.js.
@@ -552,6 +562,7 @@ export function createStatesetMcpServer({
 
   const runPlanRollback = createRunPlanRollback({
     toolDefsByName: exposedToolDefsByName,
+    describeUnavailableTool: capabilityScope.describeExcludedTool,
     inferPolicyDomain,
     executeToolStepInPlan,
     addAgenticReplayEvent,

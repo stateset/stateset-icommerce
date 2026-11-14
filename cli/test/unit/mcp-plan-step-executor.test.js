@@ -87,6 +87,49 @@ describe('createExecuteToolStepInPlan — validation exits', () => {
     assert.equal(noHandler.error, "No executable handler for tool 'no_handler'");
   });
 
+  it('refuses a tool the capability scope excludes without touching hooks or policy', async () => {
+    const message = "Tool 'delete_customer' is outside this toolkit's capability scope.";
+    let policyCalls = 0;
+    const { execute, hookCalls, handlerCalls } = makeExecutor({
+      deps: {
+        getToolRuntimeMeta: (name) => ({
+          name,
+          permission: 'unknown',
+          policyDomain: 'customers',
+          sideEffect: 'unknown',
+          compensations: [],
+          idempotent: false,
+          unavailable: { reason: 'outside_capability_scope', message, sideEffect: 'write' },
+        }),
+        evaluatePolicy: async () => {
+          policyCalls += 1;
+          return { allowed: true, params: {}, actions: [] };
+        },
+      },
+    });
+    const params = { customerId: 'c1' };
+    for (const dryRun of [false, true]) {
+      const out = await execute({ ...base, toolName: 'delete_customer', params, dryRun });
+      assert.equal(out.status, 'permission_block');
+      assert.equal(out.error, message);
+      assert.deepEqual(out.permission, { allowed: false, preview: false, reason: message });
+      assert.equal(out.simulation, dryRun);
+      assert.equal(out.runtime.sideEffect, 'write');
+      assert.equal(out.notes.scope.reason, 'outside_capability_scope');
+    }
+    const rollback = await execute({
+      ...base,
+      toolName: 'delete_customer',
+      params,
+      isRollback: true,
+    });
+    assert.equal(rollback.status, 'rollback_failed');
+    assert.equal(rollback.isRollback, true);
+    assert.equal(policyCalls, 0);
+    assert.equal(hookCalls.length, 0);
+    assert.equal(handlerCalls.length, 0);
+  });
+
   it('returns invalid with validation notes when params fail the schema', async () => {
     const { execute } = makeExecutor();
     const out = await execute({ ...base, params: {}, dryRun: true });

@@ -81,6 +81,34 @@ export function createExecuteToolStepInPlan({
     const resolvedToolName = normalizeToolName(toolName);
     const effectivePolicyDomain = policyDomain || inferPolicyDomain(resolvedToolName);
     const baseMeta = getToolRuntimeMeta(resolvedToolName);
+    if (baseMeta.unavailable) {
+      // The server knows the tool but does not expose it (a toolkit capability
+      // scope excludes it). It has no handler here; refuse with the reason.
+      const refusal = baseMeta.unavailable;
+      return {
+        index: stepIndex,
+        tool: resolvedToolName,
+        status: isRollback ? 'rollback_failed' : 'permission_block',
+        elapsedMs: Date.now() - startedAt,
+        policy: null,
+        permission: { allowed: false, preview: false, reason: refusal.message },
+        charge: null,
+        params: compactReplayValue(params || {}),
+        paramsHash: replayEventHash(params || {}),
+        result: null,
+        resultHash: null,
+        runtime: {
+          policyDomain: effectivePolicyDomain,
+          sideEffect: refusal.sideEffect,
+          compensations: [],
+          idempotent: false,
+        },
+        simulation: Boolean(dryRun),
+        error: refusal.message,
+        notes: { scope: { refused: true, reason: refusal.reason } },
+        ...(isRollback ? { isRollback: true } : {}),
+      };
+    }
     if (baseMeta.permission === 'unknown') {
       return {
         index: stepIndex,

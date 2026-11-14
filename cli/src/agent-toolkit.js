@@ -1,5 +1,5 @@
 import { getCommerce, getGlobalManager } from './database.js';
-import { KERNEL_CAPABILITY_BY_TOOL } from './kernel-tool-execution.js';
+import { capabilityAllowsTool } from './mcp/capability-scope.js';
 import { createStatesetMcpServer } from './mcp-server.js';
 import { createMppHttpAgent, discoverMppHttpService } from './mpp/agent.js';
 import { createToolInputSchema } from './tool-schema.js';
@@ -12,21 +12,6 @@ function normalizeToolName(toolName) {
 function toolDefinitionName(tool, format = 'generic') {
   return normalizeToolName(
     format === 'openai' ? tool?.function?.name : tool?.toolName || tool?.name,
-  );
-}
-
-function capabilityAllowsTool(tool, capabilities) {
-  if (!capabilities) return true;
-  const name = normalizeToolName(tool?.name);
-  const permission = String(tool?.permission || 'read');
-  const domain = String(tool?.policyDomain || '').trim();
-  return (
-    capabilities.has('*') ||
-    capabilities.has(name) ||
-    capabilities.has(`permission:${permission}`) ||
-    (permission === 'read' && capabilities.has('read:*')) ||
-    (domain && capabilities.has(`${domain}.*`)) ||
-    capabilities.has(KERNEL_CAPABILITY_BY_TOOL[name])
   );
 }
 
@@ -141,6 +126,9 @@ function createRemoteHttpDescriptor(route, baseUrl, executeRoute) {
  * @param {string} [options.dbPath='./store.db'] SQLite database path when no commerce instance is supplied.
  * @param {boolean} [options.allowApply=false] Enable write tools instead of preview-only execution.
  * @param {string[]} [options.capabilities] Explicit tool, domain, permission, or kernel capabilities.
+ *   The scope binds every path to a tool: the listing, direct calls, and the
+ *   nested steps of composite tools (plans, simulations, replay, rollback
+ *   compensations). Omit it to expose every tool in the profile.
  * @param {Object} [options.kernel] Trusted kernel policy, principal, store, and optional authority signer.
  * @param {Object} [options.commerce] Reuse an existing embedded commerce instance.
  * @param {Object|null} [options.autonomousEngine=null] Enable runtime tools such as `delegate_to_agent`.
@@ -166,10 +154,14 @@ export function createEmbeddedAgentToolkit(options = {}) {
     ...(options.mpp || {}),
     payer: options?.mpp?.payer || options?.treasury?.agentId || options?.agentId || null,
   };
+  // The server applies the same scope to the tool map every path resolves
+  // against, so composite tools (agentic_execute_plan, replay, simulation,
+  // rollback compensations) cannot reach a tool the toolkit refuses directly.
   const server = createStatesetMcpServer({
     ...options,
     commerce,
     dbPath,
+    toolCapabilities: capabilities,
   });
 
   const getRawTools = () =>

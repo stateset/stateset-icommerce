@@ -24,6 +24,7 @@ const docsPath = path.join(root, 'docs/src/kernel-execution.md');
 const embeddedKernelPath = path.join(root, 'crates/stateset-embedded/src/commerce/kernel.rs');
 const nodeToolkitPath = path.join(root, 'cli/src/agent-toolkit.js');
 const nodeToolkitTestsPath = path.join(root, 'cli/test/unit/agent-toolkit.test.js');
+const nodeCapabilityScopePath = path.join(root, 'cli/src/mcp/capability-scope.js');
 const nodeKernelExecutionPath = path.join(root, 'cli/src/kernel-tool-execution.js');
 const mcpPlanExecutorPath = path.join(root, 'cli/src/mcp/plan-step-executor.js');
 const mcpServerPath = path.join(root, 'cli/src/mcp-server.js');
@@ -97,6 +98,7 @@ const [
   embeddedKernel,
   nodeToolkit,
   nodeToolkitTests,
+  nodeCapabilityScope,
   nodeKernelExecution,
   mcpPlanExecutor,
   mcpServer,
@@ -123,6 +125,7 @@ const [
   readFile(embeddedKernelPath, 'utf8'),
   readFile(nodeToolkitPath, 'utf8'),
   readFile(nodeToolkitTestsPath, 'utf8'),
+  readFile(nodeCapabilityScopePath, 'utf8'),
   readFile(nodeKernelExecutionPath, 'utf8'),
   readFile(mcpPlanExecutorPath, 'utf8'),
   readFile(mcpServerPath, 'utf8'),
@@ -250,8 +253,19 @@ for (const token of [
   if (!embeddedKernel.includes(token))
     errors.push(`embedded kernel dispatcher is missing ${token}`);
 }
-if (!nodeToolkit.includes('KERNEL_CAPABILITY_BY_TOOL')) {
+// The toolkit's capability predicate lives in cli/src/mcp/capability-scope.js
+// so the MCP server can apply it to the tool map nested plan steps use too.
+if (
+  !nodeCapabilityScope.includes('KERNEL_CAPABILITY_BY_TOOL') ||
+  !nodeToolkit.includes('capabilityAllowsTool')
+) {
   errors.push('Node agent toolkit does not capability-scope governed commands');
+}
+if (
+  !nodeToolkit.includes('toolCapabilities: capabilities') ||
+  !mcpServer.includes('applyToolCapabilityScope')
+) {
+  errors.push('Node agent toolkit scope does not bind the MCP server tool map');
 }
 if (!nodeKernelExecution.includes('executeKernelCommand')) {
   errors.push('Node agent toolkit does not invoke the native kernel dispatcher');
