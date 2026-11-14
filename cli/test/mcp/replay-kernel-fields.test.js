@@ -11,21 +11,29 @@
 //   - the extractor on applied, rejected and non-kernel results, and its bounds;
 //   - resultHash binding, and correlation-id resolution;
 //   - tool-dispatch wiring with stubbed deps (MCP path and executeTool path);
+//   - the response evidence (result_sha256 stays the hash of the result alone,
+//     kernel_sha256 is added) and the event-stream publisher;
 //   - the real server with a kernel policy: a denied call logs its reason codes
 //     and principal, an applied call joins to its receipt, a read call has no
 //     kernel block, every event's signature verifies, and an old-format event
-//     from a fixture still verifies.
+//     from a fixture still verifies;
+//   - the real server without --apply: previewed and rejected preview receipts
+//     log their blocks too.
 
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createStatesetMcpServer } from '../../src/mcp-server.js';
-import { replayEventHash } from '../../src/mcp/audit-envelope.js';
+import {
+  COMMERCE_EXECUTION_META_KEY,
+  buildCommerceExecutionEvidence,
+  replayEventHash,
+} from '../../src/mcp/audit-envelope.js';
 import { signAuditArtifact } from '../../src/mcp/audit-signing.js';
 import {
   MAX_KERNEL_FIELD_CHARS,
@@ -34,6 +42,7 @@ import {
   extractKernelReplayFields,
   resolveKernelCorrelationId,
 } from '../../src/mcp/replay-kernel-fields.js';
+import { createEventStreamPublisher } from '../../src/mcp/replay-log.js';
 import { createToolDispatch } from '../../src/mcp/tool-dispatch.js';
 import {
   RAW_TOOL_RESULT,
@@ -141,13 +150,38 @@ const mcpResponse = (toolResult) =>
     normalizeToolResult(toolResult),
   );
 
+/** Plain data with object keys sorted at every level (canonical JSON input). */
+const sortKeys = (value) => {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, sortKeys(value[key])]),
+  );
+};
+
+/**
+ * The kernel binding written out from its documented formula, NOT the
+ * writer's `bindKernelToResultHash`: with a block, the SHA-256 hex digest of
+ * the canonical JSON of `{ kernel, resultHash: <plain result hash> }`;
+ * without one, the plain result hash unchanged.
+ */
+const independentlyBoundResultHash = (plainResultHash, kernel) =>
+  kernel
+    ? createHash('sha256')
+        .update(JSON.stringify(sortKeys({ kernel, resultHash: plainResultHash })))
+        .digest('hex')
+    : plainResultHash;
+
 /**
  * Independent verifier for a persisted replay event: recompute `resultHash`
- * from the event's own `result` and `kernel`, then the event signature over
- * the payload cli/src/mcp/replay-log.js signs.
+ * from the event's own `result` (the pre-existing replay hash) and `kernel`
+ * (the binding above), then the event signature over the payload
+ * cli/src/mcp/replay-log.js signs.
  */
 function verifyReplayEvent(event, signing) {
-  const resultHash = bindKernelToResultHash(
+  const resultHash = independentlyBoundResultHash(
     replayEventHash(event.result || {}),
     event.kernel ?? null,
   );
@@ -262,6 +296,8 @@ describe('bindKernelToResultHash', () => {
     const bound = bindKernelToResultHash(base, kernel);
     assert.match(bound, /^[0-9a-f]{64}$/);
     assert.notEqual(bound, base);
+    // The writer agrees with the formula written out independently above.
+    assert.equal(bound, independentlyBoundResultHash(base, kernel));
     const reordered = { reasonCodes: ['a', 'b'], receiptStatus: 'rejected', commandId: 'c-1' };
     assert.equal(bindKernelToResultHash(base, reordered), bound);
     assert.notEqual(bindKernelToResultHash(base, { ...kernel, reasonCodes: ['a'] }), bound);
@@ -284,6 +320,48 @@ describe('resolveKernelCorrelationId', () => {
       resolveKernelCorrelationId(7, () => 'minted'),
       'minted',
     );
+  });
+});
+
+describe('commerce execution evidence for a governed event', () => {
+  const result = {
+    content: [{ type: 'text', text: '{"success":false}' }],
+    structuredContent: { ok: false, result: { success: false } },
+    isError: true,
+  };
+  const kernel = {
+    commandId: 'c-1',
+    receiptStatus: 'rejected',
+    reasonCodes: ['policy.approval_required'],
+  };
+  const plain = replayEventHash(result);
+  const event = (fields) => ({ eventId: 'e-1', tool: 'create_product', result, ...fields });
+
+  it('keeps result_sha256 the hash of the result alone and adds kernel_sha256', () => {
+    const evidence = buildCommerceExecutionEvidence(
+      event({ resultHash: bindKernelToResultHash(plain, kernel), kernel }),
+    );
+    assert.equal(evidence.version, 'stateset.commerce-evidence.v1');
+    assert.equal(evidence.result_sha256, `sha256:${plain}`);
+    assert.equal(evidence.kernel_sha256, `sha256:${replayEventHash(kernel)}`);
+  });
+
+  it('is unchanged, with no kernel_sha256, for an ungoverned event', () => {
+    const evidence = buildCommerceExecutionEvidence(event({ resultHash: plain }));
+    assert.equal(evidence.result_sha256, `sha256:${plain}`);
+    assert.equal('kernel_sha256' in evidence, false);
+  });
+});
+
+describe('replay event stream publisher', () => {
+  it('publishes a governed event with its kernel block, and other events without one', () => {
+    const published = [];
+    const publish = createEventStreamPublisher({ publish: (event) => published.push(event) });
+    const kernel = { commandId: 'c-1', receiptStatus: 'rejected', reasonCodes: ['p.denied'] };
+    publish({ tool: 'create_product', status: 'error', result: {}, kernel });
+    publish({ tool: 'list_customers', status: 'success', result: {} });
+    assert.deepEqual(published[0].kernel, kernel);
+    assert.equal('kernel' in published[1], false);
   });
 });
 
@@ -396,6 +474,22 @@ describe('tool-dispatch: MCP path', () => {
     assert.equal(d.governedCalls[0].options.correlationId, correlationId);
   });
 
+  it('lowercases a transport UUID and mints one in place of a non-UUID it would refuse', async () => {
+    const d = makeDispatch({ governed: governedResult(appliedReceipt()) });
+    const correlationId = randomUUID();
+    await adaptedTool(d).handler(
+      {},
+      { requestId: randomUUID(), correlationId: correlationId.toUpperCase() },
+    );
+    assert.equal(d.governedCalls[0].options.correlationId, correlationId);
+
+    const requestId = randomUUID();
+    await adaptedTool(d).handler({}, { requestId, correlationId: 'trace-abc' });
+    const minted = d.governedCalls[1].options.correlationId;
+    assert.match(minted, UUID);
+    assert.notEqual(minted, requestId, 'a non-UUID correlation id is replaced, not dropped');
+  });
+
   it('logs no kernel field, and the old resultHash, for an ungoverned call', async () => {
     const d = makeDispatch({ governed: null });
     await adaptedTool(d).handler({}, { requestId: randomUUID() });
@@ -428,25 +522,92 @@ describe('tool-dispatch: executeTool path', () => {
     assert.equal(d.stepCalls[0].extra.correlationId, correlationId);
     assert.equal('kernel' in d.events[0], false);
   });
+
+  it('mints a correlation UUID in place of an explicit one that is not a UUID', async () => {
+    const d = makeDispatch({ stepResult: { ok: true } });
+    const requestId = randomUUID();
+    await d.executeTool('create_customer', {}, { requestId, correlationId: 'order-42' });
+    const minted = d.stepCalls[0].extra.correlationId;
+    assert.match(minted, UUID);
+    assert.notEqual(minted, requestId);
+  });
 });
 
-describe('the replay log on the real server with a kernel policy', () => {
-  const SIGNING = { signingKey: 'replay-kernel-test-key', keyId: 'replay-kernel-test' };
-  const ENV_KEYS = ['STATESET_AGENTIC_AUDIT_SIGNING_KEY', 'STATESET_AGENTIC_AUDIT_SIGNING_KEY_ID'];
-  const savedEnv = {};
-  const commandPolicy = (capability, overrides = {}) => ({
-    required_capabilities: [capability],
-    requires_approval: false,
-    requires_tenant: true,
-    requires_store: true,
-    allowed_tenant_ids: ['tenant:replay'],
-    allowed_store_ids: ['store:replay'],
-    requires_agent_delegation: true,
-    requires_signed_authority: false,
-    ...overrides,
+const SIGNING = { signingKey: 'replay-kernel-test-key', keyId: 'replay-kernel-test' };
+const SIGNING_ENV_KEYS = [
+  'STATESET_AGENTIC_AUDIT_SIGNING_KEY',
+  'STATESET_AGENTIC_AUDIT_SIGNING_KEY_ID',
+];
+const commandPolicy = (capability, overrides = {}) => ({
+  required_capabilities: [capability],
+  requires_approval: false,
+  requires_tenant: true,
+  requires_store: true,
+  allowed_tenant_ids: ['tenant:replay'],
+  allowed_store_ids: ['store:replay'],
+  requires_agent_delegation: true,
+  requires_signed_authority: false,
+  ...overrides,
+});
+
+/**
+ * A real server over a fresh store with a strict kernel policy, signing replay
+ * events with SIGNING. Customer creation is allowed; product creation needs an
+ * approval this agent never carries, so the kernel always rejects it.
+ */
+function startReplayServer({ allowApply }) {
+  const savedEnv = Object.fromEntries(SIGNING_ENV_KEYS.map((key) => [key, process.env[key]]));
+  process.env.STATESET_AGENTIC_AUDIT_SIGNING_KEY = SIGNING.signingKey;
+  process.env.STATESET_AGENTIC_AUDIT_SIGNING_KEY_ID = SIGNING.keyId;
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'replay-kernel-'));
+  const server = createStatesetMcpServer({
+    dbPath: path.join(dir, 'store.db'),
+    allowApply,
+    kernel: {
+      strict: true,
+      storeId: 'store:replay',
+      principal: {
+        id: 'agent:replay',
+        kind: 'agent',
+        tenantId: 'tenant:replay',
+        delegatedBy: 'user:replay',
+        capabilities: ['customers.create', 'products.create'],
+      },
+      policy: {
+        version: 'replay-v1',
+        commands: {
+          'customers.create': commandPolicy('customers.create'),
+          'products.create': commandPolicy('products.create', { requires_approval: true }),
+        },
+        trusted_authority_keys: {},
+      },
+    },
   });
-  let dir;
+  const eventFor = async (requestId) => {
+    const { events } = await server.getReplayLog({ requestId, limit: 10 });
+    assert.equal(events.length, 1, `one replay event for request ${requestId}`);
+    return events[0];
+  };
+  const stop = async () => {
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    try {
+      await server.close?.();
+    } catch {
+      // never connected to a transport
+    }
+    await server.dispose?.();
+    rmSync(dir, { recursive: true, force: true });
+  };
+  return { server, eventFor, stop };
+}
+
+describe('the replay log on the real server with a kernel policy', () => {
   let server;
+  let eventFor;
+  let stop;
   const calls = {};
 
   const tool = (name) => {
@@ -454,41 +615,9 @@ describe('the replay log on the real server with a kernel policy', () => {
     assert.ok(found, `${name} is exposed`);
     return found;
   };
-  const eventFor = async (requestId) => {
-    const { events } = await server.getReplayLog({ requestId, limit: 10 });
-    assert.equal(events.length, 1, `one replay event for request ${requestId}`);
-    return events[0];
-  };
 
   before(async () => {
-    for (const key of ENV_KEYS) savedEnv[key] = process.env[key];
-    process.env.STATESET_AGENTIC_AUDIT_SIGNING_KEY = SIGNING.signingKey;
-    process.env.STATESET_AGENTIC_AUDIT_SIGNING_KEY_ID = SIGNING.keyId;
-    dir = mkdtempSync(path.join(os.tmpdir(), 'replay-kernel-'));
-    server = createStatesetMcpServer({
-      dbPath: path.join(dir, 'store.db'),
-      allowApply: true,
-      kernel: {
-        strict: true,
-        storeId: 'store:replay',
-        principal: {
-          id: 'agent:replay',
-          kind: 'agent',
-          tenantId: 'tenant:replay',
-          delegatedBy: 'user:replay',
-          capabilities: ['customers.create', 'products.create'],
-        },
-        policy: {
-          version: 'replay-v1',
-          commands: {
-            'customers.create': commandPolicy('customers.create'),
-            // Product creation needs an approval this agent never carries.
-            'products.create': commandPolicy('products.create', { requires_approval: true }),
-          },
-          trusted_authority_keys: {},
-        },
-      },
-    });
+    ({ server, eventFor, stop } = startReplayServer({ allowApply: true }));
 
     calls.applied = { requestId: randomUUID() };
     calls.applied.response = await tool('create_customer').handler(
@@ -514,17 +643,7 @@ describe('the replay log on the real server with a kernel policy', () => {
   });
 
   after(async () => {
-    for (const key of ENV_KEYS) {
-      if (savedEnv[key] === undefined) delete process.env[key];
-      else process.env[key] = savedEnv[key];
-    }
-    try {
-      await server?.close?.();
-    } catch {
-      // never connected to a transport
-    }
-    await server?.dispose?.();
-    rmSync(dir, { recursive: true, force: true });
+    await stop?.();
   });
 
   const receiptOf = (call) => call.response.structuredContent.result.receipt;
@@ -603,5 +722,95 @@ describe('the replay log on the real server with a kernel policy', () => {
       verifyReplayEvent(legacy, { signingKey: 'replay-fixture-key', keyId: 'replay-fixture' }),
       'ok',
     );
+  });
+
+  it('keeps the response evidence result_sha256 a hash of the result alone', async () => {
+    for (const call of [calls.applied, calls.denied, calls.read]) {
+      const event = await eventFor(call.requestId);
+      const evidence = call.response._meta[COMMERCE_EXECUTION_META_KEY];
+      assert.equal(evidence.event_id, event.eventId);
+      // Recomputed from the response the caller received, less the evidence
+      // it carries: no kernel block or other replay state is needed.
+      const { _meta: _evidence, ...resultAlone } = call.response;
+      assert.equal(evidence.result_sha256, `sha256:${replayEventHash(resultAlone)}`);
+      assert.equal(evidence.result_sha256, `sha256:${replayEventHash(event.result || {})}`);
+      if (event.kernel) {
+        assert.notEqual(evidence.result_sha256, `sha256:${event.resultHash}`);
+        assert.equal(evidence.kernel_sha256, `sha256:${replayEventHash(event.kernel)}`);
+      } else {
+        assert.equal(evidence.result_sha256, `sha256:${event.resultHash}`);
+        assert.equal('kernel_sha256' in evidence, false);
+      }
+    }
+  });
+});
+
+describe('the replay log without --apply on the real server with a kernel policy', () => {
+  // Without --apply a governed executeTool call still reaches the kernel,
+  // which answers with a preview receipt: `previewed` when policy allows the
+  // command, `rejected` (with reason codes) when it does not.
+  let eventFor;
+  let stop;
+  const calls = {};
+
+  before(async () => {
+    let server;
+    ({ server, eventFor, stop } = startReplayServer({ allowApply: false }));
+    calls.previewed = { requestId: randomUUID() };
+    calls.previewed.outcome = await server.executeTool(
+      'create_customer',
+      { email: 'ada@example.com', firstName: 'Ada', lastName: 'Lovelace' },
+      { requestId: calls.previewed.requestId },
+    );
+    calls.rejected = { requestId: randomUUID() };
+    calls.rejected.outcome = await server.executeTool(
+      'create_product',
+      { name: 'Widget', variants: [{ sku: 'W-1', price: '5.00' }] },
+      { requestId: calls.rejected.requestId },
+    );
+  });
+
+  after(async () => {
+    await stop?.();
+  });
+
+  const receiptOf = (call) => call.outcome.result.receipt;
+
+  it('logs a previewed receipt as a kernel block', async () => {
+    const receipt = receiptOf(calls.previewed);
+    assert.equal(receipt.status, 'previewed');
+    const event = await eventFor(calls.previewed.requestId);
+    assert.equal(event.status, 'preview', 'the existing status is unchanged');
+    assert.equal(event.kernel.receiptStatus, 'previewed');
+    assert.equal(event.kernel.commandId, receipt.command_id);
+    assert.equal(event.kernel.correlationId, calls.previewed.requestId);
+    assert.equal(event.kernel.correlationId, receipt.economic_context.correlation_id);
+    assert.equal(event.kernel.principalId, 'agent:replay');
+    assert.equal('reasonCodes' in event.kernel, false);
+    assert.equal('errorCode' in event.kernel, false);
+  });
+
+  it('logs a rejected preview with its reason codes and error code', async () => {
+    const receipt = receiptOf(calls.rejected);
+    assert.equal(receipt.status, 'rejected');
+    const event = await eventFor(calls.rejected.requestId);
+    assert.equal(event.kernel.receiptStatus, 'rejected');
+    assert.deepEqual(event.kernel.reasonCodes, receipt.policy.reason_codes);
+    assert.ok(event.kernel.reasonCodes.includes('policy.approval_required'));
+    assert.equal(event.kernel.errorCode, receipt.error_code);
+    assert.equal(event.kernel.commandId, receipt.command_id);
+    assert.equal(event.kernel.correlationId, calls.rejected.requestId);
+    assert.equal(event.kernel.principalId, 'agent:replay');
+  });
+
+  it('binds both preview blocks into resultHash so the events verify', async () => {
+    for (const call of Object.values(calls)) {
+      const event = await eventFor(call.requestId);
+      assert.notEqual(event.resultHash, replayEventHash(event.result || {}));
+      assert.equal(verifyReplayEvent(event, SIGNING), 'ok', `${event.tool}`);
+      const altered = structuredClone(event);
+      altered.kernel.receiptStatus = 'succeeded';
+      assert.equal(verifyReplayEvent(altered, SIGNING), 'resultHash mismatch');
+    }
   });
 });

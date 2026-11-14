@@ -14,7 +14,13 @@
 //     principalId, auditHash }
 //
 // Each field is present only when the receipt has it; a result with no
-// governed receipt yields no block at all.
+// governed receipt yields no block at all. A governed call made without
+// --apply still reaches the kernel and gets a `previewed` (or `rejected`)
+// receipt, and logs its block the same way.
+//
+// A receipt the kernel replays for a reused idempotency key is the ORIGINAL
+// command's receipt, so a retried call's block carries the original command's
+// commandId and correlationId, not the ids of the retry.
 //
 // Signature coverage. The replay log signs a fixed payload that includes
 // `resultHash` but not arbitrary event fields (see replay-log.js). So the
@@ -23,6 +29,10 @@
 // replayEventHash(result) }); for an event without one it is
 // replayEventHash(result), exactly as before. Old events, and every event of
 // an ungoverned call, hash and verify unchanged.
+//
+// The commerce evidence an MCP response carries (audit-envelope.js) keeps its
+// v1 meaning: `result_sha256` is the hash of the result alone, and a governed
+// event adds `kernel_sha256`, the hash of its block.
 
 import { randomUUID } from 'node:crypto';
 
@@ -124,21 +134,23 @@ export function bindKernelToResultHash(resultHash, kernel) {
 }
 
 /**
- * The correlation id for a governed command issued by an MCP tool call.
+ * The correlation id for a governed command issued by a tool call.
  *
- * The kernel envelope types `correlation_id` as a UUID and refuses any other
- * value, while an MCP (JSON-RPC) request id is often a number. A UUID request
- * id is used as-is (lowercased, as the kernel echoes it); otherwise a fresh
- * UUID is minted, which the receipt echoes and the replay event records in
- * `kernel.correlationId`.
+ * Callers pass the explicit correlation id when one was supplied, else the
+ * call's request id (`correlationId ?? requestId`). The kernel envelope types
+ * `correlation_id` as a UUID and refuses the whole command over any other
+ * value, while an MCP (JSON-RPC) request id is often a number. So a UUID is
+ * used as-is (lowercased, as the kernel echoes it); anything else is replaced
+ * by a freshly minted UUID, which the receipt echoes and the replay event
+ * records in `kernel.correlationId`.
  *
- * @param {unknown} requestId
+ * @param {unknown} candidate - explicit correlation id, else the request id
  * @param {() => string} [mint]
  * @returns {string}
  */
-export function resolveKernelCorrelationId(requestId, mint = randomUUID) {
-  if (typeof requestId === 'string' && UUID_PATTERN.test(requestId)) {
-    return requestId.toLowerCase();
+export function resolveKernelCorrelationId(candidate, mint = randomUUID) {
+  if (typeof candidate === 'string' && UUID_PATTERN.test(candidate)) {
+    return candidate.toLowerCase();
   }
   return mint();
 }

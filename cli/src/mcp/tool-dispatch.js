@@ -531,9 +531,10 @@ export function createToolDispatch({
       extra: {
         ...(options.extra || {}),
         idempotencyKey: options.idempotencyKey,
-        // An explicit correlation id is passed as given; by default a governed
-        // command is correlated with this call's request id.
-        correlationId: options.correlationId ?? resolveKernelCorrelationId(requestId),
+        // An explicit correlation id, else this call's request id; a value
+        // that is not a UUID (which the kernel would refuse) is replaced by a
+        // minted one.
+        correlationId: resolveKernelCorrelationId(options.correlationId ?? requestId),
         causationId: options.causationId,
         expectedVersion: options.expectedVersion,
         deadline: options.deadline,
@@ -547,7 +548,9 @@ export function createToolDispatch({
     });
 
     const rawResult = outcome[RAW_TOOL_RESULT];
-    const kernel = extractKernelReplayFields(rawResult);
+    // A preview outcome (no --apply) has no raw copy: its `result` is the
+    // kernel's uncompacted preview receipt, which carries a block too.
+    const kernel = extractKernelReplayFields(rawResult ?? outcome.result);
     await addAgenticReplayEvent({
       eventId: randomUUID(),
       tool: normalizedToolName,
@@ -632,8 +635,9 @@ export function createToolDispatch({
               sessionId: extra?.sessionId,
               traceId: extra?.traceId,
               // Joins the kernel receipt (economic_context.correlation_id) to
-              // this call's replay event (kernel.correlationId).
-              correlationId: extra?.correlationId ?? resolveKernelCorrelationId(extra?.requestId),
+              // this call's replay event (kernel.correlationId). A transport's
+              // correlation id, else the request id; not a UUID -> minted.
+              correlationId: resolveKernelCorrelationId(extra?.correlationId ?? extra?.requestId),
               requireGoverned: allowApply && isMutationPermission(toolDef.permission),
             })
           : null;
