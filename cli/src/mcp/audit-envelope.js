@@ -48,10 +48,18 @@ export const buildCommerceExecutionEvidence = (event) => ({
   request_id: event.requestId ?? null,
   session_id: event.sessionId ?? null,
   params_sha256: `sha256:${event.paramsHash || replayEventHash(event.params || {})}`,
-  result_sha256: `sha256:${event.resultHash || replayEventHash(event.result || {})}`,
+  // The hash of the result alone. A governed event's `resultHash` also binds
+  // its kernel block (./replay-kernel-fields.js), so for such an event the
+  // result is hashed afresh and the block is hashed into `kernel_sha256`.
+  result_sha256: `sha256:${
+    event.kernel
+      ? replayEventHash(event.result || {})
+      : event.resultHash || replayEventHash(event.result || {})
+  }`,
   policy_sha256: `sha256:${replayEventHash(event.policy || {})}`,
   permission_sha256: `sha256:${replayEventHash(event.permission || {})}`,
   mutation_manifest_sha256: `sha256:${replayEventHash(event.notes?.mutationManifest || {})}`,
+  ...(event.kernel ? { kernel_sha256: `sha256:${replayEventHash(event.kernel)}` } : {}),
 });
 
 /** Attach commerce evidence without disturbing existing MCP result metadata. */
