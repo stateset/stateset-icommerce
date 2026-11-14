@@ -389,7 +389,7 @@
   "permissions": [
     {
       "name": "admin",
-      "count": 47
+      "count": 48
     },
     {
       "name": "delete",
@@ -397,18 +397,18 @@
     },
     {
       "name": "read",
-      "count": 487
+      "count": 485
     },
     {
       "name": "write",
-      "count": 429
+      "count": 430
     }
   ],
   "permissionCounts": {
-    "admin": 47,
+    "admin": 48,
     "delete": 21,
-    "read": 487,
-    "write": 429
+    "read": 485,
+    "write": 430
   },
   "tools": [
     {
@@ -2362,7 +2362,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__agentic_replay_mutation",
       "policyDomain": "agentic",
-      "permission": "read"
+      "permission": "write"
     },
     {
       "name": "agentic_runtime_contract",
@@ -4612,7 +4612,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__export_full_data",
       "policyDomain": "maintenance",
-      "permission": "read"
+      "permission": "admin"
     },
     {
       "name": "export_gdpr_data",

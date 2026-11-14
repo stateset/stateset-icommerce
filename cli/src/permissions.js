@@ -516,7 +516,7 @@ export const TOOL_PERMISSIONS = {
   agentic_prepare_payment: 'read',
   agentic_plan: 'read',
   agentic_simulate_mutation: 'read',
-  agentic_replay_mutation: 'read',
+  agentic_replay_mutation: 'write',
   agentic_replay: 'read',
   agentic_subscribe_events: 'read',
   agentic_unsubscribe_events: 'read',
@@ -1027,7 +1027,7 @@ export const TOOL_PERMISSIONS = {
   // maintenance.js
   backup_database: 'write',
   restore_database: 'write',
-  export_full_data: 'read',
+  export_full_data: 'admin',
   import_full_data: 'write',
   list_portable_domains: 'read',
   // payment-obligations.js

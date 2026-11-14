@@ -16,10 +16,10 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | Total tools | 984 |
 | MCP servers | 3 |
 | Policy domains | 91 |
-| Read tools | 487 |
-| Write tools | 429 |
+| Read tools | 485 |
+| Write tools | 430 |
 | Delete tools | 21 |
-| Admin tools | 47 |
+| Admin tools | 48 |
 | Unknown permission | 0 |
 
 ## MCP Server Counts
@@ -130,10 +130,10 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 
 | Permission | Tools |
 | --- | --- |
-| admin | 47 |
+| admin | 48 |
 | delete | 21 |
-| read | 487 |
-| write | 429 |
+| read | 485 |
+| write | 430 |
 
 ## Tool Registry
 
@@ -355,7 +355,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `agentic_plan` | `stateset-commerce` | `agentic` | `read` |
 | `agentic_prepare_payment` | `stateset-commerce` | `agentic` | `read` |
 | `agentic_replay` | `stateset-commerce` | `agentic` | `read` |
-| `agentic_replay_mutation` | `stateset-commerce` | `agentic` | `read` |
+| `agentic_replay_mutation` | `stateset-commerce` | `agentic` | `write` |
 | `agentic_runtime_contract` | `stateset-commerce` | `agentic` | `read` |
 | `agentic_simulate_mutation` | `stateset-commerce` | `agentic` | `read` |
 | `agentic_subscribe_events` | `stateset-commerce` | `agentic` | `read` |
@@ -605,7 +605,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `export_audit_trail` | `stateset-commerce` | `compliance` | `admin` |
 | `export_compliance_package` | `stateset-commerce` | `proofs` | `read` |
 | `export_data` | `stateset-commerce` | `import` | `read` |
-| `export_full_data` | `stateset-commerce` | `maintenance` | `read` |
+| `export_full_data` | `stateset-commerce` | `maintenance` | `admin` |
 | `export_gdpr_data` | `stateset-commerce` | `compliance` | `admin` |
 | `express_checkout` | `stateset-commerce` | `checkout` | `write` |
 | `find_or_create_customer` | `stateset-commerce` | `customers` | `write` |

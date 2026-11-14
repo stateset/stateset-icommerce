@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:a2b8949d925d43684f1d7af9fe7cbc0040e923fc4cf4e32a0cb18a0ccec2bd61",
+  "digest": "sha256:dcaae380cdbafd3b05012cfae1226f1e09c4266643a2d5b55d7ccc1a6b41d6ae",
   "counts": {
     "total": 966,
-    "readOnly": 478,
-    "mutations": 488,
+    "readOnly": 476,
+    "mutations": 490,
     "governed": 36,
     "governedComposite": 1,
-    "blocked": 451
+    "blocked": 453
   },
   "entries": [
     {
@@ -1524,9 +1524,9 @@
     },
     {
       "name": "agentic_replay_mutation",
-      "permission": "read",
-      "mutation": false,
-      "disposition": "read_only",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
       "commandType": null
     },
     {
@@ -3274,9 +3274,9 @@
     },
     {
       "name": "export_full_data",
-      "permission": "read",
-      "mutation": false,
-      "disposition": "read_only",
+      "permission": "admin",
+      "mutation": true,
+      "disposition": "blocked",
       "commandType": null
     },
     {

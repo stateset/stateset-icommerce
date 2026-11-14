@@ -46,7 +46,8 @@
  * `write` (changes data) or `init` (creates only empty structure on first use:
  * a table or index, a database with no rows, a directory). The list only
  * shrinks: a new violation fails, an `init` tool that changes more than
- * structure fails, and a listed tool that no longer violates fails.
+ * structure fails, and a listed tool that no longer violates, or is no longer
+ * a read tool, fails.
  *
  * A fake read tool that writes a customer row is registered for this process
  * only and swept first and last; the test fails unless both runs are caught,
@@ -370,6 +371,15 @@ if (sweep) {
     it('keeps the baseline honest: a fixed tool must leave it', () => {
       const stale = [...known.keys()].filter((tool) => tools.has(tool) && !violating.has(tool));
       assert.deepEqual(stale, [], 'these no longer change state; remove them from the baseline');
+      // A tool reclassified as a write is fixed too, but is no longer swept.
+      const notRead = only
+        ? []
+        : [...known.keys()].filter((tool) => !sweep.expectedReadTools.includes(tool));
+      assert.deepEqual(
+        notRead,
+        [],
+        'these are no longer read tools; remove them from the baseline',
+      );
     });
   });
 }
