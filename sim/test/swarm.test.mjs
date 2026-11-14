@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { SIM_DIR, bindingAvailable } from '../lib/engine.mjs';
-import { runOracleIsolated } from '../lib/oracle.mjs';
+import { differingFields, runOracleIsolated, sealedAsReturned } from '../lib/oracle.mjs';
 import { EXPECTED_DENIAL, normalizeConfig } from '../lib/plan.mjs';
 import { createRng } from '../lib/rng.mjs';
 import { runActors } from '../lib/scheduler.mjs';
@@ -60,6 +60,40 @@ describe('the scheduler', () => {
     assert.equal(crashing.record.thrown.length, 1);
     assert.equal(crashing.record.thrown[0].kind, 'harness');
     assert.match(crashing.record.thrown[0].message, /journey bug/);
+  });
+});
+
+describe('the oracle compares receipts in full', () => {
+  // An audit-log entry stores the receipt as hashed (audit_hash null); the
+  // caller gets that receipt with audit_hash set to the entry's hash.
+  const entry = {
+    audit_hash: 'abc123',
+    parsed: {
+      receipt_id: 'r-1',
+      status: 'succeeded',
+      result: { order_id: 'o-1', total_charged: '10.00' },
+      audit_hash: null,
+    },
+  };
+
+  it('accepts the sealed receipt with its audit hash filled in', () => {
+    const returned = { ...entry.parsed, audit_hash: 'abc123' };
+    assert.deepEqual(sealedAsReturned(entry), returned);
+    assert.deepEqual(differingFields(returned, sealedAsReturned(entry)), []);
+  });
+
+  it('names the altered fields when the ids are unchanged', () => {
+    const expected = sealedAsReturned(entry);
+    assert.deepEqual(differingFields({ ...expected, status: 'rejected' }, expected), ['status']);
+    assert.deepEqual(
+      differingFields(
+        { ...expected, result: { order_id: 'o-1', total_charged: '0.00' }, audit_hash: null },
+        expected,
+      ),
+      ['audit_hash', 'result'],
+    );
+    const { result: _dropped, ...withoutResult } = expected;
+    assert.deepEqual(differingFields(withoutResult, expected), ['result']);
   });
 });
 
@@ -266,6 +300,83 @@ describe('agent swarm', { skip }, () => {
         assert.equal(oracle.invariants.oversold, true);
         assert.equal(oracle.invariants.passed, false);
       },
+    );
+  });
+
+  describe('the oracle fails a replay that is not the original receipt', () => {
+    // One untouched store: these cases alter what a caller was told, not the
+    // database, so they share a single swarm run.
+    const dir = mkdtempSync(
+      path.join(process.env.SIM_TMPDIR || os.tmpdir(), 'stateset-swarm-replay-'),
+    );
+    after(() => rmSync(dir, { recursive: true, force: true }));
+    let fixture;
+    const swarm = () =>
+      (fixture ??= (async () => {
+        const dbPath = path.join(dir, 'replays.db');
+        const config = normalizeConfig({ agents: 12, seed: 5, stock: 6, db: dbPath });
+        const result = await executeSwarm(config, dbPath);
+        const input = {
+          dbPath,
+          config,
+          records: result.records,
+          budgetStatuses: result.budgetStatuses,
+        };
+        const clean = await runOracleIsolated(input);
+        assert.equal(clean.invariants.passed, true, 'the untouched replays must pass');
+        return input;
+      })());
+
+    /** Edit one replayed checkout receipt a caller saw, keeping its ids. */
+    function withAlteredReplay(records, edit) {
+      const altered = structuredClone(records);
+      const replay = altered
+        .flatMap((record) => record.observed)
+        .find((entry) => entry.role === 'replay' && entry.receipt.status === 'succeeded');
+      assert.ok(replay, 'seed 5 resubmits a succeeded checkout');
+      const { receipt_id: receiptId, audit_hash: auditHash } = replay.receipt;
+      edit(replay.receipt);
+      assert.equal(replay.receipt.receipt_id, receiptId);
+      assert.equal(replay.receipt.audit_hash, auditHash);
+      return { altered, key: replay.key };
+    }
+
+    async function judgeAltered(field, edit) {
+      const input = await swarm();
+      const { altered, key } = withAlteredReplay(input.records, edit);
+      const oracle = await runOracleIsolated({ ...input, records: altered });
+      assert.ok(
+        oracle.receipts.issues.some(
+          (issue) =>
+            issue.kind === 'returned_receipt_differs_from_sealed' &&
+            issue.key === key &&
+            issue.role === 'replay' &&
+            issue.fields.includes(field),
+        ),
+        JSON.stringify(oracle.receipts.issues),
+      );
+      assert.ok(
+        oracle.idempotency.issues.some(
+          (issue) =>
+            issue.kind === 'key_returned_different_receipts' &&
+            issue.key === key &&
+            issue.fields.includes(field),
+        ),
+        JSON.stringify(oracle.idempotency.issues),
+      );
+      assert.equal(oracle.invariants.passed, false);
+    }
+
+    it('a replay with the same ids but another status', { timeout: TIMEOUT }, () =>
+      judgeAltered('status', (receipt) => {
+        receipt.status = 'rejected';
+      }),
+    );
+
+    it('a replay with the same ids but another result', { timeout: TIMEOUT }, () =>
+      judgeAltered('result', (receipt) => {
+        receipt.result = { ...receipt.result, total_charged: '0.00' };
+      }),
     );
   });
 });

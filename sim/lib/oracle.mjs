@@ -9,10 +9,13 @@
  *   overspent         - budgets: committed <= limit, and committed equals the
  *                       sum of succeeded checkouts sealed against the budget.
  *   receiptMismatches - every applied command has exactly one sealed receipt,
- *                       every sealed receipt reached a caller, and every
- *                       mutation (customer, cart, line, order) has a receipt.
+ *                       every receipt a caller got (first submission, replay
+ *                       or retry) is that sealed receipt in full, every
+ *                       sealed receipt reached a caller, and every mutation
+ *                       (customer, cart, line, order) has a receipt.
  *   duplicateApplies  - one idempotency key, at most one sealed outcome; one
- *                       cart, at most one order; replays return the original.
+ *                       cart, at most one order; every answer under one key,
+ *                       and every replay, is the original receipt in full.
  *   chainValid        - the receipt audit chain recomputes. The Node binding
  *                       on master exposes no verify API (the Rust
  *                       `Commerce::kernel_audit().verify_chain()` is not
@@ -169,6 +172,25 @@ function verifyChain(audit, materialized) {
   };
 }
 
+/**
+ * The receipt a caller is handed for a sealed entry, fresh or replayed: the
+ * sealed receipt with `audit_hash` filled in. The audit log stores the
+ * receipt as it was hashed, with `audit_hash: null` (the hash cannot cover
+ * itself); the engine then sets `audit_hash` to the entry's hash on the copy
+ * it materializes into `kernel_receipts` and on the copy it returns.
+ */
+export function sealedAsReturned(entry) {
+  return { ...entry.parsed, audit_hash: entry.audit_hash };
+}
+
+/** Top-level receipt fields whose canonical values differ (for diagnostics). */
+export function differingFields(actual, expected) {
+  const encode = (object, field) => (field in object ? canonicalJson(object[field]) : '<absent>');
+  return [...new Set([...Object.keys(actual), ...Object.keys(expected)])]
+    .filter((field) => encode(actual, field) !== encode(expected, field))
+    .sort();
+}
+
 function checkReceipts(db, audit, observed) {
   const issues = [];
   const byReceiptId = new Map();
@@ -176,29 +198,47 @@ function checkReceipts(db, audit, observed) {
     if (!byReceiptId.has(row.receipt_id)) byReceiptId.set(row.receipt_id, []);
     byReceiptId.get(row.receipt_id).push(row);
   }
+  const byHash = new Map(audit.map((row) => [row.audit_hash, row]));
   const seen = new Set();
   for (const entry of observed) {
-    if (entry.auditHash === null || entry.auditHash === undefined) {
+    const { receipt } = entry;
+    if (receipt.audit_hash === null || receipt.audit_hash === undefined) {
       // The only receipt the kernel hands back unsealed is the idempotency
       // conflict: nothing executed, so nothing is chained.
-      if (entry.errorCode !== 'kernel.idempotency_conflict') {
+      if (receipt.error_code !== 'kernel.idempotency_conflict') {
         issues.push({
           kind: 'unsealed_receipt',
           key: entry.key,
-          code: entry.errorCode ?? entry.status,
+          role: entry.role,
+          code: receipt.error_code ?? receipt.status,
         });
       }
       continue;
     }
-    if (seen.has(entry.receiptId)) continue;
-    seen.add(entry.receiptId);
-    const rows = byReceiptId.get(entry.receiptId) ?? [];
-    if (rows.length !== 1 || rows[0].audit_hash !== entry.auditHash) {
+    if (!seen.has(receipt.receipt_id)) {
+      seen.add(receipt.receipt_id);
+      const rows = byReceiptId.get(receipt.receipt_id) ?? [];
+      if (rows.length !== 1 || rows[0].audit_hash !== receipt.audit_hash) {
+        issues.push({
+          kind: 'receipt_not_sealed_once',
+          key: entry.key,
+          receiptId: receipt.receipt_id,
+          sealed: rows.length,
+        });
+      }
+    }
+    // Every receipt handed out -- first submission, replay or retry -- must be
+    // the sealed receipt in full, not merely carry its ids.
+    const sealed = byHash.get(receipt.audit_hash);
+    if (!sealed) continue; // already reported as not sealed once
+    const expected = sealedAsReturned(sealed);
+    if (canonicalJson(receipt) !== canonicalJson(expected)) {
       issues.push({
-        kind: 'receipt_not_sealed_once',
+        kind: 'returned_receipt_differs_from_sealed',
         key: entry.key,
-        receiptId: entry.receiptId,
-        sealed: rows.length,
+        role: entry.role,
+        receiptId: receipt.receipt_id,
+        fields: differingFields(receipt, expected),
       });
     }
   }
@@ -269,19 +309,33 @@ function checkIdempotency(db, audit, observed, records) {
   )) {
     issues.push({ kind: 'cart_ordered_more_than_once', cartId: row.cart_id, orders: row.n });
   }
+  // Every answer under one key (the first submission, its replay, any retry)
+  // must be the same receipt in full: same id is not enough.
   const receiptsByKey = new Map();
   for (const entry of observed) {
     if (entry.role === 'conflict') {
-      if (entry.status === 'succeeded')
+      if (entry.receipt.status === 'succeeded')
         issues.push({ kind: 'conflicting_reuse_applied', key: entry.key });
       continue;
     }
-    if (!receiptsByKey.has(entry.key)) receiptsByKey.set(entry.key, new Set());
-    receiptsByKey.get(entry.key).add(entry.receiptId);
+    if (!receiptsByKey.has(entry.key)) receiptsByKey.set(entry.key, new Map());
+    const variants = receiptsByKey.get(entry.key);
+    const canonical = canonicalJson(entry.receipt);
+    if (!variants.has(canonical)) variants.set(canonical, entry);
   }
-  for (const [key, ids] of receiptsByKey) {
-    if (ids.size > 1)
-      issues.push({ kind: 'key_returned_different_receipts', key, receipts: ids.size });
+  for (const [key, variants] of receiptsByKey) {
+    if (variants.size > 1) {
+      const [first, ...others] = [...variants.values()];
+      issues.push({
+        kind: 'key_returned_different_receipts',
+        key,
+        receipts: variants.size,
+        roles: [first.role, ...others.map((entry) => entry.role)],
+        fields: [
+          ...new Set(others.flatMap((entry) => differingFields(entry.receipt, first.receipt))),
+        ].sort(),
+      });
+    }
   }
   let replays = 0;
   for (const record of records) {
@@ -473,7 +527,11 @@ function checkExpectations(records, observed) {
   const failures = [];
   const denialByActor = new Map();
   for (const entry of observed) {
-    if (entry.errorCode === EXPECTED_DENIAL.errorCode) denialByActor.set(entry.actor, entry);
+    if (entry.receipt.error_code === EXPECTED_DENIAL.errorCode) {
+      denialByActor.set(entry.actor, {
+        reasonCodes: entry.receipt.policy?.reason_codes ?? [],
+      });
+    }
   }
   let deniedActors = 0;
   let deniedObserved = 0;

@@ -70,17 +70,18 @@ export function buildSummary({ config, records, procResults, oracle, timings }) 
   const denialsByReason = {};
   const roles = {};
   for (const entry of observed) {
+    const { status, error_code: errorCode, policy } = entry.receipt;
     tally(roles, entry.role);
     byTypeStatus[entry.commandType] ??= {};
     tally(
       byTypeStatus[entry.commandType],
-      entry.role === 'primary' ? entry.status : `${entry.status}(${entry.role})`,
+      entry.role === 'primary' ? status : `${status}(${entry.role})`,
     );
-    if (entry.status !== 'rejected' || entry.role !== 'primary') continue;
-    tally(rejectionsByCode, entry.errorCode ?? 'unknown');
-    if (entry.errorCode === 'kernel.policy_denied') {
-      tally(denialsByCode, entry.errorCode);
-      for (const reason of entry.reasonCodes) tally(denialsByReason, reason);
+    if (status !== 'rejected' || entry.role !== 'primary') continue;
+    tally(rejectionsByCode, errorCode ?? 'unknown');
+    if (errorCode === 'kernel.policy_denied') {
+      tally(denialsByCode, errorCode);
+      for (const reason of policy?.reason_codes ?? []) tally(denialsByReason, reason);
     }
   }
 

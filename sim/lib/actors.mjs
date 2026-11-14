@@ -13,6 +13,7 @@
  *   checkout.commit (budget commitment = snapshot grand total) ->
  *   [same checkout.commit again: replay, later or concurrently]
  */
+import { canonicalJson } from '../../bindings/node/canonical-json.mjs';
 import { classifyThrown } from './engine.mjs';
 import { CURRENCY, POLICY_VERSION, SKU, STORE_ID } from './plan.mjs';
 import { seededUuid } from './rng.mjs';
@@ -249,12 +250,14 @@ function* journey(actor) {
     note(label, commit);
     if (replay) {
       note(`${label}:replay`, replay);
+      // A replay must return the original receipt, all of it: matching ids
+      // with a different status or result is not a replay.
       entry.replay = {
         mode: purchase.duplicate,
         matched: Boolean(
           commit.receipt &&
           replay.receipt &&
-          commit.receipt.receipt_id === replay.receipt.receipt_id,
+          canonicalJson(commit.receipt) === canonicalJson(replay.receipt),
         ),
       };
     }
@@ -313,8 +316,8 @@ function envelope(actor, step) {
 /**
  * Executes steps against one engine handle and records every outcome:
  * latencies by command type, thrown errors by kind (busy/timeout/other), and
- * the receipts each actor saw (the oracle's ground truth for "what callers
- * were told").
+ * the complete receipts each actor was handed (the oracle's ground truth for
+ * "what callers were told", compared field for field with what was sealed).
  */
 export function createExecutor({ commerce, policy, config, stats }) {
   const time = (type, startNs) => {
@@ -338,16 +341,8 @@ export function createExecutor({ commerce, policy, config, stats }) {
           key: step.key,
           role: step.role,
           commandType: step.commandType,
-          receiptId: receipt.receipt_id,
-          status: receipt.status,
-          errorCode: receipt.error_code,
-          reasonCodes: receipt.policy?.reason_codes ?? [],
-          auditHash: receipt.audit_hash,
-          aggregateId: receipt.aggregate_id,
-          budgetId: receipt.economic_context?.commitment?.budget_id ?? null,
-          totalCharged: receipt.result?.total_charged ?? null,
-          orderId: receipt.result?.order_id ?? null,
           attempts: attempt + 1,
+          receipt,
         });
         return { receipt, attempts: attempt + 1 };
       } catch (error) {
