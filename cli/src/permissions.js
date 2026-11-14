@@ -522,7 +522,7 @@ export const TOOL_PERMISSIONS = {
   agentic_unsubscribe_events: 'read',
   agentic_list_event_subscriptions: 'read',
   agentic_get_event_history: 'read',
-  agentic_execute_plan: 'read',
+  agentic_execute_plan: 'write',
 
   // Sync / VES
   sync_status: 'read',
