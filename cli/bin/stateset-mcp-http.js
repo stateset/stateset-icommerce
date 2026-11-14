@@ -270,14 +270,13 @@ async function main() {
   // took itself for the last user, checkpointed and unlinked -wal/-shm, and the
   // close dropped the engine's locks, leaving later engine commits invisible to
   // new connections. The connection now opens lazily on the first side-store
-  // call and closes once, at shutdown (see runMain below). Known limits, NOT
-  // fixed: that first open can still truncate -shm under the engine; both
-  // copies can take the WAL write lock at once, and an unlock by one releases
-  // the other's lock on the same bytes; stateset-mcp (stdio) still runs a second
-  // copy for its lifetime. Real fix (owner-pending): route side stores through
-  // the engine binding.
+  // call and is never closed by this process: exit releases it (see runMain
+  // below). Known limits, NOT fixed: that first open can still truncate -shm
+  // under the engine; both copies can take the WAL write lock at once, and an
+  // unlock by one releases the other's lock on the same bytes; stateset-mcp
+  // (stdio) still runs a second copy for its lifetime. Real fix (owner-pending):
+  // route side stores through the engine binding.
   const sharedStores = { a2aStore: new A2AStore({ dbPath: storageDbPath }) };
-  runtime.sharedStores = sharedStores;
 
   // Per-request server factory: this is what makes the endpoint stateless. The
   // same factory backs both the 2026-07-28 path and the legacy stateless leg.
@@ -397,6 +396,7 @@ async function main() {
     server.once('error', reject);
     server.listen(port, host, () => resolve());
   });
+  runtime.httpServer = server;
 
   const address = server.address();
   const boundPort = typeof address === 'object' && address ? address.port : port;
@@ -413,14 +413,21 @@ async function main() {
   );
 }
 
-/** Process-lifetime resources that the shutdown handler releases. */
-const runtime = { sharedStores: null };
+/** Process-lifetime resources the shutdown handler touches. */
+const runtime = { httpServer: null };
 
 runMain('stateset-mcp-http', main, {
-  // Close the shared side stores exactly once (a second signal finds none).
   cleanup: async () => {
-    const stores = runtime.sharedStores;
-    runtime.sharedStores = null;
-    stores?.a2aStore.close();
+    // Stop accepting connections; process exit follows immediately.
+    const server = runtime.httpServer;
+    runtime.httpServer = null;
+    server?.close();
+    // The shared side stores are deliberately NOT closed. Closing better-sqlite3
+    // while the engine's connection is live makes that second SQLite copy take
+    // itself for the last user: it checkpoints, unlinks -wal/-shm and drops the
+    // engine's locks (see main). The engine cannot be closed first either:
+    // Commerce.close() resolves before the native engine releases the file.
+    // Exit releases every descriptor and lock at once; the next open recovers
+    // the WAL.
   },
 });

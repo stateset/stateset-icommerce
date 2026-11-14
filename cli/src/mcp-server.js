@@ -263,7 +263,7 @@ export function createStatesetMcpServer({
   // names for its quote/card projections while `a2a_escrows` is deliberately
   // shared with the native kernel, so escrow release and its receipt/outbox
   // commit atomically against the record created by the public A2A tools.
-  // An injected store (stateset-mcp-http) outlives this server; its owner closes it.
+  // An injected store (stateset-mcp-http) outlives this server, which never closes it.
   const a2aStore = sharedStores?.a2aStore ?? new A2AStore({ dbPath });
 
   // The A2A accessor is late-bound: `./mcp/a2a-service.js` starts it as a

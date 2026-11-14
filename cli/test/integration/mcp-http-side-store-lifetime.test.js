@@ -12,7 +12,9 @@
  * engine commits then go to an unlinked WAL that no new connection can read.
  *
  * The stopgap gives the HTTP server one long-lived side-store set per process
- * (`createStatesetMcpServer({ sharedStores })`), closed once at shutdown.
+ * (`createStatesetMcpServer({ sharedStores })`). The process never closes it,
+ * not even at shutdown: that close would checkpoint and unlink the WAL under
+ * the still-open engine. Process exit releases it.
  *
  * The first block drives the real binary as a separate server process. A
  * `--import` probe (test/helpers/side-store-probe.mjs) reports each
@@ -313,11 +315,29 @@ describe('stateset-mcp-http keeps one side-store connection per process', () => 
     assert.deepEqual(read(), [...emails].sort());
   });
 
-  it('closes the shared side store exactly once at shutdown', async () => {
+  it('leaves the shared side store open at shutdown and keeps the store intact', async () => {
     server.child.kill('SIGTERM');
     const exit = await server.exited;
     assert.equal(exit.code, 0, `graceful shutdown must exit 0: ${JSON.stringify(exit)}`);
-    assert.deepEqual(probeEvents(server, dbPath), ['open', 'close']);
+    // Closing better-sqlite3 while the engine is live would checkpoint and
+    // unlink the WAL under it; exit, not the shutdown handler, releases it.
+    assert.deepEqual(
+      probeEvents(server, dbPath),
+      ['open'],
+      'the shutdown handler must not close the shared side store',
+    );
+    assert.ok(
+      existsSync(`${dbPath}-wal`),
+      'store.db-wal must survive SIGTERM (no side-store checkpoint/unlink at shutdown)',
+    );
+    // Every acknowledged engine write is there when the store is reopened.
+    const emailsOnReopen = sqliteOperations(dbPath, [
+      {
+        mode: 'all',
+        sql: "SELECT email FROM customers WHERE email LIKE 'side-store-%@example.test' ORDER BY email",
+      },
+    ])[0].map((row) => row.email);
+    assert.deepEqual(emailsOnReopen, [...emails].sort());
   });
 });
 
