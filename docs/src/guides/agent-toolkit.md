@@ -327,7 +327,7 @@ const delegation = await toolkit.executeTool('delegate_to_agent', {
 
 `delegate_to_agent` is a write-gated runtime tool. With `allowApply: false`, the toolkit returns a preview payload instead of executing the delegation.
 
-The delegated agent runs inside the autonomous engine with whatever tools that engine's agent executor was given; the toolkit's `capabilities` do not narrow it. Grant `delegate_to_agent` (directly, or through `permission:write` or `agentic.*`) only when the engine's own scope is acceptable.
+The delegated agent runs inside the autonomous engine with whatever tools that engine's agent executor was given (in the harness, the all-tools `customer-service` agent); the toolkit's `capabilities` do not narrow it. For that reason `delegate_to_agent` is granted only explicitly: list it by name, as above, or grant `*`. Broad grants such as `permission:write`, `agentic.*` or `read:*` never include it, neither in the listing nor in a plan step. Grant it only when the engine's own scope is acceptable.
 
 ## Configuration Options
 

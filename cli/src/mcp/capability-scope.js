@@ -24,16 +24,29 @@ export function outsideCapabilityScopeMessage(toolName) {
 }
 
 /**
+ * Tools a scope admits only by name (or `*`), never through a
+ * `permission:<p>`, `read:*`, `<domain>.*` or kernel-capability grant.
+ *
+ * `delegate_to_agent` hands its task to the caller-supplied autonomous engine,
+ * whose agents run with the engine's own tools (in the harness, the all-tools
+ * customer-service agent). No toolkit scope can narrow what they do, so a
+ * broad grant such as `permission:write` must not hand them out implicitly.
+ */
+export const EXPLICIT_GRANT_ONLY_TOOLS = Object.freeze(['delegate_to_agent']);
+const EXPLICIT_GRANT_ONLY_TOOL_SET = new Set(EXPLICIT_GRANT_ONLY_TOOLS);
+
+/**
  * Normalize a capability list to the Set the scope checks, or `null` when no
  * scope applies and every tool is admitted.
  *
  * @param {Iterable<unknown> | null | undefined} capabilities
+ * @param {{ optionName?: string }} [options] Option name used in the error.
  * @returns {Set<string> | null}
  */
-export function normalizeToolCapabilities(capabilities) {
+export function normalizeToolCapabilities(capabilities, { optionName = 'toolCapabilities' } = {}) {
   if (capabilities === null || capabilities === undefined) return null;
   if (!Array.isArray(capabilities) && !(capabilities instanceof Set)) {
-    throw new TypeError('toolCapabilities must be an array or a Set of capability strings.');
+    throw new TypeError(`${optionName} must be an array or a Set of capability strings.`);
   }
   return new Set([...capabilities].map((capability) => String(capability).trim()).filter(Boolean));
 }
@@ -42,7 +55,8 @@ export function normalizeToolCapabilities(capabilities) {
  * Whether a raw tool definition is inside `capabilities`. A `null` scope
  * admits every tool. A capability admits a tool when it is `*`, the tool's
  * name, `permission:<permission>`, `read:*` (read tools only),
- * `<policyDomain>.*`, or the tool's kernel command capability.
+ * `<policyDomain>.*`, or the tool's kernel command capability. Tools in
+ * `EXPLICIT_GRANT_ONLY_TOOLS` are admitted only by `*` or their name.
  *
  * @param {{ name?: string, permission?: string, policyDomain?: string } | null | undefined} tool
  * @param {Set<string> | null} capabilities
@@ -50,15 +64,18 @@ export function normalizeToolCapabilities(capabilities) {
 export function capabilityAllowsTool(tool, capabilities) {
   if (!capabilities) return true;
   const name = normalizeToolName(tool?.name);
+  if (capabilities.has('*') || (name && capabilities.has(name))) return true;
+  if (EXPLICIT_GRANT_ONLY_TOOL_SET.has(name)) return false;
   const permission = String(tool?.permission || 'read');
   const domain = String(tool?.policyDomain || '').trim();
-  return (
-    capabilities.has('*') ||
-    capabilities.has(name) ||
+  const kernelCapability = Object.hasOwn(KERNEL_CAPABILITY_BY_TOOL, name)
+    ? KERNEL_CAPABILITY_BY_TOOL[name]
+    : null;
+  return Boolean(
     capabilities.has(`permission:${permission}`) ||
     (permission === 'read' && capabilities.has('read:*')) ||
     (domain && capabilities.has(`${domain}.*`)) ||
-    capabilities.has(KERNEL_CAPABILITY_BY_TOOL[name])
+    (kernelCapability && capabilities.has(kernelCapability)),
   );
 }
 

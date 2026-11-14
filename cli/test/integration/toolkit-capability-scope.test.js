@@ -105,6 +105,43 @@ test('a permission grant does not widen the scope of nested plan steps', async (
   assert.equal(existsSync(exportPath), false);
 });
 
+test('delegate_to_agent needs an explicit grant: wildcards neither list nor run it', async (t) => {
+  const { toolkit } = await fixture(t);
+  // The engine's agents run with the engine's own tools, which no toolkit
+  // scope narrows, so `permission:write` must not hand out delegation.
+  const delegated = [];
+  const autonomousEngine = {
+    executeAgentRequest: async (agentName, taskDescription) => {
+      delegated.push({ agentName, taskDescription });
+      return { status: 'completed' };
+    },
+  };
+  const task = { agent_name: 'customer-service', task_description: 'Delete customer X' };
+
+  for (const capabilities of [['permission:write'], ['agentic.*']]) {
+    const scoped = toolkit({ allowApply: true, capabilities, autonomousEngine });
+    assert.equal(scoped.getRawTool('delegate_to_agent'), undefined, JSON.stringify(capabilities));
+    assert.ok(scoped.getRawTool('agentic_execute_plan'), JSON.stringify(capabilities));
+    await assert.rejects(scoped.executeTool('delegate_to_agent', task), OUT_OF_SCOPE);
+    const plan = await scoped.executeTool('agentic_execute_plan', {
+      dryRun: false,
+      steps: [{ tool: 'delegate_to_agent', params: task }],
+    });
+    assert.equal(plan.result.steps[0].status, 'permission_block');
+    assert.match(plan.result.steps[0].error, OUT_OF_SCOPE);
+  }
+  assert.equal(delegated.length, 0);
+
+  for (const capabilities of [['delegate_to_agent'], ['*']]) {
+    const granted = toolkit({ allowApply: true, capabilities, autonomousEngine });
+    assert.ok(granted.getRawTool('delegate_to_agent'), JSON.stringify(capabilities));
+    const result = await granted.executeTool('delegate_to_agent', task);
+    assert.equal(result.status, 'success', JSON.stringify(result.error));
+    assert.equal(result.result.delegatedTo, 'customer-service');
+  }
+  assert.equal(delegated.length, 2);
+});
+
 test('dry runs and simulations report out-of-scope steps instead of passing them', async (t) => {
   const { customer, toolkit, customerStatus } = await fixture(t);
   const scoped = toolkit({ allowApply: true, capabilities: ['read:*', 'agentic_execute_plan'] });

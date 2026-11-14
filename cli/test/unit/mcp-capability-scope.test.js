@@ -2,8 +2,9 @@
 //
 // The toolkit's capability predicate moved here so the MCP server can apply
 // it to the tool map every path resolves against. These pin its semantics
-// (unchanged from the toolkit) and check that a scoped server exposes exactly
-// the tools the toolkit's own filter admits.
+// (the toolkit's, plus the explicit-grant rule for delegate_to_agent and a
+// guard against matching an absent kernel capability) and check that a
+// scoped server exposes exactly the tools the toolkit's own filter admits.
 
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  EXPLICIT_GRANT_ONLY_TOOLS,
   OUTSIDE_CAPABILITY_SCOPE,
   applyToolCapabilityScope,
   capabilityAllowsTool,
@@ -55,6 +57,53 @@ describe('capabilityAllowsTool', () => {
   it('treats a tool without a permission as read', () => {
     assert.equal(capabilityAllowsTool({ name: 'anything' }, scope('read:*')), true);
   });
+
+  it('admits delegate_to_agent only by name or *, never through a wildcard grant', () => {
+    assert.deepEqual(EXPLICIT_GRANT_ONLY_TOOLS, ['delegate_to_agent']);
+    const delegate = { name: 'delegate_to_agent', permission: 'write', policyDomain: 'agentic' };
+    for (const capabilities of [
+      ['permission:write'],
+      ['agentic.*'],
+      ['read:*'],
+      ['permission:read'],
+      ['permission:write', 'agentic.*', 'read:*'],
+    ]) {
+      assert.equal(
+        capabilityAllowsTool(delegate, scope(...capabilities)),
+        false,
+        JSON.stringify(capabilities),
+      );
+    }
+    assert.equal(capabilityAllowsTool(delegate, scope('delegate_to_agent')), true);
+    assert.equal(capabilityAllowsTool(delegate, scope('*')), true);
+    assert.equal(
+      capabilityAllowsTool(
+        { ...delegate, name: 'mcp__stateset-commerce__delegate_to_agent' },
+        scope('delegate_to_agent'),
+      ),
+      true,
+    );
+    // The other agentic runtime tools keep their wildcard grants.
+    const plan = { name: 'agentic_execute_plan', permission: 'write', policyDomain: 'agentic' };
+    assert.equal(capabilityAllowsTool(plan, scope('permission:write')), true);
+    assert.equal(capabilityAllowsTool(plan, scope('agentic.*')), true);
+  });
+
+  it('never matches a tool through an absent kernel capability or an empty name', () => {
+    // list_orders has no kernel command: has(undefined) must not admit it.
+    const noKernel = { name: 'list_orders', permission: 'write', policyDomain: 'orders' };
+    assert.equal(capabilityAllowsTool(noKernel, new Set([undefined])), false);
+    assert.equal(capabilityAllowsTool(noKernel, new Set([null])), false);
+    assert.equal(capabilityAllowsTool({ permission: 'write' }, new Set(['', undefined])), false);
+    // Inherited object keys are not kernel capabilities either.
+    assert.equal(
+      capabilityAllowsTool(
+        { name: 'constructor', permission: 'write' },
+        new Set([Object.prototype.constructor]),
+      ),
+      false,
+    );
+  });
 });
 
 describe('normalizeToolCapabilities', () => {
@@ -74,6 +123,10 @@ describe('normalizeToolCapabilities', () => {
 
   it('refuses a scope it cannot read instead of admitting everything', () => {
     assert.throws(() => normalizeToolCapabilities('read:*'), TypeError);
+    assert.throws(
+      () => normalizeToolCapabilities({ length: 1 }, { optionName: 'capabilities' }),
+      /^TypeError: capabilities must be an array or a Set/,
+    );
   });
 });
 
@@ -191,5 +244,17 @@ describe('createStatesetMcpServer toolCapabilities', () => {
   it('exposes the whole profile when no scope is given', () => {
     const all = createServer().getRawToolDefinitions().length;
     assert.equal(createServer({ toolCapabilities: null }).getRawToolDefinitions().length, all);
+  });
+
+  it('exposes delegate_to_agent only to a scope that names it or holds *', () => {
+    const exposes = (capabilities) =>
+      createServer({ toolCapabilities: capabilities })
+        .getRawToolDefinitions()
+        .some((tool) => tool.name === 'delegate_to_agent');
+    assert.equal(exposes(['permission:write']), false);
+    assert.equal(exposes(['agentic.*']), false);
+    assert.equal(exposes(['read:*', 'permission:write', 'agentic.*']), false);
+    assert.equal(exposes(['delegate_to_agent']), true);
+    assert.equal(exposes(['*']), true);
   });
 });
