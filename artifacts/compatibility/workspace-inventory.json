@@ -572,7 +572,7 @@
     }
   ],
   "cli": {
-    "binaryCount": 56,
+    "binaryCount": 57,
     "dependencyCount": 15,
     "optionalDependencyCount": 12,
     "topLevelSourceCounts": [
@@ -590,7 +590,7 @@
       },
       {
         "name": "mcp",
-        "count": 35
+        "count": 36
       },
       {
         "name": "channels",

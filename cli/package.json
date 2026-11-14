@@ -46,6 +46,7 @@
     "stateset-signal": "bin/stateset-signal.js",
     "stateset-channels": "bin/stateset-channels.js",
     "stateset-agent": "bin/stateset-agent.js",
+    "stateset-agent-report": "bin/stateset-agent-report.js",
     "stateset-skills": "bin/stateset-skills.js",
     "stateset-daemon": "bin/stateset-daemon.js",
     "stateset-install-service": "bin/stateset-install-service.js",

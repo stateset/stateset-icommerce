@@ -78,7 +78,7 @@ stateset-direct inventory adjust SKU-001 --quantity 50 --reason "shipment receiv
 | **Core** | `stateset`, `stateset-direct`, `stateset-init`, `stateset-setup`, `stateset-config`, `stateset-update` |
 | **Commerce** | `stateset-orders`, `stateset-inventory`, `stateset-payments`, `stateset-returns`, `stateset-checkout`, `stateset-subscriptions`, `stateset-shipments`, `stateset-invoices`, `stateset-warranties`, `stateset-promotions`, `stateset-tax`, `stateset-currency`, `stateset-manufacturing`, `stateset-suppliers`, `stateset-treasury` |
 | **AI & Agents** | `stateset-agents`, `stateset-chat`, `stateset-autonomous`, `stateset-simulate`, `stateset-skills`, `stateset-create`, `stateset-tutorial` |
-| **Analytics** | `stateset-analytics`, `stateset-events`, `stateset-mcp-events` |
+| **Analytics** | `stateset-analytics`, `stateset-events`, `stateset-mcp-events`, `stateset-agent-report` |
 | **Integration** | `stateset-webhooks`, `stateset-import`, `stateset-sync` |
 | **Notifications** | `stateset-telegram`, `stateset-discord`, `stateset-slack`, `stateset-whatsapp`, `stateset-signal`, `stateset-google-chat`, `stateset-channels` |
 | **Payments** | `stateset-pay`, `stateset-x402`, `stateset-x402-mcp` |
