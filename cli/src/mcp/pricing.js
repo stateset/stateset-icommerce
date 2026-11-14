@@ -20,13 +20,26 @@
  * @param {Record<string, string>} deps.toolDomainByName
  * @param {Record<string, Array<unknown>>} deps.compensationHints
  * @param {Set<string>} deps.idempotencyHints
+ * @param {(toolName: string) => ({ reason: string, message: string, sideEffect: string } | null)} [deps.describeUnavailableTool]
+ *   Explains a tool the server knows but does not expose (for example one a
+ *   toolkit capability scope excludes). Its answer is attached as
+ *   `unavailable` so callers can refuse with the real reason; the tool still
+ *   reads as unknown and nothing can resolve a handler for it.
  */
 export function buildToolRuntimeMeta(
   toolName,
-  { toolDefsByName, inferPolicyDomain, toolDomainByName, compensationHints, idempotencyHints },
+  {
+    toolDefsByName,
+    inferPolicyDomain,
+    toolDomainByName,
+    compensationHints,
+    idempotencyHints,
+    describeUnavailableTool = null,
+  },
 ) {
   const candidate = toolDefsByName.get(toolName);
   if (!candidate) {
+    const unavailable = describeUnavailableTool?.(toolName) || null;
     return {
       name: toolName,
       permission: 'unknown',
@@ -34,6 +47,7 @@ export function buildToolRuntimeMeta(
       sideEffect: 'unknown',
       compensations: [],
       idempotent: false,
+      ...(unavailable ? { unavailable } : {}),
     };
   }
   const permission = candidate?.permission || 'unknown';
