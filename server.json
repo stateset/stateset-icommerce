@@ -30,7 +30,7 @@
         {
           "type": "named",
           "name": "--profile",
-          "description": "Tool catalog profile: core (focused commerce catalog) or full (all tools)",
+          "description": "Tool catalog profile: core (default; the stable commerce catalog), all (every tool), finance, operations or agents (curated workloads)",
           "format": "string",
           "isRequired": false,
           "default": "core"

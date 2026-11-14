@@ -177,7 +177,7 @@ If your runtime needs agent-to-agent delegation, pass `autonomousEngine` and tur
 ### MCP (Claude Desktop, Cursor, Windsurf)
 
 ```bash
-npx -y @stateset/cli@latest stateset-setup --yes --quickstart --db ./store.db
+npx -y -p @stateset/cli@latest stateset-setup --yes --quickstart --db ./store.db
 ```
 
 This registers the MCP server with your client. The full registry-generated tool inventory appears automatically.

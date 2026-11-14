@@ -1255,7 +1255,7 @@ Resources:
   vector          Hybrid vector search
 
 Note: direct mode covers only these 6 resources. The other engine domains
-(finance suite, WMS, EDI, supply chain, quality, etc. — 73 domains total) are
+(finance suite, WMS, EDI, supply chain, quality, etc. — 89 domains total) are
 available through the AI interface (`stateset "<request>"`) or any MCP client.
 See docs/TOOLS.md for the full catalog.
 ```
