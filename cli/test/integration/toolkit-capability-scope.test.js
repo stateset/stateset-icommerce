@@ -205,6 +205,42 @@ test('replay refuses a recorded mutation whose tool is outside the scope', async
   assert.equal(await customerStatus(), 'active');
 });
 
+test('replay still re-executes a recorded mutation whose tool is in scope', async (t) => {
+  const { commerce, toolkit } = await fixture(t);
+  // Positive control for the refusal above: the scope must not break replay.
+  const scoped = toolkit({
+    allowApply: true,
+    capabilities: ['read:*', 'create_cart', 'agentic_replay_mutation'],
+  });
+  const cartCount = async () => (await commerce.carts.list({})).length;
+
+  const missing = await scoped.executeTool('agentic_replay_mutation', {
+    tool: 'create_cart',
+    dryRun: false,
+  });
+  assert.equal(missing.result.success, false);
+  assert.match(missing.result.error, /No replayable mutation event/);
+
+  const recorded = await scoped.executeTool('create_cart', { customerEmail: 'replay@example.com' });
+  assert.equal(recorded.status, 'success', JSON.stringify(recorded.error));
+  const before = await cartCount();
+
+  const dryRun = await scoped.executeTool('agentic_replay_mutation', { tool: 'create_cart' });
+  assert.equal(dryRun.result.success, true, JSON.stringify(dryRun.result));
+  assert.equal(dryRun.result.replay.status, 'dry_run_success');
+  assert.equal(await cartCount(), before);
+
+  const replay = await scoped.executeTool('agentic_replay_mutation', {
+    tool: 'create_cart',
+    dryRun: false,
+  });
+  assert.equal(replay.result.success, true, JSON.stringify(replay.result));
+  assert.equal(replay.result.sourceEvent.tool, 'create_cart');
+  assert.equal(replay.result.sourceEvent.requestId, recorded.requestId);
+  assert.equal(replay.result.replay.status, 'success');
+  assert.equal(await cartCount(), before + 1);
+});
+
 test('rollback never runs a compensation tool outside the scope and says so', async (t) => {
   const { commerce, customer, toolkit, customerStatus } = await fixture(t);
   const plan = {
