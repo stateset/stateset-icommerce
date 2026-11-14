@@ -45,9 +45,18 @@ function fixture(t) {
   return { directory, dbPath, commerce, operator, writer };
 }
 
-function assertRefused(result, tool) {
+// A scoped toolkit's replay can be refused by either of two guards: the
+// replay's own write-only rule (REPLAY_PERMISSION_DENIED), or, where the
+// toolkit's capability scope is also bound to nested tools, the scope itself
+// (PERMISSION_DENIED: the logged tool is not exposed to that toolkit at all).
+// Either way nothing runs. The unscoped-server case below pins the replay
+// rule's own code, since no scope applies there.
+const REFUSED_BY_REPLAY_RULE = [REPLAY_PERMISSION_DENIED];
+const REFUSED_BY_REPLAY_RULE_OR_SCOPE = [REPLAY_PERMISSION_DENIED, 'PERMISSION_DENIED'];
+
+function assertRefused(result, tool, codes = REFUSED_BY_REPLAY_RULE_OR_SCOPE) {
   assert.equal(result.ok, false, JSON.stringify(result));
-  assert.equal(result.failure?.code, REPLAY_PERMISSION_DENIED, JSON.stringify(result.failure));
+  assert.ok(codes.includes(result.failure?.code), JSON.stringify(result.failure));
   assert.match(result.error, new RegExp(`'${tool}'`));
   assert.equal(result.result?.replay, undefined, 'nothing was replayed');
 }
@@ -92,6 +101,34 @@ test('a write-scoped caller cannot replay a delete tool: the cart survives', asy
     await writer.executeTool('agentic_replay_mutation', { tool: 'delete_cart', dryRun: false }),
     'delete_cart',
   );
+  assert.equal((await commerce.carts.get(cart.id))?.id, cart.id, 'the cart was not deleted');
+});
+
+test('an unscoped apply server still replays only write tools', async (t) => {
+  const { directory, dbPath, commerce, operator } = fixture(t);
+  const exportPath = join(directory, 'export.json');
+  const cart = await commerce.carts.create({ customerEmail: 'replay@example.com' });
+  await operator.executeTool('export_full_data', { exportPath });
+  await operator.executeTool('delete_cart', { cartId: cart.id });
+
+  const server = createStatesetMcpServer({
+    commerce,
+    dbPath,
+    allowApply: true,
+    toolProfile: 'all',
+  });
+  t.after(async () => {
+    server.dispose?.();
+    await server.close?.().catch(() => {});
+  });
+  for (const tool of ['export_full_data', 'delete_cart']) {
+    assertRefused(
+      await server.executeTool('agentic_replay_mutation', { tool, dryRun: false }),
+      tool,
+      REFUSED_BY_REPLAY_RULE,
+    );
+  }
+  assert.equal(existsSync(exportPath), false, 'the replay wrote no export file');
   assert.equal((await commerce.carts.get(cart.id))?.id, cart.id, 'the cart was not deleted');
 });
 
