@@ -172,6 +172,20 @@ test('dry runs and simulations report out-of-scope steps instead of passing them
 
   const helperSimulation = await scoped.simulatePlan({ steps: [deleteStep(customer)] });
   assert.equal(helperSimulation.outcomes[0].status, 'permission_block');
+
+  // Every name that normalises to the excluded tool gets the scope refusal.
+  for (const tool of ['mcp__stateset-commerce__delete_customer', ' delete_customer ']) {
+    const payment = await scoped.executeTool('agentic_prepare_payment', { tool, params: {} });
+    assert.match(payment.result.error, OUT_OF_SCOPE, JSON.stringify(tool));
+    assert.equal(payment.failure?.code, 'PERMISSION_DENIED');
+    const step = await scoped.executePlan({
+      dryRun: true,
+      steps: [{ tool, params: { customerId: customer.id } }],
+    });
+    assert.match(step.steps[0].error, OUT_OF_SCOPE, JSON.stringify(tool));
+    const mutation = await scoped.simulateMutation({ tool, params: { customerId: customer.id } });
+    assert.match(mutation.error, OUT_OF_SCOPE, JSON.stringify(tool));
+  }
   assert.equal(await customerStatus(), 'active');
 });
 

@@ -404,6 +404,7 @@ export function createStatesetMcpServer({
   });
   const preparePaymentForTool = createPreparePaymentForTool({
     toolDefsByName: exposedToolDefsByName,
+    describeUnavailableTool: capabilityScope.describeExcludedTool,
     getAgenticToolPricing,
     serviceInfo: MPP_SERVICE_INFO,
   });
