@@ -81,12 +81,13 @@ describe('agentic-runtime-tools · expected tool surface', () => {
     }
   });
 
-  it('classifies mutation replay, the governed plan orchestrator and delegation as writes', () => {
+  it('classifies mutation replay, unsubscribing, the governed plan orchestrator and delegation as writes', () => {
     const writers = AGENTIC_RUNTIME_TOOLS.filter((t) => t.permission === 'write').map(
       (t) => t.name,
     );
     assert.deepEqual(writers, [
       'agentic_replay_mutation',
+      'agentic_unsubscribe_events',
       'agentic_execute_plan',
       'delegate_to_agent',
     ]);
@@ -94,7 +95,7 @@ describe('agentic-runtime-tools · expected tool surface', () => {
 
   it('all non-mutating tools are read-permission', () => {
     const reads = AGENTIC_RUNTIME_TOOLS.filter((t) => t.permission === 'read');
-    assert.ok(reads.length >= expectedNames.length - 3);
+    assert.ok(reads.length >= expectedNames.length - 4);
   });
 });
 

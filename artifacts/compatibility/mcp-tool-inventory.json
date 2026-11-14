@@ -397,18 +397,18 @@
     },
     {
       "name": "read",
-      "count": 484
+      "count": 483
     },
     {
       "name": "write",
-      "count": 431
+      "count": 432
     }
   ],
   "permissionCounts": {
     "admin": 48,
     "delete": 21,
-    "read": 484,
-    "write": 431
+    "read": 483,
+    "write": 432
   },
   "tools": [
     {
@@ -2407,7 +2407,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__agentic_unsubscribe_events",
       "policyDomain": "agentic",
-      "permission": "read"
+      "permission": "write"
     },
     {
       "name": "allocate_backorder",

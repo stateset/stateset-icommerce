@@ -633,7 +633,11 @@ describe('stateset-mcp-events integration', () => {
     }
   });
 
-  it('subscribes and unsubscribes MCP event streams through agentic tools', async () => {
+  // The gateway has no --apply flag, so it runs every write tool in preview.
+  // agentic_unsubscribe_events is a write (it deletes from the shared
+  // registry), so here it only previews; the applied path is unit-tested in
+  // test/unit/mcp-server.test.js.
+  it('subscribes through agentic tools, and only previews an unsubscribe', async () => {
     const started = await startGateway(dbPath);
     gateway = started;
 
@@ -697,16 +701,16 @@ describe('stateset-mcp-events integration', () => {
         },
       });
       const unsubscribePayload = parseToolResponseContent(unsubscribeResponse);
-      assert.equal(unsubscribePayload?.success, true);
-      assert.equal(unsubscribePayload?.subscription?.id, subscriptionId);
+      assert.equal(unsubscribePayload?.preview, true);
+      assert.deepEqual(unsubscribePayload?.wouldDo?.params, { subscriptionId });
 
       const afterUnsubscribe = await requestJson(
         started.port,
         `/subscriptions?session=${sessionId}`,
       );
       assert.equal(afterUnsubscribe.status, 200);
-      assert.equal(afterUnsubscribe.body.count, 0);
-      assert.equal(Array.isArray(afterUnsubscribe.body.subscriptions), true);
+      assert.equal(afterUnsubscribe.body.count, 1, 'a preview must not unsubscribe');
+      assert.equal(afterUnsubscribe.body.subscriptions[0].id, subscriptionId);
     } finally {
       mcpClient.close();
       stream.close();
@@ -719,7 +723,6 @@ describe('stateset-mcp-events integration', () => {
 
     const mcpClient = createMcpClient(started.process);
     const sessionId = 'list-events-session';
-    let subscriptionId = null;
 
     try {
       const initResponse = await mcpClient.request('initialize', {
@@ -754,7 +757,7 @@ describe('stateset-mcp-events integration', () => {
       });
       const subscribePayload = parseToolResponseContent(subscribeResponse);
       assert.equal(subscribePayload?.success, true);
-      subscriptionId = subscribePayload?.subscription?.id;
+      const subscriptionId = subscribePayload?.subscription?.id;
       assert.ok(subscriptionId);
 
       const listResponse = await mcpClient.request('tools/call', {
@@ -770,21 +773,8 @@ describe('stateset-mcp-events integration', () => {
       assert.equal(listPayload.subscriptions[0].sessionId, sessionId);
       assert.deepEqual(listPayload.subscriptions[0].eventTypes, ['success', 'error']);
     } finally {
-      if (subscriptionId) {
-        const toolsResponse = await mcpClient.request('tools/list');
-        const unsubscribeTool = toolsResponse.result?.tools?.find((tool) =>
-          `${tool?.name || ''}`.endsWith('agentic_unsubscribe_events'),
-        );
-        if (unsubscribeTool) {
-          await mcpClient.request('tools/call', {
-            name: unsubscribeTool.name,
-            arguments: {
-              subscriptionId,
-            },
-          });
-        }
-      }
-
+      // No unsubscribe: it only previews on this gateway, and afterEach stops
+      // the gateway, which drops its in-memory subscriptions.
       mcpClient.close();
     }
   });
