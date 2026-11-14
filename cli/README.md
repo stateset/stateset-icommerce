@@ -531,6 +531,7 @@ stateset --apply --batch orders.txt --parallel 3
 | `stateset-doctor`          | Health check and diagnostics                                  |
 | `stateset-events`          | Event management and webhooks                                 |
 | `stateset-mcp-events`      | MCP event gateway (SSE + history + subscriptions)             |
+| `stateset-agent-report`    | Per-session report from the MCP replay log (read-only)        |
 | `stateset-sync`            | Verifiable Event Sync with sequencer                          |
 | `stateset-tutorial`        | Interactive tutorials and onboarding                          |
 | `stateset-completion`      | Shell completion scripts (bash/zsh/fish)                      |
