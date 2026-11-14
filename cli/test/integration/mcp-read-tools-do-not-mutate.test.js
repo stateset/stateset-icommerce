@@ -43,11 +43,13 @@
  * A refusal is fine -- inputs are synthetic. Only a state change is a
  * violation. Known violations live in
  * test/fixtures/read-tool-mutation-baseline.json, each with a `kind`:
- * `write` (changes data) or `init` (creates only empty structure on first use:
- * a table or index, a database with no rows, a directory). The list only
- * shrinks: a new violation fails, an `init` tool that changes more than
- * structure fails, and a listed tool that no longer violates, or is no longer
- * a read tool, fails.
+ * `write` (changes rows of the `tables` it lists) or `init` (creates only empty
+ * structure on first use: a table or index, a database with no rows, a
+ * directory). The list only shrinks: a new violation fails, an `init` tool
+ * that changes more than structure fails, a `write` tool that changes anything
+ * but rows of its listed tables fails, and a listed tool that no longer
+ * violates, a listed table it no longer writes, or a listed tool that is no
+ * longer a read tool, fails.
  *
  * A fake read tool that writes a customer row is registered for this process
  * only and swept first and last; the test fails unless both runs are caught,
@@ -103,6 +105,10 @@ const isInitializationOnly = (changes) =>
       (change.kind === 'sqlite' && change.change === 'added' && change.rows === 0) ||
       (change.kind === 'dir' && change.change === 'added'),
   );
+
+/** Changes a `write` baseline entry does not cover: anything but rows of its listed tables. */
+const outsideListedTables = (entry, changes) =>
+  changes.filter((change) => !(change.kind === 'rows' && entry.tables.includes(change.table)));
 
 /**
  * Claims to be a read; writes a customer. Registered for this process only
@@ -195,9 +201,9 @@ async function runSweep(sandbox) {
     await new Promise((resolve) => setTimeout(resolve, 300));
     const quiet = await probe.diff(null);
 
-    // Agentic runtime tools come before the domain tools because
-    // `agentic_replay_mutation` searches only the newest 200 replay events,
-    // and the seed writes must still be among them.
+    // Agentic runtime read tools first, then the domain read tools.
+    // First-use `init` work is attributed to whichever tool of a domain runs
+    // first, so reordering moves `init` baseline entries.
     const expectedReadTools = [
       ...agenticReadTools,
       ...ALL_DOMAIN_TOOLS.filter((tool) => tool.permission === 'read'),
@@ -346,6 +352,16 @@ if (sweep) {
       for (const entry of baseline.violations) {
         assert.ok(['write', 'init'].includes(entry.kind), `${entry.tool}: kind is write|init`);
         assert.ok(entry.reason?.trim(), `${entry.tool}: give a reason`);
+        if (entry.kind === 'write') {
+          assert.ok(
+            Array.isArray(entry.tables) &&
+              entry.tables.length > 0 &&
+              entry.tables.every((table) => typeof table === 'string' && table),
+            `${entry.tool}: a 'write' entry lists the tables it writes`,
+          );
+        } else {
+          assert.equal(entry.tables, undefined, `${entry.tool}: only 'write' entries list tables`);
+        }
       }
       assert.equal(known.size, baseline.violations.length, 'a tool is listed twice');
     });
@@ -366,11 +382,42 @@ if (sweep) {
         [],
         "these tools are baselined as first-use 'init' but now change more than empty structure",
       );
+      const strayWrites = realViolations.flatMap((v) => {
+        const entry = known.get(v.tool);
+        if (entry?.kind !== 'write') return [];
+        return outsideListedTables(entry, v.changes).map(
+          (change) => `${v.tool} [${v.variant}] -> ${describeChange(change, sandbox.root)}`,
+        );
+      });
+      assert.deepEqual(
+        strayWrites,
+        [],
+        "these tools are baselined as 'write' but changed state outside their listed tables",
+      );
     });
 
     it('keeps the baseline honest: a fixed tool must leave it', () => {
       const stale = [...known.keys()].filter((tool) => tools.has(tool) && !violating.has(tool));
       assert.deepEqual(stale, [], 'these no longer change state; remove them from the baseline');
+      const staleTables = baseline.violations
+        .filter((entry) => entry.kind === 'write' && violating.has(entry.tool))
+        .flatMap((entry) => {
+          const written = new Set(
+            realViolations
+              .filter((v) => v.tool === entry.tool)
+              .flatMap((v) => v.changes)
+              .filter((change) => change.kind === 'rows')
+              .map((change) => change.table),
+          );
+          return entry.tables
+            .filter((table) => !written.has(table))
+            .map((table) => `${entry.tool}: ${table}`);
+        });
+      assert.deepEqual(
+        staleTables,
+        [],
+        'these tables are no longer written; remove them from the baseline entry',
+      );
       // A tool reclassified as a write is fixed too, but is no longer swept.
       const notRead = only
         ? []
