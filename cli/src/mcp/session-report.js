@@ -27,6 +27,14 @@
  *     "[truncated]": `error_code` survives, `reason_codes` and the principal do
  *     not. Such refusals are grouped by `error_code` and counted in
  *     `denials.reasonCodesUnavailable`.
+ *   - Newer writers add a top-level `kernel` block to governed events, lifted
+ *     from the receipt BEFORE sanitisation: `{ commandId, correlationId,
+ *     receiptStatus, errorCode, reasonCodes, reasonCodesOmitted, principalId,
+ *     auditHash }`, each present only when the receipt had it, absent on
+ *     ungoverned calls. When present it is preferred to the receipt: its
+ *     `reasonCodes` are complete up to the writer's cap (`reasonCodesOmitted`
+ *     counts the rest), so a block without them means the receipt had none,
+ *     not that they were lost. Events without the block are read as before.
  *   - `charge` is `{ charged, rule: { tool, chainId, tokenSymbol, amount },
  *     mpp }`. `rule.amount` is the operator's pricing rule verbatim: a JSON
  *     number or a decimal string. The treasury ledger entry is not logged.
@@ -89,14 +97,29 @@ export function findKernelReceipt(event) {
   return null;
 }
 
+/**
+ * The top-level kernel block a newer writer attaches to a governed event, or
+ * null for an ungoverned event or an older log.
+ *
+ * @param {object} event
+ * @returns {object|null}
+ */
+export function findKernelBlock(event) {
+  return isPlainObject(event?.kernel) ? event.kernel : null;
+}
+
+const stringsOf = (value) =>
+  Array.isArray(value) ? value.map(nonEmptyString).filter(Boolean) : [];
+
 /** The structured error code an event carries, or null. Never parsed from prose. */
-function errorCodeOf(event, receipt) {
+function errorCodeOf(event, receipt, kernel) {
   const result = isPlainObject(event?.result) ? event.result : null;
   const contract = isPlainObject(result?.structuredContent) ? result.structuredContent : null;
   const toolResult = contract ? contract.result : result;
   const candidates = [
     isPlainObject(contract?.error) ? contract.error.code : null,
     receipt?.error_code,
+    kernel?.errorCode,
     isPlainObject(toolResult) ? toolResult.errorCode : null,
     isPlainObject(toolResult) ? toolResult.error_code : null,
     isPlainObject(toolResult) && isPlainObject(toolResult.error) ? toolResult.error.code : null,
@@ -110,25 +133,41 @@ function errorCodeOf(event, receipt) {
  *
  * @param {object} event
  * @returns {{ outcome: 'ok'|'denied'|'error'|'other', reasons?: string[],
- *             reasonCodesUnavailable?: boolean, code?: string }}
+ *             reasonCodesUnavailable?: boolean, reasonCodesOmitted?: number,
+ *             code?: string }}
  */
 export function classifyEvent(event) {
   const status = nonEmptyString(event?.status) || '(unknown)';
   const receipt = findKernelReceipt(event);
+  const kernel = findKernelBlock(event);
+  const receiptStatus = nonEmptyString(kernel?.receiptStatus) || receipt?.status || null;
 
-  // A kernel refusal: logged as `error` (or `preview`), named by the receipt.
-  if (receipt && receipt.status === 'rejected') {
-    const policy = receipt.policy;
+  // A kernel refusal: logged as `error` (or `preview`), named by the kernel
+  // block when the writer added one, else by the receipt.
+  if (receiptStatus === 'rejected') {
+    const policy = receipt?.policy;
+    const kernelCodes = stringsOf(kernel?.reasonCodes);
     const reasonCodes =
-      isPlainObject(policy) && Array.isArray(policy.reason_codes)
-        ? policy.reason_codes.map(nonEmptyString).filter(Boolean)
-        : [];
-    if (reasonCodes.length > 0) return { outcome: 'denied', reasons: reasonCodes };
+      kernelCodes.length > 0
+        ? kernelCodes
+        : isPlainObject(policy)
+          ? stringsOf(policy.reason_codes)
+          : [];
+    const omitted = kernel?.reasonCodesOmitted;
+    const extra = Number.isInteger(omitted) && omitted > 0 ? { reasonCodesOmitted: omitted } : {};
+    if (reasonCodes.length > 0) return { outcome: 'denied', reasons: reasonCodes, ...extra };
     return {
       outcome: 'denied',
-      reasons: [nonEmptyString(receipt.error_code) || 'kernel.rejected (no error_code)'],
-      // The sanitizer replaced the nested policy decision with "[truncated]".
-      reasonCodesUnavailable: !isPlainObject(policy),
+      reasons: [
+        nonEmptyString(kernel?.errorCode) ||
+          nonEmptyString(receipt?.error_code) ||
+          'kernel.rejected (no error_code)',
+      ],
+      // Unavailable only when the sanitizer replaced the receipt's policy
+      // decision with "[truncated]" and no kernel block was written. A block
+      // without reason codes means the receipt had none.
+      reasonCodesUnavailable: !kernel && !isPlainObject(policy),
+      ...extra,
     };
   }
 
@@ -138,8 +177,8 @@ export function classifyEvent(event) {
   }
 
   const contractFailed = event?.result?.structuredContent?.ok === false;
-  if (ERROR_STATUSES.has(status) || (receipt && receipt.status === 'failed') || contractFailed) {
-    return { outcome: 'error', code: errorCodeOf(event, receipt) || `(no code) ${status}` };
+  if (ERROR_STATUSES.has(status) || receiptStatus === 'failed' || contractFailed) {
+    return { outcome: 'error', code: errorCodeOf(event, receipt, kernel) || `(no code) ${status}` };
   }
   if (OK_STATUSES.has(status) || status === 'dry_run_blocked') return { outcome: 'ok' };
   return { outcome: 'other' };
@@ -158,7 +197,7 @@ function createAccumulator() {
     byTool: {},
     bySource: {},
     outcomes: { ok: 0, denied: 0, error: 0, other: 0 },
-    denials: { total: 0, byReason: {}, reasonCodesUnavailable: 0 },
+    denials: { total: 0, byReason: {}, reasonCodesUnavailable: 0, reasonCodesOmitted: 0 },
     errors: { total: 0, byCode: {} },
     charges: { count: 0, numericAmounts: 0, unparseableAmounts: 0, byToken: new Map() },
     principals: new Set(),
@@ -183,6 +222,7 @@ function accumulate(acc, event) {
     acc.denials.total += 1;
     for (const reason of verdict.reasons) bump(acc.denials.byReason, reason);
     if (verdict.reasonCodesUnavailable) acc.denials.reasonCodesUnavailable += 1;
+    if (verdict.reasonCodesOmitted) acc.denials.reasonCodesOmitted += verdict.reasonCodesOmitted;
   } else if (verdict.outcome === 'error') {
     acc.errors.total += 1;
     bump(acc.errors.byCode, verdict.code);
@@ -208,8 +248,10 @@ function accumulate(acc, event) {
     }
   }
 
-  const principalId = findKernelReceipt(event)?.economic_context?.principal?.id;
-  if (nonEmptyString(principalId)) acc.principals.add(principalId);
+  const principalId =
+    nonEmptyString(findKernelBlock(event)?.principalId) ||
+    nonEmptyString(findKernelReceipt(event)?.economic_context?.principal?.id);
+  if (principalId) acc.principals.add(principalId);
 
   const at = nonEmptyString(event.occurredAt);
   const ms = at ? Date.parse(at) : NaN;
@@ -243,6 +285,7 @@ function summarize(acc) {
       total: acc.denials.total,
       byReason: sortedCounts(acc.denials.byReason),
       reasonCodesUnavailable: acc.denials.reasonCodesUnavailable,
+      reasonCodesOmitted: acc.denials.reasonCodesOmitted,
     },
     errors: { total: acc.errors.total, byCode: sortedCounts(acc.errors.byCode) },
     charges: {
@@ -445,6 +488,11 @@ export function formatSessionReport(report, { logPath = null } = {}) {
       if (s.denials.reasonCodesUnavailable > 0) {
         out.push(
           `            (${s.denials.reasonCodesUnavailable} kernel refusal(s) logged without reason codes; grouped by error_code)`,
+        );
+      }
+      if (s.denials.reasonCodesOmitted > 0) {
+        out.push(
+          `            (${s.denials.reasonCodesOmitted} further reason code(s) omitted by the log writer's per-event cap)`,
         );
       }
     }

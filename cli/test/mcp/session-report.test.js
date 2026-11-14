@@ -261,8 +261,153 @@ const EVENTS = [
   }),
 ];
 
+// Events as written once tool-dispatch.js lifts a top-level `kernel` block out
+// of the UNCOMPACTED receipt (cli/src/mcp/replay-kernel-fields.js on
+// feat/replay-kernel-correlation): { commandId, correlationId, receiptStatus,
+// errorCode, reasonCodes, reasonCodesOmitted, principalId, auditHash }, each
+// present only when the receipt had it, absent on ungoverned calls. The
+// receipt inside `result` is still sanitised exactly as before, so on the MCP
+// path its `policy` and `economic_context` remain "[truncated]".
+const truncatedGoverned = (receiptOverrides, contract) =>
+  mcpResult({
+    preview: false,
+    ...contract,
+    result: {
+      success: receiptOverrides.status === 'succeeded',
+      kernel: true,
+      receipt: receipt({
+        economic_context: '[truncated]',
+        policy: '[truncated]',
+        ...receiptOverrides,
+      }),
+      result: null,
+    },
+  });
+
+const kernelBlock = (overrides) => ({
+  commandId: `cmd-${seq + 1}`,
+  correlationId: '6a0c3c53-3f4e-4f43-9c51-6d2a1a7c0b11',
+  auditHash: '4c73427182458cf83dfe40aec418483de2c204f25b329539d832d17e1e6e3ee5',
+  principalId: 'agent:explore',
+  ...overrides,
+});
+
+const APPROVAL_DENIED = 'policy denied command: policy.approval_required';
+
+const KERNEL_EVENTS = [
+  // applied: the principal survives only in the kernel block
+  base({
+    tool: 'create_customer',
+    status: 'success',
+    sessionId: 'sess-K',
+    elapsedMs: 12,
+    kernel: kernelBlock({ receiptStatus: 'succeeded' }),
+    result: truncatedGoverned({ status: 'succeeded' }, { ok: true }),
+  }),
+  // denied with reason codes; the receipt's policy is truncated (MCP path)
+  base({
+    tool: 'create_refund',
+    status: 'error',
+    sessionId: 'sess-K',
+    elapsedMs: 8,
+    kernel: kernelBlock({
+      receiptStatus: 'rejected',
+      errorCode: 'kernel.policy_denied',
+      reasonCodes: ['policy.approval_required', 'policy.max_amount_exceeded'],
+    }),
+    result: {
+      ...truncatedGoverned(
+        { status: 'rejected', error_code: 'kernel.policy_denied', error_message: APPROVAL_DENIED },
+        {
+          ok: false,
+          error: { code: 'kernel.policy_denied', message: APPROVAL_DENIED, retryable: false },
+        },
+      ),
+      isError: true,
+    },
+  }),
+  // denied on the executeTool path: block AND full receipt -- counted once
+  base({
+    tool: 'create_refund',
+    status: 'error',
+    sessionId: 'sess-K',
+    elapsedMs: 6,
+    source: 'embedded_agent_toolkit',
+    error: APPROVAL_DENIED,
+    kernel: kernelBlock({
+      receiptStatus: 'rejected',
+      errorCode: 'kernel.policy_denied',
+      reasonCodes: ['policy.approval_required'],
+    }),
+    result: {
+      success: false,
+      kernel: true,
+      receipt: receipt({
+        status: 'rejected',
+        error_code: 'kernel.policy_denied',
+        error_message: APPROVAL_DENIED,
+        economic_context: { principal: { id: 'agent:explore', kind: 'agent' } },
+        policy: { allowed: false, reason_codes: ['policy.approval_required'] },
+      }),
+      result: null,
+    },
+  }),
+  // a domain rejection: the receipt had no reason codes, so the block has none
+  base({
+    tool: 'ship_order',
+    status: 'error',
+    sessionId: 'sess-K',
+    elapsedMs: 4,
+    kernel: kernelBlock({
+      receiptStatus: 'rejected',
+      errorCode: 'commerce.invalid_order_status_transition',
+    }),
+    result: truncatedGoverned(
+      { status: 'rejected', error_code: 'commerce.invalid_order_status_transition' },
+      { ok: false, error: { code: 'commerce.invalid_order_status_transition', message: 'x' } },
+    ),
+  }),
+  // a failed command whose result did not survive: only the block names it
+  base({
+    tool: 'capture_payment',
+    status: 'error',
+    sessionId: 'sess-K',
+    elapsedMs: 3,
+    kernel: kernelBlock({ receiptStatus: 'failed', errorCode: 'kernel.storage' }),
+    result: null,
+  }),
+  // the writer keeps 16 reason codes and counts the rest
+  base({
+    tool: 'create_payment',
+    status: 'error',
+    sessionId: 'sess-cap',
+    elapsedMs: 9,
+    kernel: kernelBlock({
+      receiptStatus: 'rejected',
+      errorCode: 'kernel.policy_denied',
+      reasonCodes: Array.from(
+        { length: 16 },
+        (_, i) => `policy.code_${String(i).padStart(2, '0')}`,
+      ),
+      reasonCodesOmitted: 3,
+    }),
+    result: truncatedGoverned(
+      { status: 'rejected', error_code: 'kernel.policy_denied' },
+      { ok: false, error: { code: 'kernel.policy_denied', message: 'denied' } },
+    ),
+  }),
+];
+
+// One session spanning the upgrade: an old-format refusal (reason codes
+// truncated away) and a new-format refusal carrying a kernel block.
+const MIXED_SESSION = [
+  { ...EVENTS[4], eventId: 'evt-mixed-old', sessionId: 'sess-M' },
+  { ...KERNEL_EVENTS[1], eventId: 'evt-mixed-new', sessionId: 'sess-M' },
+];
+
 let dir;
 let logPath;
+let mixedLogPath;
 
 before(() => {
   dir = mkdtempSync(path.join(os.tmpdir(), 'session-report-'));
@@ -271,6 +416,11 @@ before(() => {
   // A torn write and a blank line in the middle of the log.
   lines.splice(3, 0, '{"eventId":"evt-torn","tool":"list_cust', '');
   writeFileSync(logPath, `${lines.join('\n')}\n`);
+  mixedLogPath = path.join(dir, 'mixed.jsonl');
+  writeFileSync(
+    mixedLogPath,
+    `${[...EVENTS, ...KERNEL_EVENTS, ...MIXED_SESSION].map((e) => JSON.stringify(e)).join('\n')}\n`,
+  );
 });
 
 after(() => {
@@ -481,6 +631,102 @@ describe('classifyEvent / findKernelReceipt', () => {
   });
 });
 
+describe('the top-level kernel block', () => {
+  const report = buildSessionReport(KERNEL_EVENTS);
+  const k = report.sessions['sess-K'];
+
+  it('keys a refusal by the block reason codes although the receipt policy was truncated', () => {
+    assert.deepEqual(k.outcomes, { ok: 1, denied: 3, error: 1, other: 0 });
+    assert.equal(k.denials.total, 3);
+    assert.deepEqual(k.denials.byReason, {
+      // the MCP-path denial (2 codes) and the executeTool denial, counted once
+      'policy.approval_required': 2,
+      'policy.max_amount_exceeded': 1,
+      // no reason codes on the receipt: the block's errorCode
+      'commerce.invalid_order_status_transition': 1,
+    });
+    assert.equal(k.denials.reasonCodesUnavailable, 0);
+    assert.equal(report.totals.denials.reasonCodesUnavailable, 0);
+  });
+
+  it('prefers the block over the receipt and falls back to its errorCode', () => {
+    assert.deepEqual(classifyEvent(KERNEL_EVENTS[1]), {
+      outcome: 'denied',
+      reasons: ['policy.approval_required', 'policy.max_amount_exceeded'],
+    });
+    assert.deepEqual(classifyEvent(KERNEL_EVENTS[3]), {
+      outcome: 'denied',
+      reasons: ['commerce.invalid_order_status_transition'],
+      reasonCodesUnavailable: false,
+    });
+  });
+
+  it('names the error of a failed command from the block when the result is gone', () => {
+    assert.deepEqual(classifyEvent(KERNEL_EVENTS[4]), { outcome: 'error', code: 'kernel.storage' });
+    assert.deepEqual(k.errors, { total: 1, byCode: { 'kernel.storage': 1 } });
+  });
+
+  it('takes the principal from the block, also on an applied command', () => {
+    assert.deepEqual(k.principals, ['agent:explore']);
+    assert.deepEqual(buildSessionReport([KERNEL_EVENTS[0]]).totals.principals, ['agent:explore']);
+    // without the block the truncated receipt names nobody
+    const { kernel: _kernel, ...withoutBlock } = KERNEL_EVENTS[0];
+    assert.deepEqual(buildSessionReport([withoutBlock]).totals.principals, []);
+  });
+
+  it('counts the reason codes the writer omitted', () => {
+    const cap = report.sessions['sess-cap'];
+    assert.equal(cap.denials.total, 1);
+    assert.equal(Object.keys(cap.denials.byReason).length, 16);
+    assert.equal(cap.denials.reasonCodesOmitted, 3);
+    assert.equal(k.denials.reasonCodesOmitted, 0);
+    assert.equal(report.totals.denials.reasonCodesOmitted, 3);
+    assert.deepEqual(classifyEvent(KERNEL_EVENTS[5]).reasonCodesOmitted, 3);
+  });
+
+  it('survives a malformed block', () => {
+    assert.deepEqual(
+      classifyEvent({
+        status: 'error',
+        kernel: { receiptStatus: 'rejected', errorCode: 'kernel.policy_denied', reasonCodes: 'x' },
+      }),
+      { outcome: 'denied', reasons: ['kernel.policy_denied'], reasonCodesUnavailable: false },
+    );
+    assert.deepEqual(classifyEvent({ ...EVENTS[4], kernel: 'x' }), classifyEvent(EVENTS[4]));
+    assert.deepEqual(classifyEvent({ ...EVENTS[0], kernel: null }), classifyEvent(EVENTS[0]));
+  });
+
+  it('reports old-format events exactly as before in a mixed log', () => {
+    const old = buildSessionReport(EVENTS);
+    const mixed = buildSessionReport([...EVENTS, ...KERNEL_EVENTS, ...MIXED_SESSION]);
+    for (const key of ['sess-A', 'sess-B', NO_SESSION]) {
+      assert.deepEqual(mixed.sessions[key], old.sessions[key], key);
+    }
+    assert.equal(old.sessions['sess-A'].denials.reasonCodesUnavailable, 1);
+    assert.equal(old.sessions['sess-A'].denials.reasonCodesOmitted, 0);
+  });
+
+  it('counts reasonCodesUnavailable only for the old-format refusal of a mixed session', () => {
+    const mixed = buildSessionReport([...EVENTS, ...KERNEL_EVENTS, ...MIXED_SESSION]);
+    const m = mixed.sessions['sess-M'];
+    assert.equal(m.denials.total, 2);
+    assert.deepEqual(m.denials.byReason, {
+      'kernel.policy_denied': 1,
+      'policy.approval_required': 1,
+      'policy.max_amount_exceeded': 1,
+    });
+    assert.equal(m.denials.reasonCodesUnavailable, 1);
+    // sess-A's old refusal plus sess-M's
+    assert.equal(mixed.totals.denials.reasonCodesUnavailable, 2);
+  });
+
+  it('prints the omitted-code count and no truncation caveat for new-format refusals', () => {
+    const text = formatSessionReport(report);
+    assert.doesNotMatch(text, /logged without reason codes/);
+    assert.match(text, /3 further reason code\(s\) omitted/);
+  });
+});
+
 describe('streaming reader', () => {
   it('yields events line by line and marks the line that is not JSON', async () => {
     const seen = [];
@@ -551,6 +797,21 @@ describe('stateset-agent-report bin', () => {
     assert.ok(report.sessions[NO_SESSION]);
     assert.ok(readFileSync(logPath).equals(before.bytes));
     assert.equal(statSync(logPath).mtimeMs, before.mtimeMs);
+  });
+
+  it('groups kernel-block refusals by reason code in a mixed log', async () => {
+    const { stdout, exitCode } = await run([
+      '--log',
+      mixedLogPath,
+      '--session',
+      'sess-K',
+      '--json',
+    ]);
+    assert.equal(exitCode, 0);
+    const k = JSON.parse(stdout).sessions['sess-K'];
+    assert.equal(k.denials.byReason['policy.approval_required'], 2);
+    assert.equal(k.denials.reasonCodesUnavailable, 0);
+    assert.deepEqual(k.principals, ['agent:explore']);
   });
 
   it('prints a table by default and honours --session', async () => {
