@@ -1,0 +1,31 @@
+{
+  "name": "@stateset/icp-conformance",
+  "version": "1.0.0",
+  "description": "Black-box conformance suite for the Intelligent Commerce Protocol (ICP-1.0): test vectors, profiles, a JSON-over-stdio adapter contract and a zero-dependency runner.",
+  "type": "module",
+  "private": true,
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stateset/stateset-icommerce.git",
+    "directory": "icp-conformance"
+  },
+  "bin": {
+    "icp-conformance": "runner/run.mjs"
+  },
+  "files": [
+    "runner/",
+    "vectors/",
+    "profiles/",
+    "iut-adapters/",
+    "README.md",
+    "CONFORMANCE-REPORT.md"
+  ],
+  "engines": {
+    "node": ">=20.20.0"
+  },
+  "scripts": {
+    "conformance": "node runner/run.mjs --fail-on-skip",
+    "test": "node --test test/runner.test.mjs"
+  }
+}
