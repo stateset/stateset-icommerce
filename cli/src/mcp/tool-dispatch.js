@@ -23,6 +23,11 @@ import { attachCommerceExecutionEvidence, replayEventHash } from './audit-envelo
 import { attachPaymentMetadataToResponse } from './mpp-payment.js';
 import { buildDeterministicMutationManifest } from './mutation-manifest.js';
 import { normalizeToolName } from './policy-helpers.js';
+import {
+  bindKernelToResultHash,
+  extractKernelReplayFields,
+  resolveKernelCorrelationId,
+} from './replay-kernel-fields.js';
 import { compactReplayValue } from './replay-sanitizer.js';
 import { isMutationPermission } from '../kernel-boundary.js';
 import {
@@ -142,6 +147,9 @@ export function createToolDispatch({
                 payload?.permission || permission,
                 status,
               );
+        // A governed call's kernel decision, lifted from the uncompacted
+        // result and bound into resultHash so the event signature covers it.
+        const kernel = payload?.kernel || null;
         const event = {
           eventId: randomUUID(),
           tool: name,
@@ -154,11 +162,12 @@ export function createToolDispatch({
           params: compactReplayValue(payload?.params || args || {}),
           paramsHash: replayEventHash(payload?.params || args || {}),
           result: payload?.result,
-          resultHash: replayEventHash(payload?.result || {}),
+          resultHash: bindKernelToResultHash(replayEventHash(payload?.result || {}), kernel),
           policy: compactReplayValue(payload?.policy || null),
           permission: compactReplayValue(payload?.permission || null),
           charge: compactReplayValue(payload?.charge || null),
           error: payload?.error || null,
+          ...(kernel ? { kernel } : {}),
           notes: compactReplayValue({
             ...(payload?.notes || {}),
             mutationManifest,
@@ -443,6 +452,7 @@ export function createToolDispatch({
           permission,
           charge,
           result: compactReplayValue(result),
+          kernel: extractKernelReplayFields(result),
           policy: {
             allowed: policy.allowed,
             domain: policy.domain,
@@ -521,7 +531,9 @@ export function createToolDispatch({
       extra: {
         ...(options.extra || {}),
         idempotencyKey: options.idempotencyKey,
-        correlationId: options.correlationId,
+        // An explicit correlation id is passed as given; by default a governed
+        // command is correlated with this call's request id.
+        correlationId: options.correlationId ?? resolveKernelCorrelationId(requestId),
         causationId: options.causationId,
         expectedVersion: options.expectedVersion,
         deadline: options.deadline,
@@ -534,6 +546,8 @@ export function createToolDispatch({
       },
     });
 
+    const rawResult = outcome[RAW_TOOL_RESULT];
+    const kernel = extractKernelReplayFields(rawResult);
     await addAgenticReplayEvent({
       eventId: randomUUID(),
       tool: normalizedToolName,
@@ -547,11 +561,15 @@ export function createToolDispatch({
       params: compactReplayValue(outcome.params || params || {}),
       paramsHash: outcome.paramsHash || replayEventHash(outcome.params || params || {}),
       result: compactReplayValue(outcome.result || null),
-      resultHash: outcome.resultHash || replayEventHash(outcome.result || null),
+      resultHash: bindKernelToResultHash(
+        outcome.resultHash || replayEventHash(outcome.result || null),
+        kernel,
+      ),
       policy: compactReplayValue(outcome.policy || null),
       permission: compactReplayValue(outcome.permission || null),
       charge: compactReplayValue(outcome.charge || null),
       error: outcome.error || null,
+      ...(kernel ? { kernel } : {}),
       notes: compactReplayValue({
         directExecution: true,
         dryRun,
@@ -564,7 +582,6 @@ export function createToolDispatch({
     // The tool result contract (./tool-result-contract.js) decides `ok`; the
     // legacy `success` flag is kept and now also turns false when the tool's
     // own result says it failed (e.g. a rejected kernel receipt).
-    const rawResult = outcome[RAW_TOOL_RESULT];
     const contract = normalizeStepOutcome(outcome, rawResult);
     const { [RAW_TOOL_RESULT]: _raw, ...record } = outcome;
     const statusSucceeded =
@@ -614,6 +631,9 @@ export function createToolDispatch({
               requestId: extra?.requestId,
               sessionId: extra?.sessionId,
               traceId: extra?.traceId,
+              // Joins the kernel receipt (economic_context.correlation_id) to
+              // this call's replay event (kernel.correlationId).
+              correlationId: extra?.correlationId ?? resolveKernelCorrelationId(extra?.requestId),
               requireGoverned: allowApply && isMutationPermission(toolDef.permission),
             })
           : null;
