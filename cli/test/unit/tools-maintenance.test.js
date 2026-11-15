@@ -87,7 +87,10 @@ describe('maintenance tools registration', () => {
     for (const tool of maintenanceTools) {
       assert.equal(tool.policyDomain, 'maintenance', `${tool.name} has a policy domain`);
       assert.ok(tool.description.length > 20, `${tool.name} has a real description`);
-      assert.ok(['read', 'write'].includes(tool.permission), `${tool.name} declares a permission`);
+      assert.ok(
+        ['read', 'write', 'admin'].includes(tool.permission),
+        `${tool.name} declares a permission`,
+      );
       assert.equal(typeof tool.handler, 'function');
     }
   });
@@ -96,9 +99,9 @@ describe('maintenance tools registration', () => {
     for (const name of ['backup_database', 'restore_database', 'import_full_data']) {
       assert.equal(toolByName(name).permission, 'write', `${name} must be a write`);
     }
-    for (const name of ['export_full_data', 'list_portable_domains']) {
-      assert.equal(toolByName(name).permission, 'read', `${name} must be a read`);
-    }
+    // Writes every customer's records to a caller-chosen path.
+    assert.equal(toolByName('export_full_data').permission, 'admin');
+    assert.equal(toolByName('list_portable_domains').permission, 'read');
   });
 });
 
@@ -118,7 +121,8 @@ describe('apply gate', () => {
     });
   }
 
-  test('export_data is a read and needs no --apply', async () => {
+  // Its admin permission gates it at dispatch; the handler has no guard.
+  test('export_full_data handler exports without its own --apply check', async () => {
     const { commerce, calls } = makeCommerce();
     const result = await toolByName('export_full_data').handler({
       commerce,

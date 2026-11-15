@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 1022,
+  "totalTools": 984,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 1004
+      "count": 966
     },
     {
       "name": "stateset-scaffold",
@@ -43,11 +43,11 @@
     },
     {
       "name": "accounts_payable",
-      "count": 22
+      "count": 11
     },
     {
       "name": "accounts_receivable",
-      "count": 15
+      "count": 8
     },
     {
       "name": "activity_logs",
@@ -147,7 +147,7 @@
     },
     {
       "name": "explain",
-      "count": 3
+      "count": 2
     },
     {
       "name": "fixed_assets",
@@ -163,7 +163,7 @@
     },
     {
       "name": "general_ledger",
-      "count": 26
+      "count": 17
     },
     {
       "name": "gift_cards",
@@ -207,7 +207,7 @@
     },
     {
       "name": "manufacturing",
-      "count": 12
+      "count": 11
     },
     {
       "name": "orders",
@@ -267,7 +267,7 @@
     },
     {
       "name": "receiving",
-      "count": 16
+      "count": 8
     },
     {
       "name": "returns",
@@ -347,7 +347,7 @@
     },
     {
       "name": "transfer_orders",
-      "count": 8
+      "count": 7
     },
     {
       "name": "treasury",
@@ -389,26 +389,26 @@
   "permissions": [
     {
       "name": "admin",
-      "count": 102
+      "count": 48
     },
     {
       "name": "delete",
-      "count": 20
+      "count": 21
     },
     {
       "name": "read",
-      "count": 497
+      "count": 484
     },
     {
       "name": "write",
-      "count": 403
+      "count": 431
     }
   ],
   "permissionCounts": {
-    "admin": 102,
-    "delete": 20,
-    "read": 497,
-    "write": 403
+    "admin": 48,
+    "delete": 21,
+    "read": 484,
+    "write": 431
   },
   "tools": [
     {
@@ -1786,7 +1786,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__adjust_credit_limit",
       "policyDomain": "credit",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "adjust_inventory",
@@ -1849,7 +1849,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__agent_collect_rfq_responses",
       "policyDomain": "agent_runtime",
-      "permission": "read"
+      "permission": "write"
     },
     {
       "name": "agent_create_escrow_deal",
@@ -2362,7 +2362,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__agentic_replay_mutation",
       "policyDomain": "agentic",
-      "permission": "read"
+      "permission": "write"
     },
     {
       "name": "agentic_runtime_contract",
@@ -2437,31 +2437,13 @@
       "permission": "write"
     },
     {
-      "name": "apply_credit_memo",
-      "description": "Apply customer credit to an issued invoice",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__apply_credit_memo",
-      "policyDomain": "accounts_receivable",
-      "permission": "admin"
-    },
-    {
-      "name": "apply_payment_to_invoices",
-      "description": "Apply a completed customer payment to issued invoices",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__apply_payment_to_invoices",
-      "policyDomain": "accounts_receivable",
-      "permission": "admin"
-    },
-    {
       "name": "apply_prepayment",
       "description": "Apply a prepayment against a bill or payment obligation.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__apply_prepayment",
       "policyDomain": "prepayments",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "apply_store_credit",
@@ -2479,25 +2461,16 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__apply_vendor_credit",
       "policyDomain": "vendor_credits",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "approve_bill",
-      "description": "Approve a bill after three-way matching; a variance requires an explicit override reason.",
+      "description": "Approve a bill.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__approve_bill",
       "policyDomain": "accounts_payable",
-      "permission": "admin"
-    },
-    {
-      "name": "approve_bill_payment_run",
-      "description": "Approve a supplier payment run",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__approve_bill_payment_run",
-      "policyDomain": "accounts_payable",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "approve_purchase_order",
@@ -2578,15 +2551,6 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__assign_pick_task",
       "policyDomain": "fulfillment",
-      "permission": "write"
-    },
-    {
-      "name": "assign_put_away",
-      "description": "Assign a put-away task to a warehouse worker.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__assign_put_away",
-      "policyDomain": "receiving",
       "permission": "write"
     },
     {
@@ -2758,16 +2722,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__cancel_bill",
       "policyDomain": "accounts_payable",
-      "permission": "admin"
-    },
-    {
-      "name": "cancel_bill_payment_run",
-      "description": "Cancel a supplier payment run",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__cancel_bill_payment_run",
-      "policyDomain": "accounts_payable",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "cancel_cart",
@@ -2851,15 +2806,6 @@
       "permission": "write"
     },
     {
-      "name": "cancel_put_away",
-      "description": "Cancel a put-away task.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__cancel_put_away",
-      "policyDomain": "receiving",
-      "permission": "write"
-    },
-    {
       "name": "cancel_receipt",
       "description": "Cancel a receipt.",
       "serverName": "stateset-commerce",
@@ -2911,7 +2857,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__cancel_vendor_credit",
       "policyDomain": "vendor_credits",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "cancel_vendor_return",
@@ -2942,7 +2888,7 @@
     },
     {
       "name": "capture_stock_snapshot",
-      "description": "Capture on-hand and available quantities from the stored stock ledger.",
+      "description": "Capture a stock snapshot; totals are computed from the supplied lines.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__capture_stock_snapshot",
@@ -3175,22 +3121,13 @@
       "permission": "delete"
     },
     {
-      "name": "close_gl_period",
-      "description": "Close an accounting period.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__close_gl_period",
-      "policyDomain": "general_ledger",
-      "permission": "admin"
-    },
-    {
       "name": "close_month",
       "description": "Close the month: post scheduled depreciation, recognize revenue through period end, revalue foreign-currency balances, then run the period close. Use dryRun to preview per-step counts and amounts without writing.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__close_month",
       "policyDomain": "general_ledger",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "close_ncr",
@@ -3283,15 +3220,6 @@
       "permission": "write"
     },
     {
-      "name": "complete_put_away",
-      "description": "Complete a put-away task and move its received stock to the destination.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__complete_put_away",
-      "policyDomain": "receiving",
-      "permission": "write"
-    },
-    {
       "name": "complete_receiving",
       "description": "Complete receiving against a receipt.",
       "serverName": "stateset-commerce",
@@ -3307,15 +3235,6 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__complete_return",
       "policyDomain": "returns",
-      "permission": "write"
-    },
-    {
-      "name": "complete_transfer_order_receiving",
-      "description": "Close transfer receiving and record outstanding in-transit stock as a shortage. This finalizes the transfer.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__complete_transfer_order_receiving",
-      "policyDomain": "transfer_orders",
       "permission": "write"
     },
     {
@@ -3361,15 +3280,6 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__configure_woocommerce_webhooks",
       "policyDomain": "import",
-      "permission": "write"
-    },
-    {
-      "name": "configure_work_order_stock",
-      "description": "Set the component source and finished-goods destination of a planned work order, such as one created before stock routing was required.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__configure_work_order_stock",
-      "policyDomain": "manufacturing",
       "permission": "write"
     },
     {
@@ -3499,24 +3409,6 @@
       "permission": "write"
     },
     {
-      "name": "create_bill_payment",
-      "description": "Pay approved supplier bills with explicit allocations",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__create_bill_payment",
-      "policyDomain": "accounts_payable",
-      "permission": "admin"
-    },
-    {
-      "name": "create_bill_payment_run",
-      "description": "Prepare a single-currency supplier payment run",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__create_bill_payment_run",
-      "policyDomain": "accounts_payable",
-      "permission": "admin"
-    },
-    {
       "name": "create_bom",
       "description": "Create a new Bill of Materials for a product. Defines what components/ingredients are needed.",
       "serverName": "stateset-commerce",
@@ -3577,7 +3469,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__create_credit_account",
       "policyDomain": "credit",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "create_credit_memo",
@@ -3586,7 +3478,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__create_credit_memo",
       "policyDomain": "accounts_receivable",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "create_custom_object",
@@ -3617,7 +3509,7 @@
     },
     {
       "name": "create_cycle_count",
-      "description": "Create a draft cycle count for a warehouse. Expected quantities are read from stored inventory.",
+      "description": "Create a draft cycle count for a warehouse with the SKUs to count and the quantity the system expects for each.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__create_cycle_count",
@@ -3742,15 +3634,6 @@
       "permission": "write"
     },
     {
-      "name": "create_journal_entry",
-      "description": "Create a balanced journal draft or post it atomically with exact decimal lines.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__create_journal_entry",
-      "policyDomain": "general_ledger",
-      "permission": "admin"
-    },
-    {
       "name": "create_location",
       "description": "Create a warehouse location.",
       "serverName": "stateset-commerce",
@@ -3829,7 +3712,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__create_payment_obligation",
       "policyDomain": "payment-obligations",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "create_payment_settlement_batch",
@@ -3847,7 +3730,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__create_prepayment",
       "policyDomain": "prepayments",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "create_price_level",
@@ -3901,15 +3784,6 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__create_purchase_order",
       "policyDomain": "suppliers",
-      "permission": "write"
-    },
-    {
-      "name": "create_put_away",
-      "description": "Create a put-away task from a received line into its destination location.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__create_put_away",
-      "policyDomain": "receiving",
       "permission": "write"
     },
     {
@@ -4171,7 +4045,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__create_vendor_credit",
       "policyDomain": "vendor_credits",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "create_vendor_return",
@@ -4226,15 +4100,6 @@
       "qualifiedName": "mcp__stateset-commerce__create_work_order",
       "policyDomain": "manufacturing",
       "permission": "write"
-    },
-    {
-      "name": "create_write_off",
-      "description": "Record a partial or full bad-debt write-off",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__create_write_off",
-      "policyDomain": "accounts_receivable",
-      "permission": "admin"
     },
     {
       "name": "deactivate_promotion",
@@ -4549,16 +4414,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__dispose_fixed_asset",
       "policyDomain": "fixed_assets",
-      "permission": "admin"
-    },
-    {
-      "name": "dispute_bill",
-      "description": "Dispute bill; resolution restores its prior approval state and current payment balance.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__dispute_bill",
-      "policyDomain": "accounts_payable",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "earn_points",
@@ -4714,15 +4570,6 @@
       "permission": "read"
     },
     {
-      "name": "explain_state_machine",
-      "description": "Ask what a record can do next BEFORE trying to change its status. With no arguments, lists every status lifecycle the engine enforces (order, payment, refund, return, shipment, cart, subscription, purchase_order, ...). With `machine`, returns its full transition graph. With `machine` + `from`, the statuses reachable next. With `machine` + `from` + `to`, whether that move is allowed and, if not, the shortest route. Generated from the engine rules; read-only and touches no data. A status reached only by an operation (e.g. shipping an order) still needs that operation, not a plain status update.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__explain_state_machine",
-      "policyDomain": "explain",
-      "permission": "read"
-    },
-    {
       "name": "export_agent_catalog",
       "description": "Export the agent catalog in JSON or OpenAPI format. Useful for sharing the catalog with other systems or generating API documentation.",
       "serverName": "stateset-commerce",
@@ -4765,7 +4612,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__export_full_data",
       "policyDomain": "maintenance",
-      "permission": "read"
+      "permission": "admin"
     },
     {
       "name": "export_gdpr_data",
@@ -5025,24 +4872,6 @@
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_bill",
-      "policyDomain": "accounts_payable",
-      "permission": "read"
-    },
-    {
-      "name": "get_bill_payment",
-      "description": "Get a supplier bill payment",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__get_bill_payment",
-      "policyDomain": "accounts_payable",
-      "permission": "read"
-    },
-    {
-      "name": "get_bill_payment_run",
-      "description": "Get a supplier payment run",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__get_bill_payment_run",
       "policyDomain": "accounts_payable",
       "permission": "read"
     },
@@ -5331,24 +5160,6 @@
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_gl_account_balance",
-      "policyDomain": "general_ledger",
-      "permission": "read"
-    },
-    {
-      "name": "get_gl_period",
-      "description": "Get an accounting period.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__get_gl_period",
-      "policyDomain": "general_ledger",
-      "permission": "read"
-    },
-    {
-      "name": "get_gl_posting_config",
-      "description": "Read the active automatic ledger posting settings.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__get_gl_posting_config",
       "policyDomain": "general_ledger",
       "permission": "read"
     },
@@ -5728,15 +5539,6 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_purgatory_order",
       "policyDomain": "purgatory",
-      "permission": "read"
-    },
-    {
-      "name": "get_put_away",
-      "description": "Get one put-away task.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__get_put_away",
-      "policyDomain": "receiving",
       "permission": "read"
     },
     {
@@ -6295,7 +6097,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__initialize_chart_of_accounts",
       "policyDomain": "general_ledger",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "inspect_batch",
@@ -6322,7 +6124,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__link_payment_obligation_bill",
       "policyDomain": "payment-obligations",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "list_active_lots",
@@ -6412,15 +6214,6 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_backorders_for_sku",
       "policyDomain": "backorders",
-      "permission": "read"
-    },
-    {
-      "name": "list_bill_payment_runs",
-      "description": "List supplier payment runs",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__list_bill_payment_runs",
-      "policyDomain": "accounts_payable",
       "permission": "read"
     },
     {
@@ -6766,15 +6559,6 @@
       "permission": "read"
     },
     {
-      "name": "list_invoice_payment_applications",
-      "description": "List allocations for a customer payment",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__list_invoice_payment_applications",
-      "policyDomain": "accounts_receivable",
-      "permission": "read"
-    },
-    {
       "name": "list_invoices",
       "description": "List all invoices.",
       "serverName": "stateset-commerce",
@@ -7096,15 +6880,6 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_purgatory_orders",
       "policyDomain": "purgatory",
-      "permission": "read"
-    },
-    {
-      "name": "list_put_aways",
-      "description": "List put-away tasks by receipt, warehouse, status or assignee.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__list_put_aways",
-      "policyDomain": "receiving",
       "permission": "read"
     },
     {
@@ -7477,15 +7252,6 @@
       "permission": "read"
     },
     {
-      "name": "list_write_offs",
-      "description": "List bad-debt write-offs and their reversals",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__list_write_offs",
-      "policyDomain": "accounts_receivable",
-      "permission": "read"
-    },
-    {
       "name": "load_policy_file",
       "description": "Load a YAML or JSON policy file into the engine. The file must define a valid policy set with domain, rules, and actions.",
       "serverName": "stateset-commerce",
@@ -7493,15 +7259,6 @@
       "qualifiedName": "mcp__stateset-commerce__load_policy_file",
       "policyDomain": "policies",
       "permission": "write"
-    },
-    {
-      "name": "lock_gl_period",
-      "description": "Lock an accounting period.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__lock_gl_period",
-      "policyDomain": "general_ledger",
-      "permission": "admin"
     },
     {
       "name": "map_purgatory_line",
@@ -7591,7 +7348,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__open_gl_period",
       "policyDomain": "general_ledger",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "pair_print_station",
@@ -7627,7 +7384,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__place_asset_in_service",
       "policyDomain": "fixed_assets",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "plan_partial_shipment",
@@ -7645,7 +7402,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__post_depreciation",
       "policyDomain": "fixed_assets",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "post_journal_entry",
@@ -7654,7 +7411,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__post_journal_entry",
       "policyDomain": "general_ledger",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "post_purgatory_order",
@@ -7666,17 +7423,8 @@
       "permission": "write"
     },
     {
-      "name": "process_bill_payment_run",
-      "description": "Process a supplier payment run",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__process_bill_payment_run",
-      "policyDomain": "accounts_payable",
-      "permission": "admin"
-    },
-    {
       "name": "process_vendor_return",
-      "description": "Remove returned stock and create one linked vendor credit atomically.",
+      "description": "Process a vendor return, optionally generating a vendor credit.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__process_vendor_return",
@@ -7753,7 +7501,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__reactivate_credit_account",
       "policyDomain": "credit",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "recalculate_cart",
@@ -7775,20 +7523,11 @@
     },
     {
       "name": "receive_purchase_order",
-      "description": "Receive exact quantities against sent PO lines into an explicit warehouse location. PO quantities, receipt documents, and inventory stock are posted atomically.",
+      "description": "Record exact received quantities against sent PO lines. This updates the purchase order only; inventory stock must be posted separately through the inventory or warehouse workflow.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__receive_purchase_order",
       "policyDomain": "suppliers",
-      "permission": "write"
-    },
-    {
-      "name": "receive_receipt_items",
-      "description": "Receive accepted goods into an explicit receiving location and record rejected quantities, lots and serials.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__receive_receipt_items",
-      "policyDomain": "receiving",
       "permission": "write"
     },
     {
@@ -7801,22 +7540,13 @@
       "permission": "write"
     },
     {
-      "name": "reclose_gl_period",
-      "description": "Reclose an accounting period.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__reclose_gl_period",
-      "policyDomain": "general_ledger",
-      "permission": "admin"
-    },
-    {
       "name": "recognize_revenue",
       "description": "Recognize deferred revenue for a performance obligation: every scheduled entry whose period starts on or before `through`.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__recognize_revenue",
       "policyDomain": "revenue_recognition",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "reconcile_payment_provider",
@@ -7852,7 +7582,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__record_invoice_payment",
       "policyDomain": "invoices",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "record_payment_obligation_payment",
@@ -7861,7 +7591,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__record_payment_obligation_payment",
       "policyDomain": "payment-obligations",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "record_promotion_usage",
@@ -7897,7 +7627,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__refund_prepayment",
       "policyDomain": "prepayments",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "refund_to_gift_card",
@@ -8044,15 +7774,6 @@
       "permission": "write"
     },
     {
-      "name": "reopen_gl_period",
-      "description": "Reopen an accounting period.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__reopen_gl_period",
-      "policyDomain": "general_ledger",
-      "permission": "admin"
-    },
-    {
       "name": "reserve_cart_inventory",
       "description": "Reserve inventory for all cart items.",
       "serverName": "stateset-commerce",
@@ -8069,15 +7790,6 @@
       "qualifiedName": "mcp__stateset-commerce__reserve_inventory",
       "policyDomain": "inventory",
       "permission": "write"
-    },
-    {
-      "name": "resolve_bill_dispute",
-      "description": "Resolve bill dispute; resolution restores its prior approval state and current payment balance.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__resolve_bill_dispute",
-      "policyDomain": "accounts_payable",
-      "permission": "admin"
     },
     {
       "name": "resolve_integration_mapping",
@@ -8131,16 +7843,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__revalue_gl",
       "policyDomain": "general_ledger",
-      "permission": "admin"
-    },
-    {
-      "name": "reverse_journal_entry",
-      "description": "Reverse a posted entry on an open accounting date.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__reverse_journal_entry",
-      "policyDomain": "general_ledger",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "reverse_prepayment_application",
@@ -8149,7 +7852,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__reverse_prepayment_application",
       "policyDomain": "prepayments",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "reverse_vendor_credit_application",
@@ -8158,16 +7861,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__reverse_vendor_credit_application",
       "policyDomain": "vendor_credits",
-      "permission": "admin"
-    },
-    {
-      "name": "reverse_write_off",
-      "description": "Reverse a bad-debt write-off",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__reverse_write_off",
-      "policyDomain": "accounts_receivable",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "review_flagged_order",
@@ -8341,22 +8035,13 @@
       "permission": "admin"
     },
     {
-      "name": "set_gl_posting_config",
-      "description": "Configure accounts for automatic ledger postings. Replaces the active settings atomically.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__set_gl_posting_config",
-      "policyDomain": "general_ledger",
-      "permission": "admin"
-    },
-    {
       "name": "set_item_cost",
       "description": "Set item cost inputs for a SKU.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__set_item_cost",
       "policyDomain": "cost_accounting",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "set_payment_obligation_status",
@@ -8365,7 +8050,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__set_payment_obligation_status",
       "policyDomain": "payment-obligations",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "set_price_level_entry",
@@ -8503,15 +8188,6 @@
       "permission": "write"
     },
     {
-      "name": "start_put_away",
-      "description": "Start a put-away task.",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__start_put_away",
-      "policyDomain": "receiving",
-      "permission": "write"
-    },
-    {
       "name": "start_receiving",
       "description": "Start receiving against a receipt.",
       "serverName": "stateset-commerce",
@@ -8554,7 +8230,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__suspend_credit_account",
       "policyDomain": "credit",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "sync_conflicts",
@@ -8764,15 +8440,6 @@
       "permission": "admin"
     },
     {
-      "name": "unapply_invoice_payment",
-      "description": "Reverse a customer payment allocation",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__unapply_invoice_payment",
-      "policyDomain": "accounts_receivable",
-      "permission": "admin"
-    },
-    {
       "name": "uninstall_wasm_connector",
       "description": "Uninstall a connector version from the local connector runtime.",
       "serverName": "stateset-commerce",
@@ -8788,7 +8455,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__update_average_item_cost",
       "policyDomain": "cost_accounting",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "update_backorder",
@@ -9215,7 +8882,7 @@
     },
     {
       "name": "verify_chain_anchor",
-      "description": "Verify that a raw leaf hash, taken on trust, is committed under the Merkle root of an on-chain anchor transaction. anchored (and valid) are true only when leafCount (the anchored batch event count, known independently of the proof) is given and the path leads from a leaf position of a tree of that size to the root (pathBound: true). Without leafCount anchored is false: rootReached then reports whether the hash chain reaches the root, which only proves that some node of the anchored tree hashes to it, not that an event was committed.",
+      "description": "Verify that an event proof matches an expected on-chain anchor transaction hash and Merkle root. Confirms the event was committed to the chain.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__verify_chain_anchor",
@@ -9224,7 +8891,7 @@
     },
     {
       "name": "verify_inclusion_proof",
-      "description": "Verify a Merkle inclusion proof for a raw leaf hash, which is taken on trust. valid is true only when leafCount (the batch event count, known independently of the proof) is given and the path leads from a leaf position of a tree of that size to expectedRoot (pathBound: true); it says nothing about which event the hash belongs to. Without leafCount valid is false: rootReached then reports whether the hash chain reaches the root, which only proves that some node of the tree, possibly an interior node rather than a leaf, hashes to it.",
+      "description": "Verify a Merkle inclusion proof — confirms that a leaf hash is included in a Merkle root.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__verify_inclusion_proof",
@@ -9233,7 +8900,7 @@
     },
     {
       "name": "verify_receipt",
-      "description": "Verify a VES commerce receipt bundle: its leaf, its Merkle inclusion proof against the bundle's own merkleRoot (compare that with the anchored root yourself), its payload hash, and its signature when publicKeyHex is given. valid is true only when every check passes. A ves-v1 leaf is recomputed from the event in its own hash domain (leafBound: true), so it cannot be an interior node; leafCount is optional there and also holds the path to the batch size (pathBound: true). A legacy-v0 leaf hash is taken as given (leafBound: false), so a legacy-v0 bundle is valid only with leafCount (the batch event count, known independently of the bundle): without it a path_bound check fails, because the inclusion proof then only shows that some node of the tree hashes to the root. rootReached reports the plain hash chain; the bundle's own leafCount is only a sanity bound.",
+      "description": "Verify a VES commerce receipt — checks signature, hash, and Merkle inclusion proof.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__verify_receipt",
@@ -9250,22 +8917,13 @@
       "permission": "read"
     },
     {
-      "name": "void_bill_payment",
-      "description": "Void a supplier cash payment and reverse its allocations",
-      "serverName": "stateset-commerce",
-      "source": "cli/src/mcp-server.js",
-      "qualifiedName": "mcp__stateset-commerce__void_bill_payment",
-      "policyDomain": "accounts_payable",
-      "permission": "admin"
-    },
-    {
       "name": "void_credit_memo",
       "description": "Void a credit memo.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__void_credit_memo",
       "policyDomain": "accounts_receivable",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "void_invoice",
@@ -9274,7 +8932,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__void_invoice",
       "policyDomain": "invoices",
-      "permission": "admin"
+      "permission": "delete"
     },
     {
       "name": "void_journal_entry",
@@ -9283,7 +8941,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__void_journal_entry",
       "policyDomain": "general_ledger",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "void_shipping_label",
@@ -9310,7 +8968,7 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__write_off_fixed_asset",
       "policyDomain": "fixed_assets",
-      "permission": "admin"
+      "permission": "write"
     },
     {
       "name": "x402_circuit_status",

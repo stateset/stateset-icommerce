@@ -675,9 +675,10 @@ export const SEED_WRITES = [
 ];
 
 /**
- * Run after every other seed, so it is the newest replayable write in the
- * MCP replay log -- the call `agentic_replay_mutation` re-runs when given no
- * filter -- and one that writes a new row every time it runs.
+ * Run once more after both seeding passes, as a canary: it writes a new row
+ * every time, and the test requires this last run to succeed, so a seeding
+ * pass that broke the server's dispatch part-way fails loudly instead of
+ * leaving the sweep to run against a half-seeded store.
  */
 const LAST_SEED_WRITE = SEED_WRITES.find(([name]) => name === 'create_payment_link');
 

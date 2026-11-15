@@ -21,6 +21,12 @@ import { replayEventHash } from './audit-envelope.js';
 import { normalizeToolName } from './policy-helpers.js';
 
 /**
+ * Error code for a replay refused because the logged call's tool is not a
+ * `write` tool (see `createReplayMutationToolCall`).
+ */
+export const REPLAY_PERMISSION_DENIED = 'REPLAY_PERMISSION_DENIED';
+
+/**
  * @typedef {Object} MutationSimulatorDeps
  * @property {(toolName: string) => Object} getToolRuntimeMeta
  * @property {(toolName: string) => string} inferPolicyDomain
@@ -147,6 +153,15 @@ export function createSimulateMutationToolCall({
  * Build `replayMutationToolCall` — re-execute a recorded mutation event for
  * determinism verification. Defaults to dry-run so it's safe by default.
  *
+ * Only `write` tools are replayed. `agentic_replay_mutation` is itself a
+ * `write` tool, so replaying an `admin` or `delete` tool through it would let a
+ * caller holding write permission (e.g. a toolkit scoped to
+ * `permission:write`) run admin and delete tools it was never granted. The
+ * permission is the tool's CURRENT one, read from the tool definitions at
+ * replay time, never anything recorded in the log. The newest matching
+ * mutation is refused outright rather than skipped, so a replay never
+ * silently re-runs an older call than the one the caller asked for.
+ *
  * @param {MutationSimulatorDeps} deps
  */
 export function createReplayMutationToolCall({
@@ -181,6 +196,27 @@ export function createReplayMutationToolCall({
       return {
         success: false,
         error: 'No replayable mutation event found for the provided filters.',
+        filters: {
+          eventId,
+          requestId,
+          tool: tool || null,
+        },
+      };
+    }
+
+    const sourcePermission = getToolRuntimeMeta(sourceEvent.tool).permission;
+    if (sourcePermission !== 'write') {
+      return {
+        success: false,
+        errorCode: REPLAY_PERMISSION_DENIED,
+        error:
+          `Refusing to replay '${sourceEvent.tool}': it is a '${sourcePermission}' tool, ` +
+          "and agentic_replay_mutation replays only 'write' tools. Call the tool directly.",
+        sourceEvent: {
+          eventId: sourceEvent.eventId || null,
+          tool: sourceEvent.tool,
+          permission: sourcePermission,
+        },
         filters: {
           eventId,
           requestId,

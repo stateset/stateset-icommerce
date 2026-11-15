@@ -621,7 +621,7 @@ Tier: **experimental** — autonomous agent loops over wallets, escrow and on-ch
 | `agent_enable_settlement` | experimental | write | Enable on-chain payment settlement for an agent runtime. The agent will settle payments on the specified blockchain using derived wallets. |
 | `agent_get_chain_balance` | experimental | read | Get the on-chain payment-token balance for an agent runtime with settlement enabled. |
 | `agent_broadcast_rfq` | experimental | write | Broadcast a Request for Quotation (RFQ) to multiple sellers in the marketplace. Sellers matching the filter will receive quote requests. |
-| `agent_collect_rfq_responses` | experimental | read | Collect and score all responses for an RFQ broadcast. |
+| `agent_collect_rfq_responses` | experimental | write | Collect and score all responses for an RFQ broadcast. |
 | `agent_award_rfq` | experimental | write | Award an RFQ to the best-scored (or specified) seller. Accepts the winner's quote and declines all others. |
 | `agent_get_marketplace_metrics` | experimental | read | Get marketplace performance metrics for a registered service (success rate, response time, etc.). |
 | `agent_attach_sla` | experimental | write | Attach a Service Level Agreement to a registered service. Defines performance thresholds and penalties. |
@@ -1503,7 +1503,7 @@ Tier: **extended**
 | --- | --- | --- | --- |
 | `backup_database` | extended | write | Create a consistent, checksum-verified backup of the database plus a sidecar manifest. Safe to run while the store is being written to. |
 | `restore_database` | extended | write | Restore a backup to a target path. Verifies the manifest checksum, refuses backups from a newer engine, and refuses to overwrite an existing database unless overwrite is set. |
-| `export_full_data` | extended | read | Export the full store to a versioned JSON file (distinct from export_data, which dumps a single entity type for parity testing). Covers the core commerce and finance domains; see the maintenance module docs for exactly what is and is not included. |
+| `export_full_data` | extended | admin | Export the full store to a versioned JSON file (distinct from export_data, which dumps a single entity type for parity testing). Covers the core commerce and finance domains; see the maintenance module docs for exactly what is and is not included. |
 | `import_full_data` | extended | write | Import a JSON export into this store. Records are replayed through the normal create paths, so IDs are re-minted and foreign keys remapped. |
 | `list_portable_domains` | extended | read | List the domains that data export and import can cover. |
 
@@ -1746,7 +1746,7 @@ Server-level tools that belong to no domain (planning, simulation, replay, event
 | `agentic_prepare_payment` | extended | read | Prepare a Machine Payments Protocol challenge and retry template for a priced MCP tool call. |
 | `agentic_plan` | core | read | Evaluate a proposed tool sequence for deterministic simulation: policy, permission, and replayability checks. |
 | `agentic_simulate_mutation` | core | read | Run deterministic dry-run simulation for a mutating tool with policy, permission, rollback, and replay metadata. |
-| `agentic_replay_mutation` | core | read | Replay a previously logged mutating tool call from the deterministic replay log, with dry-run by default. |
+| `agentic_replay_mutation` | core | write | Replay a previously logged mutating tool call from the deterministic replay log, with dry-run by default. |
 | `agentic_replay` | core | read | Read recent deterministic execution events for auditability and replay tooling. |
 | `agentic_subscribe_events` | core | read | Subscribe to MCP execution events for a session or global stream. |
 | `agentic_unsubscribe_events` | core | read | Unsubscribe from a previously-created MCP event subscription. |
