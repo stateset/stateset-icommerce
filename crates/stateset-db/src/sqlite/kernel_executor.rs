@@ -17,7 +17,8 @@ use super::payments::{
     void_in_flight_payments_for_order_conn,
 };
 use super::returns::{
-    SqliteReturnRepository, apply_update_tx, insert_return_tx, row_to_return_item,
+    SqliteReturnRepository, apply_update_published_tx, apply_update_tx, insert_return_tx,
+    row_to_return_item,
 };
 use super::shipments::create_shipment_tx;
 use super::subscriptions::SqliteSubscriptionRepository;
@@ -53,7 +54,7 @@ use crate::kernel::plans::payments::{
     RefundSnapshot, create_payment_guard, economic_counterparty_guard, economic_money_guard,
     plan_refund,
 };
-use crate::kernel::plans::returns::transition_return_guard;
+use crate::kernel::plans::returns::{transition_return_guard, transition_return_state_guard};
 use crate::kernel::plans::storefront::{
     DomainOutcome, PAYMENT_UNVERSIONED, RETURN_TRACKING_UNVERSIONED, SealDecision,
     StorefrontAggregate, add_cart_item_guard, add_return_tracking_guard, apply_cart_coupon_guard,
@@ -2086,6 +2087,25 @@ impl SqliteKernelExecutor {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
+            // The repository's rules on every return status write: terminal
+            // returns are immutable, dispositioned items pin the return, and
+            // completion needs every item dispositioned.
+            if let Some(rejection) =
+                transition_return_state_guard(&returned, command.payload.status)
+            {
+                let mut receipt = rejected_receipt(
+                    command,
+                    Some(policy.clone()),
+                    rejection.code,
+                    &rejection.message,
+                    rejection.retry,
+                    "return",
+                );
+                receipt.aggregate_id = Some(returned.id.to_string());
+                receipt.version_before = Some(version_before);
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
             if command.mode == ExecutionMode::Preview {
                 let mut receipt = preview_receipt(command, policy.clone(), "return");
                 receipt.result = Some(returned);
@@ -2094,17 +2114,19 @@ impl SqliteKernelExecutor {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
-            let changed = tx.execute(
-                "UPDATE returns SET status = ?, updated_at = ?, version = version + 1
-                 WHERE id = ? AND version = ?",
-                params![
-                    command.payload.status.to_string(),
-                    started_at.to_rfc3339(),
-                    command.payload.return_id.to_string(),
-                    version_before
-                ],
+            // The repository's own status write, in this transaction: the
+            // guards above re-checked on the locked row, the version bump,
+            // and — on completion — the payment refunds `settle_refund_tx`
+            // creates. Its `returns.updated.v1` fact is this command's fact.
+            let (applied, event_id) = apply_update_published_tx(
+                tx,
+                command.payload.return_id,
+                &UpdateReturn { status: Some(command.payload.status), ..Default::default() },
+                started_at,
+                Some(command.idempotency_key.clone()),
+                |event| attach_command_context(event, command),
             )?;
-            if changed == 0 {
+            if applied.version != version_before + 1 {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                     CommerceError::VersionConflict {
                         entity: "return".into(),
@@ -2113,33 +2135,7 @@ impl SqliteKernelExecutor {
                     },
                 )));
             }
-            let mut event = KernelOutboxEvent::domain(
-                "returns.updated.v1",
-                "return",
-                command.payload.return_id.to_string(),
-                serde_json::json!({"return_id": command.payload.return_id.to_string(),
-                    "status_before": returned.status.to_string(), "status_after": command.payload.status.to_string(),
-                    "version_before": version_before, "version_after": version_before + 1,
-                    "refund_amount": returned.refund_amount.map(|amount| amount.to_string())}),
-                Some(command.idempotency_key.clone()),
-            );
-            attach_command_context(&mut event, command);
-            append_kernel_event_tx(tx, &event)?;
-            returned = tx.query_row(
-                "SELECT * FROM returns WHERE id = ?",
-                [command.payload.return_id.to_string()],
-                SqliteReturnRepository::row_to_return,
-            )?;
-            let mut stmt = tx.prepare(
-                "SELECT id, return_id, order_item_id, sku, name, quantity, condition,
-                        refund_amount, disposition, disposition_at, disposition_by,
-                        lot_id, serial_ids
-                 FROM return_items WHERE return_id = ? ORDER BY rowid",
-            )?;
-            returned.items = stmt
-                .query_map([command.payload.return_id.to_string()], row_to_return_item)?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            drop(stmt);
+            returned = applied;
             let mut receipt = ExecutionReceipt {
                 contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
                 receipt_id: Uuid::new_v4(),
@@ -2155,7 +2151,7 @@ impl SqliteKernelExecutor {
                 aggregate_id: Some(returned.id.to_string()),
                 version_before: Some(version_before),
                 version_after: Some(returned.version),
-                event_ids: vec![event.id],
+                event_ids: vec![event_id],
                 policy: Some(policy.clone()),
                 economic_context: Some(stateset_core::EconomicReceiptContext::from_command(
                     command,

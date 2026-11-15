@@ -18,7 +18,8 @@ use super::payments::{
 };
 use super::resolve_currency_with_executor;
 use super::returns::{
-    PgReturnRepository, ReturnItemRow, ReturnRow, apply_update_pg, insert_return_pg,
+    PgReturnRepository, ReturnItemRow, ReturnRow, apply_update_pg, apply_update_published_pg,
+    insert_return_pg,
 };
 use super::shipments::create_shipment_pg;
 use super::subscriptions::{BillingCycleRow, PgSubscriptionRepository};
@@ -50,7 +51,7 @@ use crate::kernel::plans::payments::{
     RefundSnapshot, create_payment_guard, economic_counterparty_guard, economic_money_guard,
     plan_refund,
 };
-use crate::kernel::plans::returns::transition_return_guard;
+use crate::kernel::plans::returns::{transition_return_guard, transition_return_state_guard};
 use crate::kernel::plans::storefront::{
     DomainOutcome, PAYMENT_UNVERSIONED, RETURN_TRACKING_UNVERSIONED, SealDecision,
     StorefrontAggregate, add_cart_item_guard, add_return_tracking_guard, apply_cart_coupon_guard,
@@ -2164,6 +2165,24 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
+        // The repository's rules on every return status write (twin of the
+        // SQLite executor): terminal returns are immutable, dispositioned
+        // items pin the return, and completion needs every item dispositioned.
+        if let Some(rejection) = transition_return_state_guard(&returned, command.payload.status) {
+            let mut receipt = rejected_receipt(
+                command,
+                Some(policy),
+                rejection.code,
+                &rejection.message,
+                rejection.retry,
+                "return",
+            );
+            receipt.aggregate_id = Some(returned.id.to_string());
+            receipt.version_before = Some(version_before);
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            return Ok(receipt);
+        }
         if command.mode == ExecutionMode::Preview {
             let mut receipt = preview_receipt(command, policy, "return");
             receipt.result = Some(returned);
@@ -2173,44 +2192,26 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
-        let row = sqlx::query_as::<_, ReturnRow>(
-            "UPDATE returns SET status = $1, updated_at = $2, version = version + 1
-             WHERE id = $3 AND version = $4 RETURNING *",
-        )
-        .bind(command.payload.status.to_string())
-        .bind(started_at)
-        .bind(command.payload.return_id.into_uuid())
-        .bind(version_before)
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?
-        .ok_or_else(|| CommerceError::VersionConflict {
-            entity: "return".into(),
-            id: command.payload.return_id.to_string(),
-            expected_version: version_before,
-        })?;
-        let mut event = KernelOutboxEvent::domain(
-            "returns.updated.v1",
-            "return",
-            command.payload.return_id.to_string(),
-            serde_json::json!({"return_id": command.payload.return_id.to_string(), "status_before": returned.status.to_string(),
-                "status_after": command.payload.status.to_string(), "version_before": version_before, "version_after": version_before + 1,
-                "refund_amount": returned.refund_amount.map(|amount| amount.to_string())}),
+        // The repository's own status write, in this transaction: the guards
+        // re-checked on the locked row, the version bump, and — on completion
+        // — the payment refunds `settle_refund_pg` creates. Its
+        // `returns.updated.v1` fact is this command's fact.
+        let (result, event_id) = apply_update_published_pg(
+            tx.as_mut(),
+            command.payload.return_id.into_uuid(),
+            &UpdateReturn { status: Some(command.payload.status), ..Default::default() },
+            started_at,
             Some(command.idempotency_key.clone()),
-        );
-        attach_command_context(&mut event, command);
-        append_kernel_event_tx(tx.as_mut(), &event).await?;
-        let items = sqlx::query_as::<_, ReturnItemRow>(
-            "SELECT * FROM return_items WHERE return_id = $1 ORDER BY id",
+            |event| attach_command_context(event, command),
         )
-        .bind(command.payload.return_id.into_uuid())
-        .fetch_all(tx.as_mut())
-        .await
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?
-        .into_iter()
-        .map(PgReturnRepository::row_to_item)
-        .collect::<Result<Vec<_>>>()?;
-        let result = PgReturnRepository::row_to_return(row, items)?;
+        .await?;
+        if result.version != version_before + 1 {
+            return Err(CommerceError::VersionConflict {
+                entity: "return".into(),
+                id: command.payload.return_id.to_string(),
+                expected_version: version_before,
+            });
+        }
         let mut receipt = ExecutionReceipt {
             contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
             receipt_id: Uuid::new_v4(),
@@ -2226,7 +2227,7 @@ impl PgKernelExecutor {
             aggregate_id: Some(result.id.to_string()),
             version_before: Some(version_before),
             version_after: Some(result.version),
-            event_ids: vec![event.id],
+            event_ids: vec![event_id],
             policy: Some(policy),
             economic_context: Some(stateset_core::EconomicReceiptContext::from_command(command)),
             audit_hash: None,

@@ -461,6 +461,21 @@ pub(crate) async fn apply_update_pg(
     input: &UpdateReturn,
     now: DateTime<Utc>,
 ) -> Result<Return> {
+    apply_update_published_pg(conn, id, input, now, None, |_| {}).await.map(|(ret, _)| ret)
+}
+
+/// [`apply_update_pg`] for a caller that owns the published fact (twin of the
+/// SQLite `apply_update_published_tx`): the `returns.updated.v1` event carries
+/// `idempotency_key` and whatever `decorate` adds (the kernel attaches its
+/// command context), and its id is returned with the stored return.
+pub(crate) async fn apply_update_published_pg(
+    conn: &mut PgConnection,
+    id: Uuid,
+    input: &UpdateReturn,
+    now: DateTime<Utc>,
+    idempotency_key: Option<String>,
+    decorate: impl FnOnce(&mut KernelOutboxEvent),
+) -> Result<(Return, Uuid)> {
     let before = load_return_pg(conn, id, true).await?.ok_or(CommerceError::ReturnNotFound(id))?;
     let status_before = before.status;
     if status_before.is_terminal() {
@@ -540,12 +555,16 @@ pub(crate) async fn apply_update_pg(
         payload["undispositioned_units"] = serde_json::json!(written_off);
     }
 
-    append_kernel_event_tx(
-        conn,
-        &KernelOutboxEvent::domain("returns.updated.v1", "return", id.to_string(), payload, None),
-    )
-    .await?;
-    Ok(ret)
+    let mut event = KernelOutboxEvent::domain(
+        "returns.updated.v1",
+        "return",
+        id.to_string(),
+        payload,
+        idempotency_key,
+    );
+    decorate(&mut event);
+    append_kernel_event_tx(conn, &event).await?;
+    Ok((ret, event.id))
 }
 
 /// One guarded serial status hop plus its history row (local SQL: the serial

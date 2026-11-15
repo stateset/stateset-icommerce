@@ -2243,6 +2243,73 @@ async fn postgres_kernel_storefront_commands_run_a_complete_checkout_on_the_gove
     assert_eq!(tracked.status, ReturnStatus::InTransit);
     assert_eq!(tracked.tracking_number.as_deref(), Some("RET-1Z"));
 
+    // A governed completion runs the repository's status write (twin of the
+    // SQLite storefront proof): it needs every item dispositioned, and it
+    // settles the refund against the captured payment in the same transaction.
+    let transition = |step: &str, status| {
+        pg_applied(&kernel_command(
+            "returns.transition",
+            key(step),
+            "returns.transition",
+            TransitionReturn { return_id, status },
+        ))
+    };
+    let received = kernel
+        .execute_transition_return_async(&transition("return-received", ReturnStatus::Received))
+        .await
+        .expect("receive");
+    pg_assert_sealed_success(&received, "returns.transition received");
+    let refused = kernel
+        .execute_transition_return_async(&transition(
+            "return-complete-early",
+            ReturnStatus::Completed,
+        ))
+        .await
+        .expect("refusal receipt");
+    assert_eq!(refused.status, ExecutionStatus::Rejected);
+    assert_eq!(refused.error_code.as_deref(), Some("commerce.return_items_undispositioned"));
+    assert!(refused.audit_hash.is_some(), "the refusal is sealed");
+    let pending =
+        db.returns().get_async(return_id.into_uuid()).await.expect("return").expect("return");
+    assert_eq!(pending.status, ReturnStatus::Received);
+    assert!(
+        db.payments().get_refunds_async(payment_id.into_uuid()).await.expect("refunds").is_empty()
+    );
+    // Operator disposition, outside the agent surface.
+    db.returns()
+        .set_item_disposition_async(
+            return_id,
+            pending.items[0].id,
+            stateset_core::SetReturnDisposition {
+                disposition: stateset_core::ReturnDisposition::Scrap,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("disposition");
+    let completed = kernel
+        .execute_transition_return_async(&transition("return-complete", ReturnStatus::Completed))
+        .await
+        .expect("complete");
+    pg_assert_sealed_success(&completed, "returns.transition completed");
+    let completed_return = completed.result.clone().expect("completed return");
+    assert_eq!(completed_return.status, ReturnStatus::Completed);
+    let refunds = db.payments().get_refunds_async(payment_id.into_uuid()).await.expect("refunds");
+    assert_eq!(refunds.len(), 1, "completion settles the refund against the captured payment");
+    assert_eq!(Some(refunds[0].amount), completed_return.refund_amount);
+    let (event_type, command_id, refund_id): (String, Option<Uuid>, Option<String>) =
+        sqlx::query_as(
+            "SELECT event_type, command_id, payload->'payment_refund_ids'->>0
+             FROM kernel_outbox WHERE id = $1",
+        )
+        .bind(completed.event_ids[0])
+        .fetch_one(db.pool())
+        .await
+        .expect("completion fact");
+    assert_eq!(event_type, "returns.updated.v1");
+    assert_eq!(command_id, Some(completed.command_id), "the fact carries the command");
+    assert_eq!(refund_id, Some(refunds[0].id.to_string()));
+
     assert!(db.kernel_outbox().verify_audit_chain_async().await.expect("verify chain").valid);
 }
 

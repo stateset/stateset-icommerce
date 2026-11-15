@@ -3878,6 +3878,65 @@ fn kernel_storefront_commands_run_a_complete_checkout_on_the_governed_surface() 
     assert_eq!(tracked.status, ReturnStatus::InTransit);
     assert_eq!(tracked.tracking_number.as_deref(), Some("RET-1Z"));
 
+    // A governed completion runs the repository's status write: it needs
+    // every item dispositioned, and it settles the refund against the
+    // captured payment in the same transaction as the receipt.
+    let transition = |key: &str, status| {
+        applied(&storefront("returns.transition", key, TransitionReturn { return_id, status }))
+    };
+    let received = kernel
+        .execute_transition_return(&transition(
+            "storefront-return-received",
+            ReturnStatus::Received,
+        ))
+        .expect("receive");
+    assert_sealed_success(&received, "returns.transition received");
+    let refused = kernel
+        .execute_transition_return(&transition(
+            "storefront-return-complete-early",
+            ReturnStatus::Completed,
+        ))
+        .expect("refusal receipt");
+    assert_eq!(refused.status, ExecutionStatus::Rejected);
+    assert_eq!(refused.error_code.as_deref(), Some("commerce.return_items_undispositioned"));
+    assert!(refused.audit_hash.is_some(), "the refusal is sealed");
+    let pending = db.returns().get(return_id).expect("return").expect("return");
+    assert_eq!(pending.status, ReturnStatus::Received);
+    assert!(db.payments().get_refunds(payment_id).expect("refunds").is_empty());
+    // Operator disposition, outside the agent surface.
+    db.returns()
+        .set_item_disposition(
+            return_id,
+            pending.items[0].id,
+            stateset_core::SetReturnDisposition {
+                disposition: stateset_core::ReturnDisposition::Scrap,
+                ..Default::default()
+            },
+        )
+        .expect("disposition");
+    let completed = kernel
+        .execute_transition_return(&transition(
+            "storefront-return-complete",
+            ReturnStatus::Completed,
+        ))
+        .expect("complete");
+    assert_sealed_success(&completed, "returns.transition completed");
+    let completed_return = completed.result.clone().expect("completed return");
+    assert_eq!(completed_return.status, ReturnStatus::Completed);
+    let refunds = db.payments().get_refunds(payment_id).expect("refunds");
+    assert_eq!(refunds.len(), 1, "completion settles the refund against the captured payment");
+    assert_eq!(Some(refunds[0].amount), completed_return.refund_amount);
+    let fact = db
+        .kernel_outbox()
+        .pending(10_000)
+        .expect("events")
+        .into_iter()
+        .find(|event| event.id == completed.event_ids[0])
+        .expect("completion fact");
+    assert_eq!(fact.event_type, "returns.updated.v1");
+    assert_eq!(fact.command_id, Some(completed.command_id), "the fact carries the command");
+    assert_eq!(fact.payload["payment_refund_ids"][0], refunds[0].id.to_string());
+
     let chain = db.kernel_outbox().verify_audit_chain().expect("verify chain");
     assert!(chain.valid, "{chain:?}");
 }

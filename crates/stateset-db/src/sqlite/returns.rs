@@ -496,6 +496,21 @@ pub(crate) fn apply_update_tx(
     input: &UpdateReturn,
     now: DateTime<Utc>,
 ) -> rusqlite::Result<Return> {
+    apply_update_published_tx(tx, id, input, now, None, |_| {}).map(|(ret, _)| ret)
+}
+
+/// [`apply_update_tx`] for a caller that owns the published fact: the
+/// `returns.updated.v1` event carries `idempotency_key` and whatever
+/// `decorate` adds (the kernel attaches its command context), and its id is
+/// returned with the stored return so a receipt can reference it.
+pub(crate) fn apply_update_published_tx(
+    tx: &rusqlite::Transaction<'_>,
+    id: ReturnId,
+    input: &UpdateReturn,
+    now: DateTime<Utc>,
+    idempotency_key: Option<String>,
+    decorate: impl FnOnce(&mut KernelOutboxEvent),
+) -> rusqlite::Result<(Return, Uuid)> {
     let before = load_return_conn(tx, &id.to_string())?
         .ok_or_else(|| smuggle(CommerceError::ReturnNotFound(id.into())))?;
     let status_before = before.status;
@@ -580,11 +595,16 @@ pub(crate) fn apply_update_tx(
         payload["undispositioned_units"] = serde_json::json!(written_off);
     }
 
-    append_kernel_event_tx(
-        tx,
-        &KernelOutboxEvent::domain("returns.updated.v1", "return", id.to_string(), payload, None),
-    )?;
-    Ok(ret)
+    let mut event = KernelOutboxEvent::domain(
+        "returns.updated.v1",
+        "return",
+        id.to_string(),
+        payload,
+        idempotency_key,
+    );
+    decorate(&mut event);
+    append_kernel_event_tx(tx, &event)?;
+    Ok((ret, event.id))
 }
 
 /// Delete a return and its items on the caller's transaction, refusing any

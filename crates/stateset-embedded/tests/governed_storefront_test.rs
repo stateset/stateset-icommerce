@@ -254,7 +254,42 @@ fn governed_storefront_runs_a_complete_checkout_through_the_json_dispatcher() {
     );
     assert_eq!(tracked["status"], "in_transit");
     agent.apply("returns.transition", json!({"return_id": return_id, "status": "received"}));
-    agent.apply("returns.transition", json!({"return_id": return_id, "status": "completed"}));
+    // `returns.transition` runs the repository's status write: completing a
+    // return whose items have no disposition is refused, exactly as
+    // `returns().complete()` refuses it.
+    assert_eq!(
+        agent
+            .rejected("returns.transition", json!({"return_id": return_id, "status": "completed"})),
+        "commerce.return_items_undispositioned"
+    );
+    // Operator disposition, outside the agent surface; then the governed
+    // completion goes through and refunds the captured payment.
+    let return_uuid = return_id.parse::<Uuid>().expect("uuid");
+    let pending = agent.commerce.returns().get(return_uuid.into()).expect("load").expect("return");
+    agent
+        .commerce
+        .returns()
+        .set_item_disposition(
+            return_uuid.into(),
+            pending.items[0].id,
+            stateset_core::SetReturnDisposition {
+                disposition: stateset_core::ReturnDisposition::Scrap,
+                ..Default::default()
+            },
+        )
+        .expect("disposition");
+    let completed =
+        agent.apply("returns.transition", json!({"return_id": return_id, "status": "completed"}));
+    assert_eq!(completed["status"], "completed");
+    let refunds = agent
+        .commerce
+        .payments()
+        .get_refunds(payment_id.parse::<Uuid>().expect("uuid").into())
+        .expect("refunds");
+    assert_eq!(refunds.len(), 1, "the governed completion refunds the captured payment");
+    let refund_amount: rust_decimal::Decimal =
+        completed["refund_amount"].as_str().expect("amount").parse().expect("decimal");
+    assert_eq!(refunds[0].amount, refund_amount);
 
     let chain = agent.commerce.kernel_audit().expect("audit").verify_chain().expect("verify");
     assert!(chain.valid, "{chain:?}");

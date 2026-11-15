@@ -43,6 +43,17 @@ This project follows Keep a Changelog and Semantic Versioning.
 - The HTTP negotiation counter-offer, accept and reject endpoints keep the
   negotiation when its transition is refused; a refused transition (400)
   used to delete it.
+- Kernel `returns.transition` runs the repository's return status write on
+  both databases (owner-approved). It checked only the state-machine edge,
+  so a governed `complete_return` completed returns with undispositioned
+  items and issued no payment refund. Governed transitions now refuse
+  completing with an undispositioned item
+  (`commerce.return_items_undispositioned`), rejecting or cancelling after
+  an item was dispositioned (`commerce.return_items_dispositioned`) and
+  re-sending a terminal return's own status (`commerce.return_terminal`); a
+  governed completion creates the pending payment refunds
+  `returns.complete` creates, and its `returns.updated.v1` fact carries the
+  repository payload, including `payment_refund_ids`.
 
 ## [1.41.0] - 2026-11-15
 
