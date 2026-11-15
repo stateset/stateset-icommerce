@@ -259,6 +259,22 @@ describe('operations actions auth guard', () => {
       await expect(getLots('')).rejects.toThrow(/status is required/);
     });
 
+    it('accepts the binding Debug spelling of a status filter', async () => {
+      vi.mocked(fulfillmentApi.listWaves).mockResolvedValueOnce([
+        { id: 'w1', waveNumber: 'WAVE-1', warehouseId: 1, orderCount: 2, status: 'in_progress', createdAt: 'x' },
+        { id: 'w2', waveNumber: 'WAVE-2', warehouseId: 1, orderCount: 3, status: 'draft', createdAt: 'x' },
+      ]);
+      await expect(getFulfillmentWaves('InProgress')).resolves.toMatchObject([{ id: 'w1' }]);
+
+      vi.mocked(lotsApi.list).mockResolvedValueOnce([
+        {
+          id: 'l1', lotNumber: 'LOT-1', sku: 'SKU-1', quantityProduced: 10,
+          quantityAvailable: 10, quantityReserved: 0, status: 'on_hold', createdAt: 'x',
+        },
+      ]);
+      await expect(getLots('OnHold')).resolves.toMatchObject([{ id: 'l1' }]);
+    });
+
     it('aggregates lots + serials + receipts', async () => {
       await expect(getTraceabilityPageData()).resolves.toEqual({
         lots: [],

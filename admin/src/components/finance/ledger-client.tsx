@@ -174,7 +174,17 @@ export default function LedgerClient() {
                     <td className="py-2 pr-4">{entry.entryDate}</td>
                     <td className="py-2 pr-4">{entry.description}</td>
                     <td className="py-2">
-                      <Badge variant={entry.status === 'posted' ? 'success' : 'outline'}>
+                      <Badge
+                        variant={
+                          entry.status === 'posted'
+                            ? 'success'
+                            : entry.status === 'voided'
+                              ? 'danger'
+                              : entry.status === 'reversed'
+                                ? 'warning'
+                                : 'outline'
+                        }
+                      >
                         {entry.status}
                       </Badge>
                     </td>

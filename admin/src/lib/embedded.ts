@@ -11,6 +11,26 @@
 
 import 'server-only';
 
+import {
+  AP_AGING_EXCLUDED_BILL_STATUSES,
+  AR_OPEN_INVOICE_STATUSES,
+  normalizeEngineStatus,
+  statusIn,
+  type BillStatus,
+  type GlAccountStatus,
+  type InspectionStatus,
+  type InvoiceStatus,
+  type JournalEntryStatus,
+  type LotStatus,
+  type NcrSeverity,
+  type NcrStatus,
+  type PickTaskStatus,
+  type PurchaseOrderStatus,
+  type ReceiptStatus,
+  type SerialStatus,
+  type WaveStatus,
+  type WorkOrderStatus,
+} from './engine-lifecycles';
 import type {
   Address,
   Customer,
@@ -317,6 +337,100 @@ async function loadCommerceModule() {
   }
 }
 
+// ============================================================================
+// Native boundary: one normalisation for the binding's Debug-cased enums
+// ============================================================================
+
+/**
+ * Enum-valued fields the native binding renders in the Rust `Debug` form
+ * (`'PartiallyPaid'`, `'InProgress'`) instead of the engine's canonical
+ * snake_case, keyed by the sub-API that returns them (see the "rendered Debug"
+ * unions in `bindings/node/index.d.ts`). The binding's output is deliberately
+ * left as-is — other consumers depend on it — and the admin normalises here,
+ * once, so every page compares against one vocabulary
+ * (`src/lib/engine-lifecycles.ts`) whether it runs on the native engine or
+ * the mock.
+ */
+const NATIVE_DEBUG_ENUM_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  lots: ['status'],
+  serials: ['status'],
+  quality: ['status', 'severity', 'source', 'disposition', 'inspectionType', 'holdType'],
+  fulfillment: ['status'],
+  receiving: ['status', 'receiptType'],
+  warehouse: ['warehouseType', 'locationType'],
+  accountsPayable: ['status'],
+  accountsReceivable: ['status', 'reason'],
+  generalLedger: ['status', 'accountType'],
+};
+
+/** Rewrite the listed enum fields to snake_case on a record, a list, or nested records. */
+function normalizeNativeOutput(value: unknown, fields: readonly string[], depth = 0): unknown {
+  if (depth > 3 || value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeNativeOutput(entry, fields, depth + 1));
+  }
+  const record = value as Record<string, unknown>;
+  let changed: Record<string, unknown> | null = null;
+  for (const [key, entry] of Object.entries(record)) {
+    const next =
+      typeof entry === 'string'
+        ? fields.includes(key)
+          ? normalizeEngineStatus(entry)
+          : entry
+        : normalizeNativeOutput(entry, fields, depth + 1);
+    if (next !== entry) {
+      changed = changed ?? { ...record };
+      changed[key] = next;
+    }
+  }
+  return changed ?? record;
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    (typeof value === 'object' || typeof value === 'function') &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
+}
+
+function wrapNativeSubApi(api: object, fields: readonly string[]): object {
+  return new Proxy(api, {
+    get(target, property) {
+      const member: unknown = Reflect.get(target, property, target);
+      if (typeof member !== 'function') return member;
+      return (...args: unknown[]) => {
+        const result: unknown = Reflect.apply(member, target, args);
+        return isThenable(result)
+          ? result.then((resolved) => normalizeNativeOutput(resolved, fields))
+          : normalizeNativeOutput(result, fields);
+      };
+    },
+  });
+}
+
+/**
+ * Wrap a native `Commerce` instance so the sub-APIs in
+ * `NATIVE_DEBUG_ENUM_FIELDS` return snake_case enum values. Every other member
+ * passes through untouched (methods stay bound to the native instance).
+ */
+export function adaptNativeEngine<T extends object>(engine: T): T {
+  return new Proxy(engine, {
+    get(target, property) {
+      const member: unknown = Reflect.get(target, property, target);
+      if (
+        typeof property === 'string' &&
+        Object.prototype.hasOwnProperty.call(NATIVE_DEBUG_ENUM_FIELDS, property) &&
+        member !== null &&
+        typeof member === 'object'
+      ) {
+        return wrapNativeSubApi(member, NATIVE_DEBUG_ENUM_FIELDS[property]);
+      }
+      return typeof member === 'function' ? member.bind(target) : member;
+    },
+  });
+}
+
 /**
  * Initialize or get the embedded commerce engine instance.
  * Mock data is only allowed when explicitly enabled for demo or test mode.
@@ -325,7 +439,7 @@ export async function getCommerceEngine(): Promise<CommerceEngine> {
   if (!commerceInstance) {
     const CommerceModule = await loadCommerceModule();
     if (CommerceModule) {
-      commerceInstance = new CommerceModule(DEFAULT_DATABASE_PATH);
+      commerceInstance = adaptNativeEngine(new CommerceModule(DEFAULT_DATABASE_PATH));
       await commerceInstance.initialize?.();
     } else {
       commerceInstance = createMockCommerceEngine();
@@ -1764,9 +1878,10 @@ export interface GlAccount {
   id: string;
   accountNumber: string;
   name: string;
+  /** asset, liability, equity, revenue, expense (normalised from the binding's `Debug` form) */
   accountType: string;
   balance: number;
-  status: string;
+  status: GlAccountStatus;
   description?: string;
 }
 
@@ -1775,7 +1890,7 @@ export interface JournalEntry {
   entryNumber: string;
   entryDate: string;
   description: string;
-  status: string;
+  status: JournalEntryStatus;
   createdAt: string;
 }
 
@@ -1834,7 +1949,7 @@ export interface Bill {
   billNumber: string;
   supplierId: string;
   currency?: string;
-  status: string;
+  status: BillStatus;
   totalAmount: string | number;
   amountPaid: string | number;
   amountDue: string | number;
@@ -1867,7 +1982,7 @@ export interface Invoice {
   currency?: string;
   balanceDue?: string;
   orderId?: string;
-  status: string;
+  status: InvoiceStatus;
   subtotal: string | number;
   taxAmount: string | number;
   total: string | number;
@@ -2077,16 +2192,34 @@ function buildMockFinanceData(): MockFinanceData {
     ['5000', 'Cost of Goods Sold', 'expense', 118_200.2],
   ];
 
-  const glAccounts = accountSpecs.map(([accountNumber, name, accountType, balance]) => ({
-    id: `gl_${accountNumber}`,
-    accountNumber,
-    name,
-    accountType,
-    balance,
-    status: 'active',
-    description: `${name} account`,
-  }));
+  const glAccounts = accountSpecs.map(
+    ([accountNumber, name, accountType, balance]) =>
+      ({
+        id: `gl_${accountNumber}`,
+        accountNumber,
+        name,
+        accountType,
+        balance,
+        status: 'active',
+        description: `${name} account`,
+      }) satisfies GlAccount,
+  );
 
+  // The engine's journal entry vocabulary (`GlJournalEntryStatus`).
+  const journalStatuses: JournalEntryStatus[] = [
+    'draft',
+    'posted',
+    'posted',
+    'pending',
+    'posted',
+    'posted',
+    'reversed',
+    'posted',
+    'voided',
+    'posted',
+    'posted',
+    'posted',
+  ];
   const journalEntries = Array.from({ length: 12 }, (_, index) => {
     const createdAt = formatMockDate(-(index * 2) - 1, index % 8);
     return {
@@ -2099,9 +2232,9 @@ function buildMockFinanceData(): MockFinanceData {
           : index % 3 === 1
             ? 'Inventory receipt accrual'
             : 'Supplier bill accrual',
-      status: index % 5 === 0 ? 'draft' : 'posted',
+      status: journalStatuses[index],
       createdAt,
-    };
+    } satisfies JournalEntry;
   });
 
   const glPeriods: GlPeriod[] = [
@@ -2135,11 +2268,27 @@ function buildMockFinanceData(): MockFinanceData {
     },
   ];
 
-  const billStatuses = ['open', 'approved', 'paid', 'overdue', 'open', 'approved'];
+  // The engine's bill vocabulary (`BillStatus`, normalised from its `Debug` render).
+  const billStatuses: BillStatus[] = [
+    'pending',
+    'approved',
+    'paid',
+    'overdue',
+    'draft',
+    'partially_paid',
+    'approved',
+    'disputed',
+    'cancelled',
+  ];
   const bills = Array.from({ length: 18 }, (_, index) => {
     const totalAmount = roundCurrency(320 + deterministicNumber(index + 1601, 0, 4200));
     const status = billStatuses[index % billStatuses.length];
-    const amountPaid = status === 'paid' ? totalAmount : 0;
+    const amountPaid =
+      status === 'paid'
+        ? totalAmount
+        : status === 'partially_paid'
+          ? roundCurrency(totalAmount * 0.4)
+          : 0;
     const createdAt = formatMockDate(-(index * 4) - 2, index % 9);
     return {
       id: `bill_${3000 + index}`,
@@ -2154,7 +2303,10 @@ function buildMockFinanceData(): MockFinanceData {
     } satisfies Bill;
   });
 
-  const openBills = bills.filter((bill) => bill.amountDue > 0);
+  // Same scope as the engine's AP aging: everything but paid and cancelled.
+  const openBills = bills.filter(
+    (bill) => !statusIn(AP_AGING_EXCLUDED_BILL_STATUSES, bill.status) && bill.amountDue > 0,
+  );
   const bucketTotal = (predicate: (index: number) => boolean) =>
     roundCurrency(
       openBills
@@ -2170,7 +2322,16 @@ function buildMockFinanceData(): MockFinanceData {
     total: roundCurrency(openBills.reduce((sum, bill) => sum + bill.amountDue, 0)),
   };
 
-  const invoiceStatuses = ['sent', 'paid', 'overdue', 'sent', 'partially_paid', 'sent'];
+  const invoiceStatuses: InvoiceStatus[] = [
+    'sent',
+    'paid',
+    'overdue',
+    'viewed',
+    'partially_paid',
+    'disputed',
+    'draft',
+    'sent',
+  ];
   const invoices = Array.from({ length: 24 }, (_, index) => {
     const subtotal = roundCurrency(480 + deterministicNumber(index + 1701, 0, 5200));
     const taxAmount = roundCurrency(subtotal * 0.08);
@@ -2194,8 +2355,10 @@ function buildMockFinanceData(): MockFinanceData {
     } satisfies Invoice;
   });
 
+  // Same scope as the engine's AR aging: issued, open invoices only.
   const openInvoices = invoices.filter(
-    (invoice) => invoice.status !== 'paid' && invoice.total - invoice.amountPaid > 0,
+    (invoice) =>
+      statusIn(AR_OPEN_INVOICE_STATUSES, invoice.status) && invoice.total - invoice.amountPaid > 0,
   );
   const arBucketTotal = (predicate: (daysPastDue: number) => boolean) =>
     roundCurrency(
@@ -2577,6 +2740,8 @@ export const ediDocumentsApi = {
 //
 // Types mirror the napi binding outputs in bindings/node/index.d.ts. Amounts
 // are passed through untouched; formatting is display-only in components.
+// Status (and other enum) fields carry the engine's snake_case vocabulary:
+// `adaptNativeEngine` normalises the binding's `Debug`-cased renders.
 // ============================================================================
 
 /** A purchase order header (`commerce.purchaseOrders.list`). */
@@ -2584,7 +2749,7 @@ export interface PurchaseOrder {
   id: string;
   poNumber: string;
   supplierId: string;
-  status: string;
+  status: PurchaseOrderStatus;
   subtotal: number;
   total: number;
   createdAt: string;
@@ -2607,6 +2772,7 @@ export interface WarehouseRecord {
   id: number;
   code: string;
   name: string;
+  /** distribution, manufacturing, retail, third_party, consignment, returns */
   warehouseType: string;
   isActive: boolean;
   timezone?: string;
@@ -2618,6 +2784,7 @@ export interface WarehouseLocation {
   id: number;
   warehouseId: number;
   code: string;
+  /** bulk, pick, staging, receiving, shipping, quarantine, returns, production, packing, cross_dock */
   locationType: string;
   zone?: string;
   aisle?: string;
@@ -2668,7 +2835,7 @@ export interface WorkOrder {
   workOrderNumber: string;
   productId: string;
   bomId?: string;
-  status: string;
+  status: WorkOrderStatus;
   priority: string;
   quantityToBuild: number;
   quantityCompleted: number;
@@ -2681,10 +2848,11 @@ export interface WorkOrder {
 export interface QualityInspection {
   id: string;
   inspectionNumber: string;
+  /** incoming, receiving, in_process, final, random, return */
   inspectionType: string;
   referenceType: string;
   referenceId: string;
-  status: string;
+  status: InspectionStatus;
   createdAt: string;
   updatedAt: string;
 }
@@ -2693,11 +2861,12 @@ export interface QualityInspection {
 export interface NonConformanceReport {
   id: string;
   ncrNumber: string;
+  /** inspection, customer_complaint, internal_audit, supplier_issue, production_defect, shipping_damage */
   source: string;
-  severity: string;
+  severity: NcrSeverity;
   sku: string;
   quantityAffected: number;
-  status: string;
+  status: NcrStatus;
   description: string;
   createdAt: string;
 }
@@ -2708,8 +2877,7 @@ export interface Wave {
   waveNumber: string;
   warehouseId: number;
   orderCount: number;
-  /** created, released, picking, completed, cancelled */
-  status: string;
+  status: WaveStatus;
   createdAt: string;
 }
 
@@ -2721,8 +2889,7 @@ export interface PickTask {
   sku: string;
   quantityRequested: number;
   quantityPicked: number;
-  /** pending, assigned, in_progress, picked, cancelled */
-  status: string;
+  status: PickTaskStatus;
   sourceLocationId: number;
   assignedTo?: string;
 }
@@ -2735,8 +2902,7 @@ export interface Lot {
   quantityProduced: number;
   quantityAvailable: number;
   quantityReserved: number;
-  /** active, quarantined, expired, consumed */
-  status: string;
+  status: LotStatus;
   productionDate?: string;
   expirationDate?: string;
   createdAt: string;
@@ -2748,8 +2914,7 @@ export interface SerialNumber {
   serial: string;
   sku: string;
   lotId?: string;
-  /** available, allocated, sold, quarantined */
-  status: string;
+  status: SerialStatus;
   ownerId?: string;
   locationId?: number;
   createdAt: string;
@@ -2759,10 +2924,10 @@ export interface SerialNumber {
 export interface Receipt {
   id: string;
   receiptNumber: string;
+  /** purchase_order, transfer, return, adjustment, production, other */
   receiptType: string;
   warehouseId: number;
-  /** pending, receiving, completed, cancelled */
-  status: string;
+  status: ReceiptStatus;
   carrier?: string;
   trackingNumber?: string;
   createdAt: string;
@@ -2807,7 +2972,18 @@ function buildMockOperationsData(): MockOperationsData {
       }) satisfies Supplier,
   );
 
-  const poStatuses = ['draft', 'submitted', 'approved', 'sent', 'received', 'cancelled'];
+  const poStatuses: PurchaseOrderStatus[] = [
+    'draft',
+    'pending_approval',
+    'approved',
+    'sent',
+    'acknowledged',
+    'partially_received',
+    'received',
+    'completed',
+    'on_hold',
+    'cancelled',
+  ];
   const purchaseOrders = Array.from({ length: 20 }, (_, index) => {
     const subtotal = roundCurrency(750 + deterministicNumber(index + 2101, 0, 9400));
     const createdAt = formatMockDate(-(index * 3) - 1, index % 11);
@@ -2825,7 +3001,7 @@ function buildMockOperationsData(): MockOperationsData {
 
   const warehouseSpecs: [string, string, string][] = [
     ['WH-MAIN', 'Reno Distribution Center', 'distribution'],
-    ['WH-EAST', 'Columbus Fulfillment', 'fulfillment'],
+    ['WH-EAST', 'Columbus Fulfillment', 'third_party'],
     ['WH-MFG', 'Fremont Manufacturing', 'manufacturing'],
   ];
   const warehouses = warehouseSpecs.map(
@@ -2841,7 +3017,7 @@ function buildMockOperationsData(): MockOperationsData {
       }) satisfies WarehouseRecord,
   );
 
-  const locationTypes = ['bin', 'bulk', 'staging', 'receiving'];
+  const locationTypes = ['pick', 'bulk', 'staging', 'receiving'];
   const locations: WarehouseLocation[] = [];
   let locationId = 0;
   for (const warehouse of warehouses) {
@@ -2901,7 +3077,14 @@ function buildMockOperationsData(): MockOperationsData {
     } satisfies CycleCount;
   });
 
-  const workOrderStatuses = ['draft', 'released', 'in_progress', 'completed', 'cancelled'];
+  const workOrderStatuses: WorkOrderStatus[] = [
+    'planned',
+    'in_progress',
+    'completed',
+    'partially_completed',
+    'on_hold',
+    'cancelled',
+  ];
   const priorities = ['low', 'normal', 'high', 'urgent'];
   const workOrders = Array.from({ length: 16 }, (_, index) => {
     const status = workOrderStatuses[index % workOrderStatuses.length];
@@ -2909,7 +3092,7 @@ function buildMockOperationsData(): MockOperationsData {
     const quantityCompleted =
       status === 'completed'
         ? quantityToBuild
-        : status === 'in_progress'
+        : status === 'in_progress' || status === 'partially_completed'
           ? Math.floor(quantityToBuild / 2)
           : 0;
     const createdAt = formatMockDate(-(index * 4) - 1, index % 12);
@@ -2929,7 +3112,16 @@ function buildMockOperationsData(): MockOperationsData {
   });
 
   const inspectionTypes = ['incoming', 'in_process', 'final', 'return'];
-  const inspectionStatuses = ['pending', 'in_progress', 'passed', 'failed'];
+  const inspectionStatuses: InspectionStatus[] = [
+    'pending',
+    'scheduled',
+    'in_progress',
+    'passed',
+    'failed',
+    'partial_pass',
+    'on_hold',
+    'cancelled',
+  ];
   const inspections = Array.from({ length: 14 }, (_, index) => {
     const createdAt = formatMockDate(-(index * 3) - 1, index % 9);
     return {
@@ -2944,15 +3136,22 @@ function buildMockOperationsData(): MockOperationsData {
     } satisfies QualityInspection;
   });
 
-  const severities = ['minor', 'major', 'critical'];
-  const ncrStatuses = ['open', 'under_review', 'closed'];
+  const severities: NcrSeverity[] = ['minor', 'major', 'critical', 'observation'];
+  const ncrStatuses: NcrStatus[] = [
+    'open',
+    'under_review',
+    'closed',
+    'pending_disposition',
+    'corrective_action',
+    'cancelled',
+  ];
   const ncrs = Array.from(
     { length: 9 },
     (_, index) =>
       ({
         id: `ncr_${9700 + index}`,
         ncrNumber: `NCR-${9700 + index}`,
-        source: index % 2 === 0 ? 'inspection' : 'customer_return',
+        source: index % 2 === 0 ? 'inspection' : 'customer_complaint',
         severity: severities[index % severities.length],
         sku: `SKU-${1000 + (index % 40)}`,
         quantityAffected: 1 + deterministicNumber(index + 2401, 0, 60),
@@ -2962,7 +3161,7 @@ function buildMockOperationsData(): MockOperationsData {
       }) satisfies NonConformanceReport,
   );
 
-  const waveStatuses = ['created', 'released', 'picking', 'completed', 'cancelled'];
+  const waveStatuses: WaveStatus[] = ['draft', 'released', 'in_progress', 'completed', 'cancelled'];
   const waves = Array.from(
     { length: 10 },
     (_, index) =>
@@ -2976,14 +3175,21 @@ function buildMockOperationsData(): MockOperationsData {
       }) satisfies Wave,
   );
 
-  const pickStatuses = ['pending', 'assigned', 'in_progress', 'picked', 'cancelled'];
+  const pickStatuses: PickTaskStatus[] = [
+    'pending',
+    'assigned',
+    'in_progress',
+    'completed',
+    'short',
+    'cancelled',
+  ];
   const picks = Array.from({ length: 24 }, (_, index) => {
     const status = pickStatuses[index % pickStatuses.length];
     const quantityRequested = 1 + deterministicNumber(index + 2601, 0, 24);
     const quantityPicked =
-      status === 'picked'
+      status === 'completed'
         ? quantityRequested
-        : status === 'in_progress'
+        : status === 'in_progress' || status === 'short'
           ? Math.floor(quantityRequested / 2)
           : 0;
     return {
@@ -2999,7 +3205,15 @@ function buildMockOperationsData(): MockOperationsData {
     } satisfies PickTask;
   });
 
-  const lotStatuses = ['active', 'active', 'quarantined', 'expired', 'consumed'];
+  const lotStatuses: LotStatus[] = [
+    'active',
+    'active',
+    'quarantine',
+    'expired',
+    'consumed',
+    'on_hold',
+    'recalled',
+  ];
   const lots = Array.from({ length: 18 }, (_, index) => {
     const status = lotStatuses[index % lotStatuses.length];
     const quantityProduced = 100 + deterministicNumber(index + 2701, 0, 900);
@@ -3022,7 +3236,14 @@ function buildMockOperationsData(): MockOperationsData {
     } satisfies Lot;
   });
 
-  const serialStatuses = ['available', 'allocated', 'sold', 'quarantined'];
+  const serialStatuses: SerialStatus[] = [
+    'available',
+    'reserved',
+    'sold',
+    'quarantined',
+    'shipped',
+    'returned',
+  ];
   const serials = Array.from({ length: 20 }, (_, index) => {
     const status = serialStatuses[index % serialStatuses.length];
     return {
@@ -3037,7 +3258,14 @@ function buildMockOperationsData(): MockOperationsData {
     } satisfies SerialNumber;
   });
 
-  const receiptStatuses = ['pending', 'receiving', 'completed', 'completed', 'cancelled'];
+  const receiptStatuses: ReceiptStatus[] = [
+    'expected',
+    'in_progress',
+    'received',
+    'putting_away',
+    'completed',
+    'cancelled',
+  ];
   const receiptTypes = ['purchase_order', 'return', 'transfer'];
   const carriers = ['UPS', 'FedEx', 'DHL'];
   const receipts = Array.from(

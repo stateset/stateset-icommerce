@@ -58,7 +58,7 @@ const data = {
       sku: 'SKU-1001',
       quantityRequested: 2,
       quantityPicked: 2,
-      status: 'picked',
+      status: 'completed',
       sourceLocationId: 11,
       assignedTo: 'picker_1',
     },
@@ -95,7 +95,7 @@ describe('FulfillmentClient', () => {
     render(<FulfillmentClient />);
 
     fireEvent.change(screen.getByLabelText('Filter pick tasks by status'), {
-      target: { value: 'picked' },
+      target: { value: 'completed' },
     });
 
     expect(screen.getByText('pick_5001')).toBeInTheDocument();

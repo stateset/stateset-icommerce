@@ -7,6 +7,7 @@ import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getBillsPageData } from '@/app/actions/finance';
 import { formatMoney } from '@/lib/finance/format';
 import type { Bill } from '@/lib/embedded';
+import type { BillStatus } from '@/lib/engine-lifecycles';
 
 type DsBadgeVariant =
   | 'default'
@@ -17,11 +18,15 @@ type DsBadgeVariant =
   | 'danger'
   | 'outline';
 
-const statusBadgeVariants: Record<string, DsBadgeVariant> = {
-  open: 'primary',
+/** One badge per engine bill status (`BillStatus`, normalised from its `Debug` render). */
+const statusBadgeVariants: Record<BillStatus, DsBadgeVariant> = {
+  draft: 'outline',
+  pending: 'primary',
   approved: 'accent',
+  partially_paid: 'warning',
   paid: 'success',
   overdue: 'danger',
+  disputed: 'warning',
   cancelled: 'outline',
 };
 

@@ -85,7 +85,7 @@ const data = {
     {
       id: 'ncr_2',
       ncrNumber: 'NCR-9701',
-      source: 'customer_return',
+      source: 'customer_complaint',
       severity: 'minor',
       sku: 'SKU-1001',
       quantityAffected: 2,
@@ -108,6 +108,27 @@ describe('ManufacturingClient', () => {
     expect(screen.getByText('NCR-9700')).toBeInTheDocument();
     // One of the two NCRs is closed, so only one is counted as open.
     expect(screen.getByText('Open NCRs')).toBeInTheDocument();
+  });
+
+  it('counts every NCR that is not closed or cancelled as open', () => {
+    const ncr = data.ncrs[0];
+    useEmbeddedDataMock.mockReturnValue({
+      data: {
+        ...data,
+        ncrs: [
+          { ...ncr, id: 'a', ncrNumber: 'NCR-A', status: 'open' },
+          { ...ncr, id: 'b', ncrNumber: 'NCR-B', status: 'under_review' },
+          { ...ncr, id: 'c', ncrNumber: 'NCR-C', status: 'corrective_action' },
+          { ...ncr, id: 'd', ncrNumber: 'NCR-D', status: 'closed' },
+          { ...ncr, id: 'e', ncrNumber: 'NCR-E', status: 'cancelled' },
+        ],
+      },
+      isLoading: false,
+      error: null,
+    });
+    render(<ManufacturingClient />);
+
+    expect(screen.getByText('Open NCRs').nextElementSibling).toHaveTextContent('3');
   });
 
   it('filters work orders by status', () => {
