@@ -201,14 +201,17 @@ export function createSimulateAgenticPlan({
 
       const meta = getToolRuntimeMeta(step.tool);
       if (meta.permission === 'unknown') {
+        // A tool a toolkit capability scope excludes is refused with that
+        // reason rather than reported as unknown.
+        const refusal = meta.unavailable || null;
         const unknown = {
           index: step.index,
           tool: step.tool,
-          status: 'invalid',
-          error: `Unknown tool '${step.tool}'`,
+          status: refusal ? 'permission_block' : 'invalid',
+          error: refusal ? refusal.message : `Unknown tool '${step.tool}'`,
           routing: stepRouting,
           policy: null,
-          permission: null,
+          permission: refusal ? { allowed: false, preview: false, reason: refusal.message } : null,
           treasury: null,
           runtime: null,
           simulation: true,

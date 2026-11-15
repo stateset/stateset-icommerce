@@ -1,5 +1,5 @@
 import { getCommerce, getGlobalManager } from './database.js';
-import { KERNEL_CAPABILITY_BY_TOOL } from './kernel-tool-execution.js';
+import { capabilityAllowsTool, normalizeToolCapabilities } from './mcp/capability-scope.js';
 import { createStatesetMcpServer } from './mcp-server.js';
 import { createMppHttpAgent, discoverMppHttpService } from './mpp/agent.js';
 import { createToolInputSchema } from './tool-schema.js';
@@ -12,21 +12,6 @@ function normalizeToolName(toolName) {
 function toolDefinitionName(tool, format = 'generic') {
   return normalizeToolName(
     format === 'openai' ? tool?.function?.name : tool?.toolName || tool?.name,
-  );
-}
-
-function capabilityAllowsTool(tool, capabilities) {
-  if (!capabilities) return true;
-  const name = normalizeToolName(tool?.name);
-  const permission = String(tool?.permission || 'read');
-  const domain = String(tool?.policyDomain || '').trim();
-  return (
-    capabilities.has('*') ||
-    capabilities.has(name) ||
-    capabilities.has(`permission:${permission}`) ||
-    (permission === 'read' && capabilities.has('read:*')) ||
-    (domain && capabilities.has(`${domain}.*`)) ||
-    capabilities.has(KERNEL_CAPABILITY_BY_TOOL[name])
   );
 }
 
@@ -140,7 +125,15 @@ function createRemoteHttpDescriptor(route, baseUrl, executeRoute) {
  * @param {Object} [options]
  * @param {string} [options.dbPath='./store.db'] SQLite database path when no commerce instance is supplied.
  * @param {boolean} [options.allowApply=false] Enable write tools instead of preview-only execution.
- * @param {string[]} [options.capabilities] Explicit tool, domain, permission, or kernel capabilities.
+ * @param {string[]|Set<string>} [options.capabilities] Explicit tool, domain, permission, or kernel capabilities.
+ *   The scope binds every path to a tool: the listing, direct calls, and the
+ *   nested steps of composite tools (plans, simulations, replay, rollback
+ *   compensations). Omit it to expose every tool in the profile. Any value
+ *   other than an array or a Set throws. `delegate_to_agent` is granted only
+ *   by name or `*`.
+ * @param {string[]|Set<string>} [options.toolCapabilities] The server option's
+ *   name for the same scope; accepted as `capabilities` when that is absent.
+ *   Passing both throws.
  * @param {Object} [options.kernel] Trusted kernel policy, principal, store, and optional authority signer.
  * @param {Object} [options.commerce] Reuse an existing embedded commerce instance.
  * @param {Object|null} [options.autonomousEngine=null] Enable runtime tools such as `delegate_to_agent`.
@@ -150,26 +143,35 @@ function createRemoteHttpDescriptor(route, baseUrl, executeRoute) {
  * @returns {Object} Toolkit helpers for tool discovery, execution, and framework adapters.
  */
 export function createEmbeddedAgentToolkit(options = {}) {
-  const dbPath = options.dbPath || './store.db';
-  const ownsCommerce = !options.commerce;
-  const commerce = options.commerce || getCommerce(dbPath);
-  const capabilityList = Array.isArray(options.capabilities)
-    ? options.capabilities.map((capability) => String(capability).trim()).filter(Boolean)
-    : null;
-  if (options.allowApply && (!capabilityList || capabilityList.length === 0)) {
+  // Validate the scope before opening anything. A scope the toolkit cannot
+  // read throws: it must never silently mean "no scope" (every tool).
+  const given = (value) => value !== undefined && value !== null;
+  if (given(options.capabilities) && given(options.toolCapabilities)) {
+    throw new Error('Pass the capability scope as capabilities or toolCapabilities, not both.');
+  }
+  const capabilities = given(options.capabilities)
+    ? normalizeToolCapabilities(options.capabilities, { optionName: 'capabilities' })
+    : normalizeToolCapabilities(options.toolCapabilities, { optionName: 'toolCapabilities' });
+  if (options.allowApply && (!capabilities || capabilities.size === 0)) {
     throw new Error(
       'allowApply requires explicit capabilities (for example ["read:*", "payments.create"]).',
     );
   }
-  const capabilities = capabilityList ? new Set(capabilityList) : null;
+  const dbPath = options.dbPath || './store.db';
+  const ownsCommerce = !options.commerce;
+  const commerce = options.commerce || getCommerce(dbPath);
   const defaultPaymentOptions = {
     ...(options.mpp || {}),
     payer: options?.mpp?.payer || options?.treasury?.agentId || options?.agentId || null,
   };
+  // The server applies the same scope to the tool map every path resolves
+  // against, so composite tools (agentic_execute_plan, replay, simulation,
+  // rollback compensations) cannot reach a tool the toolkit refuses directly.
   const server = createStatesetMcpServer({
     ...options,
     commerce,
     dbPath,
+    toolCapabilities: capabilities,
   });
 
   const getRawTools = () =>

@@ -590,7 +590,7 @@
       },
       {
         "name": "mcp",
-        "count": 37
+        "count": 36
       },
       {
         "name": "channels",
@@ -654,10 +654,6 @@
       },
       {
         "name": "compliance",
-        "count": 3
-      },
-      {
-        "name": "erc8004",
         "count": 3
       },
       {
@@ -818,6 +814,10 @@
       },
       {
         "name": "env.js",
+        "count": 1
+      },
+      {
+        "name": "erc8004",
         "count": 1
       },
       {

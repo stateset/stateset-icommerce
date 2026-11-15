@@ -16,6 +16,7 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { ToolErrorCode } from './tool-result-contract.js';
 import { compactReplayValue } from './replay-sanitizer.js';
 import { replayEventHash } from './audit-envelope.js';
 import { normalizeToolName } from './policy-helpers.js';
@@ -75,7 +76,10 @@ export function createSimulateMutationToolCall({
     if (runtime.permission === 'unknown') {
       return {
         success: false,
-        error: `Unknown tool '${targetTool}'`,
+        error: runtime.unavailable?.message || `Unknown tool '${targetTool}'`,
+        ...(runtime.unavailable
+          ? { errorCode: ToolErrorCode.PERMISSION_DENIED, refusal: runtime.unavailable.reason }
+          : {}),
       };
     }
     if (runtime.sideEffect !== 'write') {
@@ -207,11 +211,35 @@ export function createReplayMutationToolCall({
       // Withheld writes are unknown to a strict server, but stay candidates.
       const withheld = Boolean(strictKernel?.isWithheld(event.tool));
       const runtime = getToolRuntimeMeta(event.tool);
-      if (!withheld && (runtime.permission === 'unknown' || runtime.sideEffect !== 'write')) {
+      // A mutation by a tool outside this server's capability scope is still
+      // selected, so the refusal below names it instead of replaying another.
+      if (runtime.unavailable) {
+        if (runtime.unavailable.sideEffect !== 'write') return false;
+      } else if (
+        !withheld &&
+        (runtime.permission === 'unknown' || runtime.sideEffect !== 'write')
+      ) {
         return false;
       }
       return event.params && typeof event.params === 'object';
     });
+
+    const sourceRefusal = sourceEvent ? getToolRuntimeMeta(sourceEvent.tool).unavailable : null;
+    if (sourceRefusal) {
+      return {
+        success: false,
+        errorCode: ToolErrorCode.PERMISSION_DENIED,
+        error: sourceRefusal.message,
+        refusal: sourceRefusal.reason,
+        sourceEvent: {
+          eventId: sourceEvent.eventId || null,
+          requestId: sourceEvent.requestId || null,
+          tool: sourceEvent.tool,
+          occurredAt: sourceEvent.occurredAt || null,
+          status: sourceEvent.status || null,
+        },
+      };
+    }
 
     if (!sourceEvent) {
       return {
