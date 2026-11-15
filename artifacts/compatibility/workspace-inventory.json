@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.40.1",
+    "version": "1.40.0",
     "memberCount": 31,
     "defaultMemberCount": 19,
     "rustCrateCount": 23,
@@ -572,8 +572,8 @@
     }
   ],
   "cli": {
-    "binaryCount": 56,
-    "dependencyCount": 14,
+    "binaryCount": 57,
+    "dependencyCount": 15,
     "optionalDependencyCount": 12,
     "topLevelSourceCounts": [
       {
@@ -598,19 +598,19 @@
       },
       {
         "name": "sync",
-        "count": 29
-      },
-      {
-        "name": "simulation",
-        "count": 21
+        "count": 26
       },
       {
         "name": "adapters",
         "count": 20
       },
       {
+        "name": "simulation",
+        "count": 20
+      },
+      {
         "name": "utils",
-        "count": 17
+        "count": 16
       },
       {
         "name": "harness",
@@ -825,10 +825,6 @@
         "count": 1
       },
       {
-        "name": "generated",
-        "count": 1
-      },
-      {
         "name": "google-chat",
         "count": 1
       },
@@ -978,10 +974,6 @@
       },
       {
         "name": "standalone.js",
-        "count": 1
-      },
-      {
-        "name": "state-machine-catalog.js",
         "count": 1
       },
       {
