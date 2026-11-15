@@ -6,6 +6,15 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- Postgres checkout no longer revives a terminal order. When an order was
+  already minted for the cart (`orders.create_from_cart`), checkout moved it
+  back to `confirmed` even if it had been cancelled, refunded, shipped or
+  delivered; it now accepts only `pending` (or an already `confirmed`
+  order), refuses anything else with `InvalidOrderStatusTransition` as
+  SQLite does, and writes under the order's version.
+
 ## [1.41.0] - 2026-11-15
 
 1.41.0 rolls up three lines of work: the 1.40.1 security fixes, which were

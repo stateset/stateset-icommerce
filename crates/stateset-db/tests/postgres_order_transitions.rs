@@ -477,3 +477,118 @@ async fn postgres_ship_does_not_confirm_other_reservations_when_one_expired() {
     assert_eq!(by_id.get(&expired), Some(&ReservationStatus::Expired));
     assert_eq!(by_id.get(&kept), Some(&ReservationStatus::Pending));
 }
+
+/// Twin of the SQLite
+/// `sqlite_cart_checkout_refuses_to_revive_a_cancelled_order_minted_for_the_cart`:
+/// checkout reuses the order already minted for the cart (by `cart_id`), and
+/// promoting it to `confirmed` is a status transition. A cancelled order must
+/// stay cancelled — Postgres used to run the promotion with no transition
+/// check, reviving it.
+#[cfg(feature = "postgres")]
+#[tokio::test]
+async fn postgres_cart_checkout_refuses_to_revive_a_cancelled_order_minted_for_the_cart() {
+    use stateset_core::{AddCartItem, CartAddress, CartStatus, CreateCart};
+    let Some(db) = setup_db().await else {
+        return;
+    };
+    let email = format!("checkout-revive-{}@example.com", Uuid::new_v4());
+    let customer = create_customer(&db, &email).await;
+    let carts = db.carts();
+    let cart = carts
+        .create_async(CreateCart {
+            customer_id: Some(customer.id),
+            customer_email: Some(email.clone()),
+            customer_name: Some("Checkout Revive".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("create cart");
+    carts
+        .add_item_async(
+            cart.id.into_uuid(),
+            AddCartItem {
+                // `cart_items.product_id` is a foreign key on Postgres; a
+                // non-catalogue line carries none (checkout mints one).
+                product_id: None,
+                sku: format!("SKU-REVIVE-{}", Uuid::new_v4().simple()),
+                name: "Revive Widget".into(),
+                quantity: 1,
+                unit_price: dec!(19.99),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("add cart item");
+    carts
+        .set_shipping_address_async(
+            cart.id.into_uuid(),
+            CartAddress {
+                first_name: "John".into(),
+                last_name: "Doe".into(),
+                company: None,
+                line1: "123 Main St".into(),
+                line2: None,
+                city: "San Francisco".into(),
+                state: Some("CA".into()),
+                postal_code: "94102".into(),
+                country: "US".into(),
+                phone: None,
+                email: Some(email.clone()),
+            },
+        )
+        .await
+        .expect("set shipping address");
+    let cart = carts.get_async(cart.id.into_uuid()).await.expect("get cart").expect("cart exists");
+
+    let order = db
+        .orders()
+        .create_from_cart_async(
+            cart.id.into_uuid(),
+            CreateOrder {
+                customer_id: customer.id,
+                items: cart
+                    .items
+                    .iter()
+                    .map(|item| CreateOrderItem {
+                        product_id: item.product_id.unwrap_or_else(ProductId::new),
+                        variant_id: item.variant_id,
+                        sku: item.sku.clone(),
+                        name: item.name.clone(),
+                        quantity: item.quantity,
+                        unit_price: item.unit_price,
+                        discount: Some(item.discount_amount),
+                        tax_amount: Some(item.tax_amount),
+                    })
+                    .collect(),
+                currency: Some(cart.currency),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("create order for cart");
+    let cancelled = db
+        .orders()
+        .update_async(
+            order.id.into(),
+            UpdateOrder { status: Some(OrderStatus::Cancelled), ..Default::default() },
+        )
+        .await
+        .expect("cancel order");
+    assert_eq!(cancelled.status, OrderStatus::Cancelled);
+
+    let err = carts
+        .complete_async(cart.id.into_uuid())
+        .await
+        .expect_err("checkout must not revive a cancelled order");
+    assert!(
+        matches!(err, CommerceError::InvalidOrderStatusTransition { .. }),
+        "unexpected error: {err:?}"
+    );
+    let stored =
+        db.orders().get_async(order.id.into()).await.expect("get order").expect("order exists");
+    assert_eq!(stored.status, OrderStatus::Cancelled);
+    assert_eq!(stored.version, cancelled.version, "the refused checkout wrote nothing");
+    let reloaded =
+        carts.get_async(cart.id.into_uuid()).await.expect("reload cart").expect("cart exists");
+    assert_ne!(reloaded.status, CartStatus::Completed);
+}
