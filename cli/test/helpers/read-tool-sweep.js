@@ -200,8 +200,9 @@ export function installSweepGuard() {
  * 'smoke', which makes a sweep vacuous: almost every input fails validation
  * before the handler runs. When the installed zod is one the sampler cannot
  * read, present each schema to it in the zod 3 shape it expects. When the
- * sampler reads the schemas natively (zod 3, as master's lockfile pins) this
- * is the identity.
+ * sampler reads the schemas natively (zod 3 with a zod 3 sampler, or zod 4
+ * with a zod 4 sampler) this is the identity; this module's own type checks
+ * (baseOf) still read the zod 3 shape, through asZod3.
  *
  * @param {(schema: unknown, key?: string) => unknown} sample - the smoke sampler
  * @param {object} z - the zod the tool modules import
@@ -323,9 +324,19 @@ const WRAPPERS = new Set([
   'ZodLazy',
 ]);
 
+/**
+ * A schema in the zod 3 shape this module inspects. A sampler that reads zod 4
+ * natively (scripts/mcp-tool-smoke.mjs since the zod 4 upgrade) gets an
+ * identity `view`, so the shapes handed to baseOf are zod 4 schemas: present
+ * those as zod 3 here too, or no field is ever recognised as a string or a
+ * boolean and the `seeded` and `flipped` variants -- and every seed write's
+ * real ids -- silently vanish.
+ */
+const asZod3 = (schema) => (schema?._def?.typeName ? schema : zod4AsZod3(schema));
+
 /** The schema under optional/default/effects wrappers (zod 3 shape). */
 function baseOf(schema) {
-  let current = schema;
+  let current = asZod3(schema);
   for (let depth = 0; depth < 25; depth += 1) {
     const def = current?._def;
     if (!def || !WRAPPERS.has(def.typeName)) return current;
@@ -407,7 +418,33 @@ export function readSeedPool(dbPath, { db: open = null } = {}) {
       }
     };
     const sku = first('inventory_items', 'sku') ?? first('product_variants', 'sku');
-    const skuPrice = row('SELECT price FROM product_variants WHERE sku = ?', sku)?.price ?? null;
+    const skuVariant = row('SELECT price, product_id FROM product_variants WHERE sku = ?', sku);
+    const skuPrice = skuVariant?.price ?? null;
+    // Two distinct active locations of one active warehouse, the second
+    // receivable: the stock routing work orders, transfer orders and vendor
+    // returns are refused without.
+    const stockRoute = row(
+      'SELECT s.warehouse_id AS warehouseId, s.id AS sourceLocationId, d.id AS destinationLocationId ' +
+        'FROM locations s JOIN locations d ON d.warehouse_id = s.warehouse_id AND d.id <> s.id ' +
+        'JOIN warehouses w ON w.id = s.warehouse_id ' +
+        'WHERE s.is_active = 1 AND d.is_active = 1 AND d.is_receivable = 1 AND w.is_active = 1 ' +
+        'ORDER BY s.id, d.id LIMIT 1',
+    );
+    // Stocked SKUs with neither a cost method nor cost layers, which the
+    // engine refuses to value (see NATIVE_SEEDS).
+    let uncostedSkus = [];
+    try {
+      uncostedSkus = db
+        .prepare(
+          'SELECT DISTINCT i.sku AS sku FROM inventory_items i ' +
+            'WHERE NOT EXISTS (SELECT 1 FROM item_costs c WHERE c.sku = i.sku) ' +
+            'AND NOT EXISTS (SELECT 1 FROM cost_layers l WHERE l.sku = i.sku) ORDER BY i.sku',
+        )
+        .all()
+        .map((entry) => entry.sku);
+    } catch {
+      // A table it reads does not exist yet.
+    }
     const orderItem = row('SELECT id, order_id FROM order_items ORDER BY rowid LIMIT 1');
     const customObject = row(
       'SELECT o.handle AS object, t.handle AS type FROM custom_object_records o ' +
@@ -418,6 +455,9 @@ export function readSeedPool(dbPath, { db: open = null } = {}) {
       named: {
         sku,
         skuPrice: skuPrice === null ? null : String(skuPrice),
+        skuProductId: skuVariant?.product_id ?? null,
+        stockRoute: stockRoute ? { ...stockRoute } : null,
+        uncostedSkus,
         email: first('customers', 'email'),
         couponCode: first('coupon_codes', 'code') ?? first('promotions', 'code'),
         shortCode: first('payment_links', 'short_code'),
@@ -826,6 +866,8 @@ export const FIXTURE_INPUTS = {
       anchorTxHash: `0x${'ef'.repeat(32)}`,
     })),
   agent_key_info: [{ agentId: SEED_AGENT_ID, keyType: 'signing', keyId: 1 }],
+  // The payer whose credit account the x402_credit_balance seed opened.
+  x402_get_credit_account: [{ payerAddress: WALLET_A }],
   agent_receipt_status: [{ order_id_hash: `0x${'ab'.repeat(32)}` }],
   agent_receipt_fx_quote: [{ pair: 'USD/EUR' }],
 
@@ -914,15 +956,23 @@ export const FIXTURE_INPUTS = {
  * @type {Array<[string, (pool: ReturnType<typeof readSeedPool>) => object, ((result: any) => object)?]>}
  */
 export const SEED_WRITES = [
-  ['create_order', (pool) => ({ items: [seedItem(pool)] })],
-  ['create_order', (pool) => ({ items: [seedItem(pool, { quantity: 2 })] })],
+  // Orders reference a real customer (a foreign key the engine enforces).
+  ['create_order', (pool) => ({ customerId: firstId(pool, 'customers'), items: [seedItem(pool)] })],
+  [
+    'create_order',
+    (pool) => ({
+      customerId: firstId(pool, 'customers'),
+      items: [seedItem(pool, { quantity: 2 })],
+    }),
+  ],
   ['create_cart', none],
   ['add_cart_item', (pool) => ({ unitPrice: pool.named.skuPrice ?? '10.00' })],
   ['create_shipment', none],
   [
     'create_invoice',
     () => ({
-      items: JSON.stringify([{ description: 'Seed service', quantity: 1, unitPrice: 10 }]),
+      // Finance money and quantities are decimal strings.
+      items: JSON.stringify([{ description: 'Seed service', quantity: '1', unitPrice: '10.00' }]),
     }),
   ],
   ['create_gift_card', none],
@@ -945,6 +995,16 @@ export const SEED_WRITES = [
     'create_location',
     (pool) => ({ locationType: 'pick', warehouseId: Number(firstId(pool, 'warehouses', 1)) }),
   ],
+  // A second, receivable location in the same warehouse: work orders,
+  // transfer orders and vendor returns route stock between two locations.
+  [
+    'create_location',
+    (pool) => ({
+      locationType: 'receiving',
+      warehouseId: Number(firstId(pool, 'warehouses', 1)),
+      isReceivable: true,
+    }),
+  ],
   ['create_lot', none],
   ['create_serial', none],
   ['create_backorder', none],
@@ -963,7 +1023,20 @@ export const SEED_WRITES = [
   ],
   ['create_supplier_sku', none],
   ['create_bom', none],
-  ['create_work_order', none],
+  [
+    'create_work_order',
+    (pool) => ({
+      // The output SKU must be a variant of the product, and the stock
+      // routing must name active locations, the output one receivable.
+      productId: pool.named.skuProductId,
+      quantityToBuild: '1',
+      stock: pool.named.stockRoute && {
+        sourceLocationId: pool.named.stockRoute.sourceLocationId,
+        outputLocationId: pool.named.stockRoute.destinationLocationId,
+        outputSku: pool.named.sku,
+      },
+    }),
+  ],
   ['create_production_batch', none],
   ['create_inspection', () => ({ inspectionType: 'incoming', referenceType: 'purchase_order' })],
   ['create_ncr', () => ({ source: 'inspection', severity: 'minor', description: 'Seed NCR' })],
@@ -996,7 +1069,7 @@ export const SEED_WRITES = [
       endDate: '2026-01-31',
     }),
   ],
-  ['create_bill', none],
+  // A bill comes from NATIVE_SEEDS: create_bill refuses without an operator actor.
   ['create_prepayment', none],
   ['create_vendor_credit', none],
   [
@@ -1026,9 +1099,15 @@ export const SEED_WRITES = [
       items: [{ orderItemId: pool.named.orderItemId, quantity: 1 }],
     }),
   ],
-  ['create_credit_memo', () => ({ amount: 5, reason: 'service_credit' })],
-  ['create_credit_account', () => ({ creditLimit: 1000 })],
-  ['set_item_cost', (pool) => ({ sku: pool.named.sku, standardCost: 5 })],
+  ['create_credit_memo', () => ({ amount: '5.00', reason: 'service_credit' })],
+  ['create_credit_account', () => ({ creditLimit: '1000.00' })],
+  [
+    'set_item_cost',
+    (pool) => ({ sku: pool.named.sku, costMethod: 'standard', standardCost: '5.00' }),
+  ],
+  // Opens the x402 credit account x402_get_credit_account reads (a write:
+  // the balance query is a get-or-create).
+  ['x402_credit_balance', () => ({ payerAddress: WALLET_A })],
 
   // Catalog, fulfilment and warehouse records.
   [
@@ -1058,11 +1137,15 @@ export const SEED_WRITES = [
   [
     'create_transfer_order',
     (pool) => ({
-      // Transfer orders take warehouse UUIDs; the `warehouses` table's ids
-      // are integers, so these name no row (none is required).
+      // Stock moves between two distinct active locations, the destination
+      // receivable, and each line's SKU must be a variant of its product.
+      sourceLocationId: pool.named.stockRoute?.sourceLocationId,
+      destinationLocationId: pool.named.stockRoute?.destinationLocationId,
+      // The warehouse ids are external UUID references; the `warehouses`
+      // table's ids are integers, so these name no row (none is required).
       sourceWarehouseId: '00000000-0000-4000-8000-0000000000a1',
       destinationWarehouseId: '00000000-0000-4000-8000-0000000000a2',
-      items: [{ productId: firstId(pool, 'products'), quantity: '1' }],
+      items: [{ sku: pool.named.sku, productId: pool.named.skuProductId, quantity: '1' }],
     }),
   ],
   [
@@ -1110,7 +1193,18 @@ export const SEED_WRITES = [
     'create_vendor_return',
     (pool) => ({
       supplierId: firstId(pool, 'suppliers'),
-      items: [{ productId: firstId(pool, 'products'), quantity: '1', unitCost: '5.00' }],
+      // Each line ships from a location of the return's warehouse, and its
+      // SKU must be a variant of its product.
+      warehouseId: pool.named.stockRoute?.warehouseId,
+      items: [
+        {
+          productId: pool.named.skuProductId,
+          sku: pool.named.sku,
+          sourceLocationId: pool.named.stockRoute?.sourceLocationId,
+          quantity: '1',
+          unitCost: '5.00',
+        },
+      ],
     }),
   ],
   [
@@ -1260,6 +1354,14 @@ const exactOr = (api, exact, plain) => (typeof api[exact] === 'function' ? exact
  * those tools' legacy handlers. They run after the first SEED_WRITES pass, so
  * the second pass can build on them (create_return needs a shipped order).
  *
+ * Two more mirror ungoverned tools that cannot do the job from the sweep's
+ * server: create_bill records its maker from the operator-configured actor
+ * (--actor / STATESET_ERP_ACTOR), which the sandbox scrubs, so it refuses;
+ * and the engine values stock only by a SKU's cost method or cost layers,
+ * which the demo seeder's opening stock lacks, so get_total_inventory_value
+ * needs every stocked SKU costed -- one set_item_cost call per SKU, more than
+ * one seed entry can make.
+ *
  * @type {Array<[string, (commerce: any, pool: ReturnType<typeof readSeedPool>) => Promise<void>]>}
  */
 export const NATIVE_SEEDS = [
@@ -1292,6 +1394,27 @@ export const NATIVE_SEEDS = [
         }
       }
       await commerce.orders.ship(orderId, 'SEED-TRACK-1');
+    },
+  ],
+  [
+    'bill, with its maker',
+    async (commerce, pool) => {
+      // create_bill's handler, with the actor the server would be configured with.
+      await commerce.accountsPayable.createBill({
+        createdBy: 'read-sweep-actor',
+        supplierId: firstId(pool, 'suppliers'),
+        dueDate: '2026-12-31T00:00:00Z', // RFC 3339
+        items: [{ description: 'Seed bill line', quantity: '1', unitPrice: '10.00' }],
+      });
+    },
+  ],
+  [
+    'opening stock costed',
+    async (commerce, pool) => {
+      // set_item_cost's handler, for each stocked SKU with no cost yet.
+      for (const sku of pool.named.uncostedSkus ?? []) {
+        await commerce.costAccounting.setItemCost({ sku, costMethod: 'average' });
+      }
     },
   ],
 ];
