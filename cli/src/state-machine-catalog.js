@@ -354,7 +354,8 @@ function explainUncatalogued(lifecycle, from, to) {
     reason:
       `${lifecycle.name} is a known lifecycle that is not catalogued yet: the engine has it, ` +
       'but its transition rules are not in the generated catalog, so this tool cannot say ' +
-      'which moves it accepts. Run the operation as a preview and read its result.',
+      'which moves it accepts. The engine still enforces them: a move it does not allow is ' +
+      'refused, and the refusal says why.',
     ...(lifecycle.note ? { note: lifecycle.note } : {}),
   };
   if (from === undefined) {

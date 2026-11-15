@@ -82,11 +82,11 @@ const REFUSALS = [
   { re: new RegExp(`\\b([a-z_]+) is already ${WORD}`, 'i'), machine: 1, from: 2 },
 ];
 
-/** "an order", "a return". */
 /** "a", "a or b", "a, b or c". */
 const listOr = (items) =>
   items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} or ${items.at(-1)}`;
 const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+/** "an order", "a return". */
 const withArticle = (noun) => `${/^[aeiou]/i.test(noun) ? 'an' : 'a'} ${noun}`;
 
 /** "the return" -> "return"; "fixed asset" -> "fixed_asset"; unknown -> undefined. */
