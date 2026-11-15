@@ -177,3 +177,138 @@ describe('x402_get_credit_account tool', () => {
     assert.equal(result.account.network, 'base');
   });
 });
+
+/**
+ * The engine's markSettled accepts only a sequenced or batched, unexpired
+ * intent. The tool used to accept `signed` too and check expiry not at all,
+ * so for a signed intent it executed the payment on-chain and then
+ * markSettled threw: money moved, intent left signed. Every refusal must now
+ * come before executePayment. A fake chains module stands in for wallets and
+ * payment execution, so nothing touches a chain.
+ */
+describe('x402_settle_intent_onchain refuses before moving money', () => {
+  const PAYER = '0x1111111111111111111111111111111111111111';
+  const PAYEE = '0x2222222222222222222222222222222222222222';
+  const tool = () => x402Tools.find((entry) => entry.name === 'x402_settle_intent_onchain');
+
+  function intent(overrides = {}) {
+    return {
+      id: 'intent_1',
+      status: 'sequenced',
+      payer_address: PAYER,
+      payee_address: PAYEE,
+      amount: '1000000',
+      asset: 'usdc',
+      network: 'base',
+      nonce: 1,
+      valid_until: Math.floor(Date.now() / 1000) + 3600,
+      ...overrides,
+    };
+  }
+
+  function fakeChains(executeResult = { success: false, error: 'stop: payment reached' }) {
+    const calls = { executePayment: [] };
+    return {
+      calls,
+      module: {
+        getChain: (id) => (id === 'base' ? { chainId: 8453 } : null),
+        listChains: () => ['base'],
+        getToken: () => ({ symbol: 'USDC', decimals: 6 }),
+        getDefaultStablecoin: () => ({ symbol: 'USDC', decimals: 6 }),
+        getWalletAddress: async () => PAYER,
+        isEvmChain: () => true,
+        fromSmallestUnit: (value, decimals) => (Number(value) / 10 ** decimals).toFixed(decimals),
+        executePayment: async (payment) => {
+          calls.executePayment.push(payment);
+          return executeResult;
+        },
+      },
+    };
+  }
+
+  function commerceWith(storedIntent, { markSettled } = {}) {
+    const calls = { markSettled: [] };
+    const api = {
+      getIntent: async () => storedIntent,
+      markSettled: async (...args) => {
+        calls.markSettled.push(args);
+        if (markSettled) return markSettled(...args);
+        return { ...storedIntent, status: 'settled', tx_hash: args[1] };
+      },
+    };
+    return { calls, commerce: { x402: () => api } };
+  }
+
+  async function settle(storedIntent, chains, options) {
+    const { calls, commerce } = commerceWith(storedIntent, options);
+    const result = await tool().handler({
+      commerce,
+      params: { intentId: 'intent_1', agentId: 'agent-payer' },
+      allowApply: true,
+      chainsModule: chains.module,
+    });
+    return { result, markSettledCalls: calls.markSettled };
+  }
+
+  for (const status of ['signed', 'created', 'settled', 'expired', 'failed']) {
+    it(`refuses an intent in ${status} state without paying, and says which state is required`, async () => {
+      const chains = fakeChains();
+      const { result, markSettledCalls } = await settle(intent({ status }), chains);
+
+      assert.equal(result.success, false);
+      assert.match(result.error, /must be sequenced or batched/);
+      assert.match(result.error, new RegExp(`current: ${status}`));
+      assert.deepEqual(result.requiredStatus, ['sequenced', 'batched']);
+      assert.equal(chains.calls.executePayment.length, 0, 'no payment may be executed');
+      assert.equal(markSettledCalls.length, 0);
+    });
+  }
+
+  it('refuses an expired intent without paying', async () => {
+    const chains = fakeChains();
+    const validUntil = Math.floor(Date.now() / 1000) - 5;
+    const { result } = await settle(intent({ valid_until: validUntil }), chains);
+
+    assert.equal(result.success, false);
+    assert.match(result.error, /expired/);
+    assert.equal(result.validUntil, validUntil);
+    assert.equal(chains.calls.executePayment.length, 0);
+  });
+
+  it('refuses an intent with no valid_until without paying', async () => {
+    const chains = fakeChains();
+    const { result } = await settle(intent({ valid_until: undefined }), chains);
+
+    assert.equal(result.success, false);
+    assert.match(result.error, /valid_until/);
+    assert.equal(chains.calls.executePayment.length, 0);
+  });
+
+  for (const status of ['sequenced', 'batched']) {
+    it(`still pays a ${status}, unexpired intent`, async () => {
+      const chains = fakeChains();
+      const { result } = await settle(intent({ status }), chains);
+
+      assert.equal(chains.calls.executePayment.length, 1, 'the intended path still pays');
+      assert.equal(chains.calls.executePayment[0].toAddress, PAYEE);
+      assert.equal(result.error, 'stop: payment reached');
+    });
+  }
+
+  it('reports the transaction when recording the settlement fails after paying', async () => {
+    const chains = fakeChains({ success: true, txHash: '0xabc', blockNumber: 42 });
+    const { result, markSettledCalls } = await settle(intent(), chains, {
+      markSettled: () => {
+        throw new Error('Payment intent has expired');
+      },
+    });
+
+    assert.equal(markSettledCalls.length, 1);
+    assert.equal(result.success, false);
+    assert.equal(result.paymentExecuted, true);
+    assert.equal(result.txHash, '0xabc');
+    assert.equal(result.blockNumber, 42);
+    assert.match(result.error, /payment was sent \(tx 0xabc\)/);
+    assert.match(result.error, /do not retry/);
+  });
+});
