@@ -287,10 +287,19 @@ describe('SequencerClient — _getHeaders', () => {
     assert.strictEqual(headers['Content-Type'], 'application/json');
   });
 
-  it('sets Authorization Bearer with apiKey', () => {
+  // The sequencer validates `Authorization: Bearer` as a JWT only
+  // (src/auth/middleware.rs), so an API key must never be sent as Bearer.
+  it('sends an API key as Authorization: ApiKey, never as Bearer', () => {
     const client = new SequencerClient(makeConfig({ apiKey: 'my-api-key' }));
     const headers = client._getHeaders();
-    assert.strictEqual(headers['Authorization'], 'Bearer my-api-key');
+    assert.strictEqual(headers['Authorization'], 'ApiKey my-api-key');
+  });
+
+  it('sends an ss_ API key in the same documented ApiKey form', () => {
+    const client = new SequencerClient(makeConfig({ apiKey: 'ss_live_abc' }));
+    const headers = client._getHeaders();
+    assert.strictEqual(headers['Authorization'], 'ApiKey ss_live_abc');
+    assert.strictEqual(headers['x-api-key'], undefined);
   });
 
   it('sets Authorization Bearer with jwt when no apiKey', () => {
@@ -304,7 +313,7 @@ describe('SequencerClient — _getHeaders', () => {
     cfg.getCredentials = () => ({ apiKey: 'key', jwt: 'jwt' });
     const client = new SequencerClient(cfg);
     const headers = client._getHeaders();
-    assert.strictEqual(headers['Authorization'], 'Bearer key');
+    assert.strictEqual(headers['Authorization'], 'ApiKey key');
   });
 
   it('omits Authorization when no credentials', () => {
@@ -400,7 +409,7 @@ describe('SequencerClient — _request', () => {
 
     const client = new SequencerClient(makeConfig({ apiKey: 'test-key' }));
     await client._request('GET', '/api/v1/test');
-    assert.strictEqual(capturedHeaders['Authorization'], 'Bearer test-key');
+    assert.strictEqual(capturedHeaders['Authorization'], 'ApiKey test-key');
   });
 });
 

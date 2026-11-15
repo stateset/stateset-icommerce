@@ -411,13 +411,12 @@ export class SequencerClient {
 
     const creds = this.config.getCredentials();
     if (creds.apiKey) {
-      // API keys with ss_ prefix go in x-api-key header;
-      // otherwise fall back to Authorization Bearer
-      if (creds.apiKey.startsWith('ss_')) {
-        headers['x-api-key'] = creds.apiKey;
-      } else {
-        headers['Authorization'] = `Bearer ${creds.apiKey}`;
-      }
+      // stateset-sequencer's auth extractor (src/auth/middleware.rs) accepts
+      // `Authorization: ApiKey <key>`, a bare `ss_...` key, or either in
+      // x-api-key, and validates `Authorization: Bearer <token>` as a JWT
+      // ONLY: an API key sent as Bearer is refused as "Invalid JWT".
+      // `ApiKey` is the documented form (docs/AGENT_INTEGRATION.md).
+      headers['Authorization'] = `ApiKey ${creds.apiKey}`;
     } else if (creds.jwt) {
       headers['Authorization'] = `Bearer ${creds.jwt}`;
     }
