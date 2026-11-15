@@ -538,6 +538,281 @@ describe('Scheduler', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Lifecycle guards: retries, cancel, pause, remove, resume
+// ---------------------------------------------------------------------------
+
+describe('Scheduler lifecycle guards', () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const due = () => new Date(Date.now() - 1000).toISOString();
+  /** @type {Scheduler[]} */
+  let schedulers;
+
+  function make(options) {
+    const s = new Scheduler({ storePath: null, ...options });
+    s.on('error', () => {});
+    schedulers.push(s);
+    return s;
+  }
+
+  /** An executor that blocks until its run is aborted. */
+  const untilAborted =
+    (counter) =>
+    async (_action, { signal }) => {
+      counter.calls++;
+      await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+    };
+
+  beforeEach(() => {
+    schedulers = [];
+  });
+
+  afterEach(() => {
+    for (const s of schedulers) s.stop();
+  });
+
+  it('retries exactly maxRetries times even while the tick keeps firing', async () => {
+    let calls = 0;
+    const s = make({
+      tickInterval: 20,
+      executor: async () => {
+        calls++;
+        throw new Error('boom');
+      },
+    });
+    const job = s.addJob({
+      name: 'flaky',
+      type: 'interval',
+      schedule: 60_000,
+      action: { agent: 'test' },
+      maxRetries: 1,
+      retryDelay: 200,
+    });
+    job.nextRunAt = due();
+    s.start();
+
+    await sleep(120); // inside the backoff window
+    assert.equal(calls, 1, 'the tick must not re-run a job waiting on its retry');
+    assert.equal(job.status, JobStatus.RETRYING);
+    assert.ok(new Date(job.nextRunAt) > new Date(), 'nextRunAt is the retry time');
+    assert.deepEqual(s.getDueJobs(new Date(Date.now() + 10_000)), []);
+
+    await sleep(400);
+    assert.equal(calls, 2, 'one run plus exactly one retry');
+    assert.equal(job.status, JobStatus.FAILED);
+    assert.equal(job.enabled, true);
+    assert.ok(new Date(job.nextRunAt) > new Date(Date.now() + 30_000));
+  });
+
+  it('a recurring job that exhausts its retries reads failed, not pending', async () => {
+    const s = make({
+      executor: async () => {
+        throw new Error('boom');
+      },
+    });
+    const job = s.addJob({
+      name: 'recurring',
+      type: 'interval',
+      schedule: 60_000,
+      action: { agent: 'test' },
+      maxRetries: 0,
+    });
+    const result = await s.executeJob(job);
+    assert.equal(result.status, JobStatus.FAILED);
+    assert.equal(job.status, JobStatus.FAILED);
+    assert.equal(job.enabled, true);
+    assert.ok(job.nextRunAt, 'still scheduled');
+  });
+
+  it('a cancelled one-time job does not run again', async () => {
+    const counter = { calls: 0 };
+    const s = make({ tickInterval: 20, executor: untilAborted(counter) });
+    const job = s.addJob({
+      name: 'once',
+      type: 'once',
+      schedule: due(),
+      action: { agent: 'test' },
+      maxRetries: 0,
+    });
+    job.nextRunAt = due();
+    s.start();
+    await sleep(50);
+    assert.equal(s.cancelJob(job.id), true);
+    await sleep(120);
+
+    assert.equal(counter.calls, 1);
+    assert.equal(job.status, JobStatus.CANCELLED);
+    assert.equal(job.enabled, false);
+    assert.equal(job.nextRunAt, null);
+  });
+
+  it('a cancelled recurring run is not re-run on the next tick', async () => {
+    const counter = { calls: 0 };
+    const s = make({ tickInterval: 20, executor: untilAborted(counter) });
+    const job = s.addJob({
+      name: 'recurring',
+      type: 'interval',
+      schedule: 60_000,
+      action: { agent: 'test' },
+      maxRetries: 0,
+    });
+    job.nextRunAt = due();
+    s.start();
+    await sleep(50);
+    assert.equal(s.cancelJob(job.id), true);
+    await sleep(120);
+
+    assert.equal(counter.calls, 1);
+    assert.equal(job.status, JobStatus.CANCELLED);
+    assert.equal(job.enabled, true, 'cancelling a run does not disable a recurring job');
+    assert.ok(new Date(job.nextRunAt) > new Date(Date.now() + 30_000));
+  });
+
+  for (const [name, stop] of [
+    ['pause', (s, job) => s.pauseJob(job.id)],
+    ['remove', (s, job) => s.removeJob(job.id)],
+    ['cancel', (s, job) => assert.equal(s.cancelJob(job.id), true)],
+  ]) {
+    it(`${name} during the retry backoff disarms the retry`, async () => {
+      let calls = 0;
+      const s = make({
+        executor: async () => {
+          calls++;
+          throw new Error('boom');
+        },
+      });
+      const job = s.addJob({
+        name,
+        type: 'once',
+        schedule: new Date(Date.now() + 86_400_000).toISOString(),
+        action: { agent: 'test' },
+        maxRetries: 2,
+        retryDelay: 60,
+      });
+      await s.runNow(job.id);
+      assert.equal(job.status, JobStatus.RETRYING);
+      stop(s, job);
+      assert.equal(s.retryTimers.size, 0);
+      await sleep(200);
+
+      assert.equal(calls, 1, `no retry may fire after ${name}`);
+      if (name === 'pause') {
+        assert.equal(job.status, JobStatus.PAUSED);
+        assert.equal(job.enabled, false);
+      }
+      if (name === 'cancel') {
+        assert.equal(job.status, JobStatus.CANCELLED);
+        assert.equal(job.enabled, false);
+      }
+    });
+  }
+
+  it('runNow during the backoff supersedes the armed retry', async () => {
+    let calls = 0;
+    const s = make({
+      executor: async () => {
+        calls++;
+        if (calls === 1) throw new Error('first attempt fails');
+        return { ok: true };
+      },
+    });
+    const job = s.addJob({
+      name: 'manual',
+      type: 'interval',
+      schedule: 60_000,
+      action: { agent: 'test' },
+      maxRetries: 1,
+      retryDelay: 60,
+    });
+    await s.runNow(job.id);
+    assert.equal(job.status, JobStatus.RETRYING);
+    assert.equal((await s.runNow(job.id)).status, JobStatus.COMPLETED);
+    await sleep(150);
+    assert.equal(calls, 2);
+    assert.equal(job.status, JobStatus.COMPLETED);
+  });
+
+  it('a recurring job paused mid-run stays paused, is not retried, and can be resumed', async () => {
+    let release;
+    let calls = 0;
+    const s = make({
+      executor: () => {
+        calls++;
+        return new Promise((_resolve, reject) => {
+          release = () => reject(new Error('boom'));
+        });
+      },
+    });
+    const job = s.addJob({
+      name: 'paused-mid-run',
+      type: 'interval',
+      schedule: 60_000,
+      action: { agent: 'test' },
+      maxRetries: 3,
+      retryDelay: 20,
+    });
+    const run = s.executeJob(job);
+    await sleep(10);
+    s.pauseJob(job.id);
+    release();
+    assert.equal((await run).status, JobStatus.FAILED);
+    await sleep(80);
+
+    assert.equal(calls, 1);
+    assert.equal(job.status, JobStatus.PAUSED);
+    assert.equal(job.enabled, false);
+    s.resumeJob(job.id);
+    assert.equal(job.status, JobStatus.PENDING);
+    assert.equal(job.enabled, true);
+    assert.ok(job.nextRunAt);
+  });
+
+  it('resumeJob only resumes a paused (or added-disabled) job', async () => {
+    const counter = { calls: 0 };
+    const s = make({ executor: untilAborted(counter) });
+
+    const running = s.addJob({
+      name: 'running',
+      type: 'interval',
+      schedule: 60_000,
+      action: { agent: 'test' },
+      maxRetries: 0,
+    });
+    const run = s.executeJob(running);
+    await sleep(10);
+    assert.equal(s.resumeJob(running.id), running);
+    assert.equal(running.status, JobStatus.RUNNING, 'resume must not relabel a running job');
+    s.cancelJob(running.id);
+    await run;
+
+    const done = s.addJob({
+      name: 'done',
+      type: 'once',
+      schedule: new Date(Date.now() + 86_400_000).toISOString(),
+      action: { agent: 'test' },
+    });
+    done.enabled = false;
+    done.status = JobStatus.COMPLETED;
+    assert.throws(() => s.resumeJob(done.id), /only a paused job can be resumed/);
+    assert.equal(done.status, JobStatus.COMPLETED);
+    assert.equal(done.enabled, false);
+
+    const disabled = s.addJob({
+      name: 'disabled',
+      type: 'interval',
+      schedule: 60_000,
+      action: { agent: 'test' },
+      enabled: false,
+    });
+    s.resumeJob(disabled.id);
+    assert.equal(disabled.enabled, true);
+    assert.equal(disabled.status, JobStatus.PENDING);
+    assert.ok(disabled.nextRunAt);
+
+    assert.equal(s.resumeJob('missing'), null);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // JobTemplates
 // ---------------------------------------------------------------------------
 
