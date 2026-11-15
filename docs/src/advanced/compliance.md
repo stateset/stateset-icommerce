@@ -137,13 +137,22 @@ const receipt = await toolkit.executeTool('generate_receipt_bundle', {
     batchEvents: JSON.stringify(batchEvents),
     batchId: 'batch-456'
 });
-// → { bundle: { event, leafHash, proof, root, ... } }
+// → { bundle: { format, event, leafHash, inclusionProof, merkleRoot, leafCount, ... } }
 
-// Verify a receipt
-const valid = await toolkit.executeTool('verify_receipt', {
-    receiptBundle: JSON.stringify(receipt.bundle)
+// Verify a receipt. leafCount is the batch's event count as you know it
+// independently of the bundle (here, from batchEvents; otherwise from the
+// anchored commitment). A legacy-v0 bundle (events without tenantId, storeId,
+// sequenceNumber and agentSignature) takes its leaf hash on trust, so it is
+// valid only with leafCount; a ves-v1 bundle's leaf is recomputed from the
+// event, so there leafCount is optional and also checks the batch size.
+const verdict = await toolkit.executeTool('verify_receipt', {
+    receiptBundle: JSON.stringify(receipt.bundle),
+    leafCount: batchEvents.length
 });
-// → { valid: true, signer: 'ed25519:abc...', timestamp: '...' }
+// → { valid: true, format: 'ves-v1', leafBound: true, pathBound: true,
+//     rootReached: true, checks: [...], detail: '...' }
+// verify_receipt checks the bundle against its own merkleRoot: compare
+// receipt.bundle.merkleRoot with the anchored batch root yourself.
 
 // Generate an inclusion proof (event was in a specific batch)
 const proof = await toolkit.executeTool('generate_inclusion_proof', {
@@ -209,7 +218,7 @@ await toolkit.executeTool('agent_reset_breaker', { agentName: 'my-agent' });
 | `delete_gdpr_data` | GDPR | Data deletion |
 | `soc2_evidence` | Compliance | SOC 2 evidence package |
 | `compliance_summary` | Compliance | Aggregate compliance report |
-| `verify_receipt` | VES | Verify receipt signature |
+| `verify_receipt` | VES | Verify a receipt bundle (leaf, inclusion, payload hash, signature) |
 | `generate_inclusion_proof` | VES | Merkle inclusion proof |
 | `generate_receipt_bundle` | VES | Complete receipt package |
 | `export_compliance_package` | VES | Full audit package |

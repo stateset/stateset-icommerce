@@ -9,7 +9,8 @@
 import { z } from 'zod';
 
 // A raw leaf hash says nothing about where in the tree it sits, so only a
-// tree size the caller knows independently of the proof binds the path; see
+// tree size the caller knows independently of the proof binds the path, and
+// the raw-leaf tools report valid/anchored true only then; see
 // sync/raw-leaf-inclusion.js. Both inputs take an integer or its canonical
 // decimal spelling, as parseTreeInteger in sync/merkle-shape.js reads them
 // (gRPC carries uint64 values as strings).
@@ -21,9 +22,9 @@ const leafCountInput = z
   .optional()
   .describe(
     'Number of events in the batch, as you know it independently of the proof (e.g. from the ' +
-      'batch commitment or anchor record). Only this binds the path to the tree: pathBound is ' +
-      'true only when it is given, and the path must then be exactly as long as a tree of that ' +
-      'size makes it and end at a leaf inside the tree.',
+      'batch commitment or anchor record). Required for a true result: only this binds the ' +
+      'path to the tree (pathBound), and the path must then be exactly as long as a tree of ' +
+      'that size makes it and end at a leaf inside the tree.',
   );
 
 const leafIndexInput = z
@@ -44,12 +45,16 @@ export const proofTools = [
   {
     name: 'verify_receipt',
     description:
-      'Verify a VES commerce receipt — checks signature, hash, and Merkle inclusion proof. Pass ' +
-      'leafCount (the batch event count, known independently of the bundle) to bind the ' +
-      "inclusion path to the tree (pathBound: true); the bundle's own leafCount is only a " +
-      'sanity bound. A legacy-v0 leaf is not recomputed from the event (leafBound: false), so ' +
-      'without leafCount its inclusion check only proves that some node of the tree hashes to ' +
-      'the root.',
+      'Verify a VES commerce receipt bundle: its leaf, its Merkle inclusion proof against the ' +
+      "bundle's own merkleRoot (compare that with the anchored root yourself), its payload hash, " +
+      'and its signature when publicKeyHex is given. valid is true only when every check passes. ' +
+      'A ves-v1 leaf is recomputed from the event in its own hash domain (leafBound: true), so ' +
+      'it cannot be an interior node; leafCount is optional there and also holds the path to ' +
+      'the batch size (pathBound: true). A legacy-v0 leaf hash is taken as given (leafBound: ' +
+      'false), so a legacy-v0 bundle is valid only with leafCount (the batch event count, known ' +
+      'independently of the bundle): without it a path_bound check fails, because the inclusion ' +
+      'proof then only shows that some node of the tree hashes to the root. rootReached reports ' +
+      "the plain hash chain; the bundle's own leafCount is only a sanity bound.",
     inputSchema: {
       receiptBundle: z.string().min(1).describe('JSON-encoded receipt bundle'),
       publicKeyHex: z
@@ -58,8 +63,9 @@ export const proofTools = [
         .describe('Optional hex-encoded Ed25519 public key for signature verification'),
       leafCount: leafCountInput.describe(
         'Number of events in the batch, as you know it independently of the bundle (e.g. from ' +
-          'the batch commitment or anchor record). Only this binds the inclusion path: pathBound ' +
-          'is true only when it is given, and a bundle stating a different leafCount fails.',
+          'the batch commitment or anchor record). Required for a legacy-v0 bundle to be valid; ' +
+          'optional for ves-v1. It binds the inclusion path (pathBound: true), and a bundle ' +
+          'stating a different leafCount fails.',
       ),
     },
     permission: 'read',
@@ -67,10 +73,11 @@ export const proofTools = [
       try {
         const cryptoMod = await import('../sync/crypto.js');
         const { createProofGenerator } = await import('../sync/proof-generator.js');
+        const { verifyReceipt } = await import('../sync/raw-leaf-inclusion.js');
         const pg = createProofGenerator(cryptoMod);
         const bundle = JSON.parse(params.receiptBundle);
         const publicKey = params.publicKeyHex || undefined;
-        const result = pg.verifyReceiptBundle(bundle, publicKey, { leafCount: params.leafCount });
+        const result = verifyReceipt(pg, bundle, publicKey, { leafCount: params.leafCount });
         return { success: true, ...result };
       } catch (error) {
         return { success: false, error: error.message };
@@ -133,11 +140,13 @@ export const proofTools = [
   {
     name: 'verify_inclusion_proof',
     description:
-      'Verify a Merkle inclusion proof — checks that a leaf hash walks up to a Merkle root. The ' +
-      'leaf hash is taken on trust. Pass leafCount (the batch event count, known independently ' +
-      'of the proof) to bind the path to the tree (pathBound: true); without leafCount a valid ' +
-      'result only proves that some node of the tree, possibly an interior node rather than a ' +
-      'leaf, hashes to the root.',
+      'Verify a Merkle inclusion proof for a raw leaf hash, which is taken on trust. valid is ' +
+      'true only when leafCount (the batch event count, known independently of the proof) is ' +
+      'given and the path leads from a leaf position of a tree of that size to expectedRoot ' +
+      '(pathBound: true); it says nothing about which event the hash belongs to. Without ' +
+      'leafCount valid is false: rootReached then reports whether the hash chain reaches the ' +
+      'root, which only proves that some node of the tree, possibly an interior node rather ' +
+      'than a leaf, hashes to it.',
     inputSchema: {
       leafHash: z.string().min(1).describe('Hex-encoded leaf hash'),
       proof: z.string().min(1).describe('JSON-encoded proof array (each step: { position, hash })'),
@@ -271,11 +280,13 @@ export const proofTools = [
   {
     name: 'verify_chain_anchor',
     description:
-      'Verify that a Merkle proof reaches the Merkle root of an on-chain anchor transaction. ' +
-      'Pass leafCount (the anchored batch event count, known independently of the proof) to ' +
-      'bind the path to the tree (pathBound: true) and confirm the leaf was committed; without ' +
-      'leafCount, anchored: true only proves that some node of the anchored tree hashes to the ' +
-      'root, not that an event was committed. The leaf hash is taken on trust.',
+      'Verify that a raw leaf hash, taken on trust, is committed under the Merkle root of an ' +
+      'on-chain anchor transaction. anchored (and valid) are true only when leafCount (the ' +
+      'anchored batch event count, known independently of the proof) is given and the path ' +
+      'leads from a leaf position of a tree of that size to the root (pathBound: true). Without ' +
+      'leafCount anchored is false: rootReached then reports whether the hash chain reaches the ' +
+      'root, which only proves that some node of the anchored tree hashes to it, not that an ' +
+      'event was committed.',
     inputSchema: {
       leafHash: z.string().min(1).describe('Hex-encoded leaf hash of the event'),
       proof: z.string().min(1).describe('JSON-encoded Merkle proof array'),

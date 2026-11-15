@@ -71,14 +71,25 @@ export async function execute(action, args, { jsonOutput }) {
       const { leafCount, rest } = await takeLeafCount(args, usage);
       const [receiptBundleJson, publicKeyHex] = rest;
       if (!receiptBundleJson) throw new Error(usage);
-      const result = pg.verifyReceiptBundle(
+      const { verifyReceipt } = await import('../sync/raw-leaf-inclusion.js');
+      const result = verifyReceipt(
+        pg,
         parseJsonArg(receiptBundleJson, 'receiptBundle'),
         publicKeyHex || undefined,
-        { leafCount },
+        { leafCount, leafCountHint: LEAF_COUNT_HINT },
       );
-      return jsonOutput
-        ? result
-        : { result, formatted: `Receipt verification: ${result.valid ? 'valid' : 'invalid'}` };
+      // A leaf taken on trust (legacy-v0) is valid only for a bound path; a
+      // bundle that failed nothing else says why it is not valid.
+      const failed = result.checks.filter((c) => !c.passed);
+      const unbound = failed.length === 1 && failed[0].check === 'path_bound';
+      let formatted = `Receipt verification: ${result.valid ? 'valid' : 'invalid'}`;
+      if (unbound) {
+        formatted =
+          `Receipt verification: unbound (the ${result.format} leaf hash is taken as given and ` +
+          'no --leaf-count bound the path to a tree size, so it does not show the event was ' +
+          'included)';
+      }
+      return jsonOutput ? result : { result, formatted };
     }
 
     case 'generate-proof': {
@@ -105,7 +116,8 @@ export async function execute(action, args, { jsonOutput }) {
       if (!leafHash || !proofJson || !expectedRoot) {
         throw new Error(usage);
       }
-      const { verifyRawLeafInclusion } = await import('../sync/raw-leaf-inclusion.js');
+      const { UNBOUND_REASON, verifyRawLeafInclusion } =
+        await import('../sync/raw-leaf-inclusion.js');
       const result = verifyRawLeafInclusion(
         pg,
         {
@@ -118,15 +130,17 @@ export async function execute(action, args, { jsonOutput }) {
         },
         { leafCountHint: LEAF_COUNT_HINT },
       );
-      const unbound = result.valid && !result.pathBound;
-      return jsonOutput
-        ? result
-        : {
-            result,
-            formatted:
-              `Inclusion proof: ${result.valid ? 'valid' : 'invalid'}` +
-              (unbound ? ' (path not bound to a tree size; pass --leaf-count <n> to bind it)' : ''),
-          };
+      // valid means bound inclusion; a chain that reaches the root without a
+      // --leaf-count is reported as unbound, never as valid.
+      let formatted = 'Inclusion proof: invalid';
+      if (result.valid) {
+        formatted = 'Inclusion proof: valid';
+      } else if (result.reason === UNBOUND_REASON) {
+        formatted =
+          'Inclusion proof: unbound (the hash chain reaches the root, but no --leaf-count bound ' +
+          'the path to a tree size, so it does not show a leaf was included)';
+      }
+      return jsonOutput ? result : { result, formatted };
     }
 
     case 'bundle': {
@@ -179,7 +193,7 @@ export async function execute(action, args, { jsonOutput }) {
       if (!leafHash || !proofJson || !expectedRoot || !anchorTxHash) {
         throw new Error(usage);
       }
-      const { verifyRawLeafAnchor } = await import('../sync/raw-leaf-inclusion.js');
+      const { UNBOUND_REASON, verifyRawLeafAnchor } = await import('../sync/raw-leaf-inclusion.js');
       const output = verifyRawLeafAnchor(
         pg,
         {
@@ -192,10 +206,12 @@ export async function execute(action, args, { jsonOutput }) {
         },
         { leafCountHint: LEAF_COUNT_HINT },
       );
+      // anchored means bound inclusion; a chain that reaches the root without
+      // a --leaf-count is reported as unbound, never as verified.
       let formatted = 'Chain anchor: invalid';
-      if (output.anchored && output.pathBound) {
+      if (output.anchored) {
         formatted = 'Chain anchor: verified';
-      } else if (output.anchored) {
+      } else if (output.reason === UNBOUND_REASON) {
         formatted =
           'Chain anchor: unbound (the proof reaches the on-chain root, but no --leaf-count ' +
           'bound the path to a tree size, so it does not show the event was committed)';

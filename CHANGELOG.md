@@ -108,6 +108,31 @@ existing stores before upgrading; see
   SQLite and Postgres repositories; both now call the one in
   `stateset-core`. The accepted transitions are unchanged.
 
+### Changed
+
+- **BREAKING: the raw-leaf proof tools report success only for a path bound
+  to a caller-supplied tree size.** A leaf hash taken on trust says nothing
+  about where it sits, so without the batch event count an interior node's
+  hash (or the root itself) plus the path above it reached the root and was
+  reported as a valid inclusion or a committed anchor.
+  - `verify_chain_anchor` / `proofs verify-anchor`: `anchored` and `valid`
+    are true only with `leafCount` (`--leaf-count <n>`); the text line says
+    `Chain anchor: unbound (...)` otherwise.
+  - `verify_inclusion_proof` / `proofs verify-proof`: `valid` is true only
+    with `leafCount`; the text line says `Inclusion proof: unbound (...)`
+    otherwise.
+  - `verify_receipt` / `proofs verify-receipt`: a legacy-v0 bundle (or one
+    with no `format`) is valid only with `leafCount`; a new `path_bound`
+    check fails without it and the text line says
+    `Receipt verification: unbound (...)`. ves-v1 bundles are unchanged: their
+    leaf is recomputed from the event in the `VES_LEAF_V1` domain, which no
+    interior node can match, so `leafCount` stays optional there.
+  - All three now carry `rootReached`, the plain hash-chain result, and a
+    `detail` that says what was shown. Migration: pass the batch event count
+    you know independently of the proof (for example, from the anchored
+    commitment) as `leafCount`; read `rootReached` where you relied on the old
+    hash-chain meaning.
+
 ## [1.40.1] - 2026-10-27
 
 ### Security
