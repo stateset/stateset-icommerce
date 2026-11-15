@@ -6,10 +6,18 @@
  */
 
 import { z } from 'zod';
-import { allowedNextField } from '../state-machine-catalog.js';
+import { acceptedFrom, allowedNextField } from '../state-machine-catalog.js';
 import { applyRequired } from '../utils/apply-guard.js';
 
 const withPolicyDomain = (policyDomain, tools) => tools.map((tool) => ({ policyDomain, ...tool }));
+
+/** "requested", "received or inspecting": where the engine accepts a move into `to`. */
+const from = (to) => {
+  const states = acceptedFrom('return', to);
+  return states.length <= 1
+    ? states.join('')
+    : `${states.slice(0, -1).join(', ')} or ${states.at(-1)}`;
+};
 
 function returnSummary(ret) {
   return {
@@ -183,7 +191,7 @@ export const returnTools = withPolicyDomain('returns', [
 
   {
     name: 'approve_return',
-    description: 'Approve a return request.',
+    description: `Approve a return request (the engine accepts this from ${from('approved')}).`,
     inputSchema: {
       returnId: z.string().min(1).describe('Return ID (UUID)'),
     },
@@ -211,7 +219,7 @@ export const returnTools = withPolicyDomain('returns', [
 
   {
     name: 'reject_return',
-    description: 'Reject a return request with a reason.',
+    description: `Reject a return with a reason (the engine accepts this from ${from('rejected')}).`,
     inputSchema: {
       returnId: z.string().min(1).describe('Return ID (UUID)'),
       reason: z.string().min(1).max(500).describe('Reason for rejection'),
@@ -240,7 +248,10 @@ export const returnTools = withPolicyDomain('returns', [
 
   {
     name: 'mark_return_received',
-    description: 'Mark a return as physically received at the warehouse.',
+    description:
+      'Mark a return as physically received at the warehouse. The engine accepts this only ' +
+      `from ${from('received')}, which add_return_tracking sets on an approved return; an ` +
+      'approved return without tracking is refused.',
     inputSchema: {
       returnId: z.string().min(1).describe('Return ID (UUID)'),
     },
@@ -261,7 +272,9 @@ export const returnTools = withPolicyDomain('returns', [
 
   {
     name: 'complete_return',
-    description: 'Complete a return and process the refund.',
+    description:
+      `Complete a return (the engine accepts this from ${from('completed')}). It closes the ` +
+      'return only: no refund is created. Refund the payment separately with create_refund.',
     inputSchema: {
       returnId: z.string().min(1).describe('Return ID (UUID)'),
     },
@@ -282,7 +295,7 @@ export const returnTools = withPolicyDomain('returns', [
 
   {
     name: 'cancel_return',
-    description: 'Cancel a return request.',
+    description: `Cancel a return (the engine accepts this from ${from('cancelled')}).`,
     inputSchema: {
       returnId: z.string().min(1).describe('Return ID (UUID)'),
     },
@@ -303,7 +316,9 @@ export const returnTools = withPolicyDomain('returns', [
 
   {
     name: 'add_return_tracking',
-    description: 'Add a return-shipping tracking number and mark the return in transit.',
+    description:
+      'Add a return-shipping tracking number and mark the return in transit (the engine ' +
+      `accepts this from ${from('in_transit')}). This is the step before mark_return_received.`,
     inputSchema: {
       returnId: z.string().min(1).describe('Return ID (UUID)'),
       trackingNumber: z.string().min(1).max(200).describe('Return shipment tracking number'),

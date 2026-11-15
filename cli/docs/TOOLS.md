@@ -219,12 +219,12 @@ Tier: **core**
 | `list_returns_for_customer` | core | read | List all returns filed by a specific customer. |
 | `list_pending_returns` | core | read | List returns awaiting approval (status requested). |
 | `create_return` | core | write | Create a return request for an order. |
-| `approve_return` | core | write | Approve a return request. |
-| `reject_return` | core | write | Reject a return request with a reason. |
-| `mark_return_received` | core | write | Mark a return as physically received at the warehouse. |
-| `complete_return` | core | write | Complete a return and process the refund. |
-| `cancel_return` | core | write | Cancel a return request. |
-| `add_return_tracking` | core | write | Add a return-shipping tracking number and mark the return in transit. |
+| `approve_return` | core | write | Approve a return request (the engine accepts this from requested). |
+| `reject_return` | core | write | Reject a return with a reason (the engine accepts this from requested or inspecting). |
+| `mark_return_received` | core | write | Mark a return as physically received at the warehouse. The engine accepts this only from in_transit, which add_return_tracking sets on an approved return; an approved return without tracking is refused. |
+| `complete_return` | core | write | Complete a return (the engine accepts this from received or inspecting). It closes the return only: no refund is created. Refund the payment separately with create_refund. |
+| `cancel_return` | core | write | Cancel a return (the engine accepts this from requested or approved). |
+| `add_return_tracking` | core | write | Add a return-shipping tracking number and mark the return in transit (the engine accepts this from approved). This is the step before mark_return_received. |
 
 ## carts
 

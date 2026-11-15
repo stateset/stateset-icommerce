@@ -1754,7 +1754,7 @@
     },
     {
       "name": "add_return_tracking",
-      "description": "Add a return-shipping tracking number and mark the return in transit.",
+      "description": "Add a return-shipping tracking number and mark the return in transit (the engine accepts this from approved). This is the step before mark_return_received.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__add_return_tracking",
@@ -2510,7 +2510,7 @@
     },
     {
       "name": "approve_return",
-      "description": "Approve a return request.",
+      "description": "Approve a return request (the engine accepts this from requested).",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__approve_return",
@@ -2870,7 +2870,7 @@
     },
     {
       "name": "cancel_return",
-      "description": "Cancel a return request.",
+      "description": "Cancel a return (the engine accepts this from requested or approved).",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__cancel_return",
@@ -3302,7 +3302,7 @@
     },
     {
       "name": "complete_return",
-      "description": "Complete a return and process the refund.",
+      "description": "Complete a return (the engine accepts this from received or inspecting). It closes the return only: no refund is created. Refund the payment separately with create_refund.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__complete_return",
@@ -7550,7 +7550,7 @@
     },
     {
       "name": "mark_return_received",
-      "description": "Mark a return as physically received at the warehouse.",
+      "description": "Mark a return as physically received at the warehouse. The engine accepts this only from in_transit, which add_return_tracking sets on an approved return; an approved return without tracking is refused.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__mark_return_received",
@@ -7928,7 +7928,7 @@
     },
     {
       "name": "reject_return",
-      "description": "Reject a return request with a reason.",
+      "description": "Reject a return with a reason (the engine accepts this from requested or inspecting).",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__reject_return",
