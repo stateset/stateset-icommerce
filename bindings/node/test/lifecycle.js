@@ -62,6 +62,78 @@ test('close() releases a file database so it can be reopened', async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('close() resolves only after the database files are released', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stateset-close-release-'));
+  const file = path.join(dir, 'store.db');
+  const wal = `${file}-wal`;
+  const shm = `${file}-shm`;
+  const writes = 600;
+  try {
+    const first = await Commerce.open(file);
+    for (let batch = 0; batch < writes / 50; batch++) {
+      await Promise.all(
+        Array.from({ length: 50 }, (_, i) =>
+          first.customers.create({ email: `w${batch}-${i}@example.com`, firstName: 'W', lastName: 'L' }),
+        ),
+      );
+    }
+    // The engine checkpoints only every 10000 pages, so the writes are still
+    // in the WAL: the main file alone does not hold them yet.
+    assert.ok(fs.existsSync(wal) && fs.statSync(wal).size > 0, 'precondition: the writes left a WAL');
+
+    // Both closes (idempotent) resolve only after the engine has dropped.
+    await Promise.all([first.close(), first.close()]);
+
+    // Closing the last connection checkpoints the WAL into the main file and
+    // removes the WAL and shared-memory files — before close() resolved.
+    assert.strictEqual(fs.existsSync(wal), false, 'WAL still present after close() resolved');
+    assert.strictEqual(fs.existsSync(shm), false, 'shared-memory file still present after close() resolved');
+    await first.close();
+    await assert.rejects(first.customers.count(), (err) => err.code === 'PRECONDITION_FAILED');
+
+    // So the main file alone is now complete: a byte copy taken immediately
+    // holds every write, and the original reopens in this same process.
+    const copy = path.join(dir, 'copy.db');
+    fs.copyFileSync(file, copy);
+    const fromCopy = await Commerce.open(copy);
+    assert.strictEqual(await fromCopy.customers.count(), writes);
+    await fromCopy.close();
+    const reopened = await Commerce.open(file);
+    assert.strictEqual(await reopened.customers.count(), writes);
+    await reopened.close();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('close() waits for in-flight writes and releases the file after them', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stateset-close-inflight-'));
+  const file = path.join(dir, 'store.db');
+  try {
+    const commerce = await Commerce.open(file);
+    const inFlight = Promise.allSettled(
+      Array.from({ length: 20 }, (_, i) =>
+        commerce.customers.create({ email: `i${i}@example.com`, firstName: 'I', lastName: 'F' }),
+      ),
+    );
+    await commerce.close();
+    // Nothing may still hold the file: every write that will ever land has
+    // been checkpointed into the main database.
+    assert.strictEqual(fs.existsSync(`${file}-wal`), false, 'WAL still present after close() resolved');
+    let created = 0;
+    for (const outcome of await inFlight) {
+      if (outcome.status === 'fulfilled') created += 1;
+      // A call that had not yet taken the engine when close() emptied the slot.
+      else assert.strictEqual(outcome.reason.code, 'PRECONDITION_FAILED', outcome.reason.message);
+    }
+    const reopened = await Commerce.open(file);
+    assert.strictEqual(await reopened.customers.count(), created);
+    await reopened.close();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('Symbol.asyncDispose closes the instance', async () => {
   const commerce = new Commerce(':memory:');
   assert.strictEqual(typeof commerce[Symbol.asyncDispose], 'function');
