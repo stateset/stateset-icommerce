@@ -6875,7 +6875,7 @@
     },
     {
       "name": "list_payment_links",
-      "description": "List payment links with optional filters by status and customer.",
+      "description": "List payment links with optional filters by status and customer. Each link carries `expired`: true when it is still active but its expiry has passed.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_payment_links",

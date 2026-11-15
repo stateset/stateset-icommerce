@@ -1056,7 +1056,7 @@ Tier: **experimental** — converting a payment link mints order, payment and es
 | `express_checkout` | experimental | write | One-call checkout from a payment link. Converts the link into an order and payment. |
 | `agent_instant_checkout` | experimental | write | Agent-to-agent instant checkout. Creates a payment link and converts it in one step. Returns order and escrow IDs for A2A settlement. |
 | `get_payment_link_status` | experimental | read | Get the status and metrics (views, conversions) for a payment link. |
-| `list_payment_links` | experimental | read | List payment links with optional filters by status and customer. |
+| `list_payment_links` | experimental | read | List payment links with optional filters by status and customer. Each link carries `expired`: true when it is still active but its expiry has passed. |
 | `revoke_payment_link` | experimental | write | Revoke (cancel) an active payment link. Prevents further checkouts from it. |
 | `checkout_with_crypto` | experimental | write | Express checkout with a crypto wallet. Similar to express_checkout but takes a wallet address and network for on-chain payment. |
 

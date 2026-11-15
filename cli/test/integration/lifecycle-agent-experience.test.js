@@ -360,6 +360,142 @@ describe('order and customer statuses match what the engine accepts', () => {
   });
 });
 
+describe('status filters offer what is stored, and older values still work', () => {
+  const statusesOf = async (tool, params, key) =>
+    (await call(tool, params))[key].map((record) => record.status);
+
+  it('promotions and coupons use the engine vocabulary (exhausted, archived)', async () => {
+    for (const status of ['exhausted', 'archived', 'draft']) {
+      assert.deepEqual(await statusesOf('list_promotions', { status }, 'promotions'), [], status);
+    }
+    // `depleted` used to be offered and made the binding throw; it now means exhausted.
+    for (const status of ['exhausted', 'depleted']) {
+      const out = await server.executeTool('list_coupons', { status });
+      assert.equal(out.ok, true, `${status}: ${JSON.stringify(out.failure)}`);
+    }
+  });
+
+  it('payment intents: stored values, the cancelled alias, and an explained refusal', async () => {
+    const manual = (
+      await call('create_payment_intent', { amount: '12.00', captureMethod: 'manual' })
+    ).intent;
+    const cancelled = (
+      await call('create_payment_intent', { amount: '13.00', captureMethod: 'manual' })
+    ).intent;
+    await call('cancel_payment_intent', { intentId: cancelled.id });
+    const ids = async (status) =>
+      (await call('list_payment_intents', { status })).intents.map((intent) => intent.id);
+
+    assert.ok((await ids('requires_capture')).includes(manual.id));
+    assert.ok((await ids('canceled')).includes(cancelled.id));
+    assert.deepEqual(await ids('cancelled'), await ids('canceled'), 'cancelled is an alias');
+    const reconciled = await call('reconcile_payment_provider', { status: 'cancelled' });
+    assert.ok(JSON.stringify(reconciled).includes(cancelled.id));
+
+    const pending = await server.executeTool('list_payment_intents', { status: 'pending' });
+    assert.equal(pending.failure.code, 'INVALID_INPUT');
+    assert.match(pending.failure.hint, /requires_capture/);
+  });
+
+  it('settlements and batches: paid, with completed as an alias', async () => {
+    const intent = (
+      await call('create_payment_intent', { amount: '20.00', captureMethod: 'automatic' })
+    ).intent;
+    const created = await call('create_payment_settlement_batch', { intentIds: [intent.id] });
+    assert.equal(created.batch.status, 'paid');
+    for (const status of ['paid', 'completed']) {
+      const settlements = (await call('list_payment_settlements', { status })).settlements;
+      assert.ok(
+        settlements.some((s) => s.intentId === intent.id),
+        status,
+      );
+      const batches = (await call('list_payment_settlement_batches', { status })).batches;
+      assert.ok(
+        batches.some((b) => b.id === created.batch.id),
+        status,
+      );
+    }
+    const processing = await server.executeTool('list_payment_settlement_batches', {
+      status: 'processing',
+    });
+    assert.equal(processing.failure.code, 'INVALID_INPUT');
+    assert.match(processing.failure.hint, /recorded as paid/);
+  });
+
+  it('shipping labels: label_created and voided, with created/purchased/error aliases', async () => {
+    const { rates } = await call('quote_shipping_rates', {
+      originAddress: {
+        line1: '1 Main St',
+        city: 'Los Angeles',
+        state: 'CA',
+        postalCode: '90001',
+        country: 'US',
+      },
+      destinationAddress: {
+        line1: '2 Broadway',
+        city: 'New York',
+        state: 'NY',
+        postalCode: '10001',
+        country: 'US',
+      },
+      parcels: [{ weightGrams: 500 }],
+    });
+    const label = (await call('create_shipping_label', { rateId: rates[0].rateId })).label;
+    assert.equal(label.status, 'label_created');
+    for (const status of ['label_created', 'created', 'purchased']) {
+      const labels = (await call('list_shipping_labels', { status })).labels;
+      assert.ok(
+        labels.some((l) => l.id === label.id),
+        status,
+      );
+    }
+    await call('void_shipping_label', { labelId: label.id });
+    const voided = (await call('list_shipping_labels', { status: 'voided' })).labels;
+    assert.ok(voided.some((l) => l.id === label.id));
+    assert.equal((await server.executeTool('list_shipping_labels', { status: 'error' })).ok, true);
+  });
+
+  it('tax transactions: committed/adjusted/voided; pending is explained', async () => {
+    const quote = (
+      await call('calculate_tax_quote', {
+        items: [{ unitPrice: '10.00', quantity: 1 }],
+        shippingAddress: { country: 'US', state: 'CA', postalCode: '90001' },
+      })
+    ).quote;
+    const committed = (await call('commit_tax_transaction', { quoteId: quote.id })).transaction;
+    const listed = (await call('list_tax_transactions', { status: 'committed' })).transactions;
+    assert.ok(listed.some((t) => t.id === committed.id));
+    assert.equal(
+      (await server.executeTool('list_tax_transactions', { status: 'adjusted' })).ok,
+      true,
+    );
+    const pending = await server.executeTool('list_tax_transactions', { status: 'pending' });
+    assert.equal(pending.failure.code, 'INVALID_INPUT');
+    assert.match(pending.failure.hint, /get_tax_quote/);
+  });
+
+  it('payment links: expired is derived from the expiry, not stored', async () => {
+    const lapsing = await call('create_payment_link', {
+      items: [{ name: 'Gift', quantity: 1, unitPrice: 5 }],
+      currency: 'USD',
+      expiresIn: 1,
+    });
+    const lasting = await call('create_payment_link', {
+      items: [{ name: 'Gift', quantity: 1, unitPrice: 5 }],
+      currency: 'USD',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const expired = (await call('list_payment_links', { status: 'expired' })).links;
+    assert.deepEqual(
+      expired.map((link) => [link.id, link.status, link.expired]),
+      [[lapsing.linkId, 'active', true]],
+    );
+    const active = (await call('list_payment_links', { status: 'active' })).links;
+    assert.ok(active.some((link) => link.id === lasting.linkId));
+    assert.ok(!active.some((link) => link.id === lapsing.linkId));
+  });
+});
+
 describe('a preview of a catalogued move states its precondition', () => {
   it('without --apply, on executeTool and the MCP response', async () => {
     const preview = await previewServer.executeTool('mark_return_received', { returnId: 'r-1' });

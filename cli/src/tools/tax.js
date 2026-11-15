@@ -8,6 +8,7 @@ const providerMoney = z
   .union([z.string().regex(/^\d{1,40}(?:\.\d{1,36})?$/), z.number().nonnegative().finite()])
   .describe('Exact decimal string (preferred) or legacy safe number');
 import { applyRequired } from '../utils/apply-guard.js';
+import { statusFilter } from '../utils/status-schema.js';
 import {
   calculateTaxQuote,
   calculateTaxQuoteWithFailover,
@@ -1044,10 +1045,15 @@ export const taxTools = [
     description: 'List provider-backed tax transactions with optional filtering.',
     inputSchema: {
       providerId: z.string().optional().describe('Filter by provider ID'),
-      status: z
-        .enum(['pending', 'committed', 'voided'])
-        .optional()
-        .describe('Filter by transaction status'),
+      // What the provider runtime stores (./providers/tax.js): a transaction
+      // exists once a quote is committed, and is then adjusted or voided.
+      status: statusFilter(['committed', 'adjusted', 'voided'], {
+        subject: 'transaction',
+        redirects: {
+          pending:
+            'a tax transaction exists only once committed; an uncommitted calculation is a quote (get_tax_quote).',
+        },
+      }),
       quoteId: z.string().optional().describe('Filter by quote ID'),
       reference: z.string().optional().describe('Filter by external reference'),
       limit: z.number().int().min(1).max(500).optional().describe('Maximum transactions to return'),
