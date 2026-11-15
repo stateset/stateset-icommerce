@@ -11,7 +11,33 @@
 // Every decision emits a `permission_decision` telemetry event with the
 // same shape as before extraction.
 //
+// A preview of a catalogued status move (e.g. `mark_return_received`) also
+// says which states the engine accepts that move from, so "would execute"
+// never reads as "would succeed" (`wouldDo.transition`, from the state
+// machine catalog; nothing is read from the store).
+//
 // Extracted from mcp-server.js (pure move — no behaviour change).
+
+import { previewForMove } from './transition-guidance.js';
+
+/**
+ * Add the catalog's precondition to a preview of a catalogued status move.
+ * Any other decision is returned as it is.
+ */
+export function withMovePreview(toolName, params, decision) {
+  if (!decision?.preview) return decision;
+  const move = previewForMove(toolName, params);
+  if (!move) return decision;
+  const reason = decision.reason ? `${decision.reason}. ${move.sentence}` : move.sentence;
+  return {
+    ...decision,
+    reason,
+    wouldDo: {
+      ...(decision.wouldDo ?? { tool: toolName, params }),
+      transition: move.transition,
+    },
+  };
+}
 
 /**
  * Derive the set of read-only tool names from tool permission metadata.
@@ -42,7 +68,11 @@ export function buildReadOnlyToolSet(toolDefs) {
 export function createCheckPermission({ permissionGate, telemetry, allowApply, isReadOnly }) {
   const checkPermission = async (toolName, params) => {
     if (permissionGate) {
-      const result = await permissionGate.checkPermission(toolName, params);
+      const result = withMovePreview(
+        toolName,
+        params,
+        await permissionGate.checkPermission(toolName, params),
+      );
       if (telemetry) {
         telemetry.logCustomEvent('permission_decision', {
           tool: toolName,
@@ -63,12 +93,12 @@ export function createCheckPermission({ permissionGate, telemetry, allowApply, i
       }
       return { allowed: true };
     }
-    const result = {
+    const result = withMovePreview(toolName, params, {
       allowed: false,
       preview: true,
       reason: `Preview mode: would execute '${toolName}' if --apply flag is set`,
       wouldDo: { tool: toolName, params },
-    };
+    });
     if (telemetry) {
       telemetry.logCustomEvent('permission_decision', {
         tool: toolName,
