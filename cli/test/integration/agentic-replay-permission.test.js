@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { Commerce } from '../../../bindings/node/index.js';
 import { createEmbeddedAgentToolkit } from '../../src/agent-toolkit.js';
 import { createStatesetMcpServer } from '../../src/mcp-server.js';
-import { REPLAY_PERMISSION_DENIED } from '../../src/mcp/mutation-simulator.js';
+import { REPLAY_NOT_GOVERNED, REPLAY_PERMISSION_DENIED } from '../../src/mcp/mutation-simulator.js';
 
 const kernelExample = (name) =>
   JSON.parse(readFileSync(new URL(`../../../kernel/examples/${name}`, import.meta.url), 'utf8'));
@@ -148,6 +148,8 @@ test('a write tool still replays for a write-scoped caller', async (t) => {
   assert.equal((await commerce.carts.list()).length, before + 1, 'the replay created the cart');
 });
 
+// Strict mode runs the replay itself (a top-level governed composite) but
+// replays governed commands only; see kernel-strict-composites.test.js.
 test('strict kernel mode exposes the replay as a governed composite, and it cannot replay an ungoverned write', async (t) => {
   const { dbPath, commerce, operator } = fixture(t);
   const countLinks = async () =>
@@ -182,6 +184,6 @@ test('strict kernel mode exposes the replay as a governed composite, and it cann
     tool: 'create_payment_link',
     dryRun: false,
   });
-  assert.equal(replayed.ok, false, JSON.stringify(replayed));
+  assertRefused(replayed, 'create_payment_link', [REPLAY_NOT_GOVERNED]);
   assert.equal(await countLinks(), before, 'no payment link was created');
 });

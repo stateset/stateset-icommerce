@@ -4,19 +4,31 @@ import { KERNEL_CAPABILITY_BY_TOOL } from './kernel-tool-execution.js';
 
 export const KERNEL_BOUNDARY_SCHEMA_VERSION = 1;
 
-// These tools may orchestrate mutations, but never perform one directly. In
-// strict mode every nested write still traverses executeGovernedTool and fails
-// closed unless it has a typed kernel command mapping. Keep this allow-list
-// deliberately small and explicit so an orchestration surface cannot masquerade
-// as a read merely to remain discoverable.
+// These tools may orchestrate mutations, but never perform one directly. Keep
+// this allow-list deliberately small and explicit so an orchestration surface
+// cannot masquerade as a read merely to remain discoverable.
+//
+// In strict mode a composite runs only as a top-level call, and only the
+// composite itself is exempt from the typed-command requirement. Every step it
+// runs goes back through the step executor (src/mcp/plan-step-executor.js):
+// a write the strict boundary withholds is refused before its handler runs, a
+// composite nested inside another composite is refused, and every other live
+// write must cross executeGovernedTool as a typed kernel command under the
+// operator's principal and policy.
 //
 // agentic_replay_mutation re-executes one logged write through the same step
-// executor (src/mcp/mutation-simulator.js), and refuses admin and delete tools.
+// executor (src/mcp/mutation-simulator.js); it refuses admin and delete tools,
+// and in strict mode it replays governed commands only.
 export const KERNEL_GOVERNED_COMPOSITE_TOOLS = Object.freeze([
   'agentic_execute_plan',
   'agentic_replay_mutation',
 ]);
 const KERNEL_GOVERNED_COMPOSITE_TOOL_SET = new Set(KERNEL_GOVERNED_COMPOSITE_TOOLS);
+
+/** Whether a tool is on the governed composite allow-list. */
+export function isKernelGovernedComposite(toolName) {
+  return KERNEL_GOVERNED_COMPOSITE_TOOL_SET.has(toolName);
+}
 
 /**
  * Kernel strict mode is intentionally fail closed. Only an explicit `read`
@@ -93,5 +105,25 @@ export function selectStrictKernelToolDefinitions(
       !isMutationToolDefinition(tool) ||
       Boolean(capabilityByTool[tool.name]) ||
       governedCompositeTools.has(tool.name),
+  );
+}
+
+/**
+ * Names of the tools strict mode withholds: the mutations with neither a typed
+ * command nor a place on the composite allow-list. The exact complement of
+ * `selectStrictKernelToolDefinitions` over the same definitions.
+ */
+export function selectStrictKernelWithheldToolNames(
+  toolDefs,
+  capabilityByTool = KERNEL_CAPABILITY_BY_TOOL,
+  governedCompositeTools = KERNEL_GOVERNED_COMPOSITE_TOOL_SET,
+) {
+  const exposed = new Set(
+    selectStrictKernelToolDefinitions(toolDefs, capabilityByTool, governedCompositeTools).map(
+      (tool) => tool.name,
+    ),
+  );
+  return new Set(
+    (toolDefs || []).map((tool) => tool?.name).filter((name) => name && !exposed.has(name)),
   );
 }
