@@ -31,6 +31,9 @@ This project follows Keep a Changelog and Semantic Versioning.
   the other order's reservation. Unreserved serials, serials reserved for
   the order being fulfilled, and lapsed unconfirmed reservations work as
   before.
+- Postgres `search_configs.set_active` with an unknown id changes nothing,
+  as on SQLite. It used to commit "deactivate every config" before
+  returning `NotFound`.
 
 ## [1.41.0] - 2026-11-15
 

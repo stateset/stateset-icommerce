@@ -164,3 +164,35 @@ async fn postgres_core_crud_smoke() {
     db.products().delete_async(product.id).await.expect("delete product");
     db.customers().delete_async(customer.id).await.expect("delete customer");
 }
+
+/// Activating a search config that does not exist changes nothing — Postgres
+/// used to commit "deactivate every config" before discovering the id was
+/// missing. Twin of the SQLite
+/// `sqlite_search_config_set_active_missing_id_changes_nothing`.
+#[cfg(feature = "postgres")]
+#[tokio::test]
+async fn postgres_search_config_set_active_missing_id_changes_nothing() {
+    use stateset_core::{CommerceError, CreateSearchConfig, SearchConfigId};
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping search config test");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations");
+    let configs = db.search_configs();
+    let config = configs
+        .create_async(CreateSearchConfig {
+            name: format!("Primary {}", Uuid::new_v4()),
+            description: None,
+            searchable_fields: vec![],
+            facets: vec![],
+            synonyms: vec![],
+            boost_rules: vec![],
+        })
+        .await
+        .expect("create config");
+    configs.set_active_async(config.id).await.expect("activate config");
+    let err = configs.set_active_async(SearchConfigId::new()).await.expect_err("missing id");
+    assert!(matches!(err, CommerceError::NotFound), "{err:?}");
+    let active = configs.get_active_async().await.expect("get active").expect("an active config");
+    assert_eq!(active.id, config.id, "the refused activation deactivated nothing");
+}

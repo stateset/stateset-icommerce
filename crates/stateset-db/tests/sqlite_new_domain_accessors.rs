@@ -58,3 +58,30 @@ fn sqlite_new_domain_accessors_do_not_panic() {
 
     assert!(outcomes.into_iter().all(std::convert::identity));
 }
+
+/// Activating a search config that does not exist changes nothing: the
+/// currently active config stays active. Twin of the Postgres
+/// `postgres_search_config_set_active_missing_id_changes_nothing`.
+#[test]
+fn sqlite_search_config_set_active_missing_id_changes_nothing() {
+    use stateset_core::{
+        CommerceError, CreateSearchConfig, SearchConfigId, SearchConfigRepository,
+    };
+    let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
+    let configs = db.search_configs();
+    let config = configs
+        .create(CreateSearchConfig {
+            name: "Primary".into(),
+            description: None,
+            searchable_fields: vec![],
+            facets: vec![],
+            synonyms: vec![],
+            boost_rules: vec![],
+        })
+        .expect("create config");
+    configs.set_active(config.id).expect("activate config");
+    let err = configs.set_active(SearchConfigId::new()).expect_err("missing id");
+    assert!(matches!(err, CommerceError::NotFound), "{err:?}");
+    let active = configs.get_active().expect("get active").expect("an active config");
+    assert_eq!(active.id, config.id, "the refused activation deactivated nothing");
+}
