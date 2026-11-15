@@ -134,10 +134,106 @@ describe('explain_state_machine', () => {
     assert.match(noop.reason, /no-op/);
   });
 
+  it('names the tool for each move, and the moves only one operation can make', () => {
+    const graph = ask({ machine: 'order' });
+    assert.deepEqual(graph.tools.shipped, ['ship_order']);
+    assert.deepEqual(graph.tools.cancelled, ['cancel_order', 'update_order_status']);
+    assert.ok(
+      graph.onlyVia.some(
+        (m) => m.from === 'processing' && m.to === 'shipped' && m.tool === 'ship_order',
+      ),
+    );
+    const customer = ask({ machine: 'customer' });
+    assert.ok(
+      customer.onlyVia.some(
+        (m) => m.from === 'active' && m.to === 'deleted' && m.tool === 'delete_customer',
+      ),
+    );
+
+    const next = ask({ machine: 'return', from: 'approved' });
+    assert.deepEqual(next.moves, [
+      { status: 'in_transit', tools: ['add_return_tracking'] },
+      { status: 'cancelled', tools: ['cancel_return'] },
+    ]);
+
+    const ship = ask({ machine: 'order', from: 'processing', to: 'shipped' });
+    assert.equal(ship.allowed, true);
+    assert.equal(ship.onlyVia, 'ship_order');
+    assert.match(ship.reason, /only through ship_order/);
+
+    const refused = ask({ machine: 'return', from: 'approved', to: 'received' });
+    assert.equal(refused.allowed, false);
+    assert.deepEqual(refused.path, ['approved', 'in_transit', 'received']);
+    assert.equal(refused.moves[0].tools[0], 'add_return_tracking');
+  });
+
+  it('reports the persistence-layer move the generator omits, with its source', () => {
+    assert.deepEqual(nextStates('payment', 'pending'), [
+      'processing',
+      'failed',
+      'cancelled',
+      'completed',
+    ]);
+    const graph = ask({ machine: 'payment' });
+    assert.equal(graph.persistenceMoves[0].from, 'pending');
+    assert.match(graph.persistenceMoves[0].source, /rules\/payments\.rs/);
+    assert.equal(ask({ machine: 'payment', from: 'pending', to: 'completed' }).allowed, true);
+  });
+
+  it('answers a known lifecycle that is not catalogued without guessing its moves', () => {
+    for (const machine of ['gift_card', 'gift-cards', 'GiftCardStatus']) {
+      const result = ask({ machine });
+      assert.equal(result.success, true, machine);
+      assert.equal(result.catalogued, false);
+      assert.equal(result.machine, 'gift_card');
+      assert.deepEqual(result.states, ['active', 'depleted', 'expired', 'disabled']);
+      assert.match(result.reason, /not catalogued/);
+    }
+    const move = ask({ machine: 'x402_intent', from: 'signed', to: 'settled' });
+    assert.equal(move.success, true);
+    assert.equal(move.allowed, null);
+    assert.equal(move.next, null);
+    assert.equal(ask({ machine: 'coupon', from: 'depleted' }).success, false);
+
+    // An order's own payment status is `PaymentStatus` in the engine.
+    const orderPayment = ask({ machine: 'payment_status' });
+    assert.equal(orderPayment.machine, 'order_payment');
+    assert.match(orderPayment.note, /never set directly/);
+
+    const all = ask({});
+    assert.ok(all.uncatalogued.some((l) => l.machine === 'invoice'));
+    assert.equal(all.count, STATE_MACHINES.length);
+    assert.deepEqual(ask({ machine: 'order' }).related, ['order_payment', 'order_fulfillment']);
+  });
+
+  it('lists the candidates when a domain holds several lifecycles', () => {
+    const payments = ask({ machine: 'payments' });
+    assert.equal(payments.success, false);
+    assert.deepEqual(
+      payments.candidates.map((c) => [c.machine, c.catalogued]),
+      [
+        ['payment', true],
+        ['refund', true],
+      ],
+    );
+    assert.match(payments.hint, /payment/);
+    const promotions = ask({ machine: 'promotions', from: 'active' });
+    assert.deepEqual(
+      promotions.candidates.map((c) => c.machine),
+      ['promotion', 'coupon'],
+    );
+  });
+
+  it('describes itself as the catalogued lifecycles, not every one', () => {
+    assert.doesNotMatch(stateMachineTool.description, /every status lifecycle the engine enforces/);
+    assert.match(stateMachineTool.description, /not catalogued yet/);
+  });
+
   it('fails cleanly, naming the valid choices', () => {
     const unknownMachine = ask({ machine: 'nope' });
     assert.equal(unknownMachine.success, false);
     assert.ok(unknownMachine.machines.includes('order'));
+    assert.ok(unknownMachine.uncatalogued.includes('gift_card'));
 
     const unknownState = ask({ machine: 'payment', from: 'bogus' });
     assert.equal(unknownState.success, false);
