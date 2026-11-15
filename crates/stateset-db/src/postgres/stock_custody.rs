@@ -10,6 +10,44 @@ type DbResult<T> = stateset_core::Result<T>;
 fn invalid(message: &str) -> CommerceError {
     CommerceError::ValidationError(message.into())
 }
+/// A serial held by an open reservation for anything other than `order_id`
+/// (another order, or another kind of reference) cannot be picked or shipped
+/// for `order_id` (twin of the SQLite guard). The serial row is locked first
+/// so a concurrent `reserve` cannot slip in between the check and the move.
+/// An unconfirmed reservation whose expiry has passed no longer holds the
+/// unit, and an unreserved serial is unaffected.
+async fn ensure_serial_not_reserved_elsewhere(
+    tx: &mut Transaction<'_, Postgres>,
+    serial: &str,
+    order_id: Uuid,
+    now: DateTime<Utc>,
+) -> DbResult<()> {
+    sqlx::query("SELECT id FROM serial_numbers WHERE serial = $1 FOR UPDATE")
+        .bind(serial)
+        .execute(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+    let holder: Option<(String, Uuid)> = sqlx::query_as(
+        "SELECT r.reference_type, r.reference_id FROM serial_reservations r
+         JOIN serial_numbers s ON s.id = r.serial_id
+         WHERE s.serial = $1 AND r.released_at IS NULL
+           AND (r.confirmed_at IS NOT NULL OR r.expires_at IS NULL OR r.expires_at > $2)
+           AND NOT (lower(r.reference_type) = 'order' AND r.reference_id = $3)
+         LIMIT 1",
+    )
+    .bind(serial)
+    .bind(now)
+    .bind(order_id)
+    .fetch_optional(tx.as_mut())
+    .await
+    .map_err(map_db_error)?;
+    match holder {
+        Some((reference_type, reference_id)) => Err(CommerceError::Conflict(format!(
+            "Serial {serial} is reserved for {reference_type} {reference_id}, not order {order_id}"
+        ))),
+        None => Ok(()),
+    }
+}
 pub(super) async fn pick(
     tx: &mut Transaction<'_, Postgres>,
     pick: &PickTask,
@@ -124,6 +162,9 @@ pub(super) async fn pick(
     }
     sqlx::query("INSERT INTO pick_stock_custody (pick_id, staging_location_id, quantity) VALUES ($1, $2, $3)").bind(pick.id).bind(staging).bind(pick.quantity_picked).execute(tx.as_mut()).await.map_err(map_db_error)?;
     if let Some(serial) = &pick.serial_number {
+        // Checked where the serial row is first locked, keeping this
+        // transaction's lock order; a refusal rolls back the whole pick.
+        ensure_serial_not_reserved_elsewhere(tx, serial, order_id, now).await?;
         sqlx::query("INSERT INTO serial_history (id, serial_id, event_type, reference_type, reference_id, from_status, to_status, from_location_id, to_location_id, performed_by, created_at) SELECT $1, id, 'reserved', 'pick_task', $2, status, 'reserved', current_location_id, $3, $4, $5 FROM serial_numbers WHERE serial = $6").bind(Uuid::new_v4()).bind(pick.id).bind(staging).bind(pick.assigned_to.as_deref()).bind(now).bind(serial).execute(tx.as_mut()).await.map_err(map_db_error)?;
         sqlx::query("UPDATE serial_numbers SET current_location_id = $1, status = 'reserved', updated_at = $2 WHERE serial = $3").bind(staging).bind(now).bind(serial).execute(tx.as_mut()).await.map_err(map_db_error)?;
     }
@@ -250,6 +291,7 @@ pub(super) async fn ship(
             return Err(invalid("Shipment exceeds matching picked stock in staging"));
         }
         if let Some(serial) = serial {
+            ensure_serial_not_reserved_elsewhere(tx, &serial, order_id, now).await?;
             sqlx::query("INSERT INTO serial_history (id, serial_id, event_type, reference_type, reference_id, from_status, to_status, from_location_id, performed_by, created_at) SELECT $1, id, 'shipped', 'ship_task', $2, status, 'shipped', current_location_id, $3, $4 FROM serial_numbers WHERE serial = $5").bind(Uuid::new_v4()).bind(ship_id).bind(performed_by).bind(now).bind(&serial).execute(tx.as_mut()).await.map_err(map_db_error)?;
             sqlx::query("UPDATE serial_numbers SET status = 'shipped', current_location_id = NULL, sold_at = COALESCE(sold_at, $1), updated_at = $1 WHERE serial = $2").bind(now).bind(&serial).execute(tx.as_mut()).await.map_err(map_db_error)?;
             sqlx::query("UPDATE serial_reservations SET released_at = $1, active_key = NULL WHERE serial_id = (SELECT id FROM serial_numbers WHERE serial = $2) AND released_at IS NULL").bind(now).bind(&serial).execute(tx.as_mut()).await.map_err(map_db_error)?;

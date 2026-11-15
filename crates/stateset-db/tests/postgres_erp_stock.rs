@@ -22,6 +22,7 @@ fn cycle_counts_use_stored_balances() {
     stock::quality_guards(&db);
     transfers::lifecycle(&db);
     custody::lifecycle(&db);
+    custody::serial_reservation_owner(&db);
     lot_stock::lifecycle(&db);
     lot_stock::mixed_bins_and_order_warehouses(&db);
 }

@@ -25,6 +25,12 @@ This project follows Keep a Changelog and Semantic Versioning.
   records an `a2a.dispute_resolved.v1` fact, on both databases. The dispute
   used to stay open, so `payments.create_refund` refused the escrow's
   payment forever.
+- Warehouse pick and ship refuse a serial held by an open reservation for
+  another order (or any other reference), on both databases. Such a serial
+  could be picked and shipped for the wrong order, and the shipment closed
+  the other order's reservation. Unreserved serials, serials reserved for
+  the order being fulfilled, and lapsed unconfirmed reservations work as
+  before.
 
 ## [1.41.0] - 2026-11-15
 
