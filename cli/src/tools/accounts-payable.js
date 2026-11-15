@@ -210,17 +210,20 @@ export const accountsPayableTools = withPolicyDomain('accounts_payable', [
     description: 'Run a three-way match (bill vs purchase order vs receipt) for a bill.',
     inputSchema: {
       billId: z.string().min(1).describe('Bill ID'),
+      // The binding takes the tolerance as an exact decimal string. A number
+      // is still accepted and converted: declaring only z.number() made every
+      // call that passed a tolerance fail in the binding ("Number 1 into rust
+      // type String").
       tolerancePercent: z
-        .number()
-        .min(0)
+        .union([nonnegativeDecimalString, z.number().finite().min(0)])
         .optional()
-        .describe('Optional variance tolerance percent'),
+        .describe('Optional variance tolerance percent, e.g. "2" or "0.5"'),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const match = await commerce.accountsPayable.threeWayMatch(
         params.billId,
-        params.tolerancePercent,
+        params.tolerancePercent === undefined ? undefined : String(params.tolerancePercent),
       );
       return { success: true, match };
     },

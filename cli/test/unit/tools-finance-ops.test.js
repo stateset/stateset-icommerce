@@ -744,7 +744,27 @@ describe('three_way_match_bill', () => {
     });
     assert.equal(result.success, true);
     assert.equal(result.match.matched, true);
-    assert.deepEqual(received, { billId: 'bill_001', tolerancePercent: 2 });
+    // The binding takes the tolerance as a decimal string.
+    assert.deepEqual(received, { billId: 'bill_001', tolerancePercent: '2' });
+  });
+
+  it('accepts a decimal-string tolerance and passes it through unchanged', async () => {
+    let received;
+    const commerce = {
+      accountsPayable: {
+        threeWayMatch: async (billId, tolerancePercent) => {
+          received = { billId, tolerancePercent };
+          return { matched: true, variances: [] };
+        },
+      },
+    };
+    const schema = z.object(tool.inputSchema);
+    assert.equal(schema.safeParse({ billId: 'b', tolerancePercent: '0.5' }).success, true);
+    assert.equal(schema.safeParse({ billId: 'b', tolerancePercent: 0.5 }).success, true);
+    assert.equal(schema.safeParse({ billId: 'b', tolerancePercent: '-1' }).success, false);
+    assert.equal(schema.safeParse({ billId: 'b', tolerancePercent: 'abc' }).success, false);
+    await tool.handler({ commerce, params: { billId: 'bill_003', tolerancePercent: '0.5' } });
+    assert.deepEqual(received, { billId: 'bill_003', tolerancePercent: '0.5' });
   });
 
   it('omits tolerance when not provided', async () => {
