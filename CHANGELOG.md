@@ -6,6 +6,37 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- The CLI sync client works against the real stateset-sequencer API
+  (checked against its source at master e97829b):
+  - `pull()`, `getHead()` and `getEntityHistory()` read the VES routes
+    (`/api/v1/ves/events`, `/api/v1/ves/head`,
+    `/api/v1/ves/entities/{type}/{id}`). They read the deprecated pre-VES
+    routes, whose table VES ingest never writes, so pushed events never came
+    back. There is no fallback to the old routes: no sequencer version served
+    VES events there. A sequencer older than v0.6.0 (no VES read routes) now
+    gets a clear error instead of an empty stream.
+  - Pulled events map the VES envelope: `source_agent_id` (read as
+    `source_agent`, so no pulled event could verify), `sequenced_at` inside
+    the envelope, and no `receipt_hash`. A missing signature, key id or hash
+    stays missing instead of being filled with zeros. Entity history follows
+    `has_more` across pages and URL-encodes the id.
+  - Push settlement reads rejections as `event_id` and settles exact replays
+    (a retry after a lost response) from their stored receipts. Before, any
+    rejection or replay made the receipt "invalid" and left the whole batch
+    pending forever.
+  - `getCommitment()` reads the VES commitment (`/api/v1/ves/commitments/{id}`);
+    new `listCommitments()`, `createCommitment()`, `getInclusionProof()` and
+    `verifyEventInclusion()`, which binds the proof to the commitment's leaf
+    count. `getHead()` no longer returns `stateRoot`/`lastCommitmentId`,
+    which the head route never served.
+  - API keys go out as `Authorization: ApiKey <key>`; the sequencer reads
+    `Bearer` as a JWT only, so non-`ss_` keys sent as Bearer always failed.
+  - A sequencer without `GET /api/v1/agents/:id/signing-keys` (stateset-sequencer
+    PR #6, unmerged) yields a `key_directory_unsupported` error that says to
+    supply peer keys another way, instead of a bare 404.
+
 ## [1.41.0] - 2026-11-15
 
 1.41.0 rolls up three lines of work: the 1.40.1 security fixes, which were
