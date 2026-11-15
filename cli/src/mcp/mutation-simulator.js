@@ -27,12 +27,22 @@ import { normalizeToolName } from './policy-helpers.js';
 export const REPLAY_PERMISSION_DENIED = 'REPLAY_PERMISSION_DENIED';
 
 /**
+ * Error code for a replay refused in kernel strict mode because the logged
+ * call's tool has no typed kernel command (see `createReplayMutationToolCall`).
+ */
+export const REPLAY_NOT_GOVERNED = 'REPLAY_NOT_GOVERNED';
+
+/**
  * @typedef {Object} MutationSimulatorDeps
  * @property {(toolName: string) => Object} getToolRuntimeMeta
  * @property {(toolName: string) => string} inferPolicyDomain
  * @property {(args: Object) => Promise<Object>} executeToolStepInPlan
  * @property {(event: Object) => Promise<void>} addAgenticReplayEvent
  * @property {(options?: Object) => Promise<{ events: Array<Object> }>} listAgenticReplayEvents
+ * @property {{ isWithheld: (toolName: string) => boolean,
+ *   isGovernedCommand: (toolName: string) => boolean } | null} [strictKernel]
+ *   Set only in kernel strict mode: `isWithheld` names the writes the strict
+ *   boundary does not expose, `isGovernedCommand` the typed kernel commands.
  */
 
 /**
@@ -162,6 +172,12 @@ export function createSimulateMutationToolCall({
  * mutation is refused outright rather than skipped, so a replay never
  * silently re-runs an older call than the one the caller asked for.
  *
+ * In kernel strict mode the replay re-executes governed commands only. A
+ * logged call to a write the strict boundary withholds (one logged before the
+ * server went strict, say) is still the newest matching mutation, so it too is
+ * refused rather than skipped. The replay itself runs as a nested step, which
+ * the step executor governs like any plan step.
+ *
  * @param {MutationSimulatorDeps} deps
  */
 export function createReplayMutationToolCall({
@@ -170,6 +186,7 @@ export function createReplayMutationToolCall({
   executeToolStepInPlan,
   addAgenticReplayEvent,
   listAgenticReplayEvents,
+  strictKernel = null,
 }) {
   return async function replayMutationToolCall({
     eventId = null,
@@ -187,8 +204,12 @@ export function createReplayMutationToolCall({
     });
     const sourceEvent = (replayEvents.events || []).find((event) => {
       if (!event?.tool || event.tool.startsWith('agentic_')) return false;
+      // Withheld writes are unknown to a strict server, but stay candidates.
+      const withheld = Boolean(strictKernel?.isWithheld(event.tool));
       const runtime = getToolRuntimeMeta(event.tool);
-      if (runtime.permission === 'unknown' || runtime.sideEffect !== 'write') return false;
+      if (!withheld && (runtime.permission === 'unknown' || runtime.sideEffect !== 'write')) {
+        return false;
+      }
       return event.params && typeof event.params === 'object';
     });
 
@@ -196,6 +217,25 @@ export function createReplayMutationToolCall({
       return {
         success: false,
         error: 'No replayable mutation event found for the provided filters.',
+        filters: {
+          eventId,
+          requestId,
+          tool: tool || null,
+        },
+      };
+    }
+
+    if (strictKernel && !strictKernel.isGovernedCommand(sourceEvent.tool)) {
+      return {
+        success: false,
+        errorCode: REPLAY_NOT_GOVERNED,
+        error:
+          `Refusing to replay '${sourceEvent.tool}': kernel strict mode replays only ` +
+          'governed commands, and it has no typed kernel command.',
+        sourceEvent: {
+          eventId: sourceEvent.eventId || null,
+          tool: sourceEvent.tool,
+        },
         filters: {
           eventId,
           requestId,

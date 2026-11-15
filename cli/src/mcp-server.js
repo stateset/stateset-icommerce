@@ -66,7 +66,10 @@ import { routeToAgentWithConfidence } from './agent-router.js';
 import { adaptCommerceApis } from './commerce.js';
 import { getCommerce } from './database.js';
 import { KERNEL_CAPABILITY_BY_TOOL, createKernelToolExecutor } from './kernel-tool-execution.js';
-import { selectStrictKernelToolDefinitions } from './kernel-boundary.js';
+import {
+  selectStrictKernelToolDefinitions,
+  selectStrictKernelWithheldToolNames,
+} from './kernel-boundary.js';
 // SUPPORTED_AGENT_NAMES* now consumed by `./mcp/agentic-runtime-tools.js`.
 import { buildMppServiceInfo } from './mpp/index.js';
 
@@ -100,6 +103,11 @@ const AGENTIC_REPLAY_LOG_FILE = DEFAULT_REPLAY_LOG_FILE;
 const AGENTIC_REPLAY_BUFFER_SIZE = DEFAULT_REPLAY_BUFFER_SIZE;
 
 const ALL_TOOL_DEFS = [...ALL_DOMAIN_TOOLS, ...AGENTIC_RUNTIME_TOOLS];
+
+// The registry writes kernel strict mode withholds (no typed command, not a
+// governed composite). A strict server refuses them by name wherever they turn
+// up, including as a plan or replay step, whatever the tool profile.
+const KERNEL_WITHHELD_TOOL_NAMES = selectStrictKernelWithheldToolNames(ALL_TOOL_DEFS);
 
 // AGENTIC_COMPENSATION_HINTS, AGENTIC_IDEMPOTENCY_HINTS, coerceReplayIdSource,
 // extractReplayIdFromSource, _extractFirstIdLikeValue, and
@@ -260,6 +268,14 @@ export function createStatesetMcpServer({
     allowApply,
     agentConfig,
   });
+  // Strict mode only: lets the step executor and the replay keep every step a
+  // governed composite runs inside the governed catalog.
+  const strictKernel = strictKernelBoundary
+    ? {
+        isWithheld: (toolName) => KERNEL_WITHHELD_TOOL_NAMES.has(toolName),
+        isGovernedCommand: (toolName) => Boolean(KERNEL_CAPABILITY_BY_TOOL[toolName]),
+      }
+    : null;
 
   // ---------------------------------------------------------------------------
   // A2A Store initialization
@@ -533,6 +549,7 @@ export function createStatesetMcpServer({
     wrapWithTelemetry,
     getToolContext: () => toolContext,
     executeGovernedTool,
+    strictKernel,
   });
 
   // Mutation simulate/replay bodies live in ./mcp/mutation-simulator.js.
@@ -544,6 +561,7 @@ export function createStatesetMcpServer({
     executeToolStepInPlan,
     addAgenticReplayEvent,
     listAgenticReplayEvents,
+    strictKernel,
   };
   const simulateMutationToolCall = createSimulateMutationToolCall(mutationDeps);
   const replayMutationToolCall = createReplayMutationToolCall(mutationDeps);

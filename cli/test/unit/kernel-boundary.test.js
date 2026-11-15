@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 
 import {
   classifyKernelToolBoundary,
+  isKernelGovernedComposite,
   isMutationPermission,
   KERNEL_GOVERNED_COMPOSITE_TOOLS,
   selectStrictKernelToolDefinitions,
+  selectStrictKernelWithheldToolNames,
 } from '../../src/kernel-boundary.js';
 import { KERNEL_CAPABILITY_BY_TOOL } from '../../src/kernel-tool-execution.js';
 import { AGENTIC_RUNTIME_TOOLS } from '../../src/mcp/agentic-runtime-tools.js';
@@ -76,6 +78,28 @@ describe('kernel mutation boundary', () => {
       ['agentic_execute_plan', 'agentic_replay_mutation'],
       'the governed composite allow-list stays small and explicit',
     );
+  });
+
+  it('withholds exactly the blocked mutations, the complement of strict exposure', () => {
+    const withheld = selectStrictKernelWithheldToolNames(ALL_TOOLS);
+    const exposed = new Set(selectStrictKernelToolDefinitions(ALL_TOOLS).map((tool) => tool.name));
+    const blocked = classifyKernelToolBoundary(ALL_TOOLS)
+      .entries.filter((entry) => entry.disposition === 'blocked')
+      .map((entry) => entry.name);
+
+    assert.deepEqual([...withheld].sort(), blocked.sort());
+    for (const tool of ALL_TOOLS) {
+      assert.notEqual(withheld.has(tool.name), exposed.has(tool.name), tool.name);
+    }
+    assert.equal(withheld.has('create_payment_link'), true);
+    assert.equal(withheld.has('create_customer'), false);
+    assert.equal(withheld.has('list_customers'), false);
+    for (const name of KERNEL_GOVERNED_COMPOSITE_TOOLS) {
+      assert.equal(withheld.has(name), false, name);
+      assert.equal(isKernelGovernedComposite(name), true, name);
+    }
+    assert.equal(isKernelGovernedComposite('agentic_plan'), false);
+    assert.equal(isKernelGovernedComposite('create_customer'), false);
   });
 
   it('treats missing and future permission classes as mutations', () => {

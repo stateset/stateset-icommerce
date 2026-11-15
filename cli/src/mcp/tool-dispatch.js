@@ -29,7 +29,7 @@ import {
   resolveKernelCorrelationId,
 } from './replay-kernel-fields.js';
 import { compactReplayValue } from './replay-sanitizer.js';
-import { isMutationPermission } from '../kernel-boundary.js';
+import { isKernelGovernedComposite, isMutationPermission } from '../kernel-boundary.js';
 import {
   RAW_TOOL_RESULT,
   attachContractToResponse,
@@ -529,6 +529,9 @@ export function createToolDispatch({
       stepIndex: 0,
       includeHooks: options.includeHooks ?? true,
       isRollback: options.isRollback || false,
+      // A direct call: in kernel strict mode only a top-level call may run a
+      // governed composite (see ./plan-step-executor.js).
+      topLevel: true,
       extra: {
         ...(options.extra || {}),
         idempotencyKey: options.idempotencyKey,
@@ -630,6 +633,9 @@ export function createToolDispatch({
 
     const adapted = wrapTool(name, description, inputSchema, async (args, extra) => {
       try {
+        // An MCP tool call is always top level. A governed composite runs no
+        // write itself, so it alone needs no typed command here; each step it
+        // runs goes through the step executor, which governs it as nested.
         const governed = executeGovernedTool
           ? await executeGovernedTool(name, args, {
               requestId: extra?.requestId,
@@ -639,7 +645,10 @@ export function createToolDispatch({
               // this call's replay event (kernel.correlationId). A transport's
               // correlation id, else the request id; not a UUID -> minted.
               correlationId: resolveKernelCorrelationId(extra?.correlationId ?? extra?.requestId),
-              requireGoverned: allowApply && isMutationPermission(toolDef.permission),
+              requireGoverned:
+                allowApply &&
+                isMutationPermission(toolDef.permission) &&
+                !isKernelGovernedComposite(name),
             })
           : null;
         const result =

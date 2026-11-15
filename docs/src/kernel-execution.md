@@ -354,6 +354,38 @@ kernel configuration (the ephemeral HTTP sandbox, or legacy writes with no
 policy) the storefront tools keep their previous legacy handlers; the commands
 that were already governed still refuse apply without a kernel.
 
+## Plans and replay on the strict profile
+
+`agentic_execute_plan` and `agentic_replay_mutation` run on a strict endpoint,
+dry run and apply. Each is a governed composite: the call itself needs no
+typed command, because it performs no write, and each step it runs is governed
+exactly as if the agent had called that tool directly.
+
+- A governed step (for example `create_customer`, then `create_cart`, then
+  `add_cart_item`) runs as its typed command under the operator's principal,
+  store and policy; step arguments never supply identity. The step result
+  carries the sealed receipt.
+- A step that is a write without a typed command (for example
+  `create_payment_link`) is refused with `permission_block` before its handler
+  runs, and the plan reports `finalStatus: "failed"`. A dry run refuses it the
+  same way, so it predicts the apply.
+- A composite nested in another composite (a plan step that is itself a plan or
+  a replay) is refused: strict mode runs composites only as top-level calls.
+- The replay re-executes governed commands only. When the newest matching
+  logged call is a write without a typed command (one logged before the
+  endpoint went strict, say), the replay is refused with `REPLAY_NOT_GOVERNED`
+  rather than skipping to an older call.
+- Rollback compensations are steps too, so only governed compensations run.
+  Most compensations (`cancel_cart`, `remove_cart_item`, …) have no typed
+  command, so a failed strict plan usually reports its rollback as not fully
+  reverted and leaves the completed steps for the operator.
+- Per-call options given to `executeTool` (idempotency key, approval,
+  authority) apply to the composite call only. Its steps take approval,
+  authority, mandate and commitment from the operator's kernel configuration,
+  and an idempotency key from their own arguments where the tool accepts one
+  (otherwise a fresh key), so a policy that requires per-command evidence
+  refuses those steps unless that configuration supplies it.
+
 ## Exact money
 
 Agent-facing JSON uses `MoneyWire`:
@@ -711,14 +743,18 @@ demo store durable.
 When a trusted `kernel` configuration is supplied to the Node toolkit or MCP
 server, strict exposure is the default: read tools remain discoverable, but a
 mutation is advertised and executable only when it maps to a typed command in
-the governed catalog. The one explicit governed composite,
-`agentic_execute_plan`, is classified as `write`; it remains available for
-multi-step automation, but every nested live write crosses the same typed
-command executor and an unmapped step fails closed before its handler runs.
+the governed catalog or is one of the two explicit governed composites,
+`agentic_execute_plan` and `agentic_replay_mutation`. Both are classified as
+`write` and run as top-level calls (see
+[Plans and replay on the strict profile](#plans-and-replay-on-the-strict-profile));
+neither performs a write itself, and every step they run crosses the same
+typed command executor: an unmapped step fails closed before its handler runs,
+and a composite nested in another composite is refused.
 Mutation classification is fail closed: `write`,
 `delete`, `admin`, missing, and any future permission class are mutating; only
 an explicit `read` permission bypasses the command boundary. This closes direct
-calls, plans, rollback execution, and MCP transport over the same boundary.
+calls, plans, replays, rollback execution, and MCP transport over the same
+boundary.
 `kernel.strict=false` is an explicit legacy-migration escape hatch; it should
 not be enabled for autonomous agents.
 
