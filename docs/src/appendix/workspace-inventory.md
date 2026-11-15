@@ -19,7 +19,7 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 | Rust crates in workspace | 23 |
 | Binding crates in workspace | 8 |
 | Excluded local binding manifests | 2 |
-| CLI binaries | 57 |
+| CLI binaries | 56 |
 | CLI optional dependencies | 12 |
 | Admin local embedded binding | `file:../bindings/node` |
 
@@ -93,12 +93,12 @@ workspace membership because they require host runtimes or headers.
 | `tools` | 99 |
 | `commands` | 90 |
 | `a2a` | 62 |
-| `mcp` | 36 |
+| `mcp` | 37 |
 | `channels` | 29 |
-| `sync` | 29 |
+| `sync` | 26 |
 | `adapters` | 20 |
 | `simulation` | 20 |
-| `utils` | 17 |
+| `utils` | 16 |
 | `harness` | 14 |
 | `chains` | 10 |
 | `x402` | 10 |
