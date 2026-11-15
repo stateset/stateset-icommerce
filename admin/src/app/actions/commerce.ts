@@ -355,6 +355,24 @@ export async function getInventory(params?: {
   return inventoryApi.list(params);
 }
 
+/**
+ * Whether the connected engine can list inventory. The native binding looks
+ * stock up by SKU only, so pages offering a full listing (the CSV export)
+ * disable it with this explanation instead of failing on click.
+ */
+export async function getInventoryListingSupport(): Promise<{
+  supported: boolean;
+  reason?: string;
+}> {
+  await requireAdminSession();
+  return (await inventoryApi.supportsListing())
+    ? { supported: true }
+    : {
+        supported: false,
+        reason: 'This engine has no inventory listing; look stock up by SKU instead.',
+      };
+}
+
 export async function getInventoryItem(sku: string): Promise<InventoryItem | null> {
   await requireAdminSession();
   return inventoryApi.get(sku);

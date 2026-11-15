@@ -25,10 +25,14 @@ import {
 
 // Mock the server actions so the client-side render doesn't try to invoke
 // "use server" boundaries from jsdom.
+const inventorySupport = vi.hoisted(() => ({
+  get: vi.fn().mockResolvedValue({ supported: true }),
+}));
 vi.mock('@/app/actions/commerce', () => ({
   getOrders: vi.fn().mockResolvedValue([]),
   getCustomers: vi.fn().mockResolvedValue([]),
   getInventory: vi.fn().mockResolvedValue([]),
+  getInventoryListingSupport: inventorySupport.get,
 }));
 
 // Stub the CsvExportButton with a label-passing button so we can verify
@@ -88,6 +92,21 @@ describe('<ExportHubClient />', () => {
     expect(screen.getByTestId('csv-inventory')).toHaveAccessibleName(
       'Export inventory CSV',
     );
+  });
+
+  it('replaces the inventory export with an explanation when the engine cannot list inventory', async () => {
+    inventorySupport.get.mockResolvedValueOnce({
+      supported: false,
+      reason: 'This engine has no inventory listing; look stock up by SKU instead.',
+    });
+    render(<ExportHubClient />);
+
+    expect(
+      await screen.findByText(/This engine has no inventory listing/),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId('csv-inventory')).not.toBeInTheDocument();
+    // The other exports are unaffected.
+    expect(screen.getByTestId('csv-orders')).toBeInTheDocument();
   });
 
   it('renders the descriptive copy for each entity', () => {
