@@ -13,13 +13,13 @@ Machine-readable output lives at `artifacts/compatibility/workspace-inventory.js
 
 | Metric | Value |
 | --- | --- |
-| Workspace version | `1.40.0` |
+| Workspace version | `1.40.1` |
 | Workspace members | 31 |
 | Default members | 19 |
 | Rust crates in workspace | 23 |
 | Binding crates in workspace | 8 |
 | Excluded local binding manifests | 2 |
-| CLI binaries | 56 |
+| CLI binaries | 57 |
 | CLI optional dependencies | 12 |
 | Admin local embedded binding | `file:../bindings/node` |
 
@@ -80,10 +80,10 @@ workspace membership because they require host runtimes or headers.
 
 | Metric | Value |
 | --- | --- |
-| Top-level source groups | 109 |
+| Top-level source groups | 111 |
 | Tool modules | 99 |
 | A2A modules | 62 |
-| JS dependencies | 15 |
+| JS dependencies | 14 |
 | Optional integrations | 12 |
 
 ## CLI Top-Level Source Groups
@@ -93,12 +93,12 @@ workspace membership because they require host runtimes or headers.
 | `tools` | 99 |
 | `commands` | 90 |
 | `a2a` | 62 |
-| `mcp` | 36 |
+| `mcp` | 41 |
 | `channels` | 29 |
-| `sync` | 26 |
+| `sync` | 29 |
+| `simulation` | 21 |
 | `adapters` | 20 |
-| `simulation` | 20 |
-| `utils` | 16 |
+| `utils` | 18 |
 | `harness` | 14 |
 | `chains` | 10 |
 | `x402` | 10 |
@@ -110,6 +110,7 @@ workspace membership because they require host runtimes or headers.
 | `providers` | 4 |
 | `autonomous` | 3 |
 | `compliance` | 3 |
+| `erc8004` | 3 |
 | `heartbeat` | 3 |
 | `mpp` | 3 |
 | `plugins` | 3 |
@@ -150,8 +151,8 @@ workspace membership because they require host runtimes or headers.
 | `doctor-checks.js` | 1 |
 | `dry-run.js` | 1 |
 | `env.js` | 1 |
-| `erc8004` | 1 |
 | `errors.js` | 1 |
+| `generated` | 1 |
 | `google-chat` | 1 |
 | `graceful-shutdown.js` | 1 |
 | `harness-hooks.js` | 1 |
@@ -190,6 +191,7 @@ workspace membership because they require host runtimes or headers.
 | `signal` | 1 |
 | `slack` | 1 |
 | `standalone.js` | 1 |
+| `state-machine-catalog.js` | 1 |
 | `suggestions.js` | 1 |
 | `telegram` | 1 |
 | `telemetry.js` | 1 |
