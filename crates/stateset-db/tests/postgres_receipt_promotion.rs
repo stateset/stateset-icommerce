@@ -1,4 +1,6 @@
 #![cfg(feature = "postgres")]
+#[path = "support/audit_correspondence.rs"]
+mod audit;
 #[path = "support/isolated_pg.rs"]
 mod isolated_pg;
 #[path = "support/receipt_promotion.rs"]
@@ -6,6 +8,8 @@ mod support;
 
 use rust_decimal::Decimal;
 use stateset_core::{ExecutionMode, ExecutionStatus, ReservationStatus};
+use stateset_db::PostgresDatabase;
+use stateset_db::kernel_outbox::{KernelAuditFailure, KernelAuditField, KernelAuditVerification};
 use uuid::Uuid;
 
 /// A private database: these tests verify the whole store-wide audit chain,
@@ -239,5 +243,343 @@ async fn promotion_rechecks_expiry_without_replaying_the_preview_result() {
     assert_eq!(event.3["balance_version"], 3);
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM kernel_outbox WHERE event_type = 'inventory.reservation_expired.v1' AND aggregate_id = $1").bind(source.id.to_string()).fetch_one(db.pool()).await.unwrap();
     assert_eq!(count, 1, "replay must not emit a second expiry event");
+    isolated.drop_database().await;
+}
+
+// --- Receipt audit correspondence -------------------------------------------
+//
+// The same proofs as `sqlite_receipt_promotion.rs`: `kernel_receipts` is the
+// idempotent-replay index, so the verifier checks it against the sealed
+// entries rather than only the surviving rows against the chain.
+
+/// Run the shared scenario (see `support/audit_correspondence.rs`).
+async fn audited_store(db: &PostgresDatabase) -> audit::Keys {
+    let keys = audit::Keys::new();
+    let executor = db.kernel_executor(audit::allowing());
+    let preview =
+        executor.execute_create_cart_async(&audit::preview(&keys.promoted)).await.unwrap();
+    assert_eq!(preview.status, ExecutionStatus::Previewed);
+    let promoted = executor.execute_create_cart_async(&audit::apply(&keys.promoted)).await.unwrap();
+    assert_eq!(promoted.status, ExecutionStatus::Succeeded);
+    let replay = executor.execute_create_cart_async(&audit::apply(&keys.promoted)).await.unwrap();
+    assert_eq!(replay.receipt_id, promoted.receipt_id, "a replay appends nothing");
+    let preview_only =
+        executor.execute_create_cart_async(&audit::preview(&keys.preview_only)).await.unwrap();
+    assert_eq!(preview_only.status, ExecutionStatus::Previewed);
+    let rejected = db
+        .kernel_executor(audit::denying())
+        .execute_create_cart_async(&audit::apply(&keys.rejected))
+        .await
+        .unwrap();
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
+    let applied = executor.execute_create_cart_async(&audit::apply(&keys.applied)).await.unwrap();
+    assert_eq!(applied.status, ExecutionStatus::Succeeded);
+    let conflict =
+        executor.execute_create_cart_async(&audit::conflicting(&keys.applied)).await.unwrap();
+    assert_eq!(conflict.error_code.as_deref(), Some("kernel.idempotency_conflict"));
+    keys
+}
+
+async fn sequences(db: &PostgresDatabase, key: &str) -> Vec<i64> {
+    sqlx::query_scalar(
+        "SELECT sequence FROM kernel_receipt_audit_log WHERE idempotency_key = $1
+         ORDER BY sequence",
+    )
+    .bind(key)
+    .fetch_all(db.pool())
+    .await
+    .unwrap()
+}
+
+async fn carts_for(db: &PostgresDatabase, key: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM carts WHERE customer_email = $1")
+        .bind(audit::email(key))
+        .fetch_one(db.pool())
+        .await
+        .unwrap()
+}
+
+/// Run one statement that must touch exactly one row.
+async fn tamper(db: &PostgresDatabase, sql: &str, key: &str) {
+    let result = sqlx::query(sql).bind(key).execute(db.pool()).await.unwrap();
+    assert_eq!(result.rows_affected(), 1, "{sql}");
+}
+
+async fn verify(db: &PostgresDatabase) -> KernelAuditVerification {
+    db.kernel_outbox().verify_audit_chain_async().await.expect("verify chain")
+}
+
+/// Assert `expected` is the reported failure and the chain cannot checkpoint.
+async fn assert_failure(db: &PostgresDatabase, expected: KernelAuditFailure) {
+    let verification = verify(db).await;
+    assert!(!verification.valid, "{verification:?}");
+    assert_eq!(verification.failure.as_ref(), Some(&expected));
+    assert_eq!(verification.first_invalid_sequence, Some(expected.sequence().unwrap_or(0)));
+    assert!(db.kernel_outbox().audit_checkpoint_async().await.is_err());
+}
+
+#[tokio::test]
+async fn audit_correspondence_holds_across_preview_promotion_rejection_and_replay() {
+    let Some(isolated) = database().await else { return };
+    let db = &isolated.db;
+    let keys = audited_store(db).await;
+    let verification = verify(db).await;
+    assert!(verification.valid, "{verification:?}");
+    assert_eq!(verification.entries, audit::SCENARIO_ENTRIES);
+    assert_eq!(verification.failure, None);
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM kernel_receipts")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(rows, audit::SCENARIO_ROWS, "the promoted preview is superseded, not materialized");
+    assert_eq!(sequences(db, &keys.promoted).await.len(), 2);
+    for key in [&keys.preview_only, &keys.rejected, &keys.applied] {
+        assert_eq!(sequences(db, key).await.len(), 1, "{key}");
+    }
+    let mut carts = Vec::new();
+    for key in [&keys.promoted, &keys.preview_only, &keys.rejected, &keys.applied] {
+        carts.push(carts_for(db, key).await);
+    }
+    assert_eq!(carts, [1, 0, 0, 1], "only applied receipts created carts");
+    let checkpoint = db.kernel_outbox().audit_checkpoint_async().await.expect("checkpoint");
+    assert!(db.kernel_outbox().verify_audit_checkpoint_async(&checkpoint).await.unwrap());
+    isolated.drop_database().await;
+}
+
+#[tokio::test]
+async fn audit_detects_a_deleted_materialized_receipt_and_the_re_execution_it_allows() {
+    let Some(isolated) = database().await else { return };
+    let db = &isolated.db;
+    let keys = audited_store(db).await;
+    let sealed = sequences(db, &keys.applied).await[0];
+    tamper(db, "DELETE FROM kernel_receipts WHERE idempotency_key = $1", &keys.applied).await;
+    assert_failure(
+        db,
+        KernelAuditFailure::MissingMaterializedReceipt {
+            sequence: sealed,
+            idempotency_key: keys.applied.clone(),
+        },
+    )
+    .await;
+
+    // The deleted row was the replay index, so the same key executes again —
+    // a second cart. The chain now records that re-execution.
+    let retry = db
+        .kernel_executor(audit::allowing())
+        .execute_create_cart_async(&audit::apply(&keys.applied))
+        .await
+        .unwrap();
+    assert_eq!(retry.status, ExecutionStatus::Succeeded);
+    assert_eq!(carts_for(db, &keys.applied).await, 2, "the hazard this check exists for");
+    let resealed = sequences(db, &keys.applied).await;
+    assert_eq!(resealed.len(), 2);
+    assert_failure(
+        db,
+        KernelAuditFailure::InvalidSupersession {
+            sequence: resealed[1],
+            superseded_sequence: sealed,
+            idempotency_key: keys.applied,
+        },
+    )
+    .await;
+    isolated.drop_database().await;
+}
+
+/// Put both receipt tables back to the snapshot taken after the scenario.
+async fn restore(db: &PostgresDatabase) {
+    for sql in [
+        "DELETE FROM kernel_receipts",
+        "INSERT INTO kernel_receipts SELECT * FROM audit_test_receipts",
+        "DELETE FROM kernel_receipt_audit_log",
+        "INSERT INTO kernel_receipt_audit_log SELECT * FROM audit_test_log",
+    ] {
+        sqlx::query(sql).execute(db.pool()).await.unwrap();
+    }
+    let verification = verify(db).await;
+    assert!(verification.valid, "restored snapshot must verify: {verification:?}");
+}
+
+#[tokio::test]
+async fn audit_detects_re_keyed_altered_orphan_and_rewritten_receipts() {
+    let Some(isolated) = database().await else { return };
+    let db = &isolated.db;
+    let keys = audited_store(db).await;
+    for sql in [
+        "CREATE TABLE audit_test_receipts AS SELECT * FROM kernel_receipts",
+        "CREATE TABLE audit_test_log AS SELECT * FROM kernel_receipt_audit_log",
+    ] {
+        sqlx::query(sql).execute(db.pool()).await.unwrap();
+    }
+    let applied = sequences(db, &keys.applied).await[0];
+    let rejected = sequences(db, &keys.rejected).await[0];
+
+    // Re-keyed.
+    tamper(
+        db,
+        "UPDATE kernel_receipts SET idempotency_key = idempotency_key || '-rekeyed'
+         WHERE idempotency_key = $1",
+        &keys.applied,
+    )
+    .await;
+    assert_failure(
+        db,
+        KernelAuditFailure::MaterializedReceiptMismatch {
+            sequence: applied,
+            idempotency_key: keys.applied.clone(),
+            field: KernelAuditField::IdempotencyKey,
+        },
+    )
+    .await;
+    restore(db).await;
+
+    // Altered, field by field.
+    let cases = [
+        (
+            "UPDATE kernel_receipts SET status = 'succeeded' WHERE idempotency_key = $1",
+            (&keys.rejected, rejected),
+            KernelAuditField::Status,
+        ),
+        (
+            "UPDATE kernel_receipts SET receipt = jsonb_set(receipt, '{error_code}', '\"kernel.none\"')
+             WHERE idempotency_key = $1",
+            (&keys.rejected, rejected),
+            KernelAuditField::Receipt,
+        ),
+        (
+            "UPDATE kernel_receipts SET receipt = jsonb_set(receipt, '{status}', '\"rejected\"')
+             WHERE idempotency_key = $1",
+            (&keys.applied, applied),
+            KernelAuditField::Receipt,
+        ),
+        (
+            "UPDATE kernel_receipts SET request_hash = 'rebound' WHERE idempotency_key = $1",
+            (&keys.applied, applied),
+            KernelAuditField::RequestHash,
+        ),
+        (
+            "UPDATE kernel_receipts SET command_type = 'carts.item.add' WHERE idempotency_key = $1",
+            (&keys.applied, applied),
+            KernelAuditField::CommandType,
+        ),
+        (
+            "UPDATE kernel_receipts SET command_id = md5(random()::text)::uuid
+             WHERE idempotency_key = $1",
+            (&keys.applied, applied),
+            KernelAuditField::CommandId,
+        ),
+    ];
+    for (sql, (key, sequence), field) in cases {
+        tamper(db, sql, key).await;
+        assert_failure(
+            db,
+            KernelAuditFailure::MaterializedReceiptMismatch {
+                sequence,
+                idempotency_key: key.clone(),
+                field,
+            },
+        )
+        .await;
+        restore(db).await;
+    }
+
+    // The superseded preview restored as the materialized receipt.
+    let [preview, promoted] = sequences(db, &keys.promoted).await[..] else {
+        panic!("a promoted key seals two entries")
+    };
+    let (audit_hash, mut sealed): (String, serde_json::Value) = sqlx::query_as(
+        "SELECT audit_hash, receipt FROM kernel_receipt_audit_log WHERE sequence = $1",
+    )
+    .bind(preview)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    sealed["audit_hash"] = serde_json::Value::String(audit_hash);
+    let preview_command: Uuid = sealed["command_id"].as_str().unwrap().parse().unwrap();
+    let result = sqlx::query(
+        "UPDATE kernel_receipts SET status = 'previewed', command_id = $1, receipt = $2
+         WHERE idempotency_key = $3",
+    )
+    .bind(preview_command)
+    .bind(&sealed)
+    .bind(&keys.promoted)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(result.rows_affected(), 1);
+    assert_failure(
+        db,
+        KernelAuditFailure::StaleMaterializedReceipt {
+            sequence: promoted,
+            materialized_sequence: preview,
+            idempotency_key: keys.promoted.clone(),
+        },
+    )
+    .await;
+    restore(db).await;
+
+    // An orphan row, and a copy of a real receipt under a second key.
+    let result = sqlx::query(
+        "INSERT INTO kernel_receipts (command_id, idempotency_key, command_type, contract_version,
+            request_hash, status, receipt, created_at, completed_at)
+         VALUES ($1, 'audit-orphan', 'carts.create', '1.0', 'h', 'succeeded',
+                 '{\"audit_hash\":\"0000\"}'::jsonb, NOW(), NOW())",
+    )
+    .bind(Uuid::new_v4())
+    .execute(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(result.rows_affected(), 1);
+    assert_failure(
+        db,
+        KernelAuditFailure::OrphanMaterializedReceipt {
+            idempotency_key: "audit-orphan".into(),
+            claimed_audit_hash: Some("0000".into()),
+        },
+    )
+    .await;
+    restore(db).await;
+    let result = sqlx::query(
+        "INSERT INTO kernel_receipts (command_id, idempotency_key, command_type, contract_version,
+            request_hash, status, receipt, created_at, completed_at)
+         SELECT $1, 'audit-copy', command_type, contract_version, request_hash, status, receipt,
+                created_at, completed_at
+         FROM kernel_receipts WHERE idempotency_key = $2",
+    )
+    .bind(Uuid::new_v4())
+    .bind(&keys.applied)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(result.rows_affected(), 1);
+    assert_failure(
+        db,
+        KernelAuditFailure::MaterializedReceiptMismatch {
+            sequence: applied,
+            idempotency_key: keys.applied.clone(),
+            field: KernelAuditField::IdempotencyKey,
+        },
+    )
+    .await;
+    restore(db).await;
+
+    // An unhashed audit-log column rewritten: every link still verifies.
+    let result = sqlx::query(
+        "UPDATE kernel_receipt_audit_log SET idempotency_key = 'elsewhere' WHERE sequence = $1",
+    )
+    .bind(applied)
+    .execute(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(result.rows_affected(), 1);
+    assert_failure(
+        db,
+        KernelAuditFailure::InvalidEntryField {
+            sequence: applied,
+            field: KernelAuditField::IdempotencyKey,
+        },
+    )
+    .await;
+    assert_eq!(verify(db).await.entries, audit::SCENARIO_ENTRIES);
+    restore(db).await;
     isolated.drop_database().await;
 }
