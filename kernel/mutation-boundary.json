@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:a09093d84d0659ee5fdaf0bc838ea156011a4703fc305edbf704bcb9f0a910d5",
+  "digest": "sha256:c1507cc39aeef87bd81a266c2bb6e5947f1f4100bfa660afd74add099c2a209f",
   "counts": {
     "total": 966,
-    "readOnly": 474,
-    "mutations": 492,
+    "readOnly": 472,
+    "mutations": 494,
     "governed": 36,
     "governedComposite": 2,
-    "blocked": 454
+    "blocked": 456
   },
   "entries": [
     {
@@ -5759,9 +5759,9 @@
     },
     {
       "name": "resolve_payment_link",
-      "permission": "read",
-      "mutation": false,
-      "disposition": "read_only",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
       "commandType": null
     },
     {
@@ -6683,9 +6683,9 @@
     },
     {
       "name": "x402_credit_balance",
-      "permission": "read",
-      "mutation": false,
-      "disposition": "read_only",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "blocked",
       "commandType": null
     },
     {

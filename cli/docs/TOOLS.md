@@ -511,7 +511,7 @@ Tier: **experimental + extended**
 | `x402_record_incoming_settlement` | extended | write | Record a settled x402 intent as an incoming treasury deposit for a local payee agent. |
 | `x402_mark_settled` | extended | write | Mark an x402 payment intent as settled on-chain. Called after blockchain confirmation. |
 | `x402_get_next_nonce` | extended | read | Get the next nonce for a payer address. Used for replay protection. |
-| `x402_credit_balance` | extended | read | Get x402 credit balance for a payer (prepaid meter for streaming usage). |
+| `x402_credit_balance` | extended | write | Get x402 credit balance for a payer (prepaid meter for streaming usage). Opens a zero-balance credit account on first use; x402_get_credit_account reads without creating one. |
 | `x402_get_credit_account` | extended | read | Get the x402 credit account record for a payer address. |
 | `x402_credit_deposit` | extended | write | Credit (deposit) x402 balance for metered usage. Requires --apply. |
 | `x402_credit_debit` | extended | write | Debit x402 balance for metered usage. Requires --apply. |
@@ -1052,7 +1052,7 @@ Tier: **experimental** — converting a payment link mints order, payment and es
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
 | `create_payment_link` | experimental | write | Create a shareable payment link for instant checkout. Returns a short URL that buyers or agents can use. |
-| `resolve_payment_link` | experimental | read | Resolve a payment link by ID or short code. Returns the link details, items, total, and expiry status. |
+| `resolve_payment_link` | experimental | write | Resolve a payment link by ID or short code, as a buyer opening it: counts a view. Returns the link details, items, total, and expiry status. get_payment_link_status reads a link without counting a view. |
 | `express_checkout` | experimental | write | One-call checkout from a payment link. Converts the link into an order and payment. |
 | `agent_instant_checkout` | experimental | write | Agent-to-agent instant checkout. Creates a payment link and converts it in one step. Returns order and escrow IDs for A2A settlement. |
 | `get_payment_link_status` | experimental | read | Get the status and metrics (views, conversions) for a payment link. |

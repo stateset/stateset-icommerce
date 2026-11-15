@@ -57,6 +57,12 @@ describe('kernel mutation boundary', () => {
     assert.equal(exposedNames.has('set_exchange_rate'), false);
     // Removes an entry from the shared, in-memory event subscription registry.
     assert.equal(exposedNames.has('agentic_unsubscribe_events'), false);
+    // Look like lookups, but write rows: a get-or-create credit account and a
+    // payment link view counter. Their pure reads stay exposed.
+    assert.equal(exposedNames.has('x402_credit_balance'), false);
+    assert.equal(exposedNames.has('resolve_payment_link'), false);
+    assert.equal(exposedNames.has('x402_get_credit_account'), true);
+    assert.equal(exposedNames.has('get_payment_link_status'), true);
     assert.equal(exposedNames.has('create_payment'), true);
     const entries = classifyKernelToolBoundary(ALL_TOOLS).entries;
     for (const name of ['agentic_execute_plan', 'agentic_replay_mutation']) {
