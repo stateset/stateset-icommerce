@@ -102,6 +102,12 @@ function signedEnvelope(mock, agent, { entityType = 'order', entityId = 'ORD-1',
 
 const strip0x = (hex) => String(hex).replace(/^0x/, '').toLowerCase();
 
+/**
+ * The mock's request log, API routes only: on a shared machine other local
+ * processes sometimes probe an ephemeral loopback port (`GET /`, no auth).
+ */
+const apiRequests = (requests) => requests.filter((r) => r.path.startsWith('/api/'));
+
 describe('SequencerClient against the VES wire format', () => {
   let mock;
   let agent;
@@ -195,7 +201,7 @@ describe('SequencerClient against the VES wire format', () => {
     }
     const before = mock.requests.length;
     const history = await client.getEntityHistory('cart', entityId);
-    const pages = mock.requests.slice(before);
+    const pages = apiRequests(mock.requests.slice(before));
     assert.equal(pages.length, 3, '100 + 100 + 5');
     assert.ok(
       pages.every((r) => r.path === `/api/v1/ves/entities/cart/${encodeURIComponent(entityId)}`),
@@ -263,15 +269,19 @@ describe('SequencerClient against the VES wire format', () => {
   });
 
   test('every request sends the API key as Authorization: ApiKey', () => {
-    const authed = mock.requests.filter((r) => r.path !== '/health');
+    const authed = apiRequests(mock.requests);
     assert.ok(authed.length > 0);
     assert.deepEqual([...new Set(authed.map((r) => r.auth))], ['ApiKey']);
   });
 
   test('a JWT is sent as Bearer, which the sequencer validates as a JWT', async () => {
     const jwtClient = new SequencerClient(clientConfig(mock, { apiKey: null, jwt: 'eyJ.e30.sig' }));
+    const before = mock.requests.length;
     await assert.rejects(jwtClient.getHead(), /401 .*invalid_jwt/);
-    assert.equal(mock.requests.at(-1).auth, 'Bearer');
+    assert.deepEqual(
+      apiRequests(mock.requests.slice(before)).map((r) => r.auth),
+      ['Bearer'],
+    );
   });
 
   test('a sequencer without the key directory route yields a clear, coded failure', async () => {

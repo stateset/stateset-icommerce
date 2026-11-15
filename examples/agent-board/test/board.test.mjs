@@ -506,10 +506,13 @@ describe('CLI sync client against the real wire format', () => {
   });
 
   test('the client authenticates as ApiKey; the mock refuses an API key sent as Bearer', async () => {
-    const fromClient = localMock.requests.filter((r) => r.path !== '/health');
+    // Only the API routes: on a shared machine other local processes
+    // sometimes probe the ephemeral port (unauthenticated `GET /`).
+    const fromClient = localMock.requests.filter((r) => r.path.startsWith('/api/'));
     assert.ok(fromClient.length > 0);
-    assert.ok(
-      fromClient.every((r) => r.auth === 'ApiKey'),
+    assert.deepEqual(
+      fromClient.filter((r) => r.auth !== 'ApiKey'),
+      [],
       'CLI client and board use ApiKey',
     );
 
