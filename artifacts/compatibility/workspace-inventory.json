@@ -657,6 +657,10 @@
         "count": 3
       },
       {
+        "name": "erc8004",
+        "count": 3
+      },
+      {
         "name": "heartbeat",
         "count": 3
       },
@@ -814,10 +818,6 @@
       },
       {
         "name": "env.js",
-        "count": 1
-      },
-      {
-        "name": "erc8004",
         "count": 1
       },
       {

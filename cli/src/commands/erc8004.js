@@ -134,10 +134,10 @@ function formatRows(rows, { output, jsonOutput, empty }) {
   return {
     rows,
     formatted: output.table(rows, [
-      { key: 'agentRegistry', header: 'Registry' },
-      { key: 'agentId', header: 'Agent' },
-      { key: 'agentUri', header: 'URI' },
-      { key: 'agentWallet', header: 'Wallet' },
+      { key: 'agent_registry', header: 'Registry' },
+      { key: 'agent_id', header: 'Agent' },
+      { key: 'agent_uri', header: 'URI' },
+      { key: 'agent_wallet', header: 'Wallet' },
       { key: 'active', header: 'Active' },
     ]),
   };

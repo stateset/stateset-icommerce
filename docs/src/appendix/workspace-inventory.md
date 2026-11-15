@@ -110,6 +110,7 @@ workspace membership because they require host runtimes or headers.
 | `providers` | 4 |
 | `autonomous` | 3 |
 | `compliance` | 3 |
+| `erc8004` | 3 |
 | `heartbeat` | 3 |
 | `mpp` | 3 |
 | `plugins` | 3 |
@@ -150,7 +151,6 @@ workspace membership because they require host runtimes or headers.
 | `doctor-checks.js` | 1 |
 | `dry-run.js` | 1 |
 | `env.js` | 1 |
-| `erc8004` | 1 |
 | `errors.js` | 1 |
 | `google-chat` | 1 |
 | `graceful-shutdown.js` | 1 |
