@@ -26,5 +26,128 @@
       "kind": "init",
       "reason": "Creates the empty <db dir>/.stateset/a2a-checkpoints directory on first use."
     }
+  ],
+  "_unreached": "Read tools no sweep input gets to a successful handler run, so the sweep cannot say whether they write. Each needs something the sandbox does not have. With this checkout's own engine binding, the test fails when any other read tool never runs to success (a coverage regression) and when a listed tool does (remove it here). An engine binary built from another tree changes which tools reach, so the per-tool check is skipped there.",
+  "unreached": [
+    {
+      "tool": "sync_outbox",
+      "reason": "external: sync is not configured (no sequencer); the local outbox also needs a commerce.db SQLite handle the native binding does not expose."
+    },
+    {
+      "tool": "sync_pulled_events",
+      "reason": "external: sync is not configured (no sequencer)."
+    },
+    {
+      "tool": "sync_decrypt_event",
+      "reason": "external: sync is not configured (no sequencer)."
+    },
+    {
+      "tool": "sync_entity_history",
+      "reason": "external: sync is not configured (no sequencer)."
+    },
+    {
+      "tool": "sync_conflicts",
+      "reason": "external: sync is not configured (no sequencer)."
+    },
+    {
+      "tool": "sync_inspect_commitment",
+      "reason": "external: fetches a batch commitment from the sync sequencer over HTTP."
+    },
+    {
+      "tool": "get_wallet_balance",
+      "reason": "external: reads the default agent wallet's balance over a chain RPC (rpc.setchain.io); the sweep refuses the connection."
+    },
+    {
+      "tool": "agent_get_chain_balance",
+      "reason": "external: reads an on-chain balance through the runtime agent's settlement service (needs the runtime's signing key and a chain RPC)."
+    },
+    {
+      "tool": "a2a_get_payment",
+      "reason": "external: needs an agent wallet (agentConfig walletAddress and signing key)."
+    },
+    {
+      "tool": "a2a_list_payments",
+      "reason": "external: needs an agent wallet (agentConfig walletAddress and signing key)."
+    },
+    {
+      "tool": "a2a_list_payment_requests",
+      "reason": "external: needs an agent wallet (agentConfig walletAddress and signing key)."
+    },
+    {
+      "tool": "a2a_list_quotes",
+      "reason": "external: needs an agent wallet (agentConfig walletAddress and signing key)."
+    },
+    {
+      "tool": "a2a_get_balance",
+      "reason": "external: needs an agent wallet (agentConfig walletAddress and signing key)."
+    },
+    {
+      "tool": "a2a_check_payment_conditions",
+      "reason": "external: needs an agent wallet (agentConfig walletAddress and signing key)."
+    },
+    {
+      "tool": "a2a_billing_metrics",
+      "reason": "external: the billing executor pays from the agent wallet, so it is not initialised without one."
+    },
+    {
+      "tool": "a2a_settlement_status",
+      "reason": "external: needs an A2A payment, and A2A payments need an agent wallet."
+    },
+    {
+      "tool": "vector_search_products",
+      "reason": "external: OPENAI_API_KEY (embeddings API), removed from the sweep's environment."
+    },
+    {
+      "tool": "vector_search_customers",
+      "reason": "external: OPENAI_API_KEY (embeddings API), removed from the sweep's environment."
+    },
+    {
+      "tool": "vector_search_orders",
+      "reason": "external: OPENAI_API_KEY (embeddings API), removed from the sweep's environment."
+    },
+    {
+      "tool": "vector_search_inventory",
+      "reason": "external: OPENAI_API_KEY (embeddings API), removed from the sweep's environment."
+    },
+    {
+      "tool": "vector_stats",
+      "reason": "external: OPENAI_API_KEY (embeddings API), removed from the sweep's environment."
+    },
+    {
+      "tool": "agent_receipt_status",
+      "reason": "external: agent-receipt contracts from the ves-demo stack (AGENT_RECEIPT_BROADCAST_LOG; anvil, sequencer, contracts)."
+    },
+    {
+      "tool": "agent_receipt_fx_quote",
+      "reason": "external: agent-receipt contracts from the ves-demo stack (AGENT_RECEIPT_BROADCAST_LOG; anvil, sequencer, contracts)."
+    },
+    {
+      "tool": "agent_receipt_merchant_statement",
+      "reason": "external: the ves-demo stack (AGENT_RECEIPT_DEMO_DIR)."
+    },
+    {
+      "tool": "agent_receipt_audit",
+      "reason": "external: the ves-demo stack (AGENT_RECEIPT_DEMO_DIR)."
+    },
+    {
+      "tool": "a2a_tick_metrics",
+      "reason": "runtime: no tick loop in the MCP server is instrumented with a tick optimizer, so there are never metrics to report."
+    },
+    {
+      "tool": "a2a_get_dispute",
+      "reason": "governed: disputes come only from a2a_file_dispute / a2a_dispute_escrow, governed mutations that refuse in apply mode without kernel configuration (the sweep's posture)."
+    },
+    {
+      "tool": "get_journal_entry",
+      "reason": "no seed path: no tool creates a journal entry on this branch (GL auto-posting is configured only from Rust; post_journal_entry needs an existing draft)."
+    },
+    {
+      "tool": "get_pick_task",
+      "reason": "no seed path: releasing a wave creates pick tasks only from bin stock (location_inventory) in a pickable location, and no ungoverned tool stocks a bin."
+    },
+    {
+      "tool": "list_id_mappings",
+      "reason": "defect: the handler builds IdMapStore from commerce.db / commerce._db, which the native Commerce binding does not expose, so it always fails with 'IdMapStore requires a database handle'."
+    }
   ]
 }

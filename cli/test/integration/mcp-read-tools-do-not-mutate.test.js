@@ -9,14 +9,27 @@
  * handler does.
  *
  * This test seeds a store (the demo data `stateset-mcp-http` boots with, then
- * a list of write tools: test/helpers/read-tool-sweep.js SEED_WRITES), then
- * calls every read tool through the server's own dispatch
- * (`server.executeTool`: validation, policy, permission, then the handler --
- * the path scripts/mcp-tool-smoke.mjs drives) in apply mode, the mode a strict
- * endpoint runs in. Inputs start from the smoke sampler's minimal input and
- * add, where they differ: real ids from the seeded store, flipped booleans
- * (`dryRun: false`), every optional field, unique free text, and a few
- * hand-written fixtures the sampler cannot produce (read-tool-sweep.js).
+ * a list of write tools: test/helpers/read-tool-sweep.js SEED_WRITES, with
+ * NATIVE_SEEDS for records only governed tools create), then calls every read
+ * tool through the server's own dispatch (`server.executeTool`: validation,
+ * policy, permission, then the handler -- the path scripts/mcp-tool-smoke.mjs
+ * drives) in apply mode, the mode a strict endpoint runs in. Inputs start from
+ * the smoke sampler's minimal input and add, where they differ: real ids from
+ * the seeded store, flipped booleans (`dryRun: false`), every optional field,
+ * unique free text, and hand-written fixtures the sampler cannot produce,
+ * most of them built from seeded rows (read-tool-sweep.js FIXTURE_INPUTS).
+ * After the sweep, LATE_SEED_WRITES (seeds that would otherwise absorb a read
+ * tool's first-use init) run and every read tool that has not yet run to
+ * success is swept again.
+ *
+ * A read call that fails proves nothing about what its handler writes, so the
+ * test also tracks reach: every read tool must run to success at least once,
+ * except those listed under `unreached` in the baseline file, each with the
+ * external service, wallet, governed seed or defect that keeps it from
+ * running. The sweep stays local: outbound connections and child processes
+ * other than Node are refused and reported (read-tool-sweep.js
+ * installSweepGuard), and external credentials are removed from the
+ * environment.
  *
  * After every call it fingerprints all persisted state under one sandbox that
  * HOME, the working directory, the temp dir and the store all point into
@@ -68,15 +81,22 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import childProcess from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import net from 'node:net';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   FIXTURE_INPUTS,
+  LATE_SEED_WRITES,
   createSamplerView,
   createSandbox,
+  createSeedWriter,
   createVariantBuilder,
+  installSweepGuard,
   seedStore,
   sweepTools,
 } from '../helpers/read-tool-sweep.js';
@@ -88,6 +108,26 @@ const NEGATIVE_CONTROL = '__read_tool_mutation_negative_control';
 const baselineFile = new URL('../fixtures/read-tool-mutation-baseline.json', import.meta.url);
 const baseline = JSON.parse(readFileSync(baselineFile, 'utf8'));
 const known = new Map(baseline.violations.map((entry) => [entry.tool, entry]));
+const unreachable = new Map(baseline.unreached.map((entry) => [entry.tool, entry]));
+
+/**
+ * Which read tools reach a successful handler run depends on the engine
+ * binding: records a seed creates, inputs a handler accepts. The per-tool
+ * reach check runs only against this checkout's own binding (CI builds it in
+ * bindings/node); with @stateset/embedded resolved anywhere else -- a
+ * node_modules borrowed from another checkout -- this says why it is skipped.
+ */
+function foreignEngine() {
+  try {
+    const resolved = realpathSync(createRequire(import.meta.url).resolve('@stateset/embedded'));
+    const own = realpathSync(fileURLToPath(new URL('../../../bindings/node/', import.meta.url)));
+    return resolved.startsWith(`${own}${path.sep}`)
+      ? null
+      : `@stateset/embedded resolves to ${resolved}, not this checkout's bindings/node`;
+  } catch (error) {
+    return `cannot resolve @stateset/embedded: ${error.message}`;
+  }
+}
 
 const only = process.env.READ_TOOL_SWEEP_ONLY
   ? new Set(
@@ -170,8 +210,11 @@ async function runSweep(sandbox) {
 
     const { native, view } = createSamplerView(sample, z);
     let pool = null;
+    // Values seeds capture from their results (ids the store does not hold).
+    const captured = {};
     const refreshPool = async () => {
-      pool = await probe.seedPool(sandbox.dbPath);
+      const read = await probe.seedPool(sandbox.dbPath);
+      pool = { ...read, named: { ...read.named, ...captured } };
     };
     await refreshPool();
     const variantsFor = createVariantBuilder({
@@ -193,7 +236,9 @@ async function runSweep(sandbox) {
       toolsByName,
       refreshPool,
       pool: () => pool,
+      remember: (values) => Object.assign(captured, values),
     });
+    const seedingRefused = guard.take();
 
     // Nothing may change state while nothing is called, or every later
     // attribution is suspect.
@@ -208,25 +253,47 @@ async function runSweep(sandbox) {
       ...agenticReadTools,
       ...ALL_DOMAIN_TOOLS.filter((tool) => tool.permission === 'read'),
     ];
-    const readTools = [
-      negativeControl,
-      ...expectedReadTools.filter((tool) => !only || only.has(tool.name)),
-      negativeControl,
-    ];
-
-    const swept = await sweepTools({
-      tools: readTools,
-      variantsFor,
+    const selected = expectedReadTools.filter((tool) => !only || only.has(tool.name));
+    const sweepOptions = {
       invoke,
       changesSince: (toolName) => probe.diff(toolName),
+      takeRefused: guard.take,
+    };
+    const first = await sweepTools({
+      ...sweepOptions,
+      tools: [negativeControl, ...selected],
+      variantsFor,
+    });
+
+    // LATE_SEED_WRITES would have absorbed a read tool's first-use init had
+    // they run before the sweep. Run them now, then sweep again every read
+    // tool no input got through to a successful handler run, in case it was
+    // waiting for one of those rows. The negative control closes the sweep.
+    const late = await createSeedWriter({
+      invoke,
+      variantsFor,
+      toolsByName,
+      refreshPool,
+      pool: () => pool,
+      remember: (values) => Object.assign(captured, values),
+    }).writeAll(LATE_SEED_WRITES);
+    const lateRefused = guard.take();
+    await probe.mark();
+    const ran = new Set(first.calls.filter((call) => call.outcome === 'ok').map((c) => c.tool));
+    const second = await sweepTools({
+      ...sweepOptions,
+      tools: [...selected.filter((tool) => !ran.has(tool.name)), negativeControl],
+      variantsFor: (tool) =>
+        variantsFor(tool).map((variant) => ({ ...variant, label: `late ${variant.label}` })),
     });
     return {
       native,
-      seeding,
+      seeding: { ...seeding, late, refused: [...seedingRefused, ...lateRefused] },
       seededTables: [...pool.idsByTable.keys()].sort(),
       quiet,
       expectedReadTools: expectedReadTools.map((tool) => tool.name),
-      ...swept,
+      calls: [...first.calls, ...second.calls],
+      violations: [...first.violations, ...second.violations],
       ms: Date.now() - startedAt,
     };
   } finally {
@@ -236,15 +303,44 @@ async function runSweep(sandbox) {
   }
 }
 
+/**
+ * The guard must still be refusing at the end of the sweep: a spawn of cargo
+ * and a TCP connection, both of which a read tool could otherwise reach.
+ */
+async function checkGuard() {
+  const refusals = [];
+  try {
+    childProcess.execFileSync('cargo', ['--version'], { stdio: 'ignore' });
+  } catch (error) {
+    refusals.push(error.code === 'EACCES' && /read-tool sweep/.test(error.message));
+  }
+  refusals.push(
+    await new Promise((resolve) => {
+      const socket = net.connect(9, '127.0.0.1');
+      socket.once('connect', () => {
+        socket.destroy();
+        resolve(false);
+      });
+      socket.once('error', (error) => resolve(/read-tool sweep/.test(error.message)));
+    }),
+  );
+  return { refusals, recorded: guard.take().map((attempt) => attempt.kind) };
+}
+
 let sweep = null;
+let guardCheck = null;
 let unavailable = null;
 const sandbox = createSandbox();
+// Before anything imports src/: some modules bind child_process helpers at load.
+const guard = installSweepGuard();
 try {
   sweep = await runSweep(sandbox);
+  guardCheck = await checkGuard();
 } catch (error) {
   unavailable = error;
   console.warn(`[read-tool-sweep] could not run: ${error.stack ?? error.message}`);
 } finally {
+  guard.restore();
   sandbox.restore({ keep: Boolean(process.env.READ_TOOL_SWEEP_KEEP) });
 }
 
@@ -270,6 +366,26 @@ if (sweep) {
     const kind = known.get(v.tool)?.kind ?? 'NEW';
     console.log(`[read-tool-sweep]   ${kind.padEnd(5)} ${describeViolation(v)}`);
   }
+  // A tool "ran" when at least one input got through to a handler run that
+  // succeeded; only those runs can show what the handler writes.
+  const ran = new Set(sweep.calls.filter((call) => call.outcome === 'ok').map((c) => c.tool));
+  const notRun = [...tools].filter((tool) => !ran.has(tool));
+  console.log(
+    `[read-tool-sweep] ${tools.size - notRun.length}/${tools.size} read tools ran to success; ` +
+      `not run: ${notRun.map((tool) => (unreachable.has(tool) ? tool : `${tool} (unlisted)`)).join(', ')}`,
+  );
+  for (const call of sweep.calls.filter((c) => c.refused)) {
+    const targets = call.refused.map((attempt) => `${attempt.kind} ${attempt.target}`);
+    console.log(
+      `[read-tool-sweep]   refused ${call.tool} [${call.variant}]: ${targets.join(', ')}`,
+    );
+  }
+  /** Why a tool never ran: its last handler error, else its last validation refusal. */
+  const whyNotRun = (tool) => {
+    const calls = sweep.calls.filter((call) => call.tool === tool);
+    const handled = calls.filter((call) => call.status && call.status !== 'invalid');
+    return (handled.at(-1) ?? calls.at(-1))?.message ?? 'no call';
+  };
 
   if (process.env.READ_TOOL_SWEEP_REPORT) {
     writeFileSync(
@@ -302,6 +418,44 @@ if (sweep) {
         `only ${passed.size}/${tools.size} read tools got an input past validation; ` +
           'the sampler has gone vacuous and the sweep proves little',
       );
+    });
+
+    const engineSkip = foreignEngine();
+    it(
+      'runs every read tool handler to success, except the tools listed as unreached',
+      { skip: engineSkip ?? false },
+      () => {
+        assert.deepEqual(
+          notRun.filter((tool) => !unreachable.has(tool)).map((t) => `${t}: ${whyNotRun(t)}`),
+          [],
+          'no input got these read tools through to a successful handler run, so the sweep ' +
+            'cannot see what they write: seed the rows they read or give them a fixture ' +
+            '(test/helpers/read-tool-sweep.js); list them as unreached only if they need ' +
+            'something the sandbox cannot have',
+        );
+        const nowRun = [...unreachable.keys()].filter((tool) => ran.has(tool));
+        assert.deepEqual(nowRun, [], 'these now run to success; remove them from `unreached`');
+      },
+    );
+
+    it('lists every unreached tool once, as a read tool, with a reason', () => {
+      for (const entry of baseline.unreached) {
+        assert.ok(entry.reason?.trim(), `${entry.tool}: give a reason`);
+        assert.ok(
+          sweep.expectedReadTools.includes(entry.tool),
+          `${entry.tool} is not a read tool; remove it from \`unreached\``,
+        );
+      }
+      assert.equal(unreachable.size, baseline.unreached.length, 'a tool is listed twice');
+    });
+
+    it('keeps the sweep local: refuses outbound connections and non-Node processes', () => {
+      assert.deepEqual(
+        guardCheck?.refusals,
+        [true, true],
+        'the guard no longer refuses a cargo spawn and a TCP connection at the end of the sweep',
+      );
+      assert.deepEqual(guardCheck.recorded, ['spawn', 'connect']);
     });
 
     it('seeds rows for read tools to find', () => {
