@@ -24,6 +24,7 @@ import { getReturnsManagementData } from '@/app/actions/commerce';
 import { formatCurrency, formatPercentage, formatDateTime } from '@/lib/utils';
 import type { ReturnsManagementData, ReturnsPipelineStage } from '@/lib/types/dashboard-data';
 import type { Return } from '@/lib/types';
+import type { ReturnReason, ReturnStatus } from '@/lib/engine-lifecycles';
 
 type DsStatus = 'ok' | 'run' | 'warn' | 'fail' | 'review' | 'idle';
 
@@ -31,23 +32,37 @@ interface ReturnsManagementProps {
   data?: ReturnsManagementData;
 }
 
-const reasonLabels: Record<string, string> = {
+/** One label per engine return reason code (`ReturnReason`). */
+const reasonLabels: Record<ReturnReason, string> = {
   defective: 'Defective Product',
   wrong_item: 'Wrong Item',
   not_as_described: 'Not as Described',
   changed_mind: 'Changed Mind',
+  better_price_found: 'Better Price Found',
+  no_longer_needed: 'No Longer Needed',
+  damaged: 'Damaged',
   other: 'Other',
 };
 
-const statusPills: Record<string, DsStatus> = {
+/** One pill per engine return status (`ReturnStatus`). */
+const statusPills: Record<ReturnStatus, DsStatus> = {
   requested: 'review',
   approved: 'run',
+  in_transit: 'run',
   received: 'run',
-  inspected: 'review',
-  refunded: 'ok',
+  inspecting: 'review',
+  completed: 'ok',
   rejected: 'fail',
-  closed: 'idle',
+  cancelled: 'idle',
 };
+
+function pillFor(status: string): DsStatus {
+  return statusPills[status as ReturnStatus] || 'idle';
+}
+
+function reasonLabel(reason: string): string {
+  return reasonLabels[reason as ReturnReason] || reason;
+}
 
 function ReturnsManagementInner({ data: propData }: ReturnsManagementProps) {
   const { data, isLoading, error } = useEmbeddedData(() => getReturnsManagementData(), {
@@ -82,7 +97,7 @@ function ReturnsManagementInner({ data: propData }: ReturnsManagementProps) {
 
   const reasonChartData = Object.entries(analytics.returnsByReason || {}).map(
     ([reason, count]) => ({
-      name: reasonLabels[reason] || reason,
+      name: reasonLabel(reason),
       value: count as number,
     }),
   );
@@ -193,11 +208,11 @@ function ReturnsManagementInner({ data: propData }: ReturnsManagementProps) {
                 return (
                   <div key={status}>
                     <div className="flex justify-between mb-1">
-                      <p className="text-sm font-medium text-ds-foreground capitalize">{status}</p>
+                      <p className="text-sm font-medium text-ds-foreground capitalize">
+                        {status.replaceAll('_', ' ')}
+                      </p>
                       <div className="flex items-center space-x-2">
-                        <StatusPill status={statusPills[status] || 'idle'}>
-                          {count as number}
-                        </StatusPill>
+                        <StatusPill status={pillFor(status)}>{count as number}</StatusPill>
                         <p className="text-sm text-ds-muted-foreground">{percentage.toFixed(1)}%</p>
                       </div>
                     </div>
@@ -206,7 +221,7 @@ function ReturnsManagementInner({ data: propData }: ReturnsManagementProps) {
                       color={
                         status === 'rejected'
                           ? 'rose'
-                          : status === 'refunded'
+                          : status === 'completed'
                             ? 'emerald'
                             : 'indigo'
                       }
@@ -300,13 +315,11 @@ function ReturnsManagementInner({ data: propData }: ReturnsManagementProps) {
                       {ret.orderId.slice(0, 8)}...
                     </TableCell>
                     <TableCell>
-                      <StatusPill status={statusPills[ret.status] || 'idle'}>
-                        {ret.status}
+                      <StatusPill status={pillFor(ret.status)}>
+                        {ret.status.replaceAll('_', ' ')}
                       </StatusPill>
                     </TableCell>
-                    <TableCell className="text-sm">
-                      {reasonLabels[ret.reasonCategory] || ret.reasonCategory}
-                    </TableCell>
+                    <TableCell className="text-sm">{reasonLabel(ret.reasonCategory)}</TableCell>
                     <TableCell tone="numeric" className="text-sm font-medium">
                       {ret.refundAmount ? formatCurrency(ret.refundAmount) : '-'}
                     </TableCell>

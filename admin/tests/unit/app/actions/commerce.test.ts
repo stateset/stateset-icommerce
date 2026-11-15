@@ -53,8 +53,10 @@ vi.mock('@/lib/embedded', () => ({
     create: vi.fn(),
     approve: vi.fn().mockResolvedValue({ id: 'ret-1', status: 'approved' }),
     reject: vi.fn(),
-    receive: vi.fn(),
-    processRefund: vi.fn().mockResolvedValue({ id: 'ret-1', status: 'refunded' }),
+    cancel: vi.fn(),
+    addTracking: vi.fn(),
+    markReceived: vi.fn(),
+    complete: vi.fn().mockResolvedValue({ id: 'ret-1', status: 'completed' }),
     getAnalytics: vi.fn(),
   },
   customersApi: {
@@ -106,8 +108,10 @@ import {
   createReturn,
   approveReturn,
   rejectReturn,
-  receiveReturn,
-  processRefund,
+  cancelReturn,
+  addReturnTracking,
+  markReturnReceived,
+  completeReturn,
   createCustomer,
   updateCustomer,
   createSubscription,
@@ -161,13 +165,17 @@ describe('commerce actions auth guard', () => {
       expect(inventoryApi.adjust).not.toHaveBeenCalled();
     });
 
-    it('rejects approveReturn and processRefund', async () => {
+    it('rejects every return lifecycle action', async () => {
       await expect(approveReturn('ret-1')).rejects.toMatchObject(UNAUTHORIZED);
-      await expect(processRefund('ret-1', 'original')).rejects.toMatchObject(
-        UNAUTHORIZED
-      );
+      await expect(cancelReturn('ret-1')).rejects.toMatchObject(UNAUTHORIZED);
+      await expect(addReturnTracking('ret-1', '1Z999')).rejects.toMatchObject(UNAUTHORIZED);
+      await expect(markReturnReceived('ret-1')).rejects.toMatchObject(UNAUTHORIZED);
+      await expect(completeReturn('ret-1')).rejects.toMatchObject(UNAUTHORIZED);
       expect(returnsApi.approve).not.toHaveBeenCalled();
-      expect(returnsApi.processRefund).not.toHaveBeenCalled();
+      expect(returnsApi.cancel).not.toHaveBeenCalled();
+      expect(returnsApi.addTracking).not.toHaveBeenCalled();
+      expect(returnsApi.markReceived).not.toHaveBeenCalled();
+      expect(returnsApi.complete).not.toHaveBeenCalled();
     });
 
     it('rejects deleteProduct', async () => {
@@ -212,6 +220,15 @@ describe('commerce actions auth guard', () => {
 
       expect(result).toMatchObject({ id: 'ret-1', status: 'approved' });
       expect(returnsApi.approve).toHaveBeenCalledWith('ret-1');
+    });
+
+    it('routes each return action to the binding-named engine method', async () => {
+      await cancelReturn('ret-1');
+      expect(returnsApi.cancel).toHaveBeenCalledWith('ret-1');
+      await markReturnReceived('ret-2');
+      expect(returnsApi.markReceived).toHaveBeenCalledWith('ret-2');
+      await expect(completeReturn('ret-3')).resolves.toMatchObject({ status: 'completed' });
+      expect(returnsApi.complete).toHaveBeenCalledWith('ret-3');
     });
 
     it('allows read actions', async () => {
@@ -352,25 +369,36 @@ describe('commerce action input validation', () => {
     expect(returnsApi.reject).not.toHaveBeenCalled();
   });
 
-  it('receiveReturn rejects an unknown item condition', async () => {
-    await expect(
-      receiveReturn('ret-1', [{ productId: 'prod-1', condition: 'pristine' }])
-    ).rejects.toMatchObject(VALIDATION_ERROR);
-    expect(returnsApi.receive).not.toHaveBeenCalled();
-  });
-
-  it('processRefund rejects an unknown refund method', async () => {
-    await expect(processRefund('ret-1', 'bitcoin' as never)).rejects.toMatchObject(
+  it('addReturnTracking rejects a blank or markup tracking number', async () => {
+    await expect(addReturnTracking('ret-1', '   ')).rejects.toMatchObject(VALIDATION_ERROR);
+    await expect(addReturnTracking('ret-1', '<script>')).rejects.toMatchObject(
       VALIDATION_ERROR
     );
-    expect(returnsApi.processRefund).not.toHaveBeenCalled();
+    expect(returnsApi.addTracking).not.toHaveBeenCalled();
   });
 
-  it('processRefund rejects a path-traversal id', async () => {
-    await expect(processRefund('../../admin', 'original')).rejects.toMatchObject(
-      VALIDATION_ERROR
+  it('completeReturn rejects a path-traversal id', async () => {
+    await expect(completeReturn('../../admin')).rejects.toMatchObject(VALIDATION_ERROR);
+    expect(returnsApi.complete).not.toHaveBeenCalled();
+  });
+
+  it('markReturnReceived and cancelReturn reject a missing id', async () => {
+    await expect(markReturnReceived('')).rejects.toMatchObject(VALIDATION_ERROR);
+    await expect(cancelReturn('')).rejects.toMatchObject(VALIDATION_ERROR);
+    expect(returnsApi.markReceived).not.toHaveBeenCalled();
+    expect(returnsApi.cancel).not.toHaveBeenCalled();
+  });
+
+  it('createReturn accepts every engine reason code', async () => {
+    await createReturn({
+      orderId: 'order-1',
+      items: [{ productId: 'prod-1', quantity: 1 }],
+      reason: 'found it cheaper',
+      reasonCategory: 'better_price_found',
+    });
+    expect(returnsApi.create).toHaveBeenCalledWith(
+      expect.objectContaining({ reasonCategory: 'better_price_found' })
     );
-    expect(returnsApi.processRefund).not.toHaveBeenCalled();
   });
 
   it('createCustomer rejects a malformed email', async () => {
@@ -480,10 +508,8 @@ describe('commerce action input validation', () => {
       },
     });
 
-    await receiveReturn('ret-1', [{ productId: 'prod-1', condition: 'opened' }]);
-    expect(returnsApi.receive).toHaveBeenCalledWith('ret-1', [
-      { productId: 'prod-1', condition: 'opened' },
-    ]);
+    await addReturnTracking('ret-1', ' 1Z999AA10123456784 ');
+    expect(returnsApi.addTracking).toHaveBeenCalledWith('ret-1', '1Z999AA10123456784');
 
     await createProduct({ sku: 'SKU-1', name: 'Widget', price: 10.99, currency: 'USD' });
     expect(productsApi.create).toHaveBeenCalledWith({

@@ -6,6 +6,7 @@
 
 import { z } from 'zod';
 
+import { RETURN_REASONS } from '../engine-lifecycles';
 import { ValidationError } from './errors';
 
 // ============================================================================
@@ -321,13 +322,20 @@ export const orderStatusSchema = z.enum([
   'cancelled',
 ]);
 
-export const returnReasonCategorySchema = z.enum([
-  'defective',
-  'wrong_item',
-  'not_as_described',
-  'changed_mind',
-  'other',
-]);
+/** The engine's return reason codes (`ReturnReason` in the binding). */
+export const returnReasonCategorySchema = z.enum(RETURN_REASONS);
+
+/**
+ * Carrier tracking number recorded when a return ships back
+ * (`returns.addTracking`). Bounded and restricted to the characters carriers
+ * actually use so it cannot carry markup or a payload.
+ */
+export const trackingNumberSchema = z
+  .string()
+  .trim()
+  .min(1, 'Tracking number is required')
+  .max(100, 'Tracking number too long')
+  .regex(/^[A-Za-z0-9 _.-]+$/, 'Tracking number contains invalid characters');
 
 export const refundMethodSchema = z.enum(['original', 'store_credit', 'exchange']);
 
@@ -416,17 +424,9 @@ export const rejectReturnArgsSchema = z.object({
   reason: reasonSchema,
 });
 
-export const receiveReturnArgsSchema = z.object({
+export const addReturnTrackingArgsSchema = z.object({
   returnId: safeIdSchema,
-  items: z
-    .array(z.object({ productId: safeIdSchema, condition: returnItemConditionSchema }))
-    .min(1, 'Receiving a return needs at least one line item')
-    .max(500, 'Too many line items'),
-});
-
-export const processRefundArgsSchema = z.object({
-  returnId: safeIdSchema,
-  method: refundMethodSchema.optional(),
+  trackingNumber: trackingNumberSchema,
 });
 
 /** Shared shape for `Partial<Customer>` create/update payloads. */

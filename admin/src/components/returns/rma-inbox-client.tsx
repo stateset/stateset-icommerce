@@ -5,26 +5,68 @@ import { useCallback, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { approveReturn, processRefund, receiveReturn, rejectReturn } from '@/app/actions/commerce';
+import {
+  addReturnTracking,
+  approveReturn,
+  cancelReturn,
+  completeReturn,
+  markReturnReceived,
+  rejectReturn,
+} from '@/app/actions/commerce';
+import {
+  RETURN_LIFECYCLE,
+  canApplyReturnAction,
+  isTerminal,
+  type ReturnAction,
+  type ReturnReason,
+  type ReturnStatus,
+} from '@/lib/engine-lifecycles';
 import type { Return } from '@/lib/types';
 
-const STATUS_BADGE_COLOR: Record<Return['status'], React.ComponentProps<typeof Badge>['color']> = {
+/** One colour per engine return status (`ReturnStatus`). */
+const STATUS_BADGE_COLOR: Record<ReturnStatus, React.ComponentProps<typeof Badge>['color']> = {
   requested: 'amber',
   approved: 'blue',
+  in_transit: 'cyan',
   received: 'indigo',
-  inspected: 'purple',
-  refunded: 'emerald',
+  inspecting: 'purple',
+  completed: 'emerald',
   rejected: 'red',
-  closed: 'gray',
+  cancelled: 'gray',
 };
 
-const REASON_LABELS: Record<Return['reasonCategory'], string> = {
+const STATUS_LABELS: Record<ReturnStatus, string> = {
+  requested: 'requested',
+  approved: 'approved',
+  in_transit: 'in transit',
+  received: 'received',
+  inspecting: 'inspecting',
+  completed: 'completed',
+  rejected: 'rejected',
+  cancelled: 'cancelled',
+};
+
+/** One label per engine return reason code (`ReturnReason`). */
+const REASON_LABELS: Record<ReturnReason, string> = {
   defective: 'Defective',
   wrong_item: 'Wrong item',
   not_as_described: 'Not as described',
   changed_mind: 'Changed mind',
+  better_price_found: 'Better price found',
+  no_longer_needed: 'No longer needed',
+  damaged: 'Damaged',
   other: 'Other',
 };
+
+/** Button label per binding action, in the order the row renders them. */
+const ACTION_LABELS: [ReturnAction, string][] = [
+  ['approve', 'Approve'],
+  ['addTracking', 'Add tracking'],
+  ['markReceived', 'Mark received'],
+  ['complete', 'Complete'],
+  ['reject', 'Reject'],
+  ['cancel', 'Cancel'],
+];
 
 /** Per-row UI state (which row is busy, plus any error message). */
 type RowState = { busy: boolean; error?: string };
@@ -41,13 +83,15 @@ export function RmaInboxClient({ initialReturns }: RmaInboxClientProps) {
 
   const visible = useMemo(() => {
     if (statusFilter === 'all') return returns;
-    // "pending" = anything an operator hasn't fully resolved yet.
-    const open: Return['status'][] = ['requested', 'approved', 'received', 'inspected'];
-    return returns.filter((r) => open.includes(r.status));
+    // "pending" = every return the engine still lets an operator move:
+    // requested, approved, in transit, received and inspecting.
+    return returns.filter((r) => !isTerminal(RETURN_LIFECYCLE, r.status));
   }, [returns, statusFilter]);
 
   const replaceReturn = useCallback((next: Return) => {
-    setReturns((prev) => prev.map((r) => (r.id === next.id ? next : r)));
+    // The engine's reply may be a header without the line items; keep the
+    // detail we already have for anything it leaves out.
+    setReturns((prev) => prev.map((r) => (r.id === next.id ? { ...r, ...next } : r)));
   }, []);
 
   const setRow = useCallback((id: string, state: RowState) => {
@@ -55,9 +99,9 @@ export function RmaInboxClient({ initialReturns }: RmaInboxClientProps) {
   }, []);
 
   /**
-   * Wrap a server action in optimistic-busy UI state. We don't optimistically
-   * mutate the row because rejections can fail (validation, permissions);
-   * we just disable the buttons until the action settles.
+   * Wrap a server action in busy-row UI state. We don't optimistically
+   * mutate the row because the engine can still refuse a move (validation,
+   * permissions, a concurrent change); we disable the buttons until it settles.
    */
   const runAction = useCallback(
     async (id: string, fn: () => Promise<Return>) => {
@@ -74,45 +118,39 @@ export function RmaInboxClient({ initialReturns }: RmaInboxClientProps) {
     [replaceReturn, setRow],
   );
 
-  const onApprove = useCallback(
-    (id: string) => runAction(id, () => approveReturn(id)),
-    [runAction],
-  );
-
-  const onReject = useCallback(
-    (id: string) => {
-      const reason = window.prompt('Rejection reason?')?.trim();
-      if (!reason) return;
-      void runAction(id, () => rejectReturn(id, reason));
-    },
-    [runAction],
-  );
-
-  const onReceive = useCallback(
-    (r: Return) => {
-      // Mark every line item as "opened"; a richer dialog would let the
-      // operator set per-item condition. This is the sensible default.
-      const items = r.items.map((it) => ({ productId: it.productId, condition: 'opened' }));
-      void runAction(r.id, () => receiveReturn(r.id, items));
-    },
-    [runAction],
-  );
-
-  const onRefund = useCallback(
-    (r: Return) => {
-      const choice = window.prompt(
-        'Refund method? (original / store_credit / exchange)',
-        r.refundMethod ?? 'original',
-      );
-      if (!choice) return;
-      const method = choice.trim() as Return['refundMethod'];
-      if (!['original', 'store_credit', 'exchange'].includes(method as string)) {
-        setRow(r.id, { busy: false, error: `Invalid method: ${choice}` });
-        return;
+  const onAction = useCallback(
+    (r: Return, action: ReturnAction) => {
+      switch (action) {
+        case 'approve':
+          void runAction(r.id, () => approveReturn(r.id));
+          return;
+        case 'reject': {
+          const reason = window.prompt('Rejection reason?')?.trim();
+          if (!reason) return;
+          void runAction(r.id, () => rejectReturn(r.id, reason));
+          return;
+        }
+        case 'cancel':
+          if (!window.confirm(`Cancel return ${r.id}?`)) return;
+          void runAction(r.id, () => cancelReturn(r.id));
+          return;
+        case 'addTracking': {
+          const trackingNumber = window
+            .prompt('Return shipment tracking number?', r.trackingNumber ?? '')
+            ?.trim();
+          if (!trackingNumber) return;
+          void runAction(r.id, () => addReturnTracking(r.id, trackingNumber));
+          return;
+        }
+        case 'markReceived':
+          void runAction(r.id, () => markReturnReceived(r.id));
+          return;
+        case 'complete':
+          void runAction(r.id, () => completeReturn(r.id));
+          return;
       }
-      void runAction(r.id, () => processRefund(r.id, method));
     },
-    [runAction, setRow],
+    [runAction],
   );
 
   const toggleSelect = useCallback((id: string) => {
@@ -130,6 +168,13 @@ export function RmaInboxClient({ initialReturns }: RmaInboxClientProps) {
     );
   }, [visible]);
 
+  // Bulk approve only when the engine would accept it for *every* selected
+  // row (approval is legal from `requested` only); otherwise the operator
+  // gets a partial-failure surprise.
+  const canBulkApprove =
+    selected.size > 0 &&
+    returns.every((r) => !selected.has(r.id) || canApplyReturnAction(r.status, 'approve'));
+
   const onBulkApprove = useCallback(async () => {
     const ids = Array.from(selected);
     setSelected(new Set());
@@ -141,7 +186,6 @@ export function RmaInboxClient({ initialReturns }: RmaInboxClientProps) {
   }, [runAction, selected]);
 
   const allSelected = visible.length > 0 && selected.size === visible.length;
-  const someSelected = selected.size > 0;
 
   return (
     <div className="space-y-4">
@@ -169,9 +213,14 @@ export function RmaInboxClient({ initialReturns }: RmaInboxClientProps) {
             <Button
               variant="outline"
               size="sm"
-              disabled={!someSelected}
+              disabled={!canBulkApprove}
               onClick={onBulkApprove}
               aria-label={`Approve ${selected.size} selected returns`}
+              title={
+                selected.size > 0 && !canBulkApprove
+                  ? 'Only requested returns can be approved'
+                  : undefined
+              }
             >
               Bulk approve ({selected.size})
             </Button>
@@ -184,7 +233,7 @@ export function RmaInboxClient({ initialReturns }: RmaInboxClientProps) {
           {visible.length === 0 ? (
             <div className="p-8 text-center text-sm text-ds-muted-foreground">
               {statusFilter === 'pending'
-                ? 'No pending returns. Switch to "All" to see refunded / rejected / closed records.'
+                ? 'No pending returns. Switch to "All" to see completed / rejected / cancelled records.'
                 : 'No returns yet.'}
             </div>
           ) : (
@@ -211,10 +260,11 @@ export function RmaInboxClient({ initialReturns }: RmaInboxClientProps) {
                 {visible.map((r) => {
                   const row = rowStates[r.id] ?? { busy: false };
                   const isSelected = selected.has(r.id);
-                  const canApprove = r.status === 'requested';
-                  const canReject = r.status === 'requested' || r.status === 'approved';
-                  const canReceive = r.status === 'approved';
-                  const canRefund = r.status === 'received' || r.status === 'inspected';
+                  // Only the moves the engine's return lifecycle accepts
+                  // from this row's current state.
+                  const actions = ACTION_LABELS.filter(([action]) =>
+                    canApplyReturnAction(r.status, action),
+                  );
                   return (
                     <tr key={r.id} className={isSelected ? 'bg-ds-brand-50' : ''}>
                       <td className="px-4 py-3">
@@ -227,52 +277,32 @@ export function RmaInboxClient({ initialReturns }: RmaInboxClientProps) {
                       </td>
                       <td className="px-4 py-3 font-mono text-xs">{r.id}</td>
                       <td className="px-4 py-3 font-mono text-xs">{r.orderId}</td>
-                      <td className="px-4 py-3">{REASON_LABELS[r.reasonCategory]}</td>
+                      <td className="px-4 py-3">
+                        {REASON_LABELS[r.reasonCategory] ?? r.reasonCategory}
+                      </td>
                       <td className="px-4 py-3">{r.items.length}</td>
                       <td className="px-4 py-3">
-                        <Badge color={STATUS_BADGE_COLOR[r.status]}>{r.status}</Badge>
+                        <Badge color={STATUS_BADGE_COLOR[r.status] ?? 'gray'}>
+                          {STATUS_LABELS[r.status] ?? r.status}
+                        </Badge>
+                        {r.trackingNumber && (
+                          <span className="ml-2 font-mono text-xs text-ds-muted-foreground">
+                            {r.trackingNumber}
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right space-x-2">
-                        {canApprove && (
+                        {actions.map(([action, label]) => (
                           <Button
+                            key={action}
                             size="sm"
-                            variant="outline"
+                            variant={action === 'complete' ? 'primary' : 'outline'}
                             disabled={row.busy}
-                            onClick={() => onApprove(r.id)}
+                            onClick={() => onAction(r, action)}
                           >
-                            Approve
+                            {label}
                           </Button>
-                        )}
-                        {canReject && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={row.busy}
-                            onClick={() => onReject(r.id)}
-                          >
-                            Reject
-                          </Button>
-                        )}
-                        {canReceive && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={row.busy}
-                            onClick={() => onReceive(r)}
-                          >
-                            Mark received
-                          </Button>
-                        )}
-                        {canRefund && (
-                          <Button
-                            size="sm"
-                            variant="primary"
-                            disabled={row.busy}
-                            onClick={() => onRefund(r)}
-                          >
-                            Refund
-                          </Button>
-                        )}
+                        ))}
                         {row.error && (
                           <p className="text-xs text-ds-status-fail mt-1 max-w-xs ml-auto">
                             {row.error}

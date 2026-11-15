@@ -14,9 +14,14 @@ import 'server-only';
 import {
   AP_AGING_EXCLUDED_BILL_STATUSES,
   AR_OPEN_INVOICE_STATUSES,
+  RETURN_LIFECYCLE,
+  RETURN_REASONS,
+  canTransition,
   normalizeEngineStatus,
   statusIn,
   type BillStatus,
+  type ReturnReason,
+  type ReturnStatus,
   type GlAccountStatus,
   type InspectionStatus,
   type InvoiceStatus,
@@ -97,15 +102,29 @@ export interface CommerceEngine {
     getAnalytics: () => Promise<InventoryAnalytics>;
     forecast: (sku: string, days: number) => Promise<DemandForecast>;
   };
+  /**
+   * Return lifecycle, named after the native binding's methods
+   * (`bindings/node/index.d.ts` `class Returns`). Each one moves a return to
+   * a single state of `RETURN_LIFECYCLE`; the engine refuses every other move.
+   */
   returns: {
     list: (params?: { status?: string; customerId?: string }) => Promise<Return[]>;
     get: (id: string) => Promise<Return | null>;
     create: (params: CreateReturnParams) => Promise<Return>;
+    /** requested → approved */
     approve: (id: string) => Promise<Return>;
-    reject: (id: string, reason?: string) => Promise<Return>;
-    receive: (id: string, items?: { productId: string; condition: string }[]) => Promise<Return>;
-    processRefund: (id: string, method?: Return['refundMethod']) => Promise<Return>;
-    getAnalytics: (params?: { startDate?: string; endDate?: string }) => Promise<ReturnAnalytics>;
+    /** requested | inspecting → rejected */
+    reject: (id: string, reason: string) => Promise<Return>;
+    /** requested | approved → cancelled */
+    cancel: (id: string) => Promise<Return>;
+    /** approved → in_transit (records the carrier tracking number) */
+    addTracking: (id: string, trackingNumber: string) => Promise<Return>;
+    /** in_transit → received */
+    markReceived: (id: string) => Promise<Return>;
+    /** received | inspecting → completed (settles the refund) */
+    complete: (id: string) => Promise<Return>;
+    /** Mock-only aggregate; the binding has none, so `returnsApi` derives it. */
+    getAnalytics?: (params?: { startDate?: string; endDate?: string }) => Promise<ReturnAnalytics>;
   };
   customers: {
     list: (params?: { segment?: string; limit?: number; offset?: number }) => Promise<Customer[]>;
@@ -225,8 +244,18 @@ export interface CommerceEngine {
       limit?: number,
     ) => Promise<{ productId: string; name: string; revenue: number; units: number }[]>;
     getConversionFunnel: () => Promise<{ stage: string; count: number; rate: number }[]>;
+    /** Native only (`Analytics.returnMetrics`): engine-computed return rate and refund total. */
+    returnMetrics?: () => Promise<NativeReturnMetrics>;
   };
   initialize?: () => Promise<void>;
+}
+
+/** The fields of the binding's `ReturnMetricsOutput` the admin reads. */
+export interface NativeReturnMetrics {
+  totalReturns: number;
+  returnRatePercent: number;
+  totalRefunded: number;
+  totalRefundedExact?: string;
 }
 
 // Dynamic import to prevent bundling issues
@@ -469,21 +498,19 @@ function buildMockCommerceData(): MockCommerceData {
     'pending',
     'cancelled',
   ];
+  // Every state of the engine's return lifecycle, so demo mode exercises the
+  // same queue (and the same action gating) as the native engine.
   const returnStatuses: Return['status'][] = [
     'requested',
     'approved',
+    'in_transit',
     'received',
-    'inspected',
-    'refunded',
+    'inspecting',
+    'completed',
     'rejected',
+    'cancelled',
   ];
-  const returnReasons: Return['reasonCategory'][] = [
-    'defective',
-    'wrong_item',
-    'not_as_described',
-    'changed_mind',
-    'other',
-  ];
+  const returnReasons: Return['reasonCategory'][] = [...RETURN_REASONS];
   const subscriptionStatuses: Subscription['status'][] = [
     'active',
     'active',
@@ -589,17 +616,21 @@ function buildMockCommerceData(): MockCommerceData {
     } satisfies InventoryItem;
   });
 
+  const shippedBack: Return['status'][] = ['in_transit', 'received', 'inspecting', 'completed'];
   const returns = Array.from({ length: 25 }, (_, index) => {
     const order = orders[(index * 2) % orders.length];
     const amount = roundCurrency(
       order.totalAmount * (0.35 + deterministicNumber(index + 801, 0, 0.45)),
     );
     const createdAt = formatMockDate(-(13 - (index % 14)), index % 12);
+    const status = returnStatuses[index % returnStatuses.length];
     return {
       id: `ret_${1000 + index}`,
       orderId: order.id,
       customerId: order.customerId,
-      status: deterministicChoice(index + 901, returnStatuses),
+      status,
+      // The engine records a tracking number when a return ships back.
+      trackingNumber: shippedBack.includes(status) ? `1ZRET${10_000 + index}` : undefined,
       items: order.items.map((item) => ({
         productId: item.productId,
         sku: item.sku,
@@ -921,6 +952,27 @@ function getMockReturn(id: string): Return | null {
   return getMockData().returns.find((entry) => entry.id === id) || null;
 }
 
+/**
+ * Move a mock return the way the engine would: refuse any move
+ * `RETURN_LIFECYCLE` does not allow, otherwise persist the new state so the
+ * next action in a demo session sees it (the engine's own guard messages are
+ * mirrored loosely; callers only rely on the throw).
+ */
+function transitionMockReturn(id: string, to: ReturnStatus, patch: Partial<Return> = {}): Return {
+  const data = getMockData();
+  const index = data.returns.findIndex((entry) => entry.id === id);
+  if (index === -1) {
+    throw new Error(`Return not found: ${id}`);
+  }
+  const current = data.returns[index];
+  if (!canTransition(RETURN_LIFECYCLE, current.status, to)) {
+    throw new Error(`Return cannot move from ${current.status} to ${to}`);
+  }
+  const next: Return = { ...current, ...patch, status: to, updatedAt: new Date().toISOString() };
+  data.returns[index] = next;
+  return next;
+}
+
 function getMockSubscription(id: string): Subscription | null {
   return getMockData().subscriptions.find((subscription) => subscription.id === id) || null;
 }
@@ -1188,62 +1240,14 @@ function createMockCommerceEngine(): CommerceEngine {
       },
       get: async (id: string) => getMockReturn(id),
       create: async (params: CreateReturnParams) => buildMockReturnFromParams(params),
-      approve: async (id: string) => {
-        const current =
-          getMockReturn(id) ||
-          buildMockReturnFromParams({
-            orderId: 'ord_1000',
-            items: [],
-            reason: 'Manual review',
-            reasonCategory: 'other',
-          });
-        return { ...current, id, status: 'approved', updatedAt: new Date().toISOString() };
-      },
-      reject: async (id: string, reason?: string) => {
-        const current =
-          getMockReturn(id) ||
-          buildMockReturnFromParams({
-            orderId: 'ord_1000',
-            items: [],
-            reason: reason || 'Rejected',
-            reasonCategory: 'other',
-          });
-        return {
-          ...current,
-          id,
-          status: 'rejected',
-          notes: reason,
-          updatedAt: new Date().toISOString(),
-        };
-      },
-      receive: async (id: string) => {
-        const current =
-          getMockReturn(id) ||
-          buildMockReturnFromParams({
-            orderId: 'ord_1000',
-            items: [],
-            reason: 'Received',
-            reasonCategory: 'other',
-          });
-        return { ...current, id, status: 'received', updatedAt: new Date().toISOString() };
-      },
-      processRefund: async (id: string, method?: Return['refundMethod']) => {
-        const current =
-          getMockReturn(id) ||
-          buildMockReturnFromParams({
-            orderId: 'ord_1000',
-            items: [],
-            reason: 'Refunded',
-            reasonCategory: 'other',
-          });
-        return {
-          ...current,
-          id,
-          status: 'refunded',
-          refundMethod: method || 'original',
-          updatedAt: new Date().toISOString(),
-        };
-      },
+      approve: async (id: string) => transitionMockReturn(id, 'approved'),
+      reject: async (id: string, reason: string) =>
+        transitionMockReturn(id, 'rejected', { notes: reason }),
+      cancel: async (id: string) => transitionMockReturn(id, 'cancelled'),
+      addTracking: async (id: string, trackingNumber: string) =>
+        transitionMockReturn(id, 'in_transit', { trackingNumber }),
+      markReceived: async (id: string) => transitionMockReturn(id, 'received'),
+      complete: async (id: string) => transitionMockReturn(id, 'completed'),
       getAnalytics: async () => getMockData().returnAnalytics,
     },
     customers: {
@@ -1608,48 +1612,122 @@ export interface CreateReturnParams {
   reasonCategory: Return['reasonCategory'];
 }
 
+function isReturnReason(value: unknown): value is ReturnReason {
+  return typeof value === 'string' && (RETURN_REASONS as readonly string[]).includes(value);
+}
+
+/**
+ * The native `ReturnOutput` is a header — id, orderId, status, the reason
+ * *code* and createdAt — while the admin's `Return` also carries the customer,
+ * line items and a free-text reason. Fill those so list views never read
+ * `undefined.length`; mock records already carry every field and pass through.
+ */
+export function toAdminReturn(record: Return): Return {
+  const partial = record as Partial<Return> & Pick<Return, 'id' | 'orderId' | 'status'>;
+  const reasonCategory = isReturnReason(partial.reasonCategory)
+    ? partial.reasonCategory
+    : isReturnReason(partial.reason)
+      ? partial.reason
+      : 'other';
+  const createdAt = partial.createdAt ?? '';
+  return {
+    ...partial,
+    customerId: partial.customerId ?? '',
+    items: partial.items ?? [],
+    reason: partial.reason ?? '',
+    reasonCategory,
+    createdAt,
+    updatedAt: partial.updatedAt ?? createdAt,
+  };
+}
+
+/**
+ * Return analytics computed from the return records themselves, for engines
+ * without an aggregate. Rate and refund total come from the engine's
+ * `analytics.returnMetrics` when supplied; figures nothing reports (processing
+ * time, top products) are left empty rather than invented.
+ */
+export function summarizeReturns(
+  returns: Return[],
+  metrics?: NativeReturnMetrics,
+): ReturnAnalytics {
+  const tally = (key: (entry: Return) => string) =>
+    returns.reduce<Record<string, number>>((acc, entry) => {
+      acc[key(entry)] = (acc[key(entry)] || 0) + 1;
+      return acc;
+    }, {});
+  const refundTotal = metrics
+    ? Number(metrics.totalRefundedExact ?? metrics.totalRefunded)
+    : roundCurrency(returns.reduce((sum, entry) => sum + (entry.refundAmount || 0), 0));
+  return {
+    totalReturns: returns.length,
+    returnRate: metrics ? metrics.returnRatePercent / 100 : 0,
+    refundTotal,
+    returnsByReason: tally((entry) => entry.reasonCategory),
+    returnsByStatus: tally((entry) => entry.status),
+    averageProcessingTime: 0,
+    topReturnedProducts: [],
+  };
+}
+
 export const returnsApi = {
   async list(params?: { status?: string; customerId?: string }): Promise<Return[]> {
     const commerce = await getCommerceEngine();
-    return commerce.returns.list(params);
+    return (await commerce.returns.list(params)).map(toAdminReturn);
   },
 
   async get(returnId: string): Promise<Return | null> {
     const commerce = await getCommerceEngine();
-    return commerce.returns.get(returnId);
+    const record = await commerce.returns.get(returnId);
+    return record ? toAdminReturn(record) : null;
   },
 
   async create(params: CreateReturnParams): Promise<Return> {
     const commerce = await getCommerceEngine();
-    return commerce.returns.create(params);
+    return toAdminReturn(await commerce.returns.create(params));
   },
 
   async approve(returnId: string): Promise<Return> {
     const commerce = await getCommerceEngine();
-    return commerce.returns.approve(returnId);
+    return toAdminReturn(await commerce.returns.approve(returnId));
   },
 
   async reject(returnId: string, reason: string): Promise<Return> {
     const commerce = await getCommerceEngine();
-    return commerce.returns.reject(returnId, reason);
+    return toAdminReturn(await commerce.returns.reject(returnId, reason));
   },
 
-  async receive(
-    returnId: string,
-    items: { productId: string; condition: string }[],
-  ): Promise<Return> {
+  async cancel(returnId: string): Promise<Return> {
     const commerce = await getCommerceEngine();
-    return commerce.returns.receive(returnId, items);
+    return toAdminReturn(await commerce.returns.cancel(returnId));
   },
 
-  async processRefund(returnId: string, method: Return['refundMethod']): Promise<Return> {
+  async addTracking(returnId: string, trackingNumber: string): Promise<Return> {
     const commerce = await getCommerceEngine();
-    return commerce.returns.processRefund(returnId, method);
+    return toAdminReturn(await commerce.returns.addTracking(returnId, trackingNumber));
+  },
+
+  async markReceived(returnId: string): Promise<Return> {
+    const commerce = await getCommerceEngine();
+    return toAdminReturn(await commerce.returns.markReceived(returnId));
+  },
+
+  /** Completes the return; the engine settles its refund in the same step. */
+  async complete(returnId: string): Promise<Return> {
+    const commerce = await getCommerceEngine();
+    return toAdminReturn(await commerce.returns.complete(returnId));
   },
 
   async getAnalytics(params?: { startDate?: string; endDate?: string }): Promise<ReturnAnalytics> {
     const commerce = await getCommerceEngine();
-    return commerce.returns.getAnalytics(params);
+    if (typeof commerce.returns.getAnalytics === 'function') {
+      return commerce.returns.getAnalytics(params);
+    }
+    const metrics =
+      typeof commerce.analytics?.returnMetrics === 'function'
+        ? await commerce.analytics.returnMetrics()
+        : undefined;
+    return summarizeReturns(await returnsApi.list(), metrics);
   },
 };
 

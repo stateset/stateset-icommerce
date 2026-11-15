@@ -212,6 +212,98 @@ describe('embedded commerce engine', () => {
     expect(engine.kernelFeatures()).toEqual(['governed-writes']);
   });
 
+  it('walks a mock return through the engine lifecycle and refuses illegal moves', async () => {
+    vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'true');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.doMock('@stateset/embedded', () => {
+      throw new Error('native addon missing');
+    });
+
+    const { returnsApi } = await import('@/lib/embedded');
+    const { RETURN_STATUSES } = await import('@/lib/engine-lifecycles');
+
+    const all = await returnsApi.list();
+    // Demo data covers every engine state (and nothing invented).
+    expect(new Set(all.map((entry) => entry.status))).toEqual(new Set(RETURN_STATUSES));
+
+    const requested = all.find((entry) => entry.status === 'requested');
+    expect(requested).toBeDefined();
+    const id = requested!.id;
+
+    // Receive is only legal once the return is in transit.
+    await expect(returnsApi.markReceived(id)).rejects.toThrow(/cannot move from requested/);
+
+    expect((await returnsApi.approve(id)).status).toBe('approved');
+    await expect(returnsApi.reject(id, 'too late')).rejects.toThrow(/cannot move from approved/);
+    expect(await returnsApi.addTracking(id, '1Z999')).toMatchObject({
+      status: 'in_transit',
+      trackingNumber: '1Z999',
+    });
+    expect((await returnsApi.markReceived(id)).status).toBe('received');
+    expect((await returnsApi.complete(id)).status).toBe('completed');
+    // Terminal: nothing moves a completed return.
+    await expect(returnsApi.cancel(id)).rejects.toThrow(/cannot move from completed/);
+    expect((await returnsApi.get(id))?.status).toBe('completed');
+
+    await expect(returnsApi.approve('ret_missing')).rejects.toThrow(/not found/);
+  });
+
+  it('fills native return headers and derives return analytics the binding lacks', async () => {
+    vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'false');
+    const header = {
+      id: 'ret_1',
+      orderId: 'ord_1',
+      status: 'in_transit',
+      reason: 'damaged',
+      version: 2,
+      createdAt: '2026-05-07T12:00:00.000Z',
+    };
+    class NativeCommerce {
+      get returns() {
+        return {
+          list: async () => [header],
+          markReceived: async (id: string) => ({ ...header, id, status: 'received' }),
+        };
+      }
+      get analytics() {
+        return {
+          returnMetrics: async () => ({
+            totalReturns: 1,
+            returnRatePercent: 12.5,
+            totalRefunded: 10.5,
+            totalRefundedExact: '10.50',
+          }),
+        };
+      }
+    }
+    vi.doMock('@stateset/embedded', () => ({ Commerce: NativeCommerce }));
+
+    const { returnsApi } = await import('@/lib/embedded');
+
+    expect(await returnsApi.list()).toEqual([
+      {
+        ...header,
+        customerId: '',
+        items: [],
+        reasonCategory: 'damaged',
+        updatedAt: header.createdAt,
+      },
+    ]);
+    expect(await returnsApi.markReceived('ret_1')).toMatchObject({
+      status: 'received',
+      items: [],
+    });
+    expect(await returnsApi.getAnalytics()).toEqual({
+      totalReturns: 1,
+      returnRate: 0.125,
+      refundTotal: 10.5,
+      returnsByReason: { damaged: 1 },
+      returnsByStatus: { in_transit: 1 },
+      averageProcessingTime: 0,
+      topReturnedProducts: [],
+    });
+  });
+
   it('rejects explicit mock mode in production', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'true');

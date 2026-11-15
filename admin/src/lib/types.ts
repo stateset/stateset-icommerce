@@ -7,7 +7,12 @@
  * This is the only declaration of the commerce record shapes: `embedded.ts`
  * re-exports them rather than keeping a second copy, so the two can no
  * longer drift apart.
+ *
+ * Status unions are not written out here: they come from the native binding
+ * through `./engine-lifecycles` (type-only import, safe in client bundles).
  */
+
+import type { ReturnReason, ReturnStatus } from './engine-lifecycles';
 
 // ============================================================================
 // Orders Types
@@ -91,10 +96,12 @@ export interface Return {
   id: string;
   orderId: string;
   customerId: string;
-  status: 'requested' | 'approved' | 'received' | 'inspected' | 'refunded' | 'rejected' | 'closed';
+  /** The engine's return lifecycle (`RETURN_LIFECYCLE` in `./engine-lifecycles`). */
+  status: ReturnStatus;
   items: ReturnItem[];
+  /** Free-text detail; the engine's own reason code is `reasonCategory`. */
   reason: string;
-  reasonCategory: 'defective' | 'wrong_item' | 'not_as_described' | 'changed_mind' | 'other';
+  reasonCategory: ReturnReason;
   refundAmount?: number;
   refundMethod?: 'original' | 'store_credit' | 'exchange';
   trackingNumber?: string;

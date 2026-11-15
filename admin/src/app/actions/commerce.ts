@@ -42,8 +42,10 @@ import type {
   SystemHealthData,
   SystemEvent,
 } from '@/lib/types/dashboard-data';
+import { RETURN_LIFECYCLE, isTerminal, type ReturnStatus } from '@/lib/engine-lifecycles';
 import { requireAdminSession } from '@/lib/shared/auth-session';
 import {
+  addReturnTrackingArgsSchema,
   adjustInventoryArgsSchema,
   cancelOrderArgsSchema,
   cancelSubscriptionArgsSchema,
@@ -53,9 +55,7 @@ import {
   createReturnArgsSchema,
   createSubscriptionArgsSchema,
   inventoryMovementArgsSchema,
-  processRefundArgsSchema,
   productIdArgsSchema,
-  receiveReturnArgsSchema,
   rejectReturnArgsSchema,
   returnIdArgsSchema,
   subscriptionIdArgsSchema,
@@ -436,22 +436,37 @@ export async function rejectReturn(returnId: string, reason: string): Promise<Re
   return returnsApi.reject(args.returnId, args.reason);
 }
 
-export async function receiveReturn(
-  returnId: string,
-  items: { productId: string; condition: string }[],
-): Promise<Return> {
+// The return actions below map one-to-one onto the binding's `Returns`
+// methods; each is legal only from the states `RETURN_LIFECYCLE` allows, and
+// the engine refuses the rest. (There is no separate "refund" step: `complete`
+// settles the refund.)
+
+/** requested | approved → cancelled */
+export async function cancelReturn(returnId: string): Promise<Return> {
   await requireAdminSession();
-  const args = validateArgs({ returnId, items }, receiveReturnArgsSchema);
-  return returnsApi.receive(args.returnId, args.items);
+  const args = validateArgs({ returnId }, returnIdArgsSchema);
+  return returnsApi.cancel(args.returnId);
 }
 
-export async function processRefund(
-  returnId: string,
-  method: Return['refundMethod'],
-): Promise<Return> {
+/** approved → in_transit, recording the carrier tracking number. */
+export async function addReturnTracking(returnId: string, trackingNumber: string): Promise<Return> {
   await requireAdminSession();
-  const args = validateArgs({ returnId, method }, processRefundArgsSchema);
-  return returnsApi.processRefund(args.returnId, args.method);
+  const args = validateArgs({ returnId, trackingNumber }, addReturnTrackingArgsSchema);
+  return returnsApi.addTracking(args.returnId, args.trackingNumber);
+}
+
+/** in_transit → received */
+export async function markReturnReceived(returnId: string): Promise<Return> {
+  await requireAdminSession();
+  const args = validateArgs({ returnId }, returnIdArgsSchema);
+  return returnsApi.markReceived(args.returnId);
+}
+
+/** received | inspecting → completed; the engine settles the refund. */
+export async function completeReturn(returnId: string): Promise<Return> {
+  await requireAdminSession();
+  const args = validateArgs({ returnId }, returnIdArgsSchema);
+  return returnsApi.complete(args.returnId);
 }
 
 export async function getReturnAnalytics(params?: {
@@ -461,6 +476,15 @@ export async function getReturnAnalytics(params?: {
   await requireAdminSession();
   return returnsApi.getAnalytics(params);
 }
+
+const RETURN_PIPELINE_STAGES: { status: ReturnStatus; stage: string }[] = [
+  { status: 'requested', stage: 'Requested' },
+  { status: 'approved', stage: 'Approved' },
+  { status: 'in_transit', stage: 'In transit' },
+  { status: 'received', stage: 'Received' },
+  { status: 'inspecting', stage: 'Inspecting' },
+  { status: 'completed', stage: 'Completed' },
+];
 
 // Returns Management data for generative UI
 export async function getReturnsManagementData() {
@@ -478,13 +502,12 @@ export async function getReturnsManagementData() {
       returnsByStatus: analytics.returnsByStatus,
       topReturnedProducts: analytics.topReturnedProducts || [],
     },
-    pipeline: [
-      { stage: 'Requested', count: analytics.returnsByStatus['requested'] || 0 },
-      { stage: 'Approved', count: analytics.returnsByStatus['approved'] || 0 },
-      { stage: 'Received', count: analytics.returnsByStatus['received'] || 0 },
-      { stage: 'Inspected', count: analytics.returnsByStatus['inspected'] || 0 },
-      { stage: 'Refunded', count: analytics.returnsByStatus['refunded'] || 0 },
-    ],
+    // The engine's happy path through the return lifecycle; rejected and
+    // cancelled returns leave the pipeline and show in the status breakdown.
+    pipeline: RETURN_PIPELINE_STAGES.map(({ status, stage }) => ({
+      stage,
+      count: analytics.returnsByStatus[status] || 0,
+    })),
   };
 }
 
@@ -1325,7 +1348,9 @@ export async function getFinancialReconciliationData(): Promise<FinancialReconci
       totalReconciled: Math.round(reconciledAmount),
       reconciledRate: 0.96,
       pendingAmount: Math.round(pendingAmount),
-      pendingCount: returns.filter((entry) => entry.status !== 'refunded').length,
+      // Still open in the return lifecycle: the refund settles on `completed`,
+      // and rejected/cancelled returns never refund.
+      pendingCount: returns.filter((entry) => !isTerminal(RETURN_LIFECYCLE, entry.status)).length,
       discrepancyAmount: Math.round(discrepancyAmount),
       discrepancyCount: discrepancyItems.length,
       netCash: Math.round(totalRevenue - totalRefunds),

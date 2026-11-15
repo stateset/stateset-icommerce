@@ -57,6 +57,7 @@ export {
   addressSchema,
   orderStatusSchema,
   returnReasonCategorySchema,
+  trackingNumberSchema,
   refundMethodSchema,
   returnItemConditionSchema,
   productStatusSchema,
