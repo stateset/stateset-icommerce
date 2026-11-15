@@ -1426,12 +1426,34 @@ export class SequencerClient {
    * Failures carry a `code` (`sequencer_key_not_configured` or
    * `directory_untrusted`) that `PeerKeyDirectory` maps to a quarantine reason.
    *
+   * The route itself is not on stateset-sequencer's main branch yet (it is
+   * proposed in stateset-sequencer PR #6; an unknown agent gets an empty key
+   * list there, not a 404). So a 404 means the sequencer has no key directory
+   * at all, and fails with `code: 'key_directory_unsupported'` and a message
+   * saying so, rather than as an opaque request failure.
+   *
    * @param {string} agentId
    * @returns {Promise<{agentId: string, tenantId: string, keys: Array<Object>, signedAt: string}>}
    */
   async getAgentSigningKeys(agentId) {
     const params = new URLSearchParams({ tenant_id: this.config.tenantId });
-    const response = await this._request('GET', `/api/v1/agents/${agentId}/signing-keys?${params}`);
+    let response;
+    try {
+      response = await this._request(
+        'GET',
+        `/api/v1/agents/${encodeURIComponent(agentId)}/signing-keys?${params}`,
+      );
+    } catch (error) {
+      if (error?.status !== 404) throw error;
+      throw keyDirectoryError(
+        'The sequencer does not expose signed agent key lists: GET ' +
+          '/api/v1/agents/:agent_id/signing-keys returned 404 (the route is proposed in ' +
+          'stateset-sequencer PR #6 and is not deployed here). Supply peer public keys ' +
+          'another way, such as an operator-distributed key roster.',
+        'key_directory_unsupported',
+        { cause: error },
+      );
+    }
 
     const sequencerPublicKey = this.config.sequencerPublicKey ?? this.config.sequencer?.publicKey;
     if (!sequencerPublicKey) {
