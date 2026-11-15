@@ -12,7 +12,12 @@
  * through `./engine-lifecycles` (type-only import, safe in client bundles).
  */
 
-import type { OrderStatus, ReturnReason, ReturnStatus } from './engine-lifecycles';
+import type {
+  OrderStatus,
+  ReturnReason,
+  ReturnStatus,
+  SubscriptionStatus,
+} from './engine-lifecycles';
 
 // ============================================================================
 // Orders Types
@@ -213,7 +218,8 @@ export interface ProductAnalytics {
 export interface Subscription {
   id: string;
   customerId: string;
-  status: 'active' | 'paused' | 'cancelled' | 'expired';
+  /** The engine's subscription lifecycle (`SUBSCRIPTION_LIFECYCLE` in `./engine-lifecycles`). */
+  status: SubscriptionStatus;
   plan: string;
   planId?: string;
   frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'annually';

@@ -17,6 +17,7 @@ import {
   ORDER_LIFECYCLE,
   RETURN_LIFECYCLE,
   RETURN_REASONS,
+  SUBSCRIPTION_LIFECYCLE,
   canTransition,
   normalizeEngineStatus,
   statusIn,
@@ -146,14 +147,24 @@ export interface CommerceEngine {
     update: (id: string, params: Partial<Product>) => Promise<Product>;
     delete: (id: string) => Promise<void>;
   };
+  /**
+   * Subscriptions, named after the native binding's methods
+   * (`bindings/node/index.d.ts` `class Subscriptions`); moves follow
+   * `SUBSCRIPTION_LIFECYCLE`.
+   */
   subscriptions: {
     list: (params?: { status?: string; customerId?: string }) => Promise<Subscription[]>;
     get: (id: string) => Promise<Subscription | null>;
-    create: (params: Partial<Subscription>) => Promise<Subscription>;
+    /** Start a subscription to a plan (the binding has no `create`). */
+    subscribe: (input: { customerId: string; planId: string }) => Promise<Subscription>;
+    /** active → paused */
     pause: (id: string) => Promise<Subscription>;
+    /** paused → active */
     resume: (id: string) => Promise<Subscription>;
-    cancel: (id: string, reason?: string) => Promise<Subscription>;
-    getAnalytics: () => Promise<SubscriptionAnalytics>;
+    /** pending | trial | active | paused | past_due → cancelled */
+    cancel: (id: string, input?: { reason?: string }) => Promise<Subscription>;
+    /** Mock-only aggregate; the binding has none, so `subscriptionsApi` derives it. */
+    getAnalytics?: () => Promise<SubscriptionAnalytics>;
   };
   generalLedger: {
     getAutoPostingConfig: () => Promise<AutoPostingConfig | null>;
@@ -517,12 +528,17 @@ function buildMockCommerceData(): MockCommerceData {
     'cancelled',
   ];
   const returnReasons: Return['reasonCategory'][] = [...RETURN_REASONS];
+  // Every engine subscription status, weighted towards active.
   const subscriptionStatuses: Subscription['status'][] = [
     'active',
     'active',
     'active',
+    'trial',
     'paused',
+    'past_due',
+    'pending',
     'cancelled',
+    'expired',
   ];
 
   const products = Array.from({ length: 50 }, (_, index) => {
@@ -1003,6 +1019,22 @@ function getMockSubscription(id: string): Subscription | null {
   return getMockData().subscriptions.find((subscription) => subscription.id === id) || null;
 }
 
+/** Move a mock subscription along `SUBSCRIPTION_LIFECYCLE`, refusing anything else. */
+function transitionMockSubscription(id: string, to: Subscription['status']): Subscription {
+  const data = getMockData();
+  const index = data.subscriptions.findIndex((subscription) => subscription.id === id);
+  if (index === -1) {
+    throw new Error(`Subscription not found: ${id}`);
+  }
+  const current = data.subscriptions[index];
+  if (!canTransition(SUBSCRIPTION_LIFECYCLE, current.status, to)) {
+    throw new Error(`Subscription cannot move from ${current.status} to ${to}`);
+  }
+  const next: Subscription = { ...current, status: to, updatedAt: new Date().toISOString() };
+  data.subscriptions[index] = next;
+  return next;
+}
+
 function getMockCustomer(id: string): Customer | null {
   return getMockData().customers.find((customer) => customer.id === id) || null;
 }
@@ -1356,26 +1388,14 @@ function createMockCommerceEngine(): CommerceEngine {
         return subscriptions;
       },
       get: async (id: string) => getMockSubscription(id),
-      create: async (params: Partial<Subscription>) =>
-        buildMockSubscription(params, nextMockId('sub')),
-      pause: async (id: string) => ({
-        ...(getMockSubscription(id) || buildMockSubscription({}, id)),
-        id,
-        status: 'paused',
-        updatedAt: new Date().toISOString(),
-      }),
-      resume: async (id: string) => ({
-        ...(getMockSubscription(id) || buildMockSubscription({}, id)),
-        id,
-        status: 'active',
-        updatedAt: new Date().toISOString(),
-      }),
-      cancel: async (id: string) => ({
-        ...(getMockSubscription(id) || buildMockSubscription({}, id)),
-        id,
-        status: 'cancelled',
-        updatedAt: new Date().toISOString(),
-      }),
+      subscribe: async (input: { customerId: string; planId: string }) =>
+        buildMockSubscription(
+          { customerId: input.customerId, planId: input.planId, plan: input.planId },
+          nextMockId('sub'),
+        ),
+      pause: async (id: string) => transitionMockSubscription(id, 'paused'),
+      resume: async (id: string) => transitionMockSubscription(id, 'active'),
+      cancel: async (id: string) => transitionMockSubscription(id, 'cancelled'),
       getAnalytics: async () => getMockData().subscriptionAnalytics,
     },
     generalLedger: {
@@ -1896,40 +1916,139 @@ export const analyticsApi = {
 // Subscriptions API
 // ============================================================================
 
+/** The fields of the binding's `SubscriptionOutput` the admin maps onto `Subscription`. */
+interface NativeSubscriptionFields {
+  planName?: string;
+  billingInterval?: string;
+  price?: number;
+}
+
+/**
+ * The native `SubscriptionOutput` names its plan, price and interval
+ * `planName`, `price` and `billingInterval` and has no line items; map those
+ * onto the admin's `Subscription` so the subscription views read real values
+ * instead of `undefined`. Mock records already match and pass through.
+ */
+export function toAdminSubscription(record: Subscription): Subscription {
+  const partial = record as Partial<Subscription> &
+    NativeSubscriptionFields &
+    Pick<Subscription, 'id' | 'customerId' | 'status'>;
+  const createdAt = partial.createdAt ?? '';
+  return {
+    ...partial,
+    plan: partial.plan ?? partial.planName ?? partial.planId ?? '',
+    frequency: partial.frequency ?? (partial.billingInterval as Subscription['frequency']),
+    nextBillingDate: partial.nextBillingDate ?? '',
+    items: partial.items ?? [],
+    quantity: partial.quantity ?? 1,
+    totalAmount: partial.totalAmount ?? partial.price ?? 0,
+    createdAt,
+    updatedAt: partial.updatedAt ?? createdAt,
+  };
+}
+
+/** Months per billing period, for both the admin's and the engine's interval names. */
+const MONTHS_PER_INTERVAL: Record<string, number> = {
+  weekly: 12 / 52,
+  biweekly: 12 / 26,
+  'bi-weekly': 12 / 26,
+  monthly: 1,
+  'bi-monthly': 2,
+  quarterly: 3,
+  'semi-annual': 6,
+  annually: 12,
+  yearly: 12,
+};
+
+/**
+ * Subscription analytics computed from the subscription records, for
+ * engines without an aggregate. MRR covers active subscriptions whose
+ * interval is known; figures nothing reports (growth, lifetime) are left at
+ * zero rather than invented.
+ */
+export function summarizeSubscriptions(subscriptions: Subscription[]): SubscriptionAnalytics {
+  const active = subscriptions.filter((subscription) => subscription.status === 'active');
+  const mrr = roundCurrency(
+    active.reduce((sum, subscription) => {
+      const months = MONTHS_PER_INTERVAL[subscription.frequency];
+      return months ? sum + subscription.totalAmount / months : sum;
+    }, 0),
+  );
+  const churned = subscriptions.filter(
+    (subscription) => subscription.status === 'cancelled' || subscription.status === 'expired',
+  ).length;
+  const tally = (key: (subscription: Subscription) => string) =>
+    subscriptions.reduce<Record<string, number>>((acc, subscription) => {
+      const k = key(subscription) || 'unknown';
+      acc[k] = (acc[k] || 0) + 1;
+      return acc;
+    }, {});
+  return {
+    totalSubscriptions: subscriptions.length,
+    activeSubscriptions: active.length,
+    mrr,
+    arr: roundCurrency(mrr * 12),
+    churnRate: subscriptions.length ? Number((churned / subscriptions.length).toFixed(3)) : 0,
+    arpu: active.length ? roundCurrency(mrr / active.length) : 0,
+    averageLifetime: 0,
+    subscriptionsByPlan: tally((subscription) => subscription.plan),
+    subscriptionsByFrequency: tally((subscription) => subscription.frequency),
+  };
+}
+
 export const subscriptionsApi = {
   async list(params?: { status?: string; customerId?: string }): Promise<Subscription[]> {
     const commerce = await getCommerceEngine();
-    return commerce.subscriptions.list(params);
+    return (await commerce.subscriptions.list(params)).map(toAdminSubscription);
   },
 
   async get(subscriptionId: string): Promise<Subscription | null> {
     const commerce = await getCommerceEngine();
-    return commerce.subscriptions.get(subscriptionId);
+    const record = await commerce.subscriptions.get(subscriptionId);
+    return record ? toAdminSubscription(record) : null;
   },
 
+  /**
+   * Start a subscription. The engine's `subscribe` needs the customer and the
+   * plan; everything else (price, interval, trial) comes from the plan.
+   */
   async create(params: Partial<Subscription>): Promise<Subscription> {
+    if (!params.customerId || !params.planId) {
+      throw new Error('A subscription needs a customerId and a planId');
+    }
     const commerce = await getCommerceEngine();
-    return commerce.subscriptions.create(params);
+    return toAdminSubscription(
+      await commerce.subscriptions.subscribe({
+        customerId: params.customerId,
+        planId: params.planId,
+      }),
+    );
   },
 
   async pause(subscriptionId: string): Promise<Subscription> {
     const commerce = await getCommerceEngine();
-    return commerce.subscriptions.pause(subscriptionId);
+    return toAdminSubscription(await commerce.subscriptions.pause(subscriptionId));
   },
 
   async resume(subscriptionId: string): Promise<Subscription> {
     const commerce = await getCommerceEngine();
-    return commerce.subscriptions.resume(subscriptionId);
+    return toAdminSubscription(await commerce.subscriptions.resume(subscriptionId));
   },
 
   async cancel(subscriptionId: string, reason?: string): Promise<Subscription> {
     const commerce = await getCommerceEngine();
-    return commerce.subscriptions.cancel(subscriptionId, reason);
+    // The binding takes `CancelSubscriptionInput`, not a bare reason string.
+    return toAdminSubscription(
+      await commerce.subscriptions.cancel(subscriptionId, reason ? { reason } : undefined),
+    );
   },
 
   async getAnalytics(): Promise<SubscriptionAnalytics> {
     const commerce = await getCommerceEngine();
-    return commerce.subscriptions.getAnalytics();
+    if (typeof commerce.subscriptions.getAnalytics === 'function') {
+      return commerce.subscriptions.getAnalytics();
+    }
+    return summarizeSubscriptions(await subscriptionsApi.list());
   },
 };
 

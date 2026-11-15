@@ -312,6 +312,78 @@ describe('embedded commerce engine', () => {
     });
   });
 
+  it('routes subscriptions to the binding methods and derives their analytics', async () => {
+    vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'false');
+    const native = {
+      id: 'sub_1',
+      customerId: 'cus_1',
+      planId: 'plan_pro',
+      planName: 'Pro',
+      status: 'active',
+      billingInterval: 'quarterly',
+      price: 90,
+      createdAt: '2026-05-01T00:00:00.000Z',
+      updatedAt: '2026-05-02T00:00:00.000Z',
+    };
+    const subscribe = vi.fn(async () => native);
+    const cancel = vi.fn(async (id: string) => ({ ...native, id, status: 'cancelled' }));
+    class NativeCommerce {
+      get subscriptions() {
+        return {
+          list: async () => [native, { ...native, id: 'sub_2', status: 'trial' }],
+          subscribe,
+          cancel,
+        };
+      }
+    }
+    vi.doMock('@stateset/embedded', () => ({ Commerce: NativeCommerce }));
+
+    const { subscriptionsApi } = await import('@/lib/embedded');
+
+    await expect(
+      subscriptionsApi.create({ customerId: 'cus_1', planId: 'plan_pro' }),
+    ).resolves.toMatchObject({ plan: 'Pro', totalAmount: 90, frequency: 'quarterly' });
+    expect(subscribe).toHaveBeenCalledWith({ customerId: 'cus_1', planId: 'plan_pro' });
+
+    // The binding takes `CancelSubscriptionInput`, not a bare string.
+    await subscriptionsApi.cancel('sub_1', 'too expensive');
+    expect(cancel).toHaveBeenCalledWith('sub_1', { reason: 'too expensive' });
+    await subscriptionsApi.cancel('sub_1');
+    expect(cancel).toHaveBeenLastCalledWith('sub_1', undefined);
+
+    expect(await subscriptionsApi.getAnalytics()).toMatchObject({
+      totalSubscriptions: 2,
+      activeSubscriptions: 1,
+      mrr: 30,
+      arr: 360,
+      subscriptionsByPlan: { Pro: 2 },
+    });
+  });
+
+  it('refuses mock subscription moves the engine lifecycle forbids', async () => {
+    vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'true');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.doMock('@stateset/embedded', () => {
+      throw new Error('native addon missing');
+    });
+
+    const { subscriptionsApi } = await import('@/lib/embedded');
+    const { SUBSCRIPTION_STATUSES } = await import('@/lib/engine-lifecycles');
+    const all = await subscriptionsApi.list();
+    expect(new Set(all.map((subscription) => subscription.status))).toEqual(
+      new Set(SUBSCRIPTION_STATUSES),
+    );
+
+    const active = all.find((subscription) => subscription.status === 'active')!;
+    expect((await subscriptionsApi.pause(active.id)).status).toBe('paused');
+    expect((await subscriptionsApi.resume(active.id)).status).toBe('active');
+
+    const expired = all.find((subscription) => subscription.status === 'expired')!;
+    await expect(subscriptionsApi.resume(expired.id)).rejects.toThrow(
+      /cannot move from expired to active/,
+    );
+  });
+
   it('rejects explicit mock mode in production', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'true');

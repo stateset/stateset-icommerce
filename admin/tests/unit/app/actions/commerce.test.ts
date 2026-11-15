@@ -429,9 +429,24 @@ describe('commerce action input validation', () => {
 
   it('createSubscription rejects a fractional quantity', async () => {
     await expect(
-      createSubscription({ customerId: 'cust-1', quantity: 1.5 })
+      createSubscription({ customerId: 'cust-1', planId: 'plan-1', quantity: 1.5 })
     ).rejects.toMatchObject(VALIDATION_ERROR);
     expect(subscriptionsApi.create).not.toHaveBeenCalled();
+  });
+
+  it('createSubscription requires the plan the engine subscribes to', async () => {
+    await expect(createSubscription({ customerId: 'cust-1' })).rejects.toMatchObject({
+      ...VALIDATION_ERROR,
+      details: [expect.objectContaining({ field: 'params.planId' })],
+    });
+    expect(subscriptionsApi.create).not.toHaveBeenCalled();
+  });
+
+  it('createSubscription accepts every engine subscription status', async () => {
+    for (const status of ['pending', 'trial', 'past_due'] as const) {
+      await createSubscription({ customerId: 'cust-1', planId: 'plan-1', status });
+    }
+    expect(subscriptionsApi.create).toHaveBeenCalledTimes(3);
   });
 
   it('pauseSubscription rejects a missing id', async () => {
