@@ -243,4 +243,21 @@ impl HttpIdempotencyRepository for PgHttpIdempotencyRepository {
             Ok(result.rows_affected())
         })
     }
+
+    fn release(&self, tenant: &str, key: &str, request_fingerprint: &str) -> Result<bool> {
+        block_on(async {
+            let deleted = sqlx::query(
+                "DELETE FROM http_idempotency_keys
+                 WHERE tenant = $1 AND idempotency_key = $2 AND request_fingerprint = $3
+                   AND response_status = 0",
+            )
+            .bind(tenant)
+            .bind(key)
+            .bind(request_fingerprint)
+            .execute(&self.pool)
+            .await
+            .map_err(map_db_error)?;
+            Ok(deleted.rows_affected() == 1)
+        })
+    }
 }

@@ -34,6 +34,12 @@ This project follows Keep a Changelog and Semantic Versioning.
 - Postgres `search_configs.set_active` with an unknown id changes nothing,
   as on SQLite. It used to commit "deactivate every config" before
   returning `NotFound`.
+- HTTP idempotency keys no longer stick after a transient client error. A
+  401, 403, 405, 413, 415, 429 or any other 4xx that is not replayed (only
+  400, 404, 409 and 422 are) releases the durable reservation through the
+  new `HttpIdempotencyRepository::release`, so the same key can be retried;
+  such keys used to answer 409 forever. 5xx responses still keep the
+  reservation for reconciliation.
 
 ## [1.41.0] - 2026-11-15
 

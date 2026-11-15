@@ -190,6 +190,19 @@ impl HttpIdempotencyRepository for SqliteHttpIdempotencyRepository {
             .map_err(map_err)?;
         Ok(deleted as u64)
     }
+
+    fn release(&self, tenant: &str, key: &str, request_fingerprint: &str) -> Result<bool> {
+        let deleted = self
+            .conn()?
+            .execute(
+                "DELETE FROM http_idempotency_keys
+                 WHERE tenant = ?1 AND idempotency_key = ?2 AND request_fingerprint = ?3
+                   AND response_status = 0",
+                rusqlite::params![tenant, key, request_fingerprint],
+            )
+            .map_err(map_err)?;
+        Ok(deleted == 1)
+    }
 }
 
 #[cfg(test)]
