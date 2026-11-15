@@ -9,7 +9,45 @@
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+import type {
+  BillStatus as NativeBillStatus,
+  GlAccountStatus as NativeGlAccountStatus,
+  GlJournalEntryStatus as NativeJournalEntryStatus,
+  InspectionStatus as NativeInspectionStatus,
+  InvoiceStatus as NativeInvoiceStatus,
+  LotStatus as NativeLotStatus,
+  NcrSeverity as NativeNcrSeverity,
+  NcrStatus as NativeNcrStatus,
+  OrderStatus as NativeOrderStatus,
+  PickTaskStatus as NativePickTaskStatus,
+  PurchaseOrderStatus as NativePurchaseOrderStatus,
+  ReceiptStatus as NativeReceiptStatus,
+  ReturnReason as NativeReturnReason,
+  ReturnStatus as NativeReturnStatus,
+  SerialStatus as NativeSerialStatus,
+  SubscriptionStatus as NativeSubscriptionStatus,
+  WaveStatus as NativeWaveStatus,
+  WorkOrderStatus as NativeWorkOrderStatus,
+} from '@stateset/embedded';
+
+import type {
+  Bill,
+  GlAccount,
+  Invoice,
+  JournalEntry,
+  Lot,
+  NonConformanceReport,
+  PickTask,
+  PurchaseOrder,
+  QualityInspection,
+  Receipt,
+  SerialNumber,
+  Wave,
+  WorkOrder,
+} from '@/lib/embedded';
+import type { EngineSnake } from '@/lib/engine-lifecycles';
+import type { Order, Return, Subscription } from '@/lib/types';
 
 import {
   BILL_STATUSES,
@@ -167,6 +205,42 @@ describe('vocabularies match the binding status unions', () => {
       const accepted = bindingUnion(inputName);
       for (const value of normalised) expect(accepted).toContain(value);
     }
+  });
+});
+
+// Compile-time half of the drift check (enforced by `npm run typecheck:tests`):
+// the record types the pages render carry the binding's own unions, so there
+// is no hand-copied status list left in `lib/types.ts` or `lib/embedded.ts`.
+describe('admin record types carry the binding status unions', () => {
+  it('statuses rendered snake_case by the binding', () => {
+    expectTypeOf<Order['status']>().toEqualTypeOf<NativeOrderStatus>();
+    expectTypeOf<Return['status']>().toEqualTypeOf<NativeReturnStatus>();
+    expectTypeOf<Return['reasonCategory']>().toEqualTypeOf<NativeReturnReason>();
+    expectTypeOf<Subscription['status']>().toEqualTypeOf<NativeSubscriptionStatus>();
+    expectTypeOf<PurchaseOrder['status']>().toEqualTypeOf<NativePurchaseOrderStatus>();
+    expectTypeOf<WorkOrder['status']>().toEqualTypeOf<NativeWorkOrderStatus>();
+    expectTypeOf<Invoice['status']>().toEqualTypeOf<NativeInvoiceStatus>();
+  });
+
+  it('statuses the binding renders in Debug form, normalised to snake_case', () => {
+    expectTypeOf<Bill['status']>().toEqualTypeOf<EngineSnake<NativeBillStatus>>();
+    expectTypeOf<Lot['status']>().toEqualTypeOf<EngineSnake<NativeLotStatus>>();
+    expectTypeOf<SerialNumber['status']>().toEqualTypeOf<EngineSnake<NativeSerialStatus>>();
+    expectTypeOf<QualityInspection['status']>().toEqualTypeOf<
+      EngineSnake<NativeInspectionStatus>
+    >();
+    expectTypeOf<NonConformanceReport['status']>().toEqualTypeOf<EngineSnake<NativeNcrStatus>>();
+    expectTypeOf<NonConformanceReport['severity']>().toEqualTypeOf<
+      EngineSnake<NativeNcrSeverity>
+    >();
+    expectTypeOf<Wave['status']>().toEqualTypeOf<EngineSnake<NativeWaveStatus>>();
+    expectTypeOf<PickTask['status']>().toEqualTypeOf<EngineSnake<NativePickTaskStatus>>();
+    expectTypeOf<Receipt['status']>().toEqualTypeOf<EngineSnake<NativeReceiptStatus>>();
+    expectTypeOf<GlAccount['status']>().toEqualTypeOf<EngineSnake<NativeGlAccountStatus>>();
+    expectTypeOf<JournalEntry['status']>().toEqualTypeOf<EngineSnake<NativeJournalEntryStatus>>();
+    // Spot-check the conversion itself.
+    expectTypeOf<EngineSnake<'PartiallyPaid'>>().toEqualTypeOf<'partially_paid'>();
+    expectTypeOf<EngineSnake<'in_transit'>>().toEqualTypeOf<'in_transit'>();
   });
 });
 
