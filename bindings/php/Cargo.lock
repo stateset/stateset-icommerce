@@ -2552,7 +2552,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stateset-core"
-version = "1.40.1"
+version = "1.41.0"
 dependencies = [
  "auto_impl",
  "base64 0.22.1",
@@ -2574,7 +2574,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-crypto"
-version = "1.40.1"
+version = "1.41.0"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -2598,7 +2598,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-db"
-version = "1.40.1"
+version = "1.41.0"
 dependencies = [
  "chrono",
  "r2d2",
@@ -2620,7 +2620,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded"
-version = "1.40.1"
+version = "1.41.0"
 dependencies = [
  "chrono",
  "futures",
@@ -2641,7 +2641,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-php"
-version = "1.40.1"
+version = "1.41.0"
 dependencies = [
  "chrono",
  "ext-php-rs",
@@ -2654,7 +2654,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-migrations"
-version = "1.40.1"
+version = "1.41.0"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -2665,7 +2665,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-observability"
-version = "1.40.1"
+version = "1.41.0"
 dependencies = [
  "thiserror 2.0.19",
  "tracing",
@@ -2674,7 +2674,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-primitives"
-version = "1.40.1"
+version = "1.41.0"
 dependencies = [
  "rusqlite",
  "rust_decimal",

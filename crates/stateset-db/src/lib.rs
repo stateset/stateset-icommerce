@@ -136,7 +136,7 @@ use stateset_core::{
 /// This trait provides access to repositories within a transaction scope.
 /// All operations performed through the context are part of the same transaction.
 #[deprecated(
-    since = "1.40.1",
+    since = "1.41.0",
     note = "no backend implements this trait; repositories run their own transactions. \
             Scheduled for removal in 2.0"
 )]

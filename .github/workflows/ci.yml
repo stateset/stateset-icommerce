@@ -521,7 +521,7 @@ jobs:
   rust:
     name: Rust
     runs-on: ubuntu-latest
-    # 1.40.1 took 59 of 60 minutes and the ERP suites push the core-crate step
+    # 1.41.0 took 59 of 60 minutes and the ERP suites push the core-crate step
     # alone past 56 (about 1.5x); raised until this job is split.
     timeout-minutes: 120
     needs: [fmt, clippy]
@@ -1192,7 +1192,7 @@ jobs:
     runs-on: ubuntu-latest
     # The prior aggregate run already used 58 minutes; independent boundary
     # and live-PostgreSQL saga gates need room to finish as well.
-    # 1.40.1 took 70 minutes; the ERP suites ran the coverage step past 61 of
+    # 1.41.0 took 70 minutes; the ERP suites ran the coverage step past 61 of
     # its own (about 1.5x) and hit 90. Raised until this job is split.
     timeout-minutes: 150
     needs: [fmt, clippy]

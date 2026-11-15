@@ -6,134 +6,16 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
-The ERP fix plan: 59 corrections so that documents move stock, the ledger
-posts the right accounts, payables and receivables settle their balances,
-and finance writes carry an authenticated identity. Back up and reconcile
-existing stores before upgrading; see
-[docs/src/guides/erp-upgrade.md](docs/src/guides/erp-upgrade.md).
+## [1.41.0] - 2026-11-15
 
-### Breaking changes
+1.41.0 rolls up three lines of work: the 1.40.1 security fixes, which were
+prepared but never published (they ship here), the ERP fix plan, and the
+agentic-commerce safety work. Back up and reconcile existing stores before
+upgrading; see [docs/src/guides/erp-upgrade.md](docs/src/guides/erp-upgrade.md).
 
-- **Finance amounts are decimal strings** in the Node binding and the
-  finance MCP tools (`"125.50"`, not `125.5`), including invoice quantities,
-  finance rates and cost values. MCP refuses numeric money.
-- **Admin is required to approve, settle or post.** HTTP routes for bill and
-  payment-run approval and processing, AP payments and voids, AR settlements
-  and write-offs, journal posting, voids, reversals and period control,
-  posting settings, asset postings, prepayments, vendor credits, payment
-  obligations, credit and cost accounting use a new `manage_finance` action
-  class (Admin level). That includes 42 routes 1.40.1 allowed at operator
-  level, such as voiding and reversing journal entries, month-end close and
-  voiding AP payments. Customer principals are refused it. Request-body
-  `approved_by`, `posted_by`, `closed_by` and `locked_by` no longer set audit
-  identity; the authenticated actor does. Bills and payment runs record
-  their maker and refuse self-approval. The matching MCP tools need the
-  `admin` permission.
-- **ERP HTTP writes need an `Idempotency-Key`.** Missing keys return 428 and
-  conflicting reuse returns 422.
-- **Purchase-order receiving needs warehouse and receiving-location IDs.**
-  Work orders need source and output stock routing before they start
-  (`configure_work_order_stock` routes existing ones). Picked stock stays on
-  hand in a staging location until it ships.
-- **Stricter documents.** Invoices and PO lines are editable only in draft
-  or pending. Payments, write-offs and ledger postings need an issued
-  invoice. A payment applies only if it is captured, from the same customer
-  and in the invoice's currency. Published BOMs need a new revision, two
-  BOMs of one product can't share a revision, and GL periods may not
-  overlap. Invalid lifecycle transitions return conflicts.
-- **Stock and cost custody.** Stock that arrived without a cost can't be
-  issued once its SKU has a cost, and a lot must hold physical stock to be
-  split, merged or transferred. Reconcile opening stock and placements
-  before enabling writes.
-- **Error classes.** Applying a missing payment returns `NotFound`; applying
-  to a closed or voided invoice returns `Conflict`; a deleted stock location
-  returns `NotFound`.
-
-### Fixed
-
-- Stock follows the documents on both databases: transfer orders, work
-  orders, vendor returns, PO receipts, backorders and cycle counts post
-  through one transactional stock ledger. Cycle counts compare against
-  stored stock, put-aways check the receipt line, quarantined lots and
-  quality holds block picking, and the first Postgres put-away of a SKU no
-  longer loses a concurrent one.
-- Correct books: invoices post net sales, sales tax and shipping
-  separately; contract invoices credit unearned revenue; receipts post to
-  goods received not invoiced instead of cost of goods sold; reversed
-  entries stay in every report; depreciation is dated at each period end;
-  every posting keeps one currency with its historical rate; period close is
-  atomic and serialized against posting; inventory is valued by each SKU's
-  cost method.
-- Payables and receivables: prepayments and vendor credits settle the bill
-  they apply to; payment application is locked and validated; a partial
-  write-off writes off only its amount; bills with payments can't be
-  cancelled; customer credit limits are enforced; statements reconcile.
-- Postgres stock ledgers (physical, bin, lot, receiving, picking and cost
-  quantities) store exact quantities, like balances and reservations already
-  did (migration 131). Fractional quantities had been rounded to four
-  decimals and drifted between ledgers.
-- Stock posting no longer creates placeholder warehouses with an empty
-  address, which broke warehouse reads and data export.
-- The sequencer client sends agent key registrations as camelCase, the
-  sequencer's DTO.
-
-### Added
-
-- HTTP routes for cost accounting, customer credit, posting settings, period
-  reclose, account balances, receipts from purchase orders, put-away
-  assign, start and cancel, backorder allocation, lot transfer, adjust and
-  split, and work-order materials.
-- MCP tools to receive and put away goods, create and reverse journal
-  entries, close, lock, reopen and reclose periods, read and set posting
-  settings, run AP payment runs, apply AR payments and write-offs, and route
-  work orders. The finance and operations profiles are smoke-gated.
-- Admin screens to approve and pay bills, apply AR payments and credits,
-  write off and reverse, edit posting settings, and manage BOMs, production
-  batches and item costs.
-- Migrations: SQLite 102–123, Postgres 108–131.
-- `stateset_core::StateMachine`: one trait over the 25 status enums that
-  own a transition rule (order, cart, payment, refund, return, shipment,
-  subscription, purchase order, warranty claim, ...), with `next_states()`,
-  `is_terminal_state()`, `check_transition()` (the refusal names the allowed
-  next states) and `state_machine::catalog()`. It is derived from each
-  enum's existing `can_transition_to`, so no transition rule changes.
-- `explain_state_machine` MCP tool (core tier, read-only) and
-  `stateset explain state-machine`: list the lifecycles, read a full graph,
-  ask what can follow a status, or check a move and get the shortest legal
-  route. Generated from the Rust rules
-  (`cli/src/generated/state-machines.json`); a Rust test fails when it is
-  stale. Reference page: `docs/src/appendix/state-machines.md`.
-- `ClaimStatus`, `QuoteStatus` and `PurchaseStatus` gain
-  `can_transition_to`. The rule was a private table copied into both the
-  SQLite and Postgres repositories; both now call the one in
-  `stateset-core`. The accepted transitions are unchanged.
-
-### Changed
-
-- **BREAKING: the raw-leaf proof tools report success only for a path bound
-  to a caller-supplied tree size.** A leaf hash taken on trust says nothing
-  about where it sits, so without the batch event count an interior node's
-  hash (or the root itself) plus the path above it reached the root and was
-  reported as a valid inclusion or a committed anchor.
-  - `verify_chain_anchor` / `proofs verify-anchor`: `anchored` and `valid`
-    are true only with `leafCount` (`--leaf-count <n>`); the text line says
-    `Chain anchor: unbound (...)` otherwise.
-  - `verify_inclusion_proof` / `proofs verify-proof`: `valid` is true only
-    with `leafCount`; the text line says `Inclusion proof: unbound (...)`
-    otherwise.
-  - `verify_receipt` / `proofs verify-receipt`: a legacy-v0 bundle (or one
-    with no `format`) is valid only with `leafCount`; a new `path_bound`
-    check fails without it and the text line says
-    `Receipt verification: unbound (...)`. ves-v1 bundles are unchanged: their
-    leaf is recomputed from the event in the `VES_LEAF_V1` domain, which no
-    interior node can match, so `leafCount` stays optional there.
-  - All three now carry `rootReached`, the plain hash-chain result, and a
-    `detail` that says what was shown. Migration: pass the batch event count
-    you know independently of the proof (for example, from the anchored
-    commitment) as `leafCount`; read `rootReached` where you relied on the old
-    hash-chain meaning.
-
-## [1.40.1] - 2026-10-27
+The ERP fix plan makes 59 corrections so that documents move stock, the ledger
+posts the right accounts, payables and receivables settle their balances, and
+finance writes carry an authenticated identity.
 
 ### Security
 
@@ -172,6 +54,157 @@ existing stores before upgrading; see
   `@modelcontextprotocol/node` 2.0.0 is affected by GHSA-f897-62hf-6gxq
   (high: HTTP server transports and handlers did not limit request body
   size or JSON-RPC batch length).
+- **The embedded toolkit's capability scope now binds nested tools.**
+  `createEmbeddedAgentToolkit({ capabilities })` checked its scope only at its
+  own boundary, so composite tools (plan steps, plan and mutation simulation,
+  replay, rollback compensations) could run tools the toolkit refused to call
+  directly: a `['read:*', 'agentic_execute_plan']` toolkit could delete a
+  customer through a plan step. The scope is now applied inside the server
+  (new `toolCapabilities` option), so every path resolves only in-scope tools
+  and fails closed otherwise. (#439)
+- **Forged Merkle inclusion proofs are refused.** `sync_verify_inclusion` /
+  `sync verify-inclusion` took the tree size from the prover's own
+  `proof.leafCount`, which let an interior node pass as a leaf. Paths are now
+  bound only to a caller-supplied size, leaf material has fixed lengths, and
+  leaf and root hashes must be exactly 32 bytes. (#438)
+- **`export_full_data` is `admin`**, not `read`: it writes a full store export
+  to a caller-chosen path, which any `read:*` scope and kernel strict mode
+  could reach, even in preview. `agentic_replay_mutation` is `write` and
+  replays only `write` tools, so a write-scoped caller can no longer run admin
+  or delete tools by replaying a logged call. (#435)
+
+### Breaking changes
+
+- **Finance amounts are decimal strings** in the Node binding and the
+  finance MCP tools (`"125.50"`, not `125.5`), including invoice quantities,
+  finance rates and cost values. MCP refuses numeric money.
+- **Admin is required to approve, settle or post.** HTTP routes for bill and
+  payment-run approval and processing, AP payments and voids, AR settlements
+  and write-offs, journal posting, voids, reversals and period control,
+  posting settings, asset postings, prepayments, vendor credits, payment
+  obligations, credit and cost accounting use a new `manage_finance` action
+  class (Admin level). That includes 42 routes 1.40.1 allowed at operator
+  level, such as voiding and reversing journal entries, month-end close and
+  voiding AP payments. Customer principals are refused it. Request-body
+  `approved_by`, `posted_by`, `closed_by` and `locked_by` no longer set audit
+  identity; the authenticated actor does. Bills and payment runs record
+  their maker and refuse self-approval. The matching MCP tools need the
+  `admin` permission.
+- **ERP HTTP writes need an `Idempotency-Key`.** Missing keys return 428 and
+  conflicting reuse returns 422.
+- **Purchase-order receiving needs warehouse and receiving-location IDs.**
+  Work orders need source and output stock routing before they start
+  (`configure_work_order_stock` routes existing ones). Picked stock stays on
+  hand in a staging location until it ships.
+- **Stricter documents.** Invoices and PO lines are editable only in draft
+  or pending. Payments, write-offs and ledger postings need an issued
+  invoice. A payment applies only if it is captured, from the same customer
+  and in the invoice's currency. Published BOMs need a new revision, two
+  BOMs of one product can't share a revision, and GL periods may not
+  overlap. Invalid lifecycle transitions return conflicts.
+- **Stock and cost custody.** Stock that arrived without a cost can't be
+  issued once its SKU has a cost, and a lot must hold physical stock to be
+  split, merged or transferred. Reconcile opening stock and placements
+  before enabling writes.
+- **Error classes.** Applying a missing payment returns `NotFound`; applying
+  to a closed or voided invoice returns `Conflict`; a deleted stock location
+  returns `NotFound`.
+- **Tools that write are declared writes.** `export_full_data` needs the
+  `admin` permission; `agentic_replay_mutation`, `agent_collect_rfq_responses`,
+  `agentic_unsubscribe_events`, `x402_credit_balance` (it creates the credit
+  account on first read) and `resolve_payment_link` (it counts a view) need
+  `--apply` and are hidden in kernel strict mode. Pure reads exist for the last
+  two: `x402_get_credit_account` and `get_payment_link_status`. (#435, #450,
+  #451)
+- **Embedded toolkit scope.** A scoped toolkit's catalog, discovery, plans,
+  simulations, replays and compensations are limited to its scope, and a
+  failed plan no longer rolls back through an out-of-scope compensation.
+  `capabilities` must be an array or a `Set` (a string now throws), and
+  `delegate_to_agent` needs an explicit grant (its name or `*`). (#439)
+- **A plan fails when any step does not succeed.** `agentic_execute_plan`
+  used to report `success` with an `invalid` or `payment_required` step in it,
+  so `rollbackOnFailure` never ran. Any step status other than `success` or
+  `dry_run_success` now fails the plan. (#442)
+- **The inline sync verifier rejects unsigned legacy events** (the zero
+  signature placeholder). (#438)
+- **The raw-leaf proof tools report success only for a path bound
+  to a caller-supplied tree size.** A leaf hash taken on trust says nothing
+  about where it sits, so without the batch event count an interior node's
+  hash (or the root itself) plus the path above it reached the root and was
+  reported as a valid inclusion or a committed anchor.
+  - `verify_chain_anchor` / `proofs verify-anchor`: `anchored` and `valid`
+    are true only with `leafCount` (`--leaf-count <n>`); the text line says
+    `Chain anchor: unbound (...)` otherwise.
+  - `verify_inclusion_proof` / `proofs verify-proof`: `valid` is true only
+    with `leafCount`; the text line says `Inclusion proof: unbound (...)`
+    otherwise.
+  - `verify_receipt` / `proofs verify-receipt`: a legacy-v0 bundle (or one
+    with no `format`) is valid only with `leafCount`; a new `path_bound`
+    check fails without it and the text line says
+    `Receipt verification: unbound (...)`. ves-v1 bundles are unchanged: their
+    leaf is recomputed from the event in the `VES_LEAF_V1` domain, which no
+    interior node can match, so `leafCount` stays optional there.
+  - All three now carry `rootReached`, the plain hash-chain result, and a
+    `detail` that says what was shown. Migration: pass the batch event count
+    you know independently of the proof (for example, from the anchored
+    commitment) as `leafCount`; read `rootReached` where you relied on the old
+    hash-chain meaning.
+
+### Added
+
+- HTTP routes for cost accounting, customer credit, posting settings, period
+  reclose, account balances, receipts from purchase orders, put-away
+  assign, start and cancel, backorder allocation, lot transfer, adjust and
+  split, and work-order materials.
+- MCP tools to receive and put away goods, create and reverse journal
+  entries, close, lock, reopen and reclose periods, read and set posting
+  settings, run AP payment runs, apply AR payments and write-offs, and route
+  work orders. The finance and operations profiles are smoke-gated.
+- Admin screens to approve and pay bills, apply AR payments and credits,
+  write off and reverse, edit posting settings, and manage BOMs, production
+  batches and item costs.
+- Migrations: SQLite 102–123, Postgres 108–131.
+- `stateset_core::StateMachine`: one trait over the 25 status enums that
+  own a transition rule (order, cart, payment, refund, return, shipment,
+  subscription, purchase order, warranty claim, ...), with `next_states()`,
+  `is_terminal_state()`, `check_transition()` (the refusal names the allowed
+  next states) and `state_machine::catalog()`. It is derived from each
+  enum's existing `can_transition_to`, so no transition rule changes.
+- `explain_state_machine` MCP tool (core tier, read-only) and
+  `stateset explain state-machine`: list the lifecycles, read a full graph,
+  ask what can follow a status, or check a move and get the shortest legal
+  route. Generated from the Rust rules
+  (`cli/src/generated/state-machines.json`); a Rust test fails when it is
+  stale. Reference page: `docs/src/appendix/state-machines.md`.
+- `ClaimStatus`, `QuoteStatus` and `PurchaseStatus` gain
+  `can_transition_to`. The rule was a private table copied into both the
+  SQLite and Postgres repositories; both now call the one in
+  `stateset-core`. The accepted transitions are unchanged.
+- **Plans and replays in kernel strict mode.** `agentic_execute_plan` and
+  `agentic_replay_mutation` run at the top level on the strict profile; every
+  nested step is still a governed kernel command with operator-owned identity,
+  and ungoverned writes or composites nested in composites are refused before
+  anything runs. (#448)
+- **MCP tool annotations.** `tools/list` advertises `readOnlyHint` and
+  `destructiveHint` derived from each tool's permission, on the stdio, HTTP and
+  in-process servers; write tools never claim to be non-destructive. (#436)
+- **`stateset-agent-report`** reads the MCP replay log and reports per
+  session: calls by status and tool, kernel refusals by reason code, errors,
+  exact charge totals and latency percentiles. (#443)
+- **Kernel decisions in the replay log.** Governed replay events carry a
+  `kernel` block (command id, correlation id, receipt status, reason codes,
+  principal, audit hash), and governed commands always carry a UUID
+  `correlation_id` that the receipt echoes. (#444)
+- **Proof tools take the tree size.** `verify_inclusion_proof`,
+  `verify_chain_anchor` and `verify_receipt` (and the `proofs` commands) accept
+  `leafCount` / `--leaf-count`, and report `pathBound`, `leafCountSource` and
+  `rootReached`. (#438, #449)
+- **The ICP conformance suite is installable** as
+  `@stateset/icp-conformance` (private for now) with a `--report` JSON
+  conformance report. (#447)
+- **A seeded multi-agent swarm simulator** (`sim/`, dev-only) drives N agents
+  through governed checkout and checks stock, budget, receipt, idempotency and
+  audit-chain invariants out of process. (#445)
 
 ### Changed
 
@@ -182,10 +215,47 @@ existing stores before upgrading; see
 
 ### Fixed
 
+- Stock follows the documents on both databases: transfer orders, work
+  orders, vendor returns, PO receipts, backorders and cycle counts post
+  through one transactional stock ledger. Cycle counts compare against
+  stored stock, put-aways check the receipt line, quarantined lots and
+  quality holds block picking, and the first Postgres put-away of a SKU no
+  longer loses a concurrent one.
+- Correct books: invoices post net sales, sales tax and shipping
+  separately; contract invoices credit unearned revenue; receipts post to
+  goods received not invoiced instead of cost of goods sold; reversed
+  entries stay in every report; depreciation is dated at each period end;
+  every posting keeps one currency with its historical rate; period close is
+  atomic and serialized against posting; inventory is valued by each SKU's
+  cost method.
+- Payables and receivables: prepayments and vendor credits settle the bill
+  they apply to; payment application is locked and validated; a partial
+  write-off writes off only its amount; bills with payments can't be
+  cancelled; customer credit limits are enforced; statements reconcile.
+- Postgres stock ledgers (physical, bin, lot, receiving, picking and cost
+  quantities) store exact quantities, like balances and reservations already
+  did (migration 131). Fractional quantities had been rounded to four
+  decimals and drifted between ledgers.
+- Stock posting no longer creates placeholder warehouses with an empty
+  address, which broke warehouse reads and data export.
+- The sequencer client sends agent key registrations as camelCase, the
+  sequencer's DTO.
 - `stateset-db` caps `scheduled-thread-pool` (r2d2's pool) below 0.2.8. That
   release needs `parking_lot` 0.13, which requires Rust 1.95, and declares no
   `rust-version`, so a fresh `cargo add stateset-sdk` failed to build on the
   supported toolchains (MSRV 1.88).
+- The erc8004 tools no longer open the engine's store with a second SQLite
+  copy in-process, which released the engine's locks and unlinked its WAL so
+  later writes were lost; each file-backed call runs in a child process.
+  (#440)
+- `stateset-mcp-http` shares one side-store connection per process instead of
+  opening and closing one per request, which unlinked the engine's WAL and
+  could leave the store "malformed". This is a stopgap until side stores move
+  behind the engine binding. The circuit breaker's per-agent map is bounded.
+  (#441)
+- MCP event streams keep a governed event's `kernel` block. (#444)
+- Stale documentation claims (nonexistent tools, `--profile full`, `npx`
+  without `-p`, the domain count) are corrected and checked by a test. (#446)
 
 ## [1.40.0] - 2026-10-22
 
