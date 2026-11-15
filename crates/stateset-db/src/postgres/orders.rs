@@ -487,6 +487,7 @@ impl PgOrderRepository {
             });
         }
 
+        super::credit_control::check_order(tx, order_id).await?;
         Ok(())
     }
 
@@ -698,6 +699,8 @@ impl PgOrderRepository {
             return Self::row_to_order(row, items);
         }
 
+        super::credit_control::check_order(tx, order_id).await?;
+
         // Catalogue guard for every line, in the order-creating transaction.
         // Deliberately AFTER the idempotent-checkout early return above: a
         // replayed checkout must still resolve to the order it already minted,
@@ -826,13 +829,10 @@ impl PgOrderRepository {
             return Ok(());
         };
 
-        let available: Decimal = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(quantity_available), 0) FROM inventory_balances WHERE item_id = $1",
-        )
-        .bind(item_id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        let locations: Vec<(i32, Decimal)> = sqlx::query_as(
+            "SELECT location_id, quantity_available FROM inventory_balances WHERE item_id = $1 ORDER BY location_id"
+        ).bind(item_id).fetch_all(tx.as_mut()).await.map_err(map_db_error)?;
+        let available: Decimal = locations.iter().map(|row| row.1.max(Decimal::ZERO)).sum();
 
         let requested = Decimal::from(item.quantity);
         if !stock_policy.allows_backorder() && available < requested {
@@ -842,34 +842,31 @@ impl PgOrderRepository {
                 available: available.to_string(),
             });
         }
-        let reserve_qty =
-            if available > Decimal::ZERO { requested.min(available) } else { Decimal::ZERO };
-
         let mut reserved = Decimal::ZERO;
-        if reserve_qty > Decimal::ZERO {
+        for (warehouse, available) in locations {
+            let reserve_qty = (requested - reserved).min(available.max(Decimal::ZERO));
+            if reserve_qty <= Decimal::ZERO {
+                continue;
+            }
             let reserve_input = ReserveInventory {
                 sku: item.sku.clone(),
-                location_id: None,
+                location_id: Some(warehouse),
                 quantity: reserve_qty,
-                reference_type: "order".to_string(),
-                reference_id,
+                reference_type: "order".into(),
+                reference_id: reference_id.clone(),
                 expires_in_seconds: None,
             };
-
             match inventory_repo
                 .reserve_for_line_in_tx(tx, &reserve_input, Some(item.id.into_uuid()))
                 .await
             {
-                Ok(_) => {
-                    reserved = reserve_qty;
-                }
-                Err(err) => {
-                    if stock_policy.allows_backorder()
-                        && matches!(err, CommerceError::InsufficientStock { .. })
+                Ok(_) => reserved += reserve_qty,
+                Err(error) => {
+                    let error = error;
+                    if !stock_policy.allows_backorder()
+                        || !matches!(error, CommerceError::InsufficientStock { .. })
                     {
-                        reserved = Decimal::ZERO;
-                    } else {
-                        return Err(err);
+                        return Err(error);
                     }
                 }
             }
@@ -1575,6 +1572,18 @@ impl PgOrderRepository {
             if input.void_payments {
                 cancel_money.voided_payment_ids =
                     void_in_flight_payments_for_order_pg(tx.as_mut(), id, now).await?;
+                for payment_id in &cancel_money.voided_payment_ids {
+                    let gl =
+                        super::general_ledger::PgGeneralLedgerRepository::new(self.pool.clone());
+                    super::ledger_reversal::reverse_source(
+                        tx,
+                        &gl,
+                        "payment",
+                        *payment_id,
+                        now.date_naive(),
+                    )
+                    .await?;
+                }
                 let voided = &cancel_money.voided_payment_ids;
                 let outstanding: Vec<_> =
                     open.iter().filter(|p| !voided.contains(&p.id.into_uuid())).collect();

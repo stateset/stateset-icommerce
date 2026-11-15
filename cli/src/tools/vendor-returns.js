@@ -53,10 +53,18 @@ export const vendorReturnTools = withPolicyDomain('vendor-returns', [
     description: 'Create a draft vendor return.',
     inputSchema: {
       supplierId: z.string().min(1).describe('Supplier ID'),
+      warehouseId: z.number().int().positive().describe('Source warehouse ID'),
       items: z
         .array(
           z.object({
             productId: z.string().min(1).describe('Product ID'),
+            sku: z.string().min(1).describe('Exact product variant SKU'),
+            sourceLocationId: z.number().int().positive().describe('Physical source location ID'),
+            lotId: z
+              .string()
+              .uuid()
+              .optional()
+              .describe('Lot identity; required for held lot stock'),
             quantity: z.string().min(1).describe('Quantity (exact decimal string)'),
             unitCost: z.string().min(1).describe('Unit cost (exact decimal string)'),
             reason: z
@@ -78,6 +86,7 @@ export const vendorReturnTools = withPolicyDomain('vendor-returns', [
       }
       const vendorReturn = await commerce.vendorReturns.create({
         supplierId: params.supplierId,
+        warehouseId: params.warehouseId,
         purchaseOrderId: params.purchaseOrderId,
         currency: params.currency,
         items: params.items,
@@ -103,10 +112,13 @@ export const vendorReturnTools = withPolicyDomain('vendor-returns', [
   },
   {
     name: 'process_vendor_return',
-    description: 'Process a vendor return, optionally generating a vendor credit.',
+    description: 'Remove returned stock and create one linked vendor credit atomically.',
     inputSchema: {
       id: z.string().min(1).describe('Vendor return ID'),
-      generateCredit: z.boolean().describe('Whether to generate a vendor credit'),
+      generateCredit: z
+        .literal(true)
+        .default(true)
+        .describe('Processing creates one linked vendor credit'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {

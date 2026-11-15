@@ -341,6 +341,24 @@ fn optional_money_input(
     }
 }
 
+/// Finance surfaces accept exact strings for both canonical and legacy Exact names.
+fn finance_money_input(exact: Option<&str>, value: Option<String>, field: &str) -> Result<Decimal> {
+    exact
+        .or(value.as_deref())
+        .ok_or_else(|| coded(ErrCode::Validation, format!("Missing {field}: use a decimal string")))
+        .and_then(|text| parse_decimal_str(text, field))
+}
+fn optional_finance_money_input(
+    exact: Option<&str>,
+    value: Option<String>,
+    field: &str,
+) -> Result<Option<Decimal>> {
+    exact.or(value.as_deref()).map(|text| parse_decimal_str(text, field)).transpose()
+}
+fn optional_decimal_string(value: Option<String>, field: &str) -> Result<Option<Decimal>> {
+    value.as_deref().map(|text| parse_decimal_str(text, field)).transpose()
+}
+
 /// Options for `Commerce.open`.
 #[napi(object)]
 #[derive(Clone, Default)]

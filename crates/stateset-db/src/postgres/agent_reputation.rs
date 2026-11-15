@@ -491,7 +491,7 @@ impl AgentReputationRepository for PgAgentReputationRepository {
             .bind(&registry)
             .bind(&agent)
             .bind(&client)
-            .fetch_optional(&pool)
+            .fetch_one(&pool)
             .await
             .map_err(map_db_error)?;
             Ok(index.unwrap_or(0) as u64)

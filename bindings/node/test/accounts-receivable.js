@@ -15,6 +15,11 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 
 const UNKNOWN_ID = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
+function assertDecimal(actual, expected) {
+  assert.equal(typeof actual, 'string');
+  const normalize = v => v.includes('.') ? v.replace(/0+$/, '').replace(/\.$/, '') : v;
+  assert.equal(normalize(actual), normalize(String(expected)));
+}
 const ZERO_AGING = {
   currentExact: '0',
   days130Exact: '0',
@@ -31,7 +36,7 @@ async function customer(commerce, email = 'ar@example.com') {
 async function invoice(commerce, customerId, unitPriceExact, quantity = 1) {
   return commerce.invoices.create({
     customerId,
-    items: [{ description: 'Consulting', quantity, unitPriceExact }],
+    items: [{ description: 'Consulting', quantity: String(quantity), unitPriceExact }],
   });
 }
 
@@ -43,9 +48,9 @@ test('an empty ledger reports zero aging, zero outstanding, zero DSO', async () 
   const commerce = new Commerce(':memory:');
   const aging = await commerce.accountsReceivable.getAgingSummary();
   assert.deepEqual(exactAging(aging), ZERO_AGING);
-  assert.equal(aging.total, 0);
-  assert.equal(await commerce.accountsReceivable.getTotalOutstanding(), 0);
-  assert.equal(await commerce.accountsReceivable.getDso(30), 0);
+  assertDecimal(aging.total, "0");
+  assertDecimal(await commerce.accountsReceivable.getTotalOutstanding(), "0");
+  assertDecimal(await commerce.accountsReceivable.getDso(30), "0");
 });
 
 test('invoice -> partial payment -> outstanding balance -> aging report', async () => {
@@ -55,12 +60,14 @@ test('invoice -> partial payment -> outstanding balance -> aging report', async 
   assert.equal(inv.totalExact, '100.00');
   assert.equal(inv.amountPaidExact, '0');
   assert.equal(inv.status, 'draft');
+  assert.deepEqual(exactAging(await commerce.accountsReceivable.getAgingSummary()), ZERO_AGING);
+  await commerce.invoices.send(inv.id);
   // Due 30 days out, so the whole balance ages as "current".
   assert.ok(Date.parse(inv.dueDate) > Date.now());
 
   let aging = await commerce.accountsReceivable.getAgingSummary();
   assert.deepEqual(exactAging(aging), { ...ZERO_AGING, currentExact: '100.00', totalExact: '100.00' });
-  assert.equal(await commerce.accountsReceivable.getTotalOutstanding(), 100);
+  assertDecimal(await commerce.accountsReceivable.getTotalOutstanding(), "100");
 
   const paid = await commerce.invoices.recordPayment(inv.id, {
     amountExact: '40.00',
@@ -73,20 +80,20 @@ test('invoice -> partial payment -> outstanding balance -> aging report', async 
 
   aging = await commerce.accountsReceivable.getAgingSummary();
   assert.deepEqual(exactAging(aging), { ...ZERO_AGING, currentExact: '60.00', totalExact: '60.00' });
-  assert.equal(aging.current, 60);
-  assert.equal(aging.total, 60);
-  assert.equal(await commerce.accountsReceivable.getTotalOutstanding(), 60);
+  assertDecimal(aging.current, "60");
+  assertDecimal(aging.total, "60");
+  assertDecimal(await commerce.accountsReceivable.getTotalOutstanding(), "60");
 
   // DSO = outstanding / sales in window x days = 60 / 100 x 30 = 18.
-  assert.equal(await commerce.accountsReceivable.getDso(30), 18);
-  assert.equal(await commerce.accountsReceivable.getDso(90), 54);
+  assertDecimal(await commerce.accountsReceivable.getDso(30), "18");
+  assertDecimal(await commerce.accountsReceivable.getDso(90), "54");
 
   const settled = await commerce.invoices.recordPayment(inv.id, { amountExact: '60.00' });
   assert.equal(settled.status, 'paid');
   assert.equal(settled.amountPaidExact, '100.00');
   assert.deepEqual(exactAging(await commerce.accountsReceivable.getAgingSummary()), ZERO_AGING);
-  assert.equal(await commerce.accountsReceivable.getTotalOutstanding(), 0);
-  assert.equal(await commerce.accountsReceivable.getDso(30), 0);
+  assertDecimal(await commerce.accountsReceivable.getTotalOutstanding(), "0");
+  assertDecimal(await commerce.accountsReceivable.getDso(30), "0");
 });
 
 test('aging sums exact balances across customers and drops voided invoices', async () => {
@@ -96,6 +103,7 @@ test('aging sums exact balances across customers and drops voided invoices', asy
   const ia = await invoice(commerce, a.id, '19.99', 3); // 59.97
   const ib = await invoice(commerce, b.id, '0.01', 7); // 0.07
   const ic = await invoice(commerce, b.id, '250.00'); // 250.00, voided below
+  for (const item of [ia, ib, ic]) await commerce.invoices.send(item.id);
 
   let aging = await commerce.accountsReceivable.getAgingSummary();
   assert.equal(aging.currentExact, '310.04');
@@ -108,7 +116,7 @@ test('aging sums exact balances across customers and drops voided invoices', asy
   aging = await commerce.accountsReceivable.getAgingSummary();
   assert.equal(aging.currentExact, '50.07'); // 50.00 + 0.07
   assert.equal(aging.totalExact, '50.07');
-  assert.equal(await commerce.accountsReceivable.getTotalOutstanding(), 50.07);
+  assertDecimal(await commerce.accountsReceivable.getTotalOutstanding(), "50.07");
   assert.equal(ib.totalExact, '0.07');
 });
 
@@ -116,6 +124,7 @@ test('overpaying an invoice is refused with VALIDATION and leaves the receivable
   const commerce = new Commerce(':memory:');
   const cust = await customer(commerce);
   const inv = await invoice(commerce, cust.id, '25.00');
+  await commerce.invoices.send(inv.id);
   await assert.rejects(
     commerce.invoices.recordPayment(inv.id, { amountExact: '25.01' }),
     (err) => err.code === 'VALIDATION' && /exceeds/.test(err.message),
@@ -127,19 +136,20 @@ test('createCreditMemo -> getCreditMemo -> listCreditMemos -> getUnappliedCredit
   const commerce = new Commerce(':memory:');
   const cust = await customer(commerce);
   const inv = await invoice(commerce, cust.id, '80.00');
+  await commerce.invoices.send(inv.id);
 
   const memo = await commerce.accountsReceivable.createCreditMemo({
     customerId: cust.id,
     originalInvoiceId: inv.id,
     reason: 'returned_goods',
-    amount: 12.34,
+    amount: '12.34',
     notes: 'one unit returned',
   });
   assert.ok(memo.id);
   assert.match(memo.creditMemoNumber, /^CM-/);
   assert.equal(memo.customerId, cust.id);
   assert.equal(memo.amountExact, '12.34');
-  assert.equal(memo.amount, 12.34);
+  assertDecimal(memo.amount, "12.34");
   assert.equal(memo.status, 'Open');
   assert.equal(memo.reason, 'ReturnedGoods');
   assert.ok(!Number.isNaN(Date.parse(memo.createdAt)));
@@ -174,12 +184,12 @@ test('credit memo reasons map onto the engine enum, unknown is refused with VALI
     ['other', 'Other'],
   ];
   for (const [reason, expected] of cases) {
-    const memo = await commerce.accountsReceivable.createCreditMemo({ customerId: cust.id, reason, amount: 1 });
+    const memo = await commerce.accountsReceivable.createCreditMemo({ customerId: cust.id, reason, amount: '1' });
     assert.equal(memo.reason, expected, `reason '${reason}'`);
   }
   assert.equal((await commerce.accountsReceivable.listCreditMemos()).length, cases.length);
   await assert.rejects(
-    commerce.accountsReceivable.createCreditMemo({ customerId: cust.id, reason: 'because', amount: 1 }),
+    commerce.accountsReceivable.createCreditMemo({ customerId: cust.id, reason: 'because', amount: '1' }),
     (err) => err.code === 'VALIDATION' && /credit memo reason 'because'/.test(err.message),
   );
   assert.equal((await commerce.accountsReceivable.listCreditMemos()).length, cases.length);
@@ -191,7 +201,7 @@ test('voidCreditMemo flips open -> voided once; a second void is CONFLICT', asyn
   const memo = await commerce.accountsReceivable.createCreditMemo({
     customerId: cust.id,
     reason: 'goodwill',
-    amount: 5,
+    amount: '5',
   });
 
   const voided = await commerce.accountsReceivable.voidCreditMemo(memo.id);
@@ -218,7 +228,7 @@ test(
     const memo = await commerce.accountsReceivable.createCreditMemo({
       customerId: cust.id,
       reason: 'goodwill',
-      amount: 5,
+      amount: '5',
     });
     await commerce.accountsReceivable.voidCreditMemo(memo.id);
     assert.deepEqual(await commerce.accountsReceivable.getUnappliedCredits(cust.id), []);
@@ -230,7 +240,7 @@ test(
   async () => {
     const commerce = new Commerce(':memory:');
     await assert.rejects(
-      commerce.accountsReceivable.createCreditMemo({ customerId: UNKNOWN_ID, reason: 'goodwill', amount: 1 }),
+      commerce.accountsReceivable.createCreditMemo({ customerId: UNKNOWN_ID, reason: 'goodwill', amount: '1' }),
       (err) => err.code === 'NOT_FOUND' || err.code === 'VALIDATION',
     );
     assert.deepEqual(await commerce.accountsReceivable.listCreditMemos(), []);
@@ -240,7 +250,7 @@ test(
 test('createCreditMemo refuses a non-positive amount with VALIDATION', async () => {
   const commerce = new Commerce(':memory:');
   const cust = await customer(commerce);
-  for (const amount of [0, -1]) {
+  for (const amount of ['0', '-1']) {
     await assert.rejects(
       commerce.accountsReceivable.createCreditMemo({ customerId: cust.id, reason: 'other', amount }),
       (err) => err.code === 'VALIDATION' && /greater than zero/.test(err.message),
@@ -255,7 +265,7 @@ test('malformed UUIDs and a NaN amount are refused with VALIDATION', async () =>
   const cust = await customer(commerce);
 
   await assert.rejects(
-    commerce.accountsReceivable.createCreditMemo({ customerId: 'not-a-uuid', reason: 'other', amount: 1 }),
+    commerce.accountsReceivable.createCreditMemo({ customerId: 'not-a-uuid', reason: 'other', amount: '1' }),
     (err) => err.code === 'VALIDATION' && /customer UUID/i.test(err.message),
   );
   await assert.rejects(
@@ -263,12 +273,12 @@ test('malformed UUIDs and a NaN amount are refused with VALIDATION', async () =>
       customerId: cust.id,
       originalInvoiceId: 'not-a-uuid',
       reason: 'other',
-      amount: 1,
+      amount: '1',
     }),
     (err) => err.code === 'VALIDATION' && /invoice UUID 'not-a-uuid'/i.test(err.message),
   );
   await assert.rejects(
-    commerce.accountsReceivable.createCreditMemo({ customerId: cust.id, reason: 'other', amount: NaN }),
+    commerce.accountsReceivable.createCreditMemo({ customerId: cust.id, reason: 'other', amount: 'NaN' }),
     (err) => err.code === 'VALIDATION' && /amount/i.test(err.message),
   );
   for (const op of ['getCreditMemo', 'voidCreditMemo', 'getUnappliedCredits']) {

@@ -146,6 +146,16 @@ impl VendorCreditRepository for SqliteVendorCreditRepository {
         let number = format!("VC-{}", &id_str[..8]);
         with_immediate_transaction(&self.pool, |tx| {
             let currency = resolve_currency_in_tx(input.currency, tx)?;
+            if let Some(return_id) = input.vendor_return_id {
+                super::vendor_return_stock::validate_credit_link(
+                    tx,
+                    input.supplier_id,
+                    return_id,
+                    input.amount,
+                    currency,
+                    &now_str,
+                )?;
+            }
             tx.execute(
                 "INSERT INTO vendor_credits (id, number, supplier_id, vendor_return_id, amount, remaining, currency, status, memo, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)",
@@ -215,6 +225,14 @@ impl VendorCreditRepository for SqliteVendorCreditRepository {
             if input.amount > credit.remaining {
                 return Err(Self::validation("application exceeds remaining balance"));
             }
+            super::ap_settlement::apply(
+                tx,
+                &input.target_type.to_string(),
+                input.target_id,
+                credit.supplier_id,
+                credit.currency,
+                input.amount,
+            )?;
             let new_remaining = credit.remaining - input.amount;
             let new_status = Self::status_for(new_remaining, credit.status);
             tx.execute(
@@ -270,8 +288,26 @@ impl VendorCreditRepository for SqliteVendorCreditRepository {
             if reversed != 0 {
                 return Err(Self::conflict("application already reversed"));
             }
-            let amount: Decimal = amount_str.parse().unwrap_or(Decimal::ZERO);
+            let amount = parse_decimal_row(&amount_str, "supplier_application", "amount")?;
             let credit = Self::fetch(tx, &id_str)?;
+            let (target_kind, target_id) = tx.query_row(
+                "SELECT target_type,target_id FROM vendor_credit_applications WHERE id = ?1",
+                rusqlite::params![(uuid::Uuid::from(application_id)).to_string()],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        super::parse_uuid_row(&r.get::<_, String>(1)?, "stock", "id")?,
+                    ))
+                },
+            )?;
+            super::ap_settlement::apply(
+                tx,
+                &target_kind,
+                target_id,
+                credit.supplier_id,
+                credit.currency,
+                -amount,
+            )?;
             let new_remaining = credit.remaining + amount;
             let new_status = Self::status_for(new_remaining, credit.status);
             tx.execute(
@@ -333,8 +369,59 @@ mod tests {
         .expect("create vendor credit")
     }
 
-    fn apply(target: VendorCreditTargetType, amount: Decimal) -> ApplyVendorCredit {
-        ApplyVendorCredit { target_type: target, target_id: Uuid::new_v4(), amount }
+    fn apply(
+        repo: &SqliteVendorCreditRepository,
+        target: VendorCreditTargetType,
+        amount: Decimal,
+    ) -> ApplyVendorCredit {
+        let supplier = repo.list(Default::default()).unwrap()[0].supplier_id;
+        if target == VendorCreditTargetType::PaymentObligation {
+            use stateset_core::PaymentObligationRepository;
+            let target =
+                crate::sqlite::payment_obligations::SqlitePaymentObligationRepository::new(
+                    repo.pool.clone(),
+                )
+                .create(stateset_core::CreatePaymentObligation {
+                    supplier_id: supplier,
+                    purchase_order_id: None,
+                    amount: dec!(1000),
+                    currency: Some(CurrencyCode::USD),
+                    due_date: Utc::now().date_naive(),
+                    notes: None,
+                })
+                .unwrap();
+            return ApplyVendorCredit {
+                target_type: VendorCreditTargetType::PaymentObligation,
+                target_id: target.id.into(),
+                amount,
+            };
+        }
+        use stateset_core::AccountsPayableRepository;
+        let ap = crate::sqlite::accounts_payable::SqliteAccountsPayableRepository::new(
+            repo.pool.clone(),
+        );
+        let bill = ap
+            .create_bill(stateset_core::CreateBill {
+                created_by: None,
+                bill_number: None,
+                supplier_id: supplier,
+                purchase_order_id: None,
+                bill_date: None,
+                due_date: Utc::now(),
+                payment_terms: None,
+                currency: Some(CurrencyCode::USD),
+                reference_number: None,
+                memo: None,
+                items: vec![stateset_core::CreateBillItem {
+                    description: "Settlement target".into(),
+                    quantity: dec!(1),
+                    unit_price: dec!(1000),
+                    ..Default::default()
+                }],
+            })
+            .unwrap();
+        ap.approve_bill(bill.id).unwrap();
+        ApplyVendorCredit { target_type: VendorCreditTargetType::Bill, target_id: bill.id, amount }
     }
 
     #[test]
@@ -356,12 +443,13 @@ mod tests {
     fn apply_decrements_and_marks_applied() {
         let repo = test_repo();
         let c = new_credit(&repo, dec!(100));
-        let after = repo.apply(c.id, apply(VendorCreditTargetType::Bill, dec!(40))).expect("apply");
+        let after =
+            repo.apply(c.id, apply(&repo, VendorCreditTargetType::Bill, dec!(40))).expect("apply");
         assert_eq!(after.remaining, dec!(60));
         assert_eq!(after.status, VendorCreditStatus::Open);
 
         let after = repo
-            .apply(c.id, apply(VendorCreditTargetType::PaymentObligation, dec!(60)))
+            .apply(c.id, apply(&repo, VendorCreditTargetType::PaymentObligation, dec!(60)))
             .expect("apply rest");
         assert_eq!(after.remaining, dec!(0));
         assert_eq!(after.status, VendorCreditStatus::Applied);
@@ -372,14 +460,14 @@ mod tests {
     fn apply_over_balance_rejected() {
         let repo = test_repo();
         let c = new_credit(&repo, dec!(50));
-        assert!(repo.apply(c.id, apply(VendorCreditTargetType::Bill, dec!(60))).is_err());
+        assert!(repo.apply(c.id, apply(&repo, VendorCreditTargetType::Bill, dec!(60))).is_err());
     }
 
     #[test]
     fn reverse_restores_balance() {
         let repo = test_repo();
         let c = new_credit(&repo, dec!(100));
-        repo.apply(c.id, apply(VendorCreditTargetType::Bill, dec!(100))).expect("apply");
+        repo.apply(c.id, apply(&repo, VendorCreditTargetType::Bill, dec!(100))).expect("apply");
         let apps = repo.list_applications(c.id).expect("apps");
         let reversed = repo.reverse_application(c.id, apps[0].id).expect("reverse");
         assert_eq!(reversed.remaining, dec!(100));
@@ -392,7 +480,7 @@ mod tests {
     fn cancel_blocked_with_active_applications() {
         let repo = test_repo();
         let c = new_credit(&repo, dec!(100));
-        repo.apply(c.id, apply(VendorCreditTargetType::Bill, dec!(10))).expect("apply");
+        repo.apply(c.id, apply(&repo, VendorCreditTargetType::Bill, dec!(10))).expect("apply");
         assert!(repo.cancel(c.id).is_err());
 
         let apps = repo.list_applications(c.id).expect("apps");
@@ -413,7 +501,7 @@ mod tests {
             let id = credit.id;
             handles.push(std::thread::spawn(move || {
                 barrier.wait();
-                repo.apply(id, apply(VendorCreditTargetType::Bill, dec!(2)))
+                repo.apply(id, apply(&repo, VendorCreditTargetType::Bill, dec!(2)))
             }));
         }
         let mut successes = 0;

@@ -53,6 +53,7 @@ fn sqlite_list_journal_entries_applies_account_and_search_filters() {
         source_document_type: None,
         source_document_id: None,
         auto_post: Some(false),
+        fx: None,
     })
     .expect("create entry A");
     gl.create_journal_entry(CreateJournalEntry {
@@ -66,6 +67,7 @@ fn sqlite_list_journal_entries_applies_account_and_search_filters() {
         source_document_type: None,
         source_document_id: None,
         auto_post: Some(false),
+        fx: None,
     })
     .expect("create entry B");
 

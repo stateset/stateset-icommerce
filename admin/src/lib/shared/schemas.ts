@@ -95,7 +95,7 @@ export const cancelSessionSchema = z.object({
 export const agentChatMessageSchema = z.object({
   message: z.string().min(1, 'Message is required').max(10000),
   chatId: z.string().optional(),
-  context: z.record(z.unknown()).optional(),
+  context: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const confirmActionSchema = z.object({
@@ -123,7 +123,7 @@ export const updateSubscriptionSchema = z.object({
 
 export const integrationCredentialSchema = z.object({
   provider: z.string().min(1, 'Provider is required'),
-  credentials: z.record(z.string()),
+  credentials: z.record(z.string(), z.string()),
   name: z.string().min(1).max(200).optional(),
 });
 
@@ -520,7 +520,7 @@ export const productIdArgsSchema = z.object({ productId: safeIdSchema });
  * diagnosis, and it is the message the close-month UI surfaces.
  */
 export const periodIdSchema = z
-  .string({ required_error: 'Period ID is required', invalid_type_error: 'Period ID is required' })
+  .string({ error: 'Period ID is required' })
   .trim()
   .min(1, 'Period ID is required')
   .max(200, 'Period ID is too long')
@@ -552,10 +552,7 @@ export const runCloseMonthArgsSchema = z.object({
 export const ORG_ID_MAX_LENGTH = 128;
 
 export const orgIdSchema = z
-  .string({
-    required_error: 'Invalid orgId: must be 1-128 URL-safe chars',
-    invalid_type_error: 'Invalid orgId: must be 1-128 URL-safe chars',
-  })
+  .string({ error: 'Invalid orgId: must be 1-128 URL-safe chars' })
   .min(1, 'Invalid orgId: must be 1-128 URL-safe chars')
   .max(ORG_ID_MAX_LENGTH, 'Invalid orgId: must be 1-128 URL-safe chars')
   .regex(/^[A-Za-z0-9_.-]+$/, 'Invalid orgId: must be 1-128 URL-safe chars');

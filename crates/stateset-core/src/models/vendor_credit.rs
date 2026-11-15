@@ -3,7 +3,9 @@
 //! A vendor credit is an amount a supplier owes back to the buyer — typically
 //! arising from a vendor return, overpayment, or pricing adjustment. It can be
 //! applied against AP bills or payment obligations, and applications can be
-//! reversed. It is the AP-side mirror of a customer credit memo.
+//! reversed. Applications update the target balance transactionally. Supplier
+//! credits have their own posting and lifecycle rules; they are not a generic
+//! substitute for every customer-credit-memo accounting treatment.
 
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;

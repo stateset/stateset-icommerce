@@ -1353,7 +1353,7 @@ describe('SequencerClient — registerAgentKey', () => {
     assert.strictEqual(capturedMethod, 'POST');
   });
 
-  it('sends snake_case fields in body', async () => {
+  it('matches the sequencer camelCase key-registration DTO', async () => {
     let capturedBody;
     mockFetch((_url, opts) => {
       capturedBody = JSON.parse(opts.body);
@@ -1369,12 +1369,16 @@ describe('SequencerClient — registerAgentKey', () => {
       validTo: '2025-01-01T00:00:00Z',
     });
 
-    assert.strictEqual(capturedBody.tenant_id, UUID2);
-    assert.strictEqual(capturedBody.agent_id, UUID1);
-    assert.strictEqual(capturedBody.key_id, 3);
-    assert.strictEqual(capturedBody.public_key, 'pubkey-hex');
-    assert.strictEqual(capturedBody.valid_from, '2024-01-01T00:00:00Z');
-    assert.strictEqual(capturedBody.valid_to, '2025-01-01T00:00:00Z');
+    assert.equal(
+      Object.keys(capturedBody).some((key) => key.includes('_')),
+      false,
+    );
+    assert.strictEqual(capturedBody.tenantId, UUID2);
+    assert.strictEqual(capturedBody.agentId, UUID1);
+    assert.strictEqual(capturedBody.keyId, 3);
+    assert.strictEqual(capturedBody.publicKey, 'pubkey-hex');
+    assert.strictEqual(capturedBody.validFrom, '2024-01-01T00:00:00Z');
+    assert.strictEqual(capturedBody.validTo, '2025-01-01T00:00:00Z');
   });
 
   it('sends bundle-aware PQ key registration fields when provided', async () => {
@@ -1402,18 +1406,46 @@ describe('SequencerClient — registerAgentKey', () => {
       },
     });
 
-    assert.strictEqual(capturedBody.key_type, 1);
-    assert.strictEqual(capturedBody.key_algorithm, 5);
-    assert.deepStrictEqual(capturedBody.public_key_bundle, {
-      ed25519_public_key: 'aa'.repeat(32),
-      ml_dsa_65_public_key: 'bb'.repeat(64),
-      x25519_public_key: null,
-      ml_kem_768_public_key: null,
+    assert.strictEqual(capturedBody.keyType, 1);
+    assert.strictEqual(capturedBody.keyAlgorithm, 5);
+    assert.deepStrictEqual(capturedBody.publicKeyBundle, {
+      ed25519PublicKey: 'aa'.repeat(32),
+      mlDsa65PublicKey: 'bb'.repeat(64),
+      x25519PublicKey: null,
+      mlKem768PublicKey: null,
     });
-    assert.strictEqual(capturedBody.proof_of_possession, 'cc'.repeat(64));
-    assert.deepStrictEqual(capturedBody.proof_of_possession_bundle, {
-      ed25519_pop: 'dd'.repeat(64),
-      ml_dsa_65_pop: 'ee'.repeat(32),
+    assert.strictEqual(capturedBody.proofOfPossession, 'cc'.repeat(64));
+    assert.deepStrictEqual(capturedBody.proofOfPossessionBundle, {
+      ed25519Pop: 'dd'.repeat(64),
+      mlDsa65Pop: 'ee'.repeat(32),
+    });
+  });
+
+  it('normalizes existing snake_case bundle inputs to the camelCase registration DTO', async () => {
+    let body;
+    mockFetch((_url, opts) => {
+      body = JSON.parse(opts.body);
+      return okResponse({ success: true });
+    });
+    await new SequencerClient(makeConfig({ tenantId: UUID2 })).registerAgentKey({
+      agentId: UUID1,
+      keyId: 1,
+      publicKey: 'aa'.repeat(32),
+      publicKeyBundle: {
+        ed25519_public_key: 'aa'.repeat(32),
+        ml_dsa_65_public_key: 'bb'.repeat(64),
+      },
+      proofOfPossessionBundle: { ed25519_pop: 'cc'.repeat(64), ml_dsa_65_pop: 'dd'.repeat(64) },
+    });
+    assert.deepEqual(body.publicKeyBundle, {
+      ed25519PublicKey: 'aa'.repeat(32),
+      mlDsa65PublicKey: 'bb'.repeat(64),
+      x25519PublicKey: null,
+      mlKem768PublicKey: null,
+    });
+    assert.deepEqual(body.proofOfPossessionBundle, {
+      ed25519Pop: 'cc'.repeat(64),
+      mlDsa65Pop: 'dd'.repeat(64),
     });
   });
 

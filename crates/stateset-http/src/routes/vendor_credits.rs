@@ -220,10 +220,27 @@ mod tests {
 
     #[tokio::test]
     async fn create_then_apply() {
-        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let commerce = Commerce::new(":memory:").expect("in-memory Commerce");
+        let supplier = uuid::Uuid::new_v4();
+        let bill = commerce
+            .accounts_payable()
+            .create_bill(stateset_core::CreateBill {
+                supplier_id: supplier,
+                due_date: chrono::Utc::now(),
+                items: vec![stateset_core::CreateBillItem {
+                    description: "Settlement target".into(),
+                    quantity: 1.into(),
+                    unit_price: 100.into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+        commerce.accounts_payable().approve_bill(bill.id).unwrap();
+        let state = AppState::new(commerce);
         let app = router().with_state(state);
         let body = serde_json::json!({
-            "supplier_id": uuid::Uuid::new_v4().to_string(),
+            "supplier_id": supplier.to_string(),
             "amount": "100"
         });
         let resp = app
@@ -243,7 +260,7 @@ mod tests {
 
         let apply_body = serde_json::json!({
             "target_type": "bill",
-            "target_id": uuid::Uuid::new_v4().to_string(),
+            "target_id": bill.id.to_string(),
             "amount": "40"
         });
         let resp = app

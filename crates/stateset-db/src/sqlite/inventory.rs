@@ -223,6 +223,8 @@ impl SqliteInventoryRepository {
         quantity: Decimal,
         now: DateTime<Utc>,
     ) -> Result<()> {
+        super::stock_reservation::release(conn, reservation_id, &now.to_rfc3339())
+            .map_err(map_db_error)?;
         let new_version = Self::apply_allocation_delta_in_tx(
             conn,
             item_id,
@@ -322,6 +324,11 @@ impl SqliteInventoryRepository {
         now: DateTime<Utc>,
     ) -> Result<()> {
         validate_quantity(quantity)?;
+        let sku: String = tx
+            .query_row("SELECT sku FROM inventory_items WHERE id = ?1", [item_id], |r| r.get(0))
+            .map_err(map_db_error)?;
+        super::stock_guard::ensure_sellable(tx, &sku, None, None, None)?;
+
         let (on_hand_str, allocated_str, current_version): (String, String, i32) = tx
             .query_row(
                 "SELECT quantity_on_hand, quantity_allocated, version FROM inventory_balances
@@ -347,6 +354,19 @@ impl SqliteInventoryRepository {
                 available: available.to_string(),
             });
         }
+        super::stock_placement::adjust(
+            tx,
+            &sku,
+            location_id,
+            -quantity,
+            stateset_core::MovementType::Shipment,
+            Some(reference_type),
+            Some(reference_id),
+            reason,
+            true,
+            &now.to_rfc3339(),
+        )
+        .map_err(map_db_error)?;
         let new_on_hand = on_hand - quantity;
         let rows_affected = tx
             .execute(
@@ -441,6 +461,8 @@ impl SqliteInventoryRepository {
             });
         }
 
+        super::stock_reservation::consume(tx, reservation_id, quantity, reason, &now.to_rfc3339())
+            .map_err(map_db_error)?;
         let (on_hand_str, allocated_str, current_version): (String, String, i32) = tx
             .query_row(
                 "SELECT quantity_on_hand, quantity_allocated, version FROM inventory_balances
@@ -453,7 +475,12 @@ impl SqliteInventoryRepository {
         let allocated =
             parse_decimal_strict(&allocated_str, "inventory_balance", "quantity_allocated")?;
         let new_on_hand = on_hand - quantity;
-        let new_allocated = (allocated - quantity).max(Decimal::ZERO);
+        let new_allocated = allocated - quantity;
+        if new_allocated < Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Reservation exceeds the warehouse allocation; reconcile before consumption".into(),
+            ));
+        }
         if new_on_hand < Decimal::ZERO {
             return Err(CommerceError::InsufficientStock {
                 sku: format!("item:{item_id}"),
@@ -648,6 +675,8 @@ impl SqliteInventoryRepository {
         let reference_id = input.reference_id.clone();
         let expires_in_seconds = input.expires_in_seconds;
 
+        super::stock_guard::ensure_sellable(tx, &input.sku, None, None, None)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         let now = Utc::now();
 
         let item = tx
@@ -756,6 +785,15 @@ impl SqliteInventoryRepository {
                 now.to_rfc3339(),
                 order_item_id.map(|id| id.to_string()),
             ],
+        )?;
+
+        super::stock_reservation::allocate(
+            tx,
+            reservation_id,
+            &sku,
+            location_id,
+            quantity,
+            &now.to_rfc3339(),
         )?;
 
         let new_allocated = balance.quantity_allocated + quantity;
@@ -908,6 +946,7 @@ impl SqliteInventoryRepository {
             }
         }
 
+        super::stock_reservation::release(tx, reservation_id, &now.to_rfc3339())?;
         tx.execute(
             "UPDATE inventory_reservations SET status = 'released' WHERE id = ?",
             [reservation_id.to_string()],
@@ -1184,6 +1223,13 @@ impl SqliteInventoryRepository {
             ],
         )?;
 
+        super::stock_reservation::split(
+            tx,
+            reservation_id,
+            confirmed_id,
+            quantity,
+            &now.to_rfc3339(),
+        )?;
         append_kernel_event_tx(
             tx,
             &KernelOutboxEvent::domain(
@@ -1314,6 +1360,12 @@ impl InventoryRepository for SqliteInventoryRepository {
 
             let item_id = tx.last_insert_rowid();
 
+            if initial_qty < Decimal::ZERO {
+                return Err(super::bins::smuggle(CommerceError::ValidationError(
+                    "Initial inventory cannot be negative".into(),
+                )));
+            }
+            super::stock_placement::ensure_warehouse(tx, location_id, &now.to_rfc3339())?;
             tx.execute(
                 "INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, quantity_allocated, quantity_available, reorder_point, safety_stock, updated_at)
                  VALUES (?, ?, ?, '0', ?, ?, ?, ?)",
@@ -1328,6 +1380,18 @@ impl InventoryRepository for SqliteInventoryRepository {
                 ],
             )?;
 
+            super::stock_placement::adjust(
+                tx,
+                &sku,
+                location_id,
+                initial_qty,
+                stateset_core::MovementType::Receipt,
+                None,
+                None,
+                "Initial stock",
+                false,
+                &now.to_rfc3339(),
+            )?;
             // Record initial transaction if quantity > 0
             if initial_qty > Decimal::ZERO {
                 tx.execute(
@@ -1571,6 +1635,7 @@ impl InventoryRepository for SqliteInventoryRepository {
 
         with_immediate_transaction(&self.pool, |tx| {
             let now = Utc::now();
+            super::stock_placement::ensure_warehouse(tx, location_id, &now.to_rfc3339())?;
 
             // Get item directly with this connection
             let item = tx.query_row(
@@ -1667,6 +1732,7 @@ impl InventoryRepository for SqliteInventoryRepository {
                 )));
             }
 
+            super::stock_placement::adjust(tx, &sku, location_id, quantity, if quantity > Decimal::ZERO { stateset_core::MovementType::Receipt } else { stateset_core::MovementType::Adjustment }, reference_type.as_deref(), reference_id.as_deref(), &reason, true, &now.to_rfc3339())?;
             // Update balance with optimistic locking
             let current_version = balance.version;
             let rows_affected = tx.execute(
@@ -2183,6 +2249,13 @@ impl InventoryRepository for SqliteInventoryRepository {
             let location_id = input.location_id.unwrap_or(1);
             let initial_qty = input.initial_quantity.unwrap_or_default();
 
+            if initial_qty < Decimal::ZERO {
+                return Err(CommerceError::ValidationError(
+                    "Initial inventory cannot be negative".into(),
+                ));
+            }
+            super::stock_placement::ensure_warehouse(&tx, location_id, &now.to_rfc3339())
+                .map_err(map_db_error)?;
             tx.execute(
                 "INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, quantity_allocated, quantity_available, reorder_point, safety_stock, updated_at)
                  VALUES (?, ?, ?, '0', ?, ?, ?, ?)",
@@ -2198,6 +2271,19 @@ impl InventoryRepository for SqliteInventoryRepository {
             )
             .map_err(map_db_error)?;
 
+            super::stock_placement::adjust(
+                &tx,
+                &sku,
+                location_id,
+                initial_qty,
+                stateset_core::MovementType::Receipt,
+                None,
+                None,
+                "Initial stock",
+                false,
+                &now.to_rfc3339(),
+            )
+            .map_err(map_db_error)?;
             // Record initial transaction if quantity > 0
             if initial_qty > Decimal::ZERO {
                 tx.execute(
@@ -2257,6 +2343,12 @@ impl InventoryRepository for SqliteInventoryRepository {
         let now = Utc::now();
 
         for input in adjustments {
+            super::stock_placement::ensure_warehouse(
+                &tx,
+                input.location_id.unwrap_or(1),
+                &now.to_rfc3339(),
+            )
+            .map_err(map_db_error)?;
             input.validate()?;
             // Get item directly with this connection
             let item = tx
@@ -2420,6 +2512,23 @@ impl InventoryRepository for SqliteInventoryRepository {
                 });
             }
 
+            super::stock_placement::adjust(
+                &tx,
+                &input.sku,
+                location_id,
+                input.quantity,
+                if input.quantity > Decimal::ZERO {
+                    stateset_core::MovementType::Receipt
+                } else {
+                    stateset_core::MovementType::Adjustment
+                },
+                input.reference_type.as_deref(),
+                input.reference_id.as_deref(),
+                &input.reason,
+                true,
+                &now.to_rfc3339(),
+            )
+            .map_err(map_db_error)?;
             // Update balance with optimistic locking
             let current_version = balance.version;
             let rows_affected = tx.execute(

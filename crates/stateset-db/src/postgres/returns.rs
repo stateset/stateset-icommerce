@@ -6,9 +6,7 @@
 //! lock, and the `idx_returns_idempotency_key` unique index (migration 030)
 //! is the backstop for concurrent creates with the same idempotency key.
 
-use super::bins::{
-    apply_bin_delta_pg, apply_warehouse_delta_pg, find_disposition_bin_pg, insert_bin_movement_pg,
-};
+use super::bins::find_disposition_bin_pg;
 use super::kernel_outbox::append_kernel_event_tx;
 use super::payments::{create_refund_pg_tx, open_captures_for_order_pg, refundable_remaining_pg};
 use super::{block_on, map_db_error};
@@ -19,7 +17,7 @@ use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
 use sqlx::{FromRow, PgConnection, QueryBuilder};
 use stateset_core::{
-    BatchResult, BinMovementType, BinType, CommerceError, CreateReturn, CustomerId, ItemCondition,
+    BatchResult, BinType, CommerceError, CreateReturn, CustomerId, ItemCondition,
     LotTransactionType, OrderId, OrderItemId, OrderStatus, Result, Return, ReturnDisposition,
     ReturnFilter, ReturnId, ReturnItem, ReturnReason, ReturnRepository, ReturnStatus,
     SerialEventType, SerialStatus, SetReturnDisposition, UpdateReturn, validate_batch_size,
@@ -974,83 +972,61 @@ impl PgReturnRepository {
         let qty = Decimal::from(item.quantity);
         let reference_id = item_id.to_string();
         let reason = format!("return {return_id} {}", input.disposition);
+        let mut stock_location = None;
         match input.disposition {
-            ReturnDisposition::Restock => {
-                let bin = find_disposition_bin_pg(
-                    tx.as_mut(),
-                    warehouse_id,
-                    input.bin_id,
-                    &[BinType::Returns, BinType::Quarantine],
+            ReturnDisposition::Restock | ReturnDisposition::Quarantine => {
+                let held = input.disposition == ReturnDisposition::Quarantine;
+                let known: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM inventory_items WHERE sku = $1)",
                 )
-                .await?;
-                if let Some(bin) = &bin {
-                    apply_bin_delta_pg(tx.as_mut(), bin, &item.sku, qty, Decimal::ZERO, now)
+                .bind(&item.sku)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+                if !known {
+                    return Err(CommerceError::ValidationError(
+                        "Create the inventory item before restocking a return".into(),
+                    ));
+                }
+                let preferred =
+                    if held { &[BinType::Quarantine][..] } else { &[BinType::Returns][..] };
+                super::stock_placement::ensure_warehouse(&mut tx, warehouse_id, now).await?;
+                let bin =
+                    find_disposition_bin_pg(tx.as_mut(), warehouse_id, input.bin_id, preferred)
                         .await?;
-                    insert_bin_movement_pg(
-                        tx.as_mut(),
-                        BinMovementType::ReturnDisposition,
-                        None,
-                        Some(bin.id),
-                        &item.sku,
-                        qty,
-                        Some(&reason),
-                        Some("return_item"),
-                        Some(&reference_id),
-                        input.disposition_by.as_deref(),
-                        now,
-                    )
-                    .await?;
+                let destination = if let Some(bin) = bin {
+                    super::stock_move::location_for_bin(tx.as_mut(), bin.id, now).await?
+                } else {
+                    super::stock_move::role_location(tx.as_mut(), warehouse_id, "unassigned", now)
+                        .await?
+                };
+                stock_location = Some(destination);
+                if held {
+                    if let Some(lot) = input.lot_id {
+                        super::stock_lot::record_hold(&mut tx, lot, lot, destination, qty, now)
+                            .await?;
+                    }
                 }
-                apply_warehouse_delta_pg(
-                    tx.as_mut(),
-                    warehouse_id,
-                    &item.sku,
-                    qty,
-                    Decimal::ZERO,
-                    &reason,
-                    Some("return_item"),
-                    Some(&reference_id),
-                    now,
-                )
-                .await?;
-            }
-            ReturnDisposition::Quarantine => {
-                // The hold is always recorded at warehouse level (on hand and
-                // allocated, so the units are tracked but not sellable); the
-                // quarantine bin mirrors it when the warehouse has one.
-                let bin = find_disposition_bin_pg(
-                    tx.as_mut(),
-                    warehouse_id,
-                    input.bin_id,
-                    &[BinType::Quarantine],
-                )
-                .await?;
-                if let Some(bin) = &bin {
-                    apply_bin_delta_pg(tx.as_mut(), bin, &item.sku, qty, qty, now).await?;
-                    insert_bin_movement_pg(
-                        tx.as_mut(),
-                        BinMovementType::ReturnDisposition,
-                        None,
-                        Some(bin.id),
-                        &item.sku,
-                        qty,
-                        Some(&reason),
-                        Some("return_item"),
-                        Some(&reference_id),
-                        input.disposition_by.as_deref(),
-                        now,
-                    )
-                    .await?;
-                }
-                apply_warehouse_delta_pg(
-                    tx.as_mut(),
-                    warehouse_id,
-                    &item.sku,
-                    qty,
-                    qty,
-                    &reason,
-                    Some("return_item"),
-                    Some(&reference_id),
+                super::stock_move::post(
+                    &mut tx,
+                    &crate::stock_move::StockMove {
+                        id: Uuid::new_v4(),
+                        sku: &item.sku,
+                        lot_id: input.lot_id,
+                        from: None,
+                        to: Some(destination),
+                        quantity: qty,
+                        release_reserved: Decimal::ZERO,
+                        reserve_received: if held { qty } else { Decimal::ZERO },
+                        movement_type: stateset_core::MovementType::Return,
+                        lot_effect: crate::stock_move::LotEffect::AlreadyRecorded,
+                        check_sellable: false,
+                        reference_type: Some("return_item"),
+                        reference_id: Some(item_id),
+                        reference_label: Some(&reference_id),
+                        reason: Some(&reason),
+                        performed_by: input.disposition_by.as_deref(),
+                    },
                     now,
                 )
                 .await?;
@@ -1074,7 +1050,7 @@ impl PgReturnRepository {
             tx.as_mut(),
             &item,
             input.disposition,
-            warehouse_id,
+            stock_location.unwrap_or(warehouse_id),
             &input.serial_ids,
             input.disposition_by.as_deref(),
             now,

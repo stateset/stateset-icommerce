@@ -33,7 +33,7 @@ const sampleReport = {
 
 describe('close_month registration', () => {
   it('is a write tool in the general_ledger policy domain', () => {
-    assert.equal(tool.permission, 'write');
+    assert.equal(tool.permission, 'admin');
     assert.equal(tool.policyDomain, 'general_ledger');
     assert.equal(TOOL_POLICY_DOMAIN_BY_NAME.close_month, 'general_ledger');
   });
@@ -52,6 +52,7 @@ describe('close_month handler', () => {
     };
     const result = await tool.handler({
       commerce,
+      actorId: 'controller',
       params: { periodId: 'per_001' },
       allowApply: false,
     });
@@ -71,6 +72,7 @@ describe('close_month handler', () => {
     };
     const result = await tool.handler({
       commerce,
+      actorId: 'controller',
       params: { periodId: 'per_001', dryRun: true },
       allowApply: false,
     });
@@ -93,11 +95,12 @@ describe('close_month handler', () => {
     };
     const result = await tool.handler({
       commerce,
+      actorId: 'controller',
       params: {
         periodId: 'per_001',
         skipFxRevaluation: true,
         skipDepreciation: true,
-        closedBy: 'controller',
+        closedBy: 'spoofed-body',
       },
       allowApply: true,
     });
@@ -131,6 +134,7 @@ describe('close_month handler', () => {
     };
     const result = await tool.handler({
       commerce,
+      actorId: 'controller',
       params: { periodId: 'per_001', failOnWarnings: true },
       allowApply: true,
     });

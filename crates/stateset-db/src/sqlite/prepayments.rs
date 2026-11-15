@@ -45,6 +45,16 @@ impl SqlitePrepaymentRepository {
                 "prepayment",
                 "remaining",
             )?,
+            refunded_amount: parse_decimal_row(
+                &row.get::<_, String>("refund_total")?,
+                "prepayment",
+                "refunded_amount",
+            )?,
+            refunded_at: super::parse_datetime_opt_row(
+                row.get::<_, Option<String>>("refunded_at")?,
+                "prepayment",
+                "refunded_at",
+            )?,
             currency: parse_enum_row::<CurrencyCode>(
                 &row.get::<_, String>("currency")?,
                 "prepayment",
@@ -105,7 +115,7 @@ impl SqlitePrepaymentRepository {
     }
 
     fn fetch(tx: &rusqlite::Connection, id: &str) -> rusqlite::Result<Prepayment> {
-        tx.query_row("SELECT * FROM prepayments WHERE id = ?", [id], Self::row_to_prepayment)
+        tx.query_row("SELECT p.*, COALESCE(p.refunded_amount,(SELECT decimal_sum_product(value,sign) FROM (SELECT p.amount AS value,1 AS sign UNION ALL SELECT a.amount AS value,-1 AS sign FROM prepayment_applications a WHERE a.prepayment_id=p.id AND a.reversed=0))) AS refund_total FROM prepayments p WHERE id = ?", [id], Self::row_to_prepayment)
     }
 
     fn conflict(msg: &str) -> rusqlite::Error {
@@ -172,7 +182,7 @@ impl PrepaymentRepository for SqlitePrepaymentRepository {
 
     fn list(&self, filter: PrepaymentFilter) -> Result<Vec<Prepayment>> {
         let conn = self.conn()?;
-        let mut sql = "SELECT * FROM prepayments WHERE 1=1".to_string();
+        let mut sql = "SELECT p.*, COALESCE(p.refunded_amount,(SELECT decimal_sum_product(value,sign) FROM (SELECT p.amount AS value,1 AS sign UNION ALL SELECT a.amount AS value,-1 AS sign FROM prepayment_applications a WHERE a.prepayment_id=p.id AND a.reversed=0))) AS refund_total FROM prepayments p WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![];
         if let Some(supplier) = filter.supplier_id {
             sql.push_str(" AND supplier_id = ?");
@@ -210,6 +220,14 @@ impl PrepaymentRepository for SqlitePrepaymentRepository {
             if input.amount > prepayment.remaining {
                 return Err(Self::validation("application exceeds remaining balance"));
             }
+            super::ap_settlement::apply(
+                tx,
+                &input.target_type.to_string(),
+                input.target_id,
+                prepayment.supplier_id,
+                prepayment.currency,
+                input.amount,
+            )?;
             let new_remaining = prepayment.remaining - input.amount;
             let new_status = Self::status_for(new_remaining, prepayment.status);
             tx.execute(
@@ -267,11 +285,29 @@ impl PrepaymentRepository for SqlitePrepaymentRepository {
             if reversed != 0 {
                 return Err(Self::conflict("application already reversed"));
             }
-            let amount: Decimal = amount_str.parse().unwrap_or(Decimal::ZERO);
+            let amount = parse_decimal_row(&amount_str, "supplier_application", "amount")?;
             let prepayment = Self::fetch(tx, &id_str)?;
             if prepayment.status == PrepaymentStatus::Refunded {
                 return Err(Self::conflict("cannot reverse against a refunded prepayment"));
             }
+            let (target_kind, target_id) = tx.query_row(
+                "SELECT target_type,target_id FROM prepayment_applications WHERE id = ?1",
+                rusqlite::params![(uuid::Uuid::from(application_id)).to_string()],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        super::parse_uuid_row(&r.get::<_, String>(1)?, "stock", "id")?,
+                    ))
+                },
+            )?;
+            super::ap_settlement::apply(
+                tx,
+                &target_kind,
+                target_id,
+                prepayment.supplier_id,
+                prepayment.currency,
+                -amount,
+            )?;
             let new_remaining = prepayment.remaining + amount;
             let new_status = Self::status_for(new_remaining, prepayment.status);
             tx.execute("UPDATE prepayment_applications SET reversed = 1 WHERE id = ?", [&app_str])?;
@@ -291,9 +327,15 @@ impl PrepaymentRepository for SqlitePrepaymentRepository {
             if prepayment.status == PrepaymentStatus::Cancelled {
                 return Err(Self::conflict("cannot refund a cancelled prepayment"));
             }
+            if prepayment.status == PrepaymentStatus::Refunded {
+                return Ok(prepayment);
+            }
+            if prepayment.remaining <= Decimal::ZERO {
+                return Err(Self::conflict("Prepayment has no unused balance to refund"));
+            }
             // Refund zeroes the remaining balance and closes the prepayment.
             tx.execute(
-                "UPDATE prepayments SET remaining = '0', status = 'refunded', updated_at = ? WHERE id = ?",
+                "UPDATE prepayments SET refunded_amount=remaining,refunded_at=?1,remaining = '0', status = 'refunded', updated_at = ?1 WHERE id = ?2",
                 rusqlite::params![&now, &id_str],
             )?;
             Self::fetch(tx, &id_str)
@@ -327,12 +369,34 @@ mod tests {
         .expect("create prepayment")
     }
 
-    fn apply(amount: Decimal) -> ApplyPrepayment {
-        ApplyPrepayment {
-            target_type: PrepaymentTargetType::Bill,
-            target_id: Uuid::new_v4(),
-            amount,
-        }
+    fn apply(repo: &SqlitePrepaymentRepository, amount: Decimal) -> ApplyPrepayment {
+        let supplier = repo.list(Default::default()).unwrap()[0].supplier_id;
+        use stateset_core::AccountsPayableRepository;
+        let ap = crate::sqlite::accounts_payable::SqliteAccountsPayableRepository::new(
+            repo.pool.clone(),
+        );
+        let bill = ap
+            .create_bill(stateset_core::CreateBill {
+                created_by: None,
+                bill_number: None,
+                supplier_id: supplier,
+                purchase_order_id: None,
+                bill_date: None,
+                due_date: Utc::now(),
+                payment_terms: None,
+                currency: Some(CurrencyCode::USD),
+                reference_number: None,
+                memo: None,
+                items: vec![stateset_core::CreateBillItem {
+                    description: "Settlement target".into(),
+                    quantity: dec!(1),
+                    unit_price: dec!(1000),
+                    ..Default::default()
+                }],
+            })
+            .unwrap();
+        ap.approve_bill(bill.id).unwrap();
+        ApplyPrepayment { target_type: PrepaymentTargetType::Bill, target_id: bill.id, amount }
     }
 
     #[test]
@@ -355,10 +419,10 @@ mod tests {
     fn apply_decrements_and_marks_applied() {
         let repo = test_repo();
         let p = new_prepayment(&repo, dec!(100));
-        let after = repo.apply(p.id, apply(dec!(40))).expect("apply");
+        let after = repo.apply(p.id, apply(&repo, dec!(40))).expect("apply");
         assert_eq!(after.remaining, dec!(60));
         assert_eq!(after.status, PrepaymentStatus::Open);
-        let after = repo.apply(p.id, apply(dec!(60))).expect("apply rest");
+        let after = repo.apply(p.id, apply(&repo, dec!(60))).expect("apply rest");
         assert_eq!(after.remaining, dec!(0));
         assert_eq!(after.status, PrepaymentStatus::Applied);
         assert_eq!(repo.list_applications(p.id).expect("apps").len(), 2);
@@ -368,7 +432,7 @@ mod tests {
     fn apply_over_balance_rejected() {
         let repo = test_repo();
         let p = new_prepayment(&repo, dec!(50));
-        assert!(repo.apply(p.id, apply(dec!(60))).is_err());
+        assert!(repo.apply(p.id, apply(&repo, dec!(60))).is_err());
     }
 
     #[test]
@@ -383,12 +447,12 @@ mod tests {
             let barrier = Arc::clone(&barrier);
             handles.push(std::thread::spawn(move || {
                 barrier.wait();
-                repo.apply(id, apply(dec!(2)))
+                repo.apply(id, apply(&repo, dec!(2)))
             }));
         }
         let outcomes: Vec<_> = handles.into_iter().map(|h| h.join().expect("join")).collect();
         let successes = outcomes.iter().filter(|r| r.is_ok()).count();
-        assert!(successes <= 1);
+        assert_eq!(successes, 1);
         let stored = repo.get(p.id).expect("get").expect("prepayment");
         let apps = repo.list_applications(p.id).expect("applications");
         assert_eq!(apps.len(), successes);
@@ -400,7 +464,7 @@ mod tests {
     fn reverse_restores_balance() {
         let repo = test_repo();
         let p = new_prepayment(&repo, dec!(100));
-        repo.apply(p.id, apply(dec!(100))).expect("apply");
+        repo.apply(p.id, apply(&repo, dec!(100))).expect("apply");
         let apps = repo.list_applications(p.id).expect("apps");
         let reversed = repo.reverse_application(p.id, apps[0].id).expect("reverse");
         assert_eq!(reversed.remaining, dec!(100));
@@ -409,14 +473,37 @@ mod tests {
     }
 
     #[test]
+    fn legacy_refund_reconstruction_is_exact_on_get_and_list() {
+        let repo = test_repo();
+        let p = new_prepayment(&repo, dec!(9007199254740993.01));
+        repo.apply(p.id, apply(&repo, dec!(100.01))).unwrap();
+        repo.refund(p.id).unwrap();
+        // Migration 121 marks pre-existing refunds with NULL so reads derive
+        // the unallocated amount using decimal aggregation, not SQLite REAL.
+        repo.pool
+            .get()
+            .unwrap()
+            .execute("UPDATE prepayments SET refunded_amount=NULL WHERE id=?1", [p.id.to_string()])
+            .unwrap();
+        let stored = repo.get(p.id).unwrap().unwrap();
+        assert_eq!(stored.refunded_amount, dec!(9007199254740893.00));
+        assert!(stored.refunded_at.is_some());
+        assert_eq!(
+            repo.list(Default::default()).unwrap()[0].refunded_amount,
+            stored.refunded_amount
+        );
+        assert_eq!(stored.amount - stored.refunded_amount - stored.remaining, dec!(100.01));
+    }
+
+    #[test]
     fn refund_closes_prepayment() {
         let repo = test_repo();
         let p = new_prepayment(&repo, dec!(100));
-        repo.apply(p.id, apply(dec!(30))).expect("apply");
+        repo.apply(p.id, apply(&repo, dec!(30))).expect("apply");
         let refunded = repo.refund(p.id).expect("refund");
         assert_eq!(refunded.status, PrepaymentStatus::Refunded);
         assert_eq!(refunded.remaining, dec!(0));
         // can't apply after refund
-        assert!(repo.apply(p.id, apply(dec!(10))).is_err());
+        assert!(repo.apply(p.id, apply(&repo, dec!(10))).is_err());
     }
 }

@@ -29,6 +29,7 @@ async fn make_bill(
     let bill = commerce
         .accounts_payable()
         .create_bill(CreateBill {
+            created_by: None,
             bill_number: None,
             supplier_id: supplier,
             purchase_order_id: po,

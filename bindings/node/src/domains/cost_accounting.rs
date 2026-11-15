@@ -17,10 +17,10 @@ pub struct SetItemCostInput {
     pub sku: String,
     #[napi(ts_type = "CostMethodInput")]
     pub cost_method: Option<String>,
-    pub standard_cost: Option<f64>,
-    pub material_cost: Option<f64>,
-    pub labor_cost: Option<f64>,
-    pub overhead_cost: Option<f64>,
+    pub standard_cost: Option<String>,
+    pub material_cost: Option<String>,
+    pub labor_cost: Option<String>,
+    pub overhead_cost: Option<String>,
 }
 
 #[napi(object)]
@@ -30,28 +30,28 @@ pub struct ItemCostOutput {
     pub sku: String,
     #[napi(ts_type = "CostMethod")]
     pub cost_method: String,
-    /// @deprecated Use the `standardCostExact` twin; float money will be removed in 2.0.
-    pub standard_cost: f64,
+    /// Exact decimal string.
+    pub standard_cost: String,
     /// Exact base-10 standard cost, straight from the engine's `Decimal`. Prefer this field for money.
     pub standard_cost_exact: String,
-    /// @deprecated Use the `averageCostExact` twin; float money will be removed in 2.0.
-    pub average_cost: f64,
+    /// Exact decimal string.
+    pub average_cost: String,
     /// Exact base-10 average cost, straight from the engine's `Decimal`. Prefer this field for money.
     pub average_cost_exact: String,
-    /// @deprecated Use the `lastCostExact` twin; float money will be removed in 2.0.
-    pub last_cost: f64,
+    /// Exact decimal string.
+    pub last_cost: String,
     /// Exact base-10 last cost, straight from the engine's `Decimal`. Prefer this field for money.
     pub last_cost_exact: String,
-    /// @deprecated Use the `materialCostExact` twin; float money will be removed in 2.0.
-    pub material_cost: f64,
+    /// Exact decimal string.
+    pub material_cost: String,
     /// Exact base-10 material cost, straight from the engine's `Decimal`. Prefer this field for money.
     pub material_cost_exact: String,
-    /// @deprecated Use the `laborCostExact` twin; float money will be removed in 2.0.
-    pub labor_cost: f64,
+    /// Exact decimal string.
+    pub labor_cost: String,
     /// Exact base-10 labor cost, straight from the engine's `Decimal`. Prefer this field for money.
     pub labor_cost_exact: String,
-    /// @deprecated Use the `overheadCostExact` twin; float money will be removed in 2.0.
-    pub overhead_cost: f64,
+    /// Exact decimal string.
+    pub overhead_cost: String,
     /// Exact base-10 overhead cost, straight from the engine's `Decimal`. Prefer this field for money.
     pub overhead_cost_exact: String,
 }
@@ -60,12 +60,18 @@ impl TryFrom<stateset_core::ItemCost> for ItemCostOutput {
     type Error = Error;
 
     fn try_from(c: stateset_core::ItemCost) -> Result<Self> {
-        let (standard_cost, standard_cost_exact) = money_pair(c.standard_cost, "standard cost")?;
-        let (average_cost, average_cost_exact) = money_pair(c.average_cost, "average cost")?;
-        let (last_cost, last_cost_exact) = money_pair(c.last_cost, "last cost")?;
-        let (material_cost, material_cost_exact) = money_pair(c.material_cost, "material cost")?;
-        let (labor_cost, labor_cost_exact) = money_pair(c.labor_cost, "labor cost")?;
-        let (overhead_cost, overhead_cost_exact) = money_pair(c.overhead_cost, "overhead cost")?;
+        let standard_cost = c.standard_cost.to_string();
+        let standard_cost_exact = standard_cost.clone();
+        let average_cost = c.average_cost.to_string();
+        let average_cost_exact = average_cost.clone();
+        let last_cost = c.last_cost.to_string();
+        let last_cost_exact = last_cost.clone();
+        let material_cost = c.material_cost.to_string();
+        let material_cost_exact = material_cost.clone();
+        let labor_cost = c.labor_cost.to_string();
+        let labor_cost_exact = labor_cost.clone();
+        let overhead_cost = c.overhead_cost.to_string();
+        let overhead_cost_exact = overhead_cost.clone();
         Ok(Self {
             id: c.id.to_string(),
             sku: c.sku,
@@ -154,19 +160,10 @@ impl CostAccounting {
             .set_item_cost(stateset_core::SetItemCost {
                 sku: input.sku,
                 cost_method: input.cost_method.map(|s| parse_cost_method(&s)).transpose()?,
-                standard_cost: optional_decimal_from_f64(
-                    input.standard_cost,
-                    "item standard cost",
-                )?,
-                material_cost: optional_decimal_from_f64(
-                    input.material_cost,
-                    "item material cost",
-                )?,
-                labor_cost: optional_decimal_from_f64(input.labor_cost, "item labor cost")?,
-                overhead_cost: optional_decimal_from_f64(
-                    input.overhead_cost,
-                    "item overhead cost",
-                )?,
+                standard_cost: optional_decimal_string(input.standard_cost, "item standard cost")?,
+                material_cost: optional_decimal_string(input.material_cost, "item material cost")?,
+                labor_cost: optional_decimal_string(input.labor_cost, "item labor cost")?,
+                overhead_cost: optional_decimal_string(input.overhead_cost, "item overhead cost")?,
                 ..Default::default()
             })
             .map_err(|e| wrap(ErrCode::Internal, "Failed to set cost", e))?;
@@ -193,16 +190,16 @@ impl CostAccounting {
     pub async fn update_average_cost(
         &self,
         sku: String,
-        quantity: f64,
-        unit_cost: f64,
+        quantity: String,
+        unit_cost: String,
     ) -> Result<ItemCostOutput> {
         let commerce = self.commerce.get()?;
         let cost = commerce
             .cost_accounting()
             .update_average_cost(
                 &sku,
-                decimal_from_f64(quantity, "average cost quantity")?,
-                decimal_from_f64(unit_cost, "average cost unit cost")?,
+                parse_decimal_str(&quantity, "average cost quantity")?,
+                parse_decimal_str(&unit_cost, "average cost unit cost")?,
             )
             .map_err(|e| wrap(ErrCode::Internal, "Failed to update cost", e))?;
         convert_output(cost)
@@ -210,12 +207,12 @@ impl CostAccounting {
 
     /// Get total inventory value
     #[napi]
-    pub async fn get_total_inventory_value(&self) -> Result<f64> {
+    pub async fn get_total_inventory_value(&self) -> Result<String> {
         let commerce = self.commerce.get()?;
         let total = commerce
             .cost_accounting()
             .get_total_inventory_value()
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get value", e))?;
-        to_f64_checked(total, "inventory value")
+        Ok(total.to_string())
     }
 }

@@ -31,10 +31,7 @@
 //! - **Traceability**: dispositions transition the received serials and
 //!   restore lot on-hand in the same transaction as the stock effect.
 
-use super::bins::{
-    apply_bin_delta_tx, apply_warehouse_delta_tx, find_disposition_bin_tx, insert_bin_movement_tx,
-    smuggle,
-};
+use super::bins::{find_disposition_bin_tx, smuggle};
 use super::kernel_outbox::append_kernel_event_tx;
 use super::parse_helpers::{parse_decimal, parse_enum, parse_uuid};
 use super::payments::{
@@ -53,10 +50,10 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use stateset_core::{
-    BatchResult, BinMovementType, BinType, CommerceError, CreateReturn, CustomerId,
-    LotTransactionType, OrderId, OrderItemId, OrderStatus, Result, Return, ReturnDisposition,
-    ReturnFilter, ReturnId, ReturnItem, ReturnRepository, ReturnStatus, SerialEventType,
-    SerialStatus, SetReturnDisposition, UpdateReturn, validate_batch_size,
+    BatchResult, BinType, CommerceError, CreateReturn, CustomerId, LotTransactionType, OrderId,
+    OrderItemId, OrderStatus, Result, Return, ReturnDisposition, ReturnFilter, ReturnId,
+    ReturnItem, ReturnRepository, ReturnStatus, SerialEventType, SerialStatus,
+    SetReturnDisposition, UpdateReturn, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -821,7 +818,7 @@ fn apply_lot_restore_tx(
         quarantined += qty;
     }
     tx.execute(
-        "UPDATE lots SET quantity_remaining = ?1, quantity_quarantined = ?2, updated_at = ?3 WHERE id = ?4",
+        "UPDATE lots SET quantity_remaining = ?1, quantity_quarantined = ?2, status = CASE WHEN status = 'consumed' THEN 'active' ELSE status END, updated_at = ?3 WHERE id = ?4",
         rusqlite::params![remaining.to_string(), quarantined.to_string(), now, lot_id.to_string()],
     )?;
     let placed: Option<String> = tx
@@ -1165,77 +1162,55 @@ impl ReturnRepository for SqliteReturnRepository {
             let qty = Decimal::from(item.quantity);
             let reference_id = item_id.to_string();
             let reason = format!("return {return_id} {}", input.disposition);
+            let mut stock_location = None;
             match input.disposition {
-                ReturnDisposition::Restock => {
-                    let bin = find_disposition_bin_tx(
-                        tx,
-                        warehouse_id,
-                        input.bin_id,
-                        &[BinType::Returns, BinType::Quarantine],
+                ReturnDisposition::Restock | ReturnDisposition::Quarantine => {
+                    let held = input.disposition == ReturnDisposition::Quarantine;
+                    let known: bool = tx.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM inventory_items WHERE sku = ?1)",
+                        [&item.sku],
+                        |r| r.get(0),
                     )?;
-                    if let Some(bin) = &bin {
-                        apply_bin_delta_tx(tx, bin, &item.sku, qty, Decimal::ZERO, &now)?;
-                        insert_bin_movement_tx(
-                            tx,
-                            BinMovementType::ReturnDisposition,
-                            None,
-                            Some(bin.id),
-                            &item.sku,
-                            qty,
-                            Some(&reason),
-                            Some("return_item"),
-                            Some(&reference_id),
-                            input.disposition_by.as_deref(),
-                            &now,
-                        )?;
+                    if !known {
+                        return Err(smuggle(CommerceError::ValidationError(
+                            "Create the inventory item before restocking a return".into(),
+                        )));
                     }
-                    apply_warehouse_delta_tx(
-                        tx,
-                        warehouse_id,
-                        &item.sku,
-                        qty,
-                        Decimal::ZERO,
-                        &reason,
-                        Some("return_item"),
-                        Some(&reference_id),
-                        &now,
-                    )?;
-                }
-                ReturnDisposition::Quarantine => {
-                    // The hold is always recorded at warehouse level (on hand and
-                    // allocated, so the units are tracked but not sellable); the
-                    // quarantine bin mirrors it when the warehouse has one.
-                    let bin = find_disposition_bin_tx(
-                        tx,
-                        warehouse_id,
-                        input.bin_id,
-                        &[BinType::Quarantine],
-                    )?;
-                    if let Some(bin) = &bin {
-                        apply_bin_delta_tx(tx, bin, &item.sku, qty, qty, &now)?;
-                        insert_bin_movement_tx(
-                            tx,
-                            BinMovementType::ReturnDisposition,
-                            None,
-                            Some(bin.id),
-                            &item.sku,
-                            qty,
-                            Some(&reason),
-                            Some("return_item"),
-                            Some(&reference_id),
-                            input.disposition_by.as_deref(),
-                            &now,
-                        )?;
+                    let preferred =
+                        if held { &[BinType::Quarantine][..] } else { &[BinType::Returns][..] };
+                    super::stock_placement::ensure_warehouse(tx, warehouse_id, &now)?;
+                    let bin = find_disposition_bin_tx(tx, warehouse_id, input.bin_id, preferred)?;
+                    let destination = if let Some(bin) = bin {
+                        super::stock_move::location_for_bin(tx, bin.id, &now)?
+                    } else {
+                        super::stock_move::role_location(tx, warehouse_id, "unassigned", &now)?
+                    };
+                    stock_location = Some(destination);
+                    if held {
+                        if let Some(lot) = input.lot_id {
+                            super::stock_lot::record_hold(tx, lot, lot, destination, qty, &now)?;
+                        }
                     }
-                    apply_warehouse_delta_tx(
+                    super::stock_move::post(
                         tx,
-                        warehouse_id,
-                        &item.sku,
-                        qty,
-                        qty,
-                        &reason,
-                        Some("return_item"),
-                        Some(&reference_id),
+                        &crate::stock_move::StockMove {
+                            id: Uuid::new_v4(),
+                            sku: &item.sku,
+                            lot_id: input.lot_id,
+                            from: None,
+                            to: Some(destination),
+                            quantity: qty,
+                            release_reserved: Decimal::ZERO,
+                            reserve_received: if held { qty } else { Decimal::ZERO },
+                            movement_type: stateset_core::MovementType::Return,
+                            lot_effect: crate::stock_move::LotEffect::AlreadyRecorded,
+                            check_sellable: false,
+                            reference_type: Some("return_item"),
+                            reference_id: Some(item_id),
+                            reference_label: Some(&reference_id),
+                            reason: Some(&reason),
+                            performed_by: input.disposition_by.as_deref(),
+                        },
                         &now,
                     )?;
                 }
@@ -1259,7 +1234,7 @@ impl ReturnRepository for SqliteReturnRepository {
                 tx,
                 &item,
                 input.disposition,
-                warehouse_id,
+                stock_location.unwrap_or(warehouse_id),
                 &input.serial_ids,
                 input.disposition_by.as_deref(),
                 &now,

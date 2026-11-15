@@ -17,3 +17,6 @@ Cargo.lock
 
 # Coverage
 coverage/
+
+# Generated from the Rust transition rules (serde formatting, drift-checked by cargo test)
+cli/src/generated/

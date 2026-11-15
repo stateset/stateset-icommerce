@@ -22,125 +22,12 @@ use stateset_core::{
     UpdateWarehouse, UpdateZone, Warehouse, WarehouseFilter, WarehouseRepository, Zone,
 };
 
-// ============================================================================
-// WMS stock ledger (shared by receiving and fulfillment)
-// ============================================================================
-//
-// Warehouse documents used to be pure paperwork: completing a put-away, a pick
-// or a ship moved no stock anywhere, while return dispositions *did*, so the
-// warehouse was half-ledgered. These helpers are the missing half. Each is
-// applied on the caller's transaction — the same one that writes the document's
-// status — so the movement and the status flip commit or roll back together,
-// and the status guard (`WHERE status IN (...)` matching zero rows on a second
-// attempt) is what makes completing twice a no-op rather than a double count.
-//
-// Levels:
-// - `location_inventory` (bin level) is the WMS's own ledger: put-away adds to
-//   the destination bin, a pick takes from the source bin.
-// - `inventory_balances` (warehouse level, via
-//   [`super::bins::apply_warehouse_delta_tx`]) mirrors it: a put-away is the
-//   only producer of received stock, a pick allocates it (off the shelf, still
-//   in the building) and a ship consumes exactly what the picks allocated. The
-//   WMS pair pick/ship is therefore self-balancing.
+// Physical postings are centralized in `stock_move`; these helpers serve
+// document validation and transit-only movement records.
 
 /// `location_inventory.lot_id` is `NOT NULL` and stores `''` for lot-less rows.
 fn location_lot_key(lot_id: Option<Uuid>) -> String {
     lot_id.map_or_else(String::new, |id| id.to_string())
-}
-
-/// Add `delta` units of `sku` to a location's on-hand, creating the row on
-/// first use. A negative delta is refused when the bin does not hold enough
-/// unreserved stock (`InsufficientStock`).
-pub(crate) fn apply_location_delta_tx(
-    tx: &rusqlite::Transaction<'_>,
-    location_id: i32,
-    sku: &str,
-    lot_id: Option<Uuid>,
-    delta: Decimal,
-    now: &str,
-) -> rusqlite::Result<()> {
-    if delta.is_zero() {
-        return Ok(());
-    }
-    let lot_key = location_lot_key(lot_id);
-    let current: Option<(String, String)> = tx
-        .query_row(
-            "SELECT quantity_on_hand, quantity_reserved FROM location_inventory
-             WHERE location_id = ?1 AND sku = ?2 AND COALESCE(lot_id, '') = ?3",
-            params![location_id, sku, lot_key],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?;
-    let (on_hand, reserved) = match &current {
-        Some((oh, res)) => (
-            parse_decimal_strict(oh, "location_inventory", "quantity_on_hand")
-                .map_err(super::bins::smuggle)?,
-            parse_decimal_strict(res, "location_inventory", "quantity_reserved")
-                .map_err(super::bins::smuggle)?,
-        ),
-        None => (Decimal::ZERO, Decimal::ZERO),
-    };
-    let new_on_hand = on_hand + delta;
-    if new_on_hand < reserved {
-        return Err(super::bins::smuggle(CommerceError::InsufficientStock {
-            sku: sku.to_string(),
-            requested: delta.abs().to_string(),
-            available: (on_hand - reserved).to_string(),
-        }));
-    }
-    if current.is_some() {
-        tx.execute(
-            "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
-             WHERE location_id = ?3 AND sku = ?4 AND COALESCE(lot_id, '') = ?5",
-            params![new_on_hand.to_string(), now, location_id, sku, lot_key],
-        )?;
-    } else {
-        tx.execute(
-            "INSERT INTO location_inventory
-             (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
-             VALUES (?1, ?2, ?3, ?4, '0', ?5)",
-            params![location_id, sku, lot_key, new_on_hand.to_string(), now],
-        )?;
-    }
-    Ok(())
-}
-
-/// Record a WMS movement in the `inventory_movements` audit trail.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn insert_wms_movement_tx(
-    tx: &rusqlite::Transaction<'_>,
-    movement_type: MovementType,
-    from_location_id: Option<i32>,
-    to_location_id: Option<i32>,
-    sku: &str,
-    lot_id: Option<Uuid>,
-    quantity: Decimal,
-    reference_type: &str,
-    reference_id: &str,
-    performed_by: Option<&str>,
-    now: &str,
-) -> rusqlite::Result<()> {
-    tx.execute(
-        "INSERT INTO inventory_movements
-         (id, movement_type, from_location_id, to_location_id, sku, lot_id, quantity,
-          reference_type, reference_id, reason, performed_by, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-        params![
-            Uuid::new_v4().to_string(),
-            movement_type.to_string(),
-            from_location_id,
-            to_location_id,
-            sku,
-            lot_id.map(|id| id.to_string()),
-            quantity.to_string(),
-            reference_type,
-            reference_id,
-            format!("{movement_type} {reference_type} {reference_id}"),
-            performed_by,
-            now,
-        ],
-    )?;
-    Ok(())
 }
 
 /// The warehouse a location belongs to.
@@ -159,21 +46,7 @@ pub(crate) fn warehouse_of_location_tx(
     })
 }
 
-/// Ensure an `inventory_items` master row exists for `sku`.
-///
-/// `apply_warehouse_delta_tx` refuses to stock an unknown SKU, but a receipt
-/// legitimately introduces one: the goods are physically on the dock. Creating
-/// the master row here keeps a put-away from failing on a SKU that only the
-/// receipt knows about.
-pub(crate) fn ensure_inventory_item_tx(
-    tx: &rusqlite::Transaction<'_>,
-    sku: &str,
-) -> rusqlite::Result<()> {
-    tx.execute("INSERT OR IGNORE INTO inventory_items (sku, name) VALUES (?1, ?1)", params![sku])?;
-    Ok(())
-}
-
-/// SQLite warehouse repository
+/// SQLite warehouse repository.
 #[derive(Debug)]
 pub struct SqliteWarehouseRepository {
     pool: Pool<SqliteConnectionManager>,
@@ -1314,239 +1187,82 @@ impl WarehouseRepository for SqliteWarehouseRepository {
     }
 
     fn adjust_inventory(&self, input: AdjustLocationInventory) -> Result<LocationInventory> {
-        let now = Utc::now();
-        let now_str = now.to_rfc3339();
-        let lot_id_str = input.lot_id.map(|id| id.to_string());
-        let lot_key = lot_id_str.clone().unwrap_or_default();
-        let movement_id = Uuid::new_v4();
-        let reference_id_str = input.reference_id.map(|id| id.to_string());
-
-        // An adjustment is a read-modify-write of `location_inventory` (or an
-        // insert when the SKU is not stocked at the location yet) plus a
-        // movement insert. Run all of it inside one IMMEDIATE (retrying)
-        // transaction so the read holds the write lock: on a pooled connection
-        // with no transaction two concurrent `+5`s both read on-hand 10 and
-        // both wrote 15, silently losing one adjustment, and a rejected
-        // adjustment could still leave a movement row behind. This is the same
-        // model `move_inventory` and `complete_cycle_count` use; the Postgres
-        // backend gets there with `SELECT ... FOR UPDATE` + a guarded upsert.
-        // Domain errors are carried out via `ToSqlConversionFailure` so they
-        // are not retried.
         with_immediate_transaction(&self.pool, |tx| {
-            let existing: Option<(String, String)> = match tx.query_row(
-                "SELECT quantity_on_hand, quantity_reserved FROM location_inventory
-                 WHERE location_id = ?1 AND sku = ?2 AND COALESCE(lot_id, '') = ?3",
-                params![input.location_id, input.sku, lot_key],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            ) {
-                Ok(row) => Some(row),
-                Err(rusqlite::Error::QueryReturnedNoRows) => None,
-                Err(e) => return Err(e),
-            };
-
-            let (new_on_hand, reserved) = if let Some((oh_str, res_str)) = existing {
+            let now = Utc::now().to_rfc3339();
+            if input.quantity < Decimal::ZERO {
+                // Clients match on these refusals; keep their wording.
+                let on_hand: Option<String> = tx
+                    .query_row(
+                        "SELECT quantity_on_hand FROM location_inventory WHERE location_id = ?1 AND sku = ?2 AND lot_id = ?3",
+                        params![input.location_id, input.sku, location_lot_key(input.lot_id)],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                let Some(on_hand) = on_hand else {
+                    return Err(Self::smuggle(CommerceError::ValidationError(
+                        "Cannot create negative inventory".into(),
+                    )));
+                };
                 let on_hand =
-                    parse_decimal_strict(&oh_str, "location_inventory", "quantity_on_hand")
+                    parse_decimal_strict(&on_hand, "location_inventory", "quantity_on_hand")
                         .map_err(Self::smuggle)?;
-                let reserved =
-                    parse_decimal_strict(&res_str, "location_inventory", "quantity_reserved")
-                        .map_err(Self::smuggle)?;
-                let new_qty = on_hand + input.quantity;
-
-                if new_qty < Decimal::ZERO {
+                if on_hand + input.quantity < Decimal::ZERO {
                     return Err(Self::smuggle(CommerceError::ValidationError(
                         "Adjustment would result in negative inventory".into(),
                     )));
                 }
-
-                tx.execute(
-                    "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
-                     WHERE location_id = ?3 AND sku = ?4 AND COALESCE(lot_id, '') = ?5",
-                    params![new_qty.to_string(), now_str, input.location_id, input.sku, lot_key],
-                )?;
-
-                (new_qty, reserved)
-            } else {
-                if input.quantity < Decimal::ZERO {
-                    return Err(Self::smuggle(CommerceError::ValidationError(
-                        "Cannot create negative inventory".into(),
-                    )));
-                }
-
-                tx.execute(
-                    "INSERT INTO location_inventory (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, '0', ?5)",
-                    params![
-                        input.location_id,
-                        input.sku,
-                        lot_key,
-                        input.quantity.to_string(),
-                        now_str,
-                    ],
-                )?;
-
-                (input.quantity, Decimal::ZERO)
-            };
-
-            // Record the movement in the same transaction, so a rejected or
-            // rolled-back adjustment leaves no orphan audit row.
-            tx.execute(
-                "INSERT INTO inventory_movements (id, movement_type, to_location_id, sku, lot_id, quantity, reference_type, reference_id, reason, performed_by, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                params![
-                    movement_id.to_string(),
-                    MovementType::Adjustment.to_string(),
-                    input.location_id,
-                    input.sku,
-                    lot_id_str,
-                    input.quantity.to_string(),
-                    input.reference_type,
-                    reference_id_str,
-                    input.reason,
-                    input.performed_by,
-                    now_str,
-                ],
+            }
+            super::stock_move::post(
+                tx,
+                &crate::stock_move::StockMove {
+                    id: Uuid::new_v4(),
+                    sku: &input.sku,
+                    lot_id: input.lot_id,
+                    from: (input.quantity < Decimal::ZERO).then_some(input.location_id),
+                    to: (input.quantity > Decimal::ZERO).then_some(input.location_id),
+                    quantity: input.quantity.abs(),
+                    release_reserved: Decimal::ZERO,
+                    reserve_received: Decimal::ZERO,
+                    movement_type: stateset_core::MovementType::Adjustment,
+                    lot_effect: crate::stock_move::LotEffect::Track,
+                    check_sellable: false,
+                    reference_type: input.reference_type.as_deref(),
+                    reference_id: input.reference_id,
+                    reference_label: None,
+                    reason: Some(&input.reason),
+                    performed_by: input.performed_by.as_deref(),
+                },
+                &now,
             )?;
-
-            Ok(LocationInventory {
-                location_id: input.location_id,
-                sku: input.sku.clone(),
-                lot_id: input.lot_id,
-                quantity_on_hand: new_on_hand,
-                quantity_reserved: reserved,
-                quantity_available: new_on_hand - reserved,
-                updated_at: now,
-            })
+            tx.query_row("SELECT * FROM location_inventory WHERE location_id = ?1 AND sku = ?2 AND lot_id = ?3", params![input.location_id, input.sku, location_lot_key(input.lot_id)], Self::row_to_location_inventory)
         })
     }
-
     fn move_inventory(&self, input: MoveInventory) -> Result<LocationMovement> {
         let now = Utc::now();
-        let now_str = now.to_rfc3339();
-        let lot_id_str = input.lot_id.map(|id| id.to_string());
-        let lot_key = lot_id_str.clone().unwrap_or_default();
         let movement_id = Uuid::new_v4();
-
-        // A move is a source-decrement + destination-increment + movement-insert.
-        // Run all three atomically inside one IMMEDIATE (retrying) transaction so a
-        // failure partway (e.g. a bad destination) can never leave stock destroyed
-        // at the source with nothing credited to the destination — the Postgres
-        // backend already wraps the move in a transaction. Domain errors are
-        // carried out via `ToSqlConversionFailure` so they are not retried.
-
         with_immediate_transaction(&self.pool, |tx| {
-            // Get source inventory
-            let (source_on_hand, source_reserved): (String, String) = match tx.query_row(
-                "SELECT quantity_on_hand, quantity_reserved FROM location_inventory
-                 WHERE location_id = ?1 AND sku = ?2 AND COALESCE(lot_id, '') = ?3",
-                params![input.from_location_id, input.sku, lot_key],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            ) {
-                Ok(v) => v,
-                Err(rusqlite::Error::QueryReturnedNoRows) => {
-                    return Err(Self::smuggle(CommerceError::NotFound));
-                }
-                Err(e) => return Err(e),
-            };
-
-            let on_hand =
-                parse_decimal_strict(&source_on_hand, "location_inventory", "quantity_on_hand")
-                    .map_err(Self::smuggle)?;
-            let reserved =
-                parse_decimal_strict(&source_reserved, "location_inventory", "quantity_reserved")
-                    .map_err(Self::smuggle)?;
-            let available = on_hand - reserved;
-
-            if input.quantity > available {
-                return Err(Self::smuggle(CommerceError::ValidationError(format!(
-                    "Insufficient available quantity. Requested: {}, Available: {}",
-                    input.quantity, available
-                ))));
-            }
-
-            // Reduce source location
-            let new_source_qty = on_hand - input.quantity;
-            tx.execute(
-                "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
-                 WHERE location_id = ?3 AND sku = ?4 AND COALESCE(lot_id, '') = ?5",
-                params![
-                    new_source_qty.to_string(),
-                    now_str,
-                    input.from_location_id,
-                    input.sku,
-                    lot_key,
-                ],
+            super::stock_move::post(
+                tx,
+                &crate::stock_move::StockMove {
+                    id: movement_id,
+                    sku: &input.sku,
+                    lot_id: input.lot_id,
+                    from: Some(input.from_location_id),
+                    to: Some(input.to_location_id),
+                    quantity: input.quantity,
+                    release_reserved: Decimal::ZERO,
+                    reserve_received: Decimal::ZERO,
+                    movement_type: stateset_core::MovementType::Transfer,
+                    lot_effect: crate::stock_move::LotEffect::Track,
+                    check_sellable: true,
+                    reference_type: None,
+                    reference_id: None,
+                    reference_label: None,
+                    reason: input.reason.as_deref(),
+                    performed_by: input.performed_by.as_deref(),
+                },
+                &now.to_rfc3339(),
             )?;
-
-            // Increase destination location
-            let dest_exists: bool = tx
-                .query_row(
-                    "SELECT 1 FROM location_inventory WHERE location_id = ?1 AND sku = ?2 AND COALESCE(lot_id, '') = ?3",
-                    params![input.to_location_id, input.sku, lot_key],
-                    |_| Ok(true),
-                )
-                .unwrap_or(false);
-
-            if dest_exists {
-                // `quantity_on_hand` is a TEXT column (migration 016), so adding in
-                // SQL ('CAST(quantity_on_hand AS REAL) + ?1') would coerce both
-                // operands to IEEE-754 floats ('0.1' + '0.2' = 0.30000000000000004).
-                // Read the destination's current quantity, add with
-                // `rust_decimal::Decimal` in Rust, and write the exact precomputed
-                // string back as a bound parameter.
-                let dest_on_hand: String = tx.query_row(
-                    "SELECT quantity_on_hand FROM location_inventory
-                     WHERE location_id = ?1 AND sku = ?2 AND COALESCE(lot_id, '') = ?3",
-                    params![input.to_location_id, input.sku, lot_key],
-                    |row| row.get(0),
-                )?;
-                let new_dest_qty =
-                    parse_decimal_strict(&dest_on_hand, "location_inventory", "quantity_on_hand")
-                        .map_err(Self::smuggle)?
-                        + input.quantity;
-                tx.execute(
-                    "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
-                     WHERE location_id = ?3 AND sku = ?4 AND COALESCE(lot_id, '') = ?5",
-                    params![
-                        new_dest_qty.to_string(),
-                        now_str,
-                        input.to_location_id,
-                        input.sku,
-                        lot_key,
-                    ],
-                )?;
-            } else {
-                tx.execute(
-                    "INSERT INTO location_inventory (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, '0', ?5)",
-                    params![
-                        input.to_location_id,
-                        input.sku,
-                        lot_key,
-                        input.quantity.to_string(),
-                        now_str,
-                    ],
-                )?;
-            }
-
-            // Record the movement
-            tx.execute(
-                "INSERT INTO inventory_movements (id, movement_type, from_location_id, to_location_id, sku, lot_id, quantity, reason, performed_by, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                params![
-                    movement_id.to_string(),
-                    MovementType::Transfer.to_string(),
-                    input.from_location_id,
-                    input.to_location_id,
-                    input.sku,
-                    lot_id_str,
-                    input.quantity.to_string(),
-                    input.reason,
-                    input.performed_by,
-                    now_str,
-                ],
-            )?;
-
             Ok(LocationMovement {
                 id: movement_id,
                 movement_type: MovementType::Transfer,
@@ -1563,7 +1279,6 @@ impl WarehouseRepository for SqliteWarehouseRepository {
             })
         })
     }
-
     fn list_location_inventory(
         &self,
         filter: LocationInventoryFilter,
@@ -1808,7 +1523,27 @@ impl WarehouseRepository for SqliteWarehouseRepository {
                 ],
             )?;
 
+            if let Some(location) = input.location_id {
+                if warehouse_of_location_tx(tx, location)? != input.warehouse_id {
+                    return Err(Self::smuggle(CommerceError::ValidationError(
+                        "Cycle count location belongs to another warehouse".into(),
+                    )));
+                }
+            }
             for line in &input.lines {
+                let expected: String = tx.query_row(
+                    "SELECT decimal_sum(li.quantity_on_hand) FROM location_inventory li
+                     JOIN locations l ON l.id = li.location_id
+                     WHERE l.warehouse_id = ?1 AND (?2 IS NULL OR li.location_id = ?2)
+                       AND li.sku = ?3 AND COALESCE(li.lot_id, '') = ?4",
+                    params![
+                        input.warehouse_id,
+                        input.location_id,
+                        line.sku,
+                        location_lot_key(line.lot_id)
+                    ],
+                    |r| r.get(0),
+                )?;
                 tx.execute(
                     "INSERT INTO cycle_count_lines (id, cycle_count_id, sku, lot_id, expected_quantity)
                      VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -1817,7 +1552,7 @@ impl WarehouseRepository for SqliteWarehouseRepository {
                         id.to_string(),
                         line.sku,
                         line.lot_id.map(|l| l.to_string()).unwrap_or_default(),
-                        line.expected_quantity.to_string(),
+                        expected,
                     ],
                 )?;
             }
@@ -1986,78 +1721,54 @@ impl WarehouseRepository for SqliteWarehouseRepository {
                         line.sku
                     )))
                 })?;
-                let variance = counted - line.expected_quantity;
-                // Persist the final variance even when zero.
+                let location_id = existing.location_id.ok_or_else(|| {
+                    Self::smuggle(CommerceError::ValidationError(
+                        "Completing a cycle count requires a single location".into(),
+                    ))
+                })?;
+                if warehouse_of_location_tx(tx, location_id)? != existing.warehouse_id {
+                    return Err(Self::smuggle(CommerceError::ValidationError(
+                        "Cycle count location belongs to another warehouse".into(),
+                    )));
+                }
+                let current: Option<String> = tx.query_row(
+                    "SELECT quantity_on_hand FROM location_inventory WHERE location_id = ?1 AND sku = ?2 AND COALESCE(lot_id, '') = ?3",
+                    params![location_id, line.sku, location_lot_key(line.lot_id)], |r| r.get(0)
+                ).optional()?;
+                let current = current
+                    .map(|v| parse_decimal_strict(&v, "location_inventory", "quantity_on_hand"))
+                    .transpose()
+                    .map_err(Self::smuggle)?
+                    .unwrap_or(Decimal::ZERO);
+                let variance = counted - current;
                 tx.execute(
                     "UPDATE cycle_count_lines SET variance = ?1 WHERE id = ?2",
                     params![variance.to_string(), line.id.to_string()],
                 )?;
-                if variance == Decimal::ZERO {
+                if variance.is_zero() {
                     continue;
                 }
-                let location_id = existing.location_id.ok_or_else(|| {
-                    Self::smuggle(CommerceError::ValidationError(
-                        "cycle count has no location_id; cannot apply variance adjustments".into(),
-                    ))
-                })?;
-                let lot_key = line.lot_id.map(|l| l.to_string()).unwrap_or_default();
-
-                // Adjust location_inventory (same path as adjust_inventory).
-                let current: Option<String> = tx
-                    .query_row(
-                        "SELECT quantity_on_hand FROM location_inventory
-                         WHERE location_id = ?1 AND sku = ?2 AND COALESCE(lot_id, '') = ?3",
-                        params![location_id, line.sku, lot_key],
-                        |row| row.get(0),
-                    )
-                    .ok();
-                if let Some(oh_str) = current {
-                    let on_hand =
-                        parse_decimal_strict(&oh_str, "location_inventory", "quantity_on_hand")
-                            .map_err(Self::smuggle)?;
-                    let new_qty = on_hand + variance;
-                    if new_qty < Decimal::ZERO {
-                        return Err(Self::smuggle(CommerceError::ValidationError(format!(
-                            "cycle count adjustment for sku {} would result in negative inventory",
-                            line.sku
-                        ))));
-                    }
-                    tx.execute(
-                        "UPDATE location_inventory SET quantity_on_hand = ?1, updated_at = ?2
-                         WHERE location_id = ?3 AND sku = ?4 AND COALESCE(lot_id, '') = ?5",
-                        params![new_qty.to_string(), now_str, location_id, line.sku, lot_key],
-                    )?;
-                } else {
-                    if variance < Decimal::ZERO {
-                        return Err(Self::smuggle(CommerceError::ValidationError(format!(
-                            "cycle count adjustment for sku {} would result in negative inventory",
-                            line.sku
-                        ))));
-                    }
-                    tx.execute(
-                        "INSERT INTO location_inventory (location_id, sku, lot_id, quantity_on_hand, quantity_reserved, updated_at)
-                         VALUES (?1, ?2, ?3, ?4, '0', ?5)",
-                        params![location_id, line.sku, lot_key, variance.to_string(), now_str],
-                    )?;
-                }
-
-                // Record the movement as a cycle_count adjustment.
-                tx.execute(
-                    "INSERT INTO inventory_movements (id, movement_type, to_location_id, sku, lot_id, quantity, reference_type, reference_id, reason, performed_by, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                    params![
-                        Uuid::new_v4().to_string(),
-                        MovementType::CycleCount.to_string(),
-                        location_id,
-                        line.sku,
-                        line.lot_id.map(|l| l.to_string()),
-                        variance.to_string(),
-                        "cycle_count",
-                        existing.id.to_string(),
-                        "Cycle count variance",
-                        existing.counted_by.as_deref(),
-                        now_str,
-                    ],
+                super::stock_move::post(
+                    tx,
+                    &crate::stock_move::StockMove {
+                        id: Uuid::new_v4(),
+                        sku: &line.sku,
+                        lot_id: line.lot_id,
+                        from: (variance < Decimal::ZERO).then_some(location_id),
+                        to: (variance > Decimal::ZERO).then_some(location_id),
+                        quantity: variance.abs(),
+                        release_reserved: Decimal::ZERO,
+                        reserve_received: Decimal::ZERO,
+                        movement_type: stateset_core::MovementType::CycleCount,
+                        lot_effect: crate::stock_move::LotEffect::Track,
+                        check_sellable: false,
+                        reference_type: Some("cycle_count"),
+                        reference_id: Some(id),
+                        reference_label: None,
+                        reason: Some("Cycle count variance"),
+                        performed_by: existing.counted_by.as_deref(),
+                    },
+                    &now_str,
                 )?;
             }
 
@@ -2160,6 +1871,18 @@ mod tests {
             params![location_id, sku, qty],
         )
         .expect("seed inventory");
+        let warehouse: i32 = conn
+            .query_row("SELECT warehouse_id FROM locations WHERE id = ?", [location_id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        conn.execute(
+            "INSERT INTO inventory_items (sku, name) VALUES (?1, ?1) ON CONFLICT DO NOTHING",
+            [sku],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO inventory_locations (id, name, code) VALUES (?1, 'Test warehouse', ?2) ON CONFLICT DO NOTHING", params![warehouse, format!("TEST-{warehouse}")]).unwrap();
+        conn.execute("INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, quantity_available) VALUES ((SELECT id FROM inventory_items WHERE sku = ?1), ?2, ?3, ?3)", params![sku, warehouse, qty]).unwrap();
     }
 
     #[test]
@@ -2752,17 +2475,26 @@ mod tests {
         let wh = make_wh(&repo, "WH-MV");
         let src = make_loc(&repo, wh.id, "SRC-1");
         let dst = make_loc(&repo, wh.id, "DST-1");
-        let lot = Uuid::new_v4();
-
-        // Seed the source with enough stock to move twice.
-        repo.adjust_inventory(AdjustLocationInventory {
-            location_id: src.id,
+        use stateset_core::LotRepository;
+        let lots = super::super::lots::SqliteLotRepository::new(repo.pool.clone());
+        let lot = lots
+            .create(stateset_core::CreateLot {
+                sku: "SKU-1".into(),
+                quantity: dec!(10),
+                initial_location_id: Some(wh.id),
+                ..Default::default()
+            })
+            .expect("seed real lot")
+            .id;
+        let baseline =
+            repo.get_inventory_for_sku(wh.id, "SKU-1").expect("lot stock")[0].location_id;
+        repo.move_inventory(MoveInventory {
+            from_location_id: baseline,
+            to_location_id: src.id,
             sku: "SKU-1".into(),
             lot_id: Some(lot),
             quantity: dec!(10),
-            reason: "seed source".into(),
-            reference_type: None,
-            reference_id: None,
+            reason: Some("seed source".into()),
             performed_by: None,
         })
         .expect("seed source");

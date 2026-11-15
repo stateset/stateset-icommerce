@@ -959,6 +959,13 @@ impl SerialRepository for SqliteSerialRepository {
             }
         }
         serial.ensure_can_transition_to(SerialStatus::Reserved)?;
+        super::stock_guard::ensure_sellable(
+            &tx,
+            &serial.sku,
+            serial.lot_id,
+            Some(&serial.serial),
+            serial.current_location_id,
+        )?;
 
         // Legacy rows (pre-lifecycle reservations that were never consumed)
         // must not hold the backstop key against this new reservation.

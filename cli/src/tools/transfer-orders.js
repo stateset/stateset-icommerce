@@ -68,11 +68,15 @@ export const transferOrderTools = withPolicyDomain('transfer_orders', [
     name: 'create_transfer_order',
     description: 'Create a transfer order between warehouses.',
     inputSchema: {
+      sourceLocationId: z.number().int().positive().describe('Physical stock source location'),
+      destinationLocationId: z.number().int().positive().describe('Physical receiving location'),
       sourceWarehouseId: z.string().min(1).describe('Source warehouse ID'),
       destinationWarehouseId: z.string().min(1).describe('Destination warehouse ID'),
       items: z
         .array(
           z.object({
+            sku: z.string().min(1).describe('Product variant SKU'),
+            lotId: z.string().uuid().optional(),
             productId: z.string().min(1).describe('Product ID'),
             quantity: z.string().min(1).describe('Quantity as an exact decimal string'),
           }),
@@ -89,6 +93,8 @@ export const transferOrderTools = withPolicyDomain('transfer_orders', [
       }
 
       const transferOrder = await commerce.transferOrders.create({
+        sourceLocationId: params.sourceLocationId,
+        destinationLocationId: params.destinationLocationId,
         sourceWarehouseId: params.sourceWarehouseId,
         destinationWarehouseId: params.destinationWarehouseId,
         items: params.items,
@@ -150,6 +156,20 @@ export const transferOrderTools = withPolicyDomain('transfer_orders', [
 
       const transferOrder = await commerce.transferOrders.cancel(params.transferOrderId);
       return { success: true, message: 'Transfer order cancelled', transferOrder };
+    },
+  },
+  {
+    name: 'complete_transfer_order_receiving',
+    description:
+      'Close transfer receiving and record outstanding in-transit stock as a shortage. This finalizes the transfer.',
+    inputSchema: { transferOrderId: z.string().uuid() },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) return applyRequired('Close transfer receiving and record shortage', params);
+      return {
+        success: true,
+        transferOrder: await commerce.transferOrders.completeReceiving(params.transferOrderId),
+      };
     },
   },
 ]);

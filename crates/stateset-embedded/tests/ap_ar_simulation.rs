@@ -31,7 +31,7 @@ use stateset_embedded::{
     CreateBillItem, CreateBillPayment, CreateCreditMemo, CreateCustomer, CreateInvoice,
     CreateInvoiceItem, CreatePayment, CreateWriteOff, CreditMemoReason, CustomerId,
     GenerateStatementRequest, InvoiceStatus, PaymentAllocationInput, PaymentApplicationLine,
-    PaymentMethodAP, RecordInvoicePayment, WriteOffReason,
+    PaymentMethodAP, RecordInvoicePayment, WriteOffFilter, WriteOffReason,
 };
 use uuid::Uuid;
 
@@ -108,8 +108,7 @@ const fn bill_is_payable(status: BillStatus) -> bool {
 const fn invoice_is_open(status: InvoiceStatus) -> bool {
     matches!(
         status,
-        InvoiceStatus::Draft
-            | InvoiceStatus::Sent
+        InvoiceStatus::Sent
             | InvoiceStatus::Viewed
             | InvoiceStatus::PartiallyPaid
             | InvoiceStatus::Overdue
@@ -133,10 +132,18 @@ impl Sim {
                     .id
             })
             .collect();
+        let supplier = commerce
+            .purchase_orders()
+            .create_supplier(stateset_embedded::CreateSupplier {
+                name: "Simulation supplier".into(),
+                ..Default::default()
+            })
+            .expect("create supplier")
+            .id;
         Self {
             commerce,
             rng: Rng(seed),
-            supplier: Uuid::new_v4(),
+            supplier,
             bills: Vec::new(),
             invoices: Vec::new(),
             customer_ids,
@@ -208,6 +215,7 @@ impl Sim {
             .accounts_payable()
             .create_bill(CreateBill {
                 supplier_id: self.supplier,
+                created_by: Some("sim-maker".into()),
                 due_date: Utc::now() + Duration::days(30),
                 items,
                 ..Default::default()
@@ -218,7 +226,7 @@ impl Sim {
 
     fn op_approve_bill(&mut self) {
         let Some(id) = self.pick_bill() else { return self.op_create_bill() };
-        let result = self.commerce.accounts_payable().approve_bill(id);
+        let result = self.commerce.accounts_payable().approve_bill_as(id, "sim-checker", None);
         self.tolerate("approve_bill", result);
     }
 
@@ -304,6 +312,7 @@ impl Sim {
                 ..Default::default()
             })
             .expect("create invoice");
+        self.commerce.invoices().send(invoice.id.into()).expect("issue invoice");
         // Shadow from the engine-reported total (covers any default tax or
         // rounding the engine applies to the raw line inputs).
         self.shadows[cust].invoices_total += invoice.total;
@@ -311,7 +320,7 @@ impl Sim {
     }
 
     fn op_direct_payment(&mut self) {
-        let Some((id, _)) = self.pick_invoice() else { return self.op_create_invoice() };
+        let Some((id, cust)) = self.pick_invoice() else { return self.op_create_invoice() };
         let invoice = self.get_invoice(id);
         if !invoice_is_open(invoice.status) || invoice.balance_due <= Decimal::ZERO {
             return;
@@ -321,9 +330,9 @@ impl Sim {
             .commerce
             .invoices()
             .record_payment(id, RecordInvoicePayment { amount, ..Default::default() });
-        self.tolerate("record_payment (direct)", result);
-        // NOTE: direct payments are deliberately NOT statement-visible (no
-        // ar_payment_applications row), so they do not enter the shadow.
+        if self.tolerate("record_payment (direct)", result).is_some() {
+            self.shadows[cust].applied_payments += amount;
+        }
     }
 
     fn op_apply_payment(&mut self) {
@@ -344,6 +353,7 @@ impl Sim {
             .expect("create AR payment")
             .id
             .into();
+        self.commerce.payments().mark_completed(payment_id.into()).expect("complete payment");
         let result =
             self.commerce.accounts_receivable().apply_payment_to_invoices(ApplyPaymentToInvoices {
                 payment_id,
@@ -466,11 +476,25 @@ impl Sim {
 
         for &(invoice_id, _) in &self.invoices {
             let inv = self.get_invoice(invoice_id);
+            // A partial write-off reduces the collectible balance on its own.
+            let written_off: Decimal = self
+                .commerce
+                .accounts_receivable()
+                .list_write_offs(WriteOffFilter {
+                    invoice_id: Some(invoice_id),
+                    include_reversed: Some(false),
+                    ..Default::default()
+                })
+                .expect("list write-offs")
+                .iter()
+                .filter(|w| w.reversed_at.is_none())
+                .map(|w| w.amount)
+                .sum();
             assert_eq!(
                 inv.balance_due,
-                inv.total - inv.amount_paid,
-                "{context}: invoice {invoice_id} balance_due != total - paid \
-                 (total {}, paid {}, balance {}, status {:?})",
+                inv.total - inv.amount_paid - written_off,
+                "{context}: invoice {invoice_id} balance_due != total - paid - written off \
+                 (total {}, paid {}, written off {written_off}, balance {}, status {:?})",
                 inv.total,
                 inv.amount_paid,
                 inv.balance_due,
@@ -572,6 +596,7 @@ fn randomized_ap_ar_simulation_keeps_money_invariants() {
             .commerce
             .accounts_receivable()
             .generate_statement(GenerateStatementRequest {
+                currency: None,
                 customer_id: sim.customer_ids[cust].into(),
                 period_start: Some(start),
                 period_end: Some(end),

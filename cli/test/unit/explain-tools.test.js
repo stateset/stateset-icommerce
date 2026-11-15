@@ -235,16 +235,18 @@ const explainCart = (commerce, params = {}) =>
 const codes = (result) => result.flags.map((f) => f.code);
 
 describe('explain tools -- registration and binding surface', () => {
-  it('exports two read-only tools with valid schemas', () => {
+  it('exports three read-only tools with valid schemas', () => {
     assert.deepEqual(
       explainTools.map((tool) => [tool.name, tool.permission]),
       [
         ['explain_order', 'read'],
         ['explain_cart_pricing', 'read'],
+        ['explain_state_machine', 'read'],
       ],
     );
     assert.equal(TOOL_PERMISSIONS.explain_order, 'read');
     assert.equal(TOOL_PERMISSIONS.explain_cart_pricing, 'read');
+    assert.equal(TOOL_PERMISSIONS.explain_state_machine, 'read');
     assert.equal(z.object(byName.explain_order.inputSchema).safeParse({}).success, false);
     assert.equal(
       z

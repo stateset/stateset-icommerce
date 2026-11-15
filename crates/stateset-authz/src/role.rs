@@ -246,10 +246,7 @@ mod tests {
         assert!(op.check("orders", &Action::Read).is_allowed());
         assert!(op.check("orders", &Action::Create).is_allowed());
         assert!(op.check("orders", &Action::Delete).is_allowed());
-        // Operator cannot do admin-level operations... but actually Delete is the
-        // highest required_permission for any Action, so operator can do everything
-        // that Action maps to. The gap is only when resource-specific overrides
-        // restrict below Delete.
+        assert!(op.check("ap", &Action::ManageFinance).is_denied());
     }
 
     #[test]

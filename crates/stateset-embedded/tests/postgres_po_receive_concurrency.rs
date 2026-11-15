@@ -87,6 +87,25 @@ async fn postgres_receive_accumulates_concurrent_partial_receipts() {
     let po_id = po.id.into_uuid();
     let item_id = po.items[0].id;
 
+    let warehouse = commerce
+        .warehouse()
+        .create_warehouse(stateset_core::CreateWarehouse {
+            code: format!("RCV-{unique}"),
+            name: "Receiving".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let location = commerce
+        .warehouse()
+        .create_location(stateset_core::CreateLocation {
+            warehouse_id: warehouse.id,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let warehouse_id = warehouse.id;
+    let receiving_location_id = location.id;
     let n = 8;
     let barrier = Arc::new(tokio::sync::Barrier::new(n));
     let mut handles = Vec::new();
@@ -100,6 +119,8 @@ async fn postgres_receive_accumulates_concurrent_partial_receipts() {
                 .receive(
                     po_id,
                     ReceivePurchaseOrderItems {
+                        warehouse_id,
+                        receiving_location_id,
                         items: vec![ReceivePurchaseOrderItem {
                             item_id,
                             quantity_received: dec!(2),

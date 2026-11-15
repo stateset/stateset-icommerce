@@ -29,6 +29,9 @@ def test_cycle_count_full_lifecycle(commerce):
     location = commerce.warehouse.create_location(
         warehouse_id=warehouse.id, code="A-01", location_type="bulk"
     )
+    # Expected quantities come from the location's stored stock.
+    commerce.warehouse.adjust_inventory(int(location.id), "CC-SKU-1", "100", "count fixture")
+    commerce.warehouse.adjust_inventory(int(location.id), "CC-SKU-2", "25.5", "count fixture")
 
     count = cc.create(
         warehouse_id=int(warehouse.id),

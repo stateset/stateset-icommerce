@@ -56,6 +56,8 @@ async fn postgres_concurrent_invoice_payments_are_not_lost() {
         })
         .await
         .expect("create invoice");
+    // Payments are recorded only against issued invoices.
+    let invoice = commerce.invoices().send(invoice.id.into_uuid()).await.expect("issue invoice");
     assert_eq!(invoice.balance_due, dec!(100.00));
 
     // Ten $10 payments land simultaneously.

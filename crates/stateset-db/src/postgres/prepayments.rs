@@ -25,6 +25,8 @@ struct PrepaymentRow {
     supplier_id: Uuid,
     amount: Decimal,
     remaining: Decimal,
+    refunded_amount: Decimal,
+    refunded_at: Option<DateTime<Utc>>,
     currency: String,
     status: String,
     method: Option<String>,
@@ -69,6 +71,8 @@ impl PgPrepaymentRepository {
             supplier_id: row.supplier_id,
             amount: row.amount,
             remaining: row.remaining,
+            refunded_amount: row.refunded_amount,
+            refunded_at: row.refunded_at,
             currency,
             status,
             method: row.method,
@@ -222,6 +226,15 @@ impl PgPrepaymentRepository {
                 "application exceeds remaining balance".into(),
             ));
         }
+        super::ap_settlement::apply(
+            &mut tx,
+            &input.target_type.to_string(),
+            input.target_id,
+            prepayment.supplier_id,
+            prepayment.currency,
+            input.amount,
+        )
+        .await?;
         let new_remaining = prepayment.remaining - input.amount;
         let new_status = Self::status_for(new_remaining, prepayment.status);
         let now = Utc::now();
@@ -292,6 +305,22 @@ impl PgPrepaymentRepository {
                 "cannot reverse against a refunded prepayment".into(),
             ));
         }
+        let (target_kind, target_id) = sqlx::query_as::<_, (String, Uuid)>(
+            "SELECT target_type,target_id FROM prepayment_applications WHERE id = $1",
+        )
+        .bind(Uuid::from(application_id))
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        super::ap_settlement::apply(
+            &mut tx,
+            &target_kind,
+            target_id,
+            prepayment.supplier_id,
+            prepayment.currency,
+            -amount,
+        )
+        .await?;
         let new_remaining = prepayment.remaining + amount;
         let new_status = Self::status_for(new_remaining, prepayment.status);
         let now = Utc::now();
@@ -321,10 +350,18 @@ impl PgPrepaymentRepository {
         if prepayment.status == PrepaymentStatus::Cancelled {
             return Err(CommerceError::Conflict("cannot refund a cancelled prepayment".into()));
         }
+        if prepayment.status == PrepaymentStatus::Refunded {
+            return Ok(prepayment);
+        }
+        if prepayment.remaining <= Decimal::ZERO {
+            return Err(CommerceError::Conflict(
+                "Prepayment has no unused balance to refund".into(),
+            ));
+        }
         // Refund zeroes the remaining balance and closes the prepayment.
         let now = Utc::now();
         sqlx::query(
-            "UPDATE prepayments SET remaining = 0, status = 'refunded', updated_at = $1 WHERE id = $2",
+            "UPDATE prepayments SET refunded_amount=remaining,refunded_at=$1,remaining = 0, status = 'refunded', updated_at = $1 WHERE id = $2",
         )
         .bind(now)
         .bind(Uuid::from(id))

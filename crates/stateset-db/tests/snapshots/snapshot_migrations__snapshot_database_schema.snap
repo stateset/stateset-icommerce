@@ -73,7 +73,7 @@ expression: tables
     ),
     (
         "ap_bills",
-        "CREATE TABLE ap_bills (\n    id TEXT PRIMARY KEY,\n    bill_number TEXT UNIQUE NOT NULL,\n    supplier_id TEXT NOT NULL,\n    supplier_name TEXT,\n    purchase_order_id TEXT,\n    status TEXT NOT NULL DEFAULT 'draft',\n    bill_date TEXT NOT NULL,\n    due_date TEXT NOT NULL,\n    payment_terms TEXT,\n    subtotal TEXT NOT NULL DEFAULT '0',\n    tax_amount TEXT NOT NULL DEFAULT '0',\n    shipping_amount TEXT NOT NULL DEFAULT '0',\n    discount_amount TEXT NOT NULL DEFAULT '0',\n    total_amount TEXT NOT NULL DEFAULT '0',\n    amount_paid TEXT NOT NULL DEFAULT '0',\n    amount_due TEXT NOT NULL DEFAULT '0',\n    currency TEXT NOT NULL DEFAULT 'USD',\n    reference_number TEXT,\n    memo TEXT,\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL\n)",
+        "CREATE TABLE ap_bills (\n    id TEXT PRIMARY KEY,\n    bill_number TEXT UNIQUE NOT NULL,\n    supplier_id TEXT NOT NULL,\n    supplier_name TEXT,\n    purchase_order_id TEXT,\n    status TEXT NOT NULL DEFAULT 'draft',\n    bill_date TEXT NOT NULL,\n    due_date TEXT NOT NULL,\n    payment_terms TEXT,\n    subtotal TEXT NOT NULL DEFAULT '0',\n    tax_amount TEXT NOT NULL DEFAULT '0',\n    shipping_amount TEXT NOT NULL DEFAULT '0',\n    discount_amount TEXT NOT NULL DEFAULT '0',\n    total_amount TEXT NOT NULL DEFAULT '0',\n    amount_paid TEXT NOT NULL DEFAULT '0',\n    amount_due TEXT NOT NULL DEFAULT '0',\n    currency TEXT NOT NULL DEFAULT 'USD',\n    reference_number TEXT,\n    memo TEXT,\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL\n, disputed_from_status TEXT, match_override_reason TEXT, approval_match TEXT, created_by TEXT, approved_by TEXT)",
     ),
     (
         "ap_payment_allocations",
@@ -85,7 +85,7 @@ expression: tables
     ),
     (
         "ap_payment_runs",
-        "CREATE TABLE ap_payment_runs (\n    id TEXT PRIMARY KEY,\n    run_number TEXT UNIQUE NOT NULL,\n    status TEXT NOT NULL DEFAULT 'draft',\n    payment_date TEXT NOT NULL,\n    payment_method TEXT NOT NULL DEFAULT 'ach',\n    total_amount TEXT NOT NULL DEFAULT '0',\n    payment_count INTEGER NOT NULL DEFAULT 0,\n    notes TEXT,\n    created_by TEXT,\n    approved_by TEXT,\n    approved_at TEXT,\n    processed_at TEXT,\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL\n)",
+        "CREATE TABLE ap_payment_runs (\n    id TEXT PRIMARY KEY,\n    run_number TEXT UNIQUE NOT NULL,\n    status TEXT NOT NULL DEFAULT 'draft',\n    payment_date TEXT NOT NULL,\n    payment_method TEXT NOT NULL DEFAULT 'ach',\n    total_amount TEXT NOT NULL DEFAULT '0',\n    payment_count INTEGER NOT NULL DEFAULT 0,\n    notes TEXT,\n    created_by TEXT,\n    approved_by TEXT,\n    approved_at TEXT,\n    processed_at TEXT,\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL\n, currency TEXT)",
     ),
     (
         "ap_payments",
@@ -108,6 +108,10 @@ expression: tables
         "CREATE TABLE ar_payment_applications (\n    id TEXT PRIMARY KEY,\n    payment_id TEXT NOT NULL,\n    invoice_id TEXT NOT NULL,\n    applied_amount TEXT NOT NULL,\n    applied_date TEXT NOT NULL,\n    created_at TEXT NOT NULL,\n    FOREIGN KEY (payment_id) REFERENCES payments(id),\n    FOREIGN KEY (invoice_id) REFERENCES invoices(id)\n)",
     ),
     (
+        "ar_reversed_payment_applications",
+        "CREATE TABLE ar_reversed_payment_applications (\n id TEXT PRIMARY KEY, payment_id TEXT NOT NULL, invoice_id TEXT NOT NULL,\n applied_amount TEXT NOT NULL, applied_date TEXT NOT NULL, reversed_at TEXT NOT NULL\n)",
+    ),
+    (
         "ar_write_offs",
         "CREATE TABLE ar_write_offs (\n    id TEXT PRIMARY KEY,\n    write_off_number TEXT UNIQUE NOT NULL,\n    invoice_id TEXT NOT NULL,\n    customer_id TEXT NOT NULL,\n    amount TEXT NOT NULL,\n    reason TEXT NOT NULL DEFAULT 'uncollectible',\n    notes TEXT,\n    write_off_date TEXT NOT NULL,\n    approved_by TEXT,\n    approved_at TEXT,\n    reversed_at TEXT,\n    gl_journal_entry_id TEXT,\n    created_at TEXT NOT NULL,\n    FOREIGN KEY (invoice_id) REFERENCES invoices(id)\n)",
     ),
@@ -122,6 +126,10 @@ expression: tables
     (
         "backorder_fulfillments",
         "CREATE TABLE backorder_fulfillments (\n    id TEXT PRIMARY KEY,\n    backorder_id TEXT NOT NULL,\n    quantity TEXT NOT NULL,\n    source_type TEXT NOT NULL DEFAULT 'inventory',\n    source_id TEXT,\n    notes TEXT,\n    fulfilled_at TEXT NOT NULL,\n    fulfilled_by TEXT,\n    FOREIGN KEY (backorder_id) REFERENCES backorders(id) ON DELETE CASCADE\n)",
+    ),
+    (
+        "backorder_receipt_stock",
+        "CREATE TABLE backorder_receipt_stock (\n    backorder_id TEXT NOT NULL REFERENCES backorders(id),\n    put_away_id TEXT NOT NULL REFERENCES put_aways(id),\n    quantity TEXT NOT NULL,\n    PRIMARY KEY (backorder_id, put_away_id)\n)",
     ),
     (
         "backorders",
@@ -177,7 +185,7 @@ expression: tables
     ),
     (
         "cost_layers",
-        "CREATE TABLE cost_layers (\n    id TEXT PRIMARY KEY,\n    sku TEXT NOT NULL,\n    layer_date TEXT NOT NULL,\n    quantity TEXT NOT NULL,\n    remaining_quantity TEXT NOT NULL,\n    unit_cost TEXT NOT NULL,\n    total_cost TEXT NOT NULL,\n    source_type TEXT NOT NULL DEFAULT 'purchase',\n    source_id TEXT,\n    lot_id TEXT,\n    location_id INTEGER,\n    created_at TEXT NOT NULL\n)",
+        "CREATE TABLE cost_layers (\n    id TEXT PRIMARY KEY,\n    sku TEXT NOT NULL,\n    layer_date TEXT NOT NULL,\n    quantity TEXT NOT NULL,\n    remaining_quantity TEXT NOT NULL,\n    unit_cost TEXT NOT NULL,\n    total_cost TEXT NOT NULL,\n    source_type TEXT NOT NULL DEFAULT 'purchase',\n    source_id TEXT,\n    lot_id TEXT,\n    location_id INTEGER,\n    created_at TEXT NOT NULL\n, base_total_cost TEXT, base_remaining_cost TEXT, base_currency TEXT)",
     ),
     (
         "cost_rollups",
@@ -185,7 +193,7 @@ expression: tables
     ),
     (
         "cost_transactions",
-        "CREATE TABLE cost_transactions (\n    id TEXT PRIMARY KEY,\n    sku TEXT NOT NULL,\n    transaction_type TEXT NOT NULL,\n    quantity TEXT NOT NULL,\n    unit_cost TEXT NOT NULL,\n    total_cost TEXT NOT NULL,\n    layer_id TEXT,\n    reference_type TEXT,\n    reference_id TEXT,\n    notes TEXT,\n    created_at TEXT NOT NULL,\n    FOREIGN KEY (layer_id) REFERENCES cost_layers(id)\n)",
+        "CREATE TABLE cost_transactions (\n    id TEXT PRIMARY KEY,\n    sku TEXT NOT NULL,\n    transaction_type TEXT NOT NULL,\n    quantity TEXT NOT NULL,\n    unit_cost TEXT NOT NULL,\n    total_cost TEXT NOT NULL,\n    layer_id TEXT,\n    reference_type TEXT,\n    reference_id TEXT,\n    notes TEXT,\n    created_at TEXT NOT NULL, currency TEXT,\n    FOREIGN KEY (layer_id) REFERENCES cost_layers(id)\n)",
     ),
     (
         "cost_variances",
@@ -288,8 +296,12 @@ expression: tables
         "CREATE TABLE fixed_asset_depreciation_entries (\n    asset_id TEXT NOT NULL REFERENCES fixed_assets(id) ON DELETE CASCADE,\n    period INTEGER NOT NULL,\n    amount TEXT NOT NULL,\n    accumulated TEXT NOT NULL,\n    book_value TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'scheduled',\n    PRIMARY KEY (asset_id, period)\n)",
     ),
     (
+        "fixed_asset_schedule_revisions",
+        "CREATE TABLE fixed_asset_schedule_revisions (id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES fixed_assets(id), previous_asset_json TEXT NOT NULL, previous_schedule_json TEXT NOT NULL, revised_at TEXT NOT NULL)",
+    ),
+    (
         "fixed_assets",
-        "CREATE TABLE fixed_assets (\n    id TEXT PRIMARY KEY,\n    asset_number TEXT NOT NULL,\n    name TEXT NOT NULL,\n    description TEXT,\n    category TEXT NOT NULL,\n    acquisition_date TEXT NOT NULL,\n    acquisition_cost TEXT NOT NULL,\n    salvage_value TEXT NOT NULL DEFAULT '0',\n    useful_life_months INTEGER NOT NULL,\n    depreciation_method TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'draft',\n    in_service_date TEXT,\n    location_id TEXT,\n    asset_account_id TEXT,\n    accumulated_depreciation_account_id TEXT,\n    depreciation_expense_account_id TEXT,\n    accumulated_depreciation TEXT NOT NULL DEFAULT '0',\n    currency TEXT NOT NULL DEFAULT 'USD',\n    disposal_date TEXT,\n    disposal_proceeds TEXT,\n    disposal_book_value TEXT,\n    disposal_gain_loss TEXT,\n    disposal_notes TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n)",
+        "CREATE TABLE fixed_assets (\n    id TEXT PRIMARY KEY,\n    asset_number TEXT NOT NULL,\n    name TEXT NOT NULL,\n    description TEXT,\n    category TEXT NOT NULL,\n    acquisition_date TEXT NOT NULL,\n    acquisition_cost TEXT NOT NULL,\n    salvage_value TEXT NOT NULL DEFAULT '0',\n    useful_life_months INTEGER NOT NULL,\n    depreciation_method TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'draft',\n    in_service_date TEXT,\n    location_id TEXT,\n    asset_account_id TEXT,\n    accumulated_depreciation_account_id TEXT,\n    depreciation_expense_account_id TEXT,\n    accumulated_depreciation TEXT NOT NULL DEFAULT '0',\n    currency TEXT NOT NULL DEFAULT 'USD',\n    disposal_date TEXT,\n    disposal_proceeds TEXT,\n    disposal_book_value TEXT,\n    disposal_gain_loss TEXT,\n    disposal_notes TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n, acquisition_offset_account_id TEXT REFERENCES gl_accounts(id), disposal_gain_loss_account_id TEXT REFERENCES gl_accounts(id))",
     ),
     (
         "fraud_assessments",
@@ -317,7 +329,15 @@ expression: tables
     ),
     (
         "gl_auto_posting_config",
-        "CREATE TABLE gl_auto_posting_config (\n    id TEXT PRIMARY KEY,\n    config_name TEXT NOT NULL,\n    cash_account_id TEXT NOT NULL,\n    accounts_receivable_account_id TEXT NOT NULL,\n    inventory_account_id TEXT NOT NULL,\n    accounts_payable_account_id TEXT NOT NULL,\n    unearned_revenue_account_id TEXT,\n    sales_revenue_account_id TEXT NOT NULL,\n    shipping_revenue_account_id TEXT,\n    cogs_account_id TEXT NOT NULL,\n    bad_debt_expense_account_id TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1,\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL, auto_post_depreciation INTEGER NOT NULL DEFAULT 0, auto_post_revenue_recognition INTEGER NOT NULL DEFAULT 0, fx_gain_loss_account_id TEXT,\n    FOREIGN KEY (cash_account_id) REFERENCES gl_accounts(id),\n    FOREIGN KEY (accounts_receivable_account_id) REFERENCES gl_accounts(id),\n    FOREIGN KEY (inventory_account_id) REFERENCES gl_accounts(id),\n    FOREIGN KEY (accounts_payable_account_id) REFERENCES gl_accounts(id),\n    FOREIGN KEY (sales_revenue_account_id) REFERENCES gl_accounts(id),\n    FOREIGN KEY (cogs_account_id) REFERENCES gl_accounts(id)\n)",
+        "CREATE TABLE gl_auto_posting_config (\n    id TEXT PRIMARY KEY,\n    config_name TEXT NOT NULL,\n    cash_account_id TEXT NOT NULL,\n    accounts_receivable_account_id TEXT NOT NULL,\n    inventory_account_id TEXT NOT NULL,\n    accounts_payable_account_id TEXT NOT NULL,\n    unearned_revenue_account_id TEXT,\n    sales_revenue_account_id TEXT NOT NULL,\n    shipping_revenue_account_id TEXT,\n    cogs_account_id TEXT NOT NULL,\n    bad_debt_expense_account_id TEXT,\n    is_active INTEGER NOT NULL DEFAULT 1,\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL, auto_post_depreciation INTEGER NOT NULL DEFAULT 0, auto_post_revenue_recognition INTEGER NOT NULL DEFAULT 0, fx_gain_loss_account_id TEXT, sales_tax_payable_account_id TEXT REFERENCES gl_accounts(id), goods_received_not_invoiced_account_id TEXT REFERENCES gl_accounts(id), inventory_adjustment_account_id TEXT REFERENCES gl_accounts(id), work_in_progress_account_id TEXT REFERENCES gl_accounts(id),\n    FOREIGN KEY (cash_account_id) REFERENCES gl_accounts(id),\n    FOREIGN KEY (accounts_receivable_account_id) REFERENCES gl_accounts(id),\n    FOREIGN KEY (inventory_account_id) REFERENCES gl_accounts(id),\n    FOREIGN KEY (accounts_payable_account_id) REFERENCES gl_accounts(id),\n    FOREIGN KEY (sales_revenue_account_id) REFERENCES gl_accounts(id),\n    FOREIGN KEY (cogs_account_id) REFERENCES gl_accounts(id)\n)",
+    ),
+    (
+        "gl_document_exchange_rates",
+        "CREATE TABLE gl_document_exchange_rates (\n source_type TEXT NOT NULL,\n source_id TEXT NOT NULL,\n transaction_currency TEXT NOT NULL,\n base_currency TEXT NOT NULL,\n exchange_rate TEXT NOT NULL,\n effective_date TEXT NOT NULL,\n PRIMARY KEY (source_type, source_id)\n)",
+    ),
+    (
+        "gl_fx_revaluation_runs",
+        "CREATE TABLE gl_fx_revaluation_runs (\n run_key TEXT PRIMARY KEY,\n id TEXT NOT NULL UNIQUE,\n as_of_date TEXT NOT NULL,\n base_currency TEXT NOT NULL,\n result_json TEXT\n)",
     ),
     (
         "gl_journal_entries",
@@ -325,7 +345,7 @@ expression: tables
     ),
     (
         "gl_journal_entry_lines",
-        "CREATE TABLE gl_journal_entry_lines (\n    id TEXT PRIMARY KEY,\n    journal_entry_id TEXT NOT NULL,\n    line_number INTEGER NOT NULL,\n    account_id TEXT NOT NULL,\n    account_number TEXT,\n    account_name TEXT,\n    description TEXT,\n    debit_amount TEXT NOT NULL DEFAULT '0',\n    credit_amount TEXT NOT NULL DEFAULT '0',\n    currency TEXT NOT NULL DEFAULT 'USD',\n    reference_type TEXT,\n    reference_id TEXT,\n    created_at TEXT NOT NULL,\n    FOREIGN KEY (journal_entry_id) REFERENCES gl_journal_entries(id) ON DELETE CASCADE,\n    FOREIGN KEY (account_id) REFERENCES gl_accounts(id)\n)",
+        "CREATE TABLE gl_journal_entry_lines (\n    id TEXT PRIMARY KEY,\n    journal_entry_id TEXT NOT NULL,\n    line_number INTEGER NOT NULL,\n    account_id TEXT NOT NULL,\n    account_number TEXT,\n    account_name TEXT,\n    description TEXT,\n    debit_amount TEXT NOT NULL DEFAULT '0',\n    credit_amount TEXT NOT NULL DEFAULT '0',\n    currency TEXT NOT NULL DEFAULT 'USD',\n    reference_type TEXT,\n    reference_id TEXT,\n    created_at TEXT NOT NULL, transaction_currency TEXT, transaction_debit_amount TEXT, transaction_credit_amount TEXT, exchange_rate TEXT,\n    FOREIGN KEY (journal_entry_id) REFERENCES gl_journal_entries(id) ON DELETE CASCADE,\n    FOREIGN KEY (account_id) REFERENCES gl_accounts(id)\n)",
     ),
     (
         "gl_periods",
@@ -408,6 +428,10 @@ expression: tables
         "CREATE TABLE inventory_movements (\n    id TEXT PRIMARY KEY NOT NULL,\n    movement_type TEXT NOT NULL,\n    from_location_id INTEGER REFERENCES locations(id),\n    to_location_id INTEGER REFERENCES locations(id),\n    sku TEXT NOT NULL,\n    lot_id TEXT,\n    quantity TEXT NOT NULL,\n    reference_type TEXT,\n    reference_id TEXT,\n    reason TEXT,\n    performed_by TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now'))\n)",
     ),
     (
+        "inventory_reservation_stock",
+        "CREATE TABLE inventory_reservation_stock (\n    reservation_id TEXT NOT NULL REFERENCES inventory_reservations(id),\n    location_id INTEGER NOT NULL REFERENCES locations(id),\n    lot_id TEXT NOT NULL DEFAULT '',\n    quantity TEXT NOT NULL,\n    PRIMARY KEY (reservation_id, location_id, lot_id)\n)",
+    ),
+    (
         "inventory_reservations",
         "CREATE TABLE inventory_reservations (\n    id TEXT PRIMARY KEY,\n    item_id INTEGER NOT NULL REFERENCES inventory_items(id),\n    location_id INTEGER NOT NULL DEFAULT 1,\n    quantity TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'pending',\n    reference_type TEXT NOT NULL,\n    reference_id TEXT NOT NULL,\n    expires_at TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now'))\n, order_item_id TEXT)",
     ),
@@ -476,6 +500,10 @@ expression: tables
         "CREATE TABLE lot_reservations (\n    id TEXT PRIMARY KEY,\n    lot_id TEXT NOT NULL REFERENCES lots(id),\n    quantity TEXT NOT NULL,\n    reference_type TEXT NOT NULL,\n    reference_id TEXT NOT NULL,\n    reserved_by TEXT,\n    reserved_at TEXT NOT NULL DEFAULT (datetime('now')),\n    expires_at TEXT,\n    confirmed_at TEXT,\n    released_at TEXT\n)",
     ),
     (
+        "lot_stock_holds",
+        "CREATE TABLE lot_stock_holds (\n    owner_id TEXT NOT NULL,\n    lot_id TEXT NOT NULL REFERENCES lots(id),\n    location_id INTEGER NOT NULL REFERENCES locations(id),\n    quantity TEXT NOT NULL,\n    PRIMARY KEY(owner_id, lot_id, location_id)\n)",
+    ),
+    (
         "lot_transactions",
         "CREATE TABLE lot_transactions (\n    id TEXT PRIMARY KEY,\n    lot_id TEXT NOT NULL REFERENCES lots(id),\n    transaction_type TEXT NOT NULL,\n    quantity TEXT NOT NULL,\n    reference_type TEXT NOT NULL,\n    reference_id TEXT NOT NULL,\n    from_location_id INTEGER,\n    to_location_id INTEGER,\n    reason TEXT,\n    performed_by TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now'))\n)",
     ),
@@ -513,7 +541,7 @@ expression: tables
     ),
     (
         "manufacturing_work_orders",
-        "CREATE TABLE manufacturing_work_orders (\n    id TEXT PRIMARY KEY,\n    work_order_number TEXT NOT NULL UNIQUE,\n    product_id TEXT NOT NULL,\n    bom_id TEXT REFERENCES manufacturing_boms(id),\n    work_center_id TEXT,\n    assigned_to TEXT,\n    status TEXT NOT NULL DEFAULT 'planned',\n    priority TEXT NOT NULL DEFAULT 'normal',\n    quantity_to_build TEXT NOT NULL,\n    quantity_completed TEXT NOT NULL DEFAULT '0',\n    scheduled_start TEXT,\n    scheduled_end TEXT,\n    actual_start TEXT,\n    actual_end TEXT,\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n)",
+        "CREATE TABLE manufacturing_work_orders (\n    id TEXT PRIMARY KEY,\n    work_order_number TEXT NOT NULL UNIQUE,\n    product_id TEXT NOT NULL,\n    bom_id TEXT REFERENCES manufacturing_boms(id),\n    work_center_id TEXT,\n    assigned_to TEXT,\n    status TEXT NOT NULL DEFAULT 'planned',\n    priority TEXT NOT NULL DEFAULT 'normal',\n    quantity_to_build TEXT NOT NULL,\n    quantity_completed TEXT NOT NULL DEFAULT '0',\n    scheduled_start TEXT,\n    scheduled_end TEXT,\n    actual_start TEXT,\n    actual_end TEXT,\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n, source_location_id INTEGER REFERENCES locations(id), output_location_id INTEGER REFERENCES locations(id), output_sku TEXT, version INTEGER NOT NULL DEFAULT 1)",
     ),
     (
         "non_conformances",
@@ -572,6 +600,14 @@ expression: tables
         "CREATE TABLE performance_obligations (\n    id TEXT PRIMARY KEY,\n    contract_id TEXT NOT NULL REFERENCES revenue_contracts(id) ON DELETE CASCADE,\n    description TEXT NOT NULL,\n    standalone_selling_price TEXT,\n    allocated_amount TEXT NOT NULL,\n    recognition_method TEXT NOT NULL,\n    recognized_amount TEXT NOT NULL DEFAULT '0',\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n)",
     ),
     (
+        "pick_stock_custody",
+        "CREATE TABLE pick_stock_custody (\n    pick_id TEXT PRIMARY KEY REFERENCES pick_tasks(id),\n    staging_location_id INTEGER NOT NULL REFERENCES locations(id),\n    quantity TEXT NOT NULL,\n    quantity_shipped TEXT NOT NULL DEFAULT '0'\n)",
+    ),
+    (
+        "pick_stock_reservations",
+        "CREATE TABLE pick_stock_reservations (\n    pick_id TEXT NOT NULL REFERENCES pick_tasks(id),\n    reservation_id TEXT NOT NULL REFERENCES inventory_reservations(id),\n    quantity TEXT NOT NULL,\n    quantity_shipped TEXT NOT NULL DEFAULT '0',\n    PRIMARY KEY (pick_id, reservation_id)\n)",
+    ),
+    (
         "pick_tasks",
         "CREATE TABLE pick_tasks (\n    id TEXT PRIMARY KEY,\n    wave_id TEXT,\n    order_id TEXT NOT NULL,\n    order_item_id TEXT NOT NULL,\n    warehouse_id INTEGER NOT NULL,\n    status TEXT NOT NULL DEFAULT 'pending',\n    sku TEXT NOT NULL,\n    product_name TEXT,\n    source_location_id INTEGER NOT NULL,\n    source_location_code TEXT,\n    quantity_requested TEXT NOT NULL,\n    quantity_picked TEXT NOT NULL DEFAULT '0',\n    quantity_short TEXT NOT NULL DEFAULT '0',\n    lot_id TEXT,\n    serial_number TEXT,\n    assigned_to TEXT,\n    priority INTEGER NOT NULL DEFAULT 0,\n    pick_sequence INTEGER NOT NULL DEFAULT 0,\n    started_at TEXT,\n    completed_at TEXT,\n    notes TEXT,\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL,\n    FOREIGN KEY (wave_id) REFERENCES waves(id),\n    FOREIGN KEY (warehouse_id) REFERENCES warehouses(id),\n    FOREIGN KEY (source_location_id) REFERENCES locations(id)\n)",
     ),
@@ -581,7 +617,7 @@ expression: tables
     ),
     (
         "prepayments",
-        "CREATE TABLE prepayments (\n    id TEXT PRIMARY KEY,\n    number TEXT NOT NULL,\n    supplier_id TEXT NOT NULL,\n    amount TEXT NOT NULL,\n    remaining TEXT NOT NULL,\n    currency TEXT NOT NULL DEFAULT 'USD',\n    status TEXT NOT NULL DEFAULT 'open',\n    method TEXT,\n    reference TEXT,\n    memo TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n)",
+        "CREATE TABLE prepayments (\n    id TEXT PRIMARY KEY,\n    number TEXT NOT NULL,\n    supplier_id TEXT NOT NULL,\n    amount TEXT NOT NULL,\n    remaining TEXT NOT NULL,\n    currency TEXT NOT NULL DEFAULT 'USD',\n    status TEXT NOT NULL DEFAULT 'open',\n    method TEXT,\n    reference TEXT,\n    memo TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n, refunded_amount TEXT DEFAULT '0', refunded_at TEXT)",
     ),
     (
         "price_level_entries",
@@ -640,6 +676,10 @@ expression: tables
         "CREATE TABLE product_variants (\n    id TEXT PRIMARY KEY,\n    product_id TEXT NOT NULL REFERENCES products(id),\n    sku TEXT NOT NULL UNIQUE,\n    name TEXT NOT NULL,\n    price TEXT NOT NULL,\n    compare_at_price TEXT,\n    cost TEXT,\n    barcode TEXT,\n    weight TEXT,\n    weight_unit TEXT,\n    options TEXT NOT NULL DEFAULT '[]',\n    is_default INTEGER NOT NULL DEFAULT 0,\n    is_active INTEGER NOT NULL DEFAULT 1,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n, version INTEGER NOT NULL DEFAULT 1)",
     ),
     (
+        "production_batch_work_orders",
+        "CREATE TABLE production_batch_work_orders (\n    batch_id TEXT NOT NULL REFERENCES production_batches(id) ON DELETE CASCADE,\n    work_order_id TEXT NOT NULL REFERENCES manufacturing_work_orders(id),\n    PRIMARY KEY (batch_id, work_order_id)\n)",
+    ),
+    (
         "production_batches",
         "CREATE TABLE production_batches (\n    id TEXT PRIMARY KEY,\n    name TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'planned',\n    vendor_id TEXT,\n    work_order_ids TEXT NOT NULL DEFAULT '[]',\n    notes TEXT,\n    scheduled_start TEXT,\n    scheduled_end TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n)",
     ),
@@ -686,6 +726,10 @@ expression: tables
     (
         "receipt_items",
         "CREATE TABLE receipt_items (\n    id TEXT PRIMARY KEY,\n    receipt_id TEXT NOT NULL,\n    line_number INTEGER NOT NULL,\n    sku TEXT NOT NULL,\n    description TEXT,\n    po_line_id TEXT,\n    expected_quantity TEXT NOT NULL DEFAULT '0',\n    received_quantity TEXT NOT NULL DEFAULT '0',\n    rejected_quantity TEXT NOT NULL DEFAULT '0',\n    unit_cost TEXT,\n    lot_number TEXT,\n    serial_numbers TEXT,\n    expiration_date TEXT,\n    status TEXT NOT NULL DEFAULT 'pending',\n    notes TEXT,\n    created_at TEXT NOT NULL,\n    updated_at TEXT NOT NULL,\n    FOREIGN KEY (receipt_id) REFERENCES receipts(id) ON DELETE CASCADE\n)",
+    ),
+    (
+        "receipt_serials",
+        "CREATE TABLE receipt_serials (\n    serial_id TEXT PRIMARY KEY REFERENCES serial_numbers(id),\n    receipt_item_id TEXT NOT NULL REFERENCES receipt_items(id),\n    put_away_id TEXT REFERENCES put_aways(id)\n)",
     ),
     (
         "receipts",
@@ -764,12 +808,28 @@ expression: tables
         "CREATE TABLE shipping_zones (\n    id TEXT PRIMARY KEY,\n    name TEXT NOT NULL,\n    countries TEXT NOT NULL DEFAULT '[]',\n    regions TEXT NOT NULL DEFAULT '[]',\n    postal_codes TEXT NOT NULL DEFAULT '[]',\n    priority INTEGER NOT NULL DEFAULT 0,\n    is_active INTEGER NOT NULL DEFAULT 1,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n)",
     ),
     (
+        "stock_cost_events",
+        "CREATE TABLE stock_cost_events (\n    movement_id TEXT PRIMARY KEY REFERENCES inventory_movements(id),\n    kind TEXT NOT NULL,\n    currency TEXT NOT NULL,\n    carrying_cost TEXT NOT NULL,\n    actual_cost TEXT NOT NULL,\n    work_order_id TEXT\n, settlement_currency TEXT, settlement_rate TEXT)",
+    ),
+    (
+        "stock_cost_layer_changes",
+        "CREATE TABLE stock_cost_layer_changes (\n id TEXT PRIMARY KEY, layer_id TEXT NOT NULL REFERENCES cost_layers(id),\n movement_id TEXT REFERENCES inventory_movements(id),\n quantity_delta TEXT NOT NULL, value_delta TEXT NOT NULL,\n currency TEXT NOT NULL, created_at TEXT NOT NULL\n)",
+    ),
+    (
+        "stock_location_bins",
+        "CREATE TABLE stock_location_bins (\n    location_id INTEGER PRIMARY KEY REFERENCES locations(id),\n    bin_id INTEGER NOT NULL UNIQUE REFERENCES warehouse_bins(id)\n)",
+    ),
+    (
         "stock_snapshot_lines",
-        "CREATE TABLE stock_snapshot_lines (\n    id TEXT PRIMARY KEY,\n    stock_snapshot_id TEXT NOT NULL REFERENCES stock_snapshots(id) ON DELETE CASCADE,\n    product_id TEXT NOT NULL,\n    sku TEXT NOT NULL,\n    quantity_on_hand TEXT NOT NULL DEFAULT '0',\n    quantity_available TEXT NOT NULL DEFAULT '0',\n    location TEXT\n)",
+        "CREATE TABLE \"stock_snapshot_lines\" (\n    id TEXT PRIMARY KEY,\n    stock_snapshot_id TEXT NOT NULL REFERENCES stock_snapshots(id) ON DELETE CASCADE,\n    product_id TEXT,\n    sku TEXT NOT NULL,\n    quantity_on_hand TEXT NOT NULL DEFAULT '0',\n    quantity_available TEXT NOT NULL DEFAULT '0',\n    location TEXT\n)",
     ),
     (
         "stock_snapshots",
         "CREATE TABLE stock_snapshots (\n    id TEXT PRIMARY KEY,\n    label TEXT,\n    total_skus INTEGER NOT NULL DEFAULT 0,\n    total_units TEXT NOT NULL DEFAULT '0',\n    captured_at TEXT NOT NULL DEFAULT (datetime('now'))\n)",
+    ),
+    (
+        "stock_warehouse_locations",
+        "CREATE TABLE stock_warehouse_locations (\n    warehouse_id INTEGER NOT NULL REFERENCES warehouses(id),\n    role TEXT NOT NULL CHECK (role IN ('unassigned', 'staging')),\n    location_id INTEGER NOT NULL UNIQUE REFERENCES locations(id),\n    PRIMARY KEY (warehouse_id, role)\n)",
     ),
     (
         "store_credit_transactions",
@@ -837,11 +897,11 @@ expression: tables
     ),
     (
         "transfer_order_items",
-        "CREATE TABLE transfer_order_items (\n    id TEXT PRIMARY KEY,\n    transfer_order_id TEXT NOT NULL REFERENCES transfer_orders(id) ON DELETE CASCADE,\n    product_id TEXT NOT NULL,\n    sku TEXT NOT NULL,\n    quantity TEXT NOT NULL,\n    quantity_shipped TEXT NOT NULL DEFAULT '0',\n    quantity_received TEXT NOT NULL DEFAULT '0'\n)",
+        "CREATE TABLE transfer_order_items (\n    id TEXT PRIMARY KEY,\n    transfer_order_id TEXT NOT NULL REFERENCES transfer_orders(id) ON DELETE CASCADE,\n    product_id TEXT NOT NULL,\n    sku TEXT NOT NULL,\n    quantity TEXT NOT NULL,\n    quantity_shipped TEXT NOT NULL DEFAULT '0',\n    quantity_received TEXT NOT NULL DEFAULT '0'\n, lot_id TEXT REFERENCES lots(id), quantity_variance TEXT NOT NULL DEFAULT '0')",
     ),
     (
         "transfer_orders",
-        "CREATE TABLE transfer_orders (\n    id TEXT PRIMARY KEY,\n    number TEXT NOT NULL,\n    source_warehouse_id TEXT NOT NULL,\n    destination_warehouse_id TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'draft',\n    expected_at TEXT,\n    shipped_at TEXT,\n    received_at TEXT,\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n)",
+        "CREATE TABLE transfer_orders (\n    id TEXT PRIMARY KEY,\n    number TEXT NOT NULL,\n    source_warehouse_id TEXT NOT NULL,\n    destination_warehouse_id TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'draft',\n    expected_at TEXT,\n    shipped_at TEXT,\n    received_at TEXT,\n    notes TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n, source_location_id INTEGER REFERENCES locations(id), destination_location_id INTEGER REFERENCES locations(id))",
     ),
     (
         "unit_classes",
@@ -865,11 +925,11 @@ expression: tables
     ),
     (
         "vendor_return_items",
-        "CREATE TABLE vendor_return_items (\n    id TEXT PRIMARY KEY,\n    vendor_return_id TEXT NOT NULL REFERENCES vendor_returns(id) ON DELETE CASCADE,\n    product_id TEXT NOT NULL,\n    sku TEXT NOT NULL,\n    quantity TEXT NOT NULL,\n    unit_cost TEXT NOT NULL DEFAULT '0',\n    reason TEXT NOT NULL DEFAULT 'defective'\n)",
+        "CREATE TABLE vendor_return_items (\n    id TEXT PRIMARY KEY,\n    vendor_return_id TEXT NOT NULL REFERENCES vendor_returns(id) ON DELETE CASCADE,\n    product_id TEXT NOT NULL,\n    sku TEXT NOT NULL,\n    quantity TEXT NOT NULL,\n    unit_cost TEXT NOT NULL DEFAULT '0',\n    reason TEXT NOT NULL DEFAULT 'defective'\n, source_location_id INTEGER REFERENCES locations(id), lot_id TEXT REFERENCES lots(id))",
     ),
     (
         "vendor_returns",
-        "CREATE TABLE vendor_returns (\n    id TEXT PRIMARY KEY,\n    number TEXT NOT NULL,\n    supplier_id TEXT NOT NULL,\n    purchase_order_id TEXT,\n    status TEXT NOT NULL DEFAULT 'draft',\n    currency TEXT NOT NULL DEFAULT 'USD',\n    credit_generated INTEGER NOT NULL DEFAULT 0,\n    notes TEXT,\n    processed_at TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n)",
+        "CREATE TABLE vendor_returns (\n    id TEXT PRIMARY KEY,\n    number TEXT NOT NULL,\n    supplier_id TEXT NOT NULL,\n    purchase_order_id TEXT,\n    status TEXT NOT NULL DEFAULT 'draft',\n    currency TEXT NOT NULL DEFAULT 'USD',\n    credit_generated INTEGER NOT NULL DEFAULT 0,\n    notes TEXT,\n    processed_at TEXT,\n    created_at TEXT NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n, warehouse_id INTEGER REFERENCES warehouses(id))",
     ),
     (
         "warehouse_bins",

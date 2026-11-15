@@ -13,6 +13,85 @@ use super::*;
 
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
+pub struct AutoPostingConfigInput {
+    pub config_name: String,
+    pub cash_account_id: String,
+    pub accounts_receivable_account_id: String,
+    pub inventory_account_id: String,
+    pub accounts_payable_account_id: String,
+    pub unearned_revenue_account_id: Option<String>,
+    pub sales_revenue_account_id: String,
+    pub shipping_revenue_account_id: Option<String>,
+    pub sales_tax_payable_account_id: Option<String>,
+    pub goods_received_not_invoiced_account_id: Option<String>,
+    pub inventory_adjustment_account_id: Option<String>,
+    pub work_in_progress_account_id: Option<String>,
+    pub cogs_account_id: String,
+    pub bad_debt_expense_account_id: Option<String>,
+    pub fx_gain_loss_account_id: Option<String>,
+    pub auto_post_depreciation: Option<bool>,
+    pub auto_post_revenue_recognition: Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AutoPostingConfigOutput {
+    pub id: String,
+    pub config_name: String,
+    pub cash_account_id: String,
+    pub accounts_receivable_account_id: String,
+    pub inventory_account_id: String,
+    pub accounts_payable_account_id: String,
+    pub unearned_revenue_account_id: Option<String>,
+    pub sales_revenue_account_id: String,
+    pub shipping_revenue_account_id: Option<String>,
+    pub sales_tax_payable_account_id: Option<String>,
+    pub goods_received_not_invoiced_account_id: Option<String>,
+    pub inventory_adjustment_account_id: Option<String>,
+    pub work_in_progress_account_id: Option<String>,
+    pub cogs_account_id: String,
+    pub bad_debt_expense_account_id: Option<String>,
+    pub fx_gain_loss_account_id: Option<String>,
+    pub auto_post_depreciation: bool,
+    pub auto_post_revenue_recognition: bool,
+    pub is_active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+impl From<stateset_core::AutoPostingConfig> for AutoPostingConfigOutput {
+    fn from(c: stateset_core::AutoPostingConfig) -> Self {
+        Self {
+            id: c.id.to_string(),
+            config_name: c.config_name,
+            cash_account_id: c.cash_account_id.to_string(),
+            accounts_receivable_account_id: c.accounts_receivable_account_id.to_string(),
+            inventory_account_id: c.inventory_account_id.to_string(),
+            accounts_payable_account_id: c.accounts_payable_account_id.to_string(),
+            unearned_revenue_account_id: c.unearned_revenue_account_id.map(|id| id.to_string()),
+            sales_revenue_account_id: c.sales_revenue_account_id.to_string(),
+            shipping_revenue_account_id: c.shipping_revenue_account_id.map(|id| id.to_string()),
+            sales_tax_payable_account_id: c.sales_tax_payable_account_id.map(|id| id.to_string()),
+            goods_received_not_invoiced_account_id: c
+                .goods_received_not_invoiced_account_id
+                .map(|id| id.to_string()),
+            inventory_adjustment_account_id: c
+                .inventory_adjustment_account_id
+                .map(|id| id.to_string()),
+            work_in_progress_account_id: c.work_in_progress_account_id.map(|id| id.to_string()),
+            cogs_account_id: c.cogs_account_id.to_string(),
+            bad_debt_expense_account_id: c.bad_debt_expense_account_id.map(|id| id.to_string()),
+            fx_gain_loss_account_id: c.fx_gain_loss_account_id.map(|id| id.to_string()),
+            auto_post_depreciation: c.auto_post_depreciation,
+            auto_post_revenue_recognition: c.auto_post_revenue_recognition,
+            is_active: c.is_active,
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct CreateGlAccountInput {
     pub account_number: String,
     pub name: String,
@@ -30,20 +109,24 @@ pub struct GlAccountOutput {
     pub name: String,
     #[napi(ts_type = "GlAccountType")]
     pub account_type: String,
-    /// @deprecated Use the `balanceExact` twin; float money will be removed in 2.0.
-    pub balance: f64,
+    /// Exact decimal string.
+    pub balance: String,
     /// Exact base-10 balance, straight from the engine's `Decimal`. Prefer this field for money.
     pub balance_exact: String,
     #[napi(ts_type = "GlAccountStatus")]
     pub status: String,
     pub description: Option<String>,
+    pub is_header: bool,
+    pub is_posting: bool,
+    pub currency: String,
 }
 
 impl TryFrom<stateset_core::GlAccount> for GlAccountOutput {
     type Error = Error;
 
     fn try_from(a: stateset_core::GlAccount) -> Result<Self> {
-        let (balance, balance_exact) = money_pair(a.current_balance, "GL account balance")?;
+        let balance = a.current_balance.to_string();
+        let balance_exact = balance.clone();
         Ok(Self {
             id: a.id.to_string(),
             account_number: a.account_number,
@@ -53,13 +136,46 @@ impl TryFrom<stateset_core::GlAccount> for GlAccountOutput {
             balance_exact,
             status: format!("{:?}", a.status),
             description: a.description,
+            is_header: a.is_header,
+            is_posting: a.is_posting,
+            currency: a.currency.to_string(),
         })
     }
 }
 
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
+pub struct JournalEntryLineOutput {
+    pub id: String,
+    pub account_id: String,
+    pub debit_amount: String,
+    pub credit_amount: String,
+    pub currency: String,
+    pub transaction_currency: Option<String>,
+    pub transaction_debit_amount: Option<String>,
+    pub transaction_credit_amount: Option<String>,
+    pub exchange_rate: Option<String>,
+}
+impl From<stateset_core::JournalEntryLine> for JournalEntryLineOutput {
+    fn from(l: stateset_core::JournalEntryLine) -> Self {
+        Self {
+            id: l.id.to_string(),
+            account_id: l.account_id.to_string(),
+            debit_amount: l.debit_amount.to_string(),
+            credit_amount: l.credit_amount.to_string(),
+            currency: l.currency.to_string(),
+            transaction_currency: l.transaction_currency.map(|v| v.to_string()),
+            transaction_debit_amount: l.transaction_debit_amount.map(|v| v.to_string()),
+            transaction_credit_amount: l.transaction_credit_amount.map(|v| v.to_string()),
+            exchange_rate: l.exchange_rate.map(|v| v.to_string()),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct JournalEntryOutput {
+    pub posted_by: Option<String>,
     pub id: String,
     pub entry_number: String,
     pub entry_date: String,
@@ -67,11 +183,18 @@ pub struct JournalEntryOutput {
     #[napi(ts_type = "GlJournalEntryStatus")]
     pub status: String,
     pub created_at: String,
+    pub lines: Vec<JournalEntryLineOutput>,
+    pub total_debits: String,
+    pub total_credits: String,
 }
 
 impl From<stateset_core::JournalEntry> for JournalEntryOutput {
     fn from(e: stateset_core::JournalEntry) -> Self {
         Self {
+            posted_by: e.posted_by,
+            lines: e.lines.into_iter().map(Into::into).collect(),
+            total_debits: e.total_debits.to_string(),
+            total_credits: e.total_credits.to_string(),
             id: e.id.to_string(),
             entry_number: e.entry_number,
             entry_date: e.entry_date.to_string(),
@@ -86,12 +209,12 @@ impl From<stateset_core::JournalEntry> for JournalEntryOutput {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TrialBalanceOutput {
     pub as_of_date: String,
-    /// @deprecated Use the `totalDebitsExact` twin; float money will be removed in 2.0.
-    pub total_debits: f64,
+    /// Exact decimal string.
+    pub total_debits: String,
     /// Exact base-10 total debits, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_debits_exact: String,
-    /// @deprecated Use the `totalCreditsExact` twin; float money will be removed in 2.0.
-    pub total_credits: f64,
+    /// Exact decimal string.
+    pub total_credits: String,
     /// Exact base-10 total credits, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_credits_exact: String,
     pub is_balanced: bool,
@@ -101,10 +224,10 @@ impl TryFrom<stateset_core::TrialBalance> for TrialBalanceOutput {
     type Error = Error;
 
     fn try_from(t: stateset_core::TrialBalance) -> Result<Self> {
-        let (total_debits, total_debits_exact) =
-            money_pair(t.total_debits, "trial balance total debits")?;
-        let (total_credits, total_credits_exact) =
-            money_pair(t.total_credits, "trial balance total credits")?;
+        let total_debits = t.total_debits.to_string();
+        let total_debits_exact = total_debits.clone();
+        let total_credits = t.total_credits.to_string();
+        let total_credits_exact = total_credits.clone();
         Ok(Self {
             as_of_date: t.as_of_date.to_string(),
             total_debits,
@@ -120,16 +243,16 @@ impl TryFrom<stateset_core::TrialBalance> for TrialBalanceOutput {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct BalanceSheetOutput {
     pub as_of_date: String,
-    /// @deprecated Use the `totalAssetsExact` twin; float money will be removed in 2.0.
-    pub total_assets: f64,
+    /// Exact decimal string.
+    pub total_assets: String,
     /// Exact base-10 total assets, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_assets_exact: String,
-    /// @deprecated Use the `totalLiabilitiesExact` twin; float money will be removed in 2.0.
-    pub total_liabilities: f64,
+    /// Exact decimal string.
+    pub total_liabilities: String,
     /// Exact base-10 total liabilities, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_liabilities_exact: String,
-    /// @deprecated Use the `totalEquityExact` twin; float money will be removed in 2.0.
-    pub total_equity: f64,
+    /// Exact decimal string.
+    pub total_equity: String,
     /// Exact base-10 total equity, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_equity_exact: String,
 }
@@ -138,10 +261,12 @@ impl TryFrom<stateset_core::BalanceSheet> for BalanceSheetOutput {
     type Error = Error;
 
     fn try_from(b: stateset_core::BalanceSheet) -> Result<Self> {
-        let (total_assets, total_assets_exact) = money_pair(b.total_assets, "total assets")?;
-        let (total_liabilities, total_liabilities_exact) =
-            money_pair(b.total_liabilities, "total liabilities")?;
-        let (total_equity, total_equity_exact) = money_pair(b.total_equity, "total equity")?;
+        let total_assets = b.total_assets.to_string();
+        let total_assets_exact = total_assets.clone();
+        let total_liabilities = b.total_liabilities.to_string();
+        let total_liabilities_exact = total_liabilities.clone();
+        let total_equity = b.total_equity.to_string();
+        let total_equity_exact = total_equity.clone();
         Ok(Self {
             as_of_date: b.as_of_date.to_string(),
             total_assets,
@@ -159,16 +284,16 @@ impl TryFrom<stateset_core::BalanceSheet> for BalanceSheetOutput {
 pub struct IncomeStatementOutput {
     pub period_start: String,
     pub period_end: String,
-    /// @deprecated Use the `totalRevenueExact` twin; float money will be removed in 2.0.
-    pub total_revenue: f64,
+    /// Exact decimal string.
+    pub total_revenue: String,
     /// Exact base-10 total revenue, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_revenue_exact: String,
-    /// @deprecated Use the `totalExpensesExact` twin; float money will be removed in 2.0.
-    pub total_expenses: f64,
+    /// Exact decimal string.
+    pub total_expenses: String,
     /// Exact base-10 total expenses, straight from the engine's `Decimal`. Prefer this field for money.
     pub total_expenses_exact: String,
-    /// @deprecated Use the `netIncomeExact` twin; float money will be removed in 2.0.
-    pub net_income: f64,
+    /// Exact decimal string.
+    pub net_income: String,
     /// Exact base-10 net income, straight from the engine's `Decimal`. Prefer this field for money.
     pub net_income_exact: String,
 }
@@ -177,11 +302,12 @@ impl TryFrom<stateset_core::IncomeStatement> for IncomeStatementOutput {
     type Error = Error;
 
     fn try_from(i: stateset_core::IncomeStatement) -> Result<Self> {
-        let (total_revenue, total_revenue_exact) =
-            money_pair(i.total_revenue, "income statement total revenue")?;
-        let (total_expenses, total_expenses_exact) =
-            money_pair(i.total_expenses, "total expenses")?;
-        let (net_income, net_income_exact) = money_pair(i.net_income, "net income")?;
+        let total_revenue = i.total_revenue.to_string();
+        let total_revenue_exact = total_revenue.clone();
+        let total_expenses = i.total_expenses.to_string();
+        let total_expenses_exact = total_expenses.clone();
+        let net_income = i.net_income.to_string();
+        let net_income_exact = net_income.clone();
         Ok(Self {
             period_start: i.period_start.to_string(),
             period_end: i.period_end.to_string(),
@@ -368,6 +494,73 @@ pub struct GeneralLedger {
 
 #[napi]
 impl GeneralLedger {
+    /// Read the active automatic ledger posting settings.
+    #[napi]
+    pub async fn get_auto_posting_config(&self) -> Result<Option<AutoPostingConfigOutput>> {
+        self.commerce
+            .get()?
+            .general_ledger()
+            .get_auto_posting_config()
+            .map(|c| c.map(Into::into))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to read posting settings", e))
+    }
+    /// Replace automatic posting settings atomically.
+    #[napi]
+    pub async fn set_auto_posting_config(
+        &self,
+        input: AutoPostingConfigInput,
+    ) -> Result<AutoPostingConfigOutput> {
+        let parse = |id: String| {
+            id.parse::<uuid::Uuid>()
+                .map_err(|_| coded(ErrCode::Validation, "Invalid posting account UUID"))
+        };
+        let config = stateset_core::CreateAutoPostingConfig {
+            config_name: input.config_name,
+            cash_account_id: parse(input.cash_account_id)?,
+            accounts_receivable_account_id: parse(input.accounts_receivable_account_id)?,
+            inventory_account_id: parse(input.inventory_account_id)?,
+            accounts_payable_account_id: parse(input.accounts_payable_account_id)?,
+            unearned_revenue_account_id: input
+                .unearned_revenue_account_id
+                .map(&parse)
+                .transpose()?,
+            sales_revenue_account_id: parse(input.sales_revenue_account_id)?,
+            shipping_revenue_account_id: input
+                .shipping_revenue_account_id
+                .map(&parse)
+                .transpose()?,
+            sales_tax_payable_account_id: input
+                .sales_tax_payable_account_id
+                .map(&parse)
+                .transpose()?,
+            goods_received_not_invoiced_account_id: input
+                .goods_received_not_invoiced_account_id
+                .map(&parse)
+                .transpose()?,
+            inventory_adjustment_account_id: input
+                .inventory_adjustment_account_id
+                .map(&parse)
+                .transpose()?,
+            work_in_progress_account_id: input
+                .work_in_progress_account_id
+                .map(&parse)
+                .transpose()?,
+            cogs_account_id: parse(input.cogs_account_id)?,
+            bad_debt_expense_account_id: input
+                .bad_debt_expense_account_id
+                .map(&parse)
+                .transpose()?,
+            fx_gain_loss_account_id: input.fx_gain_loss_account_id.map(&parse).transpose()?,
+            auto_post_depreciation: input.auto_post_depreciation.unwrap_or(false),
+            auto_post_revenue_recognition: input.auto_post_revenue_recognition.unwrap_or(false),
+        };
+        self.commerce
+            .get()?
+            .general_ledger()
+            .set_auto_posting_config(config)
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to save posting settings", e))
+    }
     /// Create a GL account
     #[napi]
     pub async fn create_account(&self, input: CreateGlAccountInput) -> Result<GlAccountOutput> {
@@ -440,6 +633,122 @@ impl GeneralLedger {
             .initialize_chart_of_accounts()
             .map_err(|e| wrap(ErrCode::Internal, "Failed to initialize chart", e))?;
         convert_outputs(accounts)
+    }
+
+    /// Create a balanced draft or post it atomically using a trusted host identity.
+    #[napi]
+    pub async fn create_journal_entry(
+        &self,
+        i: CreateJournalEntryInput,
+        actor: Option<String>,
+    ) -> Result<JournalEntryOutput> {
+        let c = self.commerce.get()?;
+        let lines = i
+            .lines
+            .into_iter()
+            .map(|line| {
+                Ok(stateset_core::CreateJournalEntryLine {
+                    account_id: gl_workflow_id(&line.account_id)?,
+                    description: line.description,
+                    debit_amount: optional_decimal_string(line.debit_amount, "debit amount")?
+                        .unwrap_or_default(),
+                    credit_amount: optional_decimal_string(line.credit_amount, "credit amount")?
+                        .unwrap_or_default(),
+                    reference_type: None,
+                    reference_id: None,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let fx = match (i.currency, i.exchange_rate) {
+            (None, None) => None,
+            (Some(currency), Some(rate)) => Some(stateset_core::JournalEntryFx {
+                currency: currency
+                    .parse()
+                    .map_err(|_| coded(ErrCode::Validation, "Invalid currency"))?,
+                rate: finance_money_input(None, Some(rate), "exchange rate")?,
+            }),
+            _ => {
+                return Err(coded(
+                    ErrCode::Validation,
+                    "Currency and exchange rate must be supplied together",
+                ));
+            }
+        };
+        let input = stateset_core::CreateJournalEntry {
+            entry_date: gl_workflow_date(&i.entry_date)?,
+            entry_type: parse_optional_enum(i.entry_type, "entry type")?,
+            description: i.description,
+            lines,
+            source_document_type: None,
+            source_document_id: None,
+            auto_post: i.auto_post,
+            fx,
+        };
+        let result = match actor {
+            Some(actor) => c.general_ledger().create_journal_entry_as(input, &actor),
+            None => c.general_ledger().create_journal_entry(input),
+        };
+        result
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create journal entry", e))
+    }
+    #[napi]
+    pub async fn reverse_journal_entry(
+        &self,
+        id: String,
+        reversal_date: String,
+    ) -> Result<JournalEntryOutput> {
+        self.commerce
+            .get()?
+            .general_ledger()
+            .reverse_journal_entry(gl_workflow_id(&id)?, gl_workflow_date(&reversal_date)?)
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to reverse journal entry", e))
+    }
+    #[napi]
+    pub async fn get_period(&self, id: String) -> Result<Option<GlPeriodOutput>> {
+        self.commerce
+            .get()?
+            .general_ledger()
+            .get_period(gl_workflow_id(&id)?)
+            .map(|p| p.map(Into::into))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get period", e))
+    }
+    #[napi]
+    pub async fn close_period(&self, id: String, actor: String) -> Result<GlPeriodOutput> {
+        self.commerce
+            .get()?
+            .general_ledger()
+            .close_period(gl_workflow_id(&id)?, &actor)
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to close period", e))
+    }
+    #[napi]
+    pub async fn lock_period(&self, id: String, actor: String) -> Result<GlPeriodOutput> {
+        self.commerce
+            .get()?
+            .general_ledger()
+            .lock_period(gl_workflow_id(&id)?, &actor)
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to lock period", e))
+    }
+    #[napi]
+    pub async fn reopen_period(&self, id: String) -> Result<GlPeriodOutput> {
+        self.commerce
+            .get()?
+            .general_ledger()
+            .reopen_period(gl_workflow_id(&id)?)
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to reopen period", e))
+    }
+    #[napi]
+    pub async fn reclose_period(&self, id: String, actor: String) -> Result<JournalEntryOutput> {
+        self.commerce
+            .get()?
+            .general_ledger()
+            .reclose_period(gl_workflow_id(&id)?, &actor)
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to reclose period", e))
     }
 
     /// Get a journal entry by ID
@@ -551,7 +860,7 @@ impl GeneralLedger {
         &self,
         account_id: String,
         as_of_date: Option<String>,
-    ) -> Result<f64> {
+    ) -> Result<String> {
         let commerce = self.commerce.get()?;
         let uuid = account_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let date = parse_optional_date(as_of_date, "as of date")?;
@@ -559,7 +868,8 @@ impl GeneralLedger {
             .general_ledger()
             .get_account_balance(uuid, date)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get balance", e))?;
-        optional_to_f64_checked(balance, "account balance")?
+        balance
+            .map(|value| value.to_string())
             .ok_or_else(|| coded(ErrCode::NotFound, "Account balance unavailable"))
     }
 
@@ -826,4 +1136,31 @@ impl From<stateset_core::CloseMonthReport> for CloseMonthReportOutput {
             period_status: r.period_status.to_string(),
         }
     }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateJournalEntryInput {
+    pub entry_date: String,
+    pub entry_type: Option<String>,
+    pub description: String,
+    pub lines: Vec<CreateJournalEntryLineInput>,
+    pub auto_post: Option<bool>,
+    pub currency: Option<String>,
+    pub exchange_rate: Option<String>,
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreateJournalEntryLineInput {
+    pub account_id: String,
+    pub description: Option<String>,
+    pub debit_amount: Option<String>,
+    pub credit_amount: Option<String>,
+}
+fn gl_workflow_id(value: &str) -> Result<uuid::Uuid> {
+    value.parse().map_err(|_| coded(ErrCode::Validation, "Invalid ledger UUID"))
+}
+fn gl_workflow_date(value: &str) -> Result<chrono::NaiveDate> {
+    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| coded(ErrCode::Validation, "Expected YYYY-MM-DD"))
 }

@@ -622,7 +622,7 @@ export function createX402McpServer({
         {
           url: z.string().describe('URL to call (x402-protected endpoint)'),
           method: z.string().optional().describe('HTTP method (default: GET)'),
-          headers: z.record(z.string()).optional().describe('Request headers'),
+          headers: z.record(z.string(), z.string()).optional().describe('Request headers'),
           body: z.any().optional().describe('Request body (object or string)'),
           maxAmount: z.number().optional().describe('Override max amount for this call'),
           requireReceipt: z.boolean().optional().describe('Wait for payment receipt'),

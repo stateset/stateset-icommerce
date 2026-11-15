@@ -167,16 +167,16 @@ function fromSnakeCaseSignatureBundle(bundle) {
   };
 }
 
-function toSnakeCasePublicKeyBundle(bundle) {
+function toCamelCasePublicKeyBundle(bundle) {
   if (!bundle) {
     return null;
   }
 
   return {
-    ed25519_public_key: bundle.ed25519PublicKey ?? bundle.ed25519_public_key ?? null,
-    ml_dsa_65_public_key: bundle.mlDsa65PublicKey ?? bundle.ml_dsa_65_public_key ?? null,
-    x25519_public_key: bundle.x25519PublicKey ?? bundle.x25519_public_key ?? null,
-    ml_kem_768_public_key: bundle.mlKem768PublicKey ?? bundle.ml_kem_768_public_key ?? null,
+    ed25519PublicKey: bundle.ed25519PublicKey ?? bundle.ed25519_public_key ?? null,
+    mlDsa65PublicKey: bundle.mlDsa65PublicKey ?? bundle.ml_dsa_65_public_key ?? null,
+    x25519PublicKey: bundle.x25519PublicKey ?? bundle.x25519_public_key ?? null,
+    mlKem768PublicKey: bundle.mlKem768PublicKey ?? bundle.ml_kem_768_public_key ?? null,
   };
 }
 
@@ -197,14 +197,14 @@ function normalizeVerificationPublicKeyBundle(publicKey) {
   };
 }
 
-function toSnakeCaseProofOfPossessionBundle(bundle) {
+function toCamelCaseProofOfPossessionBundle(bundle) {
   if (!bundle) {
     return null;
   }
 
   return {
-    ed25519_pop: bundle.ed25519Pop ?? bundle.ed25519_pop ?? null,
-    ml_dsa_65_pop: bundle.mlDsa65Pop ?? bundle.ml_dsa_65_pop ?? null,
+    ed25519Pop: bundle.ed25519Pop ?? bundle.ed25519_pop ?? null,
+    mlDsa65Pop: bundle.mlDsa65Pop ?? bundle.ml_dsa_65_pop ?? null,
   };
 }
 
@@ -1051,18 +1051,20 @@ export class SequencerClient {
   async registerAgentKey(keyRegistration) {
     assertKeyRegistrationMatchesSecurityProfile(keyRegistration, this.securityProfile);
 
+    // RegisterAgentKeyRequest and its nested bundles use serde camelCase.
+    // Event envelopes use a different, snake_case wire format.
     const payload = {
-      tenant_id: this.config.tenantId,
-      agent_id: keyRegistration.agentId,
-      key_id: keyRegistration.keyId,
-      key_type: keyRegistration.keyType,
-      key_algorithm: keyRegistration.keyAlgorithm,
-      public_key: keyRegistration.publicKey,
-      public_key_bundle: toSnakeCasePublicKeyBundle(keyRegistration.publicKeyBundle),
-      valid_from: keyRegistration.validFrom,
-      valid_to: keyRegistration.validTo,
-      proof_of_possession: keyRegistration.proofOfPossession,
-      proof_of_possession_bundle: toSnakeCaseProofOfPossessionBundle(
+      tenantId: this.config.tenantId,
+      agentId: keyRegistration.agentId,
+      keyId: keyRegistration.keyId,
+      keyType: keyRegistration.keyType,
+      keyAlgorithm: keyRegistration.keyAlgorithm,
+      publicKey: keyRegistration.publicKey,
+      publicKeyBundle: toCamelCasePublicKeyBundle(keyRegistration.publicKeyBundle),
+      validFrom: keyRegistration.validFrom,
+      validTo: keyRegistration.validTo,
+      proofOfPossession: keyRegistration.proofOfPossession,
+      proofOfPossessionBundle: toCamelCaseProofOfPossessionBundle(
         keyRegistration.proofOfPossessionBundle,
       ),
     };

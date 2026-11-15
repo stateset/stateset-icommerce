@@ -1,6 +1,7 @@
 import { createCommerce } from '../commerce.js';
 import { addDecimals, formatDecimal, subtractDecimals } from '../utils/exact-decimal.js';
 import { commerceScenarioSchema } from './schema.js';
+import { receivePurchase } from './native-compat.js';
 
 function reference(map, name, kind) {
   const value = map.get(name);
@@ -70,6 +71,15 @@ export async function executeCommerceScenario(input, database) {
     return { inventory, orders: orderState, payments: paymentState, purchases: purchaseState };
   }
   try {
+    const warehouse = await commerce.warehouse.createWarehouse({
+      code: 'SIM',
+      name: 'Simulation warehouse',
+    });
+    const location = await commerce.warehouse.createLocation({
+      warehouseId: warehouse.id,
+      locationType: 'receiving',
+      isReceivable: true,
+    });
     const customer = await commerce.customers.create({
       email: 'simulation@example.test',
       firstName: 'Simulation',
@@ -128,21 +138,17 @@ export async function executeCommerceScenario(input, database) {
           case 'receive_purchase_order': {
             const original = reference(purchases, step.purchase, 'purchase');
             const lines = await commerce.purchaseOrders.getItems(original.id);
-            const purchase = await commerce.purchaseOrders.receive(
+            const purchase = await receivePurchase(
+              commerce,
               original.id,
               lines.map((line) => ({
                 itemId: line.id,
-                quantityReceivedExact: line.quantityOrderedExact,
+                sku: line.sku,
+                quantity: line.quantityOrderedExact,
               })),
+              warehouse.id,
+              location.id,
             );
-            // Native receipt and physical stock posting are separate transactions.
-            // A repeated full receipt is refused by the engine before stock is added.
-            for (const line of lines)
-              await commerce.inventory.adjust(
-                line.sku,
-                Number(line.quantityOrderedExact),
-                'Synthetic purchase receipt',
-              );
             observation = {
               purchase: step.purchase,
               status: purchase.status,

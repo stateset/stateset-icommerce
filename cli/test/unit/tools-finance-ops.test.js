@@ -81,7 +81,7 @@ describe('Finance ops domain registry', () => {
     );
   });
 
-  it('marks write tools as write permission and read tools as read', () => {
+  it('requires elevated permission for financial posting', () => {
     const readNames = new Set([
       'list_fixed_assets',
       'get_fixed_asset',
@@ -92,11 +92,22 @@ describe('Finance ops domain registry', () => {
       'list_cycle_counts',
       'get_cycle_count',
     ]);
+    const elevated = new Set([
+      'place_asset_in_service',
+      'dispose_fixed_asset',
+      'write_off_fixed_asset',
+      'post_depreciation',
+      'recognize_revenue',
+    ]);
     for (const tool of [...fixedAssetTools, ...revenueRecognitionTools, ...cycleCountTools]) {
-      assert.equal(tool.permission, readNames.has(tool.name) ? 'read' : 'write', tool.name);
+      assert.equal(
+        tool.permission,
+        readNames.has(tool.name) ? 'read' : elevated.has(tool.name) ? 'admin' : 'write',
+        tool.name,
+      );
     }
     assert.equal(findTool(accountsPayableTools, 'three_way_match_bill').permission, 'read');
-    assert.equal(findTool(generalLedgerTools, 'revalue_gl').permission, 'write');
+    assert.equal(findTool(generalLedgerTools, 'revalue_gl').permission, 'admin');
   });
 });
 
@@ -221,6 +232,12 @@ describe('Fixed Asset Tools', () => {
       commerce,
       params: {
         name: 'Forklift',
+        assetAccountId: '11111111-1111-4111-8111-111111111111',
+        accumulatedDepreciationAccountId: '11111111-1111-4111-8111-111111111112',
+        depreciationExpenseAccountId: '11111111-1111-4111-8111-111111111113',
+        acquisitionOffsetAccountId: '11111111-1111-4111-8111-111111111114',
+        disposalGainLossAccountId: '11111111-1111-4111-8111-111111111115',
+
         category: 'equipment',
         acquisitionCost: '25000.00',
         acquisitionDate: '2026-01-15',
@@ -246,6 +263,12 @@ describe('Fixed Asset Tools', () => {
     assert.deepStrictEqual(calls, [
       {
         name: 'Forklift',
+        assetAccountId: '11111111-1111-4111-8111-111111111111',
+        accumulatedDepreciationAccountId: '11111111-1111-4111-8111-111111111112',
+        depreciationExpenseAccountId: '11111111-1111-4111-8111-111111111113',
+        acquisitionOffsetAccountId: '11111111-1111-4111-8111-111111111114',
+        disposalGainLossAccountId: '11111111-1111-4111-8111-111111111115',
+
         category: 'equipment',
         acquisitionDate: '2026-01-15',
         acquisitionCost: '25000.00',
@@ -617,7 +640,7 @@ describe('Cycle Count Tools', () => {
     });
     await tool.handler({
       commerce,
-      params: { warehouseId: 2, lines: [{ sku: 'BOLT', expectedQuantity: '2.5' }] },
+      params: { warehouseId: 2, lines: [{ sku: 'BOLT' }] },
       allowApply: true,
     });
     assert.equal(result.success, true);
@@ -626,15 +649,15 @@ describe('Cycle Count Tools', () => {
         warehouseId: 1,
         scheduledDate: '2026-10-01T00:00:00.000Z',
         countedBy: 'alice',
-        lines: [{ sku: 'WIDGET-001', expectedQuantity: '10' }],
+        lines: [{ sku: 'WIDGET-001' }],
       },
-      { warehouseId: 2, lines: [{ sku: 'BOLT', expectedQuantity: '2.5' }] },
+      { warehouseId: 2, lines: [{ sku: 'BOLT' }] },
     ]);
   });
 
   it('create_cycle_count schema requires a warehouse and at least one line', () => {
     const schema = z.object(findTool(cycleCountTools, 'create_cycle_count').inputSchema);
-    const lines = [{ sku: 'A', expectedQuantity: 1 }];
+    const lines = [{ sku: 'A' }];
     assert.equal(schema.safeParse({ warehouseId: 1, lines }).success, true);
     assert.equal(schema.safeParse({ lines }).success, false);
     assert.equal(schema.safeParse({ warehouseId: 1, lines: [] }).success, false);

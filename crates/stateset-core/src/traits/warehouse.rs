@@ -298,6 +298,9 @@ pub trait TransferOrderRepository: Send + Sync {
         quantity: rust_decimal::Decimal,
     ) -> Result<TransferOrder>;
 
+    /// Close receiving and record remaining in-transit units as a shortage.
+    fn complete_receiving(&self, id: TransferOrderId) -> Result<TransferOrder>;
+
     /// Cancel a transfer order.
     fn cancel(&self, id: TransferOrderId) -> Result<TransferOrder>;
 }

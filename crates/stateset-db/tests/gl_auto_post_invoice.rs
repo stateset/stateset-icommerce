@@ -56,6 +56,10 @@ fn sqlite_auto_post_invoice_posts_balanced_entry() {
         unearned_revenue_account_id: None,
         sales_revenue_account_id: acct("4010"),
         shipping_revenue_account_id: None,
+        sales_tax_payable_account_id: None,
+        goods_received_not_invoiced_account_id: None,
+        inventory_adjustment_account_id: None,
+        work_in_progress_account_id: None,
         cogs_account_id: acct("5010"),
         bad_debt_expense_account_id: None,
         fx_gain_loss_account_id: None,
@@ -82,6 +86,7 @@ fn sqlite_auto_post_invoice_posts_balanced_entry() {
         .expect("create invoice");
     assert_eq!(invoice.total, dec!(100.00), "invoice total should foot to 100.00");
 
+    db.invoices().send(invoice.id).expect("issue source document");
     let entry = gl.auto_post_invoice(invoice.id).expect("auto_post_invoice must succeed");
 
     assert_eq!(entry.total_debits, dec!(100.00), "AR debit should equal the invoice total");

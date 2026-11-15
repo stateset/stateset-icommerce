@@ -926,6 +926,10 @@ impl AsyncGeneralLedger {
         self.db.general_ledger().auto_post_invoice_async(invoice_id).await
     }
 
+    pub async fn auto_post_credit_memo(&self, id: Uuid) -> Result<JournalEntry> {
+        self.db.general_ledger().auto_post_credit_memo_async(id).await
+    }
+
     pub async fn auto_post_payment_received(&self, payment_id: Uuid) -> Result<JournalEntry> {
         self.db.general_ledger().auto_post_payment_received_async(payment_id).await
     }
@@ -941,7 +945,7 @@ impl AsyncGeneralLedger {
     pub async fn auto_post_inventory_cost(
         &self,
         cost_transaction_id: Uuid,
-    ) -> Result<JournalEntry> {
+    ) -> Result<Option<JournalEntry>> {
         self.db.general_ledger().auto_post_inventory_cost_async(cost_transaction_id).await
     }
 

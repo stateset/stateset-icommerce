@@ -35,7 +35,7 @@ const PluginSchema = z.object({
     .regex(/^[a-z][a-z0-9_]*$/, 'Name must be lowercase with underscores'),
   description: z.string().min(1),
   version: z.string().optional().default('1.0.0'),
-  inputSchema: z.record(z.any()).optional().default({}),
+  inputSchema: z.record(z.string(), z.any()).optional().default({}),
   handler: z.function(),
   // Optional lifecycle hooks
   onLoad: z.function().optional(),

@@ -3861,12 +3861,32 @@ impl SqliteKernelExecutor {
                 }
                 Err(e) => return Err(e),
             };
-            if let Err(error) = entry.ensure_postable() {
+            let base = super::ledger_fx::base_currency(tx)?;
+            if let Err(error) = entry
+                .ensure_postable()
+                .and_then(|_| crate::ledger_fx::validate_recorded_entry(&entry, base))
+            {
                 let code = error.invariant_code().unwrap_or("commerce.ledger.entry_not_postable");
                 let mut receipt = rejected_receipt(
                     command,
                     Some(policy.clone()),
                     code,
+                    &error.to_string(),
+                    RetryDisposition::Never,
+                    "journal_entry",
+                );
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            if let Err(error) = super::ledger_source::validate(
+                tx,
+                entry.source_document_type.as_deref(),
+                entry.source_document_id,
+            ) {
+                let mut receipt = rejected_receipt(
+                    command,
+                    Some(policy.clone()),
+                    "commerce.ledger.source_not_postable",
                     &error.to_string(),
                     RetryDisposition::Never,
                     "journal_entry",
@@ -3887,6 +3907,21 @@ impl SqliteKernelExecutor {
                     Some(policy.clone()),
                     "commerce.ledger.period_not_open",
                     &format!("cannot post journal entry: its period is {period_status}, not open"),
+                    RetryDisposition::Never,
+                    "journal_entry",
+                );
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            if let Err(error) = SqliteGeneralLedgerRepository::validate_posting_accounts(
+                tx,
+                entry.lines.iter().map(|line| line.account_id).collect(),
+            ) {
+                let mut receipt = rejected_receipt(
+                    command,
+                    Some(policy.clone()),
+                    "commerce.ledger.account_not_postable",
+                    &error.to_string(),
                     RetryDisposition::Never,
                     "journal_entry",
                 );
@@ -3918,6 +3953,12 @@ impl SqliteKernelExecutor {
             )? == 0 {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::Conflict("Journal entry was modified concurrently".into()))));
             }
+            super::ledger_source::link(
+                tx,
+                entry.source_document_type.as_deref(),
+                entry.source_document_id,
+                entry.id,
+            )?;
             let mut event = KernelOutboxEvent::domain(
                 "ledger.journal_entry_posted.v1",
                 "journal_entry",

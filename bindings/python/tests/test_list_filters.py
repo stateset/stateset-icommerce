@@ -37,12 +37,11 @@ def test_purchase_orders_list_filters_by_supplier(commerce):
 
 def test_work_orders_list_filters_by_product_and_status(commerce):
     product = commerce.products.create(name="WO Product")
-    bom = commerce.bom.create(name="BOM", product_id=product.id)
     wo1 = commerce.work_orders.create(
-        product_id=product.id, quantity_to_build=5, bom_id=bom.id
+        product_id=product.id, quantity_to_build=5
     )
     commerce.work_orders.create(
-        product_id=product.id, quantity_to_build=3, bom_id=bom.id
+        product_id=product.id, quantity_to_build=3
     )
 
     assert len(commerce.work_orders.list()) == 2

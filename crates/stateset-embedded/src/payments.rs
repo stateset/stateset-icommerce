@@ -382,12 +382,10 @@ impl Payments {
         // Reject a nil payment reference or non-positive requested amount before
         // touching the database at all.
         input.validate()?;
-        // Defense-in-depth: validate the refund against the payment's current
-        // status and remaining refundable balance before delegating. The DB
-        // backends enforce this too, but rejecting early keeps invalid refunds
-        // out of the persistence layer entirely.
-        let payment = self.db.payments().get(input.payment_id)?.ok_or(CommerceError::NotFound)?;
-        payment.validate_refund(input.amount)?;
+        // Let the backend resolve immutable-key replays before checking mutable
+        // payment status/balance. A completed refund must remain replayable even
+        // when it consumed the last refundable amount. Both backends validate
+        // new refunds and reserve their balance atomically under the writer lock.
         self.db.payments().create_refund(input)
     }
 

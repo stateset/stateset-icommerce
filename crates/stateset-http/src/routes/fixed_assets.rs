@@ -40,6 +40,12 @@ pub(crate) struct CreateFixedAssetRequest {
     /// ISO date; when supplied the asset is created in service.
     pub in_service_date: Option<String>,
     pub location_id: Option<String>,
+    pub asset_account_id: Option<String>,
+    pub accumulated_depreciation_account_id: Option<String>,
+    pub depreciation_expense_account_id: Option<String>,
+    pub acquisition_offset_account_id: Option<String>,
+    pub disposal_gain_loss_account_id: Option<String>,
+    pub currency: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema, Default)]
@@ -50,6 +56,11 @@ pub(crate) struct UpdateFixedAssetRequest {
     /// Decimal salvage value as a string.
     pub salvage_value: Option<String>,
     pub useful_life_months: Option<u32>,
+    pub asset_account_id: Option<String>,
+    pub accumulated_depreciation_account_id: Option<String>,
+    pub depreciation_expense_account_id: Option<String>,
+    pub acquisition_offset_account_id: Option<String>,
+    pub disposal_gain_loss_account_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
@@ -109,6 +120,11 @@ pub(crate) struct FixedAssetResponse {
     pub in_service_date: Option<String>,
     pub disposal_gain_loss: Option<String>,
     pub created_at: String,
+    pub asset_account_id: Option<String>,
+    pub accumulated_depreciation_account_id: Option<String>,
+    pub depreciation_expense_account_id: Option<String>,
+    pub acquisition_offset_account_id: Option<String>,
+    pub disposal_gain_loss_account_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -141,6 +157,14 @@ pub(crate) struct DepreciationScheduleResponse {
 fn to_resp(a: &stateset_core::FixedAsset) -> FixedAssetResponse {
     FixedAssetResponse {
         id: a.id.to_string(),
+        asset_account_id: a.asset_account_id.map(|id| id.to_string()),
+        accumulated_depreciation_account_id: a
+            .accumulated_depreciation_account_id
+            .map(|id| id.to_string()),
+        depreciation_expense_account_id: a.depreciation_expense_account_id.map(|id| id.to_string()),
+        acquisition_offset_account_id: a.acquisition_offset_account_id.map(|id| id.to_string()),
+        disposal_gain_loss_account_id: a.disposal_gain_loss_account_id.map(|id| id.to_string()),
+
         asset_number: a.asset_number.clone(),
         name: a.name.clone(),
         category: a.category.to_string(),
@@ -248,10 +272,32 @@ pub(crate) async fn create(
                 )?,
                 in_service_date,
                 location_id,
-                asset_account_id: None,
-                accumulated_depreciation_account_id: None,
-                depreciation_expense_account_id: None,
-                currency: None,
+                asset_account_id: req
+                    .asset_account_id
+                    .as_deref()
+                    .map(|v| parse_id(v, "asset_account_id"))
+                    .transpose()?,
+                accumulated_depreciation_account_id: req
+                    .accumulated_depreciation_account_id
+                    .as_deref()
+                    .map(|v| parse_id(v, "accumulated_depreciation_account_id"))
+                    .transpose()?,
+                acquisition_offset_account_id: req
+                    .acquisition_offset_account_id
+                    .as_deref()
+                    .map(|v| parse_id(v, "acquisition_offset_account_id"))
+                    .transpose()?,
+                disposal_gain_loss_account_id: req
+                    .disposal_gain_loss_account_id
+                    .as_deref()
+                    .map(|v| parse_id(v, "disposal_gain_loss_account_id"))
+                    .transpose()?,
+                depreciation_expense_account_id: req
+                    .depreciation_expense_account_id
+                    .as_deref()
+                    .map(|v| parse_id(v, "depreciation_expense_account_id"))
+                    .transpose()?,
+                currency: req.currency.as_deref().map(|v| parse_id(v, "currency")).transpose()?,
             };
             let a = c.fixed_assets().create(input)?;
             Ok((StatusCode::CREATED, Json(to_resp(&a))))
@@ -370,6 +416,31 @@ pub(crate) async fn update(
                 category,
                 salvage_value,
                 useful_life_months: req.useful_life_months,
+                asset_account_id: req
+                    .asset_account_id
+                    .as_deref()
+                    .map(|v| parse_id(v, "asset_account_id"))
+                    .transpose()?,
+                accumulated_depreciation_account_id: req
+                    .accumulated_depreciation_account_id
+                    .as_deref()
+                    .map(|v| parse_id(v, "accumulated_depreciation_account_id"))
+                    .transpose()?,
+                depreciation_expense_account_id: req
+                    .depreciation_expense_account_id
+                    .as_deref()
+                    .map(|v| parse_id(v, "depreciation_expense_account_id"))
+                    .transpose()?,
+                acquisition_offset_account_id: req
+                    .acquisition_offset_account_id
+                    .as_deref()
+                    .map(|v| parse_id(v, "acquisition_offset_account_id"))
+                    .transpose()?,
+                disposal_gain_loss_account_id: req
+                    .disposal_gain_loss_account_id
+                    .as_deref()
+                    .map(|v| parse_id(v, "disposal_gain_loss_account_id"))
+                    .transpose()?,
                 ..Default::default()
             };
             Ok(Json(to_resp(&c.fixed_assets().update(id, input)?)))

@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // Enumerate named exports explicitly (Proxy mocks hang vitest imports).
 const getLedgerPageData = vi.fn();
 vi.mock('@/app/actions/finance', () => ({
+  getGlPostingConfig: vi.fn().mockResolvedValue(null),
+  setGlPostingConfig: vi.fn(),
   getLedgerPageData: (...args: unknown[]) => getLedgerPageData(...args),
 }));
 
@@ -57,9 +59,7 @@ describe('LedgerClient', () => {
     expect(screen.getAllByText('$439,745.95')).toHaveLength(2);
     expect(screen.getByText('JE-2000')).toBeInTheDocument();
     // Called with an ISO as-of date.
-    expect(getLedgerPageData).toHaveBeenCalledWith(
-      expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/)
-    );
+    expect(getLedgerPageData).toHaveBeenCalledWith(expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
   });
 
   it('shows the out-of-balance badge when the engine reports imbalance', async () => {
@@ -77,7 +77,7 @@ describe('LedgerClient', () => {
     render(<LedgerClient />);
 
     await waitFor(() =>
-      expect(screen.getByText('Failed to load general ledger')).toBeInTheDocument()
+      expect(screen.getByText('Failed to load general ledger')).toBeInTheDocument(),
     );
   });
 });

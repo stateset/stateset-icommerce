@@ -72,7 +72,7 @@ fn tolerate(label: &str, result: Result<(), CommerceError>, rejected: &mut usize
     match result {
         Ok(()) => {}
         Err(CommerceError::ValidationError(_) | CommerceError::Conflict(_)) => *rejected += 1,
-        Err(CommerceError::NotFound) => *rejected += 1,
+        Err(CommerceError::NotFound | CommerceError::InsufficientStock { .. }) => *rejected += 1,
         Err(other) => panic!("{label} failed with an unexpected error: {other:?}"),
     }
 }

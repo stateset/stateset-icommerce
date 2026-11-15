@@ -17,11 +17,77 @@ use uuid::Uuid;
 
 /// Default actor recorded on post/close/lock operations when the caller does
 /// not provide one.
-const DEFAULT_ACTOR: &str = "api";
 
 // ============================================================================
 // Request / response schemas
 // ============================================================================
+
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub(crate) struct AutoPostingConfigRequest {
+    pub config_name: String,
+    pub cash_account_id: String,
+    pub accounts_receivable_account_id: String,
+    pub inventory_account_id: String,
+    pub accounts_payable_account_id: String,
+    pub unearned_revenue_account_id: Option<String>,
+    pub sales_revenue_account_id: String,
+    pub shipping_revenue_account_id: Option<String>,
+    pub sales_tax_payable_account_id: Option<String>,
+    pub goods_received_not_invoiced_account_id: Option<String>,
+    pub inventory_adjustment_account_id: Option<String>,
+    pub work_in_progress_account_id: Option<String>,
+    pub cogs_account_id: String,
+    pub bad_debt_expense_account_id: Option<String>,
+    pub fx_gain_loss_account_id: Option<String>,
+    #[serde(default)]
+    pub auto_post_depreciation: bool,
+    #[serde(default)]
+    pub auto_post_revenue_recognition: bool,
+}
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub(crate) struct AutoPostingConfigResponse {
+    pub id: String,
+    #[serde(flatten)]
+    pub settings: AutoPostingConfigRequest,
+    pub is_active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+impl From<stateset_core::AutoPostingConfig> for AutoPostingConfigResponse {
+    fn from(c: stateset_core::AutoPostingConfig) -> Self {
+        Self {
+            id: c.id.to_string(),
+            is_active: c.is_active,
+            created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
+            settings: AutoPostingConfigRequest {
+                config_name: c.config_name,
+                cash_account_id: c.cash_account_id.to_string(),
+                accounts_receivable_account_id: c.accounts_receivable_account_id.to_string(),
+                inventory_account_id: c.inventory_account_id.to_string(),
+                accounts_payable_account_id: c.accounts_payable_account_id.to_string(),
+                unearned_revenue_account_id: c.unearned_revenue_account_id.map(|id| id.to_string()),
+                sales_revenue_account_id: c.sales_revenue_account_id.to_string(),
+                shipping_revenue_account_id: c.shipping_revenue_account_id.map(|id| id.to_string()),
+                sales_tax_payable_account_id: c
+                    .sales_tax_payable_account_id
+                    .map(|id| id.to_string()),
+                goods_received_not_invoiced_account_id: c
+                    .goods_received_not_invoiced_account_id
+                    .map(|id| id.to_string()),
+                inventory_adjustment_account_id: c
+                    .inventory_adjustment_account_id
+                    .map(|id| id.to_string()),
+                work_in_progress_account_id: c.work_in_progress_account_id.map(|id| id.to_string()),
+                cogs_account_id: c.cogs_account_id.to_string(),
+                bad_debt_expense_account_id: c.bad_debt_expense_account_id.map(|id| id.to_string()),
+                fx_gain_loss_account_id: c.fx_gain_loss_account_id.map(|id| id.to_string()),
+                auto_post_depreciation: c.auto_post_depreciation,
+                auto_post_revenue_recognition: c.auto_post_revenue_recognition,
+            },
+        }
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub(crate) struct CreateGlAccountRequest {
@@ -97,11 +163,20 @@ pub(crate) struct CreateJournalEntryRequest {
     pub lines: Vec<CreateJournalEntryLineRequest>,
     /// Post immediately after creation when balanced.
     pub auto_post: Option<bool>,
+    /// Transaction currency and historical base-currency rate for a manual entry.
+    pub fx: Option<JournalEntryFxRequest>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub(crate) struct JournalEntryFxRequest {
+    pub currency: String,
+    /// Functional currency units per transaction unit, as an exact decimal string.
+    pub rate: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, ToSchema)]
 pub(crate) struct PostJournalEntryRequest {
-    /// Actor recorded as the poster. Defaults to `api`.
+    /// Deprecated and ignored; the authenticated actor is recorded.
     pub posted_by: Option<String>,
 }
 
@@ -168,7 +243,7 @@ pub(crate) struct CloseMonthRequest {
     pub skip_period_close: Option<bool>,
     /// Refuse with 422 when any step reports warnings (strict mode).
     pub fail_on_warnings: Option<bool>,
-    /// Actor recorded as the closer. Defaults to `api`.
+    /// Deprecated and ignored; the authenticated actor is recorded.
     pub closed_by: Option<String>,
 }
 
@@ -218,6 +293,10 @@ pub(crate) struct JournalEntryLineResponse {
     /// Decimal credit amount as a string.
     pub credit_amount: String,
     pub currency: String,
+    pub transaction_currency: Option<String>,
+    pub transaction_debit_amount: Option<String>,
+    pub transaction_credit_amount: Option<String>,
+    pub exchange_rate: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -279,13 +358,13 @@ pub(crate) struct CreateGlPeriodRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, ToSchema)]
 pub(crate) struct ClosePeriodRequest {
-    /// Actor recorded as the closer. Defaults to `api`.
+    /// Deprecated and ignored; the authenticated actor is recorded.
     pub closed_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, ToSchema)]
 pub(crate) struct LockPeriodRequest {
-    /// Actor recorded as the locker. Defaults to `api`.
+    /// Deprecated and ignored; the authenticated actor is recorded.
     pub locked_by: Option<String>,
 }
 
@@ -444,6 +523,10 @@ fn to_line_resp(l: &stateset_core::JournalEntryLine) -> JournalEntryLineResponse
         debit_amount: l.debit_amount.to_string(),
         credit_amount: l.credit_amount.to_string(),
         currency: l.currency.to_string(),
+        transaction_currency: l.transaction_currency.map(|v| v.to_string()),
+        transaction_debit_amount: l.transaction_debit_amount.map(|v| v.to_string()),
+        transaction_credit_amount: l.transaction_credit_amount.map(|v| v.to_string()),
+        exchange_rate: l.exchange_rate.map(|v| v.to_string()),
     }
 }
 
@@ -491,16 +574,13 @@ fn parse_date(s: &str, what: &str) -> Result<NaiveDate, HttpError> {
         .map_err(|_| HttpError::BadRequest(format!("invalid {what}: {s} (expected YYYY-MM-DD)")))
 }
 
-fn actor_or_default(actor: Option<String>) -> String {
-    actor.filter(|value| !value.trim().is_empty()).unwrap_or_else(|| DEFAULT_ACTOR.to_string())
-}
-
 // ============================================================================
 // Router
 // ============================================================================
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/gl/posting-config", get(get_posting_config).put(set_posting_config))
         .route("/gl/accounts", post(create_account).get(list_accounts))
         .route("/gl/accounts/{id}", get(get_account))
         .route("/gl/journal-entries", post(create_journal_entry).get(list_journal_entries))
@@ -637,6 +717,7 @@ pub(crate) async fn get_account(
 #[tracing::instrument(skip(state, headers, req))]
 pub(crate) async fn create_journal_entry(
     State(state): State<AppState>,
+    actor: crate::middleware::FinanceActor,
     headers: HeaderMap,
     Json(req): Json<CreateJournalEntryRequest>,
 ) -> Result<(StatusCode, Json<JournalEntryResponse>), HttpError> {
@@ -672,8 +753,17 @@ pub(crate) async fn create_journal_entry(
                 source_document_type: None,
                 source_document_id: None,
                 auto_post: req.auto_post,
+                fx: req
+                    .fx
+                    .map(|fx| -> Result<_, HttpError> {
+                        Ok(stateset_core::JournalEntryFx {
+                            currency: parse_id(&fx.currency, "fx.currency")?,
+                            rate: parse_decimal(&fx.rate, "fx.rate")?,
+                        })
+                    })
+                    .transpose()?,
             };
-            let entry = c.general_ledger().create_journal_entry(input)?;
+            let entry = c.general_ledger().create_journal_entry_as(input, &actor.0)?;
             Ok((StatusCode::CREATED, Json(to_entry_resp(&entry))))
         })
         .await
@@ -768,13 +858,15 @@ pub(crate) async fn get_journal_entry(
 pub(crate) async fn post_journal_entry(
     State(state): State<AppState>,
     headers: HeaderMap,
+    actor: crate::middleware::FinanceActor,
     Path(id): Path<Uuid>,
     Json(req): Json<PostJournalEntryRequest>,
 ) -> Result<Json<JournalEntryResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            let posted_by = actor_or_default(req.posted_by);
+            let _ = req; // Legacy body identity is ignored.
+            let posted_by = actor.0;
             Ok(Json(to_entry_resp(&c.general_ledger().post_journal_entry(id, &posted_by)?)))
         })
         .await
@@ -895,6 +987,7 @@ fn to_close_month_step_resp(step: &stateset_core::CloseMonthStepReport) -> Close
 pub(crate) async fn close_month(
     State(state): State<AppState>,
     headers: HeaderMap,
+    actor: crate::middleware::FinanceActor,
     Json(req): Json<CloseMonthRequest>,
 ) -> Result<Json<CloseMonthResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
@@ -908,7 +1001,7 @@ pub(crate) async fn close_month(
                 skip_fx_revaluation: req.skip_fx_revaluation.unwrap_or(false),
                 skip_period_close: req.skip_period_close.unwrap_or(false),
                 fail_on_warnings: req.fail_on_warnings.unwrap_or(false),
-                closed_by: Some(actor_or_default(req.closed_by)),
+                closed_by: Some(actor.0),
             };
             let report = c.general_ledger().close_month(period_id, options)?;
             Ok(Json(CloseMonthResponse {
@@ -1139,13 +1232,15 @@ pub(crate) async fn open_period(
 pub(crate) async fn close_period(
     State(state): State<AppState>,
     headers: HeaderMap,
+    actor: crate::middleware::FinanceActor,
     Path(id): Path<Uuid>,
     Json(req): Json<ClosePeriodRequest>,
 ) -> Result<Json<GlPeriodResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            let closed_by = actor_or_default(req.closed_by);
+            let _ = req; // Legacy body identity is ignored.
+            let closed_by = actor.0;
             Ok(Json(to_period_resp(&c.general_ledger().close_period(id, &closed_by)?)))
         })
         .await
@@ -1159,13 +1254,15 @@ pub(crate) async fn close_period(
 pub(crate) async fn lock_period(
     State(state): State<AppState>,
     headers: HeaderMap,
+    actor: crate::middleware::FinanceActor,
     Path(id): Path<Uuid>,
     Json(req): Json<LockPeriodRequest>,
 ) -> Result<Json<GlPeriodResponse>, HttpError> {
     let tid = tenant_id_from_headers(&headers);
     state
         .run_blocking(tid.as_deref(), move |c| {
-            let locked_by = actor_or_default(req.locked_by);
+            let _ = req; // Legacy body identity is ignored.
+            let locked_by = actor.0;
             Ok(Json(to_period_resp(&c.general_ledger().lock_period(id, &locked_by)?)))
         })
         .await
@@ -1198,7 +1295,11 @@ mod tests {
 
     fn app() -> Router {
         let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
-        router().with_state(state)
+        router()
+            .layer(axum::Extension(crate::middleware::AuthenticatedActorIdentity(
+                "test-maker".into(),
+            )))
+            .with_state(state)
     }
 
     async fn send(
@@ -1303,7 +1404,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(posted["status"], "posted");
-        assert_eq!(posted["posted_by"], "tester");
+        assert_eq!(posted["posted_by"], "test-maker");
 
         let (status, fetched) =
             send(&app, "GET", &format!("/gl/journal-entries/{entry_id}"), None).await;
@@ -1315,6 +1416,29 @@ mod tests {
         assert_eq!(tb["is_balanced"], true);
         assert_eq!(tb["total_debits"], tb["total_credits"]);
         assert_eq!(tb["total_debits"], "100.00");
+    }
+
+    #[tokio::test]
+    async fn foreign_entry_exposes_transaction_and_base_amounts() {
+        let app = app();
+        create_open_period(&app).await;
+        let cash = create_account(&app, "1010", "Cash", "asset").await;
+        let sales = create_account(&app, "4010", "Sales", "revenue").await;
+        let (status, entry) = send(&app, "POST", "/gl/journal-entries", Some(serde_json::json!({
+            "entry_date":"2025-01-15", "description":"EUR sale", "auto_post":true,
+            "fx":{"currency":"EUR","rate":"1.2"},
+            "lines":[{"account_id":cash,"debit_amount":"1000"},{"account_id":sales,"credit_amount":"1000"}]
+        }))).await;
+        assert_eq!(status, StatusCode::CREATED, "{entry}");
+        assert_eq!(
+            entry["total_debits"].as_str().unwrap().parse::<Decimal>().unwrap(),
+            Decimal::from(1200)
+        );
+        let line = &entry["lines"][0];
+        assert_eq!(line["currency"], "USD");
+        assert_eq!(line["transaction_currency"], "EUR");
+        assert_eq!(line["transaction_debit_amount"], "1000");
+        assert_eq!(line["exchange_rate"], "1.2");
     }
 
     #[tokio::test]
@@ -1367,7 +1491,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(closed["status"], "closed");
-        assert_eq!(closed["closed_by"], "controller");
+        assert_eq!(closed["closed_by"], "test-maker");
 
         let (status, reopened) =
             send(&app, "POST", &format!("/gl/periods/{period_id}/reopen"), None).await;
@@ -1405,5 +1529,146 @@ mod tests {
             send(&app, "GET", &format!("/gl/accounts/{}", Uuid::new_v4()), None).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(body["error"]["code"], "not_found");
+    }
+}
+
+#[utoipa::path(get, operation_id = "gl_get_posting_config", path = "/api/v1/gl/posting-config", tag = "general_ledger",
+    responses((status = 200, body = Option<AutoPostingConfigResponse>)))]
+pub(crate) async fn get_posting_config(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Option<AutoPostingConfigResponse>>, HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tid.as_deref())?;
+    Ok(Json(c.general_ledger().get_auto_posting_config()?.map(Into::into)))
+}
+
+#[utoipa::path(put, operation_id = "gl_set_posting_config", path = "/api/v1/gl/posting-config", tag = "general_ledger",
+    request_body = AutoPostingConfigRequest,
+    responses((status = 200, body = AutoPostingConfigResponse), (status = 400, body = ErrorBody)))]
+pub(crate) async fn set_posting_config(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<AutoPostingConfigRequest>,
+) -> Result<Json<AutoPostingConfigResponse>, HttpError> {
+    let tid = tenant_id_from_headers(&headers);
+    let c = state.commerce_for_tenant(tid.as_deref())?;
+    let input = stateset_core::CreateAutoPostingConfig {
+        config_name: req.config_name,
+        cash_account_id: parse_id::<Uuid>(&req.cash_account_id, "cash_account_id")?,
+        accounts_receivable_account_id: parse_id::<Uuid>(
+            &req.accounts_receivable_account_id,
+            "accounts_receivable_account_id",
+        )?,
+        inventory_account_id: parse_id::<Uuid>(&req.inventory_account_id, "inventory_account_id")?,
+        accounts_payable_account_id: parse_id::<Uuid>(
+            &req.accounts_payable_account_id,
+            "accounts_payable_account_id",
+        )?,
+        unearned_revenue_account_id: req
+            .unearned_revenue_account_id
+            .as_deref()
+            .map(|id| parse_id::<Uuid>(id, "unearned_revenue_account_id"))
+            .transpose()?,
+        sales_revenue_account_id: parse_id::<Uuid>(
+            &req.sales_revenue_account_id,
+            "sales_revenue_account_id",
+        )?,
+        shipping_revenue_account_id: req
+            .shipping_revenue_account_id
+            .as_deref()
+            .map(|id| parse_id::<Uuid>(id, "shipping_revenue_account_id"))
+            .transpose()?,
+        sales_tax_payable_account_id: req
+            .sales_tax_payable_account_id
+            .as_deref()
+            .map(|id| parse_id::<Uuid>(id, "sales_tax_payable_account_id"))
+            .transpose()?,
+        goods_received_not_invoiced_account_id: req
+            .goods_received_not_invoiced_account_id
+            .as_deref()
+            .map(|id| parse_id::<Uuid>(id, "goods_received_not_invoiced_account_id"))
+            .transpose()?,
+        inventory_adjustment_account_id: req
+            .inventory_adjustment_account_id
+            .as_deref()
+            .map(|id| parse_id::<Uuid>(id, "inventory_adjustment_account_id"))
+            .transpose()?,
+        work_in_progress_account_id: req
+            .work_in_progress_account_id
+            .as_deref()
+            .map(|id| parse_id::<Uuid>(id, "work_in_progress_account_id"))
+            .transpose()?,
+        cogs_account_id: parse_id::<Uuid>(&req.cogs_account_id, "cogs_account_id")?,
+        bad_debt_expense_account_id: req
+            .bad_debt_expense_account_id
+            .as_deref()
+            .map(|id| parse_id::<Uuid>(id, "bad_debt_expense_account_id"))
+            .transpose()?,
+        fx_gain_loss_account_id: req
+            .fx_gain_loss_account_id
+            .as_deref()
+            .map(|id| parse_id::<Uuid>(id, "fx_gain_loss_account_id"))
+            .transpose()?,
+        auto_post_depreciation: req.auto_post_depreciation,
+        auto_post_revenue_recognition: req.auto_post_revenue_recognition,
+    };
+    Ok(Json(c.general_ledger().set_auto_posting_config(input)?.into()))
+}
+
+#[cfg(test)]
+mod posting_config_tests {
+    use super::*;
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn posting_configuration_round_trip_and_invalid_replacement() {
+        let commerce = stateset_embedded::Commerce::new(":memory:").unwrap();
+        commerce.general_ledger().initialize_chart_of_accounts().unwrap();
+        let account = |number| {
+            commerce.general_ledger().get_account_by_number(number).unwrap().unwrap().id.to_string()
+        };
+        let mut body = serde_json::json!({
+            "config_name": "HTTP", "cash_account_id": account("1010"),
+            "accounts_receivable_account_id": account("1100"), "inventory_account_id": account("1200"),
+            "accounts_payable_account_id": account("2010"), "sales_revenue_account_id": account("4010"),
+            "cogs_account_id": account("5010"), "auto_post_depreciation": true,
+            "auto_post_revenue_recognition": true,
+        });
+        let app = router()
+            .layer(axum::Extension(crate::middleware::AuthenticatedActorIdentity(
+                "test-maker".into(),
+            )))
+            .with_state(AppState::new(commerce));
+        let put = |body: &serde_json::Value| {
+            Request::put("/gl/posting-config")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+        let response = app.clone().oneshot(put(&body)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let saved: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+        )
+        .unwrap();
+        assert_eq!(saved["auto_post_depreciation"], true);
+        body["cash_account_id"] = body["sales_revenue_account_id"].clone();
+        let response = app.clone().oneshot(put(&body)).await.unwrap();
+        assert!(response.status().is_client_error());
+        let response = app
+            .oneshot(Request::get("/gl/posting-config").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let current: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            current["id"], saved["id"],
+            "Invalid replacement must preserve the active configuration"
+        );
     }
 }

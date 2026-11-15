@@ -635,6 +635,13 @@ export async function runAgentLoop({
     systemPrompt,
     mcpServers,
     allowedTools,
+    // The agent gets the StateSet MCP servers above and nothing else: no
+    // built-in Claude Code tools (Bash, file edits, web fetch), which would
+    // run unprompted under bypassPermissions, and none of the host's settings,
+    // hooks, CLAUDE.md or MCP servers (the SDK loads them all when omitted).
+    tools: [],
+    settingSources: [],
+    strictMcpConfig: true,
     maxTurns,
     // Allow MCP tools to run without prompting for permission
     permissionMode: 'bypassPermissions',

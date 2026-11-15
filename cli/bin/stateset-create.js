@@ -155,6 +155,9 @@ async function main() {
         tools: mcpTools,
         // Auto-allow all MCP tools without permission prompts
         allowedTools: mcpTools,
+        // Ignore the host's settings, hooks, CLAUDE.md and MCP servers.
+        settingSources: [],
+        strictMcpConfig: true,
         maxTurns: 15,
       },
     })) {

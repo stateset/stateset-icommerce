@@ -4750,6 +4750,12 @@ impl BomApi {
 #[derive(Clone)]
 pub struct WorkOrder {
     #[pyo3(get)]
+    source_location_id: Option<i32>,
+    #[pyo3(get)]
+    output_location_id: Option<i32>,
+    #[pyo3(get)]
+    output_sku: Option<String>,
+    #[pyo3(get)]
     id: String,
     #[pyo3(get)]
     work_order_number: String,
@@ -4788,6 +4794,9 @@ impl TryFrom<stateset_core::WorkOrder> for WorkOrder {
 
     fn try_from(wo: stateset_core::WorkOrder) -> PyResult<Self> {
         Ok(Self {
+            source_location_id: wo.stock.as_ref().map(|v| v.source_location_id),
+            output_location_id: wo.stock.as_ref().map(|v| v.output_location_id),
+            output_sku: wo.stock.as_ref().map(|v| v.output_sku.clone()),
             id: wo.id.to_string(),
             work_order_number: wo.work_order_number,
             product_id: wo.product_id.to_string(),
@@ -4819,7 +4828,7 @@ pub struct WorkOrders {
 #[pymethods]
 impl WorkOrders {
     /// Create a new work order.
-    #[pyo3(signature = (product_id, quantity_to_build, bom_id=None, priority=None, notes=None))]
+    #[pyo3(signature = (product_id, quantity_to_build, bom_id=None, priority=None, notes=None, source_location_id=None, output_location_id=None, output_sku=None))]
     fn create(
         &self,
         product_id: String,
@@ -4827,6 +4836,9 @@ impl WorkOrders {
         bom_id: Option<String>,
         priority: Option<String>,
         notes: Option<String>,
+        source_location_id: Option<i32>,
+        output_location_id: Option<i32>,
+        output_sku: Option<String>,
     ) -> PyResult<WorkOrder> {
         let commerce = self
             .commerce
@@ -4857,6 +4869,11 @@ impl WorkOrders {
         let wo = commerce
             .work_orders()
             .create(stateset_core::CreateWorkOrder {
+                stock: match (source_location_id, output_location_id, output_sku) {
+                    (None, None, None) => None,
+                    (Some(source_location_id), Some(output_location_id), Some(output_sku)) => Some(stateset_core::WorkOrderStock { source_location_id, output_location_id, output_sku }),
+                    _ => return Err(PyValueError::new_err("Provide source_location_id, output_location_id, and output_sku together")),
+                },
                 product_id: prod_uuid,
                 bom_id: bom_uuid,
                 quantity_to_build: decimal_from_f64(quantity_to_build, "quantity_to_build")?,
@@ -11218,13 +11235,14 @@ pub struct LotsApi {
 
 #[pymethods]
 impl LotsApi {
-    #[pyo3(signature = (sku, lot_number, quantity, expiration_date=None))]
+    #[pyo3(signature = (sku, lot_number, quantity, expiration_date=None, initial_location_id=None))]
     fn create_lot(
         &self,
         sku: String,
         lot_number: String,
         quantity: f64,
         expiration_date: Option<String>,
+        initial_location_id: Option<i32>,
     ) -> PyResult<Lot> {
         let commerce = self
             .commerce
@@ -11238,6 +11256,7 @@ impl LotsApi {
                 lot_number: Some(lot_number),
                 quantity: decimal_from_f64(quantity, "quantity")?,
                 expiration_date: exp,
+                initial_location_id,
                 ..Default::default()
             })
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
@@ -11515,6 +11534,36 @@ impl WarehouseApi {
             .create_warehouse(stateset_core::CreateWarehouse { code, name, ..Default::default() })
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(warehouse.into())
+    }
+
+    /// Adjust an explicit stock location using an exact decimal quantity.
+    #[pyo3(signature = (location_id, sku, quantity, reason, lot_id=None))]
+    fn adjust_inventory(
+        &self,
+        location_id: i32,
+        sku: String,
+        quantity: String,
+        reason: String,
+        lot_id: Option<String>,
+    ) -> PyResult<String> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {e}")))?;
+        let result = commerce
+            .warehouse()
+            .adjust_inventory(stateset_core::AdjustLocationInventory {
+                location_id,
+                sku,
+                quantity: parse_decimal_py(&quantity, "quantity")?,
+                reason,
+                lot_id: lot_id.as_deref().map(|id| parse_uuid_str_py(id, "lot")).transpose()?,
+                reference_type: None,
+                reference_id: None,
+                performed_by: None,
+            })
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(result.quantity_on_hand.to_string())
     }
 
     fn get_warehouse(&self, id: String) -> PyResult<Option<Warehouse>> {
@@ -11954,6 +12003,12 @@ impl FulfillmentApi {
 #[derive(Clone)]
 pub struct Bill {
     #[pyo3(get)]
+    created_by: Option<String>,
+    #[pyo3(get)]
+    approved_by: Option<String>,
+    #[pyo3(get)]
+    currency: String,
+    #[pyo3(get)]
     id: String,
     #[pyo3(get)]
     bill_number: String,
@@ -11975,6 +12030,8 @@ pub struct Bill {
     status: String,
     #[pyo3(get)]
     due_date: String,
+    #[pyo3(get)]
+    match_override_reason: Option<String>,
 }
 
 impl TryFrom<stateset_core::Bill> for Bill {
@@ -11986,6 +12043,10 @@ impl TryFrom<stateset_core::Bill> for Bill {
         let amount_due_exact = b.amount_due.to_string();
         Ok(Self {
             id: b.id.to_string(),
+            created_by: b.created_by,
+            approved_by: b.approved_by,
+            currency: b.currency.to_string(),
+            match_override_reason: b.match_override_reason,
             bill_number: b.bill_number,
             supplier_id: b.supplier_id.to_string(),
             total_amount: to_f64_result(b.total_amount, "bill total amount")?,
@@ -12047,7 +12108,13 @@ pub struct AccountsPayableApi {
 
 #[pymethods]
 impl AccountsPayableApi {
-    fn create_bill(&self, supplier_id: String, due_date: String) -> PyResult<Bill> {
+    #[pyo3(signature=(supplier_id,due_date,created_by=None))]
+    fn create_bill(
+        &self,
+        supplier_id: String,
+        due_date: String,
+        created_by: Option<String>,
+    ) -> PyResult<Bill> {
         let commerce = self
             .commerce
             .lock()
@@ -12060,6 +12127,7 @@ impl AccountsPayableApi {
             .accounts_payable()
             .create_bill(stateset_core::CreateBill {
                 supplier_id: uuid,
+                created_by,
                 due_date: due,
                 ..Default::default()
             })
@@ -12092,16 +12160,29 @@ impl AccountsPayableApi {
         convert_outputs(bills)
     }
 
-    fn approve_bill(&self, id: String) -> PyResult<Bill> {
+    #[pyo3(signature=(id,override_reason=None,actor=None))]
+    fn approve_bill(
+        &self,
+        id: String,
+        override_reason: Option<String>,
+        actor: Option<String>,
+    ) -> PyResult<Bill> {
         let commerce = self
             .commerce
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
         let uuid: uuid::Uuid = id.parse().map_err(|_| PyValueError::new_err("Invalid UUID"))?;
-        let bill = commerce
-            .accounts_payable()
-            .approve_bill(uuid)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let bill = if let Some(actor) = actor.as_deref() {
+            commerce.accounts_payable().approve_bill_as(uuid, actor, override_reason.as_deref())
+        } else {
+            match override_reason.as_deref() {
+                Some(reason) => {
+                    commerce.accounts_payable().approve_bill_with_override(uuid, reason)
+                }
+                None => commerce.accounts_payable().approve_bill(uuid),
+            }
+        }
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         convert_output(bill)
     }
 
@@ -13013,6 +13094,44 @@ impl TryFrom<stateset_core::GlAccount> for GlAccount {
 
 #[pyclass(skip_from_py_object)]
 #[derive(Clone)]
+pub struct JournalEntryLine {
+    #[pyo3(get)]
+    id: String,
+    #[pyo3(get)]
+    account_id: String,
+    #[pyo3(get)]
+    debit_amount: String,
+    #[pyo3(get)]
+    credit_amount: String,
+    #[pyo3(get)]
+    currency: String,
+    #[pyo3(get)]
+    transaction_currency: Option<String>,
+    #[pyo3(get)]
+    transaction_debit_amount: Option<String>,
+    #[pyo3(get)]
+    transaction_credit_amount: Option<String>,
+    #[pyo3(get)]
+    exchange_rate: Option<String>,
+}
+impl From<stateset_core::JournalEntryLine> for JournalEntryLine {
+    fn from(l: stateset_core::JournalEntryLine) -> Self {
+        Self {
+            id: l.id.to_string(),
+            account_id: l.account_id.to_string(),
+            debit_amount: l.debit_amount.to_string(),
+            credit_amount: l.credit_amount.to_string(),
+            currency: l.currency.to_string(),
+            transaction_currency: l.transaction_currency.map(|v| v.to_string()),
+            transaction_debit_amount: l.transaction_debit_amount.map(|v| v.to_string()),
+            transaction_credit_amount: l.transaction_credit_amount.map(|v| v.to_string()),
+            exchange_rate: l.exchange_rate.map(|v| v.to_string()),
+        }
+    }
+}
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
 pub struct JournalEntry {
     #[pyo3(get)]
     id: String,
@@ -13024,11 +13143,20 @@ pub struct JournalEntry {
     status: String,
     #[pyo3(get)]
     entry_date: String,
+    #[pyo3(get)]
+    lines: Vec<JournalEntryLine>,
+    #[pyo3(get)]
+    total_debits: String,
+    #[pyo3(get)]
+    total_credits: String,
 }
 
 impl From<stateset_core::JournalEntry> for JournalEntry {
     fn from(e: stateset_core::JournalEntry) -> Self {
         Self {
+            lines: e.lines.into_iter().map(Into::into).collect(),
+            total_debits: e.total_debits.to_string(),
+            total_credits: e.total_credits.to_string(),
             id: e.id.to_string(),
             entry_number: e.entry_number,
             description: e.description,
@@ -13080,6 +13208,34 @@ pub struct GeneralLedgerApi {
 
 #[pymethods]
 impl GeneralLedgerApi {
+    /// Read posting configuration as JSON with snake_case field names.
+    fn get_auto_posting_config(&self) -> PyResult<Option<String>> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let config = commerce
+            .general_ledger()
+            .get_auto_posting_config()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        config.as_ref().map(|value| serialize_json(value, "posting configuration")).transpose()
+    }
+
+    /// Set validated posting configuration from JSON. Required before month-end close.
+    fn set_auto_posting_config(&self, config_json: &str) -> PyResult<String> {
+        let config: stateset_core::CreateAutoPostingConfig = serde_json::from_str(config_json)
+            .map_err(|e| PyValueError::new_err(format!("Invalid posting configuration: {}", e)))?;
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let config = commerce
+            .general_ledger()
+            .set_auto_posting_config(config)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        serialize_json(&config, "posting configuration")
+    }
+
     #[pyo3(signature = (account_number, name, account_type, description=None))]
     fn create_account(
         &self,
@@ -14870,6 +15026,7 @@ fn stateset_embedded(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<GeneralLedgerApi>()?;
     m.add_class::<GlAccount>()?;
     m.add_class::<JournalEntry>()?;
+    m.add_class::<JournalEntryLine>()?;
     m.add_class::<TrialBalance>()?;
     m.add_class::<GlPeriod>()?;
     m.add_class::<RevaluationLine>()?;
@@ -17196,6 +17353,10 @@ pub struct FixedAsset {
     #[pyo3(get)]
     accumulated_depreciation_account_id: Option<String>,
     #[pyo3(get)]
+    acquisition_offset_account_id: Option<String>,
+    #[pyo3(get)]
+    disposal_gain_loss_account_id: Option<String>,
+    #[pyo3(get)]
     depreciation_expense_account_id: Option<String>,
     /// Exact decimal string
     #[pyo3(get)]
@@ -17236,6 +17397,8 @@ impl From<stateset_core::FixedAsset> for FixedAsset {
             accumulated_depreciation_account_id: a
                 .accumulated_depreciation_account_id
                 .map(|id| id.to_string()),
+            acquisition_offset_account_id: a.acquisition_offset_account_id.map(|id| id.to_string()),
+            disposal_gain_loss_account_id: a.disposal_gain_loss_account_id.map(|id| id.to_string()),
             depreciation_expense_account_id: a
                 .depreciation_expense_account_id
                 .map(|id| id.to_string()),
@@ -17355,6 +17518,8 @@ impl FixedAssets {
         accumulated_depreciation_account_id=None,
         depreciation_expense_account_id=None,
         currency=None,
+        acquisition_offset_account_id=None,
+        disposal_gain_loss_account_id=None,
     ))]
     fn create(
         &self,
@@ -17374,6 +17539,8 @@ impl FixedAssets {
         accumulated_depreciation_account_id: Option<String>,
         depreciation_expense_account_id: Option<String>,
         currency: Option<String>,
+        acquisition_offset_account_id: Option<String>,
+        disposal_gain_loss_account_id: Option<String>,
     ) -> PyResult<FixedAsset> {
         let commerce = self
             .commerce
@@ -17411,6 +17578,14 @@ impl FixedAssets {
                 accumulated_depreciation_account_id: parse_optional_uuid_py(
                     accumulated_depreciation_account_id,
                     "accumulated_depreciation_account_id",
+                )?,
+                acquisition_offset_account_id: parse_optional_uuid_py(
+                    acquisition_offset_account_id,
+                    "acquisition_offset_account_id",
+                )?,
+                disposal_gain_loss_account_id: parse_optional_uuid_py(
+                    disposal_gain_loss_account_id,
+                    "disposal_gain_loss_account_id",
                 )?,
                 depreciation_expense_account_id: parse_optional_uuid_py(
                     depreciation_expense_account_id,
@@ -17509,6 +17684,8 @@ impl FixedAssets {
         asset_account_id=None,
         accumulated_depreciation_account_id=None,
         depreciation_expense_account_id=None,
+        acquisition_offset_account_id=None,
+        disposal_gain_loss_account_id=None,
     ))]
     fn update(
         &self,
@@ -17523,6 +17700,8 @@ impl FixedAssets {
         asset_account_id: Option<String>,
         accumulated_depreciation_account_id: Option<String>,
         depreciation_expense_account_id: Option<String>,
+        acquisition_offset_account_id: Option<String>,
+        disposal_gain_loss_account_id: Option<String>,
     ) -> PyResult<FixedAsset> {
         let commerce = self
             .commerce
@@ -17557,6 +17736,14 @@ impl FixedAssets {
                     accumulated_depreciation_account_id: parse_optional_uuid_py(
                         accumulated_depreciation_account_id,
                         "accumulated_depreciation_account_id",
+                    )?,
+                    acquisition_offset_account_id: parse_optional_uuid_py(
+                        acquisition_offset_account_id,
+                        "acquisition_offset_account_id",
+                    )?,
+                    disposal_gain_loss_account_id: parse_optional_uuid_py(
+                        disposal_gain_loss_account_id,
+                        "disposal_gain_loss_account_id",
                     )?,
                     depreciation_expense_account_id: parse_optional_uuid_py(
                         depreciation_expense_account_id,
@@ -18860,6 +19047,10 @@ pub struct Prepayment {
     #[pyo3(get)]
     remaining: String,
     #[pyo3(get)]
+    refunded_amount: String,
+    #[pyo3(get)]
+    refunded_at: Option<String>,
+    #[pyo3(get)]
     currency: String,
     /// open, applied, refunded, cancelled
     #[pyo3(get)]
@@ -18884,6 +19075,8 @@ impl From<stateset_core::Prepayment> for Prepayment {
             supplier_id: p.supplier_id.to_string(),
             amount: p.amount.to_string(),
             remaining: p.remaining.to_string(),
+            refunded_amount: p.refunded_amount.to_string(),
+            refunded_at: p.refunded_at.map(|date| date.to_rfc3339()),
             currency: p.currency.to_string(),
             status: format!("{}", p.status),
             method: p.method,
@@ -19927,6 +20120,10 @@ impl PriceLevels {
 #[derive(Clone)]
 pub struct TransferOrderItemInput {
     #[pyo3(get, set)]
+    sku: String,
+    #[pyo3(get, set)]
+    lot_id: Option<String>,
+    #[pyo3(get, set)]
     product_id: String,
     /// Exact decimal string
     #[pyo3(get, set)]
@@ -19936,8 +20133,9 @@ pub struct TransferOrderItemInput {
 #[pymethods]
 impl TransferOrderItemInput {
     #[new]
-    fn new(product_id: String, quantity: String) -> Self {
-        Self { product_id, quantity }
+    #[pyo3(signature = (product_id, sku, quantity, lot_id=None))]
+    fn new(product_id: String, sku: String, quantity: String, lot_id: Option<String>) -> Self {
+        Self { product_id, sku, quantity, lot_id }
     }
 }
 
@@ -19945,6 +20143,10 @@ impl TransferOrderItemInput {
 #[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct TransferOrderItem {
+    #[pyo3(get)]
+    lot_id: Option<String>,
+    #[pyo3(get)]
+    quantity_variance: String,
     #[pyo3(get)]
     id: String,
     #[pyo3(get)]
@@ -19967,6 +20169,8 @@ pub struct TransferOrderItem {
 impl From<stateset_core::TransferOrderItem> for TransferOrderItem {
     fn from(i: stateset_core::TransferOrderItem) -> Self {
         Self {
+            lot_id: i.lot_id.map(|id| id.to_string()),
+            quantity_variance: i.quantity_variance.to_string(),
             id: i.id.to_string(),
             transfer_order_id: i.transfer_order_id.to_string(),
             product_id: i.product_id.to_string(),
@@ -19982,6 +20186,10 @@ impl From<stateset_core::TransferOrderItem> for TransferOrderItem {
 #[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct TransferOrder {
+    #[pyo3(get)]
+    source_location_id: Option<i32>,
+    #[pyo3(get)]
+    destination_location_id: Option<i32>,
     #[pyo3(get)]
     id: String,
     #[pyo3(get)]
@@ -20015,6 +20223,8 @@ pub struct TransferOrder {
 impl From<stateset_core::TransferOrder> for TransferOrder {
     fn from(o: stateset_core::TransferOrder) -> Self {
         Self {
+            source_location_id: o.source_location_id,
+            destination_location_id: o.destination_location_id,
             id: o.id.to_string(),
             number: o.number,
             source_warehouse_id: o.source_warehouse_id.to_string(),
@@ -20050,12 +20260,14 @@ impl TransferOrders {
     }
 
     /// Create a transfer order. Source and destination warehouses must differ.
-    #[pyo3(signature = (source_warehouse_id, destination_warehouse_id, items, expected_at=None, notes=None))]
+    #[pyo3(signature = (source_warehouse_id, destination_warehouse_id, items, source_location_id, destination_location_id, expected_at=None, notes=None))]
     fn create(
         &self,
         source_warehouse_id: String,
         destination_warehouse_id: String,
         items: Vec<TransferOrderItemInput>,
+        source_location_id: i32,
+        destination_location_id: i32,
         expected_at: Option<String>,
         notes: Option<String>,
     ) -> PyResult<TransferOrder> {
@@ -20067,6 +20279,12 @@ impl TransferOrders {
             .into_iter()
             .map(|i| -> PyResult<stateset_core::CreateTransferOrderItem> {
                 Ok(stateset_core::CreateTransferOrderItem {
+                    sku: i.sku,
+                    lot_id: i
+                        .lot_id
+                        .as_deref()
+                        .map(|id| parse_uuid_str_py(id, "lot"))
+                        .transpose()?,
                     product_id: parse_uuid_str_py(&i.product_id, "product")?.into(),
                     quantity: parse_decimal_py(&i.quantity, "quantity")?,
                 })
@@ -20075,6 +20293,8 @@ impl TransferOrders {
         let order = commerce
             .transfer_orders()
             .create(stateset_core::CreateTransferOrder {
+                source_location_id,
+                destination_location_id,
                 source_warehouse_id: parse_uuid_str_py(
                     &source_warehouse_id,
                     "source_warehouse_id",
@@ -20194,6 +20414,18 @@ impl TransferOrders {
         let uuid = parse_uuid_str_py(&id, "transfer order")?;
         let order = commerce.transfer_orders().cancel(uuid.into()).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to cancel transfer order: {}", e))
+        })?;
+        Ok(order.into())
+    }
+    /// Close receiving and record the remaining transit quantity as shortage.
+    fn complete_receiving(&self, id: String) -> PyResult<TransferOrder> {
+        let commerce = self
+            .commerce
+            .lock()
+            .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {e}")))?;
+        let id = parse_uuid_str_py(&id, "transfer order")?;
+        let order = commerce.transfer_orders().complete_receiving(id.into()).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to close transfer receiving: {e}"))
         })?;
         Ok(order.into())
     }
@@ -22850,7 +23082,7 @@ pub struct StockSnapshotLine {
     #[pyo3(get)]
     stock_snapshot_id: String,
     #[pyo3(get)]
-    product_id: String,
+    product_id: Option<String>,
     #[pyo3(get)]
     sku: String,
     /// Exact decimal string
@@ -22868,7 +23100,7 @@ impl From<stateset_core::StockSnapshotLine> for StockSnapshotLine {
         Self {
             id: l.id.to_string(),
             stock_snapshot_id: l.stock_snapshot_id.to_string(),
-            product_id: l.product_id.to_string(),
+            product_id: l.product_id.map(|id| id.to_string()),
             sku: l.sku,
             quantity_on_hand: l.quantity_on_hand.to_string(),
             quantity_available: l.quantity_available.to_string(),
@@ -22929,10 +23161,10 @@ impl StockSnapshots {
     }
 
     /// Capture a new snapshot; totals are computed from the supplied lines.
-    #[pyo3(signature = (lines, label=None))]
+    #[pyo3(signature = (lines=None, label=None))]
     fn capture(
         &self,
-        lines: Vec<CaptureStockLineInput>,
+        lines: Option<Vec<CaptureStockLineInput>>,
         label: Option<String>,
     ) -> PyResult<StockSnapshot> {
         let commerce = self
@@ -22940,6 +23172,7 @@ impl StockSnapshots {
             .lock()
             .map_err(|e| PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
         let lines = lines
+            .unwrap_or_default()
             .into_iter()
             .map(|l| -> PyResult<stateset_core::CaptureStockLine> {
                 Ok(stateset_core::CaptureStockLine {
@@ -24638,6 +24871,12 @@ fn parse_vendor_return_reason_py(s: &str) -> PyResult<stateset_core::VendorRetur
 pub struct VendorReturnItemInput {
     #[pyo3(get, set)]
     product_id: String,
+    #[pyo3(get, set)]
+    sku: String,
+    #[pyo3(get, set)]
+    source_location_id: i32,
+    #[pyo3(get, set)]
+    lot_id: Option<String>,
     /// Exact decimal string
     #[pyo3(get, set)]
     quantity: String,
@@ -24652,14 +24891,17 @@ pub struct VendorReturnItemInput {
 #[pymethods]
 impl VendorReturnItemInput {
     #[new]
-    #[pyo3(signature = (product_id, quantity, unit_cost, reason=None))]
+    #[pyo3(signature = (product_id, sku, source_location_id, quantity, unit_cost, reason=None, lot_id=None))]
     fn new(
         product_id: String,
+        sku: String,
+        source_location_id: i32,
         quantity: String,
         unit_cost: String,
         reason: Option<String>,
+        lot_id: Option<String>,
     ) -> Self {
-        Self { product_id, quantity, unit_cost, reason }
+        Self { product_id, sku, source_location_id, lot_id, quantity, unit_cost, reason }
     }
 }
 
@@ -24675,6 +24917,10 @@ pub struct VendorReturnItem {
     product_id: String,
     #[pyo3(get)]
     sku: String,
+    #[pyo3(get)]
+    source_location_id: Option<i32>,
+    #[pyo3(get)]
+    lot_id: Option<String>,
     /// Exact decimal string
     #[pyo3(get)]
     quantity: String,
@@ -24697,6 +24943,8 @@ impl From<stateset_core::VendorReturnItem> for VendorReturnItem {
             vendor_return_id: i.vendor_return_id.to_string(),
             product_id: i.product_id.to_string(),
             sku: i.sku,
+            source_location_id: i.source_location_id,
+            lot_id: i.lot_id.map(|id| id.to_string()),
             quantity: i.quantity.to_string(),
             unit_cost: i.unit_cost.to_string(),
             line_total,
@@ -24716,6 +24964,8 @@ pub struct VendorReturn {
     number: String,
     #[pyo3(get)]
     supplier_id: String,
+    #[pyo3(get)]
+    warehouse_id: Option<i32>,
     #[pyo3(get)]
     purchase_order_id: Option<String>,
     /// draft, pending, processed, cancelled
@@ -24747,6 +24997,7 @@ impl From<stateset_core::VendorReturn> for VendorReturn {
             id: r.id.to_string(),
             number: r.number,
             supplier_id: r.supplier_id.to_string(),
+            warehouse_id: r.warehouse_id,
             purchase_order_id: r.purchase_order_id.map(|id| id.to_string()),
             status: r.status.to_string(),
             currency: r.currency.to_string(),
@@ -24780,11 +25031,12 @@ impl VendorReturns {
     }
 
     /// Create a vendor return (draft). At least one item is required.
-    #[pyo3(signature = (supplier_id, items, purchase_order_id=None, currency=None, notes=None))]
+    #[pyo3(signature = (supplier_id, items, warehouse_id, purchase_order_id=None, currency=None, notes=None))]
     fn create(
         &self,
         supplier_id: String,
         items: Vec<VendorReturnItemInput>,
+        warehouse_id: i32,
         purchase_order_id: Option<String>,
         currency: Option<String>,
         notes: Option<String>,
@@ -24798,6 +25050,9 @@ impl VendorReturns {
             .map(|i| -> PyResult<stateset_core::CreateVendorReturnItem> {
                 Ok(stateset_core::CreateVendorReturnItem {
                     product_id: parse_uuid_str_py(&i.product_id, "product_id")?.into(),
+                    sku: i.sku,
+                    source_location_id: i.source_location_id,
+                    lot_id: parse_optional_uuid_py(i.lot_id, "lot_id")?,
                     quantity: parse_decimal_py(&i.quantity, "quantity")?,
                     unit_cost: parse_decimal_py(&i.unit_cost, "unit_cost")?,
                     reason: i
@@ -24813,6 +25068,7 @@ impl VendorReturns {
             .vendor_returns()
             .create(stateset_core::CreateVendorReturn {
                 supplier_id: parse_uuid_str_py(&supplier_id, "supplier_id")?,
+                warehouse_id,
                 purchase_order_id: parse_optional_uuid_py(purchase_order_id, "purchase_order_id")?,
                 currency: parse_currency_opt_py(currency)?,
                 items,

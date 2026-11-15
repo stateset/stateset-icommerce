@@ -25,6 +25,7 @@ pub(crate) struct AgingLayerRequest {
 pub(crate) struct InventoryAgingRequest {
     /// As-of date (`YYYY-MM-DD`); defaults to today when omitted.
     pub as_of: Option<String>,
+    #[serde(default)]
     pub layers: Vec<AgingLayerRequest>,
 }
 
@@ -61,48 +62,47 @@ pub fn router() -> Router<AppState> {
 #[utoipa::path(post, operation_id = "reports_inventory_aging", path = "/api/v1/reports/inventory-aging", tag = "reports",
     request_body = InventoryAgingRequest,
     responses((status = 200, body = InventoryAgingResponse), (status = 400, body = ErrorBody)))]
-#[tracing::instrument(skip(req))]
+#[tracing::instrument(skip(state, headers, req))]
 pub(crate) async fn inventory_aging(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<InventoryAgingRequest>,
 ) -> Result<(StatusCode, Json<InventoryAgingResponse>), HttpError> {
     let as_of = match req.as_of.as_deref() {
         Some(s) => parse_date(s)?,
         None => Utc::now().date_naive(),
     };
-    let mut layers = Vec::with_capacity(req.layers.len());
-    for l in req.layers {
-        let product_id = match l.product_id.as_deref() {
-            Some(s) => Some(parse_id::<ProductId>(s, "product_id")?),
-            None => None,
-        };
-        layers.push(stateset_core::AgingCostLayer {
-            product_id,
-            sku: l.sku,
-            quantity: parse_decimal(&l.quantity, "quantity")?,
-            unit_cost: parse_decimal(&l.unit_cost, "unit_cost")?,
-            received_at: parse_date(&l.received_at)?,
-        });
+    if !req.layers.is_empty() {
+        return Err(HttpError::BadRequest(
+            "Inventory aging reads stored stock and cost layers; omit caller-supplied layers"
+                .into(),
+        ));
     }
-    let report = stateset_core::compute_inventory_aging(&layers, as_of);
-    Ok((
-        StatusCode::OK,
-        Json(InventoryAgingResponse {
-            as_of: report.as_of.to_string(),
-            buckets: report
-                .buckets
-                .iter()
-                .map(|b| AgingBucketResponse {
-                    label: b.label.clone(),
-                    min_days: b.min_days,
-                    max_days: b.max_days,
-                    quantity: b.quantity.to_string(),
-                    value: b.value.to_string(),
-                })
-                .collect(),
-            total_quantity: report.total_quantity.to_string(),
-            total_value: report.total_value.to_string(),
-        }),
-    ))
+    let tenant = crate::state::tenant_id_from_headers(&headers);
+    state
+        .run_blocking(tenant.as_deref(), move |commerce| {
+            let report = commerce.stock_snapshots().inventory_aging(as_of)?;
+            Ok((
+                StatusCode::OK,
+                Json(InventoryAgingResponse {
+                    as_of: report.as_of.to_string(),
+                    buckets: report
+                        .buckets
+                        .iter()
+                        .map(|b| AgingBucketResponse {
+                            label: b.label.clone(),
+                            min_days: b.min_days,
+                            max_days: b.max_days,
+                            quantity: b.quantity.to_string(),
+                            value: b.value.to_string(),
+                        })
+                        .collect(),
+                    total_quantity: report.total_quantity.to_string(),
+                    total_value: report.total_value.to_string(),
+                }),
+            ))
+        })
+        .await
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
@@ -202,6 +202,7 @@ pub(crate) struct CogsLineRequest {
 pub(crate) struct TransactionCogsRequest {
     pub from: String,
     pub to: String,
+    #[serde(default)]
     pub lines: Vec<CogsLineRequest>,
 }
 
@@ -228,8 +229,10 @@ pub(crate) struct TransactionCogsResponse {
 #[utoipa::path(post, operation_id = "reports_transaction_cogs", path = "/api/v1/reports/transaction-cogs", tag = "reports",
     request_body = TransactionCogsRequest,
     responses((status = 200, body = TransactionCogsResponse), (status = 400, body = ErrorBody)))]
-#[tracing::instrument(skip(req))]
+#[tracing::instrument(skip(state, headers, req))]
 pub(crate) async fn transaction_cogs(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<TransactionCogsRequest>,
 ) -> Result<(StatusCode, Json<TransactionCogsResponse>), HttpError> {
     let from = parse_date(&req.from)?;
@@ -237,44 +240,40 @@ pub(crate) async fn transaction_cogs(
     if from > to {
         return Err(HttpError::BadRequest("`from` must be on or before `to`".into()));
     }
-    let mut lines = Vec::with_capacity(req.lines.len());
-    for l in req.lines {
-        let product_id = match l.product_id.as_deref() {
-            Some(s) => Some(parse_id::<ProductId>(s, "product_id")?),
-            None => None,
-        };
-        lines.push(stateset_core::CogsLine {
-            product_id,
-            sku: l.sku,
-            quantity: parse_decimal(&l.quantity, "quantity")?,
-            revenue: parse_decimal(&l.revenue, "revenue")?,
-            cost: parse_decimal(&l.cost, "cost")?,
-            transaction_date: parse_date(&l.transaction_date)?,
-        });
+    if !req.lines.is_empty() {
+        return Err(HttpError::BadRequest(
+            "This report reads stored transactions; omit caller-supplied lines and inventory"
+                .into(),
+        ));
     }
-    let report = stateset_core::compute_transaction_cogs(&lines, from, to);
-    Ok((
-        StatusCode::OK,
-        Json(TransactionCogsResponse {
-            from: report.from.to_string(),
-            to: report.to.to_string(),
-            rows: report
-                .rows
-                .iter()
-                .map(|r| CogsRowResponse {
-                    sku: r.sku.clone(),
-                    quantity: r.quantity.to_string(),
-                    revenue: r.revenue.to_string(),
-                    cogs: r.cogs.to_string(),
-                    gross_margin: r.gross_margin.to_string(),
-                })
-                .collect(),
-            total_revenue: report.total_revenue.to_string(),
-            total_cogs: report.total_cogs.to_string(),
-            gross_margin: report.gross_margin.to_string(),
-            gross_margin_pct: report.gross_margin_pct.to_string(),
-        }),
-    ))
+    let tenant = crate::state::tenant_id_from_headers(&headers);
+    state
+        .run_blocking(tenant.as_deref(), move |commerce| {
+            let report = commerce.cost_accounting().transaction_cogs(from, to)?;
+            Ok((
+                StatusCode::OK,
+                Json(TransactionCogsResponse {
+                    from: report.from.to_string(),
+                    to: report.to.to_string(),
+                    rows: report
+                        .rows
+                        .iter()
+                        .map(|r| CogsRowResponse {
+                            sku: r.sku.clone(),
+                            quantity: r.quantity.to_string(),
+                            revenue: r.revenue.to_string(),
+                            cogs: r.cogs.to_string(),
+                            gross_margin: r.gross_margin.to_string(),
+                        })
+                        .collect(),
+                    total_revenue: report.total_revenue.to_string(),
+                    total_cogs: report.total_cogs.to_string(),
+                    gross_margin: report.gross_margin.to_string(),
+                    gross_margin_pct: report.gross_margin_pct.to_string(),
+                }),
+            ))
+        })
+        .await
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
@@ -316,43 +315,41 @@ pub(crate) struct CloseBooksResponse {
 #[utoipa::path(post, operation_id = "reports_close_the_books", path = "/api/v1/reports/close-the-books", tag = "reports",
     request_body = CloseBooksRequest,
     responses((status = 200, body = CloseBooksResponse), (status = 400, body = ErrorBody)))]
-#[tracing::instrument(skip(req))]
+#[tracing::instrument(skip(state, headers, req))]
 pub(crate) async fn close_the_books(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<CloseBooksRequest>,
 ) -> Result<(StatusCode, Json<CloseBooksResponse>), HttpError> {
-    let mut lines = Vec::with_capacity(req.lines.len());
-    for l in req.lines {
-        lines.push(stateset_core::CloseBooksLine {
-            sku: l.sku,
-            cost: parse_decimal(&l.cost, "cost")?,
-        });
+    if !req.lines.is_empty() || !req.inventory.is_empty() {
+        return Err(HttpError::BadRequest(
+            "This report reads stored transactions; omit caller-supplied lines and inventory"
+                .into(),
+        ));
     }
-    let mut inventory = Vec::with_capacity(req.inventory.len());
-    for i in req.inventory {
-        inventory.push(stateset_core::CloseBooksInventory {
-            sku: i.sku,
-            quantity: parse_decimal(&i.quantity, "quantity")?,
-            valuation: parse_decimal(&i.valuation, "valuation")?,
-        });
-    }
-    let report = stateset_core::compute_close_books_readiness(&lines, &inventory);
-    Ok((
-        StatusCode::OK,
-        Json(CloseBooksResponse {
-            zero_cost_skus: report.zero_cost_lines.iter().map(|l| l.sku.clone()).collect(),
-            zero_valuation_items: report
-                .zero_valuation_items
-                .iter()
-                .map(|i| ZeroValuationItemResponse {
-                    sku: i.sku.clone(),
-                    quantity: i.quantity.to_string(),
-                })
-                .collect(),
-            zero_cost_count: report.zero_cost_count,
-            zero_valuation_count: report.zero_valuation_count,
-            is_ready: report.is_ready,
-        }),
-    ))
+    let tenant = crate::state::tenant_id_from_headers(&headers);
+    state
+        .run_blocking(tenant.as_deref(), move |commerce| {
+            let report = commerce.cost_accounting().close_books_check()?;
+            Ok((
+                StatusCode::OK,
+                Json(CloseBooksResponse {
+                    zero_cost_skus: report.zero_cost_lines.iter().map(|l| l.sku.clone()).collect(),
+                    zero_valuation_items: report
+                        .zero_valuation_items
+                        .iter()
+                        .map(|i| ZeroValuationItemResponse {
+                            sku: i.sku.clone(),
+                            quantity: i.quantity.to_string(),
+                        })
+                        .collect(),
+                    zero_cost_count: report.zero_cost_count,
+                    zero_valuation_count: report.zero_valuation_count,
+                    is_ready: report.is_ready,
+                }),
+            ))
+        })
+        .await
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
@@ -440,20 +437,37 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
+    use rust_decimal::Decimal;
     use stateset_embedded::Commerce;
     use tower::ServiceExt;
 
     #[tokio::test]
     async fn inventory_aging_buckets() {
         let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let c = state.commerce_for_tenant(None).unwrap();
+        for (sku, quantity, cost) in [("fresh", 10, 2), ("old", 2, 10)] {
+            c.inventory()
+                .create_item(stateset_core::CreateInventoryItem {
+                    sku: sku.into(),
+                    name: sku.into(),
+                    initial_quantity: Some(Decimal::from(quantity)),
+                    ..Default::default()
+                })
+                .unwrap();
+            c.cost_accounting()
+                .create_cost_layer(stateset_core::CreateCostLayer {
+                    sku: sku.into(),
+                    quantity: Decimal::from(quantity),
+                    unit_cost: Decimal::from(cost),
+                    source_type: stateset_core::CostLayerSource::Purchase,
+                    source_id: None,
+                    lot_id: None,
+                    location_id: None,
+                })
+                .unwrap();
+        }
         let app = router().with_state(state);
-        let body = serde_json::json!({
-            "as_of": "2026-06-30",
-            "layers": [
-                {"sku":"fresh","quantity":"10","unit_cost":"2","received_at":"2026-06-20"},
-                {"sku":"old","quantity":"2","unit_cost":"10","received_at":"2026-01-01"}
-            ]
-        });
+        let body = serde_json::json!({});
         let resp = app
             .oneshot(
                 Request::post("/reports/inventory-aging")
@@ -467,8 +481,8 @@ mod tests {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json["total_quantity"], "12");
-        assert_eq!(json["buckets"][0]["quantity"], "10"); // 0-30
-        assert_eq!(json["buckets"][3]["quantity"], "2"); // 90+
+        assert_eq!(json["buckets"][0]["quantity"], "12"); // Both received today.
+        assert_eq!(json["total_value"], "40");
     }
 
     #[tokio::test]
@@ -502,22 +516,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transaction_cogs_margins() {
-        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+    async fn transaction_cogs_reads_posted_ledger() {
+        use stateset_core::*;
+        let state = AppState::new(Commerce::new(":memory:").unwrap());
+        let c = state.commerce_for_tenant(None).unwrap();
+        let gl = c.general_ledger();
+        gl.initialize_chart_of_accounts().unwrap();
+        let account = |number| gl.get_account_by_number(number).unwrap().unwrap().id;
+        let from: NaiveDate = "2026-06-01".parse().unwrap();
+        let to: NaiveDate = "2026-06-30".parse().unwrap();
+        let period = gl
+            .create_period(CreateGlPeriod {
+                period_name: "June".into(),
+                fiscal_year: 2026,
+                period_number: 6,
+                start_date: from,
+                end_date: to,
+            })
+            .unwrap();
+        gl.open_period(period.id).unwrap();
+        gl.create_journal_entry(CreateJournalEntry {
+            entry_date: from,
+            entry_type: None,
+            description: "Report fixture".into(),
+            lines: vec![
+                CreateJournalEntryLine::debit(account("1010"), Decimal::from(600), None),
+                CreateJournalEntryLine::credit(account("4010"), Decimal::from(600), None),
+                CreateJournalEntryLine::debit(account("5010"), Decimal::from(160), None),
+                CreateJournalEntryLine::credit(account("1200"), Decimal::from(160), None),
+            ],
+            source_document_type: None,
+            source_document_id: None,
+            auto_post: Some(true),
+            fx: None,
+        })
+        .unwrap();
         let app = router().with_state(state);
-        let body = serde_json::json!({
-            "from": "2026-06-01",
-            "to": "2026-06-30",
-            "lines": [
-                {"sku":"a","quantity":"2","revenue":"100","cost":"60","transaction_date":"2026-06-05"},
-                {"sku":"b","quantity":"5","revenue":"500","cost":"100","transaction_date":"2026-06-15"}
-            ]
-        });
         let resp = app
             .oneshot(
                 Request::post("/reports/transaction-cogs")
                     .header("content-type", "application/json")
-                    .body(Body::from(body.to_string()))
+                    .body(Body::from(r#"{"from":"2026-06-01","to":"2026-06-30"}"#))
                     .unwrap(),
             )
             .await
@@ -528,29 +567,28 @@ mod tests {
         assert_eq!(json["total_revenue"], "600");
         assert_eq!(json["total_cogs"], "160");
         assert_eq!(json["gross_margin"], "440");
-        // b has higher margin → first row
-        assert_eq!(json["rows"][0]["sku"], "b");
     }
 
     #[tokio::test]
-    async fn close_the_books_flags_issues() {
-        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+    async fn close_the_books_flags_stored_unvalued_stock() {
+        let state = AppState::new(Commerce::new(":memory:").unwrap());
+        state
+            .commerce_for_tenant(None)
+            .unwrap()
+            .inventory()
+            .create_item(stateset_core::CreateInventoryItem {
+                sku: "unvalued".into(),
+                name: "Unvalued".into(),
+                initial_quantity: Some(Decimal::from(10)),
+                ..Default::default()
+            })
+            .unwrap();
         let app = router().with_state(state);
-        let body = serde_json::json!({
-            "lines": [
-                {"sku":"a","cost":"10"},
-                {"sku":"b","cost":"0"}
-            ],
-            "inventory": [
-                {"sku":"x","quantity":"10","valuation":"0"},
-                {"sku":"y","quantity":"5","valuation":"100"}
-            ]
-        });
         let resp = app
             .oneshot(
                 Request::post("/reports/close-the-books")
                     .header("content-type", "application/json")
-                    .body(Body::from(body.to_string()))
+                    .body(Body::from("{}"))
                     .unwrap(),
             )
             .await
@@ -558,11 +596,35 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(json["zero_cost_count"], 1);
         assert_eq!(json["zero_valuation_count"], 1);
         assert_eq!(json["is_ready"], false);
-        assert_eq!(json["zero_cost_skus"][0], "b");
-        assert_eq!(json["zero_valuation_items"][0]["sku"], "x");
+        assert_eq!(json["zero_valuation_items"][0]["sku"], "unvalued");
+    }
+
+    #[tokio::test]
+    async fn financial_reports_refuse_caller_supplied_activity() {
+        for (path, body) in [
+            (
+                "/reports/transaction-cogs",
+                serde_json::json!({"from":"2026-01-01","to":"2026-12-31","lines":[{"sku":"fake","quantity":"1","revenue":"100","cost":"1","transaction_date":"2026-01-01"}]}),
+            ),
+            (
+                "/reports/close-the-books",
+                serde_json::json!({"inventory":[{"sku":"fake","quantity":"1","valuation":"100"}]}),
+            ),
+        ] {
+            let app = router().with_state(AppState::new(Commerce::new(":memory:").unwrap()));
+            let resp = app
+                .oneshot(
+                    Request::post(path)
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        }
     }
 
     #[tokio::test]

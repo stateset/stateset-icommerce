@@ -49,6 +49,8 @@ pub(crate) struct PrepaymentResponse {
     pub supplier_id: String,
     pub amount: String,
     pub remaining: String,
+    pub refunded_amount: String,
+    pub refunded_at: Option<String>,
     pub currency: String,
     pub status: String,
 }
@@ -66,6 +68,8 @@ fn to_resp(p: &stateset_core::Prepayment) -> PrepaymentResponse {
         supplier_id: p.supplier_id.to_string(),
         amount: p.amount.to_string(),
         remaining: p.remaining.to_string(),
+        refunded_amount: p.refunded_amount.to_string(),
+        refunded_at: p.refunded_at.map(|date| date.to_rfc3339()),
         currency: p.currency.to_string(),
         status: p.status.to_string(),
     }
@@ -218,10 +222,27 @@ mod tests {
 
     #[tokio::test]
     async fn create_apply_refund() {
-        let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let commerce = Commerce::new(":memory:").expect("in-memory Commerce");
+        let supplier = uuid::Uuid::new_v4();
+        let bill = commerce
+            .accounts_payable()
+            .create_bill(stateset_core::CreateBill {
+                supplier_id: supplier,
+                due_date: chrono::Utc::now(),
+                items: vec![stateset_core::CreateBillItem {
+                    description: "Settlement target".into(),
+                    quantity: 1.into(),
+                    unit_price: 100.into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+        commerce.accounts_payable().approve_bill(bill.id).unwrap();
+        let state = AppState::new(commerce);
         let app = router().with_state(state);
         let body = serde_json::json!({
-            "supplier_id": uuid::Uuid::new_v4().to_string(),
+            "supplier_id": supplier.to_string(),
             "amount": "100",
             "method": "wire"
         });
@@ -242,7 +263,7 @@ mod tests {
 
         let apply_body = serde_json::json!({
             "target_type": "bill",
-            "target_id": uuid::Uuid::new_v4().to_string(),
+            "target_id": bill.id.to_string(),
             "amount": "30"
         });
         let resp = app

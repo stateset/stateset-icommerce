@@ -69,11 +69,11 @@ describe('invoiceTools — permissions', () => {
   it('write tools have write permission', () => {
     assert.equal(byName['create_invoice'].permission, 'write');
     assert.equal(byName['send_invoice'].permission, 'write');
-    assert.equal(byName['record_invoice_payment'].permission, 'write');
   });
 
-  it('delete tools have delete permission', () => {
-    assert.equal(byName['void_invoice'].permission, 'delete');
+  it('payments and voids need admin, separating settlement from drafting', () => {
+    assert.equal(byName['record_invoice_payment'].permission, 'admin');
+    assert.equal(byName['void_invoice'].permission, 'admin');
   });
 });
 

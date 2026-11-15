@@ -140,53 +140,11 @@ impl PgBomRepository {
 
     /// Create a BOM (async)
     pub async fn create_async(&self, input: CreateBom) -> Result<BillOfMaterials> {
-        let id = Uuid::new_v4();
-        let bom_number = BillOfMaterials::generate_bom_number();
-        let now = Utc::now();
-        let revision = input.revision.unwrap_or_else(|| "A".to_string());
-
-        sqlx::query(
-            r#"
-            INSERT INTO manufacturing_boms (id, bom_number, product_id, name, description, revision, status, created_by, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, 'draft', $7, $8, $9)
-            "#,
-        )
-        .bind(id)
-        .bind(&bom_number)
-        .bind(input.product_id)
-        .bind(&input.name)
-        .bind(&input.description)
-        .bind(&revision)
-        .bind(input.created_by)
-        .bind(now)
-        .bind(now)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        // Create components if provided
-        let mut components = Vec::new();
-        if let Some(comp_inputs) = input.components {
-            for comp_input in comp_inputs {
-                let comp = self.add_component_async(id, comp_input).await?;
-                components.push(comp);
-            }
-        }
-
-        Ok(BillOfMaterials {
-            id,
-            bom_number,
-            product_id: input.product_id,
-            name: input.name,
-            description: input.description,
-            revision,
-            status: BomStatus::Draft,
-            components,
-            created_by: input.created_by,
-            updated_by: None,
-            created_at: now,
-            updated_at: now,
-        })
+        self.create_batch_atomic_async(vec![input])
+            .await?
+            .into_iter()
+            .next()
+            .ok_or(CommerceError::NotFound)
     }
 
     /// Get BOM by ID (async)
@@ -226,29 +184,11 @@ impl PgBomRepository {
 
     /// Update BOM (async)
     pub async fn update_async(&self, id: Uuid, input: UpdateBom) -> Result<BillOfMaterials> {
-        let existing = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
-        let now = Utc::now();
-
-        let new_name = input.name.unwrap_or(existing.name);
-        let new_description = input.description.or(existing.description);
-        let new_revision = input.revision.unwrap_or(existing.revision);
-        let new_status = input.status.unwrap_or(existing.status);
-
-        sqlx::query(
-            "UPDATE manufacturing_boms SET name = $1, description = $2, revision = $3, status = $4, updated_by = $5, updated_at = $6 WHERE id = $7",
-        )
-        .bind(&new_name)
-        .bind(&new_description)
-        .bind(&new_revision)
-        .bind(new_status.to_string())
-        .bind(input.updated_by)
-        .bind(now)
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        self.get_async(id).await?.ok_or(CommerceError::NotFound)
+        self.update_batch_atomic_async(vec![(id, input)])
+            .await?
+            .into_iter()
+            .next()
+            .ok_or(CommerceError::NotFound)
     }
 
     /// List BOMs (async)
@@ -306,15 +246,11 @@ impl PgBomRepository {
 
     /// Delete BOM (async) - marks as obsolete
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
-        sqlx::query(
-            "UPDATE manufacturing_boms SET status = 'obsolete', updated_at = $1 WHERE id = $2",
+        self.update_async(
+            id,
+            UpdateBom { status: Some(BomStatus::Obsolete), ..Default::default() },
         )
-        .bind(Utc::now())
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
+        .await?;
         Ok(())
     }
 
@@ -324,6 +260,11 @@ impl PgBomRepository {
         bom_id: Uuid,
         component: CreateBomComponent,
     ) -> Result<BomComponent> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::bom_integrity::lock_graph(&mut tx).await?;
+
+        super::bom_integrity::editable(&mut tx, bom_id, Utc::now()).await?;
+        crate::bom_integrity::component(&component)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let uom = component.unit_of_measure.unwrap_or_else(|| "each".to_string());
@@ -345,10 +286,12 @@ impl PgBomRepository {
         .bind(&component.notes)
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
+        super::bom_integrity::validate_graph(&mut tx, bom_id, Utc::now()).await?;
+        tx.commit().await.map_err(map_db_error)?;
         Ok(BomComponent {
             id,
             bom_id,
@@ -370,6 +313,18 @@ impl PgBomRepository {
         component_id: Uuid,
         component: CreateBomComponent,
     ) -> Result<BomComponent> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::bom_integrity::lock_graph(&mut tx).await?;
+
+        let bom_id: Uuid =
+            sqlx::query_scalar("SELECT bom_id FROM manufacturing_bom_components WHERE id = $1")
+                .bind(component_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        super::bom_integrity::editable(&mut tx, bom_id, Utc::now()).await?;
+        crate::bom_integrity::component(&component)?;
         let now = Utc::now();
         let uom = component.unit_of_measure.unwrap_or_else(|| "each".to_string());
 
@@ -385,7 +340,7 @@ impl PgBomRepository {
         .bind(&component.notes)
         .bind(now)
         .bind(component_id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -394,21 +349,35 @@ impl PgBomRepository {
             "SELECT * FROM manufacturing_bom_components WHERE id = $1",
         )
         .bind(component_id)
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
+        super::bom_integrity::validate_graph(&mut tx, bom_id, Utc::now()).await?;
+        tx.commit().await.map_err(map_db_error)?;
         Ok(Self::row_to_component(row))
     }
 
     /// Remove component (async)
     pub async fn remove_component_async(&self, component_id: Uuid) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::bom_integrity::lock_graph(&mut tx).await?;
+
+        let bom_id: Uuid =
+            sqlx::query_scalar("SELECT bom_id FROM manufacturing_bom_components WHERE id = $1")
+                .bind(component_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .ok_or(CommerceError::NotFound)?;
+        super::bom_integrity::editable(&mut tx, bom_id, Utc::now()).await?;
         sqlx::query("DELETE FROM manufacturing_bom_components WHERE id = $1")
             .bind(component_id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
+        tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }
 
@@ -483,6 +452,7 @@ impl PgBomRepository {
         validate_batch_size(&inputs)?;
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::bom_integrity::lock_graph(&mut tx).await?;
         let mut boms = Vec::with_capacity(inputs.len());
 
         for input in inputs {
@@ -510,10 +480,13 @@ impl PgBomRepository {
             .await
             .map_err(map_db_error)?;
 
+            super::bom_integrity::validate_revision(&mut tx, id, now).await?;
+
             // Create components if provided
             let mut components = Vec::new();
             if let Some(comp_inputs) = input.components {
                 for comp_input in comp_inputs {
+                    crate::bom_integrity::component(&comp_input)?;
                     let comp_id = Uuid::new_v4();
                     let uom =
                         comp_input.unit_of_measure.clone().unwrap_or_else(|| "each".to_string());
@@ -571,6 +544,9 @@ impl PgBomRepository {
             });
         }
 
+        for bom in &boms {
+            super::bom_integrity::validate_graph(&mut tx, bom.id, Utc::now()).await?;
+        }
         tx.commit().await.map_err(map_db_error)?;
         Ok(boms)
     }
@@ -602,10 +578,12 @@ impl PgBomRepository {
         validate_batch_size(&updates)?;
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::bom_integrity::lock_graph(&mut tx).await?;
         let mut boms = Vec::with_capacity(updates.len());
 
         for (id, input) in updates {
             let now = Utc::now();
+            super::bom_integrity::prepare_update(&mut tx, id, &input, now).await?;
 
             // Fetch existing BOM
             let existing_row =
@@ -648,6 +626,9 @@ impl PgBomRepository {
             .await
             .map_err(map_db_error)?;
 
+            super::bom_integrity::validate_revision(&mut tx, id, now).await?;
+            super::bom_integrity::validate_graph(&mut tx, id, now).await?;
+
             // Fetch updated BOM
             let updated_row =
                 sqlx::query_as::<_, BomRow>("SELECT * FROM manufacturing_boms WHERE id = $1")
@@ -668,6 +649,16 @@ impl PgBomRepository {
                 updated_row,
                 updated_components.into_iter().map(Self::row_to_component).collect(),
             )?);
+        }
+
+        // A later activation may have retired an earlier result in this batch.
+        for bom in &mut boms {
+            let row = sqlx::query_as::<_, BomRow>("SELECT * FROM manufacturing_boms WHERE id = $1")
+                .bind(bom.id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            *bom = Self::row_to_bom(row, std::mem::take(&mut bom.components))?;
         }
 
         tx.commit().await.map_err(map_db_error)?;
@@ -692,23 +683,14 @@ impl PgBomRepository {
 
     /// Delete multiple BOMs - atomic (all-or-nothing) (async)
     pub async fn delete_batch_atomic_async(&self, ids: Vec<Uuid>) -> Result<()> {
-        validate_batch_size(&ids)?;
-
-        if ids.is_empty() {
-            return Ok(());
-        }
-
-        let now = Utc::now();
-
-        sqlx::query(
-            "UPDATE manufacturing_boms SET status = 'obsolete', updated_at = $1 WHERE id = ANY($2)",
+        self.update_batch_atomic_async(
+            ids.into_iter()
+                .map(|id| {
+                    (id, UpdateBom { status: Some(BomStatus::Obsolete), ..Default::default() })
+                })
+                .collect(),
         )
-        .bind(now)
-        .bind(&ids)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
+        .await?;
         Ok(())
     }
 

@@ -1,144 +1,52 @@
 # Inventory & Warehousing
 
-Inventory management tracks stock levels, handles reservations for in-progress orders, and supports multi-location warehousing.
+The engine maintains warehouse balances, physical location stock, bin placement, lot custody and cost layers through a shared transactional stock path. SQLite serializes writers; PostgreSQL locks affected stock and document rows.
 
-## Core Concepts
-
-- **Inventory Item**: A SKU with a current stock level
-- **Reservation**: A temporary hold on stock for a pending order (prevents overselling)
-- **Adjustment**: A tracked change to stock level with a reason (receiving, sale, damage, audit)
-- **Reorder Point**: The threshold below which the heartbeat monitor triggers a low-stock alert
-
-## Operations
-
-### Create an Inventory Item
+## Read and reserve stock
 
 ```javascript
-const item = commerce.inventory.createItem({
-    sku: 'WIDGET-001',
-    name: 'Premium Widget',
-    initialQuantity: 100
+const level = await commerce.inventory.getStock('WIDGET');
+console.log(level.totalOnHand, level.totalAllocated, level.totalAvailable);
+```
+
+On-hand includes picked goods held in an explicit staging location until shipment. Picking changes custody; shipment removes stock. Reservations own particular stock slices so general inventory and lot-specific consumption cannot spend the same units concurrently. Quality holds and quarantine block the applicable movement/allocation paths.
+
+Warehouse totals include unbinned physical locations as well as bins. A bin is a subdivision of physical placement, not an additional copy of inventory. Do not sum bin and warehouse balances together. Bin adjustments update their warehouse total atomically; moves preserve quantity.
+
+## Receive and put away
+
+```javascript
+const receipt = await commerce.receiving.createReceiptFromPo(po.id, warehouse.id);
+const [line] = await commerce.receiving.getReceiptItems(receipt.id);
+await commerce.receiving.startReceiving(receipt.id);
+await commerce.receiving.receiveItems({
+  receiptId: receipt.id,
+  receivingLocationId: dock.id,
+  items: [{ receiptItemId: line.id, quantityReceived: '10' }],
 });
-```
-
-### Adjust Inventory
-
-```javascript
-// Positive adjustment (receiving)
-commerce.inventory.adjust('WIDGET-001', 50, 'Received shipment #PO-456');
-
-// Negative adjustment (damage)
-commerce.inventory.adjust('WIDGET-001', -3, 'Damaged in warehouse');
-```
-
-### Reserve and Release
-
-```javascript
-// Reserve stock for an order (prevents overselling)
-const reservation = commerce.inventory.reserve('WIDGET-001', 10);
-
-// Release if order is cancelled
-commerce.inventory.release(reservation.id);
-```
-
-### Check Stock Levels
-
-```javascript
-const level = commerce.inventory.getLevel('WIDGET-001');
-console.log(`Available: ${level.available}`);
-console.log(`Reserved: ${level.reserved}`);
-console.log(`On hand: ${level.onHand}`);
-```
-
-### Batch Adjustments
-
-```rust
-// More efficient than individual adjustments — single transaction
-let results = commerce.inventory().batch_adjust(vec![
-    BatchAdjustment { sku: "SKU-001".into(), delta: 10, reason: "restock".into() },
-    BatchAdjustment { sku: "SKU-002".into(), delta: -5, reason: "sale".into() },
-    BatchAdjustment { sku: "SKU-003".into(), delta: 20, reason: "restock".into() },
-])?;
-```
-
-## Warehousing
-
-For multi-location operations, the warehouse API provides:
-
-- **Locations**: Physical warehouses or stores
-- **Zones**: Areas within a warehouse (receiving, picking, packing, shipping)
-- **Bins**: Specific storage positions
-- **Transfers**: Move inventory between locations
-
-## Lot and Serial Tracking
-
-For regulated industries (food, pharmaceuticals, electronics):
-
-```javascript
-// Lot tracking
-const lot = commerce.lots.create({
-    sku: 'PHARMA-001',
-    lotNumber: 'LOT-2026-03',
-    expirationDate: '2027-03-16',
-    quantity: 500
+await commerce.receiving.completeReceiving(receipt.id);
+const task = await commerce.receiving.createPutAway({
+  receiptId: receipt.id, receiptItemId: line.id,
+  sku: line.sku, toLocationId: shelf.id, quantity: '10',
 });
-
-// Serial number tracking
-commerce.serials.assign({
-    sku: 'DEVICE-001',
-    serialNumber: 'SN-ABC-12345',
-    lotId: lot.id
-});
+await commerce.receiving.startPutAway(task.id);
+await commerce.receiving.completePutAway({ putAwayId: task.id });
 ```
 
-## Heartbeat Low-Stock Alerts
+Receiving posts accepted goods at the specified dock; put-away moves those same goods to the shelf. Each receipt line belongs to its receipt and cannot receive beyond the expected quantity. A failed multi-line receive rolls back every line. Repeating completion cannot add the goods twice. Cancellation and assignment follow the task state machine.
 
-The [heartbeat monitor](../guides/heartbeat.md) can automatically check for low stock:
+Accepted serials are registered transactionally and become allocatable only after put-away. PO-sourced backorder fulfillment consumes stock from the completed receiving destinations and bounds attribution to those receipts; it cannot fulfil merely because a PO line exists.
 
-```json
-{
-    "id": "low-stock",
-    "checker": "low-stock",
-    "intervalMs": 3600000,
-    "enabled": true,
-    "config": { "threshold": 10 }
-}
-```
+## Transfers and returns
 
-When triggered, alerts flow through the EventBridge to Slack, Telegram, Discord, or any configured channel.
+Transfer shipping removes physical source stock into owned transit. Partial destination receipts reduce transit and add destination stock. Explicit receipt closure records remaining shortages; it does not create missing goods. Owned transit remains part of valuation until received or written off through the supported close workflow. Source/destination locations are required where physical routing matters.
 
-## Warehouse Integrity Guarantees
+Vendor-return processing removes stock from the named source and may create a linked supplier credit in the same transaction. Lot splits/merges preserve physical placements and reservations. Holds must be released or resolved before blocked stock moves.
 
-The warehouse and fulfillment modules enforce these invariants on both storage
-backends (SQLite and Postgres):
+## Counts, snapshots and valuation
 
-- **Stock adjustments are atomic.** Adjusting location inventory reads and
-  writes the balance inside one transaction (a write-locked transaction on
-  SQLite, a locked row on Postgres), so concurrent adjustments to the same
-  location and SKU can no longer lose an update. Inventory can never be driven
-  negative, and moves between locations are quantity-conserving.
-- **Receipts are bounded and all-or-nothing.** `receive_items` runs as a single
-  transaction that re-reads each line under a lock and refuses a receipt that
-  would exceed the expected quantity — mirroring the purchase-order guard. A
-  receipt that fails on any line applies none of its lines, and a line can only
-  be received through the receipt that owns it.
-- **Task lifecycles are guarded.** Wave, pick, pack, ship, receipt and put-away
-  transitions are status-guarded: a completed pick cannot be cancelled (which
-  previously left the wave's completed-pick counter overstating reality), a
-  cancelled wave cannot be completed, a shipped task cannot be re-shipped over
-  its tracking details, and a cancelled put-away cannot add its quantity to a
-  receipt's put-away total.
-- **Counts agree with their pages.** Every `count_*` operation applies exactly
-  the filters its matching `list_*` applies, so page totals cannot disagree
-  with the rows returned.
+Cycle counts validate their scope and commit variances atomically. Stock snapshots read stored balances, and aging reconstructs movements and cost-layer history at the requested date. Caller-supplied report lines cannot replace the underlying stock records.
 
-## MCP Tools
+Receipts and issues maintain FIFO, LIFO, average, standard or specific-lot carrying values as configured per SKU. Historical inconsistencies require reconciliation; changing the cost method while stock is held cannot silently rewrite carrying value.
 
-| Tool | Description |
-|------|-------------|
-| `list_inventory` | List all inventory items |
-| `get_inventory_level` | Get stock level for a SKU |
-| `adjust_inventory` | Adjust stock with reason |
-| `reserve_inventory` | Create a reservation |
-| `release_inventory` | Release a reservation |
-| `create_inventory_item` | Add a new SKU to inventory |
+The operations MCP profile is smoke-gated. Missing records, invalid states and unavailable external prerequisites must produce clean refusals. Successful receiving and put-away are also exercised against a real native store in CI.

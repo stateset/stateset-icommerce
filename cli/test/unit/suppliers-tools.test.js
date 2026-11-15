@@ -272,3 +272,31 @@ it('MCP purchase creation refuses float costs and passes exact strings unchanged
   assert.equal(refused.success, false);
   assert.equal(written, null);
 });
+
+it('PO receiving requires and forwards an explicit warehouse destination', async () => {
+  const tool = byName.receive_purchase_order;
+  for (const key of ['warehouseId', 'receivingLocationId']) {
+    assert.equal(tool.inputSchema[key].safeParse(undefined).success, false);
+    assert.equal(tool.inputSchema[key].safeParse(0).success, false);
+  }
+  let received;
+  const params = {
+    purchaseOrderId: 'po',
+    items: [{ itemId: 'line', quantityReceivedExact: '0.125' }],
+    warehouseId: 7,
+    receivingLocationId: 11,
+  };
+  await tool.handler({
+    commerce: {
+      purchaseOrders: {
+        receive: async (...args) => {
+          received = args;
+          return { id: 'po' };
+        },
+      },
+    },
+    params,
+    allowApply: true,
+  });
+  assert.deepEqual(received, ['po', params.items, 7, 11]);
+});

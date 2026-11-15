@@ -64,6 +64,9 @@ class Commerce:
         ...
 
     @property
+    def warehouse(self) -> WarehouseApi: ...
+
+    @property
     def inventory(self) -> Inventory:
         """Get the inventory API."""
         ...
@@ -2337,18 +2340,31 @@ class BomApi:
 # ============================================================================
 
 class WorkOrder:
-    """Work order data."""
-
+    """A manufacturing job with explicit stock routing."""
     id: str
     work_order_number: str
+    product_id: str
+    bom_id: Optional[str]
+    source_location_id: Optional[int]
+    output_location_id: Optional[int]
+    output_sku: Optional[str]
     status: str
-    quantity_planned: float
+    priority: str
+    quantity_to_build: float
     quantity_completed: float
+    version: int
+    created_at: str
+    updated_at: str
 
 class WorkOrders:
     """Work order operations."""
 
-    def create(self, bom_id: str, quantity_planned: float) -> WorkOrder: ...
+    def create(
+        self, product_id: str, quantity_to_build: float, bom_id: Optional[str] = None,
+        priority: Optional[str] = None, notes: Optional[str] = None,
+        source_location_id: Optional[int] = None, output_location_id: Optional[int] = None,
+        output_sku: Optional[str] = None,
+    ) -> WorkOrder: ...
 
     def get(self, id: str) -> Optional[WorkOrder]: ...
 
@@ -2856,6 +2872,9 @@ class VectorSearch:
 # ============================================================================
 
 class Bill:
+    created_by: Optional[str]
+    approved_by: Optional[str]
+    currency: str
     id: str
     bill_number: str
     supplier_id: str
@@ -2867,6 +2886,8 @@ class Bill:
     amount_due_exact: str
     status: str
     due_date: str
+    match_override_reason: Optional[str]
+
 
 class ApAgingSummary:
     current: float
@@ -2904,13 +2925,13 @@ class ThreeWayMatchResult:
 class AccountsPayableApi:
     """Accounts payable operations."""
 
-    def create_bill(self, supplier_id: str, due_date: str) -> Bill: ...
+    def create_bill(self, supplier_id: str, due_date: str, created_by: Optional[str] = None) -> Bill: ...
 
     def get_bill(self, id: str) -> Optional[Bill]: ...
 
     def list_bills(self) -> List[Bill]: ...
 
-    def approve_bill(self, id: str) -> Bill: ...
+    def approve_bill(self, id: str, override_reason: Optional[str] = None, actor: Optional[str] = None) -> Bill: ...
 
     def pay_bill(self, id: str, amount: float, payment_method: Optional[str] = None) -> Bill: ...
 
@@ -2941,7 +2962,21 @@ class GlAccount:
     current_balance_exact: str
     status: str
 
+class JournalEntryLine:
+    id: str
+    account_id: str
+    debit_amount: str
+    credit_amount: str
+    currency: str
+    transaction_currency: Optional[str]
+    transaction_debit_amount: Optional[str]
+    transaction_credit_amount: Optional[str]
+    exchange_rate: Optional[str]
+
 class JournalEntry:
+    lines: List[JournalEntryLine]
+    total_debits: str
+    total_credits: str
     id: str
     entry_number: str
     description: str
@@ -3015,6 +3050,14 @@ class CloseMonthReport:
 
 class GeneralLedgerApi:
     """General ledger operations."""
+
+    def get_auto_posting_config(self) -> Optional[str]:
+        """Return posting configuration as JSON with snake_case fields, or None."""
+        ...
+
+    def set_auto_posting_config(self, config_json: str) -> str:
+        """Validate and persist configuration JSON; return the stored JSON. Required before close."""
+        ...
 
     def create_account(
         self,
@@ -3116,6 +3159,8 @@ class FixedAsset:
     location_id: Optional[str]
     asset_account_id: Optional[str]
     accumulated_depreciation_account_id: Optional[str]
+    acquisition_offset_account_id: Optional[str]
+    disposal_gain_loss_account_id: Optional[str]
     depreciation_expense_account_id: Optional[str]
     accumulated_depreciation: str
     book_value: str
@@ -3166,6 +3211,8 @@ class FixedAssets:
         accumulated_depreciation_account_id: Optional[str] = None,
         depreciation_expense_account_id: Optional[str] = None,
         currency: Optional[str] = None,
+        acquisition_offset_account_id: Optional[str] = None,
+        disposal_gain_loss_account_id: Optional[str] = None,
     ) -> FixedAsset:
         """Create a fixed asset (draft)."""
         ...
@@ -3197,6 +3244,8 @@ class FixedAssets:
         asset_account_id: Optional[str] = None,
         accumulated_depreciation_account_id: Optional[str] = None,
         depreciation_expense_account_id: Optional[str] = None,
+        acquisition_offset_account_id: Optional[str] = None,
+        disposal_gain_loss_account_id: Optional[str] = None,
     ) -> FixedAsset: ...
 
     def place_in_service(self, id: str, date: str) -> FixedAsset:
@@ -3470,6 +3519,8 @@ class Prepayment:
     supplier_id: str
     amount: str
     remaining: str
+    refunded_amount: str
+    refunded_at: Optional[str]
     currency: str
     status: str
     method: Optional[str]
@@ -3744,9 +3795,11 @@ class TransferOrderItemInput:
     """A line on a create-transfer-order request."""
 
     product_id: str
+    sku: str
+    lot_id: Optional[str]
     quantity: str
 
-    def __init__(self, product_id: str, quantity: str) -> None: ...
+    def __init__(self, product_id: str, sku: str, quantity: str, lot_id: Optional[str] = None) -> None: ...
 
 class TransferOrderItem:
     """A single line on a transfer order. Quantities are exact decimal
@@ -3759,12 +3812,16 @@ class TransferOrderItem:
     quantity: str
     quantity_shipped: str
     quantity_received: str
+    lot_id: Optional[str]
+    quantity_variance: str
 
 class TransferOrder:
     """A transfer order moving stock between two warehouses."""
 
     id: str
     number: str
+    source_location_id: Optional[int]
+    destination_location_id: Optional[int]
     source_warehouse_id: str
     destination_warehouse_id: str
     status: str
@@ -3787,6 +3844,8 @@ class TransferOrders:
         source_warehouse_id: str,
         destination_warehouse_id: str,
         items: List[TransferOrderItemInput],
+        source_location_id: int,
+        destination_location_id: int,
         expected_at: Optional[str] = None,
         notes: Optional[str] = None,
     ) -> TransferOrder: ...
@@ -3809,6 +3868,8 @@ class TransferOrders:
     def receive_line(self, id: str, item_id: str, quantity: str) -> TransferOrder:
         """Receive a quantity against a single line at the destination."""
         ...
+
+    def complete_receiving(self, id: str) -> TransferOrder: ...
 
     def cancel(self, id: str) -> TransferOrder: ...
 
@@ -4586,7 +4647,7 @@ class StockSnapshotLine:
 
     id: str
     stock_snapshot_id: str
-    product_id: str
+    product_id: Optional[str]
     sku: str
     quantity_on_hand: str
     quantity_available: str
@@ -4609,7 +4670,7 @@ class StockSnapshots:
     def is_supported(self) -> bool: ...
     def capture(
         self,
-        lines: List[CaptureStockLineInput],
+        lines: Optional[List[CaptureStockLineInput]] = None,
         label: Optional[str] = None,
     ) -> StockSnapshot:
         """Capture a new snapshot; totals are computed from the lines."""
@@ -5113,6 +5174,9 @@ class VendorReturnItemInput:
     """A line on a create-vendor-return request."""
 
     product_id: str
+    sku: str
+    source_location_id: int
+    lot_id: Optional[str]
     quantity: str
     unit_cost: str
     reason: Optional[str]
@@ -5120,9 +5184,12 @@ class VendorReturnItemInput:
     def __init__(
         self,
         product_id: str,
+        sku: str,
+        source_location_id: int,
         quantity: str,
         unit_cost: str,
         reason: Optional[str] = None,
+        lot_id: Optional[str] = None,
     ) -> None: ...
 
 class VendorReturnItem:
@@ -5133,6 +5200,8 @@ class VendorReturnItem:
     vendor_return_id: str
     product_id: str
     sku: str
+    source_location_id: Optional[int]
+    lot_id: Optional[str]
     quantity: str
     unit_cost: str
     line_total: str
@@ -5145,6 +5214,7 @@ class VendorReturn:
     id: str
     number: str
     supplier_id: str
+    warehouse_id: Optional[int]
     purchase_order_id: Optional[str]
     status: str
     currency: str
@@ -5166,6 +5236,7 @@ class VendorReturns:
         self,
         supplier_id: str,
         items: List[VendorReturnItemInput],
+        warehouse_id: int,
         purchase_order_id: Optional[str] = None,
         currency: Optional[str] = None,
         notes: Optional[str] = None,
@@ -5677,3 +5748,26 @@ class Erc8004:
         validator_addresses: list[str] | None = None,
         tag: str | None = None,
     ) -> ValidationSummary: ...
+
+
+class Warehouse:
+    id: str
+    code: str
+    name: str
+    address: Optional[str]
+    is_active: bool
+
+class WarehouseLocation:
+    id: str
+    warehouse_id: str
+    code: str
+    location_type: str
+
+class WarehouseApi:
+    def create_warehouse(self, code: str, name: str, address: Optional[str] = None) -> Warehouse: ...
+    def get_warehouse(self, id: str) -> Optional[Warehouse]: ...
+    def list_warehouses(self) -> List[Warehouse]: ...
+    def create_location(self, warehouse_id: str, code: str, location_type: Optional[str] = None) -> WarehouseLocation: ...
+    def adjust_inventory(self, location_id: int, sku: str, quantity: str, reason: str, lot_id: Optional[str] = None) -> str:
+        """Apply an exact decimal quantity adjustment to an explicit stock location."""
+        ...

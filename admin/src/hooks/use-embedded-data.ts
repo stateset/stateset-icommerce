@@ -16,9 +16,10 @@ export function useEmbeddedData<T>(
     refreshInterval?: number;
     initialData?: T;
     enabled?: boolean;
+    queryKey?: string;
   },
 ): UseEmbeddedDataResult<T> {
-  const { refreshInterval, initialData, enabled = true } = options || {};
+  const { refreshInterval, initialData, enabled = true, queryKey } = options || {};
 
   const [data, setData] = useState<T | null>(initialData || null);
   const [isLoading, setIsLoading] = useState(!initialData && enabled);
@@ -49,7 +50,7 @@ export function useEmbeddedData<T>(
 
   useEffect(() => {
     fetch();
-  }, [fetch]);
+  }, [fetch, queryKey]);
 
   useEffect(() => {
     if (refreshInterval && refreshInterval > 0 && enabled) {

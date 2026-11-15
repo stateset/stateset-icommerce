@@ -25,6 +25,9 @@ pub(crate) fn parse_vendor_return_reason(s: &str) -> Result<stateset_core::Vendo
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreateVendorReturnItemInput {
     pub product_id: String,
+    pub sku: String,
+    pub source_location_id: i32,
+    pub lot_id: Option<String>,
     /// Exact decimal string
     pub quantity: String,
     /// Exact decimal string
@@ -38,6 +41,7 @@ pub struct CreateVendorReturnItemInput {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreateVendorReturnInput {
     pub supplier_id: String,
+    pub warehouse_id: i32,
     pub purchase_order_id: Option<String>,
     pub currency: Option<String>,
     pub items: Vec<CreateVendorReturnItemInput>,
@@ -62,6 +66,8 @@ pub struct VendorReturnItemOutput {
     pub vendor_return_id: String,
     pub product_id: String,
     pub sku: String,
+    pub source_location_id: Option<i32>,
+    pub lot_id: Option<String>,
     /// Exact decimal string
     pub quantity: String,
     /// Exact decimal string
@@ -81,6 +87,8 @@ impl From<stateset_core::VendorReturnItem> for VendorReturnItemOutput {
             vendor_return_id: i.vendor_return_id.to_string(),
             product_id: i.product_id.to_string(),
             sku: i.sku,
+            source_location_id: i.source_location_id,
+            lot_id: i.lot_id.map(|id| id.to_string()),
             quantity: i.quantity.to_string(),
             unit_cost: i.unit_cost.to_string(),
             line_total,
@@ -95,6 +103,7 @@ pub struct VendorReturnOutput {
     pub id: String,
     pub number: String,
     pub supplier_id: String,
+    pub warehouse_id: Option<i32>,
     pub purchase_order_id: Option<String>,
     /// Snake-case status
     #[napi(ts_type = "VendorReturnStatus")]
@@ -117,6 +126,7 @@ impl From<stateset_core::VendorReturn> for VendorReturnOutput {
             id: r.id.to_string(),
             number: r.number,
             supplier_id: r.supplier_id.to_string(),
+            warehouse_id: r.warehouse_id,
             purchase_order_id: r.purchase_order_id.map(|id| id.to_string()),
             status: r.status.to_string(),
             currency: r.currency.to_string(),
@@ -154,6 +164,9 @@ impl VendorReturns {
             .map(|i| -> Result<stateset_core::CreateVendorReturnItem> {
                 Ok(stateset_core::CreateVendorReturnItem {
                     product_id: parse_uuid_str(&i.product_id, "product_id")?.into(),
+                    sku: i.sku,
+                    source_location_id: i.source_location_id,
+                    lot_id: parse_optional_uuid(i.lot_id, "lot_id")?,
                     quantity: parse_decimal_str(&i.quantity, "quantity")?,
                     unit_cost: parse_decimal_str(&i.unit_cost, "unit_cost")?,
                     reason: i
@@ -169,6 +182,7 @@ impl VendorReturns {
             .vendor_returns()
             .create(stateset_core::CreateVendorReturn {
                 supplier_id: parse_uuid_str(&input.supplier_id, "supplier_id")?,
+                warehouse_id: input.warehouse_id,
                 purchase_order_id: parse_optional_uuid(
                     input.purchase_order_id,
                     "purchase_order_id",
@@ -228,14 +242,18 @@ impl VendorReturns {
         Ok(vendor_return.into())
     }
 
-    /// Process a vendor return, optionally generating a vendor credit.
+    /// Process stock and its linked vendor credit atomically. Disabling the credit is refused.
     #[napi]
-    pub async fn process(&self, id: String, generate_credit: bool) -> Result<VendorReturnOutput> {
+    pub async fn process(
+        &self,
+        id: String,
+        generate_credit: Option<bool>,
+    ) -> Result<VendorReturnOutput> {
         let commerce = self.commerce.get()?;
         let uuid = parse_uuid_str(&id, "vendor_return")?;
         let vendor_return = commerce
             .vendor_returns()
-            .process(uuid.into(), generate_credit)
+            .process(uuid.into(), generate_credit.unwrap_or(true))
             .map_err(|e| wrap(ErrCode::Internal, "Failed to process vendor return", e))?;
         Ok(vendor_return.into())
     }

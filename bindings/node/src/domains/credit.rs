@@ -15,7 +15,7 @@ use super::*;
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreateCreditAccountInput {
     pub customer_id: String,
-    pub credit_limit: f64,
+    pub credit_limit: String,
     pub payment_terms: Option<String>,
     pub notes: Option<String>,
 }
@@ -25,16 +25,16 @@ pub struct CreateCreditAccountInput {
 pub struct CreditAccountOutput {
     pub id: String,
     pub customer_id: String,
-    /// @deprecated Use the `creditLimitExact` twin; float money will be removed in 2.0.
-    pub credit_limit: f64,
+    /// Exact decimal string.
+    pub credit_limit: String,
     /// Exact base-10 credit limit, straight from the engine's `Decimal`. Prefer this field for money.
     pub credit_limit_exact: String,
-    /// @deprecated Use the `creditUsedExact` twin; float money will be removed in 2.0.
-    pub credit_used: f64,
+    /// Exact decimal string.
+    pub credit_used: String,
     /// Exact base-10 credit used, straight from the engine's `Decimal`. Prefer this field for money.
     pub credit_used_exact: String,
-    /// @deprecated Use the `creditAvailableExact` twin; float money will be removed in 2.0.
-    pub credit_available: f64,
+    /// Exact decimal string.
+    pub credit_available: String,
     /// Exact base-10 credit available, straight from the engine's `Decimal`. Prefer this field for money.
     pub credit_available_exact: String,
     #[napi(ts_type = "CreditAccountStatus")]
@@ -46,10 +46,12 @@ impl TryFrom<stateset_core::CreditAccount> for CreditAccountOutput {
     type Error = Error;
 
     fn try_from(c: stateset_core::CreditAccount) -> Result<Self> {
-        let (credit_limit, credit_limit_exact) = money_pair(c.credit_limit, "credit limit")?;
-        let (credit_used, credit_used_exact) = money_pair(c.current_balance, "credit used")?;
-        let (credit_available, credit_available_exact) =
-            money_pair(c.available_credit, "credit available")?;
+        let credit_limit = c.credit_limit.to_string();
+        let credit_limit_exact = credit_limit.clone();
+        let credit_used = c.current_balance.to_string();
+        let credit_used_exact = credit_used.clone();
+        let credit_available = c.available_credit.to_string();
+        let credit_available_exact = credit_available.clone();
         Ok(Self {
             id: c.id.to_string(),
             customer_id: c.customer_id.to_string(),
@@ -70,8 +72,8 @@ impl TryFrom<stateset_core::CreditAccount> for CreditAccountOutput {
 pub struct CreditCheckOutput {
     pub approved: bool,
     pub reason: Option<String>,
-    /// @deprecated Use the `availableCreditExact` twin; float money will be removed in 2.0.
-    pub available_credit: f64,
+    /// Exact decimal string.
+    pub available_credit: String,
     /// Exact base-10 available credit, straight from the engine's `Decimal`. Prefer this field for money.
     pub available_credit_exact: String,
     pub requires_approval: bool,
@@ -81,8 +83,8 @@ impl TryFrom<stateset_core::CreditCheckResult> for CreditCheckOutput {
     type Error = Error;
 
     fn try_from(c: stateset_core::CreditCheckResult) -> Result<Self> {
-        let (available_credit, available_credit_exact) =
-            money_pair(c.available_credit, "available credit")?;
+        let available_credit = c.available_credit.to_string();
+        let available_credit_exact = available_credit.clone();
         Ok(Self {
             approved: c.approved,
             reason: c.reason,
@@ -145,13 +147,13 @@ impl Credit {
             .credit()
             .create_credit_account(stateset_core::CreateCreditAccount {
                 customer_id,
-                credit_limit: decimal_from_f64(input.credit_limit, "credit limit")?,
+                credit_limit: parse_decimal_str(&input.credit_limit, "credit limit")?,
                 payment_terms: input.payment_terms,
                 notes: input.notes,
                 ..Default::default()
             })
             .map_err(|e| wrap(ErrCode::Internal, "Failed to create credit account", e))?;
-        convert_output(account)
+        effective_credit_output(&commerce, account)
     }
 
     /// Get a credit account by ID
@@ -164,7 +166,7 @@ impl Credit {
             .credit()
             .get_credit_account(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get account", e))?;
-        convert_optional_output(account)
+        account.map(|account| effective_credit_output(&commerce, account)).transpose()
     }
 
     /// Get credit account by customer
@@ -179,7 +181,7 @@ impl Credit {
             .credit()
             .get_credit_account_by_customer(uuid)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get account", e))?;
-        convert_optional_output(account)
+        account.map(|account| effective_credit_output(&commerce, account)).transpose()
     }
 
     /// List credit accounts, optionally filtered and paginated. No argument lists all.
@@ -194,7 +196,7 @@ impl Credit {
             .credit()
             .list_credit_accounts(filter)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to list accounts", e))?;
-        convert_outputs(accounts)
+        accounts.into_iter().map(|account| effective_credit_output(&commerce, account)).collect()
     }
 
     /// Check credit
@@ -202,13 +204,13 @@ impl Credit {
     pub async fn check_credit(
         &self,
         customer_id: String,
-        order_amount: f64,
+        order_amount: String,
     ) -> Result<CreditCheckOutput> {
         let commerce = self.commerce.get()?;
         let uuid = customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let result = commerce
             .credit()
-            .check_credit(uuid, decimal_from_f64(order_amount, "order amount")?)
+            .check_credit(uuid, parse_decimal_str(&order_amount, "order amount")?)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to check credit", e))?;
         convert_output(result)
     }
@@ -218,16 +220,16 @@ impl Credit {
     pub async fn adjust_credit_limit(
         &self,
         customer_id: String,
-        new_limit: f64,
+        new_limit: String,
         reason: String,
     ) -> Result<CreditAccountOutput> {
         let commerce = self.commerce.get()?;
         let uuid = customer_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid UUID"))?;
         let account = commerce
             .credit()
-            .adjust_credit_limit(uuid, decimal_from_f64(new_limit, "new credit limit")?, &reason)
+            .adjust_credit_limit(uuid, parse_decimal_str(&new_limit, "new credit limit")?, &reason)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to adjust limit", e))?;
-        convert_output(account)
+        effective_credit_output(&commerce, account)
     }
 
     /// Suspend credit account
@@ -243,7 +245,7 @@ impl Credit {
             .credit()
             .suspend_credit_account(uuid, &reason)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to suspend account", e))?;
-        convert_output(account)
+        effective_credit_output(&commerce, account)
     }
 
     /// Reactivate credit account
@@ -258,7 +260,7 @@ impl Credit {
             .credit()
             .reactivate_credit_account(uuid)
             .map_err(|e| wrap(ErrCode::Internal, "Failed to reactivate account", e))?;
-        convert_output(account)
+        effective_credit_output(&commerce, account)
     }
 
     /// Get over-limit customers
@@ -269,6 +271,18 @@ impl Credit {
             .credit()
             .get_over_limit_customers()
             .map_err(|e| wrap(ErrCode::Internal, "Failed to get accounts", e))?;
-        convert_outputs(accounts)
+        accounts.into_iter().map(|account| effective_credit_output(&commerce, account)).collect()
     }
+}
+
+fn effective_credit_output(
+    commerce: &stateset_embedded::Commerce,
+    mut account: stateset_core::CreditAccount,
+) -> Result<CreditAccountOutput> {
+    account.available_credit = commerce
+        .credit()
+        .check_credit(account.customer_id, Decimal::ZERO)
+        .map_err(|e| wrap(ErrCode::Internal, "Failed to calculate credit exposure", e))?
+        .available_credit;
+    convert_output(account)
 }

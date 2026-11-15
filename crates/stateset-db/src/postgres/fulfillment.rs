@@ -14,116 +14,6 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// Take the picked units off the shelf (see the SQLite twin for the model).
-async fn apply_pick_stock_effect_pg(
-    conn: &mut sqlx::PgConnection,
-    pick: &PickRow,
-    now: DateTime<Utc>,
-) -> Result<()> {
-    if pick.quantity_picked <= Decimal::ZERO {
-        return Ok(());
-    }
-    super::warehouse::ensure_inventory_item_pg(&mut *conn, &pick.sku).await?;
-    super::warehouse::apply_location_delta_pg(
-        &mut *conn,
-        pick.source_location_id,
-        &pick.sku,
-        pick.lot_id,
-        -pick.quantity_picked,
-        now,
-    )
-    .await?;
-    super::bins::apply_warehouse_delta_pg(
-        &mut *conn,
-        pick.warehouse_id,
-        &pick.sku,
-        Decimal::ZERO,
-        pick.quantity_picked,
-        "pick completed",
-        Some("pick_task"),
-        Some(&pick.id.to_string()),
-        now,
-    )
-    .await?;
-    super::warehouse::insert_wms_movement_pg(
-        &mut *conn,
-        stateset_core::MovementType::Pick,
-        Some(pick.source_location_id),
-        None,
-        &pick.sku,
-        pick.lot_id,
-        pick.quantity_picked,
-        "pick_task",
-        pick.id,
-        pick.assigned_to.as_deref(),
-        now,
-    )
-    .await?;
-    Ok(())
-}
-
-/// Ship the units the pack task's cartons hold (see the SQLite twin).
-async fn apply_ship_stock_effect_pg(
-    conn: &mut sqlx::PgConnection,
-    ship_id: Uuid,
-    order_id: Uuid,
-    pack_task_id: Uuid,
-    shipped_by: Option<&str>,
-    now: DateTime<Utc>,
-) -> Result<()> {
-    let shipped = sqlx::query_as::<_, (String, Decimal, Option<Uuid>)>(
-        "SELECT ci.sku, ci.quantity, ci.lot_id FROM carton_items ci
-         JOIN cartons c ON c.id = ci.carton_id
-         WHERE c.pack_task_id = $1",
-    )
-    .bind(pack_task_id)
-    .fetch_all(&mut *conn)
-    .await
-    .map_err(map_db_error)?;
-    if shipped.is_empty() {
-        return Ok(());
-    }
-    let warehouse_id: i32 =
-        sqlx::query_scalar("SELECT warehouse_id FROM pick_tasks WHERE order_id = $1 LIMIT 1")
-            .bind(order_id)
-            .fetch_optional(&mut *conn)
-            .await
-            .map_err(map_db_error)?
-            .unwrap_or(1);
-    for (sku, quantity, lot_id) in shipped {
-        if quantity <= Decimal::ZERO {
-            continue;
-        }
-        super::bins::apply_warehouse_delta_pg(
-            &mut *conn,
-            warehouse_id,
-            &sku,
-            -quantity,
-            -quantity,
-            "ship task completed",
-            Some("ship_task"),
-            Some(&ship_id.to_string()),
-            now,
-        )
-        .await?;
-        super::warehouse::insert_wms_movement_pg(
-            &mut *conn,
-            stateset_core::MovementType::Shipment,
-            None,
-            None,
-            &sku,
-            lot_id,
-            quantity,
-            "ship_task",
-            ship_id,
-            shipped_by,
-            now,
-        )
-        .await?;
-    }
-    Ok(())
-}
-
 #[derive(Debug, Clone)]
 pub struct PgFulfillmentRepository {
     pool: PgPool,
@@ -710,6 +600,20 @@ impl PgFulfillmentRepository {
         conn: &mut sqlx::PgConnection,
         input: &CreatePickTask,
     ) -> Result<PickTask> {
+        super::stock_guard::ensure_pick_location(
+            conn,
+            input.warehouse_id,
+            input.source_location_id,
+        )
+        .await?;
+        super::stock_guard::ensure_sellable(
+            conn,
+            &input.sku,
+            input.lot_id,
+            input.serial_number.as_deref(),
+            Some(input.source_location_id),
+        )
+        .await?;
         let now = Utc::now();
         let id = Uuid::new_v4();
 
@@ -956,6 +860,18 @@ impl PgFulfillmentRepository {
             )));
         }
 
+        let (sku, lot, serial, location, warehouse): (String, Option<Uuid>, Option<String>, i32, i32) = sqlx::query_as("SELECT sku, lot_id, serial_number, source_location_id, warehouse_id FROM pick_tasks WHERE id = $1")
+            .bind(input.pick_id).fetch_one(tx.as_mut()).await.map_err(map_db_error)?;
+        super::stock_guard::ensure_pick_location(tx.as_mut(), warehouse, location).await?;
+        super::stock_guard::ensure_sellable(
+            tx.as_mut(),
+            &sku,
+            input.lot_id.or(lot),
+            input.serial_number.as_deref().or(serial.as_deref()),
+            Some(location),
+        )
+        .await?;
+
         sqlx::query(
             r#"
             UPDATE pick_tasks SET
@@ -1000,7 +916,7 @@ impl PgFulfillmentRepository {
             .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
-        apply_pick_stock_effect_pg(tx.as_mut(), &picked, now).await?;
+        super::stock_custody::pick(&mut tx, &Self::row_to_pick(picked)?, now).await?;
 
         tx.commit().await.map_err(map_db_error)?;
 
@@ -1704,8 +1620,8 @@ impl PgFulfillmentRepository {
                 .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
-            apply_ship_stock_effect_pg(
-                tx.as_mut(),
+            super::stock_custody::ship(
+                &mut tx,
                 ship.id,
                 ship.order_id,
                 ship.pack_task_id,

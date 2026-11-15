@@ -24,12 +24,12 @@
 
 #![cfg(feature = "postgres")]
 
+#[path = "support/erp_transfer.rs"]
+mod setup;
+
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use stateset_core::{
-    CreateTransferOrder, CreateTransferOrderItem, ProductId, TransferOrder, TransferOrderStatus,
-    WarehouseId,
-};
+use stateset_core::{TransferOrder, TransferOrderStatus};
 use stateset_db::PostgresDatabase;
 use std::sync::Arc;
 use tokio::sync::Barrier;
@@ -43,16 +43,7 @@ fn postgres_url() -> Option<String> {
 async fn shipped_order(db: &PostgresDatabase, line_quantities: &[Decimal]) -> TransferOrder {
     let order = db
         .transfer_orders()
-        .create_async(CreateTransferOrder {
-            source_warehouse_id: WarehouseId::new(),
-            destination_warehouse_id: WarehouseId::new(),
-            items: line_quantities
-                .iter()
-                .map(|q| CreateTransferOrderItem { product_id: ProductId::new(), quantity: *q })
-                .collect(),
-            expected_at: None,
-            notes: Some("receipt race".into()),
-        })
+        .create_async(setup::postgres_input(db, line_quantities).await)
         .await
         .expect("create transfer order");
     db.transfer_orders().ship_async(order.id).await.expect("ship transfer order")
@@ -66,19 +57,8 @@ async fn postgres_receipt_requires_shipment_and_ship_preserves_terminal_status()
     };
     let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
     let repo = db.transfer_orders();
-    let draft = repo
-        .create_async(CreateTransferOrder {
-            source_warehouse_id: WarehouseId::new(),
-            destination_warehouse_id: WarehouseId::new(),
-            items: vec![CreateTransferOrderItem {
-                product_id: ProductId::new(),
-                quantity: dec!(3),
-            }],
-            expected_at: None,
-            notes: None,
-        })
-        .await
-        .expect("create");
+    let draft =
+        repo.create_async(setup::postgres_input(&db, &[dec!(3)]).await).await.expect("create");
     let item_id = draft.items[0].id;
     assert!(repo.receive_line_async(draft.id, item_id, dec!(1)).await.is_err());
     assert_eq!(
@@ -95,16 +75,7 @@ async fn postgres_receipt_requires_shipment_and_ship_preserves_terminal_status()
     );
 
     let cancelled = repo
-        .create_async(CreateTransferOrder {
-            source_warehouse_id: WarehouseId::new(),
-            destination_warehouse_id: WarehouseId::new(),
-            items: vec![CreateTransferOrderItem {
-                product_id: ProductId::new(),
-                quantity: dec!(1),
-            }],
-            expected_at: None,
-            notes: None,
-        })
+        .create_async(setup::postgres_input(&db, &[dec!(1)]).await)
         .await
         .expect("create second");
     repo.cancel_async(cancelled.id).await.expect("cancel");
@@ -298,7 +269,8 @@ async fn postgres_concurrent_cancels_accept_exactly_one() {
         return;
     };
     let db = Arc::new(PostgresDatabase::connect(&url).await.expect("connect + migrate"));
-    let order = shipped_order(&db, &[dec!(5)]).await;
+    let input = setup::postgres_input(&db, &[dec!(5)]).await;
+    let order = db.transfer_orders().create_async(input).await.unwrap();
 
     let contenders = 6usize;
     let barrier = Arc::new(Barrier::new(contenders));

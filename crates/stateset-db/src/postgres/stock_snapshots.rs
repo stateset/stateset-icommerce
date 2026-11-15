@@ -29,7 +29,7 @@ struct SnapshotRow {
 struct LineRow {
     id: StockSnapshotLineId,
     stock_snapshot_id: StockSnapshotId,
-    product_id: uuid::Uuid,
+    product_id: Option<uuid::Uuid>,
     sku: String,
     quantity_on_hand: Decimal,
     quantity_available: Decimal,
@@ -58,7 +58,7 @@ impl PgStockSnapshotRepository {
         StockSnapshotLine {
             id: row.id,
             stock_snapshot_id: row.stock_snapshot_id,
-            product_id: row.product_id.into(),
+            product_id: row.product_id.map(Into::into),
             sku: row.sku,
             quantity_on_hand: row.quantity_on_hand,
             quantity_available: row.quantity_available,
@@ -93,17 +93,31 @@ impl PgStockSnapshotRepository {
 
     /// Capture a new stock snapshot.
     pub async fn capture_async(&self, input: CaptureStockSnapshot) -> Result<StockSnapshot> {
-        if input.lines.is_empty() {
+        if !input.lines.is_empty() {
             return Err(CommerceError::ValidationError(
-                "a stock snapshot requires at least one line".into(),
+                "Snapshot lines are read from the stock ledger; omit caller-supplied lines".into(),
             ));
         }
         let id = StockSnapshotId::new();
         let now = Utc::now();
-        let total_skus = input.total_skus();
-        let total_units = input.total_units();
-
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        type BalanceRow = (Option<uuid::Uuid>, String, Decimal, Decimal, Option<String>);
+        let rows: Vec<BalanceRow> = sqlx::query_as("SELECT v.product_id, i.sku, b.quantity_on_hand, b.quantity_available, w.code FROM inventory_balances b JOIN inventory_items i ON i.id = b.item_id LEFT JOIN product_variants v ON v.sku = i.sku LEFT JOIN warehouses w ON w.id = b.location_id ORDER BY i.sku, b.location_id").fetch_all(tx.as_mut()).await.map_err(map_db_error)?;
+        let lines: Vec<StockSnapshotLine> = rows
+            .into_iter()
+            .map(|(product, sku, on_hand, available, location)| StockSnapshotLine {
+                id: StockSnapshotLineId::new(),
+                stock_snapshot_id: id,
+                product_id: product.map(Into::into),
+                sku,
+                quantity_on_hand: on_hand,
+                quantity_available: available,
+                location,
+            })
+            .collect();
+        let total_skus =
+            lines.iter().map(|line| &line.sku).collect::<std::collections::HashSet<_>>().len();
+        let total_units: Decimal = lines.iter().map(|line| line.quantity_on_hand).sum();
 
         sqlx::query(
             "INSERT INTO stock_snapshots (id, label, total_skus, total_units, captured_at)
@@ -118,14 +132,14 @@ impl PgStockSnapshotRepository {
         .await
         .map_err(map_db_error)?;
 
-        for line in &input.lines {
+        for line in &lines {
             sqlx::query(
                 "INSERT INTO stock_snapshot_lines (id, stock_snapshot_id, product_id, sku, quantity_on_hand, quantity_available, location)
                  VALUES ($1, $2, $3, $4, $5, $6, $7)",
             )
             .bind(StockSnapshotLineId::new())
             .bind(id)
-            .bind(*line.product_id.as_uuid())
+            .bind(line.product_id.map(|id| *id.as_uuid()))
             .bind(&line.sku)
             .bind(line.quantity_on_hand)
             .bind(line.quantity_available)
@@ -196,6 +210,22 @@ impl PgStockSnapshotRepository {
 }
 
 impl StockSnapshotRepository for PgStockSnapshotRepository {
+    fn inventory_aging(
+        &self,
+        as_of: chrono::NaiveDate,
+    ) -> Result<stateset_core::InventoryAgingReport> {
+        block_on(async {
+            let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+            sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+                .execute(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+            let report = super::stock_reports::aging(&mut tx, as_of).await?;
+            tx.commit().await.map_err(map_db_error)?;
+            Ok(report)
+        })
+    }
+
     fn capture(&self, input: CaptureStockSnapshot) -> Result<StockSnapshot> {
         block_on(self.capture_async(input))
     }

@@ -15,7 +15,7 @@ inventory this builds on is [Binding API Inventory](binding-api-inventory.md).
 - **Domains** are the `Commerce` accessors that return a handle (`commerce.orders()`,
   `commerce.promotions()`, ...) plus the root `commerce` methods. Each domain's engine methods are
   the `pub fn` methods with a `self` receiver on the returned type. The engine exposes
-  70 domains and 1232 methods.
+  70 domains and 1241 methods.
 - **Traced bindings** (Node, Python, Go): an engine method is *exposed* only when an exported
   binding method (or a helper it calls) actually calls it — `commerce.promotions().get_by_code(`.
   Names do not matter, so renames (`GetLevel` → `get_stock`) are credited correctly. A class
@@ -33,16 +33,16 @@ inventory this builds on is [Binding API Inventory](binding-api-inventory.md).
 
 | Binding | Evidence | Gated | Exposed | Coverage | Parity vs Node |
 | --- | --- | --- | --- | --- | --- |
-| Node.js | traced: #[napi] methods -> engine calls | yes | 745/1224 | 60.9% | reference |
-| Python | traced: #[pymethods] methods -> engine calls | yes | 593/1224 | 48.4% | 78.9% |
-| Go | traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls | yes | 80/1224 | 6.5% | 10.7% |
-| .NET | native reach: engine calls anywhere in the Rust layer | no | 48/1224 | 3.9% | 6.3% |
-| Java | native reach: engine calls anywhere in the Rust layer | no | 77/1224 | 6.3% | 9.5% |
-| Kotlin | native reach: engine calls anywhere in the Rust layer | no | 61/1224 | 5% | 7.9% |
-| PHP | native reach: engine calls anywhere in the Rust layer | no | 178/1224 | 14.5% | 21.6% |
-| Ruby | native reach: engine calls anywhere in the Rust layer | no | 0/1224 | 0% | 0% |
-| Swift | native reach: engine calls anywhere in the Rust layer | no | 51/1224 | 4.2% | 6.8% |
-| WASM | native reach: engine calls anywhere in the Rust layer | no | 0/1224 | 0% | 0% |
+| Node.js | traced: #[napi] methods -> engine calls | yes | 785/1233 | 63.7% | reference |
+| Python | traced: #[pymethods] methods -> engine calls | yes | 599/1233 | 48.6% | 75.5% |
+| Go | traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls | yes | 80/1233 | 6.5% | 10.2% |
+| .NET | native reach: engine calls anywhere in the Rust layer | no | 48/1233 | 3.9% | 6% |
+| Java | native reach: engine calls anywhere in the Rust layer | no | 77/1233 | 6.2% | 9.2% |
+| Kotlin | native reach: engine calls anywhere in the Rust layer | no | 61/1233 | 4.9% | 7.5% |
+| PHP | native reach: engine calls anywhere in the Rust layer | no | 178/1233 | 14.4% | 20.5% |
+| Ruby | native reach: engine calls anywhere in the Rust layer | no | 0/1233 | 0% | 0% |
+| Swift | native reach: engine calls anywhere in the Rust layer | no | 51/1233 | 4.1% | 6.5% |
+| WASM | native reach: engine calls anywhere in the Rust layer | no | 0/1233 | 0% | 0% |
 
 Coverage is exposed / (engine methods − exempt). Parity vs Node is the share of Node-exposed engine
 methods the binding also exposes.
@@ -51,9 +51,9 @@ methods the binding also exposes.
 
 | Binding | Host methods | Name-matched | Coverage | Unmatched host methods |
 | --- | --- | --- | --- | --- |
-| .NET | 245 | 220/1224 | 18% | 7 |
-| Swift | 71 | 71/1224 | 5.8% | 0 |
-| WASM | 148 | 134/1224 | 10.9% | 14 |
+| .NET | 245 | 220/1233 | 17.8% | 7 |
+| Swift | 71 | 71/1233 | 5.8% | 0 |
+| WASM | 148 | 134/1233 | 10.9% | 14 |
 
 ## Per-domain matrix
 
@@ -62,8 +62,8 @@ Cells are exposed / applicable engine methods.
 | Domain | Engine methods | Exempt | Node.js | Python | Go | .NET | Java | Kotlin | PHP | Ruby | Swift | WASM |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `commerce` | 21 | 4 | 8/17 | 4/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 | 0/17 |
-| `accounts_payable` | 38 | 0 | 13/38 | 8/38 | 0/38 | 2/38 | 3/38 | 3/38 | 4/38 | 0/38 | 3/38 | 0/38 |
-| `accounts_receivable` | 28 | 0 | 8/28 | 3/28 | 0/28 | 2/28 | 3/28 | 2/28 | 3/28 | 0/28 | 2/28 | 0/28 |
+| `accounts_payable` | 41 | 0 | 26/41 | 10/41 | 0/41 | 2/41 | 3/41 | 3/41 | 4/41 | 0/41 | 3/41 | 0/41 |
+| `accounts_receivable` | 28 | 0 | 15/28 | 3/28 | 0/28 | 2/28 | 3/28 | 2/28 | 3/28 | 0/28 | 2/28 | 0/28 |
 | `activity_logs` | 5 | 0 | 5/5 | 5/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 |
 | `agent` | 4 | 4 | exempt | exempt | exempt | exempt | exempt | exempt | exempt | exempt | exempt | exempt |
 | `analytics` | 14 | 0 | 14/14 | 14/14 | 3/14 | 3/14 | 1/14 | 3/14 | 1/14 | 0/14 | 3/14 | 0/14 |
@@ -72,7 +72,7 @@ Cells are exposed / applicable engine methods.
 | `carts` | 33 | 0 | 32/33 | 32/33 | 3/33 | 3/33 | 4/33 | 3/33 | 5/33 | 0/33 | 3/33 | 0/33 |
 | `channels` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
 | `companies` | 11 | 0 | 11/11 | 11/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 |
-| `cost_accounting` | 27 | 0 | 5/27 | 5/27 | 0/27 | 2/27 | 3/27 | 2/27 | 3/27 | 0/27 | 2/27 | 0/27 |
+| `cost_accounting` | 29 | 0 | 5/29 | 5/29 | 0/29 | 2/29 | 3/29 | 2/29 | 3/29 | 0/29 | 2/29 | 0/29 |
 | `credit` | 29 | 0 | 9/29 | 5/29 | 0/29 | 1/29 | 3/29 | 2/29 | 3/29 | 0/29 | 2/29 | 0/29 |
 | `currency` | 16 | 0 | 15/16 | 15/16 | 4/16 | 0/16 | 0/16 | 0/16 | 7/16 | 0/16 | 0/16 | 0/16 |
 | `custom_objects` | 12 | 0 | 12/12 | 12/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 |
@@ -82,7 +82,7 @@ Cells are exposed / applicable engine methods.
 | `fixed_assets` | 11 | 0 | 11/11 | 11/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 |
 | `fraud` | 11 | 0 | 11/11 | 11/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 |
 | `fulfillment` | 46 | 0 | 14/46 | 6/46 | 0/46 | 0/46 | 3/46 | 0/46 | 4/46 | 0/46 | 0/46 | 0/46 |
-| `general_ledger` | 44 | 0 | 18/44 | 12/44 | 0/44 | 2/44 | 3/44 | 2/44 | 5/44 | 0/44 | 2/44 | 0/44 |
+| `general_ledger` | 46 | 0 | 28/46 | 14/46 | 0/46 | 2/46 | 3/46 | 2/46 | 5/46 | 0/46 | 2/46 | 0/46 |
 | `gift_cards` | 10 | 0 | 10/10 | 10/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 | 0/10 |
 | `inbound_shipments` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
 | `integration_field_mappings` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
@@ -106,7 +106,7 @@ Cells are exposed / applicable engine methods.
 | `purchase_orders` | 26 | 0 | 13/26 | 11/26 | 10/26 | 0/26 | 0/26 | 0/26 | 11/26 | 0/26 | 0/26 | 0/26 |
 | `purgatory` | 7 | 0 | 7/7 | 7/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 |
 | `quality` | 33 | 0 | 17/33 | 10/33 | 0/33 | 1/33 | 4/33 | 2/33 | 4/33 | 0/33 | 2/33 | 0/33 |
-| `receiving` | 24 | 0 | 10/24 | 5/24 | 0/24 | 0/24 | 4/24 | 0/24 | 4/24 | 0/24 | 0/24 | 0/24 |
+| `receiving` | 24 | 0 | 18/24 | 5/24 | 0/24 | 0/24 | 4/24 | 0/24 | 4/24 | 0/24 | 0/24 | 0/24 |
 | `returns` | 15 | 0 | 13/15 | 6/15 | 6/15 | 2/15 | 6/15 | 6/15 | 5/15 | 0/15 | 2/15 | 0/15 |
 | `revenue_recognition` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
 | `reviews` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
@@ -115,21 +115,21 @@ Cells are exposed / applicable engine methods.
 | `serials` | 36 | 0 | 9/36 | 4/36 | 0/36 | 2/36 | 3/36 | 2/36 | 4/36 | 0/36 | 2/36 | 0/36 |
 | `shipments` | 25 | 0 | 10/25 | 7/25 | 6/25 | 6/25 | 0/25 | 8/25 | 9/25 | 0/25 | 6/25 | 0/25 |
 | `shipping_zones` | 12 | 0 | 12/12 | 12/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 | 0/12 |
-| `stock_snapshots` | 6 | 0 | 6/6 | 6/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 |
+| `stock_snapshots` | 7 | 0 | 6/7 | 6/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 |
 | `store_credits` | 7 | 0 | 7/7 | 7/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 |
 | `subscriptions` | 33 | 0 | 19/33 | 16/33 | 0/33 | 0/33 | 0/33 | 0/33 | 11/33 | 0/33 | 0/33 | 0/33 |
 | `supplier_skus` | 7 | 0 | 7/7 | 7/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 |
 | `tax` | 21 | 0 | 18/21 | 14/21 | 0/21 | 0/21 | 0/21 | 0/21 | 8/21 | 0/21 | 0/21 | 0/21 |
 | `topology_snapshots` | 6 | 0 | 6/6 | 6/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 |
-| `transfer_orders` | 7 | 0 | 7/7 | 7/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 |
+| `transfer_orders` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
 | `units_of_measure` | 11 | 0 | 11/11 | 11/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 | 0/11 |
 | `vector` | 22 | 0 | 15/22 | 9/22 | 0/22 | 0/22 | 0/22 | 0/22 | 0/22 | 0/22 | 0/22 | 0/22 |
 | `vendor_credits` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
 | `vendor_returns` | 7 | 0 | 7/7 | 7/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 |
-| `warehouse` | 52 | 0 | 17/52 | 12/52 | 0/52 | 3/52 | 3/52 | 3/52 | 4/52 | 0/52 | 3/52 | 0/52 |
+| `warehouse` | 52 | 0 | 17/52 | 13/52 | 0/52 | 3/52 | 3/52 | 3/52 | 4/52 | 0/52 | 3/52 | 0/52 |
 | `warranties` | 24 | 0 | 8/24 | 8/24 | 7/24 | 0/24 | 0/24 | 0/24 | 9/24 | 0/24 | 0/24 | 0/24 |
 | `wishlists` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
-| `work_orders` | 23 | 0 | 7/23 | 7/23 | 6/23 | 0/23 | 0/23 | 0/23 | 9/23 | 0/23 | 0/23 | 0/23 |
+| `work_orders` | 23 | 0 | 8/23 | 7/23 | 6/23 | 0/23 | 0/23 | 0/23 | 9/23 | 0/23 | 0/23 | 0/23 |
 | `x402` | 69 | 0 | 17/69 | 0/69 | 0/69 | 0/69 | 0/69 | 0/69 | 0/69 | 0/69 | 0/69 | 0/69 |
 
 ## Gate
@@ -150,8 +150,8 @@ unless `--allow-loss` is also passed. Gated bindings: `node`, `python`, `go`
 
 | Binding | Known gaps vs Node (baseline) |
 | --- | --- |
-| python | 157 |
-| go | 665 |
+| python | 192 |
+| go | 705 |
 
 ## Exemptions
 
@@ -257,6 +257,8 @@ name-matched surfaces.
 | node | `VectorSearch.indexAllInventory` | `vector.index_inventory_items` | yes |
 | node | `VectorSearch.indexAllOrders` | `vector.index_orders` | yes |
 | node | `VectorSearch.indexAllProducts` | `vector.index_products` | yes |
+| node | `WorkOrders.completeExact` | `work_orders.complete` | no |
+| node | `WorkOrders.configureStock` | `work_orders.update` | no |
 | python | `CycleCounts.cancel` | `warehouse.cancel_cycle_count` | no |
 | python | `CycleCounts.complete` | `warehouse.complete_cycle_count` | no |
 | python | `CycleCounts.create` | `warehouse.create_cycle_count` | no |
@@ -346,18 +348,20 @@ None found.
 | --- | --- | --- | --- |
 | `add_bill_item` | — | — | — |
 | `approve_bill` | yes | yes | — |
-| `approve_payment_run` | — | — | — |
+| `approve_bill_as` | yes | yes | — |
+| `approve_bill_with_override` | yes | yes | — |
+| `approve_payment_run` | yes | — | — |
 | `cancel_bill` | yes | — | — |
-| `cancel_payment_run` | — | — | — |
+| `cancel_payment_run` | yes | — | — |
 | `clear_payment` | — | — | — |
 | `count_bills` | yes | — | — |
 | `count_payments` | — | — | — |
 | `create_bill` | yes | yes | — |
 | `create_bills_batch` | — | — | — |
-| `create_payment` | — | — | — |
-| `create_payment_run` | — | — | — |
+| `create_payment` | yes | — | — |
+| `create_payment_run` | yes | — | — |
 | `delete_bill` | — | — | — |
-| `dispute_bill` | — | — | — |
+| `dispute_bill` | yes | — | — |
 | `get_aging_summary` | yes | yes | — |
 | `get_bill` | yes | yes | — |
 | `get_bill_by_number` | yes | — | — |
@@ -365,32 +369,33 @@ None found.
 | `get_bills_batch` | — | — | — |
 | `get_bills_due_soon` | yes | — | — |
 | `get_overdue_bills` | yes | yes | — |
-| `get_payment` | — | — | — |
+| `get_payment` | yes | — | — |
 | `get_payment_allocations` | — | — | — |
 | `get_payment_by_number` | — | — | — |
-| `get_payment_run` | — | — | — |
+| `get_payment_run` | yes | — | — |
 | `get_payment_run_bills` | — | — | — |
 | `get_payments_for_bill` | — | — | — |
 | `get_supplier_summary` | — | — | — |
 | `get_total_outstanding` | yes | — | — |
 | `list_bills` | yes | yes | — |
-| `list_payment_runs` | — | — | — |
+| `list_payment_runs` | yes | — | — |
 | `list_payments` | — | — | — |
 | `pay_bill` | — | yes | — |
-| `process_payment_run` | — | — | — |
+| `process_payment_run` | yes | — | — |
 | `remove_bill_item` | — | — | — |
+| `resolve_bill_dispute` | yes | — | — |
 | `three_way_match` | yes | yes | — |
 | `update_bill` | — | — | — |
-| `void_payment` | — | — | — |
+| `void_payment` | yes | — | — |
 
 ### `commerce.accounts_receivable()`
 
 | Engine method | Node.js | Python | Go |
 | --- | --- | --- | --- |
-| `apply_credit_memo` | — | — | — |
-| `apply_payment_to_invoices` | — | — | — |
+| `apply_credit_memo` | yes | — | — |
+| `apply_payment_to_invoices` | yes | — | — |
 | `create_credit_memo` | yes | yes | — |
-| `create_write_off` | — | — | — |
+| `create_write_off` | yes | — | — |
 | `generate_statement` | — | — | — |
 | `get_aging_report` | — | — | — |
 | `get_aging_summary` | yes | yes | — |
@@ -402,17 +407,17 @@ None found.
 | `get_customers_batch` | — | — | — |
 | `get_dso` | yes | yes | — |
 | `get_invoices_due_for_dunning` | — | — | — |
-| `get_payment_applications` | — | — | — |
+| `get_payment_applications` | yes | — | — |
 | `get_total_outstanding` | yes | — | — |
 | `get_unapplied_credits` | yes | — | — |
 | `get_write_off` | — | — | — |
 | `list_collection_activities` | — | — | — |
 | `list_credit_memos` | yes | — | — |
-| `list_write_offs` | — | — | — |
+| `list_write_offs` | yes | — | — |
 | `log_collection_activity` | — | — | — |
-| `reverse_write_off` | — | — | — |
+| `reverse_write_off` | yes | — | — |
 | `send_dunning_letter` | — | — | — |
-| `unapply_payment` | — | — | — |
+| `unapply_payment` | yes | — | — |
 | `update_collection_status` | — | — | — |
 | `void_credit_memo` | yes | — | — |
 
@@ -573,6 +578,7 @@ None found.
 | `apply_adjustment` | — | — | — |
 | `approve_adjustment` | — | — | — |
 | `calculate_rollup` | — | — | — |
+| `close_books_check` | — | — | — |
 | `create_adjustment` | — | — | — |
 | `create_cost_layer` | — | — | — |
 | `get_adjustment` | — | — | — |
@@ -595,6 +601,7 @@ None found.
 | `record_variance` | — | — | — |
 | `reject_adjustment` | — | — | — |
 | `set_item_cost` | yes | yes | — |
+| `transaction_cogs` | — | — | — |
 | `update_average_cost` | yes | yes | — |
 | `update_last_cost` | — | — | — |
 
@@ -820,15 +827,17 @@ None found.
 | --- | --- | --- | --- |
 | `auto_post_bill` | — | — | — |
 | `auto_post_bill_payment` | — | — | — |
+| `auto_post_credit_memo` | — | — | — |
 | `auto_post_inventory_cost` | — | — | — |
 | `auto_post_invoice` | — | — | — |
 | `auto_post_payment_received` | — | — | — |
 | `auto_post_write_off` | — | — | — |
 | `close_month` | yes | yes | — |
-| `close_period` | — | — | — |
+| `close_period` | yes | — | — |
 | `create_account` | yes | yes | — |
 | `create_accounts_batch` | — | — | — |
-| `create_journal_entry` | — | — | — |
+| `create_journal_entry` | yes | — | — |
+| `create_journal_entry_as` | yes | — | — |
 | `create_period` | yes | yes | — |
 | `delete_account` | — | — | — |
 | `get_account` | yes | yes | — |
@@ -837,29 +846,29 @@ None found.
 | `get_account_hierarchy` | — | — | — |
 | `get_account_transactions` | — | — | — |
 | `get_accounts_batch` | — | — | — |
-| `get_auto_posting_config` | — | — | — |
+| `get_auto_posting_config` | yes | yes | — |
 | `get_balance_sheet` | yes | — | — |
 | `get_current_period` | — | — | — |
 | `get_income_statement` | yes | — | — |
 | `get_journal_entry` | yes | yes | — |
 | `get_journal_entry_by_number` | — | — | — |
 | `get_journal_entry_lines` | — | — | — |
-| `get_period` | — | — | — |
+| `get_period` | yes | — | — |
 | `get_period_for_date` | — | — | — |
 | `get_trial_balance` | yes | yes | — |
 | `initialize_chart_of_accounts` | yes | yes | — |
 | `list_accounts` | yes | yes | — |
 | `list_journal_entries` | yes | — | — |
 | `list_periods` | yes | — | — |
-| `lock_period` | — | — | — |
+| `lock_period` | yes | — | — |
 | `open_period` | yes | yes | — |
 | `post_journal_entry` | yes | yes | — |
-| `reclose_period` | — | — | — |
-| `reopen_period` | — | — | — |
+| `reclose_period` | yes | — | — |
+| `reopen_period` | yes | — | — |
 | `revalue` | yes | yes | — |
-| `reverse_journal_entry` | — | — | — |
+| `reverse_journal_entry` | yes | — | — |
 | `run_period_close` | — | — | — |
-| `set_auto_posting_config` | — | — | — |
+| `set_auto_posting_config` | yes | yes | — |
 | `update_account` | — | — | — |
 | `void_journal_entry` | yes | — | — |
 
@@ -1315,28 +1324,28 @@ None found.
 
 | Engine method | Node.js | Python | Go |
 | --- | --- | --- | --- |
-| `assign_put_away` | — | — | — |
-| `cancel_put_away` | — | — | — |
+| `assign_put_away` | yes | — | — |
+| `cancel_put_away` | yes | — | — |
 | `cancel_receipt` | yes | — | — |
-| `complete_put_away` | — | — | — |
+| `complete_put_away` | yes | — | — |
 | `complete_receiving` | yes | yes | — |
 | `count_put_aways` | — | — | — |
 | `count_receipts` | yes | — | — |
-| `create_put_away` | — | — | — |
+| `create_put_away` | yes | — | — |
 | `create_receipt` | yes | yes | — |
 | `create_receipt_from_po` | yes | — | — |
 | `create_receipts_batch` | — | — | — |
 | `delete_receipt` | — | — | — |
 | `get_pending_put_aways` | — | — | — |
-| `get_put_away` | — | — | — |
+| `get_put_away` | yes | — | — |
 | `get_receipt` | yes | yes | — |
 | `get_receipt_by_number` | yes | — | — |
 | `get_receipt_items` | yes | yes | — |
 | `get_receipts_batch` | — | — | — |
-| `list_put_aways` | — | — | — |
+| `list_put_aways` | yes | — | — |
 | `list_receipts` | yes | yes | — |
-| `receive_items` | — | — | — |
-| `start_put_away` | — | — | — |
+| `receive_items` | yes | — | — |
+| `start_put_away` | yes | — | — |
 | `start_receiving` | yes | — | — |
 | `update_receipt` | — | — | — |
 
@@ -1512,6 +1521,7 @@ None found.
 | `capture` | yes | yes | — |
 | `delete` | yes | yes | — |
 | `get` | yes | yes | — |
+| `inventory_aging` | — | — | — |
 | `is_supported` | yes | yes | — |
 | `latest` | yes | yes | — |
 | `list` | yes | yes | — |
@@ -1620,6 +1630,7 @@ None found.
 | Engine method | Node.js | Python | Go |
 | --- | --- | --- | --- |
 | `cancel` | yes | yes | — |
+| `complete_receiving` | yes | yes | — |
 | `create` | yes | yes | — |
 | `get` | yes | yes | — |
 | `is_supported` | yes | yes | — |
@@ -1700,7 +1711,7 @@ None found.
 | Engine method | Node.js | Python | Go |
 | --- | --- | --- | --- |
 | `adjust_bin_level` | — | — | — |
-| `adjust_inventory` | — | — | — |
+| `adjust_inventory` | — | yes | — |
 | `cancel_cycle_count` | yes | yes | — |
 | `complete_cycle_count` | yes | yes | — |
 | `count_bins` | — | — | — |
@@ -1819,7 +1830,7 @@ None found.
 | `resume` | — | — | — |
 | `start` | yes | yes | yes |
 | `start_task` | — | — | — |
-| `update` | — | — | — |
+| `update` | yes | — | — |
 | `update_task` | — | — | — |
 
 ### `commerce.x402()`

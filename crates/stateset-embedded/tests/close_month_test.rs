@@ -50,6 +50,7 @@ fn sub_account(
 fn setup(commerce: &Commerce) -> (Uuid, Uuid, Uuid) {
     let gl = commerce.general_ledger();
     gl.initialize_chart_of_accounts().expect("init chart");
+    sub_account(commerce, "1500", "Equipment", AccountType::Asset, AccountSubType::FixedAsset);
 
     sub_account(
         commerce,
@@ -84,6 +85,10 @@ fn setup(commerce: &Commerce) -> (Uuid, Uuid, Uuid) {
         unearned_revenue_account_id: Some(unearned_id),
         sales_revenue_account_id: by_number("4010"),
         shipping_revenue_account_id: None,
+        sales_tax_payable_account_id: None,
+        goods_received_not_invoiced_account_id: None,
+        inventory_adjustment_account_id: None,
+        work_in_progress_account_id: None,
         cogs_account_id: by_number("5010"),
         bad_debt_expense_account_id: None,
         fx_gain_loss_account_id: None,
@@ -114,22 +119,26 @@ fn setup(commerce: &Commerce) -> (Uuid, Uuid, Uuid) {
             name: "Espresso machine".into(),
             description: None,
             category: FixedAssetCategory::Machinery,
-            acquisition_date: date(2026, 1, 1),
+            acquisition_date: date(2025, 1, 1),
             acquisition_cost: dec!(1200),
             salvage_value: dec!(0),
             useful_life_months: 12,
             depreciation_method: DepreciationMethod::StraightLine,
             in_service_date: None,
             location_id: None,
-            asset_account_id: None,
+            asset_account_id: Some(
+                commerce.general_ledger().get_account_by_number("1500").unwrap().unwrap().id,
+            ),
             accumulated_depreciation_account_id: None,
+            acquisition_offset_account_id: None,
+            disposal_gain_loss_account_id: None,
             depreciation_expense_account_id: None,
             currency: None,
         })
         .expect("create asset");
     let asset = commerce
         .fixed_assets()
-        .place_in_service(asset.id, date(2026, 1, 1))
+        .place_in_service(asset.id, date(2025, 1, 1))
         .expect("place in service");
     commerce.fixed_assets().generate_schedule(asset.id).expect("generate schedule");
 
@@ -144,14 +153,14 @@ fn setup(commerce: &Commerce) -> (Uuid, Uuid, Uuid) {
             invoice_id: None,
             transaction_price: dec!(600),
             currency: None,
-            effective_date: date(2026, 1, 1),
+            effective_date: date(2025, 1, 1),
             obligations: vec![CreatePerformanceObligation {
                 description: "Q1 support".into(),
                 standalone_selling_price: None,
                 allocated_amount: dec!(600),
                 recognition_method: RecognitionMethod::RatableOverTime {
-                    start: date(2026, 1, 1),
-                    end: date(2026, 3, 31),
+                    start: date(2025, 1, 1),
+                    end: date(2025, 3, 31),
                 },
             }],
         })
@@ -355,20 +364,24 @@ fn setup_with_unscheduled_asset(commerce: &Commerce) -> Uuid {
             name: "Unscheduled lathe".into(),
             description: None,
             category: FixedAssetCategory::Machinery,
-            acquisition_date: date(2026, 1, 1),
+            acquisition_date: date(2025, 1, 1),
             acquisition_cost: dec!(600),
             salvage_value: dec!(0),
             useful_life_months: 6,
             depreciation_method: DepreciationMethod::StraightLine,
             in_service_date: None,
             location_id: None,
-            asset_account_id: None,
+            asset_account_id: Some(
+                commerce.general_ledger().get_account_by_number("1500").unwrap().unwrap().id,
+            ),
             accumulated_depreciation_account_id: None,
+            acquisition_offset_account_id: None,
+            disposal_gain_loss_account_id: None,
             depreciation_expense_account_id: None,
             currency: None,
         })
         .expect("create asset");
-    commerce.fixed_assets().place_in_service(asset.id, date(2026, 1, 1)).expect("place in service");
+    commerce.fixed_assets().place_in_service(asset.id, date(2025, 1, 1)).expect("place in service");
     // Deliberately no `generate_schedule`: the close must warn, not fail.
     period_id
 }
@@ -471,6 +484,7 @@ fn close_month_fail_on_warnings_refuses_unrevaluable_fx_before_posting() {
         source_document_type: None,
         source_document_id: None,
         auto_post: Some(true),
+        fx: Some(stateset_core::JournalEntryFx { currency: "ZAR".parse().unwrap(), rate: dec!(1) }),
     })
     .expect("fund ZAR account");
     let entries_before = gl.list_journal_entries(Default::default()).expect("list").len();
@@ -489,4 +503,24 @@ fn close_month_fail_on_warnings_refuses_unrevaluable_fx_before_posting() {
     assert_eq!(entries_after, entries_before, "no depreciation / rev-rec posted");
     let period = gl.get_period(period_id).expect("get period").expect("period");
     assert_eq!(period.status, PeriodStatus::Open);
+}
+
+#[test]
+fn close_requires_explicit_ledger_posting_settings() {
+    let commerce = stateset_embedded::Commerce::new(":memory:").unwrap();
+    let period = commerce
+        .general_ledger()
+        .create_period(CreateGlPeriod {
+            period_name: "Unconfigured close".into(),
+            fiscal_year: 2025,
+            period_number: 1,
+            start_date: date(2025, 1, 1),
+            end_date: date(2025, 1, 31),
+        })
+        .unwrap();
+    let error = commerce
+        .general_ledger()
+        .close_month(period.id, stateset_core::CloseMonthOptions::default())
+        .unwrap_err();
+    assert!(error.to_string().contains("Configure automatic ledger posting"));
 }

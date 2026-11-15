@@ -57,7 +57,7 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 | `cycle-counts` | tool-backed | 7 | 0 | - |
 | `edi-documents` | tool-backed | 5 | 0 | - |
 | `erc8004` | custom | 5 | 2 | - |
-| `explain` | tool-backed | 2 | 0 | - |
+| `explain` | tool-backed | 3 | 0 | - |
 | `fixed-assets` | tool-backed | 9 | 0 | - |
 | `fraud` | custom | 6 | 2 | - |
 | `fulfillment` | custom | 14 | 2 | - |
@@ -106,7 +106,7 @@ Machine-readable output lives at `artifacts/compatibility/api-command-coverage.j
 | `sync` | custom | 20 | 2 | - |
 | `tax` | custom | 8 | 2 | - |
 | `topology-snapshots` | tool-backed | 5 | 0 | - |
-| `transfer-orders` | tool-backed | 7 | 0 | - |
+| `transfer-orders` | tool-backed | 8 | 0 | - |
 | `treasury` | custom | 6 | 2 | - |
 | `units-of-measure` | tool-backed | 10 | 0 | - |
 | `vector` | custom | 12 | 2 | - |

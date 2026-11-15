@@ -9,7 +9,7 @@ use stateset_core::{
     CommerceError, CreateRevenueContract, CurrencyCode, PerformanceObligation, RecognitionMethod,
     Result, RevenueContract, RevenueContractFilter, RevenueContractStatus, RevenueEntryStatus,
     RevenueRecognitionRepository, RevenueSchedule, RevenueScheduleEntry, UpdateRevenueContract,
-    Validate, generate_revenue_contract_number, generate_revenue_schedule,
+    Validate, generate_revenue_contract_number, generate_revenue_schedule_for_currency,
 };
 use uuid::Uuid;
 
@@ -183,6 +183,17 @@ impl PgRevenueRecognitionRepository {
             input.contract_number.clone().unwrap_or_else(generate_revenue_contract_number);
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
+        if let Some(invoice) = input.invoice_id {
+            super::revenue_invoice::validate_link(
+                &mut tx,
+                id,
+                invoice,
+                input.customer_id,
+                input.transaction_price,
+                currency.as_str(),
+            )
+            .await?;
+        }
         sqlx::query(
             "INSERT INTO revenue_contracts (id, contract_number, customer_id, order_id, invoice_id, transaction_price, currency, status, effective_date, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft', $8, $9, $9)",
@@ -332,6 +343,24 @@ impl PgRevenueRecognitionRepository {
         .map_err(map_db_error)?;
         let contract =
             row.map(Self::row_to_contract).transpose()?.ok_or(CommerceError::NotFound)?;
+        if let Some(invoice) = input.invoice_id.filter(|id| Some(*id) != contract.invoice_id) {
+            if contract.invoice_id.is_some()
+                || contract.status != stateset_core::RevenueContractStatus::Draft
+            {
+                return Err(CommerceError::Conflict(
+                    "A contract invoice link is immutable once assigned or activated".into(),
+                ));
+            }
+            super::revenue_invoice::validate_link(
+                &mut tx,
+                id,
+                invoice,
+                contract.customer_id,
+                contract.transaction_price,
+                contract.currency.as_str(),
+            )
+            .await?;
+        }
         let status = match input.status {
             Some(next) if next != contract.status => {
                 if !contract.status.can_transition_to(next) {
@@ -396,10 +425,19 @@ impl PgRevenueRecognitionRepository {
                 .fetch_one(tx.as_mut())
                 .await
                 .map_err(map_db_error)?;
-        let entries = generate_revenue_schedule(
+        let currency: CurrencyCode =
+            sqlx::query_scalar::<_, String>("SELECT currency FROM revenue_contracts WHERE id = $1")
+                .bind(obligation.contract_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?
+                .parse()
+                .map_err(|_| CommerceError::ValidationError("Invalid contract currency".into()))?;
+        let entries = generate_revenue_schedule_for_currency(
             obligation.recognition_method,
             obligation.allocated_amount,
             recognition_date,
+            currency,
         );
         if entries.is_empty() {
             return Err(CommerceError::ValidationError(
@@ -587,6 +625,7 @@ impl PgRevenueRecognitionRepository {
                 )
             })?,
         };
+        super::revenue_invoice::require_funded(tx, obligation_id, deferred_account_id).await?;
         let gl = Gl::new(self.pool.clone());
         gl.create_posted_entry_tx(
             tx,
@@ -609,6 +648,7 @@ impl PgRevenueRecognitionRepository {
                 source_document_type: Some("revenue_recognition".to_string()),
                 source_document_id: Some(obligation_id),
                 auto_post: Some(true),
+                fx: None,
             },
             "system",
         )

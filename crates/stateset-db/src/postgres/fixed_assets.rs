@@ -36,6 +36,8 @@ struct FixedAssetRow {
     location_id: Option<Uuid>,
     asset_account_id: Option<Uuid>,
     accumulated_depreciation_account_id: Option<Uuid>,
+    acquisition_offset_account_id: Option<Uuid>,
+    disposal_gain_loss_account_id: Option<Uuid>,
     depreciation_expense_account_id: Option<Uuid>,
     accumulated_depreciation: Decimal,
     currency: String,
@@ -105,6 +107,8 @@ impl PgFixedAssetRepository {
             location_id: row.location_id,
             asset_account_id: row.asset_account_id,
             accumulated_depreciation_account_id: row.accumulated_depreciation_account_id,
+            acquisition_offset_account_id: row.acquisition_offset_account_id,
+            disposal_gain_loss_account_id: row.disposal_gain_loss_account_id,
             depreciation_expense_account_id: row.depreciation_expense_account_id,
             accumulated_depreciation: row.accumulated_depreciation,
             currency: Self::parse_field::<CurrencyCode>(&row.currency, "currency")?,
@@ -164,10 +168,11 @@ impl PgFixedAssetRepository {
     /// Create a fixed asset (async)
     pub async fn create_async(&self, input: CreateFixedAsset) -> Result<FixedAsset> {
         input.validate()?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let asset_number = input.asset_number.clone().unwrap_or_else(generate_asset_number);
-        let currency = resolve_currency_with_executor(input.currency, &self.pool).await?;
+        let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
         let status = if input.in_service_date.is_some() {
             FixedAssetStatus::InService
         } else {
@@ -197,10 +202,15 @@ impl PgFixedAssetRepository {
         .bind(input.depreciation_expense_account_id)
         .bind(currency.to_string())
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
-        self.load_asset_async(id).await?.ok_or(CommerceError::NotFound)
+        sqlx::query("UPDATE fixed_assets SET acquisition_offset_account_id = $1,disposal_gain_loss_account_id = $2 WHERE id = $3").bind(input.acquisition_offset_account_id).bind(input.disposal_gain_loss_account_id).bind(id).execute(tx.as_mut()).await.map_err(map_db_error)?;
+        let asset = Self::require_asset_locked(&mut tx, id).await?;
+        let gl = super::general_ledger::PgGeneralLedgerRepository::new(self.pool.clone());
+        super::asset_posting::acquire(&mut tx, &asset, &gl).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(asset)
     }
 
     /// Get a fixed asset (async)
@@ -293,8 +303,8 @@ impl PgFixedAssetRepository {
         sqlx::query(
             "UPDATE fixed_assets SET name = $1, description = $2, category = $3, salvage_value = $4, useful_life_months = $5, in_service_date = $6, location_id = $7, asset_account_id = $8, accumulated_depreciation_account_id = $9, depreciation_expense_account_id = $10, updated_at = $11 WHERE id = $12",
         )
-        .bind(input.name.unwrap_or(asset.name))
-        .bind(input.description.or(asset.description))
+        .bind(input.name.unwrap_or(asset.name.clone()))
+        .bind(input.description.or(asset.description.clone()))
         .bind(input.category.unwrap_or(asset.category).to_string())
         .bind(input.salvage_value.unwrap_or(asset.salvage_value))
         .bind(
@@ -315,6 +325,9 @@ impl PgFixedAssetRepository {
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+        sqlx::query("UPDATE fixed_assets SET acquisition_offset_account_id = $1,disposal_gain_loss_account_id = $2 WHERE id = $3").bind(input.acquisition_offset_account_id.or(asset.acquisition_offset_account_id)).bind(input.disposal_gain_loss_account_id.or(asset.disposal_gain_loss_account_id)).bind(id).execute(tx.as_mut()).await.map_err(map_db_error)?;
+        let after = Self::require_asset_locked(&mut tx, id).await?;
+        super::asset_posting::revise(&mut tx, &asset, &after).await?;
         tx.commit().await.map_err(map_db_error)?;
         self.load_asset_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -379,6 +392,20 @@ impl PgFixedAssetRepository {
                     .await
                     .map_err(map_db_error)?;
             }
+        }
+        let after = Self::require_asset_locked(&mut tx, id).await?;
+        if matches!(next, FixedAssetStatus::Disposed | FixedAssetStatus::WrittenOff) {
+            let gl = super::general_ledger::PgGeneralLedgerRepository::new(self.pool.clone());
+            super::asset_posting::dispose(
+                &mut tx,
+                &asset,
+                date,
+                proceeds.unwrap_or(Decimal::ZERO),
+                &gl,
+            )
+            .await?;
+        } else {
+            super::asset_posting::revise(&mut tx, &asset, &after).await?;
         }
         tx.commit().await.map_err(map_db_error)?;
         self.load_asset_async(id).await?.ok_or(CommerceError::NotFound)
@@ -514,6 +541,18 @@ impl PgFixedAssetRepository {
                 "no scheduled depreciation entries remain to post".into(),
             ));
         }
+        let today = Utc::now().date_naive();
+        for entry in &pending {
+            let end = asset.depreciation_period_end(entry.period).ok_or_else(|| {
+                CommerceError::ValidationError("Asset has no valid in-service schedule date".into())
+            })?;
+            if end > today {
+                return Err(CommerceError::Conflict(format!(
+                    "Depreciation period {} is not due until {end}",
+                    entry.period
+                )));
+            }
+        }
         for e in &pending {
             sqlx::query(
                 "UPDATE fixed_asset_depreciation_entries SET status = 'posted' WHERE asset_id = $1 AND period = $2",
@@ -541,22 +580,12 @@ impl PgFixedAssetRepository {
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
-        let posted_amount: Decimal = pending.iter().map(|e| e.amount).sum();
-        let first_period = pending.first().map_or(0, |e| e.period);
-        let last_period = pending.last().map_or(0, |e| e.period);
-        // The GL entry posts on THIS transaction: the depreciation posting
-        // and its journal entry are one atomic fact — a GL failure rolls back
-        // the posting, so a retry posts the full amount. Mirrors the SQLite
-        // backend. The account fields the entry needs are unchanged by the
-        // updates above, so the pre-update asset row is authoritative.
-        self.auto_post_depreciation_entry_tx(
-            &mut tx,
-            &asset,
-            posted_amount,
-            first_period,
-            last_period,
-        )
-        .await?;
+        // Each elapsed month retains its own accounting date, even when
+        // several months are posted together. Any failure rolls back all of them.
+        for entry in &pending {
+            self.auto_post_depreciation_entry_tx(&mut tx, &asset, entry.amount, entry.period)
+                .await?;
+        }
         tx.commit().await.map_err(map_db_error)?;
         self.load_asset_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -577,14 +606,16 @@ impl PgFixedAssetRepository {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         asset: &FixedAsset,
         amount: Decimal,
-        first_period: u32,
-        last_period: u32,
+        period: u32,
     ) -> Result<()> {
         use super::general_ledger::PgGeneralLedgerRepository as Gl;
         let Some(config) = Gl::get_auto_posting_config_tx(tx).await? else { return Ok(()) };
         if !config.auto_post_depreciation || amount <= Decimal::ZERO {
             return Ok(());
         }
+        let stored = Self::require_asset_locked(tx, asset.id).await?;
+        let asset = &stored;
+        super::asset_posting::require_acquired(tx, asset).await?;
         let expense_account_id = Self::resolve_depreciation_account_tx(
             tx,
             asset.depreciation_expense_account_id,
@@ -597,18 +628,17 @@ impl PgFixedAssetRepository {
             stateset_core::AccountSubType::AccumulatedDepreciation,
         )
         .await?;
-        let periods = if first_period == last_period {
-            format!("period {first_period}")
-        } else {
-            format!("periods {first_period}-{last_period}")
-        };
+        sqlx::query("UPDATE fixed_assets SET accumulated_depreciation_account_id = $1, depreciation_expense_account_id = $2 WHERE id = $3").bind(accumulated_account_id).bind(expense_account_id).bind(asset.id).execute(tx.as_mut()).await.map_err(map_db_error)?;
+        let entry_date = asset
+            .depreciation_period_end(period)
+            .ok_or_else(|| CommerceError::ValidationError("Invalid depreciation date".into()))?;
         let gl = Gl::new(self.pool.clone());
         gl.create_posted_entry_tx(
             tx,
             &stateset_core::CreateJournalEntry {
-                entry_date: Utc::now().date_naive(),
+                entry_date,
                 entry_type: Some(stateset_core::JournalEntryType::Standard),
-                description: format!("Depreciation {} {periods}", asset.asset_number),
+                description: format!("Depreciation {} period {period}", asset.asset_number),
                 lines: vec![
                     stateset_core::CreateJournalEntryLine::debit(
                         expense_account_id,
@@ -624,6 +654,7 @@ impl PgFixedAssetRepository {
                 source_document_type: Some("fixed_asset_depreciation".to_string()),
                 source_document_id: Some(asset.id),
                 auto_post: Some(true),
+                fx: None,
             },
             "system",
         )

@@ -6,6 +6,162 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+The ERP fix plan: 59 corrections so that documents move stock, the ledger
+posts the right accounts, payables and receivables settle their balances,
+and finance writes carry an authenticated identity. Back up and reconcile
+existing stores before upgrading; see
+[docs/src/guides/erp-upgrade.md](docs/src/guides/erp-upgrade.md).
+
+### Breaking changes
+
+- **Finance amounts are decimal strings** in the Node binding and the
+  finance MCP tools (`"125.50"`, not `125.5`), including invoice quantities,
+  finance rates and cost values. MCP refuses numeric money.
+- **Admin is required to approve, settle or post.** HTTP routes for bill and
+  payment-run approval and processing, AP payments and voids, AR settlements
+  and write-offs, journal posting, voids, reversals and period control,
+  posting settings, asset postings, prepayments, vendor credits, payment
+  obligations, credit and cost accounting use a new `manage_finance` action
+  class (Admin level). That includes 42 routes 1.40.1 allowed at operator
+  level, such as voiding and reversing journal entries, month-end close and
+  voiding AP payments. Customer principals are refused it. Request-body
+  `approved_by`, `posted_by`, `closed_by` and `locked_by` no longer set audit
+  identity; the authenticated actor does. Bills and payment runs record
+  their maker and refuse self-approval. The matching MCP tools need the
+  `admin` permission.
+- **ERP HTTP writes need an `Idempotency-Key`.** Missing keys return 428 and
+  conflicting reuse returns 422.
+- **Purchase-order receiving needs warehouse and receiving-location IDs.**
+  Work orders need source and output stock routing before they start
+  (`configure_work_order_stock` routes existing ones). Picked stock stays on
+  hand in a staging location until it ships.
+- **Stricter documents.** Invoices and PO lines are editable only in draft
+  or pending. Payments, write-offs and ledger postings need an issued
+  invoice. A payment applies only if it is captured, from the same customer
+  and in the invoice's currency. Published BOMs need a new revision, two
+  BOMs of one product can't share a revision, and GL periods may not
+  overlap. Invalid lifecycle transitions return conflicts.
+- **Stock and cost custody.** Stock that arrived without a cost can't be
+  issued once its SKU has a cost, and a lot must hold physical stock to be
+  split, merged or transferred. Reconcile opening stock and placements
+  before enabling writes.
+- **Error classes.** Applying a missing payment returns `NotFound`; applying
+  to a closed or voided invoice returns `Conflict`; a deleted stock location
+  returns `NotFound`.
+
+### Fixed
+
+- Stock follows the documents on both databases: transfer orders, work
+  orders, vendor returns, PO receipts, backorders and cycle counts post
+  through one transactional stock ledger. Cycle counts compare against
+  stored stock, put-aways check the receipt line, quarantined lots and
+  quality holds block picking, and the first Postgres put-away of a SKU no
+  longer loses a concurrent one.
+- Correct books: invoices post net sales, sales tax and shipping
+  separately; contract invoices credit unearned revenue; receipts post to
+  goods received not invoiced instead of cost of goods sold; reversed
+  entries stay in every report; depreciation is dated at each period end;
+  every posting keeps one currency with its historical rate; period close is
+  atomic and serialized against posting; inventory is valued by each SKU's
+  cost method.
+- Payables and receivables: prepayments and vendor credits settle the bill
+  they apply to; payment application is locked and validated; a partial
+  write-off writes off only its amount; bills with payments can't be
+  cancelled; customer credit limits are enforced; statements reconcile.
+- Postgres stock ledgers (physical, bin, lot, receiving, picking and cost
+  quantities) store exact quantities, like balances and reservations already
+  did (migration 131). Fractional quantities had been rounded to four
+  decimals and drifted between ledgers.
+- Stock posting no longer creates placeholder warehouses with an empty
+  address, which broke warehouse reads and data export.
+- The sequencer client sends agent key registrations as camelCase, the
+  sequencer's DTO.
+
+### Added
+
+- HTTP routes for cost accounting, customer credit, posting settings, period
+  reclose, account balances, receipts from purchase orders, put-away
+  assign, start and cancel, backorder allocation, lot transfer, adjust and
+  split, and work-order materials.
+- MCP tools to receive and put away goods, create and reverse journal
+  entries, close, lock, reopen and reclose periods, read and set posting
+  settings, run AP payment runs, apply AR payments and write-offs, and route
+  work orders. The finance and operations profiles are smoke-gated.
+- Admin screens to approve and pay bills, apply AR payments and credits,
+  write off and reverse, edit posting settings, and manage BOMs, production
+  batches and item costs.
+- Migrations: SQLite 102–123, Postgres 108–131.
+- `stateset_core::StateMachine`: one trait over the 25 status enums that
+  own a transition rule (order, cart, payment, refund, return, shipment,
+  subscription, purchase order, warranty claim, ...), with `next_states()`,
+  `is_terminal_state()`, `check_transition()` (the refusal names the allowed
+  next states) and `state_machine::catalog()`. It is derived from each
+  enum's existing `can_transition_to`, so no transition rule changes.
+- `explain_state_machine` MCP tool (core tier, read-only) and
+  `stateset explain state-machine`: list the lifecycles, read a full graph,
+  ask what can follow a status, or check a move and get the shortest legal
+  route. Generated from the Rust rules
+  (`cli/src/generated/state-machines.json`); a Rust test fails when it is
+  stale. Reference page: `docs/src/appendix/state-machines.md`.
+- `ClaimStatus`, `QuoteStatus` and `PurchaseStatus` gain
+  `can_transition_to`. The rule was a private table copied into both the
+  SQLite and Postgres repositories; both now call the one in
+  `stateset-core`. The accepted transitions are unchanged.
+
+## [1.40.1] - 2026-10-27
+
+### Security
+
+- The generated storefront pins Next.js 16.4.2 (was 16.3.8). 16.3.8 is
+  affected by GHSA-2464-fhr4-w9xw (critical: unauthenticated remote code
+  execution through the Image Optimization API with SVG files) and
+  GHSA-p3m5-59mp-jv5r (high: App Router denial of service through Server
+  Actions), both fixed in 16.4.1. Storefronts generated by
+  `create-stateset-app` 1.39.0 or earlier should upgrade `next` and
+  `@next/env`.
+- `@stateset/cli` and the admin app move to zod 4 (^4.6.6). zod < 4.6.6 is
+  affected by GHSA-mrhx-c7xc-m3w5 (high: crafted input can exhaust memory
+  while parsing), and every MCP tool call is parsed with zod. MCP tool
+  schemas are now generated by zod 4's own converter, and agent-facing
+  validation messages are unchanged. Storefronts generated by
+  `create-stateset-app` depend on zod ^4.6.6 too (the AI SDK's peer range
+  accepts it); existing storefronts should upgrade `zod`.
+- The MCP server behind `stateset-mcp` and `stateset-mcp-http` no longer
+  treats a zod object schema as already-converted JSON Schema. Under zod 4
+  that would have registered such tools without validating their input.
+- The built-in Claude chat agent (`stateset` chat) gets only the StateSet
+  MCP tools. It runs with permissions bypassed, and Claude Code's built-in
+  tools (Bash, file edits, web fetch) were available to it, so commerce data
+  in tool results could have prompt-injected it. It also no longer loads the
+  host's Claude Code settings, hooks or MCP servers. The bundled
+  `@anthropic-ai/claude-agent-sdk` moves to 0.3, which restores the field
+  descriptions and constraints of the agent's tools under zod 4.
+- `ctutils` 0.4.4 (RUSTSEC-2026-0385: masks generated and `u128` values
+  compared in non-constant time; reached through the post-quantum `ml-dsa`
+  and `ml-kem` in `stateset-crypto`) and `tokio` 1.53.3 (RUSTSEC-2026-0386:
+  unsound `AsyncFd` constructors), in the workspace and the standalone PHP,
+  Ruby and fuzz lockfiles.
+- `undici` 6.29.1, `body-parser` and `ip-address` (npm audit).
+- The MCP SDK v2 packages behind `stateset-mcp-http` move to
+  `@modelcontextprotocol/node` 2.1.2 and `server`/`core` 2.4.0.
+  `@modelcontextprotocol/node` 2.0.0 is affected by GHSA-f897-62hf-6gxq
+  (high: HTTP server transports and handlers did not limit request body
+  size or JSON-RPC batch length).
+
+### Changed
+
+- The PHP and Ruby binding builds run on Ubuntu 24.04. `ubuntu-latest` moved
+  to Ubuntu 26.04, whose LLVM 20-22 broke bindgen for `ext-php-rs` and
+  `rb-sys`. The Ruby binding's `rb-sys` crate moves to 0.9.130, matching its
+  gem.
+
+### Fixed
+
+- `stateset-db` caps `scheduled-thread-pool` (r2d2's pool) below 0.2.8. That
+  release needs `parking_lot` 0.13, which requires Rust 1.95, and declares no
+  `rust-version`, so a fresh `cargo add stateset-sdk` failed to build on the
+  supported toolchains (MSRV 1.88).
+
 ## [1.40.0] - 2026-10-22
 
 ### Security

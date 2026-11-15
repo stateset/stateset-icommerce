@@ -75,6 +75,7 @@ async fn postgres_list_journal_entries_applies_account_and_search_filters() {
         source_document_type: None,
         source_document_id: None,
         auto_post: Some(false),
+        fx: None,
     })
     .await
     .expect("create entry A");
@@ -89,6 +90,7 @@ async fn postgres_list_journal_entries_applies_account_and_search_filters() {
         source_document_type: None,
         source_document_id: None,
         auto_post: Some(false),
+        fx: None,
     })
     .await
     .expect("create entry B");

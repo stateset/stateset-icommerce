@@ -21,6 +21,9 @@ pub struct PgWorkOrderRepository {
 
 #[derive(FromRow)]
 struct WorkOrderRow {
+    source_location_id: Option<i32>,
+    output_location_id: Option<i32>,
+    output_sku: Option<String>,
     id: Uuid,
     work_order_number: String,
     product_id: Uuid,
@@ -83,6 +86,9 @@ impl PgWorkOrderRepository {
         materials: Vec<WorkOrderMaterial>,
     ) -> Result<WorkOrder> {
         let WorkOrderRow {
+            source_location_id,
+            output_location_id,
+            output_sku,
             id,
             work_order_number,
             product_id,
@@ -114,6 +120,21 @@ impl PgWorkOrderRepository {
         })?;
 
         Ok(WorkOrder {
+            stock: match (source_location_id, output_location_id, output_sku) {
+                (None, None, None) => None,
+                (Some(source_location_id), Some(output_location_id), Some(output_sku)) => {
+                    Some(stateset_core::WorkOrderStock {
+                        source_location_id,
+                        output_location_id,
+                        output_sku,
+                    })
+                }
+                _ => {
+                    return Err(CommerceError::DatabaseError(
+                        "Incomplete work-order stock routing".into(),
+                    ));
+                }
+            },
             id,
             work_order_number,
             product_id: product_id.into(),
@@ -297,64 +318,10 @@ impl PgWorkOrderRepository {
     /// Create work order (async)
     pub async fn create_async(&self, input: CreateWorkOrder) -> Result<WorkOrder> {
         let id = Uuid::new_v4();
-        let work_order_number = WorkOrder::generate_work_order_number();
-        let now = Utc::now();
-        let priority = input.priority.unwrap_or(WorkOrderPriority::Normal);
-
-        sqlx::query(
-            r#"
-            INSERT INTO manufacturing_work_orders (id, work_order_number, product_id, bom_id, work_center_id, assigned_to, status, priority, quantity_to_build, quantity_completed, scheduled_start, scheduled_end, notes, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, 'planned', $7, $8, 0, $9, $10, $11, $12, $13)
-            "#,
-        )
-        .bind(id)
-        .bind(&work_order_number)
-        .bind(input.product_id)
-        .bind(input.bom_id)
-        .bind(&input.work_center_id)
-        .bind(input.assigned_to)
-        .bind(priority.to_string())
-        .bind(input.quantity_to_build)
-        .bind(input.scheduled_start)
-        .bind(input.scheduled_end)
-        .bind(&input.notes)
-        .bind(now)
-        .bind(now)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        // Create tasks if provided
-        let mut tasks = Vec::new();
-        if let Some(task_inputs) = input.tasks {
-            for task_input in task_inputs {
-                let task = self.add_task_async(id, task_input).await?;
-                tasks.push(task);
-            }
-        }
-
-        Ok(WorkOrder {
-            id,
-            work_order_number,
-            product_id: input.product_id,
-            bom_id: input.bom_id,
-            work_center_id: input.work_center_id,
-            assigned_to: input.assigned_to,
-            status: WorkOrderStatus::Planned,
-            priority,
-            quantity_to_build: input.quantity_to_build,
-            quantity_completed: Decimal::ZERO,
-            scheduled_start: input.scheduled_start,
-            scheduled_end: input.scheduled_end,
-            actual_start: None,
-            actual_end: None,
-            notes: input.notes,
-            tasks,
-            materials: vec![],
-            version: 1,
-            created_at: now,
-            updated_at: now,
-        })
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::work_order_stock::create(&mut tx, id, &input).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     /// Get work order by ID (async)
@@ -399,31 +366,9 @@ impl PgWorkOrderRepository {
 
     /// Update work order (async)
     pub async fn update_async(&self, id: Uuid, input: UpdateWorkOrder) -> Result<WorkOrder> {
-        let existing = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
-        let now = Utc::now();
-
-        let new_status = input.status.unwrap_or(existing.status);
-        let new_priority = input.priority.unwrap_or(existing.priority);
-        let new_assigned_to = input.assigned_to.or(existing.assigned_to);
-        let new_notes = input.notes.or(existing.notes);
-        let new_work_center_id = input.work_center_id.or(existing.work_center_id);
-
-        sqlx::query(
-            "UPDATE manufacturing_work_orders SET status = $1, priority = $2, assigned_to = $3, work_center_id = $4, scheduled_start = $5, scheduled_end = $6, notes = $7, updated_at = $8 WHERE id = $9",
-        )
-        .bind(new_status.to_string())
-        .bind(new_priority.to_string())
-        .bind(new_assigned_to)
-        .bind(&new_work_center_id)
-        .bind(input.scheduled_start.or(existing.scheduled_start))
-        .bind(input.scheduled_end.or(existing.scheduled_end))
-        .bind(&new_notes)
-        .bind(now)
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::work_order_stock::update(&mut tx, id, &input).await?;
+        tx.commit().await.map_err(map_db_error)?;
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -513,118 +458,55 @@ impl PgWorkOrderRepository {
 
     /// Delete work order (async) - cancels
     pub async fn delete_async(&self, id: Uuid) -> Result<()> {
-        sqlx::query("UPDATE manufacturing_work_orders SET status = 'cancelled', updated_at = $1 WHERE id = $2")
-            .bind(Utc::now())
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
-        Ok(())
+        self.cancel_async(id).await.map(|_| ())
     }
 
     /// Start work order (async)
     pub async fn start_async(&self, id: Uuid) -> Result<WorkOrder> {
-        let now = Utc::now();
-
-        sqlx::query("UPDATE manufacturing_work_orders SET status = 'in_progress', actual_start = $1, updated_at = $2 WHERE id = $3")
-            .bind(now)
-            .bind(now)
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(map_db_error)?;
-
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let inventory = super::inventory::PgInventoryRepository::new(self.pool.clone());
+        super::work_order_stock::transition(&mut tx, &inventory, id, WorkOrderStatus::InProgress)
+            .await?;
+        tx.commit().await.map_err(map_db_error)?;
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     /// Complete work order (async)
     pub async fn complete_async(&self, id: Uuid, quantity_completed: Decimal) -> Result<WorkOrder> {
-        if quantity_completed <= Decimal::ZERO {
-            return Err(CommerceError::ValidationError(
-                "Completed quantity must be greater than zero".to_string(),
-            ));
-        }
-
-        let now = Utc::now();
-
-        // Read-modify-write of `quantity_completed` inside one transaction, with
-        // `SELECT … FOR UPDATE` locking the row, so two concurrent `complete`
-        // calls serialize instead of both reading the same starting quantity and
-        // one overwriting the other (a lost update that under-counts completed
-        // units).
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-
-        let existing: (Decimal, Decimal, Option<DateTime<Utc>>) = sqlx::query_as(
-            "SELECT quantity_completed, quantity_to_build, actual_end
-             FROM manufacturing_work_orders
-             WHERE id = $1 FOR UPDATE",
-        )
-        .bind(id)
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(map_db_error)?
-        .ok_or(CommerceError::NotFound)?;
-
-        let new_quantity_completed =
-            existing.0.checked_add(quantity_completed).ok_or_else(|| {
-                CommerceError::ValidationError(
-                    "Completed quantity exceeds decimal range".to_string(),
-                )
-            })?;
-        if new_quantity_completed > existing.1 {
-            return Err(CommerceError::ValidationError(
-                "Completed quantity would exceed quantity to build".to_string(),
-            ));
-        }
-        let is_complete = new_quantity_completed >= existing.1;
-        let new_status = if is_complete { "completed" } else { "partially_completed" };
-        let new_actual_end = if is_complete { Some(now) } else { existing.2 };
-
-        sqlx::query(
-            "UPDATE manufacturing_work_orders
-             SET quantity_completed = $1, status = $2, actual_end = $3, updated_at = $4
-             WHERE id = $5",
-        )
-        .bind(new_quantity_completed)
-        .bind(new_status)
-        .bind(new_actual_end)
-        .bind(now)
-        .bind(id)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
+        super::work_order_stock::complete(&mut tx, id, quantity_completed).await?;
         tx.commit().await.map_err(map_db_error)?;
-
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     /// Hold work order (async)
     pub async fn hold_async(&self, id: Uuid) -> Result<WorkOrder> {
-        self.update_async(
-            id,
-            UpdateWorkOrder { status: Some(WorkOrderStatus::OnHold), ..Default::default() },
-        )
-        .await
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let inventory = super::inventory::PgInventoryRepository::new(self.pool.clone());
+        super::work_order_stock::transition(&mut tx, &inventory, id, WorkOrderStatus::OnHold)
+            .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     /// Resume work order (async)
     pub async fn resume_async(&self, id: Uuid) -> Result<WorkOrder> {
-        self.update_async(
-            id,
-            UpdateWorkOrder { status: Some(WorkOrderStatus::InProgress), ..Default::default() },
-        )
-        .await
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let inventory = super::inventory::PgInventoryRepository::new(self.pool.clone());
+        super::work_order_stock::transition(&mut tx, &inventory, id, WorkOrderStatus::InProgress)
+            .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     /// Cancel work order (async)
     pub async fn cancel_async(&self, id: Uuid) -> Result<WorkOrder> {
-        self.update_async(
-            id,
-            UpdateWorkOrder { status: Some(WorkOrderStatus::Cancelled), ..Default::default() },
-        )
-        .await
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let inventory = super::inventory::PgInventoryRepository::new(self.pool.clone());
+        super::work_order_stock::transition(&mut tx, &inventory, id, WorkOrderStatus::Cancelled)
+            .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     /// Add task (async)
@@ -765,44 +647,11 @@ impl PgWorkOrderRepository {
         work_order_id: Uuid,
         material: AddWorkOrderMaterial,
     ) -> Result<WorkOrderMaterial> {
-        if material.quantity <= Decimal::ZERO {
-            return Err(CommerceError::ValidationError(
-                "Reserved material quantity must be positive".into(),
-            ));
-        }
-        let id = Uuid::new_v4();
-        let now = Utc::now();
-
-        sqlx::query(
-            r#"
-            INSERT INTO manufacturing_work_order_materials (id, work_order_id, component_id, component_sku, component_name, reserved_quantity, consumed_quantity, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8)
-            "#,
-        )
-        .bind(id)
-        .bind(work_order_id)
-        .bind(material.component_id)
-        .bind(&material.component_sku)
-        .bind(&material.component_name)
-        .bind(material.quantity)
-        .bind(now)
-        .bind(now)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        Ok(WorkOrderMaterial {
-            id,
-            work_order_id,
-            component_id: material.component_id,
-            component_sku: material.component_sku,
-            component_name: material.component_name,
-            reserved_quantity: material.quantity,
-            consumed_quantity: Decimal::ZERO,
-            inventory_reservation_id: None,
-            created_at: now,
-            updated_at: now,
-        })
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let material_id =
+            super::work_order_stock::add_material(&mut tx, work_order_id, &material).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        self.get_material_by_id(material_id).await
     }
 
     /// Consume material (async)
@@ -811,31 +660,9 @@ impl PgWorkOrderRepository {
         material_id: Uuid,
         quantity: Decimal,
     ) -> Result<WorkOrderMaterial> {
-        if quantity <= Decimal::ZERO {
-            return Err(CommerceError::ValidationError(
-                "Consumed material quantity must be positive".into(),
-            ));
-        }
-        // The arithmetic and cap live in one UPDATE, so concurrent consumers
-        // serialize on the row and cannot both spend the same reservation.
-        let updated = sqlx::query(
-            "UPDATE manufacturing_work_order_materials
-             SET consumed_quantity = consumed_quantity + $1, updated_at = $2
-             WHERE id = $3 AND consumed_quantity + $1 <= reserved_quantity",
-        )
-        .bind(quantity)
-        .bind(Utc::now())
-        .bind(material_id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-        if updated.rows_affected() == 0 {
-            self.get_material_by_id(material_id).await?;
-            return Err(CommerceError::ValidationError(
-                "Cannot consume more material than reserved".into(),
-            ));
-        }
-
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::work_order_stock::consume_material(&mut tx, material_id, quantity).await?;
+        tx.commit().await.map_err(map_db_error)?;
         self.get_material_by_id(material_id).await
     }
 
@@ -916,107 +743,19 @@ impl PgWorkOrderRepository {
     ) -> Result<Vec<WorkOrder>> {
         validate_batch_size(&inputs)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let mut work_orders = Vec::with_capacity(inputs.len());
 
+        let mut ids_out = Vec::with_capacity(inputs.len());
         for input in inputs {
             let id = Uuid::new_v4();
-            let work_order_number = WorkOrder::generate_work_order_number();
-            let now = Utc::now();
-            let priority = input.priority.unwrap_or(WorkOrderPriority::Normal);
-
-            sqlx::query(
-                r#"
-                INSERT INTO manufacturing_work_orders (id, work_order_number, product_id, bom_id, work_center_id, assigned_to, status, priority, quantity_to_build, quantity_completed, scheduled_start, scheduled_end, notes, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, 'planned', $7, $8, 0, $9, $10, $11, $12, $13)
-                "#,
-            )
-            .bind(id)
-            .bind(&work_order_number)
-            .bind(input.product_id)
-            .bind(input.bom_id)
-            .bind(&input.work_center_id)
-            .bind(input.assigned_to)
-            .bind(priority.to_string())
-            .bind(input.quantity_to_build)
-            .bind(input.scheduled_start)
-            .bind(input.scheduled_end)
-            .bind(&input.notes)
-            .bind(now)
-            .bind(now)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            // Create tasks if provided
-            let mut tasks = Vec::new();
-            if let Some(task_inputs) = input.tasks {
-                for task_input in task_inputs {
-                    let task_id = Uuid::new_v4();
-                    let sequence = task_input.sequence.unwrap_or(1);
-
-                    sqlx::query(
-                        r#"
-                        INSERT INTO manufacturing_work_order_tasks (id, work_order_id, sequence, task_name, status, estimated_hours, assigned_to, notes, created_at, updated_at)
-                        VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8, $9)
-                        "#,
-                    )
-                    .bind(task_id)
-                    .bind(id)
-                    .bind(sequence)
-                    .bind(&task_input.task_name)
-                    .bind(task_input.estimated_hours)
-                    .bind(task_input.assigned_to)
-                    .bind(&task_input.notes)
-                    .bind(now)
-                    .bind(now)
-                    .execute(tx.as_mut())
-                    .await
-                    .map_err(map_db_error)?;
-
-                    tasks.push(WorkOrderTask {
-                        id: task_id,
-                        work_order_id: id,
-                        sequence,
-                        task_name: task_input.task_name,
-                        status: TaskStatus::Pending,
-                        estimated_hours: task_input.estimated_hours,
-                        actual_hours: None,
-                        assigned_to: task_input.assigned_to,
-                        started_at: None,
-                        completed_at: None,
-                        notes: task_input.notes,
-                        created_at: now,
-                        updated_at: now,
-                    });
-                }
-            }
-
-            work_orders.push(WorkOrder {
-                id,
-                work_order_number,
-                product_id: input.product_id,
-                bom_id: input.bom_id,
-                work_center_id: input.work_center_id,
-                assigned_to: input.assigned_to,
-                status: WorkOrderStatus::Planned,
-                priority,
-                quantity_to_build: input.quantity_to_build,
-                quantity_completed: Decimal::ZERO,
-                scheduled_start: input.scheduled_start,
-                scheduled_end: input.scheduled_end,
-                actual_start: None,
-                actual_end: None,
-                notes: input.notes,
-                tasks,
-                materials: vec![],
-                version: 1,
-                created_at: now,
-                updated_at: now,
-            });
+            super::work_order_stock::create(&mut tx, id, &input).await?;
+            ids_out.push(id);
         }
-
         tx.commit().await.map_err(map_db_error)?;
-        Ok(work_orders)
+        let mut result = Vec::with_capacity(ids_out.len());
+        for id in ids_out {
+            result.push(self.get_async(id).await?.ok_or(CommerceError::NotFound)?);
+        }
+        Ok(result)
     }
 
     /// Update multiple work orders in a batch (async, non-atomic)
@@ -1044,91 +783,18 @@ impl PgWorkOrderRepository {
     ) -> Result<Vec<WorkOrder>> {
         validate_batch_size(&updates)?;
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let mut work_orders = Vec::with_capacity(updates.len());
-        let now = Utc::now();
 
+        let mut ids_out = Vec::with_capacity(updates.len());
         for (id, input) in updates {
-            // Get existing work order with lock
-            let existing_row = sqlx::query_as::<_, WorkOrderRow>(
-                "SELECT * FROM manufacturing_work_orders WHERE id = $1 FOR UPDATE",
-            )
-            .bind(id)
-            .fetch_optional(tx.as_mut())
-            .await
-            .map_err(map_db_error)?
-            .ok_or(CommerceError::NotFound)?;
-
-            let status_str = existing_row.status.clone();
-            let priority_str = existing_row.priority.clone();
-            let existing_status: WorkOrderStatus = status_str.parse().map_err(|e| {
-                CommerceError::DatabaseError(format!(
-                    "Invalid work_order.status '{}': {}",
-                    status_str, e
-                ))
-            })?;
-            let existing_priority: WorkOrderPriority = priority_str.parse().map_err(|e| {
-                CommerceError::DatabaseError(format!(
-                    "Invalid work_order.priority '{}': {}",
-                    priority_str, e
-                ))
-            })?;
-            let new_status = input.status.unwrap_or(existing_status);
-            let new_priority = input.priority.unwrap_or(existing_priority);
-            let new_assigned_to = input.assigned_to.or(existing_row.assigned_to);
-            let new_notes = input.notes.or(existing_row.notes.clone());
-            let new_work_center_id = input.work_center_id.or(existing_row.work_center_id.clone());
-
-            sqlx::query(
-                "UPDATE manufacturing_work_orders SET status = $1, priority = $2, assigned_to = $3, work_center_id = $4, scheduled_start = $5, scheduled_end = $6, notes = $7, updated_at = $8 WHERE id = $9",
-            )
-            .bind(new_status.to_string())
-            .bind(new_priority.to_string())
-            .bind(new_assigned_to)
-            .bind(&new_work_center_id)
-            .bind(input.scheduled_start.or(existing_row.scheduled_start))
-            .bind(input.scheduled_end.or(existing_row.scheduled_end))
-            .bind(&new_notes)
-            .bind(now)
-            .bind(id)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            // Fetch updated work order
-            let updated_row = sqlx::query_as::<_, WorkOrderRow>(
-                "SELECT * FROM manufacturing_work_orders WHERE id = $1",
-            )
-            .bind(id)
-            .fetch_one(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            let tasks = sqlx::query_as::<_, WorkOrderTaskRow>(
-                "SELECT * FROM manufacturing_work_order_tasks WHERE work_order_id = $1 ORDER BY sequence",
-            )
-            .bind(id)
-            .fetch_all(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            let materials = sqlx::query_as::<_, WorkOrderMaterialRow>(
-                "SELECT * FROM manufacturing_work_order_materials WHERE work_order_id = $1",
-            )
-            .bind(id)
-            .fetch_all(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-            let mut task_models = Vec::with_capacity(tasks.len());
-            for task in tasks {
-                task_models.push(Self::row_to_task(task)?);
-            }
-            let material_models = materials.into_iter().map(Self::row_to_material).collect();
-            work_orders.push(Self::row_to_work_order(updated_row, task_models, material_models)?);
+            super::work_order_stock::update(&mut tx, id, &input).await?;
+            ids_out.push(id);
         }
-
         tx.commit().await.map_err(map_db_error)?;
-        Ok(work_orders)
+        let mut result = Vec::with_capacity(ids_out.len());
+        for id in ids_out {
+            result.push(self.get_async(id).await?.ok_or(CommerceError::NotFound)?);
+        }
+        Ok(result)
     }
 
     /// Delete multiple work orders in a batch (async, non-atomic)
@@ -1149,24 +815,19 @@ impl PgWorkOrderRepository {
     /// Delete multiple work orders in a batch atomically (async)
     pub async fn delete_batch_atomic_async(&self, ids: Vec<Uuid>) -> Result<()> {
         validate_batch_size(&ids)?;
-        if ids.is_empty() {
-            return Ok(());
-        }
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let now = Utc::now();
-
-        // Match single-delete semantics: soft-cancel work orders atomically.
-        sqlx::query(
-            "UPDATE manufacturing_work_orders
-             SET status = 'cancelled', updated_at = $1
-             WHERE id = ANY($2)",
-        )
-        .bind(now)
-        .bind(&ids)
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-
+        let inventory = super::inventory::PgInventoryRepository::new(self.pool.clone());
+        let mut ids_out = Vec::with_capacity(ids.len());
+        for id in ids {
+            super::work_order_stock::transition(
+                &mut tx,
+                &inventory,
+                id,
+                WorkOrderStatus::Cancelled,
+            )
+            .await?;
+            ids_out.push(id);
+        }
         tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }

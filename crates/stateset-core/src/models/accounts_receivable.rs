@@ -440,6 +440,7 @@ pub struct StatementLineItem {
 /// Customer statement
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomerStatement {
+    pub currency: stateset_primitives::CurrencyCode,
     pub customer_id: Uuid,
     pub customer_name: String,
     pub customer_email: Option<String>,
@@ -519,9 +520,12 @@ pub struct ApplyCreditMemo {
 /// Request to generate a customer statement
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GenerateStatementRequest {
+    /// Select a denomination; required when the customer has mixed currencies.
+    pub currency: Option<stateset_primitives::CurrencyCode>,
     pub customer_id: Uuid,
     pub period_start: Option<DateTime<Utc>>,
     pub period_end: Option<DateTime<Utc>>,
+    /// Retained for compatibility. Complete statements always include paid activity.
     pub include_paid_invoices: Option<bool>,
 }
 

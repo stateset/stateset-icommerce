@@ -3,7 +3,7 @@
 use super::map_db_error;
 use super::resolve_currency_with_executor;
 use chrono::{DateTime, Utc};
-use rust_decimal::Decimal;
+use rust_decimal::{Decimal, RoundingStrategy};
 use sqlx::{FromRow, postgres::PgPool};
 use stateset_core::{
     BatchResult, CommerceError, CreateInvoice, CreateInvoiceItem, CurrencyCode, CustomerId,
@@ -177,6 +177,24 @@ pub struct PgInvoiceRepository {
 }
 
 impl PgInvoiceRepository {
+    async fn require_draft_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+    ) -> Result<()> {
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM invoices WHERE id=$1 FOR UPDATE")
+                .bind(id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if status != "draft" {
+            return Err(CommerceError::Conflict(
+                "Only draft invoices can be edited; use a credit memo after issue".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -284,8 +302,9 @@ impl PgInvoiceRepository {
                 )
             },
             |column| {
+                let value = if column == "sent_at" { "COALESCE(sent_at, $2)" } else { "$2" };
                 format!(
-                    "UPDATE invoices SET status = $1, {column} = $2, updated_at = $2
+                    "UPDATE invoices SET status = $1, {column} = {value}, updated_at = $2
                      WHERE id = $3 AND {guard_sql}"
                 )
             },
@@ -305,18 +324,54 @@ impl PgInvoiceRepository {
             )));
         }
 
+        if new_status == InvoiceStatus::Sent {
+            super::credit_control::check_invoice(&mut tx, id).await?;
+        }
+        if new_status == InvoiceStatus::Voided {
+            let (total, balance) = sqlx::query_as::<_, (Decimal, Decimal)>(
+                "SELECT total,balance_due FROM invoices WHERE id=$1",
+            )
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+            if total != balance {
+                return Err(CommerceError::Conflict(
+                    "Reverse settlements before voiding an invoice".into(),
+                ));
+            }
+
+            let credits: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ar_credit_memos WHERE original_invoice_id = $1 AND status != 'voided'").bind(id).fetch_one(tx.as_mut()).await.map_err(map_db_error)?;
+            if credits > 0 {
+                return Err(CommerceError::Conflict(
+                    "Void the invoice's credit memos before voiding the invoice".into(),
+                ));
+            }
+            super::ledger_reversal::reverse_source(
+                &mut tx,
+                &super::general_ledger::PgGeneralLedgerRepository::new(self.pool.clone()),
+                "invoice",
+                id,
+                now.date_naive(),
+            )
+            .await?;
+        }
         let invoice = Self::fetch_invoice_in_tx(tx.as_mut(), id).await?;
         tx.commit().await.map_err(map_db_error)?;
         Ok(invoice)
     }
 
-    async fn recalculate_async(&self, id: Uuid) -> Result<()> {
+    async fn recalculate_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        id: Uuid,
+    ) -> Result<()> {
+        Self::require_draft_tx(tx, id).await?;
         // Calculate subtotal from items
         let subtotal: Decimal = sqlx::query_scalar(
             "SELECT COALESCE(SUM(line_total), 0) FROM invoice_items WHERE invoice_id = $1",
         )
         .bind(id)
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -325,7 +380,7 @@ impl PgInvoiceRepository {
             "SELECT discount_amount, tax_amount, shipping_amount, amount_paid FROM invoices WHERE id = $1",
         )
         .bind(id)
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -341,7 +396,7 @@ impl PgInvoiceRepository {
         .bind(balance_due)
         .bind(Utc::now())
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
@@ -498,7 +553,9 @@ impl PgInvoiceRepository {
     }
 
     pub async fn update_async(&self, id: Uuid, input: UpdateInvoice) -> Result<Invoice> {
-        let invoice = self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::require_draft_tx(&mut tx, id).await?;
+        let invoice = Self::fetch_invoice_in_tx(tx.as_mut(), id).await?;
         let now = Utc::now();
 
         sqlx::query(
@@ -530,13 +587,15 @@ impl PgInvoiceRepository {
         .bind(input.footer.or(invoice.footer))
         .bind(now)
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
-        self.recalculate_async(id).await?;
+        Self::recalculate_tx(&mut tx, id).await?;
 
-        self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)
+        let invoice = Self::fetch_invoice_in_tx(tx.as_mut(), id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(invoice)
     }
 
     pub async fn list_async(&self, filter: InvoiceFilter) -> Result<Vec<Invoice>> {
@@ -723,7 +782,7 @@ impl PgInvoiceRepository {
         self.guarded_status_change_async(
             id,
             InvoiceStatus::Sent,
-            &format!("status IN {OPEN_STATUS_SQL_LIST}"),
+            "status IN ('draft','sent','viewed')",
             Some("sent_at"),
             "send",
         )
@@ -755,6 +814,9 @@ impl PgInvoiceRepository {
         id: Uuid,
         payment: RecordInvoicePayment,
     ) -> Result<Invoice> {
+        if payment.payment_id.is_some_and(|id| id.is_nil()) {
+            return Err(CommerceError::ValidationError("Payment ID cannot be nil".to_string()));
+        }
         if payment.amount <= Decimal::ZERO {
             return Err(CommerceError::ValidationError(
                 "Invoice payment amount must be positive".to_string(),
@@ -768,7 +830,7 @@ impl PgInvoiceRepository {
         // payments on the same invoice serialize (each reads the prior payment's
         // committed total) rather than racing on a stale read and losing a
         // payment — matching the refund path's `FOR UPDATE` hardening.
-        let (status, total, amount_paid, direct_amount_paid): (String, Decimal, Decimal, Decimal) =
+        let (status, _total, amount_paid, direct_amount_paid): (String, Decimal, Decimal, Decimal) =
             sqlx::query_as(
                 "SELECT status, total, amount_paid, direct_amount_paid
                  FROM invoices WHERE id = $1 FOR UPDATE",
@@ -785,8 +847,8 @@ impl PgInvoiceRepository {
         // retry cannot slip between them. A NULL payment_id records nothing and
         // keeps the old behavior.
         if let Some(payment_id) = payment.payment_id {
-            let already: Option<Uuid> = sqlx::query_scalar(
-                "SELECT payment_id FROM invoice_direct_payments
+            let already: Option<Decimal> = sqlx::query_scalar(
+                "SELECT amount FROM invoice_direct_payments
                  WHERE invoice_id = $1 AND payment_id = $2",
             )
             .bind(id)
@@ -794,7 +856,16 @@ impl PgInvoiceRepository {
             .fetch_optional(tx.as_mut())
             .await
             .map_err(map_db_error)?;
-            if already.is_some() {
+            if let Some(recorded) = already {
+                if recorded
+                    != payment
+                        .amount
+                        .round_dp_with_strategy(2, RoundingStrategy::MidpointAwayFromZero)
+                {
+                    return Err(CommerceError::ValidationError(
+                        "Payment ID is already bound to a different amount".to_string(),
+                    ));
+                }
                 // Return the invoice unchanged: the payment already landed.
                 let invoice = Self::fetch_invoice_in_tx(tx.as_mut(), id).await?;
                 tx.commit().await.map_err(map_db_error)?;
@@ -806,19 +877,17 @@ impl PgInvoiceRepository {
         // or written-off invoice would reopen a balance the ledger has already
         // disposed of. Same guard (and same terminal set) as the AR
         // payment/credit-memo applications.
-        if is_terminal(&status) {
+        if status == "draft" || is_terminal(&status) {
             return Err(CommerceError::ValidationError(format!(
                 "Cannot record a payment on invoice {id} with status {status}"
             )));
         }
 
-        // Cap the payment at what is still owed. `balance_due` is derived
-        // (total - amount_paid) by both this path and the AR recalculation, so
-        // deriving it from the columns already read keeps the bound in step
-        // with credit memos and applications. Without this an overpayment drove
-        // `balance_due` negative, which corrupts AR aging, statements and the
-        // recalculation invariant.
-        let remaining = total - amount_paid;
+        let remaining: Decimal = sqlx::query_scalar("SELECT balance_due FROM invoices WHERE id=$1")
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
         if payment.amount > remaining {
             return Err(CommerceError::ValidationError(format!(
                 "Invoice payment amount ({}) exceeds invoice {id} balance due ({remaining})",
@@ -831,7 +900,7 @@ impl PgInvoiceRepository {
         // track it separately: the AR recalculation rebuilds amount_paid as
         // direct_amount_paid + application sums and would otherwise erase it.
         let new_direct = direct_amount_paid + payment.amount;
-        let new_balance = total - new_amount_paid;
+        let new_balance = remaining - payment.amount;
 
         let new_status = if new_balance <= Decimal::ZERO {
             InvoiceStatus::Paid
@@ -862,7 +931,8 @@ impl PgInvoiceRepository {
         // Record the idempotency key only once the payment has actually been
         // applied: a rejected payment must not burn the key, so the caller can
         // retry with a corrected amount.
-        if let Some(payment_id) = payment.payment_id {
+        {
+            let payment_id = payment.payment_id.unwrap_or_else(Uuid::new_v4);
             sqlx::query(
                 "INSERT INTO invoice_direct_payments (invoice_id, payment_id, amount, recorded_at)
                  VALUES ($1, $2, $3, $4)",
@@ -881,6 +951,10 @@ impl PgInvoiceRepository {
         // read that could fail after the payment already committed — which would
         // surface an error for a payment that actually landed and tempt the
         // caller to retry and double-pay.
+        super::accounts_receivable::PgAccountsReceivableRepository::recalculate_invoice_tx(
+            &mut tx, id,
+        )
+        .await?;
         let invoice = Self::fetch_invoice_in_tx(tx.as_mut(), id).await?;
 
         tx.commit().await.map_err(map_db_error)?;
@@ -902,17 +976,26 @@ impl PgInvoiceRepository {
     }
 
     pub async fn write_off_async(&self, id: Uuid) -> Result<Invoice> {
-        // Same allowlist as `void`: a collected (paid) invoice is not
-        // uncollectible, and a voided/already-written-off one has already been
-        // disposed of. Mirrors the AR `create_write_off` guard.
-        self.guarded_status_change_async(
-            id,
-            InvoiceStatus::WrittenOff,
-            &format!("status IN {OPEN_STATUS_SQL_LIST}"),
-            None,
-            "write off",
-        )
-        .await
+        let invoice = self.get_async(id).await?.ok_or(CommerceError::NotFound)?;
+        // The direct write-off keeps its contract: a closed invoice is a conflict
+        // that names its status. The receivables write-off does the rest.
+        if !crate::rules::invoices::open_for_write_off(invoice.status) {
+            return Err(CommerceError::Conflict(format!(
+                "Cannot write off invoice {} with status {}",
+                invoice.id, invoice.status
+            )));
+        }
+        let input = stateset_core::CreateWriteOff {
+            invoice_id: invoice.id.into(),
+            amount: invoice.balance_due,
+            reason: stateset_core::WriteOffReason::Uncollectible,
+            notes: Some("Invoice write-off".into()),
+            approved_by: None,
+        };
+        super::accounts_receivable::PgAccountsReceivableRepository::new(self.pool.clone())
+            .create_write_off_async(input)
+            .await?;
+        self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
 
     pub async fn dispute_async(&self, id: Uuid) -> Result<Invoice> {
@@ -935,6 +1018,9 @@ impl PgInvoiceRepository {
         invoice_id: Uuid,
         item: CreateInvoiceItem,
     ) -> Result<InvoiceItem> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::require_draft_tx(&mut tx, invoice_id).await?;
+
         let id = Uuid::new_v4();
         let now = Utc::now();
         let line_total = item.quantity * item.unit_price - item.discount_amount.unwrap_or_default()
@@ -962,16 +1048,18 @@ impl PgInvoiceRepository {
         .bind(item.sort_order.unwrap_or(0))
         .bind(now)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
         let row: InvoiceItemRow = sqlx::query_as("SELECT * FROM invoice_items WHERE id = $1")
             .bind(id)
-            .fetch_one(&self.pool)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
+        Self::recalculate_tx(&mut tx, invoice_id).await?;
+        tx.commit().await.map_err(map_db_error)?;
         Ok(row.into())
     }
 
@@ -980,6 +1068,15 @@ impl PgInvoiceRepository {
         item_id: Uuid,
         item: CreateInvoiceItem,
     ) -> Result<InvoiceItem> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let invoice_id: Uuid =
+            sqlx::query_scalar("SELECT invoice_id FROM invoice_items WHERE id=$1")
+                .bind(item_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        Self::require_draft_tx(&mut tx, invoice_id).await?;
+
         let now = Utc::now();
         let line_total = item.quantity * item.unit_price - item.discount_amount.unwrap_or_default()
             + item.tax_amount.unwrap_or_default();
@@ -1002,26 +1099,39 @@ impl PgInvoiceRepository {
         .bind(item.sort_order.unwrap_or(0))
         .bind(now)
         .bind(item_id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
         let row: InvoiceItemRow = sqlx::query_as("SELECT * FROM invoice_items WHERE id = $1")
             .bind(item_id)
-            .fetch_one(&self.pool)
+            .fetch_one(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
+        Self::recalculate_tx(&mut tx, invoice_id).await?;
+        tx.commit().await.map_err(map_db_error)?;
         Ok(row.into())
     }
 
     pub async fn remove_item_async(&self, item_id: Uuid) -> Result<()> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let invoice_id: Uuid =
+            sqlx::query_scalar("SELECT invoice_id FROM invoice_items WHERE id=$1")
+                .bind(item_id)
+                .fetch_one(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        Self::require_draft_tx(&mut tx, invoice_id).await?;
+
         sqlx::query("DELETE FROM invoice_items WHERE id = $1")
             .bind(item_id)
-            .execute(&self.pool)
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
 
+        Self::recalculate_tx(&mut tx, invoice_id).await?;
+        tx.commit().await.map_err(map_db_error)?;
         Ok(())
     }
 
@@ -1030,8 +1140,11 @@ impl PgInvoiceRepository {
     }
 
     pub async fn recalculate_invoice_async(&self, id: Uuid) -> Result<Invoice> {
-        self.recalculate_async(id).await?;
-        self.get_invoice_with_items(id).await?.ok_or(CommerceError::NotFound)
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::recalculate_tx(&mut tx, id).await?;
+        let invoice = Self::fetch_invoice_in_tx(tx.as_mut(), id).await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(invoice)
     }
 
     pub async fn get_overdue_async(&self) -> Result<Vec<Invoice>> {
@@ -1326,6 +1439,7 @@ impl PgInvoiceRepository {
         let now = Utc::now();
 
         for (id, input) in updates {
+            Self::require_draft_tx(&mut tx, id).await?;
             // Get existing invoice with lock
             let existing_row: InvoiceRow =
                 sqlx::query_as("SELECT * FROM invoices WHERE id = $1 FOR UPDATE")

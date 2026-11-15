@@ -322,6 +322,11 @@ pub(crate) fn record_lost_chargeback_tx(
     payment: &Payment,
     now: chrono::DateTime<chrono::Utc>,
 ) -> rusqlite::Result<Uuid> {
+    super::ar_settlement::require_unallocated(
+        tx,
+        payment.id.into_uuid(),
+        rust_decimal::Decimal::ZERO,
+    )?;
     let reversed = (payment.amount - payment.amount_refunded).max(rust_decimal::Decimal::ZERO);
     let id = Uuid::new_v4();
     let refund_number = generate_refund_number();
@@ -375,6 +380,7 @@ pub(crate) fn record_lost_chargeback_tx(
             None,
         ),
     )?;
+    super::ledger_payment::refund(tx, id)?;
     Ok(id)
 }
 
@@ -822,6 +828,7 @@ pub(crate) fn mark_completed_tx(
     if let Some(order_id) = order_id {
         sync_order_payment_status_tx(tx, &order_id, now)?;
     }
+    super::ledger_payment::payment(tx, id.into())?;
     Ok(())
 }
 
@@ -1038,6 +1045,12 @@ impl PaymentRepository for SqlitePaymentRepository {
             )?;
             if rows == 0 {
                 return Err(domain_err(transition_conflict(current, target)));
+            }
+            if target == PaymentTransactionStatus::Cancelled {
+                super::ledger_reversal::reverse_source(tx, "payment", id.into(), now.date_naive())?;
+            }
+            if target == PaymentTransactionStatus::Completed {
+                super::ledger_payment::payment(tx, id.into())?;
             }
             if let Some(disputed) = &chargeback {
                 record_lost_chargeback_tx(tx, disputed, now)?;
@@ -1409,6 +1422,11 @@ impl PaymentRepository for SqlitePaymentRepository {
             let payment_amount = parse_decimal_row(&payment_amount, "payment", "amount")?;
 
             let new_refunded = current_refunded + refund.amount;
+            super::ar_settlement::require_unallocated(
+                tx,
+                refund.payment_id.into_uuid(),
+                payment_amount - new_refunded,
+            )?;
             let new_status = if new_refunded >= payment_amount {
                 PaymentTransactionStatus::Refunded
             } else {
@@ -1435,6 +1453,7 @@ impl PaymentRepository for SqlitePaymentRepository {
             if rows == 0 {
                 return Err(domain_err(transition_conflict(payment_status, new_status)));
             }
+            super::ledger_payment::refund(tx, id)?;
             sync_order_payment_status_for_payment_tx(tx, &refund.payment_id.to_string(), now)?;
 
             super::kernel_outbox::record_outbox_fact(
@@ -1862,6 +1881,13 @@ impl PaymentRepository for SqlitePaymentRepository {
                 .map_err(map_db_error)?;
             if rows == 0 {
                 return Err(transition_conflict(current, target));
+            }
+            if target == PaymentTransactionStatus::Cancelled {
+                super::ledger_reversal::reverse_source(&tx, "payment", id.into(), now.date_naive())
+                    .map_err(map_db_error)?;
+            }
+            if target == PaymentTransactionStatus::Completed {
+                super::ledger_payment::payment(&tx, id.into()).map_err(map_db_error)?;
             }
             if let Some(disputed) = &chargeback {
                 record_lost_chargeback_tx(&tx, disputed, now).map_err(map_db_error)?;

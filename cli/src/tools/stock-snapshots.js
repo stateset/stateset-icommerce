@@ -56,20 +56,8 @@ export const stockSnapshotTools = withPolicyDomain('stock-snapshots', [
   },
   {
     name: 'capture_stock_snapshot',
-    description: 'Capture a stock snapshot; totals are computed from the supplied lines.',
+    description: 'Capture on-hand and available quantities from the stored stock ledger.',
     inputSchema: {
-      lines: z
-        .array(
-          z.object({
-            productId: z.string().min(1).describe('Product ID'),
-            sku: z.string().min(1).describe('SKU'),
-            quantityOnHand: z.string().min(1).describe('Quantity on hand'),
-            quantityAvailable: z.string().min(1).describe('Quantity available'),
-            location: z.string().min(1).optional().describe('Optional location'),
-          }),
-        )
-        .min(1)
-        .describe('Snapshot lines'),
       label: z.string().min(1).optional().describe('Optional snapshot label'),
     },
     permission: 'write',
@@ -79,7 +67,6 @@ export const stockSnapshotTools = withPolicyDomain('stock-snapshots', [
       }
       const snapshot = await commerce.stockSnapshots.capture({
         label: params.label,
-        lines: params.lines,
       });
       return { success: true, message: 'Stock snapshot captured', snapshot };
     },

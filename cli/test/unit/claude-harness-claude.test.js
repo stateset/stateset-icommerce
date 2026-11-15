@@ -253,6 +253,40 @@ describe('Claude harness paths', { concurrency: false }, () => {
     }
   });
 
+  itSerial('gives the Claude agent only the StateSet MCP servers', async () => {
+    const dbPath = newDbPath();
+    let captured = null;
+    try {
+      const queryImpl = ({ options }) => {
+        captured = options;
+        return (async function* () {
+          yield { sessionId: 'sess-tool-surface', type: 'result', result: 'ok' };
+        })();
+      };
+      await runAgentLoop({
+        request: 'List my products',
+        provider: 'claude',
+        model: 'claude-test',
+        dbPath,
+        enableSync: false,
+        enableMemory: false,
+        sessionStore: createSessionStore(),
+        queryImpl,
+      });
+      // bypassPermissions runs every available tool unprompted, so the
+      // built-in tools (Bash, file edits, web fetch) must not be available,
+      // and the host's settings, hooks and MCP servers must not load.
+      assert.equal(captured.permissionMode, 'bypassPermissions');
+      assert.deepEqual(captured.tools, []);
+      assert.deepEqual(captured.settingSources, []);
+      assert.equal(captured.strictMcpConfig, true);
+      assert.deepEqual(Object.keys(captured.mcpServers), ['stateset-commerce']);
+      assert.ok(captured.allowedTools.every((name) => name.startsWith('mcp__stateset-')));
+    } finally {
+      cleanupDb(dbPath);
+    }
+  });
+
   itSerial('passes autonomousEngine into the Claude MCP server for runAgentLoop', async () => {
     const dbPath = newDbPath();
     const delegated = [];

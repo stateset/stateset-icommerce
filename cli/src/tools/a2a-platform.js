@@ -21,7 +21,7 @@ export const a2aPlatformTools = [
       type: z
         .enum(['text', 'task_delegation', 'status_query', 'data_request'])
         .describe('Message type'),
-      payload: z.record(z.any()).describe('Message content'),
+      payload: z.record(z.string(), z.any()).describe('Message content'),
       parentMessageId: z.string().optional().describe('Parent message ID for threading'),
     },
     permission: 'write',
@@ -198,7 +198,7 @@ export const a2aPlatformTools = [
     name: 'a2a_save_checkpoint',
     description: 'Save agent state checkpoint for recovery after restart.',
     inputSchema: {
-      data: z.record(z.any()).optional().describe('Custom checkpoint data'),
+      data: z.record(z.string(), z.any()).optional().describe('Custom checkpoint data'),
     },
     permission: 'write',
     handler: async ({ commerce, params, agentConfig }) => {

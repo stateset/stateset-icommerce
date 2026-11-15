@@ -191,7 +191,7 @@ async fn postgres_cycle_count_flow_applies_variance_to_inventory() {
 }
 
 #[tokio::test]
-async fn postgres_cycle_count_negative_variance_cannot_underflow_inventory() {
+async fn postgres_cycle_count_counts_against_stored_stock_and_never_underflows() {
     let Some(url) = postgres_url() else {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping cycle count underflow test");
         return;
@@ -201,8 +201,9 @@ async fn postgres_cycle_count_negative_variance_cannot_underflow_inventory() {
     let (warehouse_id, location_id) = setup_location(&commerce).await;
     let sku = format!("CC-SKU-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
 
-    // Seed only 5 units, but expect 100: counting 0 would apply a -100
-    // variance and drive inventory negative, which must be rejected.
+    // Seed 5 units and claim 100 are expected: the count snapshots the stored
+    // 5 instead, so counting 0 applies -5 and on-hand stops at zero. A
+    // caller-supplied expectation used to apply -100 and drive it negative.
     commerce
         .warehouse()
         .adjust_inventory(AdjustLocationInventory {
@@ -245,17 +246,16 @@ async fn postgres_cycle_count_negative_variance_cannot_underflow_inventory() {
         .await
         .expect("record counts");
 
-    let err = counts.complete_cycle_count(count.id).await;
-    assert!(err.is_err(), "variance that would drive inventory negative is rejected");
+    assert_eq!(count.lines[0].expected_quantity, dec!(5), "expected comes from stored stock");
+    counts.complete_cycle_count(count.id).await.expect("complete cycle count");
 
-    // Inventory and count status are untouched by the failed completion.
-    assert_eq!(on_hand(&commerce, location_id, &sku).await, dec!(5));
+    assert_eq!(on_hand(&commerce, location_id, &sku).await, dec!(0));
     let fetched = counts
         .get_cycle_count(count.id)
         .await
         .expect("get cycle count")
         .expect("cycle count exists");
-    assert_eq!(fetched.status, CycleCountStatus::InProgress);
+    assert_eq!(fetched.status, CycleCountStatus::Completed);
 }
 
 #[tokio::test]

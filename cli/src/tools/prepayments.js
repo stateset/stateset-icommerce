@@ -69,7 +69,7 @@ export const prepaymentTools = withPolicyDomain('prepayments', [
       reference: z.string().min(1).optional().describe('Optional reference'),
       memo: z.string().max(2000).optional().describe('Optional memo'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Create prepayment', params);
@@ -95,7 +95,7 @@ export const prepaymentTools = withPolicyDomain('prepayments', [
       targetId: z.string().min(1).describe('Target ID'),
       amount: z.string().min(1).describe('Amount to apply as an exact decimal string'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Apply prepayment', params);
@@ -128,7 +128,7 @@ export const prepaymentTools = withPolicyDomain('prepayments', [
       prepaymentId: z.string().min(1).describe('Prepayment ID'),
       applicationId: z.string().min(1).describe('Application ID to reverse'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Reverse prepayment application', params);
@@ -147,7 +147,7 @@ export const prepaymentTools = withPolicyDomain('prepayments', [
     inputSchema: {
       prepaymentId: z.string().min(1).describe('Prepayment ID'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Refund prepayment', params);

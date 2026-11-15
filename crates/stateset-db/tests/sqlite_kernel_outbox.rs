@@ -1789,6 +1789,7 @@ fn create_kernel_journal(
             source_document_type: Some("kernel_command".into()),
             source_document_id: None,
             auto_post: Some(false),
+            fx: None,
         })
         .expect("create journal entry");
     (entry, cash.id, revenue.id)
@@ -4259,11 +4260,20 @@ fn kernel_reserved_shipping_consumes_only_needed_parts_of_split_line_holds() {
     let conn = db.pool().get().unwrap();
     // Two separately allocated holds back the same line; balances still back
     // four units. Shipping three must leave precisely one unit reserved.
+    let second = Uuid::new_v4().to_string();
     conn.execute("UPDATE inventory_reservations SET quantity='2'", []).unwrap();
     conn.execute("INSERT INTO inventory_reservations
         (id,item_id,location_id,quantity,status,reference_type,reference_id,expires_at,created_at,order_item_id)
         SELECT ?,item_id,location_id,quantity,status,reference_type,reference_id,expires_at,created_at,order_item_id
-        FROM inventory_reservations", [Uuid::new_v4().to_string()]).unwrap();
+        FROM inventory_reservations", [&second]).unwrap();
+    // Each hold owns its own physical slice.
+    conn.execute("UPDATE inventory_reservation_stock SET quantity='2'", []).unwrap();
+    conn.execute(
+        "INSERT INTO inventory_reservation_stock (reservation_id,location_id,lot_id,quantity)
+        SELECT ?,location_id,lot_id,quantity FROM inventory_reservation_stock",
+        [&second],
+    )
+    .unwrap();
     let mut command = applied(&reserved_shipping_command(&order));
     command.payload.lines =
         Some(vec![ShipmentLineInput { order_item_id: order.items[0].id, quantity: 3 }]);

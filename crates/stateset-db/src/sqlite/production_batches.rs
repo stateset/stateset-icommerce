@@ -30,6 +30,12 @@ impl SqliteProductionBatchRepository {
     }
 
     fn row_to_batch(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProductionBatch> {
+        if row.get::<_, bool>("unresolved_links")? {
+            return Err(super::bins::smuggle(CommerceError::ValidationError(
+                "Legacy production batch has missing work-order links; reconcile before reading"
+                    .into(),
+            )));
+        }
         let work_order_ids_json: String = row.get("work_order_ids")?;
         Ok(ProductionBatch {
             id: parse_uuid_row(&row.get::<_, String>("id")?, "production_batch", "id")?.into(),
@@ -72,12 +78,6 @@ impl SqliteProductionBatchRepository {
             )?,
         })
     }
-
-    fn json_err(e: serde_json::Error) -> rusqlite::Error {
-        rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::DatabaseError(
-            e.to_string(),
-        )))
-    }
 }
 
 impl ProductionBatchRepository for SqliteProductionBatchRepository {
@@ -103,8 +103,9 @@ impl ProductionBatchRepository for SqliteProductionBatchRepository {
                     &now_str,
                 ],
             )?;
+            super::production_batch_members::add(tx, id.into(), &input.work_order_ids, &now_str)?;
             tx.query_row(
-                "SELECT * FROM production_batches WHERE id = ?",
+                "SELECT * FROM production_batch_state WHERE id = ?",
                 [&id_str],
                 Self::row_to_batch,
             )
@@ -114,7 +115,7 @@ impl ProductionBatchRepository for SqliteProductionBatchRepository {
     fn get(&self, id: ProductionBatchId) -> Result<Option<ProductionBatch>> {
         let conn = self.conn()?;
         match conn.query_row(
-            "SELECT * FROM production_batches WHERE id = ?",
+            "SELECT * FROM production_batch_state WHERE id = ?",
             [id.to_string()],
             Self::row_to_batch,
         ) {
@@ -132,6 +133,7 @@ impl ProductionBatchRepository for SqliteProductionBatchRepository {
         let id_str = id.to_string();
         let now_str = Utc::now().to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
+            super::production_batch_members::update_status(tx, id.into(), input.status, &now_str)?;
             let mut sets = vec!["updated_at = ?".to_string()];
             let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(now_str.clone())];
 
@@ -143,10 +145,7 @@ impl ProductionBatchRepository for SqliteProductionBatchRepository {
                 sets.push("vendor_id = ?".into());
                 params.push(Box::new(vendor.to_string()));
             }
-            if let Some(status) = input.status {
-                sets.push("status = ?".into());
-                params.push(Box::new(status.to_string()));
-            }
+
             if let Some(ref notes) = input.notes {
                 sets.push("notes = ?".into());
                 params.push(Box::new(notes.clone()));
@@ -167,7 +166,7 @@ impl ProductionBatchRepository for SqliteProductionBatchRepository {
             tx.execute(&sql, param_refs.as_slice())?;
 
             tx.query_row(
-                "SELECT * FROM production_batches WHERE id = ?",
+                "SELECT * FROM production_batch_state WHERE id = ?",
                 [&id_str],
                 Self::row_to_batch,
             )
@@ -176,7 +175,7 @@ impl ProductionBatchRepository for SqliteProductionBatchRepository {
 
     fn list(&self, filter: ProductionBatchFilter) -> Result<Vec<ProductionBatch>> {
         let conn = self.conn()?;
-        let mut sql = "SELECT * FROM production_batches WHERE 1=1".to_string();
+        let mut sql = "SELECT * FROM production_batch_state WHERE 1=1".to_string();
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![];
         if let Some(status) = filter.status {
             sql.push_str(" AND status = ?");
@@ -201,10 +200,11 @@ impl ProductionBatchRepository for SqliteProductionBatchRepository {
     }
 
     fn delete(&self, id: ProductionBatchId) -> Result<()> {
-        let conn = self.conn()?;
-        conn.execute("DELETE FROM production_batches WHERE id = ?", [id.to_string()])
-            .map_err(map_db_error)?;
-        Ok(())
+        with_immediate_transaction(&self.pool, |tx| {
+            super::production_batch_members::guard(tx, id.into(), true, &Utc::now().to_rfc3339())?;
+            tx.execute("DELETE FROM production_batches WHERE id = ?1", [id.to_string()])?;
+            Ok(())
+        })
     }
 
     fn add_work_orders(
@@ -212,28 +212,13 @@ impl ProductionBatchRepository for SqliteProductionBatchRepository {
         id: ProductionBatchId,
         work_order_ids: Vec<Uuid>,
     ) -> Result<ProductionBatch> {
-        let id_str = id.to_string();
-        let now_str = Utc::now().to_rfc3339();
+        let now = Utc::now().to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
-            let current_json: String = tx.query_row(
-                "SELECT work_order_ids FROM production_batches WHERE id = ?",
-                [&id_str],
-                |r| r.get(0),
-            )?;
-            let mut ids: Vec<Uuid> = serde_json::from_str(&current_json).map_err(Self::json_err)?;
-            for wo in &work_order_ids {
-                if !ids.contains(wo) {
-                    ids.push(*wo);
-                }
-            }
-            let json = serde_json::to_string(&ids).map_err(Self::json_err)?;
-            tx.execute(
-                "UPDATE production_batches SET work_order_ids = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![&json, &now_str, &id_str],
-            )?;
+            super::production_batch_members::guard(tx, id.into(), true, &now)?;
+            super::production_batch_members::add(tx, id.into(), &work_order_ids, &now)?;
             tx.query_row(
-                "SELECT * FROM production_batches WHERE id = ?",
-                [&id_str],
+                "SELECT * FROM production_batch_state WHERE id = ?1",
+                [id.to_string()],
                 Self::row_to_batch,
             )
         })
@@ -244,24 +229,14 @@ impl ProductionBatchRepository for SqliteProductionBatchRepository {
         id: ProductionBatchId,
         work_order_id: Uuid,
     ) -> Result<ProductionBatch> {
-        let id_str = id.to_string();
-        let now_str = Utc::now().to_rfc3339();
+        let now = Utc::now().to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
-            let current_json: String = tx.query_row(
-                "SELECT work_order_ids FROM production_batches WHERE id = ?",
-                [&id_str],
-                |r| r.get(0),
-            )?;
-            let mut ids: Vec<Uuid> = serde_json::from_str(&current_json).map_err(Self::json_err)?;
-            ids.retain(|w| *w != work_order_id);
-            let json = serde_json::to_string(&ids).map_err(Self::json_err)?;
-            tx.execute(
-                "UPDATE production_batches SET work_order_ids = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![&json, &now_str, &id_str],
-            )?;
+            super::production_batch_members::guard(tx, id.into(), true, &now)?;
+            tx.execute("DELETE FROM production_batch_work_orders WHERE batch_id = ?1 AND work_order_id = ?2", rusqlite::params![id.to_string(), work_order_id.to_string()])?;
+            super::production_batch_members::sync(tx, id.into(), &now)?;
             tx.query_row(
-                "SELECT * FROM production_batches WHERE id = ?",
-                [&id_str],
+                "SELECT * FROM production_batch_state WHERE id = ?1",
+                [id.to_string()],
                 Self::row_to_batch,
             )
         })
@@ -299,21 +274,33 @@ mod tests {
         let updated = repo
             .update(
                 b.id,
-                UpdateProductionBatch {
-                    status: Some(ProductionBatchStatus::InProgress),
-                    ..Default::default()
-                },
+                UpdateProductionBatch { name: Some("Edited".into()), ..Default::default() },
             )
             .expect("update");
-        assert_eq!(updated.status, ProductionBatchStatus::InProgress);
+        assert_eq!(updated.name, "Edited");
+        assert_eq!(updated.status, ProductionBatchStatus::Planned);
     }
 
     #[test]
     fn add_and_remove_work_orders_idempotent() {
         let repo = test_repo();
         let b = new_batch(&repo, "Batch B");
-        let wo1 = Uuid::from_bytes([1; 16]);
-        let wo2 = Uuid::from_bytes([2; 16]);
+        use stateset_core::{ProductRepository, WorkOrderRepository};
+        let products = super::super::SqliteProductRepository::new(repo.pool.clone());
+        let product = products
+            .create(stateset_core::CreateProduct {
+                name: "Batch product".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let orders = super::super::SqliteWorkOrderRepository::new(repo.pool.clone());
+        let input = || stateset_core::CreateWorkOrder {
+            product_id: product.id,
+            quantity_to_build: rust_decimal::Decimal::ONE,
+            ..Default::default()
+        };
+        let wo1 = orders.create(input()).unwrap().id;
+        let wo2 = orders.create(input()).unwrap().id;
         let updated = repo.add_work_orders(b.id, vec![wo1, wo2, wo1]).expect("add");
         assert_eq!(updated.work_order_count(), 2);
         // adding wo1 again is a no-op
@@ -332,14 +319,14 @@ mod tests {
         repo.update(
             a.id,
             UpdateProductionBatch {
-                status: Some(ProductionBatchStatus::Completed),
+                status: Some(ProductionBatchStatus::Cancelled),
                 ..Default::default()
             },
         )
         .expect("update");
         let completed = repo
             .list(ProductionBatchFilter {
-                status: Some(ProductionBatchStatus::Completed),
+                status: Some(ProductionBatchStatus::Cancelled),
                 ..Default::default()
             })
             .expect("list");

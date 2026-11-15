@@ -515,9 +515,9 @@ dependencies = [
 
 [[package]]
 name = "ctutils"
-version = "0.4.2"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
+checksum = "12218662ccac37d9714f2191252553d67585b97df8c839cbe49e0bde278dc865"
 dependencies = [
  "cmov",
 ]
@@ -695,7 +695,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1888,7 +1888,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2185,7 +2185,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2552,7 +2552,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stateset-core"
-version = "1.40.0"
+version = "1.40.1"
 dependencies = [
  "auto_impl",
  "base64 0.22.1",
@@ -2574,7 +2574,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-crypto"
-version = "1.40.0"
+version = "1.40.1"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -2598,13 +2598,14 @@ dependencies = [
 
 [[package]]
 name = "stateset-db"
-version = "1.40.0"
+version = "1.40.1"
 dependencies = [
  "chrono",
  "r2d2",
  "r2d2_sqlite",
  "rusqlite",
  "rust_decimal",
+ "scheduled-thread-pool",
  "serde",
  "serde_jcs",
  "serde_json",
@@ -2619,7 +2620,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded"
-version = "1.40.0"
+version = "1.40.1"
 dependencies = [
  "chrono",
  "futures",
@@ -2640,7 +2641,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-embedded-php"
-version = "1.40.0"
+version = "1.40.1"
 dependencies = [
  "chrono",
  "ext-php-rs",
@@ -2653,7 +2654,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-migrations"
-version = "1.40.0"
+version = "1.40.1"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -2664,7 +2665,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-observability"
-version = "1.40.0"
+version = "1.40.1"
 dependencies = [
  "thiserror 2.0.19",
  "tracing",
@@ -2673,7 +2674,7 @@ dependencies = [
 
 [[package]]
 name = "stateset-primitives"
-version = "1.40.0"
+version = "1.40.1"
 dependencies = [
  "rusqlite",
  "rust_decimal",
@@ -2784,7 +2785,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2883,9 +2884,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.53.1"
+version = "1.53.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
+checksum = "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e"
 dependencies = [
  "bytes",
  "libc",
@@ -3313,7 +3314,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

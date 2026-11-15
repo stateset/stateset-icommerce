@@ -156,7 +156,19 @@ impl PgVendorCreditRepository {
         let id_uuid = Uuid::from(id);
         let now = Utc::now();
         let number = format!("VC-{}", &id_uuid.to_string()[..8]);
-        let currency = resolve_currency_with_executor(input.currency, &self.pool).await?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let currency = resolve_currency_with_executor(input.currency, tx.as_mut()).await?;
+        if let Some(return_id) = input.vendor_return_id {
+            super::vendor_return_stock::validate_credit_link(
+                &mut tx,
+                input.supplier_id,
+                return_id,
+                input.amount,
+                currency,
+                now,
+            )
+            .await?;
+        }
 
         sqlx::query(
             "INSERT INTO vendor_credits (id, number, supplier_id, vendor_return_id, amount, remaining, currency, status, memo, created_at, updated_at)
@@ -170,10 +182,11 @@ impl PgVendorCreditRepository {
         .bind(currency.to_string())
         .bind(&input.memo)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
 
+        tx.commit().await.map_err(map_db_error)?;
         self.fetch_async(id_uuid).await?.ok_or(CommerceError::NotFound)
     }
 
@@ -236,6 +249,15 @@ impl PgVendorCreditRepository {
                 "application exceeds remaining balance".into(),
             ));
         }
+        super::ap_settlement::apply(
+            &mut tx,
+            &input.target_type.to_string(),
+            input.target_id,
+            credit.supplier_id,
+            credit.currency,
+            input.amount,
+        )
+        .await?;
         let new_remaining = credit.remaining - input.amount;
         let new_status = Self::status_for(new_remaining, credit.status);
 
@@ -297,6 +319,22 @@ impl PgVendorCreditRepository {
             return Err(CommerceError::Conflict("application already reversed".into()));
         }
 
+        let (target_kind, target_id) = sqlx::query_as::<_, (String, Uuid)>(
+            "SELECT target_type,target_id FROM vendor_credit_applications WHERE id = $1",
+        )
+        .bind(Uuid::from(application_id))
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(map_db_error)?;
+        super::ap_settlement::apply(
+            &mut tx,
+            &target_kind,
+            target_id,
+            credit.supplier_id,
+            credit.currency,
+            -amount,
+        )
+        .await?;
         let new_remaining = credit.remaining + amount;
         let new_status = Self::status_for(new_remaining, credit.status);
 

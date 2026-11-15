@@ -756,7 +756,14 @@ fn restock_disposition_returns_serials_to_available_at_warehouse() {
     for id in [a.id, b.id] {
         let serial = db.serials().get(id).unwrap().unwrap();
         assert_eq!(serial.status, SerialStatus::Available);
-        assert_eq!(serial.current_location_id, Some(wh));
+        assert_eq!(
+            db.warehouse()
+                .get_location(serial.current_location_id.unwrap())
+                .unwrap()
+                .unwrap()
+                .warehouse_id,
+            wh
+        );
         let history = db.serials().get_history(id, SerialHistoryFilter::default()).unwrap();
         let events: Vec<_> = history.iter().map(|h| h.event_type).collect();
         assert!(events.contains(&SerialEventType::Returned), "history {events:?}");

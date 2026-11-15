@@ -1,0 +1,480 @@
+{
+  "source": "iCommerce ERP Fix Plan.html (reviewed 2026-10-27)",
+  "scope": "59 ERP fixes; the separate capability roadmap and release queue are not included",
+  "status": "in_progress",
+  "items": [
+    {
+      "id": "Q1",
+      "workstream": "safety-net",
+      "severity": "high",
+      "title": "Postgres inventory valuation reads a column that doesn't exist",
+      "status": "implemented",
+      "notes": "PostgreSQL valuation and SKU summary aggregate inventory_balances; shared populated-data tests pass on SQLite and PostgreSQL."
+    },
+    {
+      "id": "Q2",
+      "workstream": "safety-net",
+      "severity": "high",
+      "title": "SQLite BOM cost rollup queries a missing table",
+      "status": "implemented",
+      "notes": "Transactional recursive BOM rollups reject missing component costs, ambiguous active revisions, cycles, and decimal overflow; persist item costs and rollup history. Both backend tests pass."
+    },
+    {
+      "id": "Q3",
+      "workstream": "safety-net",
+      "severity": "med",
+      "title": "Add a test that runs every repository query on both databases",
+      "status": "implemented",
+      "notes": "507 repository read calls on each fresh backend, wired into existing test discovery; inventory-health and low-stock SQL corrected, swallowed health errors removed, and empty-aggregate decoding defects repaired."
+    },
+    {
+      "id": "W1",
+      "workstream": "stock",
+      "severity": "high",
+      "title": "Cycle counts adjust stock against a number the caller supplies",
+      "status": "implemented",
+      "notes": "Expected quantities come from stored location stock; completion adjusts against current on-hand through the shared physical/bin/warehouse/lot posting path, atomically and with reservation guards. MCP no longer accepts expected quantities. Shared backend stock regression tests pass."
+    },
+    {
+      "id": "W2",
+      "workstream": "stock",
+      "severity": "high",
+      "title": "A put-away can stock a different SKU from the one received",
+      "status": "implemented",
+      "notes": "Put-away verifies SKU against receipt line, resolves its registered lot, rejects mismatches and cancelled receipts, and revalidates on completion. Shared backend regression tests pass."
+    },
+    {
+      "id": "W3",
+      "workstream": "stock",
+      "severity": "high",
+      "title": "Receipts created from a purchase order aren't linked to its lines",
+      "status": "implemented",
+      "notes": "PO receiving requires explicit warehouse/location and atomically creates linked receipts, updates bounded PO quantities, and posts stock. Backend regression tests, 33 embedded lifecycle/integrity/concurrency tests, 5 HTTP route tests, Node compilation, and MCP forwarding/preview checks pass. Rebuilt Node bindings pass the relevant purchasing, transfer, vendor-return, snapshot, production-batch and fractional manufacturing lifecycles."
+    },
+    {
+      "id": "W4",
+      "workstream": "stock",
+      "severity": "high",
+      "title": "Postgres can lose a put-away the first time a SKU is stocked",
+      "status": "implemented",
+      "notes": "Create absent stock keys before locking and calculating balances. Deterministic PostgreSQL races cover first location stock and first warehouse balance, verifying both receipts and movement totals survive."
+    },
+    {
+      "id": "W5",
+      "workstream": "stock",
+      "severity": "high",
+      "title": "Quarantined lots and quality holds don't stop picking",
+      "status": "implemented",
+      "notes": "Transactional SKU/lot/serial eligibility and quality-hold checks cover reservations, picks, consumption, lot/location moves and transfer orders. PostgreSQL hold creation serializes with checks. Shared backend tests pass; final stock-ledger integration remains in W7. Canonical lot, physical, bin, inventory reservation and shipment paths now enforce eligibility and exact custody; backend stock and lot regression/race checks pass."
+    },
+    {
+      "id": "W6",
+      "workstream": "stock",
+      "severity": "high",
+      "title": "Transfer orders never move stock",
+      "status": "implemented",
+      "notes": "Physical transfer shipment/receipt and explicit shortage closure update stock and movement records atomically. 13 receipt/cancellation race tests plus shared lifecycle suites pass on both databases; HTTP route and MCP preview/forwarding checks pass. Legacy document-only transfers require reconciliation before posting. Rebuilt Node bindings pass the relevant purchasing, transfer, vendor-return, snapshot, production-batch and fractional manufacturing lifecycles."
+    },
+    {
+      "id": "M1",
+      "workstream": "stock",
+      "severity": "high",
+      "title": "Completing a work order moves no stock",
+      "status": "implemented",
+      "notes": "Explicit stock routing, BOM material snapshots, reservation on release, atomic consumption/output, lifecycle conflicts, and field-only edits also cover atomic batches. Shared SQLite/PostgreSQL stock lifecycles, PostgreSQL completion/material/edit races, and 19 SQLite unit tests pass. HTTP/Node/Python compile; 55 MCP/API-reference tests pass. 22 broader embedded lifecycle, state-machine and end-to-end tests also pass. Native binary runtime remains in final validation. Rebuilt Node bindings pass the relevant purchasing, transfer, vendor-return, snapshot, production-batch and fractional manufacturing lifecycles."
+    },
+    {
+      "id": "W7",
+      "workstream": "stock",
+      "severity": "med",
+      "title": "Four stock ledgers drift apart",
+      "status": "implemented",
+      "notes": "Shared transactional stock posting connects receiving, location/bin adjustments and moves, cycle counts, transfer orders, manufacturing, generic inventory/reservations, returns, and lot operations on SQLite and PostgreSQL. Explicit staging preserves picked on-hand until shipment. Lot reservations and quarantine own physical slices; splits/merges preserve placements. Orders allocate across actual warehouse balances. All 41 broader stock/manufacturing/inventory/concurrency checks pass, including simultaneous lot and general inventory consumption. All 58 SQLite lot unit cases pass. Final native binding validation is still pending."
+    },
+    {
+      "id": "W8",
+      "workstream": "stock",
+      "severity": "med",
+      "title": "Vendor returns remove no stock and create no credit",
+      "status": "implemented",
+      "notes": "Processing atomically removes stock and creates one return-linked credit with validated supplier, status, amount, currency and uniqueness. Explicit SKU/warehouse/location/lot routing reaches HTTP, Node, Python and MCP. Shared backend lifecycles, 7 SQLite unit tests, HTTP lifecycle and MCP apply-gate checks pass. Native binding runtime remains pending. Rebuilt Node bindings pass the relevant purchasing, transfer, vendor-return, snapshot, production-batch and fractional manufacturing lifecycles."
+    },
+    {
+      "id": "W9",
+      "workstream": "stock",
+      "severity": "med",
+      "title": "PO lines can be edited after approval",
+      "status": "implemented",
+      "notes": "Draft/pending-only line edits and totals commit under the same transaction and parent lock as approvals. Shared SQLite/PostgreSQL tests pass."
+    },
+    {
+      "id": "W10",
+      "workstream": "stock",
+      "severity": "med",
+      "title": "Receipt status can be wrong",
+      "status": "implemented",
+      "notes": "Line statuses remain quantity-derived at completion. Received serials are count-validated and registered transactionally, retained across partial receipts, assigned by put-away and blocked from allocation until then. Shared backend tests pass."
+    },
+    {
+      "id": "W11",
+      "workstream": "stock",
+      "severity": "med",
+      "title": "Backorders fulfilled from a PO consume no stock",
+      "status": "implemented",
+      "notes": "PO-source fulfillment validates the PO and SKU, consumes unreserved physical stock from its completed receiving destinations, and bounds attribution per put-away. Existing allocations are released and replaced in the same transaction. Shared backend tests pass."
+    },
+    {
+      "id": "M2",
+      "workstream": "stock",
+      "severity": "med",
+      "title": "The work-order state machine is never enforced",
+      "status": "implemented",
+      "notes": "Explicit stock routing, BOM material snapshots, reservation on release, atomic consumption/output, lifecycle conflicts, and field-only edits also cover atomic batches. Shared SQLite/PostgreSQL stock lifecycles, PostgreSQL completion/material/edit races, and 19 SQLite unit tests pass. HTTP/Node/Python compile; 55 MCP/API-reference tests pass. 22 broader embedded lifecycle, state-machine and end-to-end tests also pass. Native binary runtime remains in final validation. Rebuilt Node bindings pass the relevant purchasing, transfer, vendor-return, snapshot, production-batch and fractional manufacturing lifecycles."
+    },
+    {
+      "id": "M3",
+      "workstream": "stock",
+      "severity": "med",
+      "title": "Editing a work order can undo its completion",
+      "status": "implemented",
+      "notes": "Explicit stock routing, BOM material snapshots, reservation on release, atomic consumption/output, lifecycle conflicts, and field-only edits also cover atomic batches. Shared SQLite/PostgreSQL stock lifecycles, PostgreSQL completion/material/edit races, and 19 SQLite unit tests pass. HTTP/Node/Python compile; 55 MCP/API-reference tests pass. 22 broader embedded lifecycle, state-machine and end-to-end tests also pass. Native binary runtime remains in final validation. Rebuilt Node bindings pass the relevant purchasing, transfer, vendor-return, snapshot, production-batch and fractional manufacturing lifecycles."
+    },
+    {
+      "id": "M4",
+      "workstream": "stock",
+      "severity": "med",
+      "title": "Creating a work order ignores the BOM",
+      "status": "implemented",
+      "notes": "Explicit stock routing, BOM material snapshots, reservation on release, atomic consumption/output, lifecycle conflicts, and field-only edits also cover atomic batches. Shared SQLite/PostgreSQL stock lifecycles, PostgreSQL completion/material/edit races, and 19 SQLite unit tests pass. HTTP/Node/Python compile; 55 MCP/API-reference tests pass. 22 broader embedded lifecycle, state-machine and end-to-end tests also pass. Native binary runtime remains in final validation. Rebuilt Node bindings pass the relevant purchasing, transfer, vendor-return, snapshot, production-batch and fractional manufacturing lifecycles."
+    },
+    {
+      "id": "W12",
+      "workstream": "stock",
+      "severity": "low",
+      "title": "Stock snapshots and inventory aging come from caller-sent lines",
+      "status": "implemented",
+      "notes": "Snapshots read stored balances and aging reconstructs stored movements/layers as of the report date. Shared backend tests and HTTP snapshot route pass. Aging refuses unreconciled cost layers pending G16 integration. Rebuilt Node bindings pass the relevant purchasing, transfer, vendor-return, snapshot, production-batch and fractional manufacturing lifecycles."
+    },
+    {
+      "id": "M5",
+      "workstream": "stock",
+      "severity": "low",
+      "title": "BOM data checks are missing",
+      "status": "implemented",
+      "notes": "Transactional BOM creation and edits validate quantity, product identity, revision uniqueness and reachable cycles. Published revisions are immutable and replaced by new revisions. Shared backend integrity and costing tests pass; final unit sweep is pending."
+    },
+    {
+      "id": "M6",
+      "workstream": "stock",
+      "severity": "low",
+      "title": "Production batches are loosely modelled",
+      "status": "implemented",
+      "notes": "Relational work-order membership, derived batch status, guarded edits and decimal quantities pass shared backend lifecycle tests. Invalid legacy links require reconciliation. Native runtime checks are pending. Rebuilt Node bindings pass the relevant purchasing, transfer, vendor-return, snapshot, production-batch and fractional manufacturing lifecycles."
+    },
+    {
+      "id": "G1",
+      "workstream": "books",
+      "severity": "high",
+      "title": "Sales tax and shipping are booked as revenue",
+      "status": "implemented",
+      "notes": "Invoices post net sales, tax payable and shipping separately; missing required accounts fail atomically. Shared SQLite/PostgreSQL lifecycle tests pass."
+    },
+    {
+      "id": "G2",
+      "workstream": "books",
+      "severity": "high",
+      "title": "Contract revenue is counted twice",
+      "status": "implemented",
+      "notes": "Contract invoices credit unearned revenue. Customer/currency/net price must match, invoice links are unique and assigned before posting, and recognition requires funding from that invoice. Shared backend lifecycle tests pass."
+    },
+    {
+      "id": "G3",
+      "workstream": "books",
+      "severity": "high",
+      "title": "Inventory receipts and adjustments are posted against cost of goods sold",
+      "status": "implemented",
+      "notes": "Receipts accrue GRNI; bill lines use their own account or GRNI; adjustments and revaluations use their own signed gain/loss posting; same-entity transfers produce no journal entry. Shared backend lifecycle tests pass."
+    },
+    {
+      "id": "G4",
+      "workstream": "books",
+      "severity": "high",
+      "title": "Reversed entries drop out of the income statement",
+      "status": "implemented",
+      "notes": "Income and FX queries retain reversed originals as real postings. Shared backend tests verify January expense remains in January after a February reversal following close."
+    },
+    {
+      "id": "G5",
+      "workstream": "books",
+      "severity": "high",
+      "title": "Depreciation is dated the day it runs",
+      "status": "implemented",
+      "notes": "Depreciation posts each elapsed month at its month end within the same transaction; future periods refuse and close uses matching due dates. Shared backend tests pass."
+    },
+    {
+      "id": "G6",
+      "workstream": "books",
+      "severity": "high",
+      "title": "Outside Rust, nothing posts to the ledger, and month-end close hides it",
+      "status": "implemented",
+      "notes": "Atomic, account-validated posting settings are available through HTTP, Node, MCP and an authenticated admin form. Close requires configuration and enabled steps or explicit skips. HTTP and rebuilt Node round-trip/rollback tests, 146 MCP checks, both admin type checks, 27 admin tests and targeted lint pass. All 12 SQLite/PostgreSQL month-end integration cases pass, including strict preview and failure handling."
+    },
+    {
+      "id": "G7",
+      "workstream": "books",
+      "severity": "high",
+      "title": "Multi-currency postings mix currencies",
+      "status": "implemented",
+      "notes": "Separate exact transaction/base amounts, historical document rates, original-rate reversals, as-of monetary revaluation and saved idempotent results. Shared SQLite/PostgreSQL FX tests pass; HTTP/Node/Python compile. Legacy mixed currencies require explicit reconciliation; native surface runtime remains in final validation."
+    },
+    {
+      "id": "G8",
+      "workstream": "books",
+      "severity": "med",
+      "title": "Period close isn't atomic",
+      "status": "implemented",
+      "notes": "Income, closing entry, balances, outbox and closed status commit in one transaction. Failure-injection rollback tests pass on both databases."
+    },
+    {
+      "id": "G9",
+      "workstream": "books",
+      "severity": "med",
+      "title": "Postgres can post into a period while it's being closed",
+      "status": "implemented",
+      "notes": "Posting/voiding share-lock periods; close/revaluation lock exclusively. Governed posting uses period-before-entry lock order. Deterministic PostgreSQL post/void/auto-post races pass."
+    },
+    {
+      "id": "G10",
+      "workstream": "books",
+      "severity": "med",
+      "title": "Postings to inactive or header accounts vanish from reports",
+      "status": "implemented",
+      "notes": "Draft and posted lines validate active posting non-header accounts, with ordered PostgreSQL account locks. Deactivation rejects base or foreign balances, while historical reports retain retired accounts. Shared backend guards and admin settings tests pass."
+    },
+    {
+      "id": "G11",
+      "workstream": "books",
+      "severity": "med",
+      "title": "Periods can end before they start, or overlap",
+      "status": "implemented",
+      "notes": "Period date/overlap validation serializes insertion on both databases. All lookups include closed periods and refuse legacy ambiguity. Shared guards and PostgreSQL concurrency checks pass."
+    },
+    {
+      "id": "G12",
+      "workstream": "books",
+      "severity": "med",
+      "title": "Ledger postings ignore the source document's status",
+      "status": "implemented",
+      "notes": "Transactional source eligibility, atomic void/manual reversals, AR journal backlinks, and idempotent credit-memo posting. Linked credits preserve invoice tax/shipping accounts and historical rates and cannot exceed invoice value. Both backend lifecycles and PostgreSQL source-posting race pass. Pending/draft/voided/reversed sources refuse; failed reversal rolls back source changes."
+    },
+    {
+      "id": "G13",
+      "workstream": "books",
+      "severity": "med",
+      "title": "Fixed assets reach the ledger only through depreciation",
+      "status": "implemented",
+      "notes": "Acquisition, disposal and full write-off journals commit with the asset mutation. Explicit offset/gain-loss mappings reach HTTP, Node, Python and MCP. Prospective schedule revisions archive prior inputs and preserve posted depreciation. Both backend lifecycle/FX/rollback tests, 16 asset units, 12 month-end cases and 34 MCP finance tests pass; all native/HTTP surfaces compile. Asset removal preserves acquisition rates while functional-currency cash uses settlement-date rates. Native binary runtime remains in final validation."
+    },
+    {
+      "id": "G14",
+      "workstream": "books",
+      "severity": "med",
+      "title": "Operational events don't post to the ledger",
+      "status": "implemented",
+      "notes": "Canonical stock events record historical costs and post receipt accruals, shipment COGS, restocked returns, adjustments and manufacturing WIP atomically. Payment capture, refund and lost-chargeback journals use the same source transaction. Eight shared backend lifecycle/rollback/retry tests and source lifecycle/race tests pass. Native/settings runtime and comprehensive costing/valuation integration continue in G16 and final validation."
+    },
+    {
+      "id": "G15",
+      "workstream": "books",
+      "severity": "med",
+      "title": "SQLite ignores cost-accounting filters that Postgres applies",
+      "status": "implemented",
+      "notes": "All SQLite cost date/type/offset/remaining filters match PostgreSQL, with stable pagination. PostgreSQL preserves layer and variance timestamps instead of discarding the time. Shared backend filter parity tests pass."
+    },
+    {
+      "id": "G16",
+      "workstream": "books",
+      "severity": "med",
+      "title": "Inventory valuation ignores each SKU's cost method",
+      "status": "implemented",
+      "notes": "Receipt/issue layers use FIFO, LIFO, average, standard and explicit-lot costs; valuation follows stored per-SKU carrying value including owned transit. Dated layer history reconstructs aging, lot relabels and approved revaluations. Functional currency and live cost-method changes are guarded. Eighteen shared backend operational/valuation/FX tests, stored-report/filter parity cases and SQLite recursive-costing checks pass. All 25 SQLite cost-accounting unit tests pass; native surface validation remains in final checks."
+    },
+    {
+      "id": "G17",
+      "workstream": "books",
+      "severity": "low",
+      "title": "Smaller ledger issues",
+      "status": "implemented",
+      "notes": "Period transitions serialize and reject wrong states; balance sheets include unclosed fiscal-year/prior earnings and correctly subtract contra assets. Revenue schedules use currency precision. COGS and close readiness read stored ledger/stock activity, reject supplied financial lines, and preserve reversals. FX revaluation refreshes after backdated postings or rate corrections while preserving retry identity and run history. Twenty-eight backend integration tests and all six HTTP report tests pass."
+    },
+    {
+      "id": "A1",
+      "workstream": "apar",
+      "severity": "high",
+      "title": "Prepayments and vendor credits never reduce the bill",
+      "status": "implemented",
+      "notes": "Supplier prepayments and vendor credits atomically settle/reverse bills or obligations, validate target status, supplier, currency and balance, and remain included during later cash-payment recalculation/void. Four shared backend integration cases and all twelve SQLite prepayment/vendor-credit unit tests pass."
+    },
+    {
+      "id": "A2",
+      "workstream": "apar",
+      "severity": "high",
+      "title": "Postgres can apply one payment beyond its value",
+      "status": "implemented",
+      "notes": "Ten shared SQLite/PostgreSQL regressions pass, including one-payment/two-invoice and refund/allocation races, status/customer/currency/net-refund checks, terminal unapply refusal, and cumulative partial write-offs with direct payments and reversals. Refunds require releasing invoice allocations before reducing their funding."
+    },
+    {
+      "id": "A3",
+      "workstream": "apar",
+      "severity": "high",
+      "title": "Payment application ignores the payment's status, customer, currency and refunds",
+      "status": "implemented",
+      "notes": "Ten shared SQLite/PostgreSQL regressions pass, including one-payment/two-invoice and refund/allocation races, status/customer/currency/net-refund checks, terminal unapply refusal, and cumulative partial write-offs with direct payments and reversals. Refunds require releasing invoice allocations before reducing their funding."
+    },
+    {
+      "id": "A4",
+      "workstream": "apar",
+      "severity": "high",
+      "title": "Unapplying a payment revives written-off and voided invoices",
+      "status": "implemented",
+      "notes": "Ten shared SQLite/PostgreSQL regressions pass, including one-payment/two-invoice and refund/allocation races, status/customer/currency/net-refund checks, terminal unapply refusal, and cumulative partial write-offs with direct payments and reversals. Refunds require releasing invoice allocations before reducing their funding."
+    },
+    {
+      "id": "A5",
+      "workstream": "apar",
+      "severity": "high",
+      "title": "A partial write-off writes off the whole invoice",
+      "status": "implemented",
+      "notes": "Ten shared SQLite/PostgreSQL regressions pass, including one-payment/two-invoice and refund/allocation races, status/customer/currency/net-refund checks, terminal unapply refusal, and cumulative partial write-offs with direct payments and reversals. Refunds require releasing invoice allocations before reducing their funding."
+    },
+    {
+      "id": "A6",
+      "workstream": "apar",
+      "severity": "high",
+      "title": "Bills with payments on them can be cancelled",
+      "status": "implemented",
+      "notes": "Cancellation checks all settlements; disputes persist their prior state and expose explicit resolution; payment void preserves disputed/cancelled states. Six shared SQLite/PostgreSQL supplier settlement tests pass. HTTP/Node/MCP runtime checks remain in the final surface sweep."
+    },
+    {
+      "id": "A7",
+      "workstream": "apar",
+      "severity": "high",
+      "title": "Invoices can be edited after payment",
+      "status": "implemented",
+      "notes": "Invoice header and line edits are restricted to drafts, with recalculation inside the same transaction. All fourteen shared backend receivables tests pass, including draft editing and concurrent issue/edit."
+    },
+    {
+      "id": "A8",
+      "workstream": "apar",
+      "severity": "high",
+      "title": "Bill payments ignore the bill's currency",
+      "status": "implemented",
+      "notes": "Bill payments derive currency from their allocations and reject mismatches. Payment runs persist one denomination and refuse mixed or unreconciled legacy runs. All eight shared backend supplier settlement tests pass, including separate EUR/USD runs; HTTP surface accepts strict optional currency."
+    },
+    {
+      "id": "A9",
+      "workstream": "apar",
+      "severity": "med",
+      "title": "Customer credit limits aren't enforced",
+      "status": "implemented",
+      "notes": "User-selected policy applies configured credit limits to unpaid orders and issued invoices. Shared account locks enforce status, holds, denomination and combined exposure, including order/invoice/reservation overlap. All eight shared backend eligibility/document/concurrency tests pass. New HTTP credit routes await runtime validation. HTTP credit round-trip, exact money, hold enforcement and invalid-currency test passes."
+    },
+    {
+      "id": "A10",
+      "workstream": "apar",
+      "severity": "med",
+      "title": "Customer statements don't add up",
+      "status": "implemented",
+      "notes": "Statements and as-of aging share a consistent posted-activity snapshot, include every direct receipt, retain unapplication/write-off reversal history and close on the running balance. Currency selection prevents mixed totals; undated legacy direct receipts require reconciliation. All twenty shared SQLite/PostgreSQL receivables regression cases pass."
+    },
+    {
+      "id": "A11",
+      "workstream": "apar",
+      "severity": "med",
+      "title": "A Rust-only write-off skips the bad-debt record",
+      "status": "implemented",
+      "notes": "Invoice write_off now creates the receivables bad-debt record for the remaining balance, preserving prior payments and enabling reversal. All twenty shared SQLite/PostgreSQL receivables regression cases pass."
+    },
+    {
+      "id": "A12",
+      "workstream": "apar",
+      "severity": "med",
+      "title": "SQLite ignores credit-memo filters that Postgres applies",
+      "status": "implemented",
+      "notes": "Credit-memo reason, date-range, offset and default-limit filters match both backends with stable sorting, including exact unapplied-balance filtering. All twenty shared SQLite/PostgreSQL receivables regression cases pass."
+    },
+    {
+      "id": "A13",
+      "workstream": "apar",
+      "severity": "med",
+      "title": "Smaller money issues",
+      "status": "implemented",
+      "notes": "Obligation dashboards aggregate all rows in exact SQL. Supplier refunds retain amount/time and remain distinct from applied funds, including reconstruction of legacy refunds. Bill approval atomically matches cumulative bills against accepted receipts and PO quantities/prices, with explicit persisted override reasons. Twelve shared backend supplier regressions pass; Node/Python/HTTP override surfaces and refund fields compile checks underway."
+    },
+    {
+      "id": "A14",
+      "workstream": "apar",
+      "severity": "low",
+      "title": "Money crosses MCP and Node as floating point",
+      "status": "implemented",
+      "notes": "Finance Node inputs and outputs use decimal strings; MCP rejects numeric money. HTTP invoice creation supports exact lines/header values and rejects invalid currency. Node/Python/HTTP compile and 65 targeted MCP + 10 HTTP tests pass; rebuilt native runtime remains in final validation."
+    },
+    {
+      "id": "C1",
+      "workstream": "controls",
+      "severity": "high",
+      "title": "One write-level key can create, approve and pay a bill",
+      "status": "implemented",
+      "notes": "Admin-level ManageFinance action and matching MCP permissions separate financial approvals/settlements from drafting. Bound actor identity stamps bill makers/approvers; database guards reject self-approval and legacy approval bypasses. Fourteen supplier backend tests, nine MCP permission tests and full-stack HTTP maker-checker tests pass."
+    },
+    {
+      "id": "C2",
+      "workstream": "controls",
+      "severity": "med",
+      "title": "Ledger audit fields come from the request",
+      "status": "implemented",
+      "notes": "Posting, closing and locking stamp authenticated identities and ignore legacy body identity fields. Journal creation with auto_post is elevated and atomically records the caller. Anonymous/header spoof attempts and posting/close/lock integration regressions pass."
+    },
+    {
+      "id": "C3",
+      "workstream": "controls",
+      "severity": "med",
+      "title": "Retried finance requests can double-post",
+      "status": "implemented",
+      "notes": "Durable retry handling covers finance actions and ERP stock mutations, including updates/deletes. Four full-stack finance tests pass: missing keys refuse, identical payment and credit-memo retries replay without duplicate effects, conflicting bodies refuse, and payment IDs are forwarded."
+    },
+    {
+      "id": "C4",
+      "workstream": "controls",
+      "severity": "med",
+      "title": "HTTP can't reach much of the ERP",
+      "status": "implemented",
+      "notes": "Added missing cost accounting, account balance/reclose, receipt-from-PO, put-away assignment/start/cancel, backorder allocation, lot movement and work-order material routes, plus supplier SKU updates. Requests use exact strings with explicit finance/stock permissions and retry classification. Compilation and three end-to-end cost/receiving/supplier-SKU tests pass; broader HTTP regressions underway."
+    },
+    {
+      "id": "C5",
+      "workstream": "controls",
+      "severity": "med",
+      "title": "MCP agents can't complete core ERP flows",
+      "status": "implemented",
+      "notes": "Finance and operations profiles are mandatory smoke gates with no skips. Four seeded MCP/native workflows pass: PO receiving and put-away, governed journal posting/reversal/period controls, maker-checker bill/payment runs, and AR allocation/write-off reversal. Receipt reads expose line IDs; governed posting stamps the trusted principal. 58 targeted MCP unit tests and native exact-money/idempotency tests pass."
+    },
+    {
+      "id": "C6",
+      "workstream": "controls",
+      "severity": "low",
+      "title": "The admin UI is mostly read-only for the ERP",
+      "status": "implemented",
+      "notes": "Added reviewed bill approval/payment and AR payment/credit application, partial write-off/reversal forms; BOM/component/publish, production batch and item-cost screens. Mutations verify administrator identity server-side. Native invoice responses expose currency and remaining balance; admin aging uses exact decimal arithmetic. 63 targeted admin tests and application/test TypeScript checks pass; final full checks continue."
+    },
+    {
+      "id": "C7",
+      "workstream": "controls",
+      "severity": "low",
+      "title": "Docs promise behaviour the code doesn't have",
+      "status": "implemented",
+      "notes": "Replaced unsupported finance/manufacturing/inventory examples with native signatures, corrected bin/credit and procurement claims, documented stock custody, exact-money contracts, bound identities, retry limits and legacy reconciliation. Generated Node/tool references refreshed; final compile, regression, inventory and release gates are in progress."
+    }
+  ],
+  "release_after_completion": "User authorizes version bump, tag and push after all 59 fixes and required validation; follow repository release conventions and review existing unrelated changes."
+}

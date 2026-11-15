@@ -156,7 +156,6 @@ const ALLOWLIST: &[(&str, &str)] = &[
     ("postgres/analytics.rs", "to_char(created_at, '{}')"),
     ("sqlite/analytics.rs", "{period_expr}"),
     ("sqlite/analytics.rs", "GROUP BY {group_expr}"),
-    ("postgres/cost_accounting.rs", "quantity_on_hand * {}"),
     ("sqlite/kernel_executor.rs", "IN {event_types}"),
     // Literal-branch fragments (`if c { "…" } else { "" }`):
     ("sqlite/lots.rs", "?{}"),

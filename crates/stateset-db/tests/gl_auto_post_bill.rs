@@ -13,7 +13,7 @@
 //! The result: posting a vendor bill to the general ledger was completely broken on
 //! SQLite while Postgres worked. This test creates a configured chart of accounts
 //! and an AP bill, then asserts `auto_post_bill` produces a balanced, correctly-
-//! dated journal entry (debit Inventory/Expense, credit Accounts Payable).
+//! dated journal entry (debit GRNI, credit Accounts Payable).
 
 use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal_macros::dec;
@@ -48,6 +48,21 @@ fn sqlite_auto_post_bill_posts_balanced_entry() {
         .expect("create period");
     gl.open_period(period.id).expect("open period");
 
+    let grni = gl
+        .create_account(stateset_core::CreateGlAccount {
+            account_number: format!("GRNI-{}", uuid::Uuid::new_v4()),
+            name: "Goods received not invoiced".into(),
+            account_type: stateset_core::AccountType::Liability,
+            description: None,
+            account_sub_type: None,
+            parent_account_id: None,
+            is_header: None,
+            is_posting: None,
+            currency: None,
+        })
+        .unwrap()
+        .id;
+
     gl.set_auto_posting_config(CreateAutoPostingConfig {
         config_name: "default".into(),
         cash_account_id: acct("1010"),
@@ -57,6 +72,10 @@ fn sqlite_auto_post_bill_posts_balanced_entry() {
         unearned_revenue_account_id: None,
         sales_revenue_account_id: acct("4010"),
         shipping_revenue_account_id: None,
+        sales_tax_payable_account_id: None,
+        goods_received_not_invoiced_account_id: Some(grni),
+        inventory_adjustment_account_id: None,
+        work_in_progress_account_id: None,
         cogs_account_id: acct("5010"),
         bad_debt_expense_account_id: None,
         fx_gain_loss_account_id: None,
@@ -85,9 +104,10 @@ fn sqlite_auto_post_bill_posts_balanced_entry() {
         .expect("create bill");
     assert_eq!(bill.total_amount, dec!(100.00), "bill total should foot to 100.00");
 
+    db.accounts_payable().approve_bill(bill.id).expect("issue source document");
     let entry = gl.auto_post_bill(bill.id).expect("auto_post_bill must succeed");
 
-    assert_eq!(entry.total_debits, dec!(100.00), "Inventory debit should equal the bill total");
+    assert_eq!(entry.total_debits, dec!(100.00), "GRNI debit should equal the bill total");
     assert_eq!(entry.total_credits, dec!(100.00), "AP credit should equal the bill total");
     assert_eq!(entry.entry_date, bill_date.date_naive(), "entry date should be the bill date");
 }

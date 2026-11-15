@@ -480,9 +480,10 @@ describe('Zod validation constraints', () => {
       expectFail(schema, { productId: 'p1', quantityToBuild: 0 });
     });
 
-    it('complete_work_order rejects non-integer quantityCompleted', async () => {
+    it('complete_work_order rejects a non-numeric or non-positive quantityCompleted', async () => {
       const schema = getSchema(tools, 'complete_work_order');
-      expectFail(schema, { workOrderId: 'w1', quantityCompleted: 3.5 });
+      expectFail(schema, { workOrderId: 'w1', quantityCompleted: 'three' });
+      expectFail(schema, { workOrderId: 'w1', quantityCompleted: 0 });
     });
   });
 

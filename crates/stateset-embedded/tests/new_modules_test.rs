@@ -1384,8 +1384,9 @@ fn test_cancel_receipt_guards() {
     assert_eq!(cancelled.status, stateset_core::ReceiptStatus::Cancelled);
 }
 
-/// Completing a receipt marks its non-rejected line items `received` (SQLite —
-/// parity with the Postgres backend).
+/// Completing a receipt marks the lines that received stock `received` and
+/// leaves lines with nothing received `pending` (SQLite — parity with the
+/// Postgres backend).
 #[test]
 fn test_complete_receiving_marks_items_received() {
     let commerce = Commerce::new(":memory:").expect("Failed to create commerce");
@@ -1404,21 +1405,59 @@ fn test_complete_receiving_marks_items_received() {
         .create_receipt(CreateReceipt {
             receipt_type: ReceiptType::PurchaseOrder,
             warehouse_id: warehouse.id,
-            items: vec![stateset_core::CreateReceiptItem {
-                sku: "ITEM-A".into(),
-                expected_quantity: dec!(5),
-                ..Default::default()
-            }],
+            items: vec![
+                stateset_core::CreateReceiptItem {
+                    sku: "ITEM-A".into(),
+                    expected_quantity: dec!(5),
+                    ..Default::default()
+                },
+                stateset_core::CreateReceiptItem {
+                    sku: "ITEM-B".into(),
+                    expected_quantity: dec!(3),
+                    ..Default::default()
+                },
+            ],
             ..Default::default()
         })
         .expect("create receipt with items");
+    let dock = commerce
+        .warehouse()
+        .create_location(stateset_core::CreateLocation {
+            warehouse_id: warehouse.id,
+            location_type: stateset_core::LocationType::Receiving,
+            is_receivable: Some(true),
+            ..Default::default()
+        })
+        .expect("create receiving location");
 
     commerce.receiving().start_receiving(receipt.id).expect("start");
+    let lines = commerce.receiving().get_receipt_items(receipt.id).expect("get items");
+    let item_a = lines.iter().find(|i| i.sku == "ITEM-A").expect("ITEM-A line").id;
+    commerce
+        .receiving()
+        .receive_items(stateset_core::ReceiveItems {
+            receipt_id: receipt.id,
+            items: vec![stateset_core::ReceiveItemLine {
+                receipt_item_id: item_a,
+                quantity_received: dec!(5),
+                quantity_rejected: None,
+                rejection_reason: None,
+                lot_number: None,
+                serial_numbers: None,
+                expiration_date: None,
+                notes: None,
+            }],
+            receiving_location_id: Some(dock.id),
+            received_by: None,
+        })
+        .expect("receive ITEM-A");
     commerce.receiving().complete_receiving(receipt.id).expect("complete");
 
     let items = commerce.receiving().get_receipt_items(receipt.id).expect("get items");
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].status, stateset_core::ReceiptItemStatus::Received);
+    assert_eq!(items.len(), 2);
+    let status = |sku: &str| items.iter().find(|i| i.sku == sku).expect("line").status;
+    assert_eq!(status("ITEM-A"), stateset_core::ReceiptItemStatus::Received);
+    assert_eq!(status("ITEM-B"), stateset_core::ReceiptItemStatus::Pending);
 }
 
 /// Setting a new item's cost seeds `average_cost` and `last_cost` to the standard

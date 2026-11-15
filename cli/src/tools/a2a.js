@@ -1776,7 +1776,7 @@ export const a2aTools = [
         .string()
         .min(1)
         .describe('Event type (e.g., "payment.completed", "escrow.released")'),
-      payload: z.record(z.unknown()).describe('Event payload to deliver'),
+      payload: z.record(z.string(), z.unknown()).describe('Event payload to deliver'),
       endpointUrl: z
         .string()
         .url()
@@ -2064,7 +2064,7 @@ export const a2aTools = [
         .min(0)
         .optional()
         .describe('Max past-due billing cycles before cancellation (default: 3)'),
-      metadata: z.record(z.unknown()).optional().describe('Additional metadata'),
+      metadata: z.record(z.string(), z.unknown()).optional().describe('Additional metadata'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -2334,7 +2334,7 @@ export const a2aTools = [
       memo: z.string().max(500).optional().describe('Payment memo'),
       referenceType: z.string().optional().describe('Reference entity type (e.g., "order")'),
       referenceId: z.string().optional().describe('Reference entity ID'),
-      metadata: z.record(z.unknown()).optional().describe('Additional metadata'),
+      metadata: z.record(z.string(), z.unknown()).optional().describe('Additional metadata'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
