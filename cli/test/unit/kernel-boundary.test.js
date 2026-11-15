@@ -55,6 +55,8 @@ describe('kernel mutation boundary', () => {
     assert.equal(exposedNames.has('delete_customer'), false);
     assert.equal(exposedNames.has('backup_database'), false);
     assert.equal(exposedNames.has('set_exchange_rate'), false);
+    // Removes an entry from the shared, in-memory event subscription registry.
+    assert.equal(exposedNames.has('agentic_unsubscribe_events'), false);
     assert.equal(exposedNames.has('create_payment'), true);
     const entries = classifyKernelToolBoundary(ALL_TOOLS).entries;
     for (const name of ['agentic_execute_plan', 'agentic_replay_mutation']) {

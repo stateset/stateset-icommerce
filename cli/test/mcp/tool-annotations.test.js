@@ -42,6 +42,7 @@ const DESTRUCTIVE_TOOLS = [
 // Tools that change persisted state. None may ever be advertised read-only.
 const MUTATING_TOOLS = [
   'agentic_replay_mutation',
+  'agentic_unsubscribe_events',
   'export_full_data',
   'agent_collect_rfq_responses',
   'resolve_payment_link',

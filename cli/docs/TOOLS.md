@@ -1711,7 +1711,7 @@ Server-level tools that belong to no domain (planning, simulation, replay, event
 | `agentic_replay_mutation` | core | write | Replay a previously logged mutating tool call from the deterministic replay log, with dry-run by default. |
 | `agentic_replay` | core | read | Read recent deterministic execution events for auditability and replay tooling. |
 | `agentic_subscribe_events` | core | read | Subscribe to MCP execution events for a session or global stream. |
-| `agentic_unsubscribe_events` | core | read | Unsubscribe from a previously-created MCP event subscription. |
+| `agentic_unsubscribe_events` | core | write | Unsubscribe from a previously-created MCP event subscription. |
 | `agentic_list_event_subscriptions` | core | read | List active MCP event subscriptions. |
 | `agentic_get_event_history` | core | read | Fetch recent MCP event history for debugging and replay. |
 | `agentic_execute_plan` | core | write | Execute a tool sequence deterministically with optional dry-run and best-effort rollback. |
