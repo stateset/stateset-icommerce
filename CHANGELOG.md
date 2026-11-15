@@ -20,6 +20,11 @@ This project follows Keep a Changelog and Semantic Versioning.
   intents), refuses a hash that already settled another intent
   (`commerce.x402.tx_hash_already_settled`) and refuses an intent past
   `valid_until` (`commerce.x402.intent_expired`).
+- Refunding a disputed A2A escrow through the kernel (`a2a.escrow.refund`)
+  resolves its open dispute as a `full_refund` in the same transaction and
+  records an `a2a.dispute_resolved.v1` fact, on both databases. The dispute
+  used to stay open, so `payments.create_refund` refused the escrow's
+  payment forever.
 
 ## [1.41.0] - 2026-11-15
 
