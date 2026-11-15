@@ -1,7 +1,8 @@
 use crate::kernel::SealedAuditEntry;
 use crate::kernel_outbox::{
-    KernelAuditCheckpoint, KernelAuditVerification, KernelOutboxEvent, KernelOutboxHealth,
-    KernelReceiptRecord, audit_checkpoint_hash_is_valid, build_audit_checkpoint,
+    AuditEntryRow, ClaimedAuditEntry, KernelAuditCheckpoint, KernelAuditVerification,
+    KernelOutboxEvent, KernelOutboxHealth, KernelReceiptRecord, MaterializedReceiptRow,
+    ReceiptAuditVerifier, audit_checkpoint_hash_is_valid, build_audit_checkpoint,
     receipt_audit_hash,
 };
 use chrono::{DateTime, Utc};
@@ -50,6 +51,9 @@ struct KernelReceiptRow {
 #[derive(Debug, FromRow)]
 struct KernelAuditRow {
     sequence: i64,
+    receipt_id: Uuid,
+    command_id: Uuid,
+    idempotency_key: String,
     request_hash: String,
     previous_audit_hash: Option<String>,
     audit_hash: String,
@@ -58,11 +62,17 @@ struct KernelAuditRow {
 
 #[derive(Debug, FromRow)]
 struct MaterializedReceiptAuditRow {
-    receipt: Value,
+    command_id: Uuid,
+    idempotency_key: String,
+    command_type: String,
+    contract_version: String,
     request_hash: String,
+    status: String,
+    receipt: Value,
     sequence: Option<i64>,
-    audit_receipt: Option<Value>,
+    audit_hash: Option<String>,
     audit_request_hash: Option<String>,
+    audit_receipt: Option<Value>,
 }
 
 impl From<KernelReceiptRow> for KernelReceiptRecord {
@@ -366,64 +376,82 @@ impl PgKernelOutboxRepository {
         .map_err(|error| CommerceError::DatabaseError(error.to_string()))
     }
 
-    /// Recompute every receipt link and report the first broken chain position.
+    /// Recompute every receipt link, then check that the materialized
+    /// `kernel_receipts` index corresponds exactly to the chain (the rule is
+    /// documented on [`crate::kernel_outbox::KernelAuditFailure`]). Reports
+    /// the first failure with a typed reason.
     pub async fn verify_audit_chain_async(&self) -> Result<KernelAuditVerification> {
+        let db_error = |error: sqlx::Error| CommerceError::DatabaseError(error.to_string());
+        // One snapshot for both passes, so a receipt committed mid-way cannot
+        // appear on one side only.
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(db_error)?;
         let rows = sqlx::query_as::<_, KernelAuditRow>(
-            "SELECT sequence, request_hash, previous_audit_hash, audit_hash, receipt
+            "SELECT sequence, receipt_id, command_id, idempotency_key, request_hash,
+                    previous_audit_hash, audit_hash, receipt
              FROM kernel_receipt_audit_log ORDER BY sequence",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
-        .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-        let mut previous: Option<String> = None;
-        let mut entries = 0_u64;
+        .map_err(db_error)?;
+        let mut verifier = ReceiptAuditVerifier::default();
         for row in rows {
-            entries += 1;
-            let computed = receipt_audit_hash(previous.as_deref(), &row.request_hash, &row.receipt)
-                .map_err(CommerceError::DatabaseError)?;
-            if row.previous_audit_hash != previous || row.audit_hash != computed {
-                return Ok(KernelAuditVerification {
-                    valid: false,
-                    entries,
-                    head_hash: previous,
-                    first_invalid_sequence: Some(row.sequence),
-                });
-            }
-            previous = Some(row.audit_hash);
-        }
-        let materialized = sqlx::query_as::<_, MaterializedReceiptAuditRow>(
-            "SELECT r.receipt, r.request_hash, a.sequence,
-                    a.receipt AS audit_receipt, a.request_hash AS audit_request_hash
-             FROM kernel_receipts r
-             LEFT JOIN kernel_receipt_audit_log a
-               ON a.audit_hash = r.receipt->>'audit_hash'",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-        for row in materialized {
-            let mut unsealed = row.receipt;
-            if let Some(object) = unsealed.as_object_mut() {
-                object.insert("audit_hash".into(), Value::Null);
-            }
-            if row.sequence.is_none()
-                || row.audit_request_hash.as_deref() != Some(row.request_hash.as_str())
-                || row.audit_receipt.as_ref() != Some(&unsealed)
-            {
-                return Ok(KernelAuditVerification {
-                    valid: false,
-                    entries,
-                    head_hash: previous,
-                    first_invalid_sequence: Some(row.sequence.unwrap_or(0)),
-                });
+            let entry = AuditEntryRow {
+                sequence: row.sequence,
+                receipt_id: row.receipt_id.to_string(),
+                command_id: row.command_id.to_string(),
+                idempotency_key: row.idempotency_key,
+                request_hash: row.request_hash,
+                previous_audit_hash: row.previous_audit_hash,
+                audit_hash: row.audit_hash,
+                receipt: Some(row.receipt),
+            };
+            if !verifier.entry(entry)? {
+                break;
             }
         }
-        Ok(KernelAuditVerification {
-            valid: true,
-            entries,
-            head_hash: previous,
-            first_invalid_sequence: None,
-        })
+        if verifier.chain_intact() {
+            let materialized = sqlx::query_as::<_, MaterializedReceiptAuditRow>(
+                "SELECT r.command_id, r.idempotency_key, r.command_type, r.contract_version,
+                        r.request_hash, r.status, r.receipt,
+                        a.sequence, a.audit_hash, a.request_hash AS audit_request_hash,
+                        a.receipt AS audit_receipt
+                 FROM kernel_receipts r
+                 LEFT JOIN kernel_receipt_audit_log a
+                   ON a.audit_hash = r.receipt->>'audit_hash'",
+            )
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_error)?;
+            for row in materialized {
+                let claimed = match (row.sequence, row.audit_hash, row.audit_request_hash) {
+                    (Some(sequence), Some(audit_hash), Some(request_hash)) => {
+                        Some(ClaimedAuditEntry {
+                            sequence,
+                            audit_hash,
+                            request_hash,
+                            receipt: row.audit_receipt,
+                        })
+                    }
+                    _ => None,
+                };
+                verifier.materialized(MaterializedReceiptRow {
+                    command_id: row.command_id.to_string(),
+                    idempotency_key: row.idempotency_key,
+                    command_type: row.command_type,
+                    contract_version: row.contract_version,
+                    request_hash: row.request_hash,
+                    status: row.status,
+                    receipt: Some(row.receipt),
+                    claimed,
+                });
+            }
+        }
+        tx.rollback().await.map_err(db_error)?;
+        Ok(verifier.finish())
     }
 
     /// Create a portable checkpoint for publication outside this database.
