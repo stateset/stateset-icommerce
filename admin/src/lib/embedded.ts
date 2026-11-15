@@ -11,6 +11,52 @@
 
 import 'server-only';
 
+import type {
+  Address,
+  Customer,
+  CustomerAnalytics,
+  DashboardMetrics,
+  HourlyActivity,
+  InventoryAnalytics,
+  InventoryItem,
+  Order,
+  OrderAnalytics,
+  OrderItem,
+  Product,
+  ProductVariant,
+  Return,
+  ReturnAnalytics,
+  ReturnItem,
+  Subscription,
+  SubscriptionAnalytics,
+  SystemHealth,
+} from './types';
+
+// The commerce record shapes are declared once, in `./types` (client-safe),
+// and re-exported here so server code can keep importing them from the
+// engine module. Their status unions derive from the native binding via
+// `./engine-lifecycles`; nothing in this file redeclares them.
+export type {
+  Address,
+  Customer,
+  CustomerAnalytics,
+  DashboardMetrics,
+  HourlyActivity,
+  InventoryAnalytics,
+  InventoryItem,
+  Order,
+  OrderAnalytics,
+  OrderItem,
+  Product,
+  ProductVariant,
+  Return,
+  ReturnAnalytics,
+  ReturnItem,
+  Subscription,
+  SubscriptionAnalytics,
+  SystemHealth,
+};
+
 // Commerce engine interface matching the API surface
 export interface CommerceEngine {
   orders: {
@@ -1332,37 +1378,6 @@ function createMockCommerceEngine(): CommerceEngine {
 // Orders API
 // ============================================================================
 
-export interface Order {
-  id: string;
-  customerId: string;
-  status: 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
-  items: OrderItem[];
-  totalAmount: number;
-  currency: string;
-  shippingAddress?: Address;
-  billingAddress?: Address;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface OrderItem {
-  productId: string;
-  sku: string;
-  name: string;
-  quantity: number;
-  unitPrice: number;
-  totalPrice: number;
-}
-
-export interface Address {
-  line1: string;
-  line2?: string;
-  city: string;
-  state: string;
-  postalCode: string;
-  country: string;
-}
-
 export interface CreateOrderParams {
   customerId: string;
   items: { productId: string; quantity: number }[];
@@ -1402,33 +1417,9 @@ export const ordersApi = {
   },
 };
 
-export interface OrderAnalytics {
-  totalOrders: number;
-  totalRevenue: number;
-  averageOrderValue: number;
-  ordersByStatus: Record<string, number>;
-  ordersByDay: { date: string; count: number; revenue: number }[];
-}
-
 // ============================================================================
 // Inventory API
 // ============================================================================
-
-export interface InventoryItem {
-  id: string;
-  sku: string;
-  productId: string;
-  productName: string;
-  quantity: number;
-  reservedQuantity: number;
-  availableQuantity: number;
-  reorderPoint: number;
-  reorderQuantity: number;
-  warehouseId?: string;
-  location?: string;
-  lastRestocked?: string;
-  updatedAt: string;
-}
 
 export interface InventoryAdjustment {
   id: string;
@@ -1483,17 +1474,6 @@ export const inventoryApi = {
   },
 };
 
-export interface InventoryAnalytics {
-  totalSKUs: number;
-  totalUnits: number;
-  totalValue: number;
-  lowStockItems: number;
-  outOfStockItems: number;
-  turnoverRate: number;
-  topMovingItems: { sku: string; name: string; velocity: number }[];
-  slowMovingItems: { sku: string; name: string; daysSinceLastSale: number }[];
-}
-
 export interface DemandForecast {
   sku: string;
   currentStock: number;
@@ -1506,31 +1486,6 @@ export interface DemandForecast {
 // ============================================================================
 // Returns API
 // ============================================================================
-
-export interface Return {
-  id: string;
-  orderId: string;
-  customerId: string;
-  status: 'requested' | 'approved' | 'received' | 'inspected' | 'refunded' | 'rejected' | 'closed';
-  items: ReturnItem[];
-  reason: string;
-  reasonCategory: 'defective' | 'wrong_item' | 'not_as_described' | 'changed_mind' | 'other';
-  refundAmount?: number;
-  refundMethod?: 'original' | 'store_credit' | 'exchange';
-  trackingNumber?: string;
-  notes?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ReturnItem {
-  productId: string;
-  sku: string;
-  name: string;
-  quantity: number;
-  condition?: 'new' | 'opened' | 'damaged' | 'used';
-  returnReason?: string;
-}
 
 export interface CreateReturnParams {
   orderId: string;
@@ -1584,36 +1539,9 @@ export const returnsApi = {
   },
 };
 
-export interface ReturnAnalytics {
-  totalReturns: number;
-  returnRate: number;
-  refundTotal: number;
-  returnsByReason: Record<string, number>;
-  returnsByStatus: Record<string, number>;
-  averageProcessingTime: number;
-  topReturnedProducts: { productId: string; name: string; count: number; rate: number }[];
-}
-
 // ============================================================================
 // Customers API
 // ============================================================================
-
-export interface Customer {
-  id: string;
-  email: string;
-  firstName?: string;
-  lastName?: string;
-  phone?: string;
-  defaultAddress?: Address;
-  addresses: Address[];
-  tags: string[];
-  totalOrders: number;
-  totalSpent: number;
-  averageOrderValue: number;
-  lastOrderDate?: string;
-  createdAt: string;
-  updatedAt: string;
-}
 
 export interface CustomerSegment {
   id: string;
@@ -1685,48 +1613,9 @@ export interface CustomerHealthScore {
   churnRisk: number;
 }
 
-export interface CustomerAnalytics {
-  totalCustomers: number;
-  newCustomersThisMonth: number;
-  activeCustomers: number;
-  averageLifetimeValue: number;
-  averageOrdersPerCustomer: number;
-  customersBySegment: Record<string, number>;
-  acquisitionTrend: { date: string; count: number }[];
-  retentionRate: number;
-  churnRate: number;
-}
-
 // ============================================================================
 // Products API
 // ============================================================================
-
-export interface Product {
-  id: string;
-  sku: string;
-  name: string;
-  description?: string;
-  price: number;
-  compareAtPrice?: number;
-  costPrice?: number;
-  currency: string;
-  category?: string;
-  tags: string[];
-  status: 'active' | 'draft' | 'archived';
-  images: string[];
-  variants: ProductVariant[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ProductVariant {
-  id: string;
-  sku: string;
-  name: string;
-  price: number;
-  options: Record<string, string>;
-  inventoryQuantity: number;
-}
 
 export const productsApi = {
   async list(params?: { status?: string; category?: string }): Promise<Product[]> {
@@ -1758,35 +1647,6 @@ export const productsApi = {
 // ============================================================================
 // Analytics API
 // ============================================================================
-
-export interface DashboardMetrics {
-  gmvToday: number;
-  gmvChange: number;
-  ordersToday: number;
-  ordersChange: number;
-  averageOrderValue: number;
-  aovChange: number;
-  conversionRate: number;
-  conversionChange: number;
-  activeCustomers: number;
-  newCustomers: number;
-  returnRate: number;
-  inventoryHealth: number;
-}
-
-export interface HourlyActivity {
-  hour: string;
-  orders: number;
-  revenue: number;
-}
-
-export interface SystemHealth {
-  databaseLatency: number;
-  errorRate: number;
-  activeConnections: number;
-  queueDepth: number;
-  processingSpeed: number;
-}
 
 export const analyticsApi = {
   async getDashboardMetrics(): Promise<DashboardMetrics> {
@@ -1830,22 +1690,6 @@ export const analyticsApi = {
 // Subscriptions API
 // ============================================================================
 
-export interface Subscription {
-  id: string;
-  customerId: string;
-  status: 'active' | 'paused' | 'cancelled' | 'expired';
-  plan: string;
-  planId?: string;
-  frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'annually';
-  nextBillingDate: string;
-  currentPeriodEnd?: string;
-  items: { productId: string; quantity: number }[];
-  quantity: number;
-  totalAmount: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export const subscriptionsApi = {
   async list(params?: { status?: string; customerId?: string }): Promise<Subscription[]> {
     const commerce = await getCommerceEngine();
@@ -1882,19 +1726,6 @@ export const subscriptionsApi = {
     return commerce.subscriptions.getAnalytics();
   },
 };
-
-export interface SubscriptionAnalytics {
-  totalSubscriptions: number;
-  activeSubscriptions: number;
-  mrr: number;
-  mrrGrowth?: number;
-  arr: number;
-  churnRate: number;
-  arpu?: number;
-  averageLifetime: number;
-  subscriptionsByPlan: Record<string, number>;
-  subscriptionsByFrequency: Record<string, number>;
-}
 
 // ============================================================================
 // Finance API (General Ledger + Accounts Payable)

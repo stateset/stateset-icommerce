@@ -2,7 +2,11 @@
  * TypeScript Types for StateSet Commerce
  *
  * These types are shared between client and server components.
- * Import these types in client components instead of from embedded.ts
+ * Import these types in client components instead of from embedded.ts.
+ *
+ * This is the only declaration of the commerce record shapes: `embedded.ts`
+ * re-exports them rather than keeping a second copy, so the two can no
+ * longer drift apart.
  */
 
 // ============================================================================
