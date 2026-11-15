@@ -121,6 +121,8 @@ import {
   createProduct,
   updateProduct,
   deleteProduct,
+  getInventoryAnalyticsData,
+  getCustomerHealthData,
 } from '@/app/actions/commerce';
 import {
   ordersApi,
@@ -234,6 +236,25 @@ describe('commerce actions auth guard', () => {
     it('allows read actions', async () => {
       await expect(getOrders({ limit: 10 })).resolves.toEqual([]);
       expect(ordersApi.list).toHaveBeenCalledWith({ limit: 10 });
+    });
+
+    it('hands dashboards an explanation when the engine lacks a capability', async () => {
+      const missing = Object.assign(
+        new Error('The embedded engine has no inventory listing (inventory.list ...)'),
+        { code: 'ENGINE_CAPABILITY_UNAVAILABLE' }
+      );
+      vi.mocked(inventoryApi.list).mockRejectedValueOnce(missing);
+      await expect(getInventoryAnalyticsData()).resolves.toEqual({
+        unavailable: missing.message,
+      });
+
+      vi.mocked(customersApi.getAnalytics).mockRejectedValueOnce(missing);
+      await expect(getCustomerHealthData()).resolves.toEqual({ unavailable: missing.message });
+    });
+
+    it('still surfaces genuine engine failures', async () => {
+      vi.mocked(inventoryApi.list).mockRejectedValueOnce(new Error('database is locked'));
+      await expect(getInventoryAnalyticsData()).rejects.toThrow('database is locked');
     });
   });
 

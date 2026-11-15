@@ -58,6 +58,18 @@ const emptyForecastData: DemandForecastingData = {
 };
 
 describe('DemandForecasting', () => {
+  it('explains a capability the engine lacks instead of failing', () => {
+    useEmbeddedDataMock.mockReturnValue({
+      data: { unavailable: 'The embedded engine has no inventory listing' },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+      mutate: vi.fn(),
+    });
+    render(<DemandForecasting />);
+    expect(screen.getByText('Demand forecasting unavailable')).toBeInTheDocument();
+  });
+
   it('shows empty states when no live forecast coverage exists', () => {
     useEmbeddedDataMock.mockReturnValue({
       data: emptyForecastData,

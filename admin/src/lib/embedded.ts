@@ -85,25 +85,66 @@ export type {
   SystemHealth,
 };
 
-// Commerce engine interface matching the API surface
+/**
+ * Thrown when the connected engine build has no equivalent for an admin
+ * feature (the native binding lacks several methods the admin's mock offers).
+ * Server actions catch it and hand the page an explanation instead of
+ * crashing with `x is not a function`.
+ */
+export class EngineCapabilityError extends Error {
+  readonly code = 'ENGINE_CAPABILITY_UNAVAILABLE';
+
+  constructor(
+    readonly feature: string,
+    explanation: string,
+  ) {
+    super(`${explanation} (${feature} is not available on this engine build)`);
+    this.name = 'EngineCapabilityError';
+  }
+}
+
+// Commerce engine interface matching the API surface. Members marked
+// optional exist on the mock but not on the native binding; the `*Api`
+// wrappers below route them to a native equivalent or raise
+// `EngineCapabilityError`.
 export interface CommerceEngine {
   orders: {
-    list: (params?: { status?: string; limit?: number; offset?: number }) => Promise<Order[]>;
+    list: (params?: {
+      status?: string;
+      customerId?: string;
+      limit?: number;
+      offset?: number;
+    }) => Promise<Order[]>;
     get: (id: string) => Promise<Order | null>;
     create: (params: CreateOrderParams) => Promise<Order>;
     updateStatus: (id: string, status: string) => Promise<Order>;
     cancel: (id: string, reason?: string) => Promise<Order>;
-    getAnalytics: (params?: { startDate?: string; endDate?: string }) => Promise<OrderAnalytics>;
+    /** Mock-only aggregate; `ordersApi` derives it from the order list otherwise. */
+    getAnalytics?: (params?: { startDate?: string; endDate?: string }) => Promise<OrderAnalytics>;
   };
   inventory: {
-    list: (params?: { warehouseId?: string; lowStock?: boolean }) => Promise<InventoryItem[]>;
-    get: (sku: string) => Promise<InventoryItem | null>;
+    /** Mock-only: the binding has no inventory listing. */
+    list?: (params?: { warehouseId?: string; lowStock?: boolean }) => Promise<InventoryItem[]>;
+    /** Mock-only; the native lookup is `getStock`. */
+    get?: (sku: string) => Promise<InventoryItem | null>;
+    /** Native stock lookup (`Inventory.getStock`). */
+    getStock?: (sku: string) => Promise<NativeStockLevel | null>;
     adjust: (sku: string, quantity: number, reason?: string) => Promise<InventoryAdjustment>;
-    reserve: (sku: string, quantity: number, orderId: string) => Promise<InventoryItem>;
-    release: (sku: string, quantity: number, orderId: string) => Promise<InventoryItem>;
-    getLowStock: (threshold?: number) => Promise<InventoryItem[]>;
-    getAnalytics: () => Promise<InventoryAnalytics>;
-    forecast: (sku: string, days: number) => Promise<DemandForecast>;
+    /** The binding's signature: a reservation references its source record. */
+    reserve: (
+      sku: string,
+      quantity: number,
+      referenceType: string,
+      referenceId: string,
+    ) => Promise<unknown>;
+    /** Mock-only: the binding releases by reservation id (`releaseReservation`). */
+    release?: (sku: string, quantity: number, orderId: string) => Promise<InventoryItem>;
+    /** Mock-only; natively `analytics.lowStockItems`. */
+    getLowStock?: (threshold?: number) => Promise<InventoryItem[]>;
+    /** Mock-only; natively `analytics.inventoryHealth`. */
+    getAnalytics?: () => Promise<InventoryAnalytics>;
+    /** Mock-only; natively `analytics.demandForecast`. */
+    forecast?: (sku: string, days: number) => Promise<DemandForecast>;
   };
   /**
    * Return lifecycle, named after the native binding's methods
@@ -135,10 +176,14 @@ export interface CommerceEngine {
     getByEmail: (email: string) => Promise<Customer | null>;
     create: (params: Partial<Customer>) => Promise<Customer>;
     update: (id: string, params: Partial<Customer>) => Promise<Customer>;
-    getOrders: (customerId: string) => Promise<Order[]>;
-    getHealthScore: (customerId: string) => Promise<CustomerHealthScore>;
-    getSegments: () => Promise<CustomerSegment[]>;
-    getAnalytics: () => Promise<CustomerAnalytics>;
+    /** Mock-only; natively `orders.list({ customerId })`. */
+    getOrders?: (customerId: string) => Promise<Order[]>;
+    /** Mock-only: the engine computes no customer health score. */
+    getHealthScore?: (customerId: string) => Promise<CustomerHealthScore>;
+    /** Mock-only: engine segments are a separate rule-based API. */
+    getSegments?: () => Promise<CustomerSegment[]>;
+    /** Mock-only: the engine has no equivalent customer aggregate. */
+    getAnalytics?: () => Promise<CustomerAnalytics>;
   };
   products: {
     list: (params?: { status?: string; category?: string }) => Promise<Product[]>;
@@ -244,23 +289,73 @@ export interface CommerceEngine {
   receiving?: {
     listReceipts: () => Promise<Receipt[]>;
   };
+  /**
+   * The admin's dashboard aggregates are mock-only: the native `Analytics`
+   * class exposes differently shaped reports (`salesSummary`,
+   * `revenueByPeriod`, ...), so these raise `EngineCapabilityError` there.
+   */
   analytics: {
-    getDashboardMetrics: () => Promise<DashboardMetrics>;
-    getHourlyActivity: (date?: string) => Promise<HourlyActivity[]>;
-    getSystemHealth: () => Promise<SystemHealth>;
-    getRevenueByPeriod: (params: {
+    getDashboardMetrics?: () => Promise<DashboardMetrics>;
+    getHourlyActivity?: (date?: string) => Promise<HourlyActivity[]>;
+    getSystemHealth?: () => Promise<SystemHealth>;
+    getRevenueByPeriod?: (params: {
       startDate: string;
       endDate: string;
       groupBy: 'day' | 'week' | 'month';
     }) => Promise<{ period: string; revenue: number; orders: number }[]>;
-    getTopProducts: (
+    getTopProducts?: (
       limit?: number,
     ) => Promise<{ productId: string; name: string; revenue: number; units: number }[]>;
-    getConversionFunnel: () => Promise<{ stage: string; count: number; rate: number }[]>;
+    getConversionFunnel?: () => Promise<{ stage: string; count: number; rate: number }[]>;
     /** Native only (`Analytics.returnMetrics`): engine-computed return rate and refund total. */
     returnMetrics?: () => Promise<NativeReturnMetrics>;
+    /** Native only (`Analytics.lowStockItems`). */
+    lowStockItems?: (threshold?: number) => Promise<NativeLowStockItem[]>;
+    /** Native only (`Analytics.inventoryHealth`). */
+    inventoryHealth?: () => Promise<NativeInventoryHealth>;
+    /** Native only (`Analytics.demandForecast`). */
+    demandForecast?: (skus?: string[], daysAhead?: number) => Promise<NativeDemandForecast[]>;
   };
   initialize?: () => Promise<void>;
+}
+
+/** The binding's `StockLevelOutput` (`Inventory.getStock`); quantities are decimal strings. */
+export interface NativeStockLevel {
+  sku: string;
+  name: string;
+  totalOnHand: string;
+  totalAllocated: string;
+  totalAvailable: string;
+}
+
+/** The binding's `LowStockItemOutput` (`Analytics.lowStockItems`). */
+export interface NativeLowStockItem {
+  sku: string;
+  name: string;
+  onHand: number;
+  allocated: number;
+  available: number;
+  reorderPoint?: number;
+}
+
+/** The fields of the binding's `InventoryHealthOutput` the admin reads. */
+export interface NativeInventoryHealth {
+  totalSkus: number;
+  lowStockSkus: number;
+  outOfStockSkus: number;
+  totalValue: number;
+  totalValueExact?: string;
+}
+
+/** The fields of the binding's `DemandForecastOutput` the admin reads. */
+export interface NativeDemandForecast {
+  sku: string;
+  averageDailyDemand: number;
+  forecastedDemand: number;
+  confidence: number;
+  currentStock: number;
+  daysUntilStockout?: number;
+  recommendedReorderQty?: number;
 }
 
 /** The fields of the binding's `ReturnMetricsOutput` the admin reads. */
@@ -1565,13 +1660,66 @@ export const ordersApi = {
 
   async getAnalytics(params?: { startDate?: string; endDate?: string }): Promise<OrderAnalytics> {
     const commerce = await getCommerceEngine();
-    return commerce.orders.getAnalytics(params);
+    if (typeof commerce.orders.getAnalytics === 'function') {
+      return commerce.orders.getAnalytics(params);
+    }
+    // The binding has no order aggregate; every figure here is derivable
+    // from the order records themselves.
+    return summarizeOrders(await commerce.orders.list());
   },
 };
+
+/** Order analytics computed from the order records (engines without an aggregate). */
+export function summarizeOrders(orders: Order[], now: number = Date.now()): OrderAnalytics {
+  const totalRevenue = roundCurrency(orders.reduce((sum, order) => sum + order.totalAmount, 0));
+  const ordersByStatus = orders.reduce<Record<string, number>>((acc, order) => {
+    acc[order.status] = (acc[order.status] || 0) + 1;
+    return acc;
+  }, {});
+  const ordersByDay = Array.from({ length: 30 }, (_, index) => {
+    const date = toDateKey(new Date(now - (29 - index) * DAY_MS).toISOString());
+    const daily = orders.filter((order) => toDateKey(order.createdAt) === date);
+    return {
+      date,
+      count: daily.length,
+      revenue: roundCurrency(daily.reduce((sum, order) => sum + order.totalAmount, 0)),
+    };
+  });
+  return {
+    totalOrders: orders.length,
+    totalRevenue,
+    averageOrderValue: orders.length ? roundCurrency(totalRevenue / orders.length) : 0,
+    ordersByStatus,
+    ordersByDay,
+  };
+}
 
 // ============================================================================
 // Inventory API
 // ============================================================================
+
+function toInventoryItem(stock: {
+  sku: string;
+  name: string;
+  onHand: number;
+  allocated: number;
+  available: number;
+  reorderPoint?: number;
+}): InventoryItem {
+  return {
+    id: stock.sku,
+    sku: stock.sku,
+    productId: '',
+    productName: stock.name,
+    quantity: stock.onHand,
+    reservedQuantity: stock.allocated,
+    availableQuantity: stock.available,
+    // Not reported by the engine's stock lookup; 0 means "no reorder rule".
+    reorderPoint: stock.reorderPoint ?? 0,
+    reorderQuantity: 0,
+    updatedAt: '',
+  };
+}
 
 export interface InventoryAdjustment {
   id: string;
@@ -1585,14 +1733,41 @@ export interface InventoryAdjustment {
 }
 
 export const inventoryApi = {
+  /** Whether this engine can list inventory (the native binding cannot). */
+  async supportsListing(): Promise<boolean> {
+    const commerce = await getCommerceEngine();
+    return typeof commerce.inventory.list === 'function';
+  },
+
   async list(params?: { warehouseId?: string; lowStock?: boolean }): Promise<InventoryItem[]> {
     const commerce = await getCommerceEngine();
+    if (typeof commerce.inventory.list !== 'function') {
+      throw new EngineCapabilityError(
+        'inventory.list',
+        'The embedded engine has no inventory listing; look stock up by SKU instead',
+      );
+    }
     return commerce.inventory.list(params);
   },
 
   async get(sku: string): Promise<InventoryItem | null> {
     const commerce = await getCommerceEngine();
-    return commerce.inventory.get(sku);
+    if (typeof commerce.inventory.get === 'function') {
+      return commerce.inventory.get(sku);
+    }
+    if (typeof commerce.inventory.getStock === 'function') {
+      const stock = await commerce.inventory.getStock(sku);
+      return stock
+        ? toInventoryItem({
+            sku: stock.sku,
+            name: stock.name,
+            onHand: Number(stock.totalOnHand),
+            allocated: Number(stock.totalAllocated),
+            available: Number(stock.totalAvailable),
+          })
+        : null;
+    }
+    throw new EngineCapabilityError('inventory.get', 'This engine cannot look up stock by SKU');
   },
 
   async adjust(sku: string, quantity: number, reason?: string): Promise<InventoryAdjustment> {
@@ -1600,29 +1775,89 @@ export const inventoryApi = {
     return commerce.inventory.adjust(sku, quantity, reason);
   },
 
-  async reserve(sku: string, quantity: number, orderId: string): Promise<InventoryItem> {
+  /** Reserve stock for an order (the binding records the order as the reservation's source). */
+  async reserve(sku: string, quantity: number, orderId: string): Promise<unknown> {
     const commerce = await getCommerceEngine();
-    return commerce.inventory.reserve(sku, quantity, orderId);
+    return commerce.inventory.reserve(sku, quantity, 'order', orderId);
   },
 
   async release(sku: string, quantity: number, orderId: string): Promise<InventoryItem> {
     const commerce = await getCommerceEngine();
+    if (typeof commerce.inventory.release !== 'function') {
+      throw new EngineCapabilityError(
+        'inventory.release',
+        'The embedded engine releases stock by reservation id, not by SKU and order',
+      );
+    }
     return commerce.inventory.release(sku, quantity, orderId);
   },
 
   async getLowStock(threshold?: number): Promise<InventoryItem[]> {
     const commerce = await getCommerceEngine();
-    return commerce.inventory.getLowStock(threshold);
+    if (typeof commerce.inventory.getLowStock === 'function') {
+      return commerce.inventory.getLowStock(threshold);
+    }
+    if (typeof commerce.analytics.lowStockItems === 'function') {
+      return (await commerce.analytics.lowStockItems(threshold)).map(toInventoryItem);
+    }
+    throw new EngineCapabilityError('inventory.getLowStock', 'This engine reports no low stock');
   },
 
   async getAnalytics(): Promise<InventoryAnalytics> {
     const commerce = await getCommerceEngine();
-    return commerce.inventory.getAnalytics();
+    if (typeof commerce.inventory.getAnalytics === 'function') {
+      return commerce.inventory.getAnalytics();
+    }
+    if (typeof commerce.analytics.inventoryHealth === 'function') {
+      const health = await commerce.analytics.inventoryHealth();
+      return {
+        totalSKUs: health.totalSkus,
+        // Not part of the engine's health report.
+        totalUnits: 0,
+        totalValue: Number(health.totalValueExact ?? health.totalValue),
+        lowStockItems: health.lowStockSkus,
+        outOfStockItems: health.outOfStockSkus,
+        turnoverRate: 0,
+        topMovingItems: [],
+        slowMovingItems: [],
+      };
+    }
+    throw new EngineCapabilityError(
+      'inventory.getAnalytics',
+      'This engine reports no inventory health',
+    );
   },
 
   async forecast(sku: string, days: number): Promise<DemandForecast> {
     const commerce = await getCommerceEngine();
-    return commerce.inventory.forecast(sku, days);
+    if (typeof commerce.inventory.forecast === 'function') {
+      return commerce.inventory.forecast(sku, days);
+    }
+    if (typeof commerce.analytics.demandForecast === 'function') {
+      const [forecast] = await commerce.analytics.demandForecast([sku], days);
+      if (!forecast) {
+        throw new EngineCapabilityError(
+          'inventory.forecast',
+          `The engine has no forecast for ${sku}`,
+        );
+      }
+      return {
+        sku: forecast.sku,
+        currentStock: forecast.currentStock,
+        // The engine forecasts an average daily rate; spread it over the window.
+        forecastedDemand: Array.from(
+          { length: Math.max(days, 1) },
+          () => forecast.averageDailyDemand,
+        ),
+        recommendedReorder: forecast.recommendedReorderQty ?? 0,
+        stockoutDate:
+          forecast.daysUntilStockout === undefined
+            ? undefined
+            : new Date(Date.now() + forecast.daysUntilStockout * DAY_MS).toISOString(),
+        confidence: forecast.confidence,
+      };
+    }
+    throw new EngineCapabilityError('inventory.forecast', 'This engine has no demand forecast');
   },
 };
 
@@ -1805,21 +2040,43 @@ export const customersApi = {
 
   async getOrders(customerId: string): Promise<Order[]> {
     const commerce = await getCommerceEngine();
-    return commerce.customers.getOrders(customerId);
+    if (typeof commerce.customers.getOrders === 'function') {
+      return commerce.customers.getOrders(customerId);
+    }
+    // The binding filters orders by customer instead.
+    return commerce.orders.list({ customerId });
   },
 
   async getHealthScore(customerId: string): Promise<CustomerHealthScore> {
     const commerce = await getCommerceEngine();
+    if (typeof commerce.customers.getHealthScore !== 'function') {
+      throw new EngineCapabilityError(
+        'customers.getHealthScore',
+        'The embedded engine does not score customer health',
+      );
+    }
     return commerce.customers.getHealthScore(customerId);
   },
 
   async getSegments(): Promise<CustomerSegment[]> {
     const commerce = await getCommerceEngine();
+    if (typeof commerce.customers.getSegments !== 'function') {
+      throw new EngineCapabilityError(
+        'customers.getSegments',
+        'The embedded engine keeps segments as rules, not as a customer breakdown',
+      );
+    }
     return commerce.customers.getSegments();
   },
 
   async getAnalytics(): Promise<CustomerAnalytics> {
     const commerce = await getCommerceEngine();
+    if (typeof commerce.customers.getAnalytics !== 'function') {
+      throw new EngineCapabilityError(
+        'customers.getAnalytics',
+        'The embedded engine has no customer health and retention analytics',
+      );
+    }
     return commerce.customers.getAnalytics();
   },
 };
@@ -1874,20 +2131,32 @@ export const productsApi = {
 // Analytics API
 // ============================================================================
 
+/** Resolve a mock-only dashboard aggregate, or explain that the engine lacks it. */
+async function dashboardAggregate<K extends keyof CommerceEngine['analytics']>(
+  name: K,
+): Promise<NonNullable<CommerceEngine['analytics'][K]>> {
+  const commerce = await getCommerceEngine();
+  const method = commerce.analytics[name];
+  if (typeof method !== 'function') {
+    throw new EngineCapabilityError(
+      `analytics.${String(name)}`,
+      'The embedded engine has no equivalent dashboard aggregate',
+    );
+  }
+  return method.bind(commerce.analytics) as NonNullable<CommerceEngine['analytics'][K]>;
+}
+
 export const analyticsApi = {
   async getDashboardMetrics(): Promise<DashboardMetrics> {
-    const commerce = await getCommerceEngine();
-    return commerce.analytics.getDashboardMetrics();
+    return (await dashboardAggregate('getDashboardMetrics'))();
   },
 
   async getHourlyActivity(date?: string): Promise<HourlyActivity[]> {
-    const commerce = await getCommerceEngine();
-    return commerce.analytics.getHourlyActivity(date);
+    return (await dashboardAggregate('getHourlyActivity'))(date);
   },
 
   async getSystemHealth(): Promise<SystemHealth> {
-    const commerce = await getCommerceEngine();
-    return commerce.analytics.getSystemHealth();
+    return (await dashboardAggregate('getSystemHealth'))();
   },
 
   async getRevenueByPeriod(params: {
@@ -1895,20 +2164,17 @@ export const analyticsApi = {
     endDate: string;
     groupBy: 'day' | 'week' | 'month';
   }): Promise<{ period: string; revenue: number; orders: number }[]> {
-    const commerce = await getCommerceEngine();
-    return commerce.analytics.getRevenueByPeriod(params);
+    return (await dashboardAggregate('getRevenueByPeriod'))(params);
   },
 
   async getTopProducts(
     limit?: number,
   ): Promise<{ productId: string; name: string; revenue: number; units: number }[]> {
-    const commerce = await getCommerceEngine();
-    return commerce.analytics.getTopProducts(limit);
+    return (await dashboardAggregate('getTopProducts'))(limit);
   },
 
   async getConversionFunnel(): Promise<{ stage: string; count: number; rate: number }[]> {
-    const commerce = await getCommerceEngine();
-    return commerce.analytics.getConversionFunnel();
+    return (await dashboardAggregate('getConversionFunnel'))();
   },
 };
 

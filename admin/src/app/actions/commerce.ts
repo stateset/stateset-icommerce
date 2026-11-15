@@ -38,6 +38,9 @@ import {
 import type {
   AgentPerformanceData,
   CustomerHealthData,
+  DemandForecastingData,
+  EngineFeatureUnavailable,
+  InventoryAnalyticsData,
   FinancialReconciliationData,
   SystemHealthData,
   SystemEvent,
@@ -124,6 +127,29 @@ function formatRelativeTime(iso: string | undefined): string {
 
   const diffDays = Math.round(diffHours / 24);
   return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+}
+
+/**
+ * `EngineCapabilityError` (lib/embedded) marks a feature the connected engine
+ * build has no equivalent for. Matched by its code so a mocked engine module
+ * in tests needs no class export.
+ */
+function isEngineCapabilityError(error: unknown): error is Error {
+  return (
+    error instanceof Error && (error as { code?: unknown }).code === 'ENGINE_CAPABILITY_UNAVAILABLE'
+  );
+}
+
+/** Run a dashboard loader, turning a missing engine capability into an explanation. */
+async function orUnavailable<T>(load: () => Promise<T>): Promise<T | EngineFeatureUnavailable> {
+  try {
+    return await load();
+  } catch (error) {
+    if (isEngineCapabilityError(error)) {
+      return { unavailable: error.message };
+    }
+    throw error;
+  }
 }
 
 // ============================================================================
@@ -370,6 +396,10 @@ export async function getDemandForecast(sku: string, days: number) {
 // Inventory Analytics data for generative UI
 export async function getInventoryAnalyticsData() {
   await requireAdminSession();
+  return orUnavailable(loadInventoryAnalyticsData);
+}
+
+async function loadInventoryAnalyticsData(): Promise<InventoryAnalyticsData> {
   const [inventory, analytics, lowStock] = await Promise.all([
     inventoryApi.list(),
     inventoryApi.getAnalytics(),
@@ -580,8 +610,14 @@ export async function getCustomerAnalytics(): Promise<CustomerAnalytics> {
 }
 
 // Customer Health data for generative UI
-export async function getCustomerHealthData(): Promise<CustomerHealthData> {
+export async function getCustomerHealthData(): Promise<
+  CustomerHealthData | EngineFeatureUnavailable
+> {
   await requireAdminSession();
+  return orUnavailable(loadCustomerHealthData);
+}
+
+async function loadCustomerHealthData(): Promise<CustomerHealthData> {
   const [customers, analytics] = await Promise.all([
     customersApi.list({ limit: 100 }),
     customersApi.getAnalytics(),
@@ -825,6 +861,10 @@ export async function getConversionFunnel() {
 // Demand Forecasting data for generative UI
 export async function getDemandForecastingData() {
   await requireAdminSession();
+  return orUnavailable(loadDemandForecastingData);
+}
+
+async function loadDemandForecastingData(): Promise<DemandForecastingData> {
   const [inventory, analytics] = await Promise.all([
     inventoryApi.list(),
     inventoryApi.getAnalytics(),
@@ -1100,7 +1140,12 @@ export async function getAgentPerformanceData(): Promise<AgentPerformanceData> {
   await requireAdminSession();
   const [orders, inventory, returns, customers, subscriptions] = await Promise.all([
     ordersApi.list({ limit: 100 }),
-    inventoryApi.list(),
+    // The native engine cannot list inventory; this widget is simulated
+    // anyway, so the inventory agent just reports no volume there.
+    inventoryApi.list().catch((error: unknown) => {
+      if (isEngineCapabilityError(error)) return [];
+      throw error;
+    }),
     returnsApi.list(),
     customersApi.list({ limit: 100 }),
     subscriptionsApi.list(),

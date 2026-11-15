@@ -68,6 +68,19 @@ describe('InventoryAnalytics', () => {
     expect(screen.getByText('Failed to load inventory analytics')).toBeInTheDocument();
   });
 
+  it('explains a capability the engine lacks instead of failing', () => {
+    useEmbeddedDataMock.mockReturnValue({
+      data: { unavailable: 'The embedded engine has no inventory listing' },
+      isLoading: false,
+      error: null,
+    });
+    render(<InventoryAnalytics />);
+    expect(screen.getByText('Inventory analytics unavailable')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'The embedded engine has no inventory listing',
+    );
+  });
+
   it('does not show low-stock / out-of-stock badges when both counts are zero', () => {
     useEmbeddedDataMock.mockReturnValue({ data: baseData, isLoading: false, error: null });
     render(<InventoryAnalytics />);

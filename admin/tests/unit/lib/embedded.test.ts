@@ -384,6 +384,142 @@ describe('embedded commerce engine', () => {
     );
   });
 
+  it('routes admin calls the binding names differently and explains the ones it lacks', async () => {
+    vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'false');
+    const orders = [
+      {
+        id: 'ord_1',
+        customerId: 'cus_1',
+        status: 'delivered',
+        totalAmount: 40,
+        items: [],
+        currency: 'USD',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: 'ord_2',
+        customerId: 'cus_2',
+        status: 'partially_shipped',
+        totalAmount: 60,
+        items: [],
+        currency: 'USD',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+    const listOrders = vi.fn(async (filter?: { customerId?: string }) =>
+      filter?.customerId
+        ? orders.filter((order) => order.customerId === filter.customerId)
+        : orders,
+    );
+    class NativeCommerce {
+      get orders() {
+        return { list: listOrders };
+      }
+      get inventory() {
+        return {
+          getStock: async (sku: string) => ({
+            sku,
+            name: 'Widget',
+            totalOnHand: '12',
+            totalAllocated: '2',
+            totalAvailable: '10',
+          }),
+        };
+      }
+      get customers() {
+        return { list: async () => [] };
+      }
+      get analytics() {
+        return {
+          lowStockItems: async () => [
+            {
+              sku: 'SKU-1',
+              name: 'Widget',
+              onHand: 3,
+              allocated: 1,
+              available: 2,
+              reorderPoint: 5,
+            },
+          ],
+          inventoryHealth: async () => ({
+            totalSkus: 4,
+            lowStockSkus: 1,
+            outOfStockSkus: 0,
+            totalValue: 99.5,
+            totalValueExact: '99.50',
+          }),
+          demandForecast: async () => [
+            {
+              sku: 'SKU-1',
+              averageDailyDemand: 2,
+              forecastedDemand: 6,
+              confidence: 0.8,
+              currentStock: 10,
+              recommendedReorderQty: 20,
+            },
+          ],
+        };
+      }
+    }
+    vi.doMock('@stateset/embedded', () => ({ Commerce: NativeCommerce }));
+
+    const { analyticsApi, customersApi, inventoryApi, ordersApi, EngineCapabilityError } =
+      await import('@/lib/embedded');
+
+    // Derived from the order records.
+    expect(await ordersApi.getAnalytics()).toMatchObject({
+      totalOrders: 2,
+      totalRevenue: 100,
+      averageOrderValue: 50,
+      ordersByStatus: { delivered: 1, partially_shipped: 1 },
+    });
+    // customers.getOrders -> orders.list({ customerId })
+    expect(await customersApi.getOrders('cus_2')).toEqual([orders[1]]);
+    expect(listOrders).toHaveBeenLastCalledWith({ customerId: 'cus_2' });
+
+    // inventory.get -> getStock, getLowStock/getAnalytics/forecast -> analytics.*
+    expect(await inventoryApi.get('SKU-1')).toMatchObject({
+      sku: 'SKU-1',
+      productName: 'Widget',
+      quantity: 12,
+      reservedQuantity: 2,
+      availableQuantity: 10,
+    });
+    expect(await inventoryApi.getLowStock()).toMatchObject([
+      { sku: 'SKU-1', availableQuantity: 2, reorderPoint: 5 },
+    ]);
+    expect(await inventoryApi.getAnalytics()).toMatchObject({
+      totalSKUs: 4,
+      lowStockItems: 1,
+      outOfStockItems: 0,
+      totalValue: 99.5,
+    });
+    expect(await inventoryApi.forecast('SKU-1', 3)).toMatchObject({
+      sku: 'SKU-1',
+      forecastedDemand: [2, 2, 2],
+      recommendedReorder: 20,
+      confidence: 0.8,
+    });
+
+    // No native equivalent: a typed, explanatory error instead of a TypeError.
+    await expect(inventoryApi.list()).rejects.toBeInstanceOf(EngineCapabilityError);
+    await expect(inventoryApi.list()).rejects.toThrow(/no inventory listing/);
+    await expect(inventoryApi.supportsListing()).resolves.toBe(false);
+    await expect(inventoryApi.release('SKU-1', 1, 'ord_1')).rejects.toBeInstanceOf(
+      EngineCapabilityError,
+    );
+    await expect(customersApi.getHealthScore('cus_1')).rejects.toBeInstanceOf(
+      EngineCapabilityError,
+    );
+    await expect(customersApi.getAnalytics()).rejects.toBeInstanceOf(EngineCapabilityError);
+    await expect(analyticsApi.getDashboardMetrics()).rejects.toMatchObject({
+      code: 'ENGINE_CAPABILITY_UNAVAILABLE',
+      feature: 'analytics.getDashboardMetrics',
+    });
+  });
+
   it('rejects explicit mock mode in production', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'true');

@@ -27,6 +27,8 @@ import type {
   TopMovingItem,
   SlowMovingItem,
 } from '@/lib/types/dashboard-data';
+import { isEngineFeatureUnavailable } from '@/lib/types/dashboard-data';
+import { EngineFeatureNotice } from '@/components/shared/engine-feature-notice';
 import type { InventoryItem } from '@/lib/types';
 
 interface InventoryAnalyticsProps {
@@ -50,6 +52,10 @@ function InventoryAnalyticsInner({ data: propData }: InventoryAnalyticsProps) {
         </CardContent>
       </Card>
     );
+  }
+
+  if (isEngineFeatureUnavailable(data)) {
+    return <EngineFeatureNotice title="Inventory analytics" message={data.unavailable} />;
   }
 
   if (error || !data) {
