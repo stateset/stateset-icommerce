@@ -6,7 +6,7 @@
 
 import { z } from 'zod';
 
-import { RETURN_REASONS } from '../engine-lifecycles';
+import { ORDER_STATUS_UPDATES, RETURN_REASONS } from '../engine-lifecycles';
 import { ValidationError } from './errors';
 
 // ============================================================================
@@ -313,14 +313,13 @@ export const addressSchema = z.object({
   country: z.string().min(1, 'Country is required').max(60),
 });
 
-export const orderStatusSchema = z.enum([
-  'pending',
-  'confirmed',
-  'processing',
-  'shipped',
-  'delivered',
-  'cancelled',
-]);
+/**
+ * The statuses `orders.updateStatus` accepts (`OrderStatusUpdate` in the
+ * binding): every engine order status except `partially_shipped`, which only
+ * `ship` derives. Whether a given move is legal is the engine's call
+ * (`ORDER_LIFECYCLE`); this only refuses names it would never accept.
+ */
+export const orderStatusSchema = z.enum(ORDER_STATUS_UPDATES);
 
 /** The engine's return reason codes (`ReturnReason` in the binding). */
 export const returnReasonCategorySchema = z.enum(RETURN_REASONS);

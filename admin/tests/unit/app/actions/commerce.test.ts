@@ -369,6 +369,18 @@ describe('commerce action input validation', () => {
     expect(returnsApi.reject).not.toHaveBeenCalled();
   });
 
+  it('updateOrderStatus accepts every status orders.updateStatus takes, refunded included', async () => {
+    await updateOrderStatus('order-1', 'refunded');
+    expect(ordersApi.updateStatus).toHaveBeenCalledWith('order-1', 'refunded');
+  });
+
+  it('updateOrderStatus refuses partially_shipped, which only ship() derives', async () => {
+    await expect(
+      updateOrderStatus('order-1', 'partially_shipped' as never)
+    ).rejects.toMatchObject(VALIDATION_ERROR);
+    expect(ordersApi.updateStatus).not.toHaveBeenCalled();
+  });
+
   it('addReturnTracking rejects a blank or markup tracking number', async () => {
     await expect(addReturnTracking('ret-1', '   ')).rejects.toMatchObject(VALIDATION_ERROR);
     await expect(addReturnTracking('ret-1', '<script>')).rejects.toMatchObject(

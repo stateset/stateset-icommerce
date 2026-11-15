@@ -42,7 +42,13 @@ import type {
   SystemHealthData,
   SystemEvent,
 } from '@/lib/types/dashboard-data';
-import { RETURN_LIFECYCLE, isTerminal, type ReturnStatus } from '@/lib/engine-lifecycles';
+import {
+  ORDER_STATUSES,
+  RETURN_LIFECYCLE,
+  isTerminal,
+  type OrderStatusUpdate,
+  type ReturnStatus,
+} from '@/lib/engine-lifecycles';
 import { requireAdminSession } from '@/lib/shared/auth-session';
 import {
   addReturnTrackingArgsSchema,
@@ -251,7 +257,10 @@ export async function createOrder(params: {
   return ordersApi.create(args);
 }
 
-export async function updateOrderStatus(orderId: string, status: Order['status']): Promise<Order> {
+export async function updateOrderStatus(
+  orderId: string,
+  status: OrderStatusUpdate,
+): Promise<Order> {
   await requireAdminSession();
   const args = validateArgs({ orderId, status }, updateOrderStatusArgsSchema);
   return ordersApi.updateStatus(args.orderId, args.status);
@@ -279,11 +288,10 @@ export async function getOrderPipelineData() {
     ordersApi.getAnalytics(),
   ]);
 
-  // Group orders by status
-  const statusGroups = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
-  const groupedOrders = statusGroups.map((status) => ({
+  // Group orders by every engine order status, in lifecycle order.
+  const groupedOrders = ORDER_STATUSES.map((status) => ({
     key: status,
-    label: status.charAt(0).toUpperCase() + status.slice(1),
+    label: (status.charAt(0).toUpperCase() + status.slice(1)).replaceAll('_', ' '),
     count: analytics.ordersByStatus[status] || 0,
     totalValue: orders
       .filter((o) => o.status === status)
@@ -299,7 +307,9 @@ export async function getOrderPipelineData() {
       deliveredRate:
         ((analytics.ordersByStatus['delivered'] || 0) / Math.max(analytics.totalOrders, 1)) * 100,
       inProgressCount:
-        (analytics.ordersByStatus['processing'] || 0) + (analytics.ordersByStatus['shipped'] || 0),
+        (analytics.ordersByStatus['processing'] || 0) +
+        (analytics.ordersByStatus['partially_shipped'] || 0) +
+        (analytics.ordersByStatus['shipped'] || 0),
       exceptionsCount: analytics.ordersByStatus['cancelled'] || 0,
     },
     statusGroups: groupedOrders,
@@ -1157,8 +1167,12 @@ export async function getAgentPerformanceData(): Promise<AgentPerformanceData> {
     {
       id: '6',
       name: 'Fulfillment Agent',
-      volume: orders.filter((order) => order.status === 'processing' || order.status === 'shipped')
-        .length,
+      volume: orders.filter(
+        (order) =>
+          order.status === 'processing' ||
+          order.status === 'partially_shipped' ||
+          order.status === 'shipped',
+      ).length,
       target: 24,
       baseMs: 940,
       successBase: 0.985,

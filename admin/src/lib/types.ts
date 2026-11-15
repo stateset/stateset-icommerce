@@ -12,7 +12,7 @@
  * through `./engine-lifecycles` (type-only import, safe in client bundles).
  */
 
-import type { ReturnReason, ReturnStatus } from './engine-lifecycles';
+import type { OrderStatus, ReturnReason, ReturnStatus } from './engine-lifecycles';
 
 // ============================================================================
 // Orders Types
@@ -21,7 +21,8 @@ import type { ReturnReason, ReturnStatus } from './engine-lifecycles';
 export interface Order {
   id: string;
   customerId: string;
-  status: 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
+  /** The engine's order lifecycle (`ORDER_LIFECYCLE` in `./engine-lifecycles`). */
+  status: OrderStatus;
   items: OrderItem[];
   totalAmount: number;
   currency: string;

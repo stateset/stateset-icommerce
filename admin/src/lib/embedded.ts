@@ -14,12 +14,14 @@ import 'server-only';
 import {
   AP_AGING_EXCLUDED_BILL_STATUSES,
   AR_OPEN_INVOICE_STATUSES,
+  ORDER_LIFECYCLE,
   RETURN_LIFECYCLE,
   RETURN_REASONS,
   canTransition,
   normalizeEngineStatus,
   statusIn,
   type BillStatus,
+  type OrderStatusUpdate,
   type ReturnReason,
   type ReturnStatus,
   type GlAccountStatus,
@@ -489,14 +491,18 @@ function buildMockCommerceData(): MockCommerceData {
     { plan: 'Pro', planId: 'pro', amount: 79, frequency: 'monthly' as const },
     { plan: 'Enterprise', planId: 'enterprise', amount: 249, frequency: 'quarterly' as const },
   ];
+  // Every engine order status (weighted towards delivered), including the
+  // `partially_shipped` and `refunded` states the admin used to ignore.
   const statusPool: Order['status'][] = [
     'delivered',
     'delivered',
     'shipped',
+    'partially_shipped',
     'processing',
     'confirmed',
     'pending',
     'cancelled',
+    'refunded',
   ];
   // Every state of the engine's return lifecycle, so demo mode exercises the
   // same queue (and the same action gating) as the native engine.
@@ -944,6 +950,26 @@ function getMockOrder(id: string): Order | null {
   return getMockData().orders.find((order) => order.id === id) || null;
 }
 
+/**
+ * Move a mock order the way the engine's `update_status` does: the same
+ * state is a no-op (the catalog marks order states re-entrant), any other
+ * move must be an `ORDER_LIFECYCLE` edge. Persisted for the demo session.
+ */
+function transitionMockOrder(id: string, to: Order['status']): Order {
+  const data = getMockData();
+  const index = data.orders.findIndex((order) => order.id === id);
+  if (index === -1) {
+    throw new Error(`Order not found: ${id}`);
+  }
+  const current = data.orders[index];
+  if (current.status !== to && !canTransition(ORDER_LIFECYCLE, current.status, to)) {
+    throw new Error(`Order cannot move from ${current.status} to ${to}`);
+  }
+  const next: Order = { ...current, status: to, updatedAt: new Date().toISOString() };
+  data.orders[index] = next;
+  return next;
+}
+
 function getMockInventoryItem(sku: string): InventoryItem | null {
   return getMockData().inventory.find((item) => item.sku === sku) || null;
 }
@@ -1124,21 +1150,9 @@ function createMockCommerceEngine(): CommerceEngine {
       },
       get: async (id: string) => getMockOrder(id),
       create: async (params: CreateOrderParams) => buildMockOrderFromParams(params),
-      updateStatus: async (id: string, status: string) => {
-        const current =
-          getMockOrder(id) || buildMockOrderFromParams({ customerId: 'cus_100', items: [] });
-        return {
-          ...current,
-          id,
-          status: status as Order['status'],
-          updatedAt: new Date().toISOString(),
-        };
-      },
-      cancel: async (id: string) => {
-        const current =
-          getMockOrder(id) || buildMockOrderFromParams({ customerId: 'cus_100', items: [] });
-        return { ...current, id, status: 'cancelled', updatedAt: new Date().toISOString() };
-      },
+      updateStatus: async (id: string, status: string) =>
+        transitionMockOrder(id, status as Order['status']),
+      cancel: async (id: string) => transitionMockOrder(id, 'cancelled'),
       getAnalytics: async () => getMockData().orderAnalytics,
     },
     inventory: {
@@ -1519,7 +1533,7 @@ export const ordersApi = {
     return commerce.orders.create(params);
   },
 
-  async updateStatus(orderId: string, status: Order['status']): Promise<Order> {
+  async updateStatus(orderId: string, status: OrderStatusUpdate): Promise<Order> {
     const commerce = await getCommerceEngine();
     return commerce.orders.updateStatus(orderId, status);
   },

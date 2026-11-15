@@ -1,11 +1,12 @@
 // Component tests for the bulk-orders client.
 //
-// Heart of these tests: the cross-status enable/disable rules from
-// firing #25. Bulk Confirm requires every selected row to be `pending`;
-// Bulk Move-to-processing requires every selected row to be `confirmed`;
-// Bulk Cancel requires no row to be in a terminal status (`cancelled` /
-// `delivered`). Mixing rows of different statuses must disable each
-// action that doesn't apply uniformly.
+// Heart of these tests: the cross-status enable/disable rules, taken from
+// the engine's order lifecycle (`ORDER_LIFECYCLE`). Bulk Confirm requires
+// every selected row to be `pending`; Bulk Move-to-processing requires every
+// selected row to be `confirmed`; Bulk Cancel requires every selected row to
+// be pending, confirmed or processing (the engine refuses to cancel shipped,
+// delivered or refunded orders). Mixing rows of different statuses must
+// disable each action that doesn't apply uniformly.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
@@ -165,6 +166,39 @@ describe('BulkOrdersClient · cross-status action gating', () => {
     );
     fireEvent.click(screen.getByLabelText(/select all visible orders/i));
     expect(screen.getByRole('button', { name: /^Cancel \(2\)$/ })).toBeDisabled();
+  });
+
+  // The engine's order lifecycle allows cancel from pending, confirmed and
+  // processing only; shipped (incl. partially), delivered, refunded and
+  // cancelled orders are refused.
+  it.each([
+    ['pending', true],
+    ['confirmed', true],
+    ['processing', true],
+    ['partially_shipped', false],
+    ['shipped', false],
+    ['delivered', false],
+    ['cancelled', false],
+    ['refunded', false],
+  ] as [Order['status'], boolean][])('Cancel for a lone %s order: enabled=%s', (status, enabled) => {
+    render(<BulkOrdersClient initialOrders={[fakeOrder('A', status)]} />);
+    fireEvent.click(screen.getByLabelText('Select order A'));
+    const cancel = screen.getByRole('button', { name: /^Cancel \(1\)$/ });
+    if (enabled) expect(cancel).not.toBeDisabled();
+    else expect(cancel).toBeDisabled();
+  });
+
+  it('offers a filter chip for every engine order status', () => {
+    render(
+      <BulkOrdersClient
+        initialOrders={[fakeOrder('A', 'partially_shipped'), fakeOrder('B', 'refunded')]}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'partially shipped' }));
+    expect(screen.getByText('A')).toBeInTheDocument();
+    expect(screen.queryByText('B')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'refunded' }));
+    expect(screen.getByText('B')).toBeInTheDocument();
   });
 
   it('all bulk actions disabled when no rows are selected', () => {

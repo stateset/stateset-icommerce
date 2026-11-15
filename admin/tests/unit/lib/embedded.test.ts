@@ -38,15 +38,23 @@ describe('embedded commerce engine', () => {
 
     const firstOrders = await engine.orders.list();
     const secondOrders = await engine.orders.list();
-    const updated = await engine.orders.updateStatus(firstOrders[0].id, 'processing');
-
     expect(secondOrders).toEqual(firstOrders);
+
+    // Mock orders follow the engine's order lifecycle: confirmed → processing
+    // is legal, a terminal order moves nowhere.
+    const confirmed = firstOrders.find((order) => order.status === 'confirmed');
+    expect(confirmed).toBeDefined();
+    const updated = await engine.orders.updateStatus(confirmed!.id, 'processing');
     expect(updated).toMatchObject({
-      id: firstOrders[0].id,
+      id: confirmed!.id,
       status: 'processing',
-      items: firstOrders[0].items,
+      items: confirmed!.items,
       currency: 'USD',
     });
+    const cancelled = firstOrders.find((order) => order.status === 'cancelled');
+    await expect(engine.orders.updateStatus(cancelled!.id, 'processing')).rejects.toThrow(
+      /cannot move from cancelled to processing/,
+    );
   });
 
   it('serves EDI documents and a consistent summary in mock mode', async () => {
