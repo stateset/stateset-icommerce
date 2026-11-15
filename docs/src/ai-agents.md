@@ -474,7 +474,7 @@ if (!shipped.ok) {
 For Claude Desktop, Cursor, Windsurf, or other MCP-native clients:
 
 ```bash
-npx -y @stateset/cli@latest stateset-setup --yes --quickstart --db ./store.db
+npx -y -p @stateset/cli@latest stateset-setup --yes --quickstart --db ./store.db
 ```
 
 This registers the iCommerce MCP server with your client. The core tool tier appears automatically in the tool palette (see [Tool tiers and profiles](#tool-tiers-and-profiles) to widen it).
