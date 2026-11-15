@@ -16,8 +16,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | Total tools | 984 |
 | MCP servers | 3 |
 | Policy domains | 91 |
-| Read tools | 484 |
-| Write tools | 431 |
+| Read tools | 483 |
+| Write tools | 432 |
 | Delete tools | 21 |
 | Admin tools | 48 |
 | Unknown permission | 0 |
@@ -132,8 +132,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | --- | --- |
 | admin | 48 |
 | delete | 21 |
-| read | 484 |
-| write | 431 |
+| read | 483 |
+| write | 432 |
 
 ## Tool Registry
 
@@ -360,7 +360,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `agentic_simulate_mutation` | `stateset-commerce` | `agentic` | `read` |
 | `agentic_subscribe_events` | `stateset-commerce` | `agentic` | `read` |
 | `agentic_tool_catalog` | `stateset-commerce` | `agentic` | `read` |
-| `agentic_unsubscribe_events` | `stateset-commerce` | `agentic` | `read` |
+| `agentic_unsubscribe_events` | `stateset-commerce` | `agentic` | `write` |
 | `allocate_backorder` | `stateset-commerce` | `backorders` | `write` |
 | `apply_cart_discount` | `stateset-commerce` | `carts` | `write` |
 | `apply_cart_promotions` | `stateset-commerce` | `promotions` | `write` |

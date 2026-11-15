@@ -555,7 +555,7 @@ export const TOOL_PERMISSIONS = {
   agentic_replay_mutation: 'write',
   agentic_replay: 'read',
   agentic_subscribe_events: 'read',
-  agentic_unsubscribe_events: 'read',
+  agentic_unsubscribe_events: 'write',
   agentic_list_event_subscriptions: 'read',
   agentic_get_event_history: 'read',
   agentic_execute_plan: 'write',
