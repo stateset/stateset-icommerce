@@ -291,6 +291,63 @@ describe('FallbackChain', () => {
     const result = await chain.chat([{ role: 'user', content: 'hello' }]);
     assert.strictEqual(result.provider, 'openai');
   });
+
+  it('sends a half-open provider one trial call, not every concurrent request', async () => {
+    const registry = getProviderRegistry();
+    const openai = new MockProvider('openai');
+    const gemini = new MockProvider('gemini');
+    let releaseTrial;
+    const trialGate = new Promise((resolve) => {
+      releaseTrial = resolve;
+    });
+    const plainChat = openai.chat.bind(openai);
+    openai.chat = async (...args) => {
+      await trialGate;
+      return plainChat(...args);
+    };
+    registry.register(openai);
+    registry.register(gemini);
+
+    const chain = new FallbackChain({
+      order: ['openai', 'gemini'],
+      failureThreshold: 1,
+      resetTimeoutMs: 30,
+    });
+    chain._circuitBreaker.recordFailure('openai');
+    await new Promise((r) => setTimeout(r, 50)); // now due for a half-open trial
+
+    const requests = [1, 2, 3].map((n) => chain.chat([{ role: 'user', content: `req ${n}` }]));
+    await new Promise((r) => setTimeout(r, 10));
+    releaseTrial();
+    const results = await Promise.all(requests);
+
+    assert.strictEqual(openai.callCount, 1, 'exactly one trial reaches the half-open provider');
+    assert.deepStrictEqual(results.map((r) => r.provider).sort(), ['gemini', 'gemini', 'openai']);
+    assert.strictEqual(chain.getCircuitStatus().openai.state, 'closed');
+  });
+
+  it('gives back the half-open trial when the provider reports itself unavailable', async () => {
+    const registry = getProviderRegistry();
+    const openai = new MockProvider('openai');
+    const gemini = new MockProvider('gemini');
+    let openaiUp = false;
+    openai.isAvailable = async () => openaiUp;
+    registry.register(openai);
+    registry.register(gemini);
+
+    const chain = new FallbackChain({
+      order: ['openai', 'gemini'],
+      failureThreshold: 1,
+      resetTimeoutMs: 30,
+    });
+    chain._circuitBreaker.recordFailure('openai');
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.strictEqual((await chain.chat([{ role: 'user', content: 'a' }])).provider, 'gemini');
+    openaiUp = true;
+    assert.strictEqual((await chain.chat([{ role: 'user', content: 'b' }])).provider, 'openai');
+    assert.strictEqual(openai.callCount, 1);
+  });
 });
 
 // ============================================================================

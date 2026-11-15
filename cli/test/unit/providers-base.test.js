@@ -247,9 +247,48 @@ describe('CircuitBreaker', { skip: !canImport && `import failed: ${importError?.
     for (let i = 0; i < 3; i++) cb.recordFailure('p');
     await new Promise((r) => setTimeout(r, 600));
 
-    // First call transitions to half-open and returns true
+    // First call transitions to half-open and claims the single trial
     assert.equal(cb.isAvailable('p'), true);
-    // Still half-open — allows another call
+    // While that trial is in flight, nobody else gets through
+    assert.equal(cb.isAvailable('p'), false);
+    assert.equal(cb.isAvailable('p'), false);
+    assert.equal(cb.getStatus().p.state, 'half-open');
+  });
+
+  it('a half-open trial that succeeds closes the circuit; one that fails re-opens it', async () => {
+    for (let i = 0; i < 3; i++) cb.recordFailure('ok');
+    for (let i = 0; i < 3; i++) cb.recordFailure('bad');
+    await new Promise((r) => setTimeout(r, 600));
+
+    assert.equal(cb.isAvailable('ok'), true);
+    cb.recordSuccess('ok');
+    assert.equal(cb.getStatus().ok.state, 'closed');
+    assert.equal(cb.isAvailable('ok'), true);
+    assert.equal(cb.isAvailable('ok'), true);
+
+    assert.equal(cb.isAvailable('bad'), true);
+    cb.recordFailure('bad');
+    assert.equal(cb.getStatus().bad.state, 'open');
+    assert.equal(cb.isAvailable('bad'), false);
+  });
+
+  it('a released half-open trial can be claimed again', async () => {
+    for (let i = 0; i < 3; i++) cb.recordFailure('p');
+    await new Promise((r) => setTimeout(r, 600));
+
+    assert.equal(cb.isAvailable('p'), true);
+    cb.release('p');
+    assert.equal(cb.isAvailable('p'), true);
+    assert.equal(cb.isAvailable('p'), false);
+  });
+
+  it('a half-open trial that never reports back stops blocking after resetTimeoutMs', async () => {
+    for (let i = 0; i < 3; i++) cb.recordFailure('p');
+    await new Promise((r) => setTimeout(r, 600));
+
+    assert.equal(cb.isAvailable('p'), true);
+    assert.equal(cb.isAvailable('p'), false);
+    await new Promise((r) => setTimeout(r, 600));
     assert.equal(cb.isAvailable('p'), true);
   });
 
