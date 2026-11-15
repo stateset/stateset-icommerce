@@ -717,6 +717,25 @@ export class Outbox {
    * @returns {Promise<number>} Local sequence number
    */
   async append(event, options = {}) {
+    const prepared = await this.prepareAppend(event, options);
+    return prepared.insert();
+  }
+
+  /**
+   * Do the asynchronous half of `append` — key lookup, encryption, signing —
+   * and return a synchronous `insert()` that writes the signed row.
+   *
+   * better-sqlite3 transactions are synchronous, so a caller that must insert
+   * an event atomically with other writes (conflict resolution supersedes one
+   * event with another) prepares it first and calls `insert()` inside its
+   * transaction. `insert` may override `baseVersion`, which the signature does
+   * not cover, so the version can be read under the same transaction.
+   *
+   * @param {Object} event - Same shape as `append`
+   * @param {Object} [options] - Same options as `append`
+   * @returns {Promise<{ eventId: string, insert: (overrides?: { baseVersion?: number|null }) => number }>}
+   */
+  async prepareAppend(event, options = {}) {
     this.initialize();
 
     const vesVersion = options.vesVersion || 1;
@@ -823,30 +842,35 @@ export class Outbox {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const result = stmt.run(
-      eventId,
-      event.commandId || null,
-      event.tenantId,
-      event.storeId,
-      event.entityType,
-      event.entityId,
-      event.eventType,
-      vesVersion,
-      payloadJson,
-      payloadKind,
-      payloadEncrypted ? JSON.stringify(payloadEncrypted) : null,
-      bufferToHex(payloadPlainHash),
-      bufferToHex(payloadCipherHash),
-      signingKey.keyId,
-      bufferToHex(agentSignature),
-      agentSignatureScheme,
-      agentSignatureBundle ? JSON.stringify(agentSignatureBundle) : null,
-      event.baseVersion || null,
-      event.sourceAgent,
-      createdAt,
-    );
+    const insert = (overrides = {}) => {
+      const baseVersion =
+        overrides.baseVersion !== undefined ? overrides.baseVersion : event.baseVersion;
+      const result = stmt.run(
+        eventId,
+        event.commandId || null,
+        event.tenantId,
+        event.storeId,
+        event.entityType,
+        event.entityId,
+        event.eventType,
+        vesVersion,
+        payloadJson,
+        payloadKind,
+        payloadEncrypted ? JSON.stringify(payloadEncrypted) : null,
+        bufferToHex(payloadPlainHash),
+        bufferToHex(payloadCipherHash),
+        signingKey.keyId,
+        bufferToHex(agentSignature),
+        agentSignatureScheme,
+        agentSignatureBundle ? JSON.stringify(agentSignatureBundle) : null,
+        baseVersion || null,
+        event.sourceAgent,
+        createdAt,
+      );
+      return result.lastInsertRowid;
+    };
 
-    return result.lastInsertRowid;
+    return { eventId, insert };
   }
 
   /**
