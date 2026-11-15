@@ -169,6 +169,7 @@ async function main() {
     { createStatesetMcpServer },
     { createStatesetV2McpServer },
     { seedDemoData },
+    { A2AStore },
   ] = await Promise.all([
     import('@stateset/embedded'),
     import('@modelcontextprotocol/server'),
@@ -176,6 +177,7 @@ async function main() {
     import('../src/mcp-server.js'),
     import('../src/mcp/v2-server.js'),
     import('../src/seeds/demo.js'),
+    import('../src/a2a/store.js'),
   ]);
 
   const dbPath = values.db || ':memory:';
@@ -262,6 +264,22 @@ async function main() {
     await seedDemoData(commerce, { quiet: true });
   }
 
+  // Side stores: one set per PROCESS, never closed per request (stopgap).
+  // The A2A runtime keeps its tables in the engine's store file (escrow
+  // atomicity) and reaches them through better-sqlite3, a second copy of SQLite
+  // in this process. POSIX locks belong to the process, so that copy cannot see
+  // the engine's: when a per-request server closed its own connection, the copy
+  // took itself for the last user, checkpointed and unlinked -wal/-shm, and the
+  // close dropped the engine's locks, leaving later engine commits invisible to
+  // new connections. The connection now opens lazily on the first side-store
+  // call and is never closed by this process: exit releases it (see runMain
+  // below). Known limits, NOT fixed: that first open can still truncate -shm
+  // under the engine; both copies can take the WAL write lock at once, and an
+  // unlock by one releases the other's lock on the same bytes; stateset-mcp
+  // (stdio) still runs a second copy for its lifetime. Real fix (owner-pending):
+  // route side stores through the engine binding.
+  const sharedStores = { a2aStore: new A2AStore({ dbPath: storageDbPath }) };
+
   // Per-request server factory: this is what makes the endpoint stateless. The
   // same factory backs both the 2026-07-28 path and the legacy stateless leg.
   const handler = createMcpHandler(
@@ -278,6 +296,7 @@ async function main() {
               .map((value) => value.trim())
               .filter(Boolean)
           : [],
+        sharedStores,
         createServer: createStatesetMcpServer,
         actorId: values.actor || process.env.STATESET_ERP_ACTOR || null,
       }),
@@ -302,6 +321,7 @@ async function main() {
           .map((value) => value.trim())
           .filter(Boolean)
       : [],
+    sharedStores,
     createServer: createStatesetMcpServer,
     actorId: values.actor || process.env.STATESET_ERP_ACTOR || null,
   });
@@ -380,6 +400,7 @@ async function main() {
     server.once('error', reject);
     server.listen(port, host, () => resolve());
   });
+  runtime.httpServer = server;
 
   const address = server.address();
   const boundPort = typeof address === 'object' && address ? address.port : port;
@@ -396,4 +417,21 @@ async function main() {
   );
 }
 
-runMain('stateset-mcp-http', main);
+/** Process-lifetime resources the shutdown handler touches. */
+const runtime = { httpServer: null };
+
+runMain('stateset-mcp-http', main, {
+  cleanup: async () => {
+    // Stop accepting connections; process exit follows immediately.
+    const server = runtime.httpServer;
+    runtime.httpServer = null;
+    server?.close();
+    // The shared side stores are deliberately NOT closed. Closing better-sqlite3
+    // while the engine's connection is live makes that second SQLite copy take
+    // itself for the last user: it checkpoints, unlinks -wal/-shm and drops the
+    // engine's locks (see main). The engine cannot be closed first either:
+    // Commerce.close() resolves before the native engine releases the file.
+    // Exit releases every descriptor and lock at once; the next open recovers
+    // the WAL.
+  },
+});

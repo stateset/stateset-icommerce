@@ -71,6 +71,12 @@ CREATE INDEX IF NOT EXISTS idx_spending_agent ON a2a_spending_ledger(agent_name)
 CREATE INDEX IF NOT EXISTS idx_spending_created ON a2a_spending_ledger(created_at);
 `;
 
+/**
+ * How many agents the in-memory state map tracks before it evicts closed
+ * entries. See `_evictClosedStates`.
+ */
+export const DEFAULT_MAX_TRACKED_AGENTS = 10_000;
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -80,11 +86,17 @@ CREATE INDEX IF NOT EXISTS idx_spending_created ON a2a_spending_ledger(created_a
  *
  * @param {Object} store - A2A store instance (must have `.db` property)
  * @param {Object} [configOverrides={}] - Configuration overrides
+ * @param {{ maxTrackedAgents?: number }} [options] - `maxTrackedAgents` caps
+ *   the in-memory state map (default {@link DEFAULT_MAX_TRACKED_AGENTS}).
  * @returns {Object} Circuit breaker service
  */
-export function createCircuitBreaker(store, configOverrides = {}) {
+export function createCircuitBreaker(store, configOverrides = {}, options = {}) {
   if (!store || !store.db) {
     throw new Error('store with .db property is required');
+  }
+  const maxTrackedAgents = options?.maxTrackedAgents ?? DEFAULT_MAX_TRACKED_AGENTS;
+  if (!Number.isSafeInteger(maxTrackedAgents) || maxTrackedAgents < 1) {
+    throw new Error('maxTrackedAgents must be a positive integer');
   }
 
   const db = store.db;
@@ -100,8 +112,28 @@ export function createCircuitBreaker(store, configOverrides = {}) {
   // Internal helpers
   // -------------------------------------------------------------------------
 
+  // The breaker is cached per store (tools/scoped-store.js), so on
+  // stateset-mcp-http, which shares one store per process, this map lives as
+  // long as the process. Agent names come from tool input, and even the read
+  // tool agent_get_breaker_state registers the name it is asked about, so
+  // without a cap the map grows with every distinct name a client sends.
+  //
+  // A closed entry carries nothing a fresh one would not (closing clears
+  // trippedAt, reason and halfOpenCount), so closed entries are evicted
+  // oldest-first once the cap is reached. Open and half-open entries are never
+  // evicted: dropping one would silently clear a trip. An evicted agent is no
+  // longer "known" to tripAll(); while the kill switch is on it is blocked
+  // anyway, and resetAll() clears every state.
+  function _evictClosedStates() {
+    for (const [name, agentState] of agentStates) {
+      if (agentStates.size < maxTrackedAgents) return;
+      if (agentState.state === 'closed') agentStates.delete(name);
+    }
+  }
+
   function _getOrCreateState(agentName) {
     if (!agentStates.has(agentName)) {
+      if (agentStates.size >= maxTrackedAgents) _evictClosedStates();
       agentStates.set(agentName, {
         state: 'closed',
         trippedAt: null,

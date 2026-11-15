@@ -226,6 +226,7 @@ function autoIndexEntity(entityType, entity) {
  * @param {Object} options.agentConfig.signingKey - Ed25519 signing key { privateKey, publicKey }
  * @param {Object} options.mcpEventStream - Optional MCP event stream service
  * @param {boolean} options.structuredToolResults - Return MCP tool responses with machine-readable metadata
+ * @param {{a2aStore?: A2AStore}|null} [options.sharedStores] - Caller-owned side stores to use instead of opening (and closing) this server's own
  */
 export function createStatesetMcpServer({
   commerce,
@@ -245,6 +246,7 @@ export function createStatesetMcpServer({
   kernel = null,
   toolProfile = 'all',
   toolDomains = [],
+  sharedStores = null,
 }) {
   if (
     actorId !== null &&
@@ -284,7 +286,8 @@ export function createStatesetMcpServer({
   // names for its quote/card projections while `a2a_escrows` is deliberately
   // shared with the native kernel, so escrow release and its receipt/outbox
   // commit atomically against the record created by the public A2A tools.
-  const a2aStore = new A2AStore({ dbPath });
+  // An injected store (stateset-mcp-http) outlives this server, which never closes it.
+  const a2aStore = sharedStores?.a2aStore ?? new A2AStore({ dbPath });
 
   // The A2A accessor is late-bound: `./mcp/a2a-service.js` starts it as a
   // pass-through over the store and swaps in the integrated service once
@@ -334,7 +337,7 @@ export function createStatesetMcpServer({
       disposeA2AServices(commerceWithA2A);
       resourcesClosing = a2aServicesReady.then(() => {
         disposeA2AServices(commerceWithA2A);
-        a2aStore.close();
+        if (a2aStore !== sharedStores?.a2aStore) a2aStore.close();
       });
     }
     return resourcesClosing;
