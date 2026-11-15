@@ -83,11 +83,15 @@ export const checkoutTools = [
   {
     name: 'resolve_payment_link',
     description:
-      'Resolve a payment link by ID or short code. Returns the link details, items, total, and expiry status.',
+      'Resolve a payment link by ID or short code, as a buyer opening it: counts a view. Returns ' +
+      'the link details, items, total, and expiry status. get_payment_link_status reads a link ' +
+      'without counting a view.',
     inputSchema: {
       linkId: z.string().min(1).describe('Payment link ID (UUID) or short code'),
     },
-    permission: 'read',
+    // A write: every resolve increments payment_links.views and bumps
+    // updated_at (src/checkout/express.js resolvePaymentLink).
+    permission: 'write',
     handler: async ({ params, ...ctx }) => {
       try {
         const svc = await getCheckoutSvc(ctx);

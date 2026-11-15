@@ -562,7 +562,7 @@ export const TOOL_PERMISSIONS = {
 
   // Express Checkout & Payment Links
   create_payment_link: 'write',
-  resolve_payment_link: 'read',
+  resolve_payment_link: 'write',
   express_checkout: 'write',
   agent_instant_checkout: 'write',
   get_payment_link_status: 'read',
@@ -825,7 +825,7 @@ export const TOOL_PERMISSIONS = {
   x402_record_incoming_settlement: 'write',
   x402_mark_settled: 'write',
   x402_get_next_nonce: 'read',
-  x402_credit_balance: 'read',
+  x402_credit_balance: 'write',
   x402_get_credit_account: 'read',
   x402_credit_debit: 'write',
   x402_credit_deposit: 'write',
