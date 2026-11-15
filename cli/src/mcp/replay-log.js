@@ -47,6 +47,9 @@ export function createEventStreamPublisher(mcpEventStream) {
         charge: event?.charge || null,
         params: event?.params || null,
         notes: event?.notes || null,
+        // A governed call's kernel decision (./replay-kernel-fields.js);
+        // absent, as on the replay event, for every other call.
+        ...(event?.kernel ? { kernel: event.kernel } : {}),
         source: event?.source || 'mcp_server',
       });
     } catch (error) {
