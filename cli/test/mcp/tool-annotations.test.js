@@ -9,11 +9,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-import {
-  KNOWN_TOOL_PERMISSIONS,
-  READ_TOOLS_THAT_WRITE,
-  deriveToolAnnotations,
-} from '../../src/mcp/tool-annotations.js';
+import { KNOWN_TOOL_PERMISSIONS, deriveToolAnnotations } from '../../src/mcp/tool-annotations.js';
 import {
   createAnnotatedSdkMcpServer,
   sdkForwardsToolAnnotations,
@@ -89,14 +85,6 @@ describe('deriveToolAnnotations', () => {
     }
   });
 
-  it('advertises the read tools known to write as mutations', () => {
-    for (const name of READ_TOOLS_THAT_WRITE) {
-      assert.deepEqual(deriveToolAnnotations({ name, permission: 'read' }), {
-        readOnlyHint: false,
-      });
-    }
-  });
-
   it('does not invent idempotent or open-world hints', () => {
     for (const permission of KNOWN_TOOL_PERMISSIONS) {
       const annotations = deriveToolAnnotations({ name: 'x', permission });
@@ -111,7 +99,6 @@ describe('deriveToolAnnotations', () => {
       { name: 'd', permission: 'delete' },
       { name: 'a', permission: 'admin' },
       { name: 'u' },
-      { name: READ_TOOLS_THAT_WRITE[0], permission: 'read' },
     ]) {
       const annotations = deriveToolAnnotations({
         ...toolDef,
@@ -144,12 +131,15 @@ describe('deriveToolAnnotations', () => {
       });
       assert.equal(annotations.destructiveHint, true, JSON.stringify(toolDef));
     }
-    const readThatWrites = deriveToolAnnotations({
-      name: READ_TOOLS_THAT_WRITE[0],
-      permission: 'read',
-      annotations: { destructiveHint: false },
-    });
-    assert.ok(!('destructiveHint' in readThatWrites));
+    // A read tool's hints say nothing about destructiveness.
+    assert.deepEqual(
+      deriveToolAnnotations({
+        name: 'r',
+        permission: 'read',
+        annotations: { destructiveHint: false },
+      }),
+      { readOnlyHint: true },
+    );
 
     // A write tool may claim it only adds.
     assert.deepEqual(
@@ -222,18 +212,18 @@ describe('tool registry permissions', () => {
     assert.deepEqual(offenders, []);
   });
 
-  it('READ_TOOLS_THAT_WRITE equals the kind:"write" entries of the read-tool mutation baseline', () => {
-    const baselined = baseline.violations
-      .filter((violation) => violation.kind === 'write')
-      .map((violation) => violation.tool)
-      .sort();
-    assert.deepEqual([...READ_TOOLS_THAT_WRITE].sort(), baselined);
-  });
-
-  it('every READ_TOOLS_THAT_WRITE entry is a registered read tool', () => {
-    for (const name of READ_TOOLS_THAT_WRITE) {
-      assert.equal(TOOL_BY_NAME.get(name)?.permission, 'read', name);
-    }
+  // Every read tool is advertised read-only, so none may be excused for
+  // writing rows. The baseline may excuse only first-use `init` work (an
+  // empty table, index, database or directory).
+  it('the read-tool mutation baseline excuses no read tool that writes rows', () => {
+    const dataWrites = baseline.violations
+      .filter((violation) => violation.kind !== 'init')
+      .map((violation) => `${violation.tool} (${violation.kind})`);
+    assert.deepEqual(
+      dataWrites,
+      [],
+      'tools/list would advertise these read-only: declare them write instead of baselining them',
+    );
   });
 });
 
@@ -349,12 +339,9 @@ describe('tools/list annotations on the real server', () => {
     assert.deepEqual(offenders, []);
   });
 
-  it('advertises read-only exactly for read tools not known to write', () => {
+  it('advertises read-only exactly for read tools', () => {
     for (const toolDef of EVERY_TOOL) {
-      const expected =
-        toolDef.permission === 'read' &&
-        !READ_TOOLS_THAT_WRITE.includes(toolDef.name) &&
-        toolDef.annotations?.readOnlyHint !== false;
+      const expected = toolDef.permission === 'read' && toolDef.annotations?.readOnlyHint !== false;
       assert.equal(listed.get(toolDef.name).annotations.readOnlyHint, expected, toolDef.name);
     }
   });

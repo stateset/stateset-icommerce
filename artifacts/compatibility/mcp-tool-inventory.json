@@ -397,18 +397,18 @@
     },
     {
       "name": "read",
-      "count": 483
+      "count": 481
     },
     {
       "name": "write",
-      "count": 432
+      "count": 434
     }
   ],
   "permissionCounts": {
     "admin": 48,
     "delete": 21,
-    "read": 483,
-    "write": 432
+    "read": 481,
+    "write": 434
   },
   "tools": [
     {
@@ -7802,12 +7802,12 @@
     },
     {
       "name": "resolve_payment_link",
-      "description": "Resolve a payment link by ID or short code. Returns the link details, items, total, and expiry status.",
+      "description": "Resolve a payment link by ID or short code, as a buyer opening it: counts a view. Returns the link details, items, total, and expiry status. get_payment_link_status reads a link without counting a view.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__resolve_payment_link",
       "policyDomain": "checkout",
-      "permission": "read"
+      "permission": "write"
     },
     {
       "name": "resolve_scheduled_price",
@@ -8990,12 +8990,12 @@
     },
     {
       "name": "x402_credit_balance",
-      "description": "Get x402 credit balance for a payer (prepaid meter for streaming usage).",
+      "description": "Get x402 credit balance for a payer (prepaid meter for streaming usage). Opens a zero-balance credit account on first use; x402_get_credit_account reads without creating one.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__x402_credit_balance",
       "policyDomain": "x402",
-      "permission": "read"
+      "permission": "write"
     },
     {
       "name": "x402_credit_debit",

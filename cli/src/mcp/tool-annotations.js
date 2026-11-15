@@ -3,9 +3,12 @@
 // Clients use `readOnlyHint` / `destructiveHint` to decide what an agent may
 // call without confirmation, so the mapping fails closed:
 //
-//   - only `read` is ever advertised as read-only, and not even every `read`
-//     tool: READ_TOOLS_THAT_WRITE lists the ones known to change persisted
-//     state;
+//   - only `read` is ever advertised as read-only, and every `read` tool is.
+//     That trusts the declaration, so a tool that changes persisted rows must
+//     be declared `write`. The read-tool mutation sweep
+//     (test/integration/mcp-read-tools-do-not-mutate.test.js) checks every
+//     read tool, and its baseline may excuse only first-use `init` work, never
+//     a data write (test/mcp/tool-annotations.test.js);
 //   - `write` omits `destructiveHint`, so the spec default (`true`) applies. A
 //     `write` tool can delete, void, refund or overwrite, and the permission
 //     alone cannot tell which ones only add;
@@ -22,29 +25,15 @@
 export const KNOWN_TOOL_PERMISSIONS = Object.freeze(['read', 'write', 'delete', 'admin']);
 
 /**
- * Tools declared `read` that are known to change persisted rows. They are
- * advertised as mutations (`readOnlyHint: false`, destructiveness left to the
- * spec default) until their permission is fixed.
- *
- * Must equal the `kind: "write"` entries of
- * test/fixtures/read-tool-mutation-baseline.json (a test enforces it); the
- * `kind: "init"` entries only create empty structure on first use and stay
- * read-only.
- */
-export const READ_TOOLS_THAT_WRITE = Object.freeze(['resolve_payment_link', 'x402_credit_balance']);
-
-const READ_TOOLS_THAT_WRITE_SET = new Set(READ_TOOLS_THAT_WRITE);
-
-/**
  * The annotation class of a tool definition.
  *
- * @param {{name?: string, permission?: string} | null | undefined} toolDef
+ * @param {{permission?: string} | null | undefined} toolDef
  * @returns {'read' | 'mutation' | 'destructive'}
  */
 function annotationClassOf(toolDef) {
   switch (toolDef?.permission) {
     case 'read':
-      return READ_TOOLS_THAT_WRITE_SET.has(toolDef?.name) ? 'mutation' : 'read';
+      return 'read';
     case 'write':
       return 'mutation';
     default:
@@ -72,7 +61,7 @@ const HINTS_BY_CLASS = Object.freeze({
  *     only on a `permission: 'write'` tool. That is a per-tool, code-reviewed
  *     claim that the tool only adds (e.g. `create_customer`), which the spec
  *     defines the hint for and the permission cannot express. It is ignored on
- *     `delete`/`admin`/unknown tools and on READ_TOOLS_THAT_WRITE.
+ *     every other permission.
  *   - `idempotentHint` and `openWorldHint` pass through: they too are
  *     per-tool claims the permission cannot express.
  *   - A value of the wrong type, `undefined`, or any other field is ignored.
@@ -95,11 +84,7 @@ export function deriveToolAnnotations(toolDef) {
 
   if (declared.destructiveHint === true) {
     annotations.destructiveHint = true;
-  } else if (
-    declared.destructiveHint === false &&
-    toolDef.permission === 'write' &&
-    annotationClass === 'mutation'
-  ) {
+  } else if (declared.destructiveHint === false && annotationClass === 'mutation') {
     annotations.destructiveHint = false;
   }
 

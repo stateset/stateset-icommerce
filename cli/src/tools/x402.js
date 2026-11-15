@@ -1864,7 +1864,9 @@ export const x402Tools = [
   // x402 Credit Ledger Tools (Metered Billing)
   {
     name: 'x402_credit_balance',
-    description: 'Get x402 credit balance for a payer (prepaid meter for streaming usage).',
+    description:
+      'Get x402 credit balance for a payer (prepaid meter for streaming usage). Opens a ' +
+      'zero-balance credit account on first use; x402_get_credit_account reads without creating one.',
     inputSchema: {
       payerAddress: z.string().min(1).describe('Payer wallet address'),
       asset: z.string().optional().describe('Asset: usdc, ssusd, usdt, dai (default: usdc)'),
@@ -1873,7 +1875,9 @@ export const x402Tools = [
         .optional()
         .describe('Network: set_chain, base, ethereum, arbitrum (default: set_chain)'),
     },
-    permission: 'read',
+    // A write: the native getCreditBalance is a get-or-create, so the first
+    // query for a payer/asset/network inserts an x402_credit_accounts row.
+    permission: 'write',
     handler: async ({ commerce, params }) => {
       const { payerAddress, asset, network } = params;
       const x402 = getX402Api(commerce);

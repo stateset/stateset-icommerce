@@ -16,8 +16,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | Total tools | 984 |
 | MCP servers | 3 |
 | Policy domains | 91 |
-| Read tools | 483 |
-| Write tools | 432 |
+| Read tools | 481 |
+| Write tools | 434 |
 | Delete tools | 21 |
 | Admin tools | 48 |
 | Unknown permission | 0 |
@@ -132,8 +132,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | --- | --- |
 | admin | 48 |
 | delete | 21 |
-| read | 483 |
-| write | 432 |
+| read | 481 |
+| write | 434 |
 
 ## Tool Registry
 
@@ -960,7 +960,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `reserve_cart_inventory` | `stateset-commerce` | `carts` | `write` |
 | `reserve_inventory` | `stateset-commerce` | `inventory` | `write` |
 | `resolve_integration_mapping` | `stateset-commerce` | `integration-mappings` | `read` |
-| `resolve_payment_link` | `stateset-commerce` | `checkout` | `read` |
+| `resolve_payment_link` | `stateset-commerce` | `checkout` | `write` |
 | `resolve_scheduled_price` | `stateset-commerce` | `price_schedules` | `read` |
 | `restore_database` | `stateset-commerce` | `maintenance` | `write` |
 | `resume_subscription` | `stateset-commerce` | `subscriptions` | `write` |
@@ -1092,7 +1092,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-tool-inventory.jso
 | `write_off_fixed_asset` | `stateset-commerce` | `fixed_assets` | `write` |
 | `x402_circuit_status` | `stateset-commerce` | `a2a_automation` | `read` |
 | `x402_create_payment_intent` | `stateset-commerce` | `x402` | `write` |
-| `x402_credit_balance` | `stateset-commerce` | `x402` | `read` |
+| `x402_credit_balance` | `stateset-commerce` | `x402` | `write` |
 | `x402_credit_debit` | `stateset-commerce` | `x402` | `write` |
 | `x402_credit_deposit` | `stateset-commerce` | `x402` | `write` |
 | `x402_credit_transactions` | `stateset-commerce` | `x402` | `read` |
