@@ -648,6 +648,18 @@ receipt using SHA-256. `verify_audit_chain` (or PostgreSQL's async equivalent)
 recomputes the chain and identifies the first altered entry. PostgreSQL takes a
 transaction-scoped chain lock so concurrent commands cannot create forks.
 
+Verification also checks the `kernel_receipts` replay index against the chain,
+because a missing or re-keyed row there would let a retry under the original
+idempotency key execute again. Per key, the sealed entries must be one receipt,
+or one preview followed by the single apply-mode receipt that promoted it under
+the same request. The newest entry must have exactly one materialized row,
+agreeing on key, request hash, command id and type, status and full receipt
+(with `audit_hash` filled in); a promoted preview has none; and every row must
+be that row for its key. Failures carry a typed `failure` reason
+(`missing_materialized_receipt`, `materialized_receipt_mismatch`,
+`invalid_supersession`, `orphan_materialized_receipt`, and so on) alongside
+`first_invalid_sequence`.
+
 `audit_checkpoint` exports a portable, RFC 8785-canonical checkpoint containing
 the entry count, chain head, generation time, and its own SHA-256 digest. Publish
 that JSON outside the commerce database—such as to an append-only transparency

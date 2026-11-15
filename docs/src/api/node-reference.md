@@ -942,8 +942,12 @@ JavaScript-friendly Commerce instance
 
 - **`close(): Promise<void>`**
 
-  Release the engine. Calls already in flight complete; every later call
-  rejects with `PRECONDITION_FAILED`. Idempotent.
+  Release the engine. Every later call rejects with `PRECONDITION_FAILED`;
+  calls already in flight complete first. Resolves only once the engine
+  has dropped and the database files are released (the connection pool
+  is closed, so a WAL database has been checkpointed), so the same file
+  can be reopened or copied straight away. Idempotent: every call
+  resolves after that release.
 
 - **`executeKernelCommand(command: KernelCommand, policy: KernelPolicy): Promise<KernelReceipt>`**
 
