@@ -7,6 +7,8 @@
 
 import { z } from 'zod';
 
+import { allowedNextField } from '../state-machine-catalog.js';
+
 /**
  * Order tool definitions
  */
@@ -56,7 +58,8 @@ export const orderTools = [
   {
     name: 'get_order',
     description:
-      'Get a specific order by ID or order number. Returns full order details including line items.',
+      'Get a specific order by ID or order number. Returns full order details including line ' +
+      'items, and `allowedNext`: the statuses the order can move to from its current one.',
     inputSchema: {
       identifier: z.string().min(1).describe('Order ID (UUID) or order number'),
     },
@@ -102,6 +105,7 @@ export const orderTools = [
           createdAt: order.createdAt,
           updatedAt: order.updatedAt,
         },
+        ...allowedNextField('order', order.status),
       };
     },
   },

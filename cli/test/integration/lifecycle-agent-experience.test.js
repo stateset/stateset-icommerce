@@ -9,6 +9,7 @@
  *   - a preview of a catalogued move says which states the engine accepts it
  *     from (no --apply, nothing read or written), and a kernel preview that
  *     would be refused carries the same guidance as the refusal;
+ *   - reads of a lifecycle record carry `allowedNext` for its current status.
  *
  * Nothing here changes which moves the engine accepts: every refusal below is
  * the engine's own.
@@ -224,6 +225,52 @@ describe('a refused catalogued move says what is allowed next', () => {
     assert.equal(missing.ok, false);
     assert.equal(missing.failure.allowedNext, undefined);
     assert.equal(missing.failure.transition, undefined);
+  });
+});
+
+describe('reads carry allowedNext for the current status', () => {
+  it('get_order, get_return, get_shipment, get_cart, get_payment, get_customer, get_product', async () => {
+    const reads = [
+      [
+        'get_order',
+        { identifier: ids.order },
+        'order',
+        ['partially_shipped', 'shipped', 'cancelled'],
+      ],
+      ['get_return', { returnId: ids.return }, 'return', ['in_transit', 'cancelled']],
+      [
+        'get_shipment',
+        { shipmentId: ids.shipment },
+        'shipment',
+        ['processing', 'cancelled', 'on_hold'],
+      ],
+      ['get_cart', { identifier: ids.cart }, 'cart', []],
+      // A pending payment can be completed in one step (the persistence-layer move).
+      [
+        'get_payment',
+        { paymentId: ids.payment },
+        'payment',
+        ['processing', 'failed', 'cancelled', 'completed'],
+      ],
+      [
+        'get_customer',
+        { identifier: ids.customer },
+        'customer',
+        ['inactive', 'suspended', 'deleted'],
+      ],
+      ['get_product', { productId: ids.product }, 'product', ['active', 'archived']],
+    ];
+    for (const [tool, params, key, allowedNext] of reads) {
+      const result = await call(tool, params);
+      assert.ok(result[key]?.status, `${tool} returns the ${key}`);
+      assert.deepEqual(result.allowedNext, allowedNext, tool);
+    }
+  });
+
+  it('explain_order', async () => {
+    const result = await call('explain_order', { orderId: ids.order });
+    assert.equal(result.order.status, 'processing');
+    assert.deepEqual(result.allowedNext, ['partially_shipped', 'shipped', 'cancelled']);
   });
 });
 

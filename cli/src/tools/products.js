@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { allowedNextField } from '../state-machine-catalog.js';
 import { applyRequired } from '../utils/apply-guard.js';
 
 const withPolicyDomain = (policyDomain, tools) => tools.map((tool) => ({ policyDomain, ...tool }));
@@ -95,7 +96,9 @@ export const productTools = withPolicyDomain('products', [
 
   {
     name: 'get_product',
-    description: 'Get a specific product by ID.',
+    description:
+      'Get a specific product by ID, with `allowedNext`: the statuses the product can move to ' +
+      'from its current one.',
     inputSchema: {
       productId: z.string().min(1).describe('Product ID (UUID)'),
     },
@@ -108,7 +111,7 @@ export const productTools = withPolicyDomain('products', [
         return { success: false, error: 'Product not found' };
       }
 
-      return { success: true, product };
+      return { success: true, product, ...allowedNextField('product', product.status) };
     },
   },
 

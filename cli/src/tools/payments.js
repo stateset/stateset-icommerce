@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { allowedNextField } from '../state-machine-catalog.js';
 import { applyRequired } from '../utils/apply-guard.js';
 import {
   capturePaymentIntent,
@@ -49,7 +50,9 @@ export const paymentTools = [
 
   {
     name: 'get_payment',
-    description: 'Get a payment by ID.',
+    description:
+      'Get a payment by ID, with its refunds and `allowedNext`: the statuses the payment can ' +
+      'move to from its current one.',
     inputSchema: {
       paymentId: z.string().min(1).describe('Payment ID'),
     },
@@ -63,9 +66,10 @@ export const paymentTools = [
         payment && typeof commerce.payments.getRefunds === 'function'
           ? await commerce.payments.getRefunds(paymentId)
           : undefined;
+      const allowedNext = payment ? allowedNextField('payment', payment.status) : {};
       return refunds === undefined
-        ? { success: true, payment }
-        : { success: true, payment, refunds };
+        ? { success: true, payment, ...allowedNext }
+        : { success: true, payment, refunds, ...allowedNext };
     },
   },
 

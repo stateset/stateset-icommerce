@@ -129,7 +129,7 @@ Tier: **core**
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
 | `list_customers` | core | read | List all customers in the database. Returns customer details including email, name, and status. |
-| `get_customer` | core | read | Get a specific customer by ID or email address. |
+| `get_customer` | core | read | Get a specific customer by ID or email address, with `allowedNext`: the statuses the customer can move to from its current one. |
 | `create_customer` | core | write | Create a new customer. Requires email, first name, and last name. |
 | `update_customer` | core | write | Update an existing customer. Only the fields provided are changed (email, name, phone, status, marketing opt-in). |
 | `delete_customer` | core | write | Delete a customer (soft delete). |
@@ -147,7 +147,7 @@ Tier: **core**
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
 | `list_orders` | core | read | List all orders. Shows order number, status, customer, total amount, and item count. |
-| `get_order` | core | read | Get a specific order by ID or order number. Returns full order details including line items. |
+| `get_order` | core | read | Get a specific order by ID or order number. Returns full order details including line items, and `allowedNext`: the statuses the order can move to from its current one. |
 | `create_order` | core | write | Create a new order for a customer with line items. |
 | `update_order_status` | core | write | Update the status of an order. Valid statuses: pending, confirmed, processing, shipped, delivered, cancelled, refunded. |
 | `ship_order` | core | write | Mark an order as shipped with optional tracking number. |
@@ -160,7 +160,7 @@ Tier: **core**
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
 | `list_products` | core | read | List all products in the catalog. |
-| `get_product` | core | read | Get a specific product by ID. |
+| `get_product` | core | read | Get a specific product by ID, with `allowedNext`: the statuses the product can move to from its current one. |
 | `get_product_by_slug` | core | read | Get a specific product by its URL slug. |
 | `search_products` | core | read | Search active products by name or description. |
 | `get_product_variant` | core | read | Get a product variant by SKU. |
@@ -214,7 +214,7 @@ Tier: **core**
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
 | `list_returns` | core | read | List all returns. Shows return status, order, and reason. |
-| `get_return` | core | read | Get a specific return by ID. |
+| `get_return` | core | read | Get a specific return by ID, with `allowedNext`: the statuses the return can move to from its current one. |
 | `list_returns_for_order` | core | read | List all returns filed against a specific order. |
 | `list_returns_for_customer` | core | read | List all returns filed by a specific customer. |
 | `list_pending_returns` | core | read | List returns awaiting approval (status requested). |
@@ -233,7 +233,7 @@ Tier: **core**
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
 | `list_carts` | core | read | List all shopping carts. Shows cart status, customer, totals, and item count. |
-| `get_cart` | core | read | Get a specific cart by ID or cart number. Returns full cart details including items. |
+| `get_cart` | core | read | Get a specific cart by ID or cart number. Returns full cart details including items, and `allowedNext`: the statuses the cart can move to from its current one. |
 | `create_cart` | core | write | Create a new shopping cart. Can be for a guest or authenticated customer. |
 | `update_cart` | core | write | Update cart customer details, shipping method, coupon code, or notes. |
 | `list_customer_carts` | core | read | List carts for a specific customer. |
@@ -441,7 +441,7 @@ Tier: **core**
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
 | `list_payments` | core | read | List all payments in the system. |
-| `get_payment` | core | read | Get a payment by ID. |
+| `get_payment` | core | read | Get a payment by ID, with its refunds and `allowedNext`: the statuses the payment can move to from its current one. |
 | `create_payment` | core | write | Create a payment for an order. |
 | `complete_payment` | core | write | Mark a payment as completed. |
 | `mark_failed_payment` | core | write | Mark a payment as failed with a required reason and optional failure code. |
@@ -639,7 +639,7 @@ Tier: **core**
 | --- | --- | --- | --- |
 | `plan_partial_shipment` | core | read | Read remaining order-line quantities and validate a partial-shipment recovery plan. Does not reserve stock or create a shipment; operator reconciliation is required. |
 | `list_shipments` | core | read | List all shipments. |
-| `get_shipment` | core | read | Get a shipment by ID. |
+| `get_shipment` | core | read | Get a shipment by ID, with `allowedNext`: the statuses the shipment can move to from its current one. |
 | `create_shipment` | core | write | Create a shipment for an order. |
 | `update_shipment` | core | write | Update shipment fields or move through the native lifecycle. Preserves omitted fields and rejects invalid transitions or stale expectedVersion. Cancellation requires cancel_shipment. |
 | `add_shipment_item` | core | write | Add an order line to a shipment. Rejects a quantity beyond what the order line has left to allocate across non-cancelled shipments, an order not in a shippable status, and a stale expectedVersion. |
@@ -1717,7 +1717,7 @@ Tier: **core**
 
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
-| `explain_order` | core | read | Explain an order to a customer or merchant: one chronological timeline (checkout, payments, shipments, returns, refunds, fraud, activity), the money charged/refunded/net as exact strings, tax recomputed from the address, and flags for inconsistencies (e.g. paid but paymentStatus pending, refunded more than charged). Read-only; lists what it cannot see. |
+| `explain_order` | core | read | Explain an order to a customer or merchant: one chronological timeline (checkout, payments, shipments, returns, refunds, fraud, activity), the money charged/refunded/net as exact strings, tax recomputed from the address, flags for inconsistencies (e.g. paid but paymentStatus pending, refunded more than charged), and `allowedNext`: the statuses the order can move to next. Read-only; lists what it cannot see. |
 | `explain_cart_pricing` | core | read | Explain why a cart costs what it costs: lines, subtotal, promotions applied and REFUSED with reason codes, tax by jurisdiction, shipping, and a check that the explained total equals the stored grand total. Pass couponCodes to ask why a code does or does not apply. Read-only: nothing is written to the cart. |
 | `explain_state_machine` | core | read | Ask what a record can do next BEFORE trying to change its status. With no arguments, lists the catalogued status lifecycles (order, payment, refund, return, shipment, cart, customer, product, subscription, purchase_order, ...) and the known lifecycles not catalogued yet. With `machine`, returns its full transition graph and the tool that makes each move. With `machine` + `from`, the statuses reachable next and the tool for each. With `machine` + `from` + `to`, whether that move is allowed and, if not, the shortest route. Generated from the engine rules; read-only and touches no data. Some moves only one operation can make (`onlyVia`, e.g. processing -> shipped via ship_order); a plain status update is refused for them. For a known lifecycle that is not catalogued yet (order_payment, order_fulfillment, gift_card, coupon, invoice, x402_intent, gl_period, ...) it says so and lists its states without guessing its moves. |
 

@@ -4697,7 +4697,7 @@
     },
     {
       "name": "explain_order",
-      "description": "Explain an order to a customer or merchant: one chronological timeline (checkout, payments, shipments, returns, refunds, fraud, activity), the money charged/refunded/net as exact strings, tax recomputed from the address, and flags for inconsistencies (e.g. paid but paymentStatus pending, refunded more than charged). Read-only; lists what it cannot see.",
+      "description": "Explain an order to a customer or merchant: one chronological timeline (checkout, payments, shipments, returns, refunds, fraud, activity), the money charged/refunded/net as exact strings, tax recomputed from the address, flags for inconsistencies (e.g. paid but paymentStatus pending, refunded more than charged), and `allowedNext`: the statuses the order can move to next. Read-only; lists what it cannot see.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__explain_order",
@@ -5066,7 +5066,7 @@
     },
     {
       "name": "get_cart",
-      "description": "Get a specific cart by ID or cart number. Returns full cart details including items.",
+      "description": "Get a specific cart by ID or cart number. Returns full cart details including items, and `allowedNext`: the statuses the cart can move to from its current one.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_cart",
@@ -5174,7 +5174,7 @@
     },
     {
       "name": "get_customer",
-      "description": "Get a specific customer by ID or email address.",
+      "description": "Get a specific customer by ID or email address, with `allowedNext`: the statuses the customer can move to from its current one.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_customer",
@@ -5525,7 +5525,7 @@
     },
     {
       "name": "get_order",
-      "description": "Get a specific order by ID or order number. Returns full order details including line items.",
+      "description": "Get a specific order by ID or order number. Returns full order details including line items, and `allowedNext`: the statuses the order can move to from its current one.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_order",
@@ -5552,7 +5552,7 @@
     },
     {
       "name": "get_payment",
-      "description": "Get a payment by ID.",
+      "description": "Get a payment by ID, with its refunds and `allowedNext`: the statuses the payment can move to from its current one.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_payment",
@@ -5642,7 +5642,7 @@
     },
     {
       "name": "get_product",
-      "description": "Get a specific product by ID.",
+      "description": "Get a specific product by ID, with `allowedNext`: the statuses the product can move to from its current one.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_product",
@@ -5759,7 +5759,7 @@
     },
     {
       "name": "get_return",
-      "description": "Get a specific return by ID.",
+      "description": "Get a specific return by ID, with `allowedNext`: the statuses the return can move to from its current one.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_return",
@@ -5867,7 +5867,7 @@
     },
     {
       "name": "get_shipment",
-      "description": "Get a shipment by ID.",
+      "description": "Get a shipment by ID, with `allowedNext`: the statuses the shipment can move to from its current one.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_shipment",

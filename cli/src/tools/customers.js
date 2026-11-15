@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { allowedNextField } from '../state-machine-catalog.js';
 import { applyRequired } from '../utils/apply-guard.js';
 
 const withPolicyDomain = (policyDomain, tools) => tools.map((tool) => ({ policyDomain, ...tool }));
@@ -73,7 +74,9 @@ export const customerTools = withPolicyDomain('customers', [
 
   {
     name: 'get_customer',
-    description: 'Get a specific customer by ID or email address.',
+    description:
+      'Get a specific customer by ID or email address, with `allowedNext`: the statuses the ' +
+      'customer can move to from its current one.',
     inputSchema: {
       identifier: z.string().min(1).describe('Customer ID (UUID) or email address'),
     },
@@ -92,7 +95,11 @@ export const customerTools = withPolicyDomain('customers', [
         return { success: false, error: 'Customer not found' };
       }
 
-      return { success: true, customer: customerSummary(customer) };
+      return {
+        success: true,
+        customer: customerSummary(customer),
+        ...allowedNextField('customer', customer.status),
+      };
     },
   },
 

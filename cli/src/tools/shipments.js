@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { allowedNextField } from '../state-machine-catalog.js';
 import { applyRequired } from '../utils/apply-guard.js';
 import {
   createShippingLabel,
@@ -155,7 +156,9 @@ export const shipmentTools = [
 
   {
     name: 'get_shipment',
-    description: 'Get a shipment by ID.',
+    description:
+      'Get a shipment by ID, with `allowedNext`: the statuses the shipment can move to from its ' +
+      'current one.',
     inputSchema: {
       shipmentId: z.string().min(1).describe('Shipment ID'),
     },
@@ -165,7 +168,7 @@ export const shipmentTools = [
       if (!shipment) {
         return { success: false, error: 'Shipment not found' };
       }
-      return { success: true, shipment };
+      return { success: true, shipment, ...allowedNextField('shipment', shipment.status) };
     },
   },
 

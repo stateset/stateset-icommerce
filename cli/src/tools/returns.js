@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { allowedNextField } from '../state-machine-catalog.js';
 import { applyRequired } from '../utils/apply-guard.js';
 
 const withPolicyDomain = (policyDomain, tools) => tools.map((tool) => ({ policyDomain, ...tool }));
@@ -66,7 +67,9 @@ export const returnTools = withPolicyDomain('returns', [
 
   {
     name: 'get_return',
-    description: 'Get a specific return by ID.',
+    description:
+      'Get a specific return by ID, with `allowedNext`: the statuses the return can move to ' +
+      'from its current one.',
     inputSchema: {
       returnId: z.string().min(1).describe('Return ID (UUID)'),
     },
@@ -79,7 +82,7 @@ export const returnTools = withPolicyDomain('returns', [
         return { success: false, error: 'Return not found' };
       }
 
-      return { success: true, return: ret };
+      return { success: true, return: ret, ...allowedNextField('return', ret.status) };
     },
   },
 
