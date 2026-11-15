@@ -2179,6 +2179,96 @@ fn kernel_x402_settlement_previews_applies_and_replays_exactly_once() {
     assert_eq!(events, 1);
 }
 
+fn sequenced_x402_intent(db: &SqliteDatabase, payer: &str) -> stateset_core::X402PaymentIntent {
+    let intent = db
+        .x402_payment_intents()
+        .create(CreateX402PaymentIntent {
+            payer_address: payer.into(),
+            payee_address: "0xpayee-kernel".into(),
+            amount: 1_000_000,
+            asset: X402Asset::Usdc,
+            network: X402Network::SetChain,
+            ..Default::default()
+        })
+        .expect("create intent");
+    db.pool()
+        .get()
+        .expect("connection")
+        .execute(
+            "UPDATE x402_payment_intents SET status = 'sequenced' WHERE id = ?",
+            [intent.id.to_string()],
+        )
+        .expect("sequence intent fixture");
+    intent
+}
+
+/// `x402.settle` applies the repository's `mark_settled` rules: it writes
+/// `tx_hash_key` (so the migration-082 unique index covers kernel settles),
+/// refuses a transaction hash that already settled another intent, and refuses
+/// an intent whose validity window has lapsed.
+#[test]
+fn kernel_x402_settle_enforces_tx_hash_uniqueness_and_validity_window() {
+    let db = SqliteDatabase::in_memory().expect("create database");
+    let first = sequenced_x402_intent(&db, "0xpayer-unique-1");
+    let mut settle_first = settle_x402_command("x402-unique-settle-1", first.id);
+    settle_first.mode = ExecutionMode::Apply;
+    let settled = db
+        .kernel_executor(payment_policy())
+        .execute_settle_x402_intent(&settle_first)
+        .expect("settle first intent");
+    assert_eq!(settled.status, ExecutionStatus::Succeeded);
+
+    // The same on-chain transaction cannot settle a second intent.
+    let second = sequenced_x402_intent(&db, "0xpayer-unique-2");
+    let mut settle_second = settle_x402_command("x402-unique-settle-2", second.id);
+    settle_second.mode = ExecutionMode::Apply;
+    let rejected = db
+        .kernel_executor(payment_policy())
+        .execute_settle_x402_intent(&settle_second)
+        .expect("durable rejection");
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
+    assert_eq!(rejected.error_code.as_deref(), Some("commerce.x402.tx_hash_already_settled"));
+    assert!(rejected.audit_hash.is_some(), "the rejection is sealed into the audit chain");
+    let second_now = db.x402_payment_intents().get(second.id).expect("get").expect("intent");
+    assert_eq!(second_now.status, X402IntentStatus::Sequenced);
+    assert_eq!(second_now.tx_hash, None);
+    // The kernel settle writes `tx_hash_key`, so the unique index backs it.
+    let tx_hash_key: Option<String> = db
+        .pool()
+        .get()
+        .expect("connection")
+        .query_row(
+            "SELECT tx_hash_key FROM x402_payment_intents WHERE id = ?",
+            [first.id.to_string()],
+            |row| row.get(0),
+        )
+        .expect("read tx_hash_key");
+    assert_eq!(tx_hash_key.as_deref(), Some("0xconfirmed-settlement"));
+
+    // A lapsed validity window cannot settle, even with a fresh hash.
+    let expired = sequenced_x402_intent(&db, "0xpayer-unique-3");
+    db.pool()
+        .get()
+        .expect("connection")
+        .execute(
+            "UPDATE x402_payment_intents SET valid_until = 1 WHERE id = ?",
+            [expired.id.to_string()],
+        )
+        .expect("expire intent fixture");
+    let mut settle_expired = settle_x402_command("x402-unique-settle-3", expired.id);
+    settle_expired.payload.tx_hash = "0xanother-settlement".into();
+    settle_expired.mode = ExecutionMode::Apply;
+    let rejected = db
+        .kernel_executor(payment_policy())
+        .execute_settle_x402_intent(&settle_expired)
+        .expect("durable rejection");
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
+    assert_eq!(rejected.error_code.as_deref(), Some("commerce.x402.intent_expired"));
+    let expired_now = db.x402_payment_intents().get(expired.id).expect("get").expect("intent");
+    assert_eq!(expired_now.status, X402IntentStatus::Sequenced);
+    assert!(db.kernel_outbox().verify_audit_chain().expect("verify chain").valid);
+}
+
 fn checkout_command(key: &str, cart_id: stateset_core::CartId) -> CommandEnvelope<CommitCheckout> {
     let mut command = CommandEnvelope::preview(
         "checkout.commit",

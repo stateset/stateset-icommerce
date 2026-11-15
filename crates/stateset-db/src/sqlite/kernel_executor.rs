@@ -37,7 +37,8 @@ use crate::kernel::plans::escrow::{
 use crate::kernel::plans::finance::{
     BILLING_CYCLE_UNVERSIONED, CART_UNVERSIONED, JOURNAL_ENTRY_UNVERSIONED,
     X402_INTENT_UNVERSIONED, charge_subscription_guard, commit_checkout_guard,
-    post_journal_entry_guard, settle_x402_guard,
+    post_journal_entry_guard, settle_x402_expiry_guard, settle_x402_guard,
+    x402_tx_hash_already_settled,
 };
 use crate::kernel::plans::inventory::{
     declares_quantity, economic_quantity_guard, reservation_changes_balance,
@@ -4057,6 +4058,35 @@ impl SqliteKernelExecutor {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
+            // The repository's `mark_settled` rules: a lapsed validity window
+            // cannot settle, and one on-chain transaction settles at most one
+            // intent (the `tx_hash_key` unique index is the backstop).
+            let already_settled: Option<String> = tx
+                .query_row(
+                    "SELECT id FROM x402_payment_intents WHERE tx_hash = ? AND id <> ? LIMIT 1",
+                    params![command.payload.tx_hash, intent.id.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let stateful_rejection = settle_x402_expiry_guard(intent.valid_until, started_at)
+                .or_else(|| {
+                    already_settled
+                        .as_deref()
+                        .map(|other| x402_tx_hash_already_settled(&command.payload.tx_hash, other))
+                });
+            if let Some(rejection) = stateful_rejection {
+                let mut receipt = rejected_receipt(
+                    command,
+                    Some(policy.clone()),
+                    rejection.code,
+                    &rejection.message,
+                    rejection.retry,
+                    "x402_payment_intent",
+                );
+                receipt.aggregate_id = Some(intent.id.to_string());
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
             let settled_at = Utc::now();
             intent.status = X402IntentStatus::Settled;
             intent.tx_hash = Some(command.payload.tx_hash.clone());
@@ -4071,8 +4101,8 @@ impl SqliteKernelExecutor {
                 return Ok(receipt);
             }
             if tx.execute(
-                "UPDATE x402_payment_intents SET status = ?, tx_hash = ?, block_number = ?, settled_at = ?, updated_at = ? WHERE id = ? AND status = ?",
-                params![X402IntentStatus::Settled.to_string(), command.payload.tx_hash,
+                "UPDATE x402_payment_intents SET status = ?, tx_hash = ?, tx_hash_key = ?, block_number = ?, settled_at = ?, updated_at = ? WHERE id = ? AND status = ?",
+                params![X402IntentStatus::Settled.to_string(), command.payload.tx_hash, command.payload.tx_hash,
                     i64::try_from(command.payload.block_number).map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?,
                     settled_at.to_rfc3339(), settled_at.to_rfc3339(), command.payload.intent_id.to_string(),
                     X402IntentStatus::Sequenced.to_string()],

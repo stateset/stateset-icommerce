@@ -2452,3 +2452,114 @@ async fn postgres_reserved_partial_shipping_serializes_competing_dispatches() {
         .bind(order.id.to_string()).fetch_one(db.pool()).await.unwrap();
     assert_eq!(movements, 3);
 }
+
+async fn pg_sequenced_x402_intent(
+    db: &PostgresDatabase,
+    payer: String,
+) -> stateset_core::X402PaymentIntent {
+    let intent = db
+        .x402_payment_intents()
+        .create_async(CreateX402PaymentIntent {
+            payer_address: payer,
+            payee_address: "0xpayee-unique".into(),
+            amount: 1_000_000,
+            asset: X402Asset::Usdc,
+            network: X402Network::SetChain,
+            ..Default::default()
+        })
+        .await
+        .expect("create x402 intent");
+    sqlx::query("UPDATE x402_payment_intents SET status = 'sequenced' WHERE id = $1")
+        .bind(intent.id)
+        .execute(db.pool())
+        .await
+        .expect("sequence intent");
+    intent
+}
+
+/// Twin of the SQLite `kernel_x402_settle_enforces_tx_hash_uniqueness_and_validity_window`:
+/// `x402.settle` writes `tx_hash_key` (so the migration-089 unique index covers
+/// kernel settles), refuses a hash that already settled another intent, and
+/// refuses an intent past its `valid_until` — the repository's `mark_settled`
+/// rules.
+#[tokio::test]
+async fn postgres_kernel_x402_settle_enforces_tx_hash_uniqueness_and_validity_window() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping x402 settle proof");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect and migrate");
+    let suffix = Uuid::new_v4().simple().to_string();
+    let tx_hash = format!("0xpg-unique-{suffix}");
+    let settle = |key: String, intent_id: Uuid, tx_hash: String| {
+        let mut command = kernel_command(
+            "x402.settle",
+            key,
+            "x402.settle",
+            SettleX402Intent { intent_id, tx_hash, block_number: 7 },
+        );
+        command.mode = ExecutionMode::Apply;
+        command
+    };
+
+    let first = pg_sequenced_x402_intent(&db, format!("0xpayer-a-{suffix}")).await;
+    let settled = db
+        .kernel_executor(policy())
+        .execute_settle_x402_intent_async(&settle(
+            format!("pg-x402-unique-1-{suffix}"),
+            first.id,
+            tx_hash.clone(),
+        ))
+        .await
+        .expect("settle first intent");
+    assert_eq!(settled.status, ExecutionStatus::Succeeded);
+
+    // The same on-chain transaction cannot settle a second intent.
+    let second = pg_sequenced_x402_intent(&db, format!("0xpayer-b-{suffix}")).await;
+    let rejected = db
+        .kernel_executor(policy())
+        .execute_settle_x402_intent_async(&settle(
+            format!("pg-x402-unique-2-{suffix}"),
+            second.id,
+            tx_hash.clone(),
+        ))
+        .await
+        .expect("durable rejection");
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
+    assert_eq!(rejected.error_code.as_deref(), Some("commerce.x402.tx_hash_already_settled"));
+    assert!(rejected.audit_hash.is_some(), "the rejection is sealed into the audit chain");
+    let second_now =
+        db.x402_payment_intents().get_async(second.id).await.expect("get").expect("intent");
+    assert_eq!(second_now.status, X402IntentStatus::Sequenced);
+    assert_eq!(second_now.tx_hash, None);
+    // The kernel settle writes `tx_hash_key`, so the unique index backs it.
+    let tx_hash_key: Option<String> =
+        sqlx::query_scalar("SELECT tx_hash_key FROM x402_payment_intents WHERE id = $1")
+            .bind(first.id)
+            .fetch_one(db.pool())
+            .await
+            .expect("read tx_hash_key");
+    assert_eq!(tx_hash_key.as_deref(), Some(tx_hash.as_str()));
+
+    // A lapsed validity window cannot settle, even with a fresh hash.
+    let expired = pg_sequenced_x402_intent(&db, format!("0xpayer-c-{suffix}")).await;
+    sqlx::query("UPDATE x402_payment_intents SET valid_until = 1 WHERE id = $1")
+        .bind(expired.id)
+        .execute(db.pool())
+        .await
+        .expect("expire intent fixture");
+    let rejected = db
+        .kernel_executor(policy())
+        .execute_settle_x402_intent_async(&settle(
+            format!("pg-x402-unique-3-{suffix}"),
+            expired.id,
+            format!("0xpg-other-{suffix}"),
+        ))
+        .await
+        .expect("durable rejection");
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
+    assert_eq!(rejected.error_code.as_deref(), Some("commerce.x402.intent_expired"));
+    let expired_now =
+        db.x402_payment_intents().get_async(expired.id).await.expect("get").expect("intent");
+    assert_eq!(expired_now.status, X402IntentStatus::Sequenced);
+}

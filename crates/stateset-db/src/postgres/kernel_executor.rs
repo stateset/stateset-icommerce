@@ -34,7 +34,8 @@ use crate::kernel::plans::escrow::{
 use crate::kernel::plans::finance::{
     BILLING_CYCLE_UNVERSIONED, CART_UNVERSIONED, JOURNAL_ENTRY_UNVERSIONED,
     X402_INTENT_UNVERSIONED, charge_subscription_guard, commit_checkout_guard,
-    post_journal_entry_guard, settle_x402_guard,
+    post_journal_entry_guard, settle_x402_expiry_guard, settle_x402_guard,
+    x402_tx_hash_already_settled,
 };
 use crate::kernel::plans::inventory::{
     declares_quantity, economic_quantity_guard, reservation_changes_balance,
@@ -4233,6 +4234,38 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
+        // The repository's `mark_settled` rules: a lapsed validity window
+        // cannot settle, and one on-chain transaction settles at most one
+        // intent (the `tx_hash_key` unique index is the backstop for
+        // concurrent settles of different intents with the same hash).
+        let already_settled: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM x402_payment_intents WHERE tx_hash = $1 AND id <> $2 LIMIT 1",
+        )
+        .bind(&command.payload.tx_hash)
+        .bind(intent.id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let stateful_rejection =
+            settle_x402_expiry_guard(intent.valid_until, started_at).or_else(|| {
+                already_settled.map(|other| {
+                    x402_tx_hash_already_settled(&command.payload.tx_hash, &other.to_string())
+                })
+            });
+        if let Some(rejection) = stateful_rejection {
+            let mut receipt = rejected_receipt(
+                command,
+                Some(policy),
+                rejection.code,
+                &rejection.message,
+                rejection.retry,
+                "x402_payment_intent",
+            );
+            receipt.aggregate_id = Some(intent.id.to_string());
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            return Ok(receipt);
+        }
         let settled_at = Utc::now();
         intent.status = X402IntentStatus::Settled;
         intent.tx_hash = Some(command.payload.tx_hash.clone());
@@ -4250,8 +4283,8 @@ impl PgKernelExecutor {
         let block_number = i64::try_from(command.payload.block_number)
             .map_err(|e| CommerceError::ValidationError(e.to_string()))?;
         let updated = sqlx::query(
-            "UPDATE x402_payment_intents SET status = $1, tx_hash = $2, block_number = $3,
-             settled_at = $4, updated_at = $4 WHERE id = $5 AND status = $6",
+            "UPDATE x402_payment_intents SET status = $1, tx_hash = $2, tx_hash_key = $2,
+             block_number = $3, settled_at = $4, updated_at = $4 WHERE id = $5 AND status = $6",
         )
         .bind(X402IntentStatus::Settled.to_string())
         .bind(&command.payload.tx_hash)
@@ -4261,7 +4294,7 @@ impl PgKernelExecutor {
         .bind(X402IntentStatus::Sequenced.to_string())
         .execute(tx.as_mut())
         .await
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        .map_err(super::map_db_error)?;
         if updated.rows_affected() == 0 {
             return Err(CommerceError::Conflict("x402 intent was modified concurrently".into()));
         }

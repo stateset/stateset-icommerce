@@ -14,6 +14,12 @@ This project follows Keep a Changelog and Semantic Versioning.
   delivered; it now accepts only `pending` (or an already `confirmed`
   order), refuses anything else with `InvalidOrderStatusTransition` as
   SQLite does, and writes under the order's version.
+- Kernel `x402.settle` applies the repository's settlement rules on both
+  databases. It writes `tx_hash_key`, so the unique index from migrations
+  082/089 covers governed settles (one on-chain transaction could settle two
+  intents), refuses a hash that already settled another intent
+  (`commerce.x402.tx_hash_already_settled`) and refuses an intent past
+  `valid_until` (`commerce.x402.intent_expired`).
 
 ## [1.41.0] - 2026-11-15
 
