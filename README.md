@@ -55,7 +55,7 @@ For Claude Desktop, Cursor, Windsurf, or any MCP client:
 ```
 
 **Writes are preview-only by default.** The `core` profile — the default —
-exposes only the smoke-gated core tier (196 tools); `finance`, `operations`,
+exposes only the smoke-gated core tier (210 tools); `finance`, `operations`,
 `agents`, and `all` open it up, and `--domains a2a,x402` adds individual
 domains. Each tool's tier (`core`, `extended`, `experimental`) is listed in
 [`cli/docs/TOOLS.md`](cli/docs/TOOLS.md). Give an agent apply
@@ -71,6 +71,14 @@ authority only through operator-owned files, never through tool arguments:
   ]
 }
 ```
+
+That strict profile exposes only typed governed write commands plus read tools.
+Plans and replays work there too: `agentic_execute_plan` and
+`agentic_replay_mutation` run at the top level, and every step inside them must
+itself be a governed command, executed with the operator's principal and policy.
+Tools advertise MCP `readOnlyHint` / `destructiveHint` annotations derived from
+their permission, and `stateset-agent-report` summarises an agent's session
+(calls, kernel refusals by reason, charges, latency) from the replay log.
 
 For hosted deployments, `stateset-mcp-http` serves the same tools over MCP
 Streamable HTTP (protocol revision 2026-07-28), stateless by construction — no
@@ -215,7 +223,10 @@ The toolkit also exposes payment-aware helpers (`getPayableToolCatalog()`,
 helpers (`getRuntimeContract()`, `simulatePlan()`, `executePlan()`,
 `replayMutation()`). Call `simulateMutation()` or
 `executePlan({ dryRun: true })` before enabling writes, then set `allowApply`
-only on agents that should mutate commerce state.
+only on agents that should mutate commerce state. A toolkit's `capabilities`
+(tool names, `permission:<p>`, `read:*`, `<domain>.*` or kernel capabilities)
+bound everything it can reach, including steps run by plans, simulations,
+replays and rollbacks; `delegate_to_agent` needs an explicit grant.
 
 Working examples: [Embedded Agent Toolkit](docs/src/guides/agent-toolkit.md) ·
 [AI Agents](docs/src/ai-agents.md)
