@@ -9,6 +9,7 @@
   "scripts": {
     "demo:marketplace": "node examples/sequencer-marketplace/demo.mjs",
     "test:marketplace-demo": "node examples/sequencer-marketplace/demo.mjs --self-test",
+    "test:agent-board": "node --test examples/agent-board/test/board.test.mjs",
     "prepare": "husky",
     "format": "prettier --write 'cli/{src,bin}/**/*.js'",
     "format:check": "prettier --check 'cli/{src,bin}/**/*.js'",
