@@ -490,7 +490,10 @@ const execution = await toolkit.executePlan({
 metadata for the filtered tool set. `simulatePlan()` returns per-step outcomes,
 including routing metadata such as `plan.outcomes[0].routing.primary.agent`.
 `executePlan()` uses the same step model for dry-run or apply execution and
-reports an overall `finalStatus`.
+reports an overall `finalStatus`: `success` (or `dry_run` for a dry run) only
+when every step that ran succeeded, otherwise `failed`. Any other step status,
+such as `invalid`, `payment_required`, `error` or a policy/permission block,
+fails the plan, and with `rollbackOnFailure` the steps before it are compensated.
 
 For write operations, you can replay prior mutations and inspect the replay log:
 
