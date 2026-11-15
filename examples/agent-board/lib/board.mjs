@@ -8,28 +8,30 @@
  *   eventType   'board.post'
  *   payload     { author, text, replyTo?, refs?, state? }
  *
+ * Everything sequencer-facing is the CLI's own sync code, unmodified.
  * Posting goes through the CLI's outbox (`Outbox#append` signs it with the
- * agent's Ed25519 key) and `SequencerClient#push`. Reading goes through
- * `BoardSequencerClient` (the CLI client with its read methods pointed at the
- * VES routes), then every event is checked with the CLI's own receive-side
- * machinery: `PeerKeyDirectory` (signed key directory via
+ * agent's Ed25519 key), `SequencerClient#push` and `validatePushReceipt`.
+ * Reading goes through `SequencerClient` (`pull`, `getEntityHistory`,
+ * `getHead` on the VES routes), then every event is checked with the CLI's
+ * receive-side machinery: `PeerKeyDirectory` (signed key directory via
  * `getAgentSigningKeys`, TTL cache, trust-on-first-use pins),
  * `verifyEventSignature`, and, where the sequencer has committed the range,
- * `verifyInclusionDetailed` with the tree size taken from the commitment.
+ * `verifyEventInclusion`, which binds the tree size from the commitment.
  */
 
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
+import { SequencerClient } from '../../../cli/src/sync/client.js';
 import { createOutbox } from '../../../cli/src/sync/outbox.js';
 import { createPeerKeyDirectory } from '../../../cli/src/sync/key-directory.js';
 import { verifyPayloadIntegrity } from '../../../cli/src/sync/payload-integrity.js';
+import { validatePushReceipt } from '../../../cli/src/sync/push-receipt.js';
 import { assertOutgoingScope, matchesReceiveScope } from '../../../cli/src/sync/receive-scope.js';
 import { normalizeSequencerPublicKey } from '../../../cli/src/sync/config.js';
 import { KEY_ALGORITHM_ED25519 } from '../../../cli/src/sync/pqc.js';
 import { clientConfig } from './config.mjs';
 import { loadDatabase } from './deps.mjs';
-import { BoardSequencerClient, requestStatus } from './ves-client.mjs';
 
 export const ENTITY_TYPE = 'board_thread';
 export const EVENT_TYPE = 'board.post';
@@ -79,7 +81,7 @@ export function buildPayload({ author, text, replyTo, refs, state }) {
 }
 
 export function createClient(settings, agentId = null) {
-  return new BoardSequencerClient(clientConfig(settings, agentId));
+  return new SequencerClient(clientConfig(settings, agentId));
 }
 
 // ---------------------------------------------------------------------------
@@ -135,57 +137,6 @@ function toPushEnvelope(e) {
 }
 
 /**
- * Settle every submitted event against the ingest response.
- *
- * Deliberately NOT the CLI's `validatePushReceipt`, which does not fit the
- * real response (stateset-sequencer src/api/types.rs, ves_sequencer.rs):
- *  - rejections are serialized `{ event_id, reason, message }` (snake_case
- *    inside a camelCase body); validatePushReceipt reads `rejection.eventId`,
- *    so any rejection makes it throw instead of recording the rejection;
- *  - an exact replay of an already-sequenced event (a retry after a lost
- *    response) returns its stored receipt but is counted in neither
- *    eventsAccepted nor eventsRejected, so accepted + rejected != submitted.
- * Per-event receipts are authoritative here: each submitted event must have
- * exactly one receipt or exactly one rejection.
- */
-export function settlePush(response, pending) {
-  const submitted = new Map(pending.map((event) => [event.eventId, event]));
-  const fail = (why) => {
-    throw new Error(`Invalid ingest response: ${why}`);
-  };
-  const sequenced = new Map();
-  for (const receipt of response.receipts ?? []) {
-    const eventId = receipt?.eventId ?? receipt?.event_id;
-    const sequenceNumber = receipt?.sequenceNumber ?? receipt?.sequence_number;
-    if (!submitted.has(eventId)) fail(`receipt for an event that was not submitted (${eventId})`);
-    if (sequenced.has(eventId)) fail(`two receipts for event ${eventId}`);
-    if (!Number.isSafeInteger(sequenceNumber) || sequenceNumber < 1) {
-      fail(`receipt for ${eventId} has no valid sequence number`);
-    }
-    sequenced.set(eventId, sequenceNumber);
-  }
-  const rejected = new Map();
-  for (const rejection of response.rejections ?? []) {
-    const eventId = rejection?.eventId ?? rejection?.event_id;
-    const reason = rejection?.reason;
-    if (!submitted.has(eventId)) fail(`rejection for an event that was not submitted (${eventId})`);
-    if (rejected.has(eventId) || sequenced.has(eventId)) fail(`event ${eventId} settled twice`);
-    if (typeof reason !== 'string' || !reason.trim())
-      fail(`rejection for ${eventId} has no reason`);
-    rejected.set(eventId, { reason, message: rejection.message ?? null });
-  }
-  return pending.map((event) => {
-    if (sequenced.has(event.eventId)) {
-      return { event, status: 'sequenced', sequenceNumber: sequenced.get(event.eventId) };
-    }
-    if (rejected.has(event.eventId)) {
-      return { event, status: 'rejected', ...rejected.get(event.eventId) };
-    }
-    return fail(`event ${event.eventId} was neither sequenced nor rejected`);
-  });
-}
-
-/**
  * Push the pending outbox events for the configured tenant/store (this post
  * and any earlier unsent ones). Events stay pending when the request itself
  * fails, so the next post retries them; a per-event rejection is final and
@@ -201,15 +152,17 @@ export async function flushOutbox({ agent, client, batchSize = 100 }) {
     agentId: agent.manifest.agentId,
     events: pending.map(toPushEnvelope),
   });
-  const settlements = settlePush(response, pending);
+  // One receipt or one rejection per event; a replayed event (a retry after
+  // a lost response) settles from its stored receipt.
+  const settlements = validatePushReceipt(response, pending);
   agent.db
     .transaction(() => {
       const acks = [];
       for (const s of settlements) {
-        if (s.status === 'rejected') {
+        if (s.rejected) {
           agent.outbox.markRejected(s.event.localSeq, s.reason);
         } else {
-          acks.push({ localSeq: s.event.localSeq, remoteSeq: s.sequenceNumber });
+          acks.push({ localSeq: s.event.localSeq, remoteSeq: s.remoteSeq });
         }
       }
       if (acks.length) agent.outbox.markSynced(acks);
@@ -218,10 +171,10 @@ export async function flushOutbox({ agent, client, batchSize = 100 }) {
   return settlements.map((s) => ({
     eventId: s.event.eventId,
     thread: s.event.entityId,
-    status: s.status,
-    sequenceNumber: s.sequenceNumber ?? null,
-    reason: s.reason ?? null,
-    message: s.message ?? null,
+    status: s.rejected ? 'rejected' : 'sequenced',
+    sequenceNumber: s.rejected ? null : s.remoteSeq,
+    reason: s.rejected ? s.reason : null,
+    message: s.rejected ? s.message : null,
   }));
 }
 
@@ -317,14 +270,9 @@ function ephemeralOutbox() {
 }
 
 function describeKeyFailure(resolution) {
-  if (
-    resolution.error === 'key_unresolved' &&
-    requestStatus({ message: resolution.detail }) === 404
-  ) {
-    return (
-      'the sequencer has no GET /api/v1/agents/:id/signing-keys route ' +
-      '(stateset-sequencer PR #6 is not deployed); use --roster'
-    );
+  // The client names a sequencer without the key directory route (PR #6).
+  if (resolution.code === 'key_directory_unsupported') {
+    return `${resolution.detail} Pass --roster <file>.`;
   }
   return resolution.detail ?? null;
 }
@@ -384,38 +332,20 @@ async function checkInclusion(record, commitments, client) {
   const seq = record.sequenceNumber;
   const commitment = commitments.find((c) => seq >= c.sequenceStart && seq <= c.sequenceEnd);
   if (!commitment) return { status: 'not_committed' };
+  const base = {
+    batchId: commitment.batchId,
+    leafCount: commitment.leafCount,
+    anchored: commitment.isAnchored,
+  };
   // The tree size is bound by the commitment record, not by the proof.
-  const leafCount = commitment.sequenceEnd - commitment.sequenceStart + 1;
-  const base = { batchId: commitment.batchId, leafCount, anchored: commitment.isAnchored };
-  if (commitment.leafCount !== leafCount) {
-    return { status: 'failed', ...base, reason: 'commitment leaf_count disagrees with its range' };
-  }
-  let proof;
+  let verdict;
   try {
-    proof = await client.getInclusionProof(seq, commitment.batchId);
+    verdict = await client.verifyEventInclusion(record, commitment);
   } catch (error) {
     return { status: 'unavailable', ...base, reason: error.message };
   }
-  if (proof.sequenceNumber !== seq || proof.batchId !== commitment.batchId) {
-    return { status: 'failed', ...base, reason: 'proof is for a different event or batch' };
-  }
-  if (proof.leafIndex !== seq - commitment.sequenceStart) {
-    return { status: 'failed', ...base, reason: 'proof leaf index does not match the sequence' };
-  }
-  let verdict;
-  try {
-    verdict = client.verifyInclusionDetailed(
-      record.envelope,
-      { leafIndex: proof.leafIndex, proofHashes: proof.proofHashes },
-      commitment.merkleRoot,
-      { sequenceNumber: seq, leafCount },
-    );
-  } catch (error) {
-    // A malformed envelope (bad UUID, bad hex) cannot be hashed into a leaf.
-    return { status: 'failed', ...base, reason: `cannot compute the leaf: ${error.message}` };
-  }
-  if (verdict.valid && verdict.pathBound) return { status: 'verified', ...base };
-  return { status: 'failed', ...base, reason: verdict.reason ?? 'path does not reach the root' };
+  if (verdict.valid) return { status: 'verified', ...base };
+  return { status: 'failed', ...base, reason: verdict.reason };
 }
 
 async function pullAll(client, from) {

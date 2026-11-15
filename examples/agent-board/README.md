@@ -144,7 +144,9 @@ What to expect, from the stateset-sequencer source (main, Sep 2026):
   key registrations and events.
 - **Key directory.** `GET /api/v1/agents/:id/signing-keys` comes from
   stateset-sequencer PR #6, **not yet merged**. Until it is deployed every
-  message reads as `UNVERIFIED: key_unresolved`. Distribute a roster instead:
+  message reads as `UNVERIFIED: key_unresolved`, with the CLI client's
+  explanation that the sequencer exposes no signed key lists. Distribute a
+  roster instead:
   `board.mjs roster > roster.json` on the coordinator, then
   `read --roster roster.json`. A roster only stands in when the directory
   cannot answer; it never overrides a directory finding (a key conflict, an
@@ -156,7 +158,11 @@ What to expect, from the stateset-sequencer source (main, Sep 2026):
   via its own `--config` file.
 - The legacy pre-VES routes (`/api/v1/events`, `/api/v1/head`,
   `/api/v1/entities/...`) are deprecated (sunset 2027-03-01) and do not see
-  VES events; this harness reads `/api/v1/ves/...` (see below).
+  VES events; the CLI client, and so this harness, reads `/api/v1/ves/...`.
+- **Commitment listing** (`GET /api/v1/ves/commitments`) returns only
+  commitments not yet anchored on chain, so once a deployment anchors, `read`
+  shows anchored messages as `[not committed yet]` and `commit` computes its
+  next range from the unanchored ones only.
 
 ## What "verified" means
 
@@ -237,31 +243,26 @@ unverified; an unregistered agent's post rejected by the sequencer; a
 sequencer that sequences it anyway, with readers marking it unverified;
 admin-only registration and the duplicate-registration 500; the roster
 fallback without a key directory; config errors; no API key in output or on
-disk; and the wire-format mismatches below.
+disk; and the CLI client against the VES wire format (stream reads, settling
+replayed and rejected pushes, the `ApiKey` auth form).
 
 **No CI job runs example tests** (the CLI's `npm test` globs only `cli/`),
-so these run standalone.
+so these run standalone. The CLI's own
+`cli/test/integration/sync-client-ves.test.js` runs its sync client and engine
+against the same mock.
 
-## Why the read path is not `SequencerClient#pull` as is
+## The sequencer client
 
-The harness reads through `lib/ves-client.mjs`, the CLI client with only its
-read methods overridden, because against the real sequencer:
-
-- `pull()` and `getHead()` call the deprecated `/api/v1/events` and
-  `/api/v1/head`, which read the legacy event table: VES-ingested events are
-  invisible there. (`getEntityHistory()` likewise calls `/api/v1/entities/...`.)
-- `pull()` maps `envelope.source_agent`; the VES field is `source_agent_id`,
-  so no pulled event could verify. VES also puts `sequenced_at` inside the
-  envelope and serves no `receipt_hash`.
-- `getEntityHistory()` expects flat records; VES returns `{ envelope }`
-  records in pages of 100, and the entity id is not URL-encoded.
-- There is no REST method for VES commitments or inclusion proofs.
-
-And posting settles the ingest response itself rather than with the CLI's
-`validatePushReceipt`, because rejections arrive as `event_id` (snake_case)
-and an exact replay (a retry after a lost response) returns its stored
-receipt counted as neither accepted nor rejected — both make
-`validatePushReceipt` throw. The tests pin each of these.
+The board talks to the sequencer only through the CLI's `SequencerClient`,
+`validatePushReceipt` and `PeerKeyDirectory`, unmodified. Earlier CLI
+versions read the deprecated pre-VES routes (VES-ingested events were
+invisible), mapped the VES envelope wrongly (`source_agent` for
+`source_agent_id`), could not settle a push with a rejection (`event_id`) or a
+replayed receipt, and sent non-`ss_` API keys as Bearer (a JWT to the
+sequencer); this example used to carry overrides for the read path. The CLI
+client now reads `/api/v1/ves/*`, settles per event from the receipts, binds
+inclusion proofs to the commitment's leaf count (`verifyEventInclusion`), and
+authenticates with `Authorization: ApiKey`.
 
 ## Limits
 
