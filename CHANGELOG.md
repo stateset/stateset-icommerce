@@ -40,6 +40,9 @@ This project follows Keep a Changelog and Semantic Versioning.
   new `HttpIdempotencyRepository::release`, so the same key can be retried;
   such keys used to answer 409 forever. 5xx responses still keep the
   reservation for reconciliation.
+- The HTTP negotiation counter-offer, accept and reject endpoints keep the
+  negotiation when its transition is refused; a refused transition (400)
+  used to delete it.
 
 ## [1.41.0] - 2026-11-15
 
