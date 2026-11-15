@@ -274,6 +274,92 @@ describe('reads carry allowedNext for the current status', () => {
   });
 });
 
+/** A fresh processing order with `quantity` units of one line. */
+async function processingOrder(quantity) {
+  const order = (
+    await call('create_order', {
+      customerId: ids.customer,
+      items: [{ sku: `P-${quantity}`, name: 'Part', quantity, unitPrice: 3 }],
+    })
+  ).order;
+  await call('update_order_status', { orderId: order.id, status: 'confirmed' });
+  await call('update_order_status', { orderId: order.id, status: 'processing' });
+  const item = (await call('get_order', { identifier: order.id })).order.items[0];
+  return { id: order.id, itemId: item.id };
+}
+
+describe('order and customer statuses match what the engine accepts', () => {
+  it('update_order_status refuses shipped and pending by schema, naming what to do', async () => {
+    for (const [status, pattern] of [
+      ['shipped', /call ship_order/],
+      ['partially_shipped', /ship_order with `lines`/],
+      ['pending', /nothing moves back to pending/],
+    ]) {
+      const out = await server.executeTool('update_order_status', { orderId: ids.order, status });
+      assert.equal(out.ok, false, status);
+      assert.equal(out.failure.code, 'INVALID_INPUT', status);
+      assert.match(out.failure.hint, pattern, status);
+    }
+    const tool = server.getAdaptedTools().find((t) => t.name === 'update_order_status');
+    assert.match(tool.description, /cancelled \(from pending, confirmed or processing\)/);
+    assert.match(tool.description, /call ship_order/);
+  });
+
+  it('ship_order takes lines, so partially_shipped is reachable', async () => {
+    const order = await processingOrder(3);
+    const partial = await call('ship_order', {
+      orderId: order.id,
+      trackingNumber: '1Z-PART',
+      lines: [{ orderItemId: order.itemId, quantity: 1 }],
+    });
+    assert.equal(entity(partial, 'order').status, 'partially_shipped');
+    const read = await call('get_order', { identifier: order.id });
+    assert.equal(read.order.status, 'partially_shipped');
+    assert.deepEqual(read.allowedNext, ['shipped']);
+
+    // Shipping more than is left is the engine's refusal, not a silent full shipment.
+    const tooMany = await server.executeTool('ship_order', {
+      orderId: order.id,
+      lines: [{ orderItemId: order.itemId, quantity: 5 }],
+    });
+    assert.equal(tooMany.ok, false);
+
+    const rest = await call('ship_order', { orderId: order.id });
+    assert.equal(entity(rest, 'order').status, 'shipped');
+  });
+
+  it('cancel_order cancels a processing order, as its description now says', async () => {
+    const tool = server.getAdaptedTools().find((t) => t.name === 'cancel_order');
+    assert.match(tool.description, /from pending, confirmed or processing/);
+    const order = await processingOrder(1);
+    const cancelled = await call('cancel_order', { orderId: order.id });
+    assert.equal(cancelled.order.status, 'cancelled');
+  });
+
+  it('update_customer refuses deleted by schema and points to delete_customer', async () => {
+    const customer = entity(
+      await call('create_customer', { email: 'grace@example.com', firstName: 'G', lastName: 'H' }),
+      'customer',
+    );
+    const refused = await server.executeTool('update_customer', {
+      customerId: customer.id,
+      status: 'deleted',
+    });
+    assert.equal(refused.failure.code, 'INVALID_INPUT');
+    assert.match(refused.failure.hint, /call delete_customer/);
+
+    const suspended = await call('update_customer', {
+      customerId: customer.id,
+      status: 'suspended',
+    });
+    assert.equal(suspended.customer.status, 'suspended');
+    await call('delete_customer', { customerId: customer.id });
+    const read = await call('get_customer', { identifier: customer.id });
+    assert.equal(read.customer.status, 'deleted');
+    assert.deepEqual(read.allowedNext, []);
+  });
+});
+
 describe('a preview of a catalogued move states its precondition', () => {
   it('without --apply, on executeTool and the MCP response', async () => {
     const preview = await previewServer.executeTool('mark_return_received', { returnId: 'r-1' });

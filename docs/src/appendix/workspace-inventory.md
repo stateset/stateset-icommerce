@@ -98,7 +98,7 @@ workspace membership because they require host runtimes or headers.
 | `sync` | 29 |
 | `simulation` | 21 |
 | `adapters` | 20 |
-| `utils` | 18 |
+| `utils` | 19 |
 | `harness` | 14 |
 | `chains` | 10 |
 | `x402` | 10 |

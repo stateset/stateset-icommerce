@@ -131,8 +131,8 @@ Tier: **core**
 | `list_customers` | core | read | List all customers in the database. Returns customer details including email, name, and status. |
 | `get_customer` | core | read | Get a specific customer by ID or email address, with `allowedNext`: the statuses the customer can move to from its current one. |
 | `create_customer` | core | write | Create a new customer. Requires email, first name, and last name. |
-| `update_customer` | core | write | Update an existing customer. Only the fields provided are changed (email, name, phone, status, marketing opt-in). |
-| `delete_customer` | core | write | Delete a customer (soft delete). |
+| `update_customer` | core | write | Update an existing customer. Only the fields provided are changed (email, name, phone, status, marketing opt-in). Status moves between active, inactive and suspended; deleting a customer is its own operation: delete_customer. |
+| `delete_customer` | core | write | Delete a customer (soft delete). This is the only way a customer reaches the deleted status, which is final. |
 | `find_or_create_customer` | core | write | Find a customer by email, or create one if none exists. Returns the existing or newly created customer. |
 | `list_customer_addresses` | core | read | List all addresses in a customer address book. |
 | `add_customer_address` | core | write | Add an address to a customer address book. |
@@ -149,9 +149,9 @@ Tier: **core**
 | `list_orders` | core | read | List all orders. Shows order number, status, customer, total amount, and item count. |
 | `get_order` | core | read | Get a specific order by ID or order number. Returns full order details including line items, and `allowedNext`: the statuses the order can move to from its current one. |
 | `create_order` | core | write | Create a new order for a customer with line items. |
-| `update_order_status` | core | write | Update the status of an order. Valid statuses: pending, confirmed, processing, shipped, delivered, cancelled, refunded. |
-| `ship_order` | core | write | Mark an order as shipped with optional tracking number. |
-| `cancel_order` | core | delete | Cancel an order. Only pending or confirmed orders can be cancelled. |
+| `update_order_status` | core | write | Move an order to a new status: confirmed (from pending), processing (from confirmed), delivered (from shipped), cancelled (from pending, confirmed or processing), refunded (from delivered). The engine refuses any other move; get_order returns `allowedNext` for an order. Shipping is not a status update: call ship_order (pass `lines` to ship part of the order). cancel_order also cancels. Cancelling is refused while captured payments still hold money (refund first). |
+| `ship_order` | core | write | Ship an order (the engine accepts this from processing or partially_shipped), with an optional tracking number. Omit `lines` to ship every remaining unit (-> shipped); pass `lines` to ship part of the order (-> partially_shipped until every unit has shipped). This is the only way an order reaches shipped or partially_shipped. |
+| `cancel_order` | core | delete | Cancel an order. The engine accepts this from pending, confirmed or processing; once an order has shipped, use a return instead. Refused while captured payments still hold money: refund them first. |
 
 ## products
 

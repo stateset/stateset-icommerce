@@ -2807,7 +2807,7 @@
     },
     {
       "name": "cancel_order",
-      "description": "Cancel an order. Only pending or confirmed orders can be cancelled.",
+      "description": "Cancel an order. The engine accepts this from pending, confirmed or processing; once an order has shipped, use a return instead. Refused while captured payments still hold money: refund them first.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__cancel_order",
@@ -4301,7 +4301,7 @@
     },
     {
       "name": "delete_customer",
-      "description": "Delete a customer (soft delete).",
+      "description": "Delete a customer (soft delete). This is the only way a customer reaches the deleted status, which is final.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__delete_customer",
@@ -8396,7 +8396,7 @@
     },
     {
       "name": "ship_order",
-      "description": "Mark an order as shipped with optional tracking number.",
+      "description": "Ship an order (the engine accepts this from processing or partially_shipped), with an optional tracking number. Omit `lines` to ship every remaining unit (-> shipped); pass `lines` to ship part of the order (-> partially_shipped until every unit has shipped). This is the only way an order reaches shipped or partially_shipped.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__ship_order",
@@ -8864,7 +8864,7 @@
     },
     {
       "name": "update_customer",
-      "description": "Update an existing customer. Only the fields provided are changed (email, name, phone, status, marketing opt-in).",
+      "description": "Update an existing customer. Only the fields provided are changed (email, name, phone, status, marketing opt-in). Status moves between active, inactive and suspended; deleting a customer is its own operation: delete_customer.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__update_customer",
@@ -8909,7 +8909,7 @@
     },
     {
       "name": "update_order_status",
-      "description": "Update the status of an order. Valid statuses: pending, confirmed, processing, shipped, delivered, cancelled, refunded.",
+      "description": "Move an order to a new status: confirmed (from pending), processing (from confirmed), delivered (from shipped), cancelled (from pending, confirmed or processing), refunded (from delivered). The engine refuses any other move; get_order returns `allowedNext` for an order. Shipping is not a status update: call ship_order (pass `lines` to ship part of the order). cancel_order also cancels. Cancelling is refused while captured payments still hold money (refund first).",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__update_order_status",
