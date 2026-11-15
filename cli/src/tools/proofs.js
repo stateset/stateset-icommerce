@@ -8,6 +8,35 @@
 
 import { z } from 'zod';
 
+// A raw leaf hash says nothing about where in the tree it sits, so only a
+// tree size the caller knows independently of the proof binds the path; see
+// sync/raw-leaf-inclusion.js. Both inputs take an integer or its canonical
+// decimal spelling, as parseTreeInteger in sync/merkle-shape.js reads them
+// (gRPC carries uint64 values as strings).
+const leafCountInput = z
+  .union([
+    z.number().int().min(1).max(4294967295),
+    z.string().regex(/^[1-9][0-9]*$/, 'must be a canonical decimal integer of at least 1'),
+  ])
+  .optional()
+  .describe(
+    'Number of events in the batch, as you know it independently of the proof (e.g. from the ' +
+      'batch commitment or anchor record). Only this binds the path to the tree: pathBound is ' +
+      'true only when it is given, and the path must then be exactly as long as a tree of that ' +
+      'size makes it and end at a leaf inside the tree.',
+  );
+
+const leafIndexInput = z
+  .union([
+    z.number().int().min(0),
+    z.string().regex(/^(0|[1-9][0-9]*)$/, 'must be a canonical decimal integer'),
+  ])
+  .optional()
+  .describe(
+    "The leaf's position in the batch (0-based), if you know it; the proof's left/right " +
+      'positions must spell it. It does not bind the path on its own: pass leafCount for that.',
+  );
+
 export const proofTools = [
   // =========================================================================
   // 1. verify_receipt
@@ -15,13 +44,23 @@ export const proofTools = [
   {
     name: 'verify_receipt',
     description:
-      'Verify a VES commerce receipt — checks signature, hash, and Merkle inclusion proof.',
+      'Verify a VES commerce receipt — checks signature, hash, and Merkle inclusion proof. Pass ' +
+      'leafCount (the batch event count, known independently of the bundle) to bind the ' +
+      "inclusion path to the tree (pathBound: true); the bundle's own leafCount is only a " +
+      'sanity bound. A legacy-v0 leaf is not recomputed from the event (leafBound: false), so ' +
+      'without leafCount its inclusion check only proves that some node of the tree hashes to ' +
+      'the root.',
     inputSchema: {
       receiptBundle: z.string().min(1).describe('JSON-encoded receipt bundle'),
       publicKeyHex: z
         .string()
         .optional()
         .describe('Optional hex-encoded Ed25519 public key for signature verification'),
+      leafCount: leafCountInput.describe(
+        'Number of events in the batch, as you know it independently of the bundle (e.g. from ' +
+          'the batch commitment or anchor record). Only this binds the inclusion path: pathBound ' +
+          'is true only when it is given, and a bundle stating a different leafCount fails.',
+      ),
     },
     permission: 'read',
     handler: async ({ params }) => {
@@ -31,7 +70,7 @@ export const proofTools = [
         const pg = createProofGenerator(cryptoMod);
         const bundle = JSON.parse(params.receiptBundle);
         const publicKey = params.publicKeyHex || undefined;
-        const result = pg.verifyReceiptBundle(bundle, publicKey);
+        const result = pg.verifyReceiptBundle(bundle, publicKey, { leafCount: params.leafCount });
         return { success: true, ...result };
       } catch (error) {
         return { success: false, error: error.message };
@@ -94,25 +133,34 @@ export const proofTools = [
   {
     name: 'verify_inclusion_proof',
     description:
-      'Verify a Merkle inclusion proof — confirms that a leaf hash is included in a Merkle root.',
+      'Verify a Merkle inclusion proof — checks that a leaf hash walks up to a Merkle root. The ' +
+      'leaf hash is taken on trust. Pass leafCount (the batch event count, known independently ' +
+      'of the proof) to bind the path to the tree (pathBound: true); without leafCount a valid ' +
+      'result only proves that some node of the tree, possibly an interior node rather than a ' +
+      'leaf, hashes to the root.',
     inputSchema: {
       leafHash: z.string().min(1).describe('Hex-encoded leaf hash'),
       proof: z.string().min(1).describe('JSON-encoded proof array (each step: { position, hash })'),
       expectedRoot: z.string().min(1).describe('Hex-encoded expected Merkle root'),
       eventId: z.string().optional().describe('Optional event ID for context'),
+      leafCount: leafCountInput,
+      leafIndex: leafIndexInput,
     },
     permission: 'read',
     handler: async ({ params }) => {
       try {
         const cryptoMod = await import('../sync/crypto.js');
         const { createProofGenerator } = await import('../sync/proof-generator.js');
+        const { verifyRawLeafInclusion } = await import('../sync/raw-leaf-inclusion.js');
         const pg = createProofGenerator(cryptoMod);
         const proof = JSON.parse(params.proof);
-        const result = pg.verifyInclusionProof({
+        const result = verifyRawLeafInclusion(pg, {
           leafHash: params.leafHash,
           proof,
           expectedRoot: params.expectedRoot,
           eventId: params.eventId,
+          leafIndex: params.leafIndex,
+          leafCount: params.leafCount,
         });
         return { success: true, ...result };
       } catch (error) {
@@ -223,34 +271,36 @@ export const proofTools = [
   {
     name: 'verify_chain_anchor',
     description:
-      'Verify that an event proof matches an expected on-chain anchor transaction hash and Merkle root. Confirms the event was committed to the chain.',
+      'Verify that a Merkle proof reaches the Merkle root of an on-chain anchor transaction. ' +
+      'Pass leafCount (the anchored batch event count, known independently of the proof) to ' +
+      'bind the path to the tree (pathBound: true) and confirm the leaf was committed; without ' +
+      'leafCount, anchored: true only proves that some node of the anchored tree hashes to the ' +
+      'root, not that an event was committed. The leaf hash is taken on trust.',
     inputSchema: {
       leafHash: z.string().min(1).describe('Hex-encoded leaf hash of the event'),
       proof: z.string().min(1).describe('JSON-encoded Merkle proof array'),
       expectedRoot: z.string().min(1).describe('Hex-encoded Merkle root from the on-chain anchor'),
       anchorTxHash: z.string().min(1).describe('On-chain anchor transaction hash'),
+      leafCount: leafCountInput,
+      leafIndex: leafIndexInput,
     },
     permission: 'read',
     handler: async ({ params }) => {
       try {
         const cryptoMod = await import('../sync/crypto.js');
         const { createProofGenerator } = await import('../sync/proof-generator.js');
+        const { verifyRawLeafAnchor } = await import('../sync/raw-leaf-inclusion.js');
         const pg = createProofGenerator(cryptoMod);
         const proof = JSON.parse(params.proof);
-        const result = pg.verifyInclusionProof({
+        const result = verifyRawLeafAnchor(pg, {
           leafHash: params.leafHash,
           proof,
           expectedRoot: params.expectedRoot,
-        });
-        return {
-          success: true,
-          ...result,
           anchorTxHash: params.anchorTxHash,
-          anchored: result.valid,
-          detail: result.valid
-            ? `Event proof verified against on-chain root in tx ${params.anchorTxHash}`
-            : 'Merkle proof does not match the expected on-chain root',
-        };
+          leafIndex: params.leafIndex,
+          leafCount: params.leafCount,
+        });
+        return { success: true, ...result };
       } catch (error) {
         return { success: false, error: error.message };
       }

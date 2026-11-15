@@ -1022,13 +1022,13 @@ Tier: **extended**
 
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
-| `verify_receipt` | extended | read | Verify a VES commerce receipt — checks signature, hash, and Merkle inclusion proof. |
+| `verify_receipt` | extended | read | Verify a VES commerce receipt — checks signature, hash, and Merkle inclusion proof. Pass leafCount (the batch event count, known independently of the bundle) to bind the inclusion path to the tree (pathBound: true); the bundle's own leafCount is only a sanity bound. A legacy-v0 leaf is not recomputed from the event (leafBound: false), so without leafCount its inclusion check only proves that some node of the tree hashes to the root. |
 | `generate_inclusion_proof` | extended | read | Generate a Merkle inclusion proof for an event within a batch. Events carrying tenantId, storeId, sequenceNumber, eventSigningHash and agentSignature get a ves-v1 proof that the SDK spec verifier accepts; events with only id and eventSigningHash get a legacy-v0 proof and a warning saying which fields are missing. |
-| `verify_inclusion_proof` | extended | read | Verify a Merkle inclusion proof — confirms that a leaf hash is included in a Merkle root. |
+| `verify_inclusion_proof` | extended | read | Verify a Merkle inclusion proof — checks that a leaf hash walks up to a Merkle root. The leaf hash is taken on trust. Pass leafCount (the batch event count, known independently of the proof) to bind the path to the tree (pathBound: true); without leafCount a valid result only proves that some node of the tree, possibly an interior node rather than a leaf, hashes to the root. |
 | `generate_receipt_bundle` | extended | read | Generate a full verifiable receipt bundle for an event — includes event data, leaf hash, Merkle inclusion proof, and anchor metadata. |
 | `inspect_batch` | extended | read | Inspect a batch of events — computes Merkle root, event count, and time range. |
 | `export_compliance_package` | extended | read | Generate a compliance package — a complete set of verifiable receipts for all events in a batch, suitable for regulatory export or third-party audit. |
-| `verify_chain_anchor` | extended | read | Verify that an event proof matches an expected on-chain anchor transaction hash and Merkle root. Confirms the event was committed to the chain. |
+| `verify_chain_anchor` | extended | read | Verify that a Merkle proof reaches the Merkle root of an on-chain anchor transaction. Pass leafCount (the anchored batch event count, known independently of the proof) to bind the path to the tree (pathBound: true) and confirm the leaf was committed; without leafCount, anchored: true only proves that some node of the anchored tree hashes to the root, not that an event was committed. The leaf hash is taken on trust. |
 
 ## circuit-breaker
 
