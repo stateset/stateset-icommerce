@@ -1,7 +1,8 @@
 use crate::kernel::SealedAuditEntry;
 use crate::kernel_outbox::{
-    KernelAuditCheckpoint, KernelAuditVerification, KernelOutboxEvent, KernelOutboxHealth,
-    KernelReceiptRecord, audit_checkpoint_hash_is_valid, build_audit_checkpoint,
+    AuditEntryRow, ClaimedAuditEntry, KernelAuditCheckpoint, KernelAuditVerification,
+    KernelOutboxEvent, KernelOutboxHealth, KernelReceiptRecord, MaterializedReceiptRow,
+    ReceiptAuditVerifier, audit_checkpoint_hash_is_valid, build_audit_checkpoint,
     receipt_audit_hash,
 };
 use r2d2::Pool;
@@ -329,104 +330,89 @@ impl SqliteKernelOutboxRepository {
         }
     }
 
-    /// Recompute every receipt link and report the first broken chain position.
+    /// Recompute every receipt link, then check that the materialized
+    /// `kernel_receipts` index corresponds exactly to the chain (the rule is
+    /// documented on [`crate::kernel_outbox::KernelAuditFailure`]). Reports
+    /// the first failure with a typed reason.
     pub fn verify_audit_chain(&self) -> Result<KernelAuditVerification> {
-        let conn =
+        let mut conn =
             self.pool.get().map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-        let mut statement = conn
-            .prepare(
-                "SELECT sequence, request_hash, previous_audit_hash, audit_hash, receipt
-                 FROM kernel_receipt_audit_log ORDER BY sequence",
-            )
+        // One read snapshot for both passes, so a receipt committed mid-way
+        // cannot appear on one side only. WAL readers never block writers.
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)
             .map_err(map_db_error)?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                ))
-            })
-            .map_err(map_db_error)?;
-        let mut previous: Option<String> = None;
-        let mut entries = 0_u64;
-        for row in rows {
-            let (sequence, request_hash, declared_previous, declared_hash, receipt_json) =
-                row.map_err(map_db_error)?;
-            entries += 1;
-            let receipt = match serde_json::from_str(&receipt_json) {
-                Ok(value) => value,
-                Err(_) => {
-                    return Ok(KernelAuditVerification {
-                        valid: false,
-                        entries,
-                        head_hash: previous,
-                        first_invalid_sequence: Some(sequence),
-                    });
+        let mut verifier = ReceiptAuditVerifier::default();
+        {
+            let mut statement = tx
+                .prepare(
+                    "SELECT sequence, receipt_id, command_id, idempotency_key, request_hash,
+                            previous_audit_hash, audit_hash, receipt
+                     FROM kernel_receipt_audit_log ORDER BY sequence",
+                )
+                .map_err(map_db_error)?;
+            let mut rows = statement.query([]).map_err(map_db_error)?;
+            while let Some(row) = rows.next().map_err(map_db_error)? {
+                let receipt: String = row.get(7).map_err(map_db_error)?;
+                let entry = AuditEntryRow {
+                    sequence: row.get(0).map_err(map_db_error)?,
+                    receipt_id: row.get(1).map_err(map_db_error)?,
+                    command_id: row.get(2).map_err(map_db_error)?,
+                    idempotency_key: row.get(3).map_err(map_db_error)?,
+                    request_hash: row.get(4).map_err(map_db_error)?,
+                    previous_audit_hash: row.get(5).map_err(map_db_error)?,
+                    audit_hash: row.get(6).map_err(map_db_error)?,
+                    receipt: serde_json::from_str(&receipt).ok(),
+                };
+                if !verifier.entry(entry)? {
+                    break;
                 }
-            };
-            let computed = receipt_audit_hash(previous.as_deref(), &request_hash, &receipt)
-                .map_err(CommerceError::DatabaseError)?;
-            if declared_previous != previous || declared_hash != computed {
-                return Ok(KernelAuditVerification {
-                    valid: false,
-                    entries,
-                    head_hash: previous,
-                    first_invalid_sequence: Some(sequence),
-                });
             }
-            previous = Some(declared_hash);
         }
-        let mut current = conn
-            .prepare(
-                "SELECT r.receipt, r.request_hash, a.sequence, a.receipt, a.request_hash
-                 FROM kernel_receipts r
-                 LEFT JOIN kernel_receipt_audit_log a
-                   ON a.audit_hash = json_extract(r.receipt, '$.audit_hash')",
-            )
-            .map_err(map_db_error)?;
-        let current_rows = current
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<i64>>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                ))
-            })
-            .map_err(map_db_error)?;
-        for row in current_rows {
-            let (sealed_json, request_hash, sequence, audit_json, audit_request_hash) =
-                row.map_err(map_db_error)?;
-            let mut sealed: serde_json::Value = serde_json::from_str(&sealed_json)
-                .map_err(|error| CommerceError::DatabaseError(error.to_string()))?;
-            if let Some(object) = sealed.as_object_mut() {
-                object.insert("audit_hash".into(), serde_json::Value::Null);
-            }
-            let audit_receipt = audit_json
-                .as_deref()
-                .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok());
-            if sequence.is_none()
-                || audit_request_hash.as_deref() != Some(request_hash.as_str())
-                || audit_receipt.as_ref() != Some(&sealed)
-            {
-                return Ok(KernelAuditVerification {
-                    valid: false,
-                    entries,
-                    head_hash: previous,
-                    first_invalid_sequence: Some(sequence.unwrap_or(0)),
+        if verifier.chain_intact() {
+            let mut statement = tx
+                .prepare(
+                    "SELECT r.command_id, r.idempotency_key, r.command_type, r.contract_version,
+                            r.request_hash, r.status, r.receipt,
+                            a.sequence, a.audit_hash, a.request_hash, a.receipt
+                     FROM kernel_receipts r
+                     LEFT JOIN kernel_receipt_audit_log a
+                       ON a.audit_hash = json_extract(r.receipt, '$.audit_hash')",
+                )
+                .map_err(map_db_error)?;
+            let mut rows = statement.query([]).map_err(map_db_error)?;
+            while let Some(row) = rows.next().map_err(map_db_error)? {
+                let receipt: String = row.get(6).map_err(map_db_error)?;
+                let sequence: Option<i64> = row.get(7).map_err(map_db_error)?;
+                let audit_hash: Option<String> = row.get(8).map_err(map_db_error)?;
+                let audit_request_hash: Option<String> = row.get(9).map_err(map_db_error)?;
+                let audit_receipt: Option<String> = row.get(10).map_err(map_db_error)?;
+                let claimed = match (sequence, audit_hash, audit_request_hash) {
+                    (Some(sequence), Some(audit_hash), Some(request_hash)) => {
+                        Some(ClaimedAuditEntry {
+                            sequence,
+                            audit_hash,
+                            request_hash,
+                            receipt: audit_receipt
+                                .as_deref()
+                                .and_then(|json| serde_json::from_str(json).ok()),
+                        })
+                    }
+                    _ => None,
+                };
+                verifier.materialized(MaterializedReceiptRow {
+                    command_id: row.get(0).map_err(map_db_error)?,
+                    idempotency_key: row.get(1).map_err(map_db_error)?,
+                    command_type: row.get(2).map_err(map_db_error)?,
+                    contract_version: row.get(3).map_err(map_db_error)?,
+                    request_hash: row.get(4).map_err(map_db_error)?,
+                    status: row.get(5).map_err(map_db_error)?,
+                    receipt: serde_json::from_str(&receipt).ok(),
+                    claimed,
                 });
             }
         }
-        Ok(KernelAuditVerification {
-            valid: true,
-            entries,
-            head_hash: previous,
-            first_invalid_sequence: None,
-        })
+        Ok(verifier.finish())
     }
 
     /// Create a portable checkpoint for publication outside this database.

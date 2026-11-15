@@ -6,6 +6,16 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- Kernel receipt audit verification (`verify_audit_chain`, SQLite and
+  PostgreSQL) now checks the `kernel_receipts` idempotent-replay index against
+  the sealed chain. A deleted, re-keyed, altered, stale (restored preview) or
+  orphan materialized receipt, a re-execution under an already-sealed key, and
+  a rewritten unhashed audit-log column were previously reported valid.
+  `KernelAuditVerification` gains an optional typed `failure` reason. Stores
+  that relied on the old, weaker check may now report such existing damage.
+
 ## [1.40.0] - 2026-10-22
 
 ### Security
