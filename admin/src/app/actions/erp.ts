@@ -2,7 +2,9 @@
 
 import { z } from 'zod';
 import { revalidatePath } from 'next/cache';
+import type { CreditMemoOutput } from '@stateset/embedded';
 import { getErpEngine } from '@/lib/erp';
+import type { CreditMemoStatus } from '@/lib/engine-lifecycles';
 import { requireAdminSession } from '@/lib/shared/auth-session';
 import { requireFinanceActor } from '@/lib/shared/finance-actor';
 
@@ -97,6 +99,16 @@ export async function reverseReceivableWriteOff(input: FormValues) {
   revalidatePath('/finance/receivables');
 }
 
+/**
+ * A credit memo as the admin sees it: `getCommerceEngine` normalises the
+ * binding's `Debug`-cased status and reason (`'FullyApplied'`) to the engine's
+ * snake_case (`'fully_applied'`), so the declared binding type no longer fits.
+ */
+export type AdminCreditMemo = Omit<CreditMemoOutput, 'status' | 'reason'> & {
+  status: CreditMemoStatus;
+  reason: string;
+};
+
 export async function getReceivableActionsData() {
   await requireAdminSession();
   const engine = await getErpEngine();
@@ -105,7 +117,7 @@ export async function getReceivableActionsData() {
     engine.accountsReceivable.listCreditMemos(),
     engine.accountsReceivable.listWriteOffs({ includeReversed: false }),
   ]);
-  return { invoices, credits, writeOffs };
+  return { invoices, credits: credits as unknown as AdminCreditMemo[], writeOffs };
 }
 
 export async function getManufacturingSetupData() {

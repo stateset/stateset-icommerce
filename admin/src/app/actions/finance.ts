@@ -14,6 +14,11 @@
 
 import { z } from 'zod';
 import { addDecimal, isPositiveDecimal } from '@/lib/finance/decimal';
+import {
+  AP_AGING_EXCLUDED_BILL_STATUSES,
+  AR_OPEN_INVOICE_STATUSES,
+  statusIn,
+} from '@/lib/engine-lifecycles';
 import { requireFinanceActor } from '@/lib/shared/finance-actor';
 
 import {
@@ -167,10 +172,9 @@ function bucketByCustomer(invoices: Invoice[]): ArCustomerAging[] {
 
   for (const invoice of invoices) {
     const amountDue = invoice.balanceDue ?? addDecimal(invoice.total, invoice.amountPaid, true);
-    if (
-      !['sent', 'viewed', 'partially_paid', 'overdue'].includes(invoice.status) ||
-      !isPositiveDecimal(amountDue)
-    ) {
+    // Same scope as the engine's AR aging: issued, open invoices — disputed
+    // ones included (the engine still ages and collects them).
+    if (!statusIn(AR_OPEN_INVOICE_STATUSES, invoice.status) || !isPositiveDecimal(amountDue)) {
       continue;
     }
     const row =
@@ -309,10 +313,12 @@ export async function getBillsPageData(currency = 'USD'): Promise<{
     total: '0',
   };
   for (const bill of bills) {
+    // Same scope as the engine's AP aging (`status NOT IN ('paid',
+    // 'cancelled')`): draft and pending bills are liabilities it ages too.
     if (
       (bill.currency ?? 'USD') !== currency ||
       !isPositiveDecimal(bill.amountDue) ||
-      ['draft', 'pending', 'cancelled', 'paid'].includes(bill.status.toLowerCase())
+      statusIn(AP_AGING_EXCLUDED_BILL_STATUSES, bill.status)
     )
       continue;
     const days = Math.floor((Date.now() - Date.parse(bill.dueDate)) / 86400000);

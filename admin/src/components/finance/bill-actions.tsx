@@ -2,6 +2,7 @@
 import ErpActionForm from './erp-action-form';
 import { approveSupplierBill, paySupplierBill } from '@/app/actions/erp';
 import { formatMoney } from '@/lib/finance/format';
+import { BILL_APPROVABLE_STATUSES, BILL_PAYABLE_STATUSES, statusIn } from '@/lib/engine-lifecycles';
 import type { Bill } from '@/lib/embedded';
 
 export default function BillActions({
@@ -11,15 +12,15 @@ export default function BillActions({
   bills: Bill[];
   refresh: () => Promise<void>;
 }) {
-  const payable = bills.filter((b) =>
-    ['approved', 'partially_paid', 'overdue'].includes(
-      b.status.toLowerCase().replace('partiallypaid', 'partially_paid'),
-    ),
-  );
+  // Offer only the bills the engine accepts for each action: approval from
+  // draft or pending (`ap_match.rs`), payment against approved, partially
+  // paid or overdue bills (`ap_settlement.rs`).
+  const approvable = bills.filter((b) => statusIn(BILL_APPROVABLE_STATUSES, b.status));
+  const payable = bills.filter((b) => statusIn(BILL_PAYABLE_STATUSES, b.status));
   const options = (rows: Bill[]) =>
     rows.map((b) => ({
       value: b.id,
-      label: `${b.billNumber} · ${formatMoney(b.amountDue, b.currency ?? 'USD')} due`,
+      label: `${b.billNumber} · ${b.status.replaceAll('_', ' ')} · ${formatMoney(b.amountDue, b.currency ?? 'USD')} due`,
     }));
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -30,7 +31,7 @@ export default function BillActions({
           {
             name: 'billId',
             label: 'Bill',
-            options: options(bills.filter((b) => b.status.toLowerCase() === 'pending')),
+            options: options(approvable),
           },
           {
             name: 'overrideReason',

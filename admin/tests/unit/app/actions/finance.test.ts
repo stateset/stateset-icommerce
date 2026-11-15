@@ -12,6 +12,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('server-only', () => ({}));
 import { ADMIN_SESSION_COOKIE } from '@/lib/shared/auth-session';
+import type { Bill } from '@/lib/embedded';
 
 // Mock next/headers cookies() — must be before imports
 const cookieStore = vi.hoisted(() => new Map<string, { value: string }>());
@@ -302,6 +303,62 @@ describe('finance actions auth guard', () => {
       expect(result.customers[0]).toMatchObject({ currency: 'USD', total: '7.01' });
       expect(result.currencies).toEqual(['EUR', 'USD']);
       expect(result.dso).toBeNull();
+    });
+
+    it('ages disputed invoices like the engine does', async () => {
+      vi.mocked(accountsReceivableApi.listInvoices).mockResolvedValueOnce([
+        {
+          id: 'disputed',
+          invoiceNumber: 'INV-D',
+          customerId: 'cus_1',
+          status: 'disputed',
+          subtotal: '40.00',
+          taxAmount: '0',
+          total: '40.00',
+          amountPaid: '0',
+          balanceDue: '40.00',
+          currency: 'USD',
+          dueDate: '2020-01-01',
+          createdAt: '2020-01-01T00:00:00Z',
+          updatedAt: '2020-01-01T00:00:00Z',
+        },
+      ]);
+      const result = await getReceivablesPageData('USD');
+      expect(result.aging.total).toBe('40.00');
+      expect(result.customers[0]).toMatchObject({ daysOver90: '40.00' });
+    });
+
+    it('ages every bill the engine ages: all but paid and cancelled', async () => {
+      const bill = (status: Bill['status']) => ({
+        id: `bill_${status}`,
+        billNumber: `BILL-${status}`,
+        supplierId: 'sup_1',
+        currency: 'USD',
+        status,
+        totalAmount: '10.00',
+        amountPaid: '0',
+        amountDue: status === 'paid' ? '0' : '10.00',
+        dueDate: '2099-01-01',
+        createdAt: '2026-01-01T00:00:00Z',
+      });
+      vi.mocked(accountsPayableApi.listBills).mockResolvedValueOnce(
+        (
+          [
+            'draft',
+            'pending',
+            'approved',
+            'partially_paid',
+            'overdue',
+            'disputed',
+            'paid',
+            'cancelled',
+          ] as const
+        ).map(bill),
+      );
+      const result = await getBillsPageData('USD');
+      // Six open bills of 10.00 each, all current (due in the future).
+      expect(result.aging.total).toBe('60.00');
+      expect(result.aging.current).toBe('60.00');
     });
 
     it('passes the status filter through to fixed assets and validates it', async () => {

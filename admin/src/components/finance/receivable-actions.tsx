@@ -8,20 +8,27 @@ import {
   reverseReceivableWriteOff,
 } from '@/app/actions/erp';
 import { formatMoney } from '@/lib/finance/format';
+import {
+  AR_OPEN_INVOICE_STATUSES,
+  CREDIT_MEMO_APPLICABLE_STATUSES,
+  statusIn,
+} from '@/lib/engine-lifecycles';
 import ErpActionForm, { type ErpField } from './erp-action-form';
 
 export default function ReceivableActions({ refresh }: { refresh: () => Promise<void> }) {
   const { data, error, refetch } = useEmbeddedData(getReceivableActionsData);
   if (error) return <p role="alert">Receivable actions unavailable: {error.message}</p>;
   if (!data) return <p>Loading receivable actions…</p>;
+  // Issued, open invoices — disputed included: the engine accepts a payment
+  // application, a credit memo and a write-off against a disputed invoice.
   const invoice: ErpField = {
     name: 'invoiceId',
     label: 'Invoice',
     options: data.invoices
-      .filter((i) => ['sent', 'viewed', 'partially_paid', 'overdue'].includes(i.status))
+      .filter((i) => statusIn(AR_OPEN_INVOICE_STATUSES, i.status))
       .map((i) => ({
         value: i.id,
-        label: `${i.invoiceNumber} · ${formatMoney(i.balanceDue, i.currency)} due`,
+        label: `${i.invoiceNumber} · ${i.status.replaceAll('_', ' ')} · ${formatMoney(i.balanceDue, i.currency)} due`,
       })),
   };
   const amount: ErpField = {
@@ -49,8 +56,11 @@ export default function ReceivableActions({ refresh }: { refresh: () => Promise<
           {
             name: 'creditMemoId',
             label: 'Credit memo',
+            // Memos with an unapplied balance. Statuses arrive normalised to
+            // snake_case (`fully_applied`), so the old `'applied'` test never
+            // matched and fully applied memos stayed on offer.
             options: data.credits
-              .filter((c) => !['voided', 'applied'].includes(c.status.toLowerCase()))
+              .filter((c) => statusIn(CREDIT_MEMO_APPLICABLE_STATUSES, c.status))
               .map((c) => ({
                 value: c.id,
                 label: `${c.creditMemoNumber} · customer ${c.customerId}`,
