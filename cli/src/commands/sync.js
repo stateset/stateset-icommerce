@@ -560,7 +560,10 @@ export async function execute(action, args, context) {
       if (!result) throw new Error(`Commitment not found: ${batchId}`);
       return jsonOutput
         ? result
-        : { result, formatted: `Commitment ${batchId}: ${result.eventCount} events` };
+        : {
+            result,
+            formatted: `Commitment ${batchId}: ${result.leafCount} events (#${result.sequenceStart}-#${result.sequenceEnd})`,
+          };
     }
 
     case 'key-generate': {

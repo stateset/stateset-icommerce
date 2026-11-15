@@ -1014,14 +1014,16 @@ export const syncTools = [
         if (!commitment) {
           return { success: false, error: `Commitment '${batchId}' not found` };
         }
+        // VES commitment fields; the output keys predate the VES routes.
         return {
           success: true,
           batchId: commitment.batchId,
           merkleRoot: commitment.merkleRoot,
-          startSequence: commitment.startSequence,
-          endSequence: commitment.endSequence,
-          eventCount: commitment.eventCount,
+          startSequence: commitment.sequenceStart,
+          endSequence: commitment.sequenceEnd,
+          eventCount: commitment.leafCount,
           committedAt: commitment.committedAt,
+          isAnchored: commitment.isAnchored,
         };
       } catch (error) {
         return { success: false, error: error.message };

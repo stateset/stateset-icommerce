@@ -126,7 +126,10 @@ function makeEnvelope(overrides = {}) {
   };
 }
 
-// Build a minimal VES v1.0 sequenced event as returned by the server
+// Build a minimal VES v1.0 sequenced event as GET /api/v1/ves/events serves
+// it: `{ envelope }` with the sequencer-assigned fields inside the envelope,
+// `source_agent_id`, and no receipt fields (stateset-sequencer
+// src/domain/ves_event.rs, SequencedVesEvent).
 function makeServerEvent(seqNum = 1) {
   const payloadHash = computePayloadPlainHash({ order: seqNum }).toString('hex');
   return {
@@ -141,18 +144,15 @@ function makeServerEvent(seqNum = 1) {
       payload: { order: seqNum },
       ves_version: 1,
       payload_kind: 0,
-      payload_encrypted: null,
-      payload_plain_hash: payloadHash,
-      payload_cipher_hash: '0'.repeat(64),
+      payload_plain_hash: `0x${payloadHash}`,
+      payload_cipher_hash: `0x${'0'.repeat(64)}`,
       agent_key_id: 1,
-      agent_signature: '0'.repeat(128),
-      base_version: null,
+      agent_signature: `0x${'0'.repeat(128)}`,
       created_at: '2024-01-01T00:00:00Z',
-      source_agent: UUID1,
+      source_agent_id: UUID1,
       sequence_number: seqNum,
+      sequenced_at: '2024-01-01T00:00:01Z',
     },
-    sequenced_at: '2024-01-01T00:00:01Z',
-    receipt_hash: 'abc123',
   };
 }
 
@@ -410,6 +410,12 @@ describe('SequencerClient — _request', () => {
     const client = new SequencerClient(makeConfig({ apiKey: 'test-key' }));
     await client._request('GET', '/api/v1/test');
     assert.strictEqual(capturedHeaders['Authorization'], 'ApiKey test-key');
+  });
+
+  it('attaches the HTTP status to a request failure', async () => {
+    mockFetch(() => errorResponse(404, 'Not Found'));
+    const client = new SequencerClient(makeConfig());
+    await assert.rejects(() => client._request('GET', '/api/v1/missing'), { status: 404 });
   });
 });
 
@@ -895,7 +901,7 @@ describe('SequencerClient — connection generation', () => {
 describe('SequencerClient — pull', () => {
   afterEach(() => restoreFetch());
 
-  it('calls GET /api/v1/events with correct query params', async () => {
+  it('calls GET /api/v1/ves/events with correct query params', async () => {
     let capturedUrl;
     mockFetch((url) => {
       capturedUrl = url;
@@ -908,7 +914,7 @@ describe('SequencerClient — pull', () => {
     await client.pull(5, 50);
 
     const url = new URL(capturedUrl);
-    assert.strictEqual(url.pathname, '/api/v1/events');
+    assert.strictEqual(url.pathname, '/api/v1/ves/events');
     assert.strictEqual(url.searchParams.get('tenant_id'), UUID2);
     assert.strictEqual(url.searchParams.get('store_id'), UUID3);
     assert.strictEqual(url.searchParams.get('from'), '5');
@@ -946,33 +952,58 @@ describe('SequencerClient — pull', () => {
     assert.strictEqual(ev.envelope.eventType, 'created');
     assert.strictEqual(ev.envelope.vesVersion, 1);
     assert.strictEqual(ev.envelope.payloadKind, 0);
+    assert.strictEqual(ev.envelope.sourceAgent, UUID1, 'source_agent_id, the VES field');
     assert.strictEqual(ev.sequenceNumber, 7);
-    assert.strictEqual(ev.sequencedAt, '2024-01-01T00:00:01Z');
-    assert.strictEqual(ev.receiptHash, 'abc123');
+    assert.strictEqual(ev.sequencedAt, '2024-01-01T00:00:01Z', 'read from inside the envelope');
+    assert.strictEqual('receiptHash' in ev, false, 'the VES read routes serve no receipt hash');
   });
 
-  it('falls back to payload_hash for payloadPlainHash (legacy compat)', async () => {
-    const serverEvent = makeServerEvent(1);
-    const legacyHash = 'a'.repeat(64);
-    delete serverEvent.envelope.payload_plain_hash;
-    serverEvent.envelope.payload_hash = legacyHash;
+  // The pre-VES route's legacy-table defaults (payload_hash, a zero cipher
+  // hash, key id 0, a zero signature) are gone: VES envelopes always carry
+  // these signed fields, and one that is missing must stay missing so the
+  // event cannot verify, rather than carry a placeholder.
+  for (const field of [
+    'payload_plain_hash',
+    'payload_cipher_hash',
+    'agent_key_id',
+    'agent_signature',
+    'source_agent_id',
+  ]) {
+    it(`leaves a missing ${field} missing instead of inventing a value`, async () => {
+      const serverEvent = makeServerEvent(1);
+      delete serverEvent.envelope[field];
+      serverEvent.envelope.payload_hash = 'a'.repeat(64);
 
-    mockFetch(() => okResponse({ events: [serverEvent], head_sequence: 1 }));
+      mockFetch(() => okResponse({ events: [serverEvent], head_sequence: 1 }));
 
+      const client = new SequencerClient(makeConfig());
+      const { envelope } = (await client.pull(1)).events[0];
+      const mapped = {
+        payload_plain_hash: 'payloadPlainHash',
+        payload_cipher_hash: 'payloadCipherHash',
+        agent_key_id: 'agentKeyId',
+        agent_signature: 'agentSignature',
+        source_agent_id: 'sourceAgent',
+      }[field];
+      assert.strictEqual(envelope[mapped], undefined);
+    });
+  }
+
+  it('refuses a page whose next_sequence disagrees with the events served', async () => {
+    mockFetch(() =>
+      okResponse({ events: [makeServerEvent(3)], head_sequence: 9, next_sequence: 7 }),
+    );
     const client = new SequencerClient(makeConfig());
-    const result = await client.pull(1);
-    assert.strictEqual(result.events[0].envelope.payloadPlainHash, legacyHash);
+    await assert.rejects(client.pull(1), /next_sequence disagrees/);
   });
 
-  it('sets payloadCipherHash to zero hash when missing (legacy compat)', async () => {
-    const serverEvent = makeServerEvent(1);
-    delete serverEvent.envelope.payload_cipher_hash;
-
-    mockFetch(() => okResponse({ events: [serverEvent], head_sequence: 1 }));
-
+  it('explains a 404 as a sequencer without the VES read routes', async () => {
+    mockFetch(() => errorResponse(404, ''));
     const client = new SequencerClient(makeConfig());
-    const result = await client.pull(1);
-    assert.strictEqual(result.events[0].envelope.payloadCipherHash, '0'.repeat(64));
+    await assert.rejects(client.pull(1), {
+      code: 'SEQUENCER_ROUTE_NOT_FOUND',
+      message: /does not serve GET \/api\/v1\/ves\/events.*v0\.6\.0/,
+    });
   });
 
   it('returns hasMore=true when events.length === limit', async () => {
@@ -1017,17 +1048,6 @@ describe('SequencerClient — pull', () => {
     const client = new SequencerClient(makeConfig());
     const result = await client.pull(3);
     assert.strictEqual(result.headSequence, 99);
-  });
-
-  it('sets agentKeyId=0 for legacy events missing the field', async () => {
-    const serverEvent = makeServerEvent(1);
-    delete serverEvent.envelope.agent_key_id;
-
-    mockFetch(() => okResponse({ events: [serverEvent], head_sequence: 1 }));
-
-    const client = new SequencerClient(makeConfig());
-    const result = await client.pull(1);
-    assert.strictEqual(result.events[0].envelope.agentKeyId, 0);
   });
 });
 
@@ -1128,7 +1148,7 @@ describe('SequencerClient — pullStream', () => {
 describe('SequencerClient — getHead', () => {
   afterEach(() => restoreFetch());
 
-  it('calls GET /api/v1/head with tenant and store query params', async () => {
+  it('calls GET /api/v1/ves/head with tenant and store query params', async () => {
     let capturedUrl;
     mockFetch((url) => {
       capturedUrl = url;
@@ -1141,28 +1161,19 @@ describe('SequencerClient — getHead', () => {
     await client.getHead();
 
     const url = new URL(capturedUrl);
-    assert.strictEqual(url.pathname, '/api/v1/head');
+    assert.strictEqual(url.pathname, '/api/v1/ves/head');
     assert.strictEqual(url.searchParams.get('tenant_id'), UUID2);
     assert.strictEqual(url.searchParams.get('store_id'), UUID3);
   });
 
-  it('returns SyncState with headSequence', async () => {
-    mockFetch(() =>
-      okResponse({
-        head_sequence: 42,
-        state_root: 'abc123',
-        latest_commitment: { batch_id: 'BATCH-7' },
-      }),
-    );
+  it('returns SyncState with headSequence, and nothing the route does not serve', async () => {
+    // GET /api/v1/ves/head serves { head_sequence } only.
+    mockFetch(() => okResponse({ head_sequence: 42 }));
 
     const client = new SequencerClient(makeConfig({ tenantId: UUID2, storeId: UUID3 }));
     const state = await client.getHead();
 
-    assert.strictEqual(state.headSequence, 42);
-    assert.strictEqual(state.stateRoot, 'abc123');
-    assert.strictEqual(state.lastCommitmentId, 'BATCH-7');
-    assert.strictEqual(state.tenantId, UUID2);
-    assert.strictEqual(state.storeId, UUID3);
+    assert.deepStrictEqual(state, { tenantId: UUID2, storeId: UUID3, headSequence: 42 });
   });
 
   for (const head of [undefined, null, false, '0', -1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
@@ -1189,46 +1200,64 @@ describe('SequencerClient — getHead', () => {
 describe('SequencerClient — getCommitment', () => {
   afterEach(() => restoreFetch());
 
-  it('calls GET /api/v1/commitments/{batchId}', async () => {
+  // GET /api/v1/ves/commitments/:batch_id (src/api/handlers/ves/commitments.rs).
+  function vesCommitmentRecord(overrides = {}) {
+    return {
+      batch_id: 'BATCH-42',
+      tenant_id: UUID2,
+      store_id: UUID3,
+      ves_version: 1,
+      tree_depth: 7,
+      leaf_count: 100,
+      padded_leaf_count: 128,
+      merkle_root: 'AB'.repeat(32),
+      prev_state_root: '00'.repeat(32),
+      new_state_root: '11'.repeat(32),
+      sequence_start: 1,
+      sequence_end: 100,
+      committed_at: '2024-02-01T00:00:00Z',
+      chain_id: null,
+      chain_tx_hash: null,
+      chain_block_number: null,
+      anchored_at: null,
+      is_anchored: false,
+      ...overrides,
+    };
+  }
+
+  it('calls GET /api/v1/ves/commitments/{batchId}, URL-encoded', async () => {
     let capturedUrl;
     mockFetch((url) => {
       capturedUrl = url;
-      return okResponse({
-        batch_id: 'BATCH-1',
-        merkle_root: 'root123',
-        start_sequence: 1,
-        end_sequence: 10,
-        event_count: 10,
-        committed_at: '2024-01-01T00:00:00Z',
-      });
+      return okResponse(vesCommitmentRecord({ batch_id: 'BATCH/1' }));
     });
 
     const client = new SequencerClient(makeConfig({ url: 'https://seq.example.com' }));
-    await client.getCommitment('BATCH-1');
-    assert.ok(capturedUrl.endsWith('/api/v1/commitments/BATCH-1'));
+    await client.getCommitment('BATCH/1');
+    assert.ok(capturedUrl.endsWith('/api/v1/ves/commitments/BATCH%2F1'));
   });
 
-  it('returns BatchCommitment with correct fields', async () => {
-    mockFetch(() =>
-      okResponse({
-        batch_id: 'BATCH-42',
-        merkle_root: 'merkle-hex',
-        start_sequence: 1,
-        end_sequence: 100,
-        event_count: 100,
-        committed_at: '2024-02-01T00:00:00Z',
-      }),
-    );
+  it('returns the VES commitment with its leaf count and range', async () => {
+    mockFetch(() => okResponse(vesCommitmentRecord()));
 
     const client = new SequencerClient(makeConfig());
     const commitment = await client.getCommitment('BATCH-42');
 
     assert.strictEqual(commitment.batchId, 'BATCH-42');
-    assert.strictEqual(commitment.merkleRoot, 'merkle-hex');
-    assert.strictEqual(commitment.startSequence, 1);
-    assert.strictEqual(commitment.endSequence, 100);
-    assert.strictEqual(commitment.eventCount, 100);
+    assert.strictEqual(commitment.merkleRoot, 'ab'.repeat(32), 'normalised to lowercase hex');
+    assert.strictEqual(commitment.sequenceStart, 1);
+    assert.strictEqual(commitment.sequenceEnd, 100);
+    assert.strictEqual(commitment.leafCount, 100);
+    assert.strictEqual(commitment.paddedLeafCount, 128);
+    assert.strictEqual(commitment.treeDepth, 7);
     assert.strictEqual(commitment.committedAt, '2024-02-01T00:00:00Z');
+    assert.strictEqual(commitment.isAnchored, false);
+  });
+
+  it('refuses a commitment whose merkle_root is not a 32-byte hash', async () => {
+    mockFetch(() => okResponse(vesCommitmentRecord({ merkle_root: 'merkle-hex' })));
+    const client = new SequencerClient(makeConfig());
+    await assert.rejects(client.getCommitment('BATCH-42'), /merkle_root/);
   });
 
   it('returns null for 404 response', async () => {
@@ -1254,16 +1283,19 @@ describe('SequencerClient — getCommitment', () => {
 describe('SequencerClient — getEntityHistory', () => {
   afterEach(() => restoreFetch());
 
-  it('calls GET /api/v1/entities/{type}/{id}', async () => {
+  it('calls GET /api/v1/ves/entities/{type}/{id} with URL-encoded segments', async () => {
     let capturedUrl;
     mockFetch((url) => {
       capturedUrl = url;
-      return okResponse({ events: [] });
+      return okResponse({ events: [], has_more: false });
     });
 
     const client = new SequencerClient(makeConfig({ url: 'https://seq.example.com' }));
-    await client.getEntityHistory('order', 'ORD-99');
-    assert.ok(capturedUrl.includes('/api/v1/entities/order/ORD-99'));
+    await client.getEntityHistory('order', 'ORD 99/a?b');
+    const url = new URL(capturedUrl);
+    assert.strictEqual(url.pathname, '/api/v1/ves/entities/order/ORD%2099%2Fa%3Fb');
+    assert.strictEqual(url.searchParams.get('from'), '0');
+    assert.strictEqual(url.searchParams.get('limit'), '100');
   });
 
   it('includes tenant and store in query params', async () => {
@@ -1281,35 +1313,40 @@ describe('SequencerClient — getEntityHistory', () => {
     assert.strictEqual(url.searchParams.get('store_id'), UUID3);
   });
 
-  it('maps entity events to SequencedEvent camelCase shape', async () => {
+  it('maps { envelope } records to the SequencedEvent camelCase shape', async () => {
     const payloadHash = computePayloadPlainHash({ qty: 1 }).toString('hex');
     mockFetch(() =>
       okResponse({
+        entity_type: 'order',
+        entity_id: 'ORD-1',
         events: [
           {
-            event_id: UUID1,
-            command_id: null,
-            tenant_id: UUID2,
-            store_id: UUID3,
-            entity_type: 'order',
-            entity_id: 'ORD-1',
-            event_type: 'fulfilled',
-            payload: { qty: 1 },
-            ves_version: 1,
-            payload_kind: 0,
-            payload_encrypted: null,
-            payload_plain_hash: payloadHash,
-            payload_cipher_hash: '0'.repeat(64),
-            agent_key_id: 2,
-            agent_signature: 'f'.repeat(128),
-            base_version: 5,
-            created_at: '2024-03-01T00:00:00Z',
-            source_agent: UUID1,
-            sequence_number: 3,
-            sequenced_at: '2024-03-01T00:00:02Z',
-            receipt_hash: 'rcpt-abc',
+            envelope: {
+              event_id: UUID1,
+              tenant_id: UUID2,
+              store_id: UUID3,
+              entity_type: 'order',
+              entity_id: 'ORD-1',
+              event_type: 'fulfilled',
+              payload: { qty: 1 },
+              ves_version: 1,
+              payload_kind: 0,
+              payload_plain_hash: `0x${payloadHash}`,
+              payload_cipher_hash: `0x${'0'.repeat(64)}`,
+              agent_key_id: 2,
+              agent_signature: `0x${'f'.repeat(128)}`,
+              base_version: 5,
+              created_at: '2024-03-01T00:00:00Z',
+              source_agent_id: UUID1,
+              sequence_number: 3,
+              sequenced_at: '2024-03-01T00:00:02Z',
+            },
           },
         ],
+        count: 1,
+        total: 1,
+        current_version: 1,
+        has_more: false,
       }),
     );
 
@@ -1323,8 +1360,42 @@ describe('SequencerClient — getEntityHistory', () => {
     assert.strictEqual(ev.envelope.eventType, 'fulfilled');
     assert.strictEqual(ev.envelope.agentKeyId, 2);
     assert.strictEqual(ev.envelope.baseVersion, 5);
+    assert.strictEqual(ev.envelope.sourceAgent, UUID1);
     assert.strictEqual(ev.sequenceNumber, 3);
-    assert.strictEqual(ev.receiptHash, 'rcpt-abc');
+    assert.strictEqual(ev.sequencedAt, '2024-03-01T00:00:02Z');
+  });
+
+  it('follows has_more across offset pages until the end', async () => {
+    const offsets = [];
+    const record = (seq) => {
+      const event = makeServerEvent(seq);
+      event.envelope.entity_id = 'ORD-1';
+      return event;
+    };
+    mockFetch((url) => {
+      const from = Number(new URL(url).searchParams.get('from'));
+      offsets.push(from);
+      const page = from === 0 ? [record(2), record(5)] : [record(9)];
+      return okResponse({ events: page, total: 3, has_more: from === 0 });
+    });
+    const client = new SequencerClient(makeConfig());
+    const events = await client.getEntityHistory('order', 'ORD-1');
+    assert.deepStrictEqual(
+      events.map((e) => e.sequenceNumber),
+      [2, 5, 9],
+    );
+    assert.deepStrictEqual(offsets, [0, 2]);
+  });
+
+  it('refuses a history that repeats a sequence or strays into another entity', async () => {
+    const client = new SequencerClient(makeConfig());
+    const repeated = [makeServerEvent(1), makeServerEvent(1)];
+    for (const event of repeated) event.envelope.entity_id = 'ORD-1';
+    mockFetch(() => okResponse({ events: repeated, has_more: false }));
+    await assert.rejects(client.getEntityHistory('order', 'ORD-1'), /strictly increase/);
+
+    mockFetch(() => okResponse({ events: [makeServerEvent(4)], has_more: false }));
+    await assert.rejects(client.getEntityHistory('order', 'ORD-1'), /another entity/);
   });
 
   it('returns empty array when no events', async () => {
