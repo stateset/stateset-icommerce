@@ -59,6 +59,44 @@ fn sqlite_new_domain_accessors_do_not_panic() {
     assert!(outcomes.into_iter().all(std::convert::identity));
 }
 
+/// The SQLite `gift_cards` table (migration 037) stores `recipient_email` in
+/// its `customer_id` column (and `sender_name`/`message` in `issued_by`/`notes`);
+/// `create`, `update` and the row mapper all use that mapping, so an updated
+/// recipient round-trips and nothing else moves.
+#[test]
+fn sqlite_gift_card_update_round_trips_recipient_email() {
+    use stateset_core::{CreateGiftCard, CurrencyCode, GiftCardRepository, UpdateGiftCard};
+    let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
+    let cards = db.gift_cards();
+    let card = cards
+        .create(CreateGiftCard {
+            code: Some("GC-ROUNDTRIP".into()),
+            initial_balance: rust_decimal::Decimal::new(2500, 2),
+            currency: CurrencyCode::USD,
+            recipient_email: Some("first@example.com".into()),
+            sender_name: Some("Sender".into()),
+            message: Some("Enjoy".into()),
+            expires_at: None,
+        })
+        .expect("create gift card");
+    assert_eq!(card.recipient_email.as_deref(), Some("first@example.com"));
+    let updated = cards
+        .update(
+            card.id,
+            UpdateGiftCard {
+                recipient_email: Some("second@example.com".into()),
+                ..Default::default()
+            },
+        )
+        .expect("update recipient");
+    let stored = cards.get(card.id).expect("get").expect("gift card");
+    for card in [&updated, &stored] {
+        assert_eq!(card.recipient_email.as_deref(), Some("second@example.com"));
+        assert_eq!(card.sender_name.as_deref(), Some("Sender"));
+        assert_eq!(card.message.as_deref(), Some("Enjoy"));
+    }
+}
+
 /// Activating a search config that does not exist changes nothing: the
 /// currently active config stays active. Twin of the Postgres
 /// `postgres_search_config_set_active_missing_id_changes_nothing`.
