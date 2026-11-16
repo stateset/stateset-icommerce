@@ -29,8 +29,19 @@ import {
   getConversionFunnel,
 } from '@/app/actions/commerce';
 import type { DashboardMetrics, OrderAnalytics, CustomerAnalytics } from '@/lib/types';
-import { formatCurrency, formatCompactNumber, formatPercentage } from '@/lib/utils';
+import { formatCurrency, formatCompactNumber, formatRatio } from '@/lib/utils';
 import { formatMoney } from '@/lib/finance/format';
+
+/**
+ * A dashboard change (a 0-1 ratio, today vs. yesterday) as a caption. Without
+ * dashboard metrics there is nothing to compare, so no caption, rather than a
+ * "0%" change nobody measured.
+ */
+function changeCaption(change: number | undefined): string {
+  if (change === undefined) return '';
+  const sign = change > 0 ? '+' : change < 0 ? '-' : '';
+  return `${sign}${formatRatio(Math.abs(change))} today vs. yesterday`;
+}
 
 export default function AnalyticsDashboard() {
   const { data: metrics, isLoading: loadingMetrics } = useEmbeddedData<DashboardMetrics>(
@@ -110,7 +121,7 @@ export default function AnalyticsDashboard() {
             )}
             tone="success"
             icon={CurrencyDollarIcon}
-            subtitle={`${metrics?.gmvChange || 0}% vs last period`}
+            subtitle={changeCaption(metrics?.gmvChange)}
           />
 
           <MetricCard
@@ -118,7 +129,7 @@ export default function AnalyticsDashboard() {
             value={formatCompactNumber(orderAnalytics?.totalOrders || 0)}
             tone="primary"
             icon={ShoppingBagIcon}
-            subtitle={`${metrics?.ordersChange || 0}% vs last period`}
+            subtitle={changeCaption(metrics?.ordersChange)}
           />
 
           <MetricCard
@@ -128,7 +139,7 @@ export default function AnalyticsDashboard() {
             )}
             tone="primary"
             icon={ChartBarIcon}
-            subtitle={`${metrics?.aovChange || 0}% vs last period`}
+            subtitle={changeCaption(metrics?.aovChange)}
           />
 
           <MetricCard
@@ -260,17 +271,17 @@ export default function AnalyticsDashboard() {
                         </p>
                         <Badge
                           variant={
-                            stage.rate > 50 ? 'success' : stage.rate > 25 ? 'warning' : 'danger'
+                            stage.rate > 0.5 ? 'success' : stage.rate > 0.25 ? 'warning' : 'danger'
                           }
                         >
-                          {formatPercentage(stage.rate)}
+                          {formatRatio(stage.rate)}
                         </Badge>
                       </div>
                     </div>
                     <div className="h-8 bg-ds-muted rounded">
                       <div
                         className="h-full bg-ds-primary rounded transition-all duration-500"
-                        style={{ width: `${stage.rate}%` }}
+                        style={{ width: formatRatio(stage.rate) }}
                       />
                     </div>
                   </div>

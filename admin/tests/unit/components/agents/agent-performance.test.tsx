@@ -98,5 +98,9 @@ describe('AgentPerformance', () => {
     expect(screen.getByText('Active Agents')).toBeInTheDocument();
     expect(screen.getByText('Tasks Completed')).toBeInTheDocument();
     expect(screen.getByText('Order Bot')).toBeInTheDocument();
+    // Success rates and utilization are 0-1 ratios.
+    expect(screen.getByText('97.0%')).toBeInTheDocument();
+    expect(screen.getByText('99.0%')).toBeInTheDocument();
+    expect(screen.getByText('50.0% utilization')).toBeInTheDocument();
   });
 });

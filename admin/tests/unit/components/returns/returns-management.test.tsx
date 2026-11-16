@@ -83,6 +83,31 @@ describe('ReturnsManagement', () => {
     expect(screen.getByText('Return Rate')).toBeInTheDocument();
   });
 
+  it('renders the 0-1 return rates as percentages', () => {
+    useEmbeddedDataMock.mockReturnValue({
+      data: {
+        returns: [],
+        analytics: {
+          totalReturns: 4,
+          // summarizeReturns and the engine's returnRatePercent / 100 are ratios.
+          returnRate: 0.25,
+          refundTotal: 0,
+          averageProcessingTime: 0,
+          returnsByReason: {},
+          returnsByStatus: {},
+          topReturnedProducts: [{ productId: 'prod_1', name: 'Widget', count: 3, rate: 0.03 }],
+        },
+        pipeline: [],
+      },
+      isLoading: false,
+      error: null,
+    });
+    render(<ReturnsManagement />);
+    expect(screen.getByText('25.0%')).toBeInTheDocument();
+    expect(screen.getByText('3.0% rate')).toBeInTheDocument();
+    expect(screen.queryByText('0.25%')).toBeNull();
+  });
+
   it('renders engine return statuses and reason codes', () => {
     const base = {
       orderId: 'ord_123456789',

@@ -4,6 +4,11 @@
  * Typed interfaces for all 13 dashboard components' data shapes.
  * These replace `data?: any` props with concrete types based on
  * what each component actually accesses in its JSX.
+ *
+ * Rates, shares and growth figures (`*Rate`, `percentage`, `utilization`,
+ * `*Growth`, `*Reduction`) are 0-1 ratios: 0.25 is 25%. Render them with
+ * `formatRatio` from `@/lib/utils`. The few fields already on a 0-100 scale
+ * say so.
  */
 
 import type { Order, InventoryItem, Return } from '@/lib/types';
@@ -514,6 +519,7 @@ export interface ProductCatalogData {
 
 export interface AgentPerformanceSummary {
   activeAgents: number;
+  /** 0-100, not a ratio. */
   onlinePercentage: number;
   tasksCompleted: number;
   avgResponseTime: number;
@@ -578,6 +584,7 @@ export interface AgentPerformanceData {
 export interface ROISummary {
   annualSavings: number;
   savingsGrowth: number;
+  /** Already a percentage (380 is 380%), not a ratio. */
   roi: number;
   paybackMonths: number;
   hoursSaved: number;
@@ -589,6 +596,7 @@ export interface ROISummary {
 export interface CostCategory {
   name: string;
   value: number;
+  /** Already a percentage (-15 is -15%), not a ratio. */
   trend: number;
 }
 

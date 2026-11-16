@@ -21,7 +21,7 @@ import {
 import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getReturnsManagementData } from '@/app/actions/commerce';
-import { formatCurrency, formatPercentage, formatDateTime } from '@/lib/utils';
+import { formatCurrency, formatRatio, formatDateTime } from '@/lib/utils';
 import { formatMoney } from '@/lib/finance/format';
 import type { ReturnsManagementData, ReturnsPipelineStage } from '@/lib/types/dashboard-data';
 import type { Return } from '@/lib/types';
@@ -112,11 +112,7 @@ function ReturnsManagementInner({ data: propData }: ReturnsManagementProps) {
       {/* Key Metrics */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <MetricCard label="Total Returns" value={analytics.totalReturns} tone="primary" />
-        <MetricCard
-          label="Return Rate"
-          value={formatPercentage(analytics.returnRate)}
-          tone="warning"
-        />
+        <MetricCard label="Return Rate" value={formatRatio(analytics.returnRate)} tone="warning" />
         <MetricCard
           label="Refund Total"
           value={formatMoney(analytics.refundTotalExact ?? analytics.refundTotal)}
@@ -279,7 +275,7 @@ function ReturnsManagementInner({ data: propData }: ReturnsManagementProps) {
                           {product.count} returns
                         </Badge>
                         <p className="text-xs text-ds-muted-foreground mt-1">
-                          {formatPercentage(product.rate)} rate
+                          {formatRatio(product.rate)} rate
                         </p>
                       </div>
                     </div>

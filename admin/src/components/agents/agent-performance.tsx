@@ -17,7 +17,7 @@ import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getAgentPerformanceData } from '@/app/actions/commerce';
 import { SimulatedDataBadge } from '@/components/shared/simulated-data-badge';
-import { formatNumber, formatPercentage } from '@/lib/utils';
+import { formatNumber, formatRatio } from '@/lib/utils';
 import type {
   AgentPerformanceData,
   Agent,
@@ -96,7 +96,7 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
         />
         <MetricCard
           label="Success Rate"
-          value={formatPercentage(summary?.successRate || 0.984)}
+          value={formatRatio(summary?.successRate || 0.984)}
           tone="accent"
         />
       </div>
@@ -161,9 +161,7 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
                   </div>
                   <div className="flex justify-between text-sm">
                     <p className="text-sm text-ds-muted-foreground">Success</p>
-                    <p className="text-sm text-ds-foreground">
-                      {formatPercentage(agent.successRate)}
-                    </p>
+                    <p className="text-sm text-ds-foreground">{formatRatio(agent.successRate)}</p>
                   </div>
                   <div className="flex justify-between text-sm">
                     <p className="text-sm text-ds-muted-foreground">Avg Time</p>
@@ -180,7 +178,7 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
                     }
                   />
                   <p className="text-xs text-ds-muted-foreground text-center">
-                    {formatPercentage(agent.utilization)} utilization
+                    {formatRatio(agent.utilization)} utilization
                   </p>
                 </div>
               </motion.div>

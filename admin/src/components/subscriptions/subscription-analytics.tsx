@@ -21,7 +21,7 @@ import {
 import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getSubscriptionAnalyticsData } from '@/app/actions/commerce';
-import { formatCurrency, formatNumber, formatPercentage } from '@/lib/utils';
+import { formatCurrency, formatNumber, formatRatio } from '@/lib/utils';
 import type {
   SubscriptionAnalyticsData,
   ChurnReason,
@@ -88,7 +88,7 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
         <MetricCard
           label="Monthly Recurring Revenue"
           value={formatCurrency(summary?.mrr || 45000)}
-          subtitle={`+${formatPercentage(summary?.mrrGrowth || 0.12)} vs last month`}
+          subtitle={`+${formatRatio(summary?.mrrGrowth || 0.12)} vs last month`}
           tone="success"
         />
         <MetricCard
@@ -98,7 +98,7 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
         />
         <MetricCard
           label="Churn Rate"
-          value={formatPercentage(summary?.churnRate || 0.032)}
+          value={formatRatio(summary?.churnRate || 0.032)}
           tone="warning"
         />
         <MetricCard
@@ -164,7 +164,7 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
                     <div className="flex items-center space-x-2">
                       <Badge variant="default">{reason.count}</Badge>
                       <p className="text-sm text-ds-muted-foreground">
-                        {formatPercentage(reason.percentage)}
+                        {formatRatio(reason.percentage)}
                       </p>
                     </div>
                   </div>

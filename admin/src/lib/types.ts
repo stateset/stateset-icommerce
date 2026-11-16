@@ -293,8 +293,10 @@ export interface SubscriptionAnalytics {
 // Analytics Types
 // ============================================================================
 
+/** Rates and changes are 0-1 ratios (0.12 is 12%); render them with `formatRatio`. */
 export interface DashboardMetrics {
   gmvToday: number;
+  /** Today vs. yesterday, as a 0-1 ratio. */
   gmvChange: number;
   ordersToday: number;
   ordersChange: number;

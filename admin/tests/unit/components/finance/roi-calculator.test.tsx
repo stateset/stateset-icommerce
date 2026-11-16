@@ -76,5 +76,14 @@ describe('ROICalculator', () => {
     expect(screen.getByText('Shipping')).toBeInTheDocument();
     expect(screen.getByText('Picking')).toBeInTheDocument();
     expect(screen.queryByText('Break Even')).toBeNull();
+    // saved / previous is a 0-1 ratio: 100 of 200 is a 50% reduction.
+    expect(screen.getByText('50.0% reduction')).toBeInTheDocument();
+  });
+
+  it('renders the growth and reduction ratios as percentages', () => {
+    render(<ROICalculator />);
+    // The demo payload's savingsGrowth 0.23 and costReduction 0.45.
+    expect(screen.getByText('+23.0% vs last year')).toBeInTheDocument();
+    expect(screen.getByText('-45.0% reduction')).toBeInTheDocument();
   });
 });

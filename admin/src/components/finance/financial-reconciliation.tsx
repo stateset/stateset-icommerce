@@ -8,7 +8,7 @@ import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getFinancialReconciliationData } from '@/app/actions/commerce';
 import { SimulatedDataBadge } from '@/components/shared/simulated-data-badge';
-import { formatCurrency, formatPercentage } from '@/lib/utils';
+import { formatCurrency, formatRatio } from '@/lib/utils';
 import type {
   FinancialReconciliationData,
   ReconciliationCategory,
@@ -80,7 +80,7 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
               {formatCurrency(summary?.totalReconciled || 458000)}
             </p>
             <p className="text-xs text-ds-status-ok mt-1">
-              {formatPercentage(summary?.reconciledRate || 0.982)} of transactions
+              {formatRatio(summary?.reconciledRate || 0.982)} of transactions
             </p>
           </CardContent>
         </Card>
@@ -138,7 +138,7 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
               <p className="text-sm text-ds-muted-foreground">Current period status</p>
             </div>
             <Badge variant="success">
-              {formatPercentage(reconciliationRate?.overall || 0.94)} Complete
+              {formatRatio(reconciliationRate?.overall || 0.94)} Complete
             </Badge>
           </div>
           <div className="space-y-4">
@@ -160,7 +160,7 @@ function FinancialReconciliationInner({ data: propData }: FinancialReconciliatio
                               : 'danger'
                         }
                       >
-                        {formatPercentage(category.rate)}
+                        {formatRatio(category.rate)}
                       </Badge>
                     </div>
                   </div>

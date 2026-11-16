@@ -101,5 +101,8 @@ describe('FinancialReconciliation', () => {
     // "Flagged Discrepancies" is unique to the supplied-data path.
     expect(screen.getByText('Flagged Discrepancies')).toBeInTheDocument();
     expect(screen.getByText('Missing receipt')).toBeInTheDocument();
+    // Reconciliation rates are 0-1 ratios.
+    expect(screen.getByText('95.0% of transactions')).toBeInTheDocument();
+    expect(screen.getByText('95.0% Complete')).toBeInTheDocument();
   });
 });

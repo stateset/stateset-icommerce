@@ -30,18 +30,15 @@ import LoadingSkeleton from '../ui/loading-skeleton';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getDashboardMetrics, getHourlyActivity, getSystemHealth } from '@/app/actions/commerce';
 import type { DashboardMetrics, HourlyActivity, SystemHealth } from '@/lib/types';
-import {
-  formatCurrency,
-  formatCompactNumber,
-  formatPercentage,
-  formatRelativeTime,
-} from '@/lib/utils';
+import { formatCurrency, formatCompactNumber, formatRatio, formatRelativeTime } from '@/lib/utils';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 interface KPI {
   name: string;
   value: number;
+  /** Change vs. yesterday as a 0-1 ratio (0.12 is +12%). */
   change: number;
+  /** `'%'`: `value` and `target` are 0-1 ratios. */
   unit?: '$' | '%';
   target?: number;
   icon: React.ComponentType<{ className?: string }>;
@@ -67,10 +64,15 @@ interface DataCoverage {
   coverage: number;
 }
 
+// Conversion and inventory health are 0-1 ratios, like every dashboard rate.
+const CONVERSION_TARGET = 0.035;
+const INVENTORY_HEALTH_ALERT = 0.9;
+const INVENTORY_HEALTH_HIGH_ALERT = 0.8;
+
 // ─── Formatting / mapping helpers ─────────────────────────────────────────────
 function formatValue(value: number, unit?: '$' | '%'): string {
   if (unit === '$') return formatCurrency(value);
-  if (unit === '%') return formatPercentage(value);
+  if (unit === '%') return formatRatio(value);
   return formatCompactNumber(value);
 }
 
@@ -84,7 +86,7 @@ function changeTone(change: number): MetricTone {
 function trendCaption(change: number): string {
   if (change === 0) return 'Flat vs. yesterday';
   const arrow = change > 0 ? '▲' : '▼';
-  return `${arrow} ${Math.abs(change)}% vs. yesterday`;
+  return `${arrow} ${formatRatio(Math.abs(change))} vs. yesterday`;
 }
 
 const SEVERITY_STATUS: Record<Alert['severity'], StatusTone> = {
@@ -170,11 +172,12 @@ function buildOperationalAlerts(
     }
   }
 
-  if (metrics && metrics.inventoryHealth < 90) {
+  // Dashboard rates are 0-1 ratios (see `mockDashboardMetrics` in lib/embedded).
+  if (metrics && metrics.inventoryHealth < INVENTORY_HEALTH_ALERT) {
     alerts.push({
       id: 'inventory-health',
-      severity: metrics.inventoryHealth < 80 ? 'high' : 'medium',
-      message: `Inventory health is ${metrics.inventoryHealth}%`,
+      severity: metrics.inventoryHealth < INVENTORY_HEALTH_HIGH_ALERT ? 'high' : 'medium',
+      message: `Inventory health is ${formatRatio(metrics.inventoryHealth)}`,
       time: 'Live snapshot',
     });
   }
@@ -192,8 +195,8 @@ function buildOperationalInsights(
     insights.push({
       insight:
         metrics.gmvChange >= 0
-          ? `GMV is up ${Math.abs(metrics.gmvChange)}% today`
-          : `GMV is down ${Math.abs(metrics.gmvChange)}% today`,
+          ? `GMV is up ${formatRatio(Math.abs(metrics.gmvChange))} today`
+          : `GMV is down ${formatRatio(Math.abs(metrics.gmvChange))} today`,
       impact: metrics.gmvChange >= 0 ? 'positive' : 'negative',
       action:
         metrics.gmvChange >= 0
@@ -203,12 +206,12 @@ function buildOperationalInsights(
 
     insights.push({
       insight:
-        metrics.conversionRate >= 3.5
-          ? `Conversion is above target at ${metrics.conversionRate}%`
-          : `Conversion is below target at ${metrics.conversionRate}%`,
-      impact: metrics.conversionRate >= 3.5 ? 'positive' : 'warning',
+        metrics.conversionRate >= CONVERSION_TARGET
+          ? `Conversion is above target at ${formatRatio(metrics.conversionRate)}`
+          : `Conversion is below target at ${formatRatio(metrics.conversionRate)}`,
+      impact: metrics.conversionRate >= CONVERSION_TARGET ? 'positive' : 'warning',
       action:
-        metrics.conversionRate >= 3.5
+        metrics.conversionRate >= CONVERSION_TARGET
           ? 'Maintain current storefront and checkout configuration'
           : 'Inspect checkout friction and merchandising changes',
     });
@@ -287,7 +290,7 @@ function UnifiedDashboardInner() {
           value: metrics.conversionRate,
           change: metrics.conversionChange,
           unit: '%',
-          target: 3.5,
+          target: CONVERSION_TARGET,
           icon: ArrowTrendingUpIcon,
         },
         { name: 'Active Customers', value: metrics.activeCustomers, change: 0, icon: UsersIcon },

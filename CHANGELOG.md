@@ -6,6 +6,21 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- Admin percentages render at the right scale. Every rate the admin reads
+  (return, churn, conversion, success, reconciliation, growth) is a 0-1
+  ratio, but `formatPercentage` printed it as a 0-100 number, so a 25%
+  return rate read "0.25%". It is replaced by `formatRatio` (0-1 in,
+  `"25.0%"` out) in the returns, subscription, agent, reconciliation, ROI,
+  analytics and operations views. The operations dashboard's 3.5%
+  conversion target and 90%/80% inventory-health alert lines were compared
+  against ratios as if they were percentages (so inventory health always
+  alerted, at "0.95%"), and the analytics funnel drew a 29% stage 0.29%
+  wide; both now use the ratio scale. The analytics dashboard's change
+  captions say what they compare (today vs. yesterday) and are omitted when
+  there are no dashboard metrics, instead of reading "0% vs last period".
+
 ## [1.41.0] - 2026-11-15
 
 1.41.0 rolls up four lines of work: the 1.40.1 security fixes, which were

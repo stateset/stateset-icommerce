@@ -23,9 +23,20 @@ export function formatCompactNumber(value: number): string {
   }).format(value);
 }
 
-export function formatPercentage(value: number, decimals: number = 1): string {
-  return `${value.toFixed(decimals)}%`;
+/**
+ * Format a 0-1 ratio as a percentage: `formatRatio(0.25)` is `"25.0%"`.
+ *
+ * Every rate the engine and the admin's analytics report (return rate, churn,
+ * conversion, success, reconciliation, growth) is a 0-1 ratio, so this is the
+ * only percentage formatter. A value already on a 0-100 scale must not be
+ * passed here; write it out with its own `%` instead.
+ */
+export function formatRatio(ratio: number, decimals: number = 1): string {
+  return `${(ratio * 100).toFixed(decimals)}%`;
 }
+
+/** The placeholder a figure shows when nothing measured it. */
+export const NOT_AVAILABLE = '—';
 
 export function formatDate(date: string | Date): string {
   return new Intl.DateTimeFormat('en-US', {
