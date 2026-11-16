@@ -14,7 +14,7 @@ use stateset_core::{
 use stateset_embedded::Commerce;
 use uuid::Uuid;
 
-const STOREFRONT: [&str; 17] = [
+const STOREFRONT: [&str; 18] = [
     "customers.create",
     "carts.create",
     "carts.item.add",
@@ -31,6 +31,7 @@ const STOREFRONT: [&str; 17] = [
     "returns.create",
     "returns.transition",
     "returns.tracking.add",
+    "returns.item.disposition.set",
     "payments.create_refund",
 ];
 
@@ -262,22 +263,25 @@ fn governed_storefront_runs_a_complete_checkout_through_the_json_dispatcher() {
             .rejected("returns.transition", json!({"return_id": return_id, "status": "completed"})),
         "commerce.return_items_undispositioned"
     );
-    // Operator disposition, outside the agent surface; then the governed
-    // completion goes through and refunds the captured payment.
-    let return_uuid = return_id.parse::<Uuid>().expect("uuid");
-    let pending = agent.commerce.returns().get(return_uuid.into()).expect("load").expect("return");
-    agent
-        .commerce
-        .returns()
-        .set_item_disposition(
-            return_uuid.into(),
-            pending.items[0].id,
-            stateset_core::SetReturnDisposition {
-                disposition: stateset_core::ReturnDisposition::Scrap,
-                ..Default::default()
-            },
-        )
-        .expect("disposition");
+    // The agent dispositions the item on the governed surface (shaped as
+    // `set_return_item_disposition` builds it); then the governed completion
+    // goes through and refunds the captured payment.
+    let item_id = tracked["items"][0]["id"].as_str().expect("item id").to_owned();
+    let disposition = |value: &str| {
+        json!({"return_id": return_id, "return_item_id": item_id, "disposition": value,
+               "note": "cracked housing"})
+    };
+    assert_eq!(
+        agent.rejected("returns.item.disposition.set", disposition("donate")),
+        "commerce.return_disposition_invalid"
+    );
+    let item = agent.apply("returns.item.disposition.set", disposition("scrap"));
+    assert_eq!(item["disposition"], "scrap");
+    assert_eq!(item["disposition_by"], "agent:storefront");
+    assert_eq!(
+        agent.rejected("returns.item.disposition.set", disposition("restock")),
+        "commerce.return_item_already_dispositioned"
+    );
     let completed =
         agent.apply("returns.transition", json!({"return_id": return_id, "status": "completed"}));
     assert_eq!(completed["status"], "completed");

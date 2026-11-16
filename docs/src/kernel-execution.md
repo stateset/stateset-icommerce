@@ -325,7 +325,8 @@ fulfilment, return and refund — without any legacy write:
 | `ship_order` | `orders.ship` | line-aware shipment |
 | `create_return` | `returns.create` | return request (returnable quantities) |
 | `add_return_tracking` | `returns.tracking.add` | return update to `in_transit` |
-| `approve_return` … `complete_return` | `returns.transition` | return state machine |
+| `set_return_item_disposition` | `returns.item.disposition.set` | return item disposition (stock, serial and lot effects) |
+| `approve_return` … `complete_return` | `returns.transition` | return state machine (completion creates the payment refunds) |
 | `create_refund` | `payments.create_refund` | refund create |
 
 Each storefront command runs the same repository function the ungoverned API
@@ -633,9 +634,29 @@ for journal recovery and cumulative progress responses.
 
 `returns.transition` applies the return state machine under the same governed
 boundary. Preview reports the current return and predicted version; apply locks
-the return, checks `expected_version`, commits `returns.updated.v1` with exact
-string refund amounts, and stores the success receipt atomically. Missing,
-stale, and invalid transitions become durable non-mutating rejection receipts.
+the return, checks `expected_version`, runs the repository's status write
+(terminal returns are immutable, a return with a dispositioned item cannot be
+rejected or cancelled, a return cannot complete while an item has no
+disposition), commits `returns.updated.v1` with exact string refund amounts and
+— on completion — the ids of the pending payment refunds it created, and stores
+the success receipt atomically. Missing, stale, and invalid transitions become
+durable non-mutating rejection receipts (`commerce.return_items_undispositioned`,
+`commerce.return_items_dispositioned`, `commerce.return_terminal`, …).
+
+`returns.item.disposition.set` records what the warehouse did with one received
+item (`restock`, `refurbish`, `scrap`, `return_to_vendor` or `quarantine`)
+through the repository's disposition write, so a strict agent can take a return
+from `received` to `completed` on its own. Payload: `return_id`,
+`return_item_id`, `disposition` and an optional `note` (carried on the
+`returns.item_dispositioned.v1` fact). `disposition_by` is the command's
+principal, never a payload field. `restock` and `quarantine` put the units back
+into the default warehouse (the SKU needs an inventory item); the others have
+no stock effect. Refusals are sealed: `commerce.return_disposition_invalid`
+(not in the vocabulary), `commerce.return_not_found`,
+`commerce.return_not_dispositionable` (the return is not `received` or
+`inspecting`), `commerce.return_item_not_found`,
+`commerce.return_item_already_dispositioned`, and `commerce.validation_failed`
+for a stock-effect refusal from the repository.
 
 `ledger.post` verifies authority and policy before atomically posting a balanced
 draft journal entry, updating exact-decimal account balances, and recording its

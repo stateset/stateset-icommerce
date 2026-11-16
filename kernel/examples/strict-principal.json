@@ -19,6 +19,8 @@
     "payments.complete",
     "shipments.create",
     "returns.create",
-    "returns.tracking.add"
+    "returns.tracking.add",
+    "returns.transition",
+    "returns.item.disposition.set"
   ]
 }

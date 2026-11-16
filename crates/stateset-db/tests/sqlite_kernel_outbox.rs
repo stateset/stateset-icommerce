@@ -85,6 +85,10 @@ fn payment_policy() -> KernelPolicy {
         .allow("shipments.create", KernelCommandPolicy::requiring(["shipments.create"]))
         .allow("returns.create", KernelCommandPolicy::requiring(["returns.create"]))
         .allow("returns.tracking.add", KernelCommandPolicy::requiring(["returns.tracking.add"]))
+        .allow(
+            "returns.item.disposition.set",
+            KernelCommandPolicy::requiring(["returns.item.disposition.set"]),
+        )
 }
 
 fn inventory_item_command(key: &str, sku: &str) -> CommandEnvelope<CreateInventoryItem> {
@@ -3543,7 +3547,7 @@ fn kernel_storefront_commands_run_a_complete_checkout_on_the_governed_surface() 
     use stateset_core::{
         AddCartItemCommand, AddReturnTracking, ApplyCartCoupon, CalculateCartTax, CompletePayment,
         CreateCouponCode, CreatePromotion, CreateShipment, PromotionTrigger, PromotionType,
-        SetCartPaymentMethod, SetCartShippingAddress,
+        ReturnDisposition, SetCartPaymentMethod, SetCartShippingAddress, SetReturnItemDisposition,
     };
     let db = SqliteDatabase::in_memory().expect("create database");
     let kernel = db.kernel_executor(payment_policy());
@@ -3877,6 +3881,24 @@ fn kernel_storefront_commands_run_a_complete_checkout_on_the_governed_surface() 
     let tracked = tracked.result.expect("tracked return");
     assert_eq!(tracked.status, ReturnStatus::InTransit);
     assert_eq!(tracked.tracking_number.as_deref(), Some("RET-1Z"));
+    let item_id = tracked.items[0].id;
+    let disposition = |key: &str, payload: SetReturnItemDisposition| {
+        applied(&storefront("returns.item.disposition.set", key, payload))
+    };
+    let scrap = SetReturnItemDisposition {
+        note: Some("cracked housing".into()),
+        ..SetReturnItemDisposition::new(return_id, item_id, ReturnDisposition::Scrap)
+    };
+    // returns.item.disposition.set refuses goods that have not arrived.
+    let in_transit = kernel
+        .execute_set_return_item_disposition(&disposition(
+            "storefront-disposition-in-transit",
+            scrap.clone(),
+        ))
+        .expect("in-transit disposition");
+    assert_eq!(in_transit.status, ExecutionStatus::Rejected);
+    assert_eq!(in_transit.error_code.as_deref(), Some("commerce.return_not_dispositionable"));
+    assert!(in_transit.audit_hash.is_some(), "the refusal is sealed");
 
     // A governed completion runs the repository's status write: it needs
     // every item dispositioned, and it settles the refund against the
@@ -3903,17 +3925,78 @@ fn kernel_storefront_commands_run_a_complete_checkout_on_the_governed_surface() 
     let pending = db.returns().get(return_id).expect("return").expect("return");
     assert_eq!(pending.status, ReturnStatus::Received);
     assert!(db.payments().get_refunds(payment_id).expect("refunds").is_empty());
-    // Operator disposition, outside the agent surface.
-    db.returns()
-        .set_item_disposition(
-            return_id,
-            pending.items[0].id,
-            stateset_core::SetReturnDisposition {
-                disposition: stateset_core::ReturnDisposition::Scrap,
-                ..Default::default()
-            },
-        )
+
+    // returns.item.disposition.set: typed refusals, all sealed, none writing.
+    let refusals = [
+        (
+            "storefront-disposition-unknown-value",
+            SetReturnItemDisposition { disposition: "donate".into(), ..scrap.clone() },
+            "commerce.return_disposition_invalid",
+        ),
+        (
+            "storefront-disposition-unknown-item",
+            SetReturnItemDisposition { return_item_id: Uuid::new_v4(), ..scrap.clone() },
+            "commerce.return_item_not_found",
+        ),
+        (
+            "storefront-disposition-unknown-return",
+            SetReturnItemDisposition { return_id: stateset_core::ReturnId::new(), ..scrap.clone() },
+            "commerce.return_not_found",
+        ),
+        // Restock runs the repository's stock effect, which needs an
+        // inventory item for the SKU; the refusal rolls the step back.
+        (
+            "storefront-disposition-restock-unknown-sku",
+            SetReturnItemDisposition::new(return_id, item_id, ReturnDisposition::Restock),
+            "commerce.validation_failed",
+        ),
+    ];
+    for (key, payload, code) in refusals {
+        let refused =
+            kernel.execute_set_return_item_disposition(&disposition(key, payload)).expect(key);
+        assert_eq!(refused.status, ExecutionStatus::Rejected, "{key}");
+        assert_eq!(refused.error_code.as_deref(), Some(code), "{key}: {:?}", refused.error_message);
+        assert!(refused.audit_hash.is_some(), "{key}: the refusal is sealed");
+    }
+    let mut preview = disposition("storefront-disposition", scrap.clone());
+    preview.mode = ExecutionMode::Preview;
+    assert_eq!(
+        kernel.execute_set_return_item_disposition(&preview).expect("preview").status,
+        ExecutionStatus::Previewed
+    );
+    let untouched = db.returns().get(return_id).expect("return").expect("return");
+    assert_eq!(untouched.items[0].disposition, None, "preview and refusals write nothing");
+    let dispositioned = kernel
+        .execute_set_return_item_disposition(&disposition("storefront-disposition", scrap.clone()))
         .expect("disposition");
+    assert_sealed_success(&dispositioned, "returns.item.disposition.set");
+    let item = dispositioned.result.clone().expect("dispositioned item");
+    assert_eq!(item.disposition, Some(ReturnDisposition::Scrap));
+    assert_eq!(
+        item.disposition_by.as_deref(),
+        Some("agent:storefront-1"),
+        "the principal, not the payload, is recorded"
+    );
+    let fact = db
+        .kernel_outbox()
+        .pending(10_000)
+        .expect("events")
+        .into_iter()
+        .find(|event| event.id == dispositioned.event_ids[0])
+        .expect("disposition fact");
+    assert_eq!(fact.event_type, "returns.item_dispositioned.v1");
+    assert_eq!(fact.command_id, Some(dispositioned.command_id));
+    assert_eq!(fact.payload["disposition"], "scrap");
+    assert_eq!(fact.payload["note"], "cracked housing");
+    let replayed = kernel
+        .execute_set_return_item_disposition(&disposition("storefront-disposition", scrap.clone()))
+        .expect("replay disposition");
+    assert_eq!(replayed.receipt_id, dispositioned.receipt_id);
+    let twice = kernel
+        .execute_set_return_item_disposition(&disposition("storefront-disposition-again", scrap))
+        .expect("second disposition");
+    assert_eq!(twice.status, ExecutionStatus::Rejected);
+    assert_eq!(twice.error_code.as_deref(), Some("commerce.return_item_already_dispositioned"));
     let completed = kernel
         .execute_transition_return(&transition(
             "storefront-return-complete",

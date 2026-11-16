@@ -6,6 +6,28 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Governed kernel command `returns.item.disposition.set` on both databases
+  (owner-approved), so a strict agent can take a return from `received` to
+  `completed`: governed completion now requires every item to be
+  dispositioned, and nothing on the governed surface could disposition one.
+  Payload `return_id`, `return_item_id`, `disposition` (the
+  `return_items.disposition` vocabulary) and an optional `note`; it runs the
+  repository's own disposition write (stock, serial and lot effects) in the
+  kernel transaction, records the command's principal as `disposition_by`,
+  seals a receipt and a `returns.item_dispositioned.v1` fact, and refuses with
+  typed codes (`commerce.return_disposition_invalid`,
+  `commerce.return_not_found`, `commerce.return_not_dispositionable`,
+  `commerce.return_item_not_found`,
+  `commerce.return_item_already_dispositioned`). Exposed as the core MCP tool
+  `set_return_item_disposition` (kernel-optional: without a kernel it calls the
+  binding) and as `returns.setItemDisposition` on the Node binding, whose
+  `ReturnOutput` now carries `items` (with each item's id and disposition).
+  The strict example policy and principal grant `returns.transition` and
+  `returns.item.disposition.set`, and the autonomous-business bootstrap grants
+  the new capability.
+
 ### Fixed
 
 - Postgres checkout no longer revives a terminal order. When an order was

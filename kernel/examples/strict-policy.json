@@ -160,6 +160,26 @@
       "allowed_store_ids": ["store:replace-me"],
       "requires_agent_delegation": true,
       "requires_signed_authority": false
+    },
+    "returns.transition": {
+      "required_capabilities": ["returns.transition"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    },
+    "returns.item.disposition.set": {
+      "required_capabilities": ["returns.item.disposition.set"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
     }
   },
   "trusted_authority_keys": {}

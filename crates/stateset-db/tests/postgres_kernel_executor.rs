@@ -89,6 +89,10 @@ fn policy() -> KernelPolicy {
         .allow("shipments.create", KernelCommandPolicy::requiring(["shipments.create"]))
         .allow("returns.create", KernelCommandPolicy::requiring(["returns.create"]))
         .allow("returns.tracking.add", KernelCommandPolicy::requiring(["returns.tracking.add"]))
+        .allow(
+            "returns.item.disposition.set",
+            KernelCommandPolicy::requiring(["returns.item.disposition.set"]),
+        )
 }
 
 #[tokio::test]
@@ -1813,8 +1817,8 @@ fn pg_assert_sealed_success<T>(receipt: &stateset_core::ExecutionReceipt<T>, wha
 async fn postgres_kernel_storefront_commands_run_a_complete_checkout_on_the_governed_surface() {
     use stateset_core::{
         AddCartItemCommand, AddReturnTracking, ApplyCartCoupon, CalculateCartTax, CompletePayment,
-        CreateCouponCode, CreatePromotion, PromotionTrigger, PromotionType, SetCartPaymentMethod,
-        SetCartShippingAddress,
+        CreateCouponCode, CreatePromotion, PromotionTrigger, PromotionType, ReturnDisposition,
+        SetCartPaymentMethod, SetCartShippingAddress, SetReturnItemDisposition,
     };
     let Some(url) = postgres_url() else {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping storefront proof");
@@ -2242,6 +2246,30 @@ async fn postgres_kernel_storefront_commands_run_a_complete_checkout_on_the_gove
     let tracked = tracked.result.expect("tracked return");
     assert_eq!(tracked.status, ReturnStatus::InTransit);
     assert_eq!(tracked.tracking_number.as_deref(), Some("RET-1Z"));
+    let item_id = tracked.items[0].id;
+    let disposition = |step: &str, payload: SetReturnItemDisposition| {
+        pg_applied(&kernel_command(
+            "returns.item.disposition.set",
+            key(step),
+            "returns.item.disposition.set",
+            payload,
+        ))
+    };
+    let scrap = SetReturnItemDisposition {
+        note: Some("cracked housing".into()),
+        ..SetReturnItemDisposition::new(return_id, item_id, ReturnDisposition::Scrap)
+    };
+    // returns.item.disposition.set refuses goods that have not arrived.
+    let in_transit = kernel
+        .execute_set_return_item_disposition_async(&disposition(
+            "disposition-in-transit",
+            scrap.clone(),
+        ))
+        .await
+        .expect("in-transit disposition");
+    assert_eq!(in_transit.status, ExecutionStatus::Rejected);
+    assert_eq!(in_transit.error_code.as_deref(), Some("commerce.return_not_dispositionable"));
+    assert!(in_transit.audit_hash.is_some(), "the refusal is sealed");
 
     // A governed completion runs the repository's status write (twin of the
     // SQLite storefront proof): it needs every item dispositioned, and it
@@ -2275,18 +2303,95 @@ async fn postgres_kernel_storefront_commands_run_a_complete_checkout_on_the_gove
     assert!(
         db.payments().get_refunds_async(payment_id.into_uuid()).await.expect("refunds").is_empty()
     );
-    // Operator disposition, outside the agent surface.
-    db.returns()
-        .set_item_disposition_async(
-            return_id,
-            pending.items[0].id,
-            stateset_core::SetReturnDisposition {
-                disposition: stateset_core::ReturnDisposition::Scrap,
-                ..Default::default()
-            },
-        )
+
+    // returns.item.disposition.set: typed refusals, all sealed, none writing.
+    let refusals = [
+        (
+            "disposition-unknown-value",
+            SetReturnItemDisposition { disposition: "donate".into(), ..scrap.clone() },
+            "commerce.return_disposition_invalid",
+        ),
+        (
+            "disposition-unknown-item",
+            SetReturnItemDisposition { return_item_id: Uuid::new_v4(), ..scrap.clone() },
+            "commerce.return_item_not_found",
+        ),
+        (
+            "disposition-unknown-return",
+            SetReturnItemDisposition { return_id: stateset_core::ReturnId::new(), ..scrap.clone() },
+            "commerce.return_not_found",
+        ),
+        // Restock runs the repository's stock effect, which needs an
+        // inventory item for the SKU; the refusal rolls the step back.
+        (
+            "disposition-restock-unknown-sku",
+            SetReturnItemDisposition::new(return_id, item_id, ReturnDisposition::Restock),
+            "commerce.validation_failed",
+        ),
+    ];
+    for (step, payload, code) in refusals {
+        let refused = kernel
+            .execute_set_return_item_disposition_async(&disposition(step, payload))
+            .await
+            .expect(step);
+        assert_eq!(refused.status, ExecutionStatus::Rejected, "{step}");
+        assert_eq!(
+            refused.error_code.as_deref(),
+            Some(code),
+            "{step}: {:?}",
+            refused.error_message
+        );
+        assert!(refused.audit_hash.is_some(), "{step}: the refusal is sealed");
+    }
+    let mut preview = disposition("disposition", scrap.clone());
+    preview.mode = ExecutionMode::Preview;
+    assert_eq!(
+        kernel.execute_set_return_item_disposition_async(&preview).await.expect("preview").status,
+        ExecutionStatus::Previewed
+    );
+    let untouched =
+        db.returns().get_async(return_id.into_uuid()).await.expect("return").expect("return");
+    assert_eq!(untouched.items[0].disposition, None, "preview and refusals write nothing");
+    let dispositioned = kernel
+        .execute_set_return_item_disposition_async(&disposition("disposition", scrap.clone()))
         .await
         .expect("disposition");
+    pg_assert_sealed_success(&dispositioned, "returns.item.disposition.set");
+    let item = dispositioned.result.clone().expect("dispositioned item");
+    assert_eq!(item.disposition, Some(ReturnDisposition::Scrap));
+    assert_eq!(
+        item.disposition_by.as_deref(),
+        Some("agent:postgres-parity"),
+        "the principal, not the payload, is recorded"
+    );
+    let (event_type, command_id, recorded, note): (
+        String,
+        Option<Uuid>,
+        Option<String>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT event_type, command_id, payload->>'disposition', payload->>'note'
+             FROM kernel_outbox WHERE id = $1",
+    )
+    .bind(dispositioned.event_ids[0])
+    .fetch_one(db.pool())
+    .await
+    .expect("disposition fact");
+    assert_eq!(event_type, "returns.item_dispositioned.v1");
+    assert_eq!(command_id, Some(dispositioned.command_id));
+    assert_eq!(recorded.as_deref(), Some("scrap"));
+    assert_eq!(note.as_deref(), Some("cracked housing"));
+    let replayed = kernel
+        .execute_set_return_item_disposition_async(&disposition("disposition", scrap.clone()))
+        .await
+        .expect("replay disposition");
+    assert_eq!(replayed.receipt_id, dispositioned.receipt_id);
+    let twice = kernel
+        .execute_set_return_item_disposition_async(&disposition("disposition-again", scrap))
+        .await
+        .expect("second disposition");
+    assert_eq!(twice.status, ExecutionStatus::Rejected);
+    assert_eq!(twice.error_code.as_deref(), Some("commerce.return_item_already_dispositioned"));
     let completed = kernel
         .execute_transition_return_async(&transition("return-complete", ReturnStatus::Completed))
         .await
