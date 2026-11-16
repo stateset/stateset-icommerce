@@ -323,6 +323,14 @@ finance writes carry an authenticated identity.
     window, and the refund total, which native return records do not carry,
     is reported unavailable (`coverage.unavailable`) instead of taken from
     another window.
+  - Revenue, average order value, refund totals, MRR, ARR, ARPU and
+    inventory value are exact decimal strings (`totalRevenueExact`,
+    `refundTotalExact`, `mrrExact`, ...), summed from the engine's exact
+    twins (`totalAmountExact`, `priceExact`, `totalRefundedExact`,
+    `totalValueExact`) with BigInt arithmetic. ARR is the exact sum of
+    price x periods per year and MRR is rounded once from it; summing
+    rounded float monthly shares had reported ARR 760.32 for 760.28. The
+    analytics dashboard and the returns view render the exact strings.
 - The CLI sync client works against the real stateset-sequencer API
   (checked against its source at master e97829b):
   - `pull()`, `getHead()` and `getEntityHistory()` read the VES routes

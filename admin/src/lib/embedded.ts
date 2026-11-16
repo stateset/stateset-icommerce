@@ -39,6 +39,13 @@ import {
   type WaveStatus,
   type WorkOrderStatus,
 } from './engine-lifecycles';
+import {
+  decimalScale,
+  divideDecimal,
+  multiplyDecimal,
+  sumDecimals,
+  toDecimalString,
+} from './finance/decimal';
 import type {
   Address,
   AnalyticsCoverage,
@@ -1830,6 +1837,11 @@ export const ordersApi = {
   },
 };
 
+/** An order's total as an exact decimal string (the native exact twin when present). */
+function exactOrderTotal(order: Order): string {
+  return toDecimalString(order.totalAmountExact ?? order.totalAmount);
+}
+
 /** The UTC days the daily breakdown spans: the window, or the 30 days to `now`; at most 366. */
 function dailyBreakdownDays(now: number, window?: AnalyticsWindow): string[] {
   const end = window?.end ?? now;
@@ -1857,7 +1869,11 @@ export function summarizeOrders(
 ): OrderAnalytics {
   const now = options.now ?? Date.now();
   const orders = allOrders.filter((order) => isWithinWindow(order.createdAt, options.window));
-  const totalRevenue = roundCurrency(orders.reduce((sum, order) => sum + order.totalAmount, 0));
+  const revenueOf = (subset: Order[]) => sumDecimals(subset.map(exactOrderTotal));
+  const totalRevenueExact = revenueOf(orders);
+  const averageOrderValueExact = orders.length
+    ? divideDecimal(totalRevenueExact, orders.length)
+    : '0';
   const ordersByStatus = orders.reduce<Record<string, number>>((acc, order) => {
     acc[order.status] = (acc[order.status] || 0) + 1;
     return acc;
@@ -1871,16 +1887,15 @@ export function summarizeOrders(
   }
   const ordersByDay = dailyBreakdownDays(now, options.window).map((date) => {
     const daily = byDay.get(date) ?? [];
-    return {
-      date,
-      count: daily.length,
-      revenue: roundCurrency(daily.reduce((sum, order) => sum + order.totalAmount, 0)),
-    };
+    const revenueExact = revenueOf(daily);
+    return { date, count: daily.length, revenue: Number(revenueExact), revenueExact };
   });
   return {
     totalOrders: orders.length,
-    totalRevenue,
-    averageOrderValue: orders.length ? roundCurrency(totalRevenue / orders.length) : 0,
+    totalRevenue: Number(totalRevenueExact),
+    totalRevenueExact,
+    averageOrderValue: Number(averageOrderValueExact),
+    averageOrderValueExact,
     ordersByStatus,
     ordersByDay,
     coverage: coverageOf(orders, options.complete ?? true, options.window),
@@ -2003,11 +2018,13 @@ export const inventoryApi = {
     }
     if (typeof commerce.analytics.inventoryHealth === 'function') {
       const health = await commerce.analytics.inventoryHealth();
+      const totalValueExact = toDecimalString(health.totalValueExact ?? health.totalValue);
       return {
         totalSKUs: health.totalSkus,
         // Not part of the engine's health report.
         totalUnits: 0,
-        totalValue: Number(health.totalValueExact ?? health.totalValue),
+        totalValue: Number(totalValueExact),
+        totalValueExact,
         lowStockItems: health.lowStockSkus,
         outOfStockItems: health.outOfStockSkus,
         turnoverRate: 0,
@@ -2146,14 +2163,14 @@ export function summarizeReturns(
     unavailable.push('returnRate');
   }
 
-  let refundTotal = 0;
+  let refundTotalExact = '0';
   const refundAmounts = returns.flatMap((entry) =>
     entry.refundAmount === undefined ? [] : [entry.refundAmount],
   );
   if (metrics) {
-    refundTotal = Number(metrics.totalRefundedExact ?? metrics.totalRefunded);
+    refundTotalExact = toDecimalString(metrics.totalRefundedExact ?? metrics.totalRefunded);
   } else if (refundAmounts.length > 0) {
-    refundTotal = roundCurrency(refundAmounts.reduce((sum, amount) => sum + amount, 0));
+    refundTotalExact = sumDecimals(refundAmounts);
   } else if (returns.length > 0) {
     // Records without refund amounts (the native return header) and no
     // engine total for this population: the refund total is unknown.
@@ -2163,7 +2180,8 @@ export function summarizeReturns(
   return {
     totalReturns: returns.length,
     returnRate,
-    refundTotal,
+    refundTotal: Number(refundTotalExact),
+    refundTotalExact,
     returnsByReason: tally((entry) => entry.reasonCategory),
     returnsByStatus: tally((entry) => entry.status),
     averageProcessingTime: 0,
@@ -2448,6 +2466,8 @@ interface NativeSubscriptionFields {
   planName?: string;
   billingInterval?: string;
   price?: number;
+  /** Exact decimal twin of `price`. */
+  priceExact?: string;
 }
 
 /**
@@ -2469,41 +2489,54 @@ export function toAdminSubscription(record: Subscription): Subscription {
     items: partial.items ?? [],
     quantity: partial.quantity ?? 1,
     totalAmount: partial.totalAmount ?? partial.price ?? 0,
+    totalAmountExact:
+      partial.totalAmountExact ??
+      partial.priceExact ??
+      toDecimalString(partial.totalAmount ?? partial.price ?? 0),
     createdAt,
     updatedAt: partial.updatedAt ?? createdAt,
   };
 }
 
-/** Months per billing period, for both the admin's and the engine's interval names. */
-const MONTHS_PER_INTERVAL: Record<string, number> = {
-  weekly: 12 / 52,
-  biweekly: 12 / 26,
-  'bi-weekly': 12 / 26,
-  monthly: 1,
-  'bi-monthly': 2,
-  quarterly: 3,
-  'semi-annual': 6,
-  annually: 12,
-  yearly: 12,
+/**
+ * Billing periods per year, for both the admin's and the engine's interval
+ * names. Whole numbers, so a yearly value is an exact product.
+ */
+const PERIODS_PER_YEAR: Record<string, number> = {
+  weekly: 52,
+  biweekly: 26,
+  'bi-weekly': 26,
+  monthly: 12,
+  'bi-monthly': 6,
+  quarterly: 4,
+  'semi-annual': 2,
+  annually: 1,
+  yearly: 1,
 };
 
 /**
  * Subscription analytics computed from the subscription records, for
- * engines without an aggregate. MRR covers active subscriptions whose
- * interval is known; figures nothing reports (growth, lifetime) are left at
- * zero rather than invented.
+ * engines without an aggregate. Recurring revenue covers active
+ * subscriptions whose interval is known, in exact decimals: ARR is the exact
+ * sum of price x periods per year, and MRR and ARPU are rounded once from
+ * it. Figures nothing reports (growth, lifetime) are left at zero rather
+ * than invented.
  */
 export function summarizeSubscriptions(
   subscriptions: Subscription[],
   options: { complete?: boolean } = {},
 ): SubscriptionAnalytics {
   const active = subscriptions.filter((subscription) => subscription.status === 'active');
-  const mrr = roundCurrency(
-    active.reduce((sum, subscription) => {
-      const months = MONTHS_PER_INTERVAL[subscription.frequency];
-      return months ? sum + subscription.totalAmount / months : sum;
-    }, 0),
+  const arrExact = sumDecimals(
+    active.flatMap((subscription) => {
+      const periods = PERIODS_PER_YEAR[subscription.frequency];
+      const price = toDecimalString(subscription.totalAmountExact ?? subscription.totalAmount);
+      return periods ? [multiplyDecimal(price, periods)] : [];
+    }),
   );
+  const scale = Math.max(2, decimalScale(arrExact));
+  const mrrExact = divideDecimal(arrExact, 12, scale);
+  const arpuExact = active.length ? divideDecimal(arrExact, 12 * active.length, scale) : '0';
   const churned = subscriptions.filter(
     (subscription) => subscription.status === 'cancelled' || subscription.status === 'expired',
   ).length;
@@ -2516,10 +2549,13 @@ export function summarizeSubscriptions(
   return {
     totalSubscriptions: subscriptions.length,
     activeSubscriptions: active.length,
-    mrr,
-    arr: roundCurrency(mrr * 12),
+    mrr: Number(mrrExact),
+    mrrExact,
+    arr: Number(arrExact),
+    arrExact,
     churnRate: subscriptions.length ? Number((churned / subscriptions.length).toFixed(3)) : 0,
-    arpu: active.length ? roundCurrency(mrr / active.length) : 0,
+    arpu: Number(arpuExact),
+    arpuExact,
     averageLifetime: 0,
     subscriptionsByPlan: tally((subscription) => subscription.plan),
     subscriptionsByFrequency: tally((subscription) => subscription.frequency),

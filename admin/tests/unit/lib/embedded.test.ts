@@ -305,6 +305,7 @@ describe('embedded commerce engine', () => {
       totalReturns: 1,
       returnRate: 0.125,
       refundTotal: 10.5,
+      refundTotalExact: '10.50',
       returnsByReason: { damaged: 1 },
       returnsByStatus: { in_transit: 1 },
       averageProcessingTime: 0,
@@ -690,7 +691,10 @@ describe('embedded commerce engine', () => {
 
     const { ordersApi } = await import('@/lib/embedded');
 
-    const october = await ordersApi.getAnalytics({ startDate: '2026-10-01', endDate: '2026-10-31' });
+    const october = await ordersApi.getAnalytics({
+      startDate: '2026-10-01',
+      endDate: '2026-10-31',
+    });
     // The window goes to the engine as RFC 3339 bounds covering whole days...
     expect(listOrders).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -710,8 +714,13 @@ describe('embedded commerce engine', () => {
       },
     });
     expect(october.ordersByDay).toHaveLength(31);
-    expect(october.ordersByDay[0]).toEqual({ date: '2026-10-01', count: 1, revenue: 10 });
-    expect(october.ordersByDay[30]).toEqual({ date: '2026-10-31', count: 1, revenue: 10 });
+    expect(october.ordersByDay[0]).toEqual({
+      date: '2026-10-01',
+      count: 1,
+      revenue: 10,
+      revenueExact: '10.00',
+    });
+    expect(october.ordersByDay[30]).toMatchObject({ date: '2026-10-31', count: 1 });
 
     await expect(ordersApi.getAnalytics({ startDate: 'not a date' })).rejects.toThrow(
       /Invalid analytics startDate/,
@@ -725,7 +734,12 @@ describe('embedded commerce engine', () => {
     const old = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
     const returnMetrics = vi.fn(async (query?: { period?: string }) =>
       query?.period === 'all_time'
-        ? { totalReturns: 1, returnRatePercent: 100, totalRefunded: 50, totalRefundedExact: '50.00' }
+        ? {
+            totalReturns: 1,
+            returnRatePercent: 100,
+            totalRefunded: 50,
+            totalRefundedExact: '50.00',
+          }
         : { totalReturns: 0, returnRatePercent: 0, totalRefunded: 0, totalRefundedExact: '0' },
     );
     class NativeCommerce {
@@ -757,7 +771,9 @@ describe('embedded commerce engine', () => {
     ];
     const orders = [
       nativeOrder('ord_sep', '2026-09-10T00:00:00.000Z'),
-      ...['01', '08', '15', '22'].map((day) => nativeOrder(`ord_${day}`, `2026-10-${day}T09:00:00Z`)),
+      ...['01', '08', '15', '22'].map((day) =>
+        nativeOrder(`ord_${day}`, `2026-10-${day}T09:00:00Z`),
+      ),
       nativeOrder('ord_nov', '2026-11-01T00:00:00.000Z'),
     ];
     const listReturns = vi.fn(async (_filter?: Record<string, unknown>) => returns);
@@ -803,6 +819,96 @@ describe('embedded commerce engine', () => {
       // total is not measured; it is flagged, not invented.
       refundTotal: 0,
       coverage: { complete: true, records: 1, unavailable: ['refundTotal'] },
+    });
+  });
+
+  it('keeps money exact through the derived native summaries', async () => {
+    vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'false');
+    const now = new Date().toISOString();
+    const subscription = (id: string, billingInterval: string, priceExact: string) => ({
+      id,
+      customerId: 'cus_1',
+      planId: `plan_${id}`,
+      planName: 'Plan',
+      status: 'active',
+      billingInterval,
+      price: Number(priceExact),
+      priceExact,
+      createdAt: now,
+      updatedAt: now,
+    });
+    class NativeCommerce {
+      get orders() {
+        return {
+          list: async () => [
+            nativeOrder('ord_1', now, '0.10'),
+            nativeOrder('ord_2', now, '0.20'),
+            nativeOrder('ord_3', now, '1.005'),
+          ],
+        };
+      }
+      get returns() {
+        return { list: async () => [nativeReturn('ret_1', now)] };
+      }
+      get subscriptions() {
+        return {
+          list: async () => [
+            subscription('sub_w', 'weekly', '10.00'),
+            subscription('sub_m', 'monthly', '19.99'),
+            subscription('sub_q', 'quarterly', '0.10'),
+          ],
+        };
+      }
+      get inventory() {
+        return {};
+      }
+      get analytics() {
+        return {
+          returnMetrics: async () => ({
+            totalReturns: 1,
+            returnRatePercent: 10,
+            totalRefunded: 1.005,
+            totalRefundedExact: '1.005',
+          }),
+          inventoryHealth: async () => ({
+            totalSkus: 1,
+            lowStockSkus: 0,
+            outOfStockSkus: 0,
+            totalValue: 90071992547409.94,
+            totalValueExact: '90071992547409.94',
+          }),
+        };
+      }
+    }
+    vi.doMock('@stateset/embedded', () => ({ Commerce: NativeCommerce }));
+
+    const { inventoryApi, ordersApi, returnsApi, subscriptionsApi } =
+      await import('@/lib/embedded');
+
+    const orders = await ordersApi.getAnalytics();
+    expect(orders).toMatchObject({
+      totalRevenueExact: '1.305',
+      averageOrderValueExact: '0.435',
+    });
+    expect(orders.ordersByDay.at(-1)).toMatchObject({ count: 3, revenueExact: '1.305' });
+
+    expect(await returnsApi.getAnalytics()).toMatchObject({ refundTotalExact: '1.005' });
+
+    // Yearly value 10.00 x 52 + 19.99 x 12 + 0.10 x 4 = 760.28, exactly; MRR
+    // and ARPU are rounded once from it. The float path summed rounded
+    // monthly shares and reported ARR 760.32.
+    expect(await subscriptionsApi.getAnalytics()).toMatchObject({
+      arrExact: '760.28',
+      arr: 760.28,
+      mrrExact: '63.36',
+      mrr: 63.36,
+      arpuExact: '21.12',
+    });
+    const [listed] = await subscriptionsApi.list();
+    expect(listed).toMatchObject({ totalAmountExact: '10.00' });
+
+    expect(await inventoryApi.getAnalytics()).toMatchObject({
+      totalValueExact: '90071992547409.94',
     });
   });
 

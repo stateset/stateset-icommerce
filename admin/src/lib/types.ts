@@ -29,7 +29,10 @@ export interface Order {
   /** The engine's order lifecycle (`ORDER_LIFECYCLE` in `./engine-lifecycles`). */
   status: OrderStatus;
   items: OrderItem[];
+  /** Display convenience; arithmetic uses `totalAmountExact` when the engine supplies it. */
   totalAmount: number;
+  /** Exact decimal string (the binding's `OrderOutput.totalAmountExact`). */
+  totalAmountExact?: string;
   currency: string;
   shippingAddress?: Address;
   billingAddress?: Address;
@@ -74,12 +77,20 @@ export interface AnalyticsCoverage {
   unavailable?: string[];
 }
 
+/*
+ * Money in the derived aggregates below: each `…Exact` field is the exact
+ * decimal string, computed without floats; the number beside it is the same
+ * value for display only (like the binding's deprecated float twins).
+ */
+
 export interface OrderAnalytics {
   totalOrders: number;
   totalRevenue: number;
+  totalRevenueExact?: string;
   averageOrderValue: number;
+  averageOrderValueExact?: string;
   ordersByStatus: Record<string, number>;
-  ordersByDay: { date: string; count: number; revenue: number }[];
+  ordersByDay: { date: string; count: number; revenue: number; revenueExact?: string }[];
   /** Present when the admin derived the figures from order records. */
   coverage?: AnalyticsCoverage;
 }
@@ -108,6 +119,7 @@ export interface InventoryAnalytics {
   totalSKUs: number;
   totalUnits: number;
   totalValue: number;
+  totalValueExact?: string;
   lowStockItems: number;
   outOfStockItems: number;
   turnoverRate: number;
@@ -150,6 +162,7 @@ export interface ReturnAnalytics {
   totalReturns: number;
   returnRate: number;
   refundTotal: number;
+  refundTotalExact?: string;
   returnsByReason: Record<string, number>;
   returnsByStatus: Record<string, number>;
   averageProcessingTime: number;
@@ -250,7 +263,10 @@ export interface Subscription {
   currentPeriodEnd?: string;
   items: { productId: string; quantity: number }[];
   quantity: number;
+  /** Display convenience; arithmetic uses `totalAmountExact` when the engine supplies it. */
   totalAmount: number;
+  /** Exact decimal string (the binding's `SubscriptionOutput.priceExact`). */
+  totalAmountExact?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -259,10 +275,13 @@ export interface SubscriptionAnalytics {
   totalSubscriptions: number;
   activeSubscriptions: number;
   mrr: number;
+  mrrExact?: string;
   mrrGrowth?: number;
   arr: number;
+  arrExact?: string;
   churnRate: number;
   arpu?: number;
+  arpuExact?: string;
   averageLifetime: number;
   subscriptionsByPlan: Record<string, number>;
   subscriptionsByFrequency: Record<string, number>;

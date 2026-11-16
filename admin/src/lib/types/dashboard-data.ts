@@ -239,6 +239,8 @@ export interface ReturnsAnalyticsSummary {
   totalReturns: number;
   returnRate: number;
   refundTotal: number;
+  /** Exact decimal string of `refundTotal`; render this one when present. */
+  refundTotalExact?: string;
   averageProcessingTime: number;
   returnsByReason: Record<string, number>;
   returnsByStatus: Record<string, number>;
