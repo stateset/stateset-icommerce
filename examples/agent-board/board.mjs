@@ -39,10 +39,12 @@ import {
 import {
   commitNext,
   loadRoster,
+  neutralizeText,
   postMessage,
   readBoard,
   registerKey,
   renderBoard,
+  safeJsonStringify,
 } from './lib/board.mjs';
 
 // The CLI's crypto helpers report native-fallback noise on console.debug,
@@ -146,8 +148,13 @@ function agentDir(values, raw) {
   return dir;
 }
 
+/**
+ * Write the result. Output carries sequencer-supplied strings (posts, reasons,
+ * error details), so neither form may reach the terminal with raw control
+ * characters: text is neutralised, JSON escapes them and keeps exact values.
+ */
 function out(values, json, text) {
-  process.stdout.write(`${values.json ? JSON.stringify(json, null, 2) : text}\n`);
+  process.stdout.write(`${values.json ? safeJsonStringify(json, 2) : neutralizeText(text)}\n`);
 }
 
 function hintFor(error) {
@@ -289,7 +296,8 @@ async function cmdRead(values, raw) {
       proofs: !values['no-proofs'],
       from: positiveInt(values.from, '--from') ?? 1,
     });
-    out(values, board, renderBoard(board));
+    // Render only for text output, so --json never depends on the renderer.
+    out(values, board, values.json ? '' : renderBoard(board));
   } finally {
     readerAgent?.close();
   }
@@ -410,7 +418,7 @@ function cmdRoster(values, raw) {
       publicKey: manifest.publicKey,
     })),
   };
-  process.stdout.write(`${JSON.stringify(roster, null, 2)}\n`);
+  process.stdout.write(`${safeJsonStringify(roster, 2)}\n`);
 }
 
 async function main(argv) {
@@ -442,12 +450,15 @@ async function main(argv) {
 
 main(process.argv.slice(2)).catch((error) => {
   if (error instanceof UsageError) {
-    console.error(`board: ${error.message}\n${USAGE}`);
+    console.error(`board: ${neutralizeText(error.message)}\n${USAGE}`);
     process.exitCode = 2;
     return;
   }
   const hint = hintFor(error);
-  console.error(`board: error: ${error.message}${hint ? `\n  hint: ${hint}` : ''}`);
+  // Error messages can quote sequencer responses; neutralise them too.
+  console.error(
+    `board: error: ${neutralizeText(error?.message)}${hint ? `\n  hint: ${hint}` : ''}`,
+  );
   if (debug && error.stack) console.error(error.stack);
   process.exitCode = 1;
 });
