@@ -326,7 +326,12 @@ export interface KernelShipmentLine {
   quantity: number
 }
 
-/** `orders.ship` (`ShipOrderCommand`). */
+/**
+ * `orders.ship` and `orders.ship_reserved` (`ShipOrderCommand`).
+ * `orders.ship_reserved` is the stock-consuming dispatch: it needs
+ * `expected_version` and a paid order in `processing` or `partially_shipped`,
+ * and `lines` names the additional units to ship now.
+ */
 export interface KernelShipOrderPayload {
   order_id: string
   tracking_number?: string | null
@@ -452,6 +457,181 @@ export interface KernelResolveA2ADisputePayload {
   note?: string | null
 }
 
+// ---------------------------------------------------------------------------
+// Storefront journey payloads: account, cart, capture, fulfilment and return
+// (crates/stateset-core/src/models/{customer,cart,payment,shipment,returns}.rs).
+// Each runs the same repository write the ungoverned API uses; a business
+// refusal is a sealed rejection receipt, not an exception.
+// ---------------------------------------------------------------------------
+
+/** `customers.create` (`CreateCustomer`). The e-mail is normalised and must be unique. */
+export interface KernelCreateCustomerPayload {
+  email: string
+  first_name: string
+  last_name: string
+  phone?: string | null
+  accepts_marketing?: boolean | null
+  tags?: string[] | null
+  metadata?: Record<string, unknown> | null
+}
+
+/** Cart line input (`AddCartItem`), nested in `carts.create` and `carts.item.add`. */
+export interface KernelAddCartItem {
+  product_id?: string | null
+  variant_id?: string | null
+  sku: string
+  name: string
+  description?: string | null
+  image_url?: string | null
+  /** Whole units. */
+  quantity: number
+  /** Exact decimal string, e.g. `"50.00"`. */
+  unit_price: string
+  original_price?: string | null
+  weight?: string | null
+  requires_shipping?: boolean | null
+  metadata?: Record<string, unknown> | null
+}
+
+/** Cart address input (`CartAddress`). */
+export interface KernelCartAddressInput {
+  first_name: string
+  last_name: string
+  company?: string | null
+  line1: string
+  line2?: string | null
+  city: string
+  state?: string | null
+  postal_code: string
+  country: string
+  phone?: string | null
+  email?: string | null
+}
+
+/** `carts.create` (`CreateCart`). Every field is optional. */
+export interface KernelCreateCartPayload {
+  customer_id?: string | null
+  customer_email?: string | null
+  customer_name?: string | null
+  /** ISO 4217 code, e.g. `"USD"`. */
+  currency?: string | null
+  items?: KernelAddCartItem[] | null
+  shipping_address?: KernelCartAddressInput | null
+  billing_address?: KernelCartAddressInput | null
+  notes?: string | null
+  metadata?: Record<string, unknown> | null
+  expires_in_minutes?: number | null
+}
+
+/** `carts.item.add` (`AddCartItemCommand`). */
+export interface KernelAddCartItemPayload {
+  cart_id: string
+  item: KernelAddCartItem
+}
+
+/** `carts.shipping_address.set` (`SetCartShippingAddress`). */
+export interface KernelSetCartShippingAddressPayload {
+  cart_id: string
+  address: KernelCartAddressInput
+}
+
+/** Payment method recorded on a cart (`SetCartPayment`). */
+export interface KernelCartPaymentInput {
+  /** Free-form method name, e.g. `"credit_card"`. */
+  payment_method: string
+  /** Processor token; never echoed on the receipt. */
+  payment_token?: string | null
+  billing_address?: KernelCartAddressInput | null
+}
+
+/** `carts.payment_method.set` (`SetCartPaymentMethod`). */
+export interface KernelSetCartPaymentMethodPayload {
+  cart_id: string
+  payment: KernelCartPaymentInput
+}
+
+/** `carts.coupon.apply` (`ApplyCartCoupon`). Redemption rules are enforced; provisioning is not. */
+export interface KernelApplyCartCouponPayload {
+  cart_id: string
+  coupon_code: string
+}
+
+/** `carts.tax.calculate` (`CalculateCartTax`). Prices tax from the cart's shipping address. */
+export interface KernelCalculateCartTaxPayload {
+  cart_id: string
+}
+
+/** `payments.complete` (`CompletePayment`). Captures a pending or processing payment once. */
+export interface KernelCompletePaymentPayload {
+  payment_id: string
+}
+
+/** One shipped line (`CreateShipmentItem`). */
+export interface KernelCreateShipmentItem {
+  /** Must belong to the shipment's order. Omit only when the SKU identifies one order line. */
+  order_item_id?: string | null
+  /** Must match the order line when supplied; otherwise filled from that line. */
+  product_id?: string | null
+  sku: string
+  name: string
+  quantity: number
+}
+
+/**
+ * `shipments.create` (`CreateShipment`). The order must exist and not be
+ * cancelled or refunded. Carrier and method take the serde (snake_case)
+ * spellings only: `'fed_ex'`, not `'fedex'`; `'two_day'`, not `'twoday'`.
+ */
+export interface KernelCreateShipmentPayload {
+  order_id: string
+  carrier?: ShippingCarrier | null
+  shipping_method?: ShipmentMethod | null
+  tracking_number?: string | null
+  recipient_name: string
+  recipient_email?: string | null
+  recipient_phone?: string | null
+  /** Free-form address text. */
+  shipping_address: string
+  weight_kg?: string | null
+  dimensions?: string | null
+  shipping_cost?: string | null
+  insurance_amount?: string | null
+  signature_required?: boolean | null
+  estimated_delivery?: string | null
+  notes?: string | null
+  items?: KernelCreateShipmentItem[] | null
+}
+
+/** Condition of a returned item (`ItemCondition`). */
+export type KernelReturnItemCondition = 'new' | 'opened' | 'used' | 'damaged' | 'defective'
+
+/** One returned line (`CreateReturnItem`). */
+export interface KernelCreateReturnItem {
+  order_item_id: string
+  quantity: number
+  condition?: KernelReturnItemCondition | null
+}
+
+/**
+ * `returns.create` (`CreateReturn`). Quantities are checked against what the
+ * order shipped and has not already returned. `reason` takes the serde
+ * (snake_case) spellings only.
+ */
+export interface KernelCreateReturnPayload {
+  order_id: string
+  reason: ReturnReason
+  reason_details?: string | null
+  idempotency_key?: string | null
+  items: KernelCreateReturnItem[]
+  notes?: string | null
+}
+
+/** `returns.tracking.add` (`AddReturnTracking`). Moves an approved return to `in_transit`. */
+export interface KernelAddReturnTrackingPayload {
+  return_id: string
+  tracking_number: string
+}
+
 /**
  * The closed catalog of governed commands `executeKernelCommand` dispatches
  * (`stateset_embedded::Commerce::execute_kernel_command`). Any other
@@ -473,6 +653,7 @@ export type KernelCommand =
   | KernelCommandEnvelope<'inventory.reservation.release', KernelReleaseInventoryReservationPayload>
   | KernelCommandEnvelope<'orders.transition', KernelTransitionOrderPayload>
   | KernelCommandEnvelope<'orders.ship', KernelShipOrderPayload>
+  | KernelCommandEnvelope<'orders.ship_reserved', KernelShipOrderPayload>
   | KernelCommandEnvelope<'returns.transition', KernelTransitionReturnPayload>
   | KernelCommandEnvelope<'returns.item.disposition.set', KernelSetReturnItemDispositionPayload>
   | KernelCommandEnvelope<'ledger.post', KernelPostJournalEntryPayload>
@@ -487,6 +668,17 @@ export type KernelCommand =
   | KernelCommandEnvelope<'a2a.dispute.file', KernelFileA2ADisputePayload>
   | KernelCommandEnvelope<'a2a.dispute.evidence.submit', KernelSubmitA2ADisputeEvidencePayload>
   | KernelCommandEnvelope<'a2a.dispute.resolve', KernelResolveA2ADisputePayload>
+  | KernelCommandEnvelope<'customers.create', KernelCreateCustomerPayload>
+  | KernelCommandEnvelope<'carts.create', KernelCreateCartPayload>
+  | KernelCommandEnvelope<'carts.item.add', KernelAddCartItemPayload>
+  | KernelCommandEnvelope<'carts.shipping_address.set', KernelSetCartShippingAddressPayload>
+  | KernelCommandEnvelope<'carts.payment_method.set', KernelSetCartPaymentMethodPayload>
+  | KernelCommandEnvelope<'carts.coupon.apply', KernelApplyCartCouponPayload>
+  | KernelCommandEnvelope<'carts.tax.calculate', KernelCalculateCartTaxPayload>
+  | KernelCommandEnvelope<'payments.complete', KernelCompletePaymentPayload>
+  | KernelCommandEnvelope<'shipments.create', KernelCreateShipmentPayload>
+  | KernelCommandEnvelope<'returns.create', KernelCreateReturnPayload>
+  | KernelCommandEnvelope<'returns.tracking.add', KernelAddReturnTrackingPayload>
 
 // ---------------------------------------------------------------------------
 // Policy

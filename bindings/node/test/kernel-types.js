@@ -44,6 +44,36 @@ function moneyWire(value, label) {
   assert.match(value.currency, /^[A-Z]{3}$/, `${label}.currency must be ISO 4217`);
 }
 
+/** The storefront journey commands: account, cart, capture, fulfilment and return. */
+const STOREFRONT_COMMANDS = [
+  'customers.create',
+  'carts.create',
+  'carts.item.add',
+  'carts.shipping_address.set',
+  'carts.payment_method.set',
+  'carts.coupon.apply',
+  'carts.tax.calculate',
+  'payments.complete',
+  'shipments.create',
+  'returns.create',
+  'returns.tracking.add',
+];
+
+/** Command types matched in `Commerce::execute_kernel_command` (stateset-embedded). */
+function dispatchedCommandTypes() {
+  const source = readFileSync(
+    path.join(__dirname, '..', '..', '..', 'crates', 'stateset-embedded', 'src', 'commerce', 'kernel.rs'),
+    'utf8',
+  );
+  const start = source.indexOf('pub fn execute_kernel_command(');
+  assert.ok(start !== -1, 'stateset-embedded no longer defines execute_kernel_command');
+  const end = source.indexOf('unsupported governed kernel command type', start);
+  assert.ok(end !== -1, 'execute_kernel_command no longer refuses unknown command types');
+  const types = [...source.slice(start, end).matchAll(/^\s*"([a-z0-9_.]+)" => /gm)].map((m) => m[1]);
+  assert.ok(types.length > 0, 'no command types found in execute_kernel_command');
+  return types;
+}
+
 // ---------------------------------------------------------------------------
 // 1. Declarations — reflects the last build; passes after `npm run build:debug`.
 // ---------------------------------------------------------------------------
@@ -89,36 +119,46 @@ test('declarations: index.d.ts types the kernel surface (needs a rebuild after e
   ]) {
     assert.ok(dts.includes(name), `index.d.ts lacks "${name}"`);
   }
-  // Every governed command type the engine dispatches is in the union.
+  // The union is exactly the catalog the engine dispatches: read from the
+  // match in `Commerce::execute_kernel_command`, so a command added there
+  // fails here until it is declared.
+  const dispatched = dispatchedCommandTypes();
   for (const commandType of [
-    'inventory.item.create',
-    'products.create',
-    'payments.create',
-    'payments.create_refund',
-    'inventory.reserve',
-    'inventory.reservation.confirm',
-    'inventory.reservation.release',
-    'orders.transition',
-    'orders.ship',
-    'returns.transition',
-    'returns.item.disposition.set',
-    'ledger.post',
-    'x402.settle',
     'checkout.commit',
-    'subscriptions.charge',
-    'a2a.escrow.create',
-    'a2a.escrow.dispute',
-    'a2a.escrow.fund',
-    'a2a.escrow.release',
-    'a2a.escrow.refund',
-    'a2a.dispute.file',
-    'a2a.dispute.evidence.submit',
-    'a2a.dispute.resolve',
+    'orders.ship_reserved',
+    'returns.item.disposition.set',
+    ...STOREFRONT_COMMANDS,
+  ]) {
+    assert.ok(dispatched.includes(commandType), `dispatch parse missed '${commandType}'`);
+  }
+  const declared = [...dts.matchAll(/KernelCommandEnvelope<'([a-z0-9_.]+)',/g)].map((m) => m[1]);
+  assert.deepStrictEqual(
+    [...new Set(declared)].sort(),
+    [...dispatched].sort(),
+    'the KernelCommand union and the engine dispatch disagree',
+  );
+  assert.strictEqual(declared.length, new Set(declared).size, 'a command is declared twice');
+
+  // Each storefront command carries its own payload interface, not `any`.
+  for (const [commandType, payload] of [
+    ['customers.create', 'KernelCreateCustomerPayload'],
+    ['carts.create', 'KernelCreateCartPayload'],
+    ['carts.item.add', 'KernelAddCartItemPayload'],
+    ['carts.shipping_address.set', 'KernelSetCartShippingAddressPayload'],
+    ['carts.payment_method.set', 'KernelSetCartPaymentMethodPayload'],
+    ['carts.coupon.apply', 'KernelApplyCartCouponPayload'],
+    ['carts.tax.calculate', 'KernelCalculateCartTaxPayload'],
+    ['payments.complete', 'KernelCompletePaymentPayload'],
+    ['shipments.create', 'KernelCreateShipmentPayload'],
+    ['returns.create', 'KernelCreateReturnPayload'],
+    ['returns.tracking.add', 'KernelAddReturnTrackingPayload'],
+    ['orders.ship_reserved', 'KernelShipOrderPayload'],
   ]) {
     assert.ok(
-      dts.includes(`KernelCommandEnvelope<'${commandType}',`),
-      `KernelCommand union lacks '${commandType}'`,
+      dts.includes(`KernelCommandEnvelope<'${commandType}', ${payload}>`),
+      `'${commandType}' is not typed with ${payload}`,
     );
+    assert.ok(dts.includes(`export interface ${payload} {`), `index.d.ts lacks ${payload}`);
   }
 });
 
@@ -489,4 +529,133 @@ test('behaviour: the wire carries every field the kernel interfaces declare', as
       },
     );
   });
+});
+
+test('behaviour: every storefront command accepts its declared payload', async () => {
+  const commerce = new Commerce(':memory:');
+  const policy = policyAllowing(
+    ...STOREFRONT_COMMANDS,
+    'checkout.commit',
+    'payments.create',
+    'orders.transition',
+    'orders.ship',
+    'returns.transition',
+  );
+  const receipts = new Map();
+  /** Apply one command; a payload off the declared shape throws before a receipt exists. */
+  async function apply(commandType, payload, status = 'succeeded') {
+    const receipt = await commerce.executeKernelCommand(
+      envelope(commandType, payload, { mode: 'apply' }),
+      policy,
+    );
+    assertReceiptShape(receipt, { commandType, status });
+    receipts.set(commandType, receipt);
+    return receipt;
+  }
+  /** `KernelCartAddressInput`, required fields plus one optional. */
+  const address = {
+    first_name: 'Ada',
+    last_name: 'Lovelace',
+    line1: '1 Main St',
+    city: 'Los Angeles',
+    state: 'CA',
+    postal_code: '90001',
+    country: 'US',
+  };
+
+  // KernelCreateCustomerPayload
+  const customer = (
+    await apply('customers.create', {
+      email: 'storefront-types@example.com',
+      first_name: 'Ada',
+      last_name: 'Lovelace',
+      accepts_marketing: false,
+    })
+  ).result;
+  // KernelCreateCartPayload
+  const cart = (await apply('carts.create', { customer_id: customer.id, currency: 'USD' })).result;
+  // KernelAddCartItemPayload, money as an exact decimal string
+  await apply('carts.item.add', {
+    cart_id: cart.id,
+    item: { sku: 'KT-SF-1', name: 'Typed widget', quantity: 2, unit_price: '50.00' },
+  });
+  // KernelSetCartShippingAddressPayload
+  await apply('carts.shipping_address.set', { cart_id: cart.id, address });
+  // KernelSetCartPaymentMethodPayload
+  await apply('carts.payment_method.set', {
+    cart_id: cart.id,
+    payment: { payment_method: 'credit_card', payment_token: 'tok_kernel_types' },
+  });
+  // KernelCalculateCartTaxPayload
+  await apply('carts.tax.calculate', { cart_id: cart.id });
+  // KernelApplyCartCouponPayload: an unknown code is a sealed business
+  // rejection, so the payload decoded.
+  const coupon = await apply(
+    'carts.coupon.apply',
+    { cart_id: cart.id, coupon_code: 'NO-SUCH-CODE' },
+    'rejected',
+  );
+  assert.match(coupon.error_code, /^commerce\./);
+
+  const checkout = (await apply('checkout.commit', { cart_id: cart.id })).result;
+  const payment = (
+    await apply('payments.create', {
+      order_id: checkout.order_id,
+      amount: checkout.total_charged,
+      currency: 'USD',
+      payment_method: 'credit_card',
+    })
+  ).result;
+  // KernelCompletePaymentPayload
+  assert.strictEqual(
+    (await apply('payments.complete', { payment_id: payment.id })).result.status,
+    'completed',
+  );
+  await apply('orders.transition', { order_id: checkout.order_id, status: 'processing' });
+
+  const order = await commerce.orders.get(checkout.order_id);
+  const orderItemId = order.items[0].id;
+  // KernelCreateShipmentPayload, with the serde carrier and method spellings
+  const shipment = (
+    await apply('shipments.create', {
+      order_id: checkout.order_id,
+      carrier: 'fed_ex',
+      shipping_method: 'two_day',
+      recipient_name: 'Ada Lovelace',
+      shipping_address: '1 Main St, Los Angeles, CA 90001, US',
+      shipping_cost: '7.50',
+      items: [{ order_item_id: orderItemId, sku: 'KT-SF-1', name: 'Typed widget', quantity: 2 }],
+    })
+  ).result;
+  assert.strictEqual(shipment.carrier, 'fed_ex');
+  await apply('orders.ship', { order_id: checkout.order_id, tracking_number: 'KT-TRACK-1' });
+
+  // KernelCreateReturnPayload
+  const ret = (
+    await apply('returns.create', {
+      order_id: checkout.order_id,
+      reason: 'defective',
+      items: [{ order_item_id: orderItemId, quantity: 1, condition: 'opened' }],
+    })
+  ).result;
+  await apply('returns.transition', { return_id: ret.id, status: 'approved' });
+  // KernelAddReturnTrackingPayload
+  assert.strictEqual(
+    (await apply('returns.tracking.add', { return_id: ret.id, tracking_number: 'KT-RET-1' }))
+      .result.status,
+    'in_transit',
+  );
+
+  for (const commandType of STOREFRONT_COMMANDS) {
+    assert.ok(receipts.has(commandType), `${commandType} was not exercised`);
+  }
+
+  // A payload off the declared shape never reaches a receipt.
+  await assert.rejects(
+    commerce.executeKernelCommand(
+      envelope('returns.tracking.add', { return_id: ret.id }, { mode: 'apply' }),
+      policy,
+    ),
+    /tracking_number/,
+  );
 });

@@ -19,6 +19,16 @@ This project follows Keep a Changelog and Semantic Versioning.
   again. AGENTS.md now also lists return item dispositions and says that the
   templates hold a direct `create_refund` for approval, which an MCP tool call
   never carries.
+- `@stateset/embedded`'s `KernelCommand` union now declares the eleven
+  storefront commands the engine dispatches (`customers.create`,
+  `carts.create`, `carts.item.add`, `carts.shipping_address.set`,
+  `carts.payment_method.set`, `carts.coupon.apply`, `carts.tax.calculate`,
+  `payments.complete`, `shipments.create`, `returns.create`,
+  `returns.tracking.add`) and `orders.ship_reserved`, each with a payload
+  interface matching its Rust definition, so TypeScript callers no longer need
+  a cast to send them. The binding test now reads the dispatch table in
+  `Commerce::execute_kernel_command` and fails when the union and the engine
+  disagree.
 
 ## [1.41.0] - 2026-11-15
 

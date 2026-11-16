@@ -479,21 +479,35 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`JurisdictionFilterInput`](#jurisdictionfilterinput)
   - [`JurisdictionSummaryOutput`](#jurisdictionsummaryoutput)
   - [`KernelA2AEscrowRefPayload`](#kernela2aescrowrefpayload)
+  - [`KernelAddCartItem`](#kerneladdcartitem)
+  - [`KernelAddCartItemPayload`](#kerneladdcartitempayload)
+  - [`KernelAddReturnTrackingPayload`](#kerneladdreturntrackingpayload)
+  - [`KernelApplyCartCouponPayload`](#kernelapplycartcouponpayload)
   - [`KernelApprovalEvidence`](#kernelapprovalevidence)
   - [`KernelAuthorityEvidence`](#kernelauthorityevidence)
+  - [`KernelCalculateCartTaxPayload`](#kernelcalculatecarttaxpayload)
+  - [`KernelCartAddressInput`](#kernelcartaddressinput)
+  - [`KernelCartPaymentInput`](#kernelcartpaymentinput)
   - [`KernelChargeSubscriptionPayload`](#kernelchargesubscriptionpayload)
   - [`KernelCommand`](#kernelcommand)
   - [`KernelCommandEnvelope`](#kernelcommandenvelope)
   - [`KernelCommandPolicy`](#kernelcommandpolicy)
   - [`KernelCommandType`](#kernelcommandtype)
   - [`KernelCommitCheckoutPayload`](#kernelcommitcheckoutpayload)
+  - [`KernelCompletePaymentPayload`](#kernelcompletepaymentpayload)
   - [`KernelConfirmInventoryReservationPayload`](#kernelconfirminventoryreservationpayload)
   - [`KernelCreateA2AEscrowPayload`](#kernelcreatea2aescrowpayload)
+  - [`KernelCreateCartPayload`](#kernelcreatecartpayload)
+  - [`KernelCreateCustomerPayload`](#kernelcreatecustomerpayload)
   - [`KernelCreateInventoryItemPayload`](#kernelcreateinventoryitempayload)
   - [`KernelCreatePaymentPayload`](#kernelcreatepaymentpayload)
   - [`KernelCreateProductPayload`](#kernelcreateproductpayload)
   - [`KernelCreateProductVariantPayload`](#kernelcreateproductvariantpayload)
   - [`KernelCreateRefundPayload`](#kernelcreaterefundpayload)
+  - [`KernelCreateReturnItem`](#kernelcreatereturnitem)
+  - [`KernelCreateReturnPayload`](#kernelcreatereturnpayload)
+  - [`KernelCreateShipmentItem`](#kernelcreateshipmentitem)
+  - [`KernelCreateShipmentPayload`](#kernelcreateshipmentpayload)
   - [`KernelDisputeA2AEscrowPayload`](#kerneldisputea2aescrowpayload)
   - [`KernelEconomicReceiptContext`](#kerneleconomicreceiptcontext)
   - [`KernelExecutionMode`](#kernelexecutionmode)
@@ -514,6 +528,9 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`KernelReserveInventoryPayload`](#kernelreserveinventorypayload)
   - [`KernelResolveA2ADisputePayload`](#kernelresolvea2adisputepayload)
   - [`KernelRetryDisposition`](#kernelretrydisposition)
+  - [`KernelReturnItemCondition`](#kernelreturnitemcondition)
+  - [`KernelSetCartPaymentMethodPayload`](#kernelsetcartpaymentmethodpayload)
+  - [`KernelSetCartShippingAddressPayload`](#kernelsetcartshippingaddresspayload)
   - [`KernelSetReturnItemDispositionPayload`](#kernelsetreturnitemdispositionpayload)
   - [`KernelSettleX402IntentPayload`](#kernelsettlex402intentpayload)
   - [`KernelShipOrderPayload`](#kernelshiporderpayload)
@@ -10116,6 +10133,52 @@ Optional filters for `GeneralLedger.listJournalEntries`. No argument lists all.
 |---|---|---|
 | `escrow_id` | `string` |  |
 
+### KernelAddCartItem
+
+Cart line input (`AddCartItem`), nested in `carts.create` and `carts.item.add`.
+
+| Field | Type | Description |
+|---|---|---|
+| `product_id?` | `string \| null` |  |
+| `variant_id?` | `string \| null` |  |
+| `sku` | `string` |  |
+| `name` | `string` |  |
+| `description?` | `string \| null` |  |
+| `image_url?` | `string \| null` |  |
+| `quantity` | `number` | Whole units. |
+| `unit_price` | `string` | Exact decimal string, e.g. `"50.00"`. |
+| `original_price?` | `string \| null` |  |
+| `weight?` | `string \| null` |  |
+| `requires_shipping?` | `boolean \| null` |  |
+| `metadata?` | `Record<string, unknown> \| null` |  |
+
+### KernelAddCartItemPayload
+
+`carts.item.add` (`AddCartItemCommand`).
+
+| Field | Type | Description |
+|---|---|---|
+| `cart_id` | `string` |  |
+| `item` | `KernelAddCartItem` | Types: [`KernelAddCartItem`](#kerneladdcartitem) |
+
+### KernelAddReturnTrackingPayload
+
+`returns.tracking.add` (`AddReturnTracking`). Moves an approved return to `in_transit`.
+
+| Field | Type | Description |
+|---|---|---|
+| `return_id` | `string` |  |
+| `tracking_number` | `string` |  |
+
+### KernelApplyCartCouponPayload
+
+`carts.coupon.apply` (`ApplyCartCoupon`). Redemption rules are enforced; provisioning is not.
+
+| Field | Type | Description |
+|---|---|---|
+| `cart_id` | `string` |  |
+| `coupon_code` | `string` |  |
+
 ### KernelApprovalEvidence
 
 Evidence for an approval required by policy (`ApprovalEvidence`).
@@ -10146,6 +10209,42 @@ canonical command hash; `key_id` must appear in
 | `expires_at` | `string` |  |
 | `signature` | `string` |  |
 
+### KernelCalculateCartTaxPayload
+
+`carts.tax.calculate` (`CalculateCartTax`). Prices tax from the cart's shipping address.
+
+| Field | Type | Description |
+|---|---|---|
+| `cart_id` | `string` |  |
+
+### KernelCartAddressInput
+
+Cart address input (`CartAddress`).
+
+| Field | Type | Description |
+|---|---|---|
+| `first_name` | `string` |  |
+| `last_name` | `string` |  |
+| `company?` | `string \| null` |  |
+| `line1` | `string` |  |
+| `line2?` | `string \| null` |  |
+| `city` | `string` |  |
+| `state?` | `string \| null` |  |
+| `postal_code` | `string` |  |
+| `country` | `string` |  |
+| `phone?` | `string \| null` |  |
+| `email?` | `string \| null` |  |
+
+### KernelCartPaymentInput
+
+Payment method recorded on a cart (`SetCartPayment`).
+
+| Field | Type | Description |
+|---|---|---|
+| `payment_method` | `string` | Free-form method name, e.g. `"credit_card"`. |
+| `payment_token?` | `string \| null` | Processor token; never echoed on the receipt. |
+| `billing_address?` | `KernelCartAddressInput \| null` | Types: [`KernelCartAddressInput`](#kernelcartaddressinput) |
+
 ### KernelChargeSubscriptionPayload
 
 `subscriptions.charge` (`ChargeSubscription`).
@@ -10162,10 +10261,10 @@ A governed command: the envelope discriminated by `command_type`, each
 variant carrying its own payload shape.
 
 ```ts
-type KernelCommand = KernelCommandEnvelope<'inventory.item.create', KernelCreateInventoryItemPayload> | KernelCommandEnvelope<'products.create', KernelCreateProductPayload> | KernelCommandEnvelope<'payments.create', KernelCreatePaymentPayload> | KernelCommandEnvelope<'payments.create_refund', KernelCreateRefundPayload> | KernelCommandEnvelope<'inventory.reserve', KernelReserveInventoryPayload> | KernelCommandEnvelope<'inventory.reservation.confirm', KernelConfirmInventoryReservationPayload> | KernelCommandEnvelope<'inventory.reservation.release', KernelReleaseInventoryReservationPayload> | KernelCommandEnvelope<'orders.transition', KernelTransitionOrderPayload> | KernelCommandEnvelope<'orders.ship', KernelShipOrderPayload> | KernelCommandEnvelope<'returns.transition', KernelTransitionReturnPayload> | KernelCommandEnvelope<'returns.item.disposition.set', KernelSetReturnItemDispositionPayload> | KernelCommandEnvelope<'ledger.post', KernelPostJournalEntryPayload> | KernelCommandEnvelope<'x402.settle', KernelSettleX402IntentPayload> | KernelCommandEnvelope<'checkout.commit', KernelCommitCheckoutPayload> | KernelCommandEnvelope<'subscriptions.charge', KernelChargeSubscriptionPayload> | KernelCommandEnvelope<'a2a.escrow.create', KernelCreateA2AEscrowPayload> | KernelCommandEnvelope<'a2a.escrow.dispute', KernelDisputeA2AEscrowPayload> | KernelCommandEnvelope<'a2a.escrow.fund', KernelA2AEscrowRefPayload> | KernelCommandEnvelope<'a2a.escrow.release', KernelA2AEscrowRefPayload> | KernelCommandEnvelope<'a2a.escrow.refund', KernelRefundA2AEscrowPayload> | KernelCommandEnvelope<'a2a.dispute.file', KernelFileA2ADisputePayload> | KernelCommandEnvelope<'a2a.dispute.evidence.submit', KernelSubmitA2ADisputeEvidencePayload> | KernelCommandEnvelope<'a2a.dispute.resolve', KernelResolveA2ADisputePayload>
+type KernelCommand = KernelCommandEnvelope<'inventory.item.create', KernelCreateInventoryItemPayload> | KernelCommandEnvelope<'products.create', KernelCreateProductPayload> | KernelCommandEnvelope<'payments.create', KernelCreatePaymentPayload> | KernelCommandEnvelope<'payments.create_refund', KernelCreateRefundPayload> | KernelCommandEnvelope<'inventory.reserve', KernelReserveInventoryPayload> | KernelCommandEnvelope<'inventory.reservation.confirm', KernelConfirmInventoryReservationPayload> | KernelCommandEnvelope<'inventory.reservation.release', KernelReleaseInventoryReservationPayload> | KernelCommandEnvelope<'orders.transition', KernelTransitionOrderPayload> | KernelCommandEnvelope<'orders.ship', KernelShipOrderPayload> | KernelCommandEnvelope<'orders.ship_reserved', KernelShipOrderPayload> | KernelCommandEnvelope<'returns.transition', KernelTransitionReturnPayload> | KernelCommandEnvelope<'returns.item.disposition.set', KernelSetReturnItemDispositionPayload> | KernelCommandEnvelope<'ledger.post', KernelPostJournalEntryPayload> | KernelCommandEnvelope<'x402.settle', KernelSettleX402IntentPayload> | KernelCommandEnvelope<'checkout.commit', KernelCommitCheckoutPayload> | KernelCommandEnvelope<'subscriptions.charge', KernelChargeSubscriptionPayload> | KernelCommandEnvelope<'a2a.escrow.create', KernelCreateA2AEscrowPayload> | KernelCommandEnvelope<'a2a.escrow.dispute', KernelDisputeA2AEscrowPayload> | KernelCommandEnvelope<'a2a.escrow.fund', KernelA2AEscrowRefPayload> | KernelCommandEnvelope<'a2a.escrow.release', KernelA2AEscrowRefPayload> | KernelCommandEnvelope<'a2a.escrow.refund', KernelRefundA2AEscrowPayload> | KernelCommandEnvelope<'a2a.dispute.file', KernelFileA2ADisputePayload> | KernelCommandEnvelope<'a2a.dispute.evidence.submit', KernelSubmitA2ADisputeEvidencePayload> | KernelCommandEnvelope<'a2a.dispute.resolve', KernelResolveA2ADisputePayload> | KernelCommandEnvelope<'customers.create', KernelCreateCustomerPayload> | KernelCommandEnvelope<'carts.create', KernelCreateCartPayload> | KernelCommandEnvelope<'carts.item.add', KernelAddCartItemPayload> | KernelCommandEnvelope<'carts.shipping_address.set', KernelSetCartShippingAddressPayload> | KernelCommandEnvelope<'carts.payment_method.set', KernelSetCartPaymentMethodPayload> | KernelCommandEnvelope<'carts.coupon.apply', KernelApplyCartCouponPayload> | KernelCommandEnvelope<'carts.tax.calculate', KernelCalculateCartTaxPayload> | KernelCommandEnvelope<'payments.complete', KernelCompletePaymentPayload> | KernelCommandEnvelope<'shipments.create', KernelCreateShipmentPayload> | KernelCommandEnvelope<'returns.create', KernelCreateReturnPayload> | KernelCommandEnvelope<'returns.tracking.add', KernelAddReturnTrackingPayload>
 ```
 
-Types: [`KernelCommandEnvelope`](#kernelcommandenvelope), [`KernelCreateInventoryItemPayload`](#kernelcreateinventoryitempayload), [`KernelCreateProductPayload`](#kernelcreateproductpayload), [`KernelCreatePaymentPayload`](#kernelcreatepaymentpayload), [`KernelCreateRefundPayload`](#kernelcreaterefundpayload), [`KernelReserveInventoryPayload`](#kernelreserveinventorypayload), [`KernelConfirmInventoryReservationPayload`](#kernelconfirminventoryreservationpayload), [`KernelReleaseInventoryReservationPayload`](#kernelreleaseinventoryreservationpayload), [`KernelTransitionOrderPayload`](#kerneltransitionorderpayload), [`KernelShipOrderPayload`](#kernelshiporderpayload), [`KernelTransitionReturnPayload`](#kerneltransitionreturnpayload), [`KernelSetReturnItemDispositionPayload`](#kernelsetreturnitemdispositionpayload), [`KernelPostJournalEntryPayload`](#kernelpostjournalentrypayload), [`KernelSettleX402IntentPayload`](#kernelsettlex402intentpayload), [`KernelCommitCheckoutPayload`](#kernelcommitcheckoutpayload), [`KernelChargeSubscriptionPayload`](#kernelchargesubscriptionpayload), [`KernelCreateA2AEscrowPayload`](#kernelcreatea2aescrowpayload), [`KernelDisputeA2AEscrowPayload`](#kerneldisputea2aescrowpayload), [`KernelA2AEscrowRefPayload`](#kernela2aescrowrefpayload), [`KernelRefundA2AEscrowPayload`](#kernelrefunda2aescrowpayload), [`KernelFileA2ADisputePayload`](#kernelfilea2adisputepayload), [`KernelSubmitA2ADisputeEvidencePayload`](#kernelsubmita2adisputeevidencepayload), [`KernelResolveA2ADisputePayload`](#kernelresolvea2adisputepayload)
+Types: [`KernelCommandEnvelope`](#kernelcommandenvelope), [`KernelCreateInventoryItemPayload`](#kernelcreateinventoryitempayload), [`KernelCreateProductPayload`](#kernelcreateproductpayload), [`KernelCreatePaymentPayload`](#kernelcreatepaymentpayload), [`KernelCreateRefundPayload`](#kernelcreaterefundpayload), [`KernelReserveInventoryPayload`](#kernelreserveinventorypayload), [`KernelConfirmInventoryReservationPayload`](#kernelconfirminventoryreservationpayload), [`KernelReleaseInventoryReservationPayload`](#kernelreleaseinventoryreservationpayload), [`KernelTransitionOrderPayload`](#kerneltransitionorderpayload), [`KernelShipOrderPayload`](#kernelshiporderpayload), [`KernelTransitionReturnPayload`](#kerneltransitionreturnpayload), [`KernelSetReturnItemDispositionPayload`](#kernelsetreturnitemdispositionpayload), [`KernelPostJournalEntryPayload`](#kernelpostjournalentrypayload), [`KernelSettleX402IntentPayload`](#kernelsettlex402intentpayload), [`KernelCommitCheckoutPayload`](#kernelcommitcheckoutpayload), [`KernelChargeSubscriptionPayload`](#kernelchargesubscriptionpayload), [`KernelCreateA2AEscrowPayload`](#kernelcreatea2aescrowpayload), [`KernelDisputeA2AEscrowPayload`](#kerneldisputea2aescrowpayload), [`KernelA2AEscrowRefPayload`](#kernela2aescrowrefpayload), [`KernelRefundA2AEscrowPayload`](#kernelrefunda2aescrowpayload), [`KernelFileA2ADisputePayload`](#kernelfilea2adisputepayload), [`KernelSubmitA2ADisputeEvidencePayload`](#kernelsubmita2adisputeevidencepayload), [`KernelResolveA2ADisputePayload`](#kernelresolvea2adisputepayload), [`KernelCreateCustomerPayload`](#kernelcreatecustomerpayload), [`KernelCreateCartPayload`](#kernelcreatecartpayload), [`KernelAddCartItemPayload`](#kerneladdcartitempayload), [`KernelSetCartShippingAddressPayload`](#kernelsetcartshippingaddresspayload), [`KernelSetCartPaymentMethodPayload`](#kernelsetcartpaymentmethodpayload), [`KernelApplyCartCouponPayload`](#kernelapplycartcouponpayload), [`KernelCalculateCartTaxPayload`](#kernelcalculatecarttaxpayload), [`KernelCompletePaymentPayload`](#kernelcompletepaymentpayload), [`KernelCreateShipmentPayload`](#kernelcreateshipmentpayload), [`KernelCreateReturnPayload`](#kernelcreatereturnpayload), [`KernelAddReturnTrackingPayload`](#kerneladdreturntrackingpayload)
 
 ### KernelCommandEnvelope
 
@@ -10244,6 +10343,14 @@ Types: [`KernelCommand`](#kernelcommand)
 | `stock_policy?` | `KernelStockPolicy \| null` | Omission preserves historical backorder behaviour. Types: [`KernelStockPolicy`](#kernelstockpolicy) |
 | `expected_cart_fingerprint?` | `string \| null` | The `fingerprint` from `checkoutSnapshot`; checked under the checkout transaction. |
 
+### KernelCompletePaymentPayload
+
+`payments.complete` (`CompletePayment`). Captures a pending or processing payment once.
+
+| Field | Type | Description |
+|---|---|---|
+| `payment_id` | `string` |  |
+
 ### KernelConfirmInventoryReservationPayload
 
 `inventory.reservation.confirm` (`ConfirmInventoryReservation`).
@@ -10269,6 +10376,37 @@ Types: [`KernelCommand`](#kernelcommand)
 | `release_conditions?` | `Array<Record<string, unknown>>` |  |
 | `expires_at` | `string` |  |
 | `auto_release_after?` | `string \| null` |  |
+| `metadata?` | `Record<string, unknown> \| null` |  |
+
+### KernelCreateCartPayload
+
+`carts.create` (`CreateCart`). Every field is optional.
+
+| Field | Type | Description |
+|---|---|---|
+| `customer_id?` | `string \| null` |  |
+| `customer_email?` | `string \| null` |  |
+| `customer_name?` | `string \| null` |  |
+| `currency?` | `string \| null` | ISO 4217 code, e.g. `"USD"`. |
+| `items?` | `KernelAddCartItem[] \| null` | Types: [`KernelAddCartItem`](#kerneladdcartitem) |
+| `shipping_address?` | `KernelCartAddressInput \| null` | Types: [`KernelCartAddressInput`](#kernelcartaddressinput) |
+| `billing_address?` | `KernelCartAddressInput \| null` | Types: [`KernelCartAddressInput`](#kernelcartaddressinput) |
+| `notes?` | `string \| null` |  |
+| `metadata?` | `Record<string, unknown> \| null` |  |
+| `expires_in_minutes?` | `number \| null` |  |
+
+### KernelCreateCustomerPayload
+
+`customers.create` (`CreateCustomer`). The e-mail is normalised and must be unique.
+
+| Field | Type | Description |
+|---|---|---|
+| `email` | `string` |  |
+| `first_name` | `string` |  |
+| `last_name` | `string` |  |
+| `phone?` | `string \| null` |  |
+| `accepts_marketing?` | `boolean \| null` |  |
+| `tags?` | `string[] \| null` |  |
 | `metadata?` | `Record<string, unknown> \| null` |  |
 
 ### KernelCreateInventoryItemPayload
@@ -10361,6 +10499,68 @@ Variant input nested in `products.create` (`CreateProductVariant`).
 | `external_id?` | `string \| null` |  |
 | `idempotency_key?` | `string \| null` |  |
 | `notes?` | `string \| null` |  |
+
+### KernelCreateReturnItem
+
+One returned line (`CreateReturnItem`).
+
+| Field | Type | Description |
+|---|---|---|
+| `order_item_id` | `string` |  |
+| `quantity` | `number` |  |
+| `condition?` | `KernelReturnItemCondition \| null` | Types: [`KernelReturnItemCondition`](#kernelreturnitemcondition) |
+
+### KernelCreateReturnPayload
+
+`returns.create` (`CreateReturn`). Quantities are checked against what the
+order shipped and has not already returned. `reason` takes the serde
+(snake_case) spellings only.
+
+| Field | Type | Description |
+|---|---|---|
+| `order_id` | `string` |  |
+| `reason` | `ReturnReason` | Types: [`ReturnReason`](#returnreason) |
+| `reason_details?` | `string \| null` |  |
+| `idempotency_key?` | `string \| null` |  |
+| `items` | `KernelCreateReturnItem[]` | Types: [`KernelCreateReturnItem`](#kernelcreatereturnitem) |
+| `notes?` | `string \| null` |  |
+
+### KernelCreateShipmentItem
+
+One shipped line (`CreateShipmentItem`).
+
+| Field | Type | Description |
+|---|---|---|
+| `order_item_id?` | `string \| null` | Must belong to the shipment's order. Omit only when the SKU identifies one order line. |
+| `product_id?` | `string \| null` | Must match the order line when supplied; otherwise filled from that line. |
+| `sku` | `string` |  |
+| `name` | `string` |  |
+| `quantity` | `number` |  |
+
+### KernelCreateShipmentPayload
+
+`shipments.create` (`CreateShipment`). The order must exist and not be
+cancelled or refunded. Carrier and method take the serde (snake_case)
+spellings only: `'fed_ex'`, not `'fedex'`; `'two_day'`, not `'twoday'`.
+
+| Field | Type | Description |
+|---|---|---|
+| `order_id` | `string` |  |
+| `carrier?` | `ShippingCarrier \| null` | Types: [`ShippingCarrier`](#shippingcarrier) |
+| `shipping_method?` | `ShipmentMethod \| null` | Types: [`ShipmentMethod`](#shipmentmethod) |
+| `tracking_number?` | `string \| null` |  |
+| `recipient_name` | `string` |  |
+| `recipient_email?` | `string \| null` |  |
+| `recipient_phone?` | `string \| null` |  |
+| `shipping_address` | `string` | Free-form address text. |
+| `weight_kg?` | `string \| null` |  |
+| `dimensions?` | `string \| null` |  |
+| `shipping_cost?` | `string \| null` |  |
+| `insurance_amount?` | `string \| null` |  |
+| `signature_required?` | `boolean \| null` |  |
+| `estimated_delivery?` | `string \| null` |  |
+| `notes?` | `string \| null` |  |
+| `items?` | `KernelCreateShipmentItem[] \| null` | Types: [`KernelCreateShipmentItem`](#kernelcreateshipmentitem) |
 
 ### KernelDisputeA2AEscrowPayload
 
@@ -10602,6 +10802,34 @@ type KernelRetryDisposition = 'never' | 'same_key' | 'after_conflict' | 'after_d
 
 One of: `'never'`, `'same_key'`, `'after_conflict'`, `'after_delay'`.
 
+### KernelReturnItemCondition
+
+Condition of a returned item (`ItemCondition`).
+
+```ts
+type KernelReturnItemCondition = 'new' | 'opened' | 'used' | 'damaged' | 'defective'
+```
+
+One of: `'new'`, `'opened'`, `'used'`, `'damaged'`, `'defective'`.
+
+### KernelSetCartPaymentMethodPayload
+
+`carts.payment_method.set` (`SetCartPaymentMethod`).
+
+| Field | Type | Description |
+|---|---|---|
+| `cart_id` | `string` |  |
+| `payment` | `KernelCartPaymentInput` | Types: [`KernelCartPaymentInput`](#kernelcartpaymentinput) |
+
+### KernelSetCartShippingAddressPayload
+
+`carts.shipping_address.set` (`SetCartShippingAddress`).
+
+| Field | Type | Description |
+|---|---|---|
+| `cart_id` | `string` |  |
+| `address` | `KernelCartAddressInput` | Types: [`KernelCartAddressInput`](#kernelcartaddressinput) |
+
 ### KernelSetReturnItemDispositionPayload
 
 `returns.item.disposition.set` (`SetReturnItemDisposition`). The return
@@ -10628,7 +10856,10 @@ principal. An unknown disposition is a sealed
 
 ### KernelShipOrderPayload
 
-`orders.ship` (`ShipOrderCommand`).
+`orders.ship` and `orders.ship_reserved` (`ShipOrderCommand`).
+`orders.ship_reserved` is the stock-consuming dispatch: it needs
+`expected_version` and a paid order in `processing` or `partially_shipped`,
+and `lines` names the additional units to ship now.
 
 | Field | Type | Description |
 |---|---|---|
