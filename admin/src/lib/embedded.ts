@@ -406,20 +406,27 @@ const DEFAULT_DATABASE_PATH = process.env.DATABASE_PATH || './data/admin.db';
 const MOCK_FLAG = 'STATESET_ADMIN_ALLOW_MOCK_DATA';
 const MOCK_NOW = Date.parse('2026-03-01T12:00:00.000Z');
 
+/**
+ * The demo session's state. Orders, returns and subscriptions change during a
+ * session (creation, lifecycle moves), so their aggregates are not cached
+ * here: `mockOrderAnalytics` and friends derive them from these records on
+ * every read. `simulated` holds the figures demo mode invents because no
+ * record supports them; they are kept as seeded.
+ */
 type MockCommerceData = {
   orders: Order[];
-  orderAnalytics: OrderAnalytics;
   inventory: InventoryItem[];
   inventoryAnalytics: InventoryAnalytics;
   returns: Return[];
-  returnAnalytics: ReturnAnalytics;
   customers: Customer[];
   customerAnalytics: CustomerAnalytics;
   products: Product[];
   subscriptions: Subscription[];
-  subscriptionAnalytics: SubscriptionAnalytics;
-  dashboardMetrics: DashboardMetrics;
   hourlyActivity: HourlyActivity[];
+  simulated: {
+    returns: Pick<ReturnAnalytics, 'averageProcessingTime' | 'topReturnedProducts'>;
+    subscriptions: Pick<SubscriptionAnalytics, 'mrrGrowth' | 'averageLifetime'>;
+  };
 };
 
 let commerceInstance: CommerceEngine | null = null;
@@ -815,22 +822,6 @@ function buildMockCommerceData(): MockCommerceData {
     } satisfies Subscription;
   });
 
-  const ordersByStatus = orders.reduce<Record<string, number>>((acc, order) => {
-    acc[order.status] = (acc[order.status] || 0) + 1;
-    return acc;
-  }, {});
-
-  const ordersByDay = Array.from({ length: 30 }, (_, index) => {
-    const day = toDateKey(formatMockDate(-(29 - index)));
-    const dailyOrders = orders.filter((order) => toDateKey(order.createdAt) === day);
-    return {
-      date: day,
-      count: dailyOrders.length,
-      revenue: roundCurrency(dailyOrders.reduce((sum, order) => sum + order.totalAmount, 0)),
-    };
-  });
-
-  const totalRevenue = roundCurrency(orders.reduce((sum, order) => sum + order.totalAmount, 0));
   const totalUnits = inventory.reduce((sum, item) => sum + item.quantity, 0);
   const inventoryValue = roundCurrency(
     inventory.reduce((sum, item) => {
@@ -856,62 +847,6 @@ function buildMockCommerceData(): MockCommerceData {
     acc[segment] = (acc[segment] || 0) + 1;
     return acc;
   }, {});
-  const subscriptionMrr = roundCurrency(
-    subscriptions
-      .filter((subscription) => subscription.status === 'active')
-      .reduce((sum, subscription) => {
-        const monthlyFactor =
-          subscription.frequency === 'quarterly'
-            ? 1 / 3
-            : subscription.frequency === 'annually'
-              ? 1 / 12
-              : subscription.frequency === 'biweekly'
-                ? 2
-                : subscription.frequency === 'weekly'
-                  ? 4
-                  : 1;
-        return sum + subscription.totalAmount * monthlyFactor;
-      }, 0),
-  );
-
-  const dashboardMetrics = (() => {
-    const today = toDateKey(formatMockDate(0));
-    const yesterday = toDateKey(formatMockDate(-1));
-    const todayOrders = orders.filter((order) => toDateKey(order.createdAt) === today);
-    const yesterdayOrders = orders.filter((order) => toDateKey(order.createdAt) === yesterday);
-    const gmvToday = roundCurrency(todayOrders.reduce((sum, order) => sum + order.totalAmount, 0));
-    const gmvYesterday = roundCurrency(
-      yesterdayOrders.reduce((sum, order) => sum + order.totalAmount, 0),
-    );
-    const averageOrderValue = orders.length ? roundCurrency(totalRevenue / orders.length) : 0;
-    const gmvChange =
-      gmvYesterday > 0 ? Number(((gmvToday - gmvYesterday) / gmvYesterday).toFixed(3)) : 0;
-    const ordersChange =
-      yesterdayOrders.length > 0
-        ? Number(
-            ((todayOrders.length - yesterdayOrders.length) / yesterdayOrders.length).toFixed(3),
-          )
-        : 0;
-
-    return {
-      gmvToday,
-      gmvChange,
-      ordersToday: todayOrders.length,
-      ordersChange,
-      averageOrderValue,
-      aovChange: Number((averageOrderValue / 140).toFixed(3)),
-      conversionRate: Number(Math.min(0.12, orders.length / 1200).toFixed(3)),
-      conversionChange: 0.018,
-      activeCustomers: customers.filter((customer) => customer.totalOrders > 2).length,
-      newCustomers: customers.filter((customer) => customer.createdAt >= formatMockDate(-30))
-        .length,
-      returnRate: Number((returns.length / Math.max(orders.length, 1)).toFixed(3)),
-      inventoryHealth: Number(
-        (1 - lowStockItems.length / Math.max(inventory.length, 1)).toFixed(3),
-      ),
-    } satisfies DashboardMetrics;
-  })();
-
   const hourlyActivity = Array.from({ length: 24 }, (_, hour) => {
     const ordersCount = deterministicInt(hour + 1301, 4, 18);
     const averageRevenue = deterministicNumber(hour + 1401, 550, 1950);
@@ -924,13 +859,6 @@ function buildMockCommerceData(): MockCommerceData {
 
   return {
     orders,
-    orderAnalytics: {
-      totalOrders: orders.length,
-      totalRevenue,
-      averageOrderValue: orders.length ? roundCurrency(totalRevenue / orders.length) : 0,
-      ordersByStatus,
-      ordersByDay,
-    },
     inventory,
     inventoryAnalytics: {
       totalSKUs: inventory.length,
@@ -951,26 +879,6 @@ function buildMockCommerceData(): MockCommerceData {
       })),
     },
     returns,
-    returnAnalytics: {
-      totalReturns: returns.length,
-      returnRate: Number((returns.length / Math.max(orders.length, 1)).toFixed(3)),
-      refundTotal: roundCurrency(returns.reduce((sum, item) => sum + (item.refundAmount || 0), 0)),
-      returnsByReason: returns.reduce<Record<string, number>>((acc, item) => {
-        acc[item.reasonCategory] = (acc[item.reasonCategory] || 0) + 1;
-        return acc;
-      }, {}),
-      returnsByStatus: returns.reduce<Record<string, number>>((acc, item) => {
-        acc[item.status] = (acc[item.status] || 0) + 1;
-        return acc;
-      }, {}),
-      averageProcessingTime: 48,
-      topReturnedProducts: returns.slice(0, 3).map((item, index) => ({
-        productId: item.items[0]?.productId || `prod_${index}`,
-        name: item.items[0]?.name || `Product ${index + 1}`,
-        count: 2 + index,
-        rate: Number((0.02 + index * 0.01).toFixed(2)),
-      })),
-    },
     customers,
     customerAnalytics: {
       totalCustomers: customers.length,
@@ -998,41 +906,19 @@ function buildMockCommerceData(): MockCommerceData {
     },
     products,
     subscriptions,
-    subscriptionAnalytics: {
-      totalSubscriptions: subscriptions.length,
-      activeSubscriptions: subscriptions.filter((subscription) => subscription.status === 'active')
-        .length,
-      mrr: subscriptionMrr,
-      mrrGrowth: 0.08,
-      arr: roundCurrency(subscriptionMrr * 12),
-      churnRate: Number(
-        (
-          subscriptions.filter((subscription) => subscription.status === 'cancelled').length /
-          Math.max(subscriptions.length, 1)
-        ).toFixed(3),
-      ),
-      arpu: roundCurrency(
-        subscriptionMrr /
-          Math.max(
-            subscriptions.filter((subscription) => subscription.status === 'active').length,
-            1,
-          ),
-      ),
-      averageLifetime: 18,
-      subscriptionsByPlan: subscriptions.reduce<Record<string, number>>((acc, subscription) => {
-        acc[subscription.plan] = (acc[subscription.plan] || 0) + 1;
-        return acc;
-      }, {}),
-      subscriptionsByFrequency: subscriptions.reduce<Record<string, number>>(
-        (acc, subscription) => {
-          acc[subscription.frequency] = (acc[subscription.frequency] || 0) + 1;
-          return acc;
-        },
-        {},
-      ),
-    },
-    dashboardMetrics,
     hourlyActivity,
+    simulated: {
+      returns: {
+        averageProcessingTime: 48,
+        topReturnedProducts: returns.slice(0, 3).map((item, index) => ({
+          productId: item.items[0]?.productId || `prod_${index}`,
+          name: item.items[0]?.name || `Product ${index + 1}`,
+          count: 2 + index,
+          rate: Number((0.02 + index * 0.01).toFixed(2)),
+        })),
+      },
+      subscriptions: { mrrGrowth: 0.08, averageLifetime: 18 },
+    },
   };
 }
 
@@ -1041,6 +927,67 @@ function getMockData(): MockCommerceData {
     mockDataCache = buildMockCommerceData();
   }
   return mockDataCache;
+}
+
+// Demo aggregates are derived from the session's current records on every
+// read, with the same summaries (and the same window rules) the native
+// fallbacks use, so a demo lifecycle move or creation shows up in them.
+
+function mockOrderAnalytics(params?: { startDate?: string; endDate?: string }): OrderAnalytics {
+  return summarizeOrders(getMockData().orders, {
+    now: MOCK_NOW,
+    window: resolveAnalyticsWindow(params),
+  });
+}
+
+function mockReturnAnalytics(params?: { startDate?: string; endDate?: string }): ReturnAnalytics {
+  const data = getMockData();
+  const window = resolveAnalyticsWindow(params);
+  return {
+    ...summarizeReturns(data.returns, {
+      orderCount: data.orders.filter((order) => isWithinWindow(order.createdAt, window)).length,
+      window,
+    }),
+    ...data.simulated.returns,
+  };
+}
+
+function mockSubscriptionAnalytics(): SubscriptionAnalytics {
+  const data = getMockData();
+  return { ...summarizeSubscriptions(data.subscriptions), ...data.simulated.subscriptions };
+}
+
+function mockDashboardMetrics(): DashboardMetrics {
+  const { orders, customers, returns, inventory } = getMockData();
+  const totalOf = (subset: Order[]) => Number(sumDecimals(subset.map(exactOrderTotal)));
+  const today = toDateKey(formatMockDate(0));
+  const yesterday = toDateKey(formatMockDate(-1));
+  const todayOrders = orders.filter((order) => toDateKey(order.createdAt) === today);
+  const yesterdayOrders = orders.filter((order) => toDateKey(order.createdAt) === yesterday);
+  const gmvToday = totalOf(todayOrders);
+  const gmvYesterday = totalOf(yesterdayOrders);
+  const averageOrderValue = orders.length ? roundCurrency(totalOf(orders) / orders.length) : 0;
+  const lowStockItems = inventory.filter((item) => item.availableQuantity <= item.reorderPoint);
+  return {
+    gmvToday,
+    gmvChange: gmvYesterday > 0 ? Number(((gmvToday - gmvYesterday) / gmvYesterday).toFixed(3)) : 0,
+    ordersToday: todayOrders.length,
+    ordersChange:
+      yesterdayOrders.length > 0
+        ? Number(
+            ((todayOrders.length - yesterdayOrders.length) / yesterdayOrders.length).toFixed(3),
+          )
+        : 0,
+    averageOrderValue,
+    // Simulated: demo mode has no prior period to compare with.
+    aovChange: Number((averageOrderValue / 140).toFixed(3)),
+    conversionRate: Number(Math.min(0.12, orders.length / 1200).toFixed(3)),
+    conversionChange: 0.018,
+    activeCustomers: customers.filter((customer) => customer.totalOrders > 2).length,
+    newCustomers: customers.filter((customer) => customer.createdAt >= formatMockDate(-30)).length,
+    returnRate: Number((returns.length / Math.max(orders.length, 1)).toFixed(3)),
+    inventoryHealth: Number((1 - lowStockItems.length / Math.max(inventory.length, 1)).toFixed(3)),
+  };
 }
 
 function groupRevenueByPeriod(
@@ -1326,7 +1273,7 @@ function createMockCommerceEngine(): CommerceEngine {
       updateStatus: async (id: string, status: string) =>
         transitionMockOrder(id, status as Order['status']),
       cancel: async (id: string) => transitionMockOrder(id, 'cancelled'),
-      getAnalytics: async () => getMockData().orderAnalytics,
+      getAnalytics: async (params) => mockOrderAnalytics(params),
     },
     inventory: {
       list: async (params) => {
@@ -1436,7 +1383,7 @@ function createMockCommerceEngine(): CommerceEngine {
         transitionMockReturn(id, 'in_transit', { trackingNumber }),
       markReceived: async (id: string) => transitionMockReturn(id, 'received'),
       complete: async (id: string) => transitionMockReturn(id, 'completed'),
-      getAnalytics: async () => getMockData().returnAnalytics,
+      getAnalytics: async (params) => mockReturnAnalytics(params),
     },
     customers: {
       list: async (params) => {
@@ -1541,7 +1488,7 @@ function createMockCommerceEngine(): CommerceEngine {
       pause: async (id: string) => transitionMockSubscription(id, 'paused'),
       resume: async (id: string) => transitionMockSubscription(id, 'active'),
       cancel: async (id: string) => transitionMockSubscription(id, 'cancelled'),
-      getAnalytics: async () => getMockData().subscriptionAnalytics,
+      getAnalytics: async () => mockSubscriptionAnalytics(),
     },
     generalLedger: {
       getAutoPostingConfig: async () => null,
@@ -1619,7 +1566,7 @@ function createMockCommerceEngine(): CommerceEngine {
     },
     ...createMockOperationsSections(),
     analytics: {
-      getDashboardMetrics: async () => getMockData().dashboardMetrics,
+      getDashboardMetrics: async () => mockDashboardMetrics(),
       getHourlyActivity: async () => getMockData().hourlyActivity,
       getSystemHealth: async () => ({
         databaseLatency: 0.48,

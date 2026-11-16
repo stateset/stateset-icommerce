@@ -336,6 +336,12 @@ finance writes carry an authenticated identity.
   - Orders, returns and subscriptions created in a demo session are kept, so
     they can be confirmed, approved or paused. Creation returned a record
     the stricter lifecycle checks then refused as not found.
+  - Order, return and subscription analytics and the dashboard metrics are
+    derived from the session's current records on every read, with the
+    native fallbacks' summaries and window rules. They were computed once at
+    seed time, so a cancelled demo order still counted as pending and a
+    paused subscription still counted in MRR. Figures demo mode invents
+    (processing time, MRR growth) are kept as seeded.
 - The CLI sync client works against the real stateset-sequencer API
   (checked against its source at master e97829b):
   - `pull()`, `getHead()` and `getEntityHistory()` read the VES routes

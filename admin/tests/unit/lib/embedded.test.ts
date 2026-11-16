@@ -951,6 +951,81 @@ describe('embedded commerce engine', () => {
     await expect(subscriptionsApi.pause('sub_missing')).rejects.toThrow(/not found/);
   });
 
+  it('keeps demo analytics in step with demo lifecycle changes', async () => {
+    useMockEngine();
+    const { analyticsApi, ordersApi, returnsApi, subscriptionsApi } =
+      await import('@/lib/embedded');
+
+    // Orders: cancelling a pending order moves it between status counts.
+    const before = await ordersApi.getAnalytics();
+    const pending = (await ordersApi.list()).find((order) => order.status === 'pending')!;
+    await ordersApi.cancel(pending.id);
+    const after = await ordersApi.getAnalytics();
+    expect(after.ordersByStatus.pending ?? 0).toBe(before.ordersByStatus.pending - 1);
+    expect(after.ordersByStatus.cancelled).toBe(before.ordersByStatus.cancelled + 1);
+    expect(after.totalOrders).toBe(before.totalOrders);
+
+    // Returns: approving a requested return.
+    const returnsBefore = await returnsApi.getAnalytics();
+    const requested = (await returnsApi.list()).find((entry) => entry.status === 'requested')!;
+    await returnsApi.approve(requested.id);
+    const returnsAfter = await returnsApi.getAnalytics();
+    expect(returnsAfter.returnsByStatus.requested ?? 0).toBe(
+      returnsBefore.returnsByStatus.requested - 1,
+    );
+    expect(returnsAfter.returnsByStatus.approved).toBe(returnsBefore.returnsByStatus.approved + 1);
+    // Simulated-only figures survive the recomputation.
+    expect(returnsAfter.averageProcessingTime).toBe(returnsBefore.averageProcessingTime);
+    expect(returnsAfter.topReturnedProducts).toEqual(returnsBefore.topReturnedProducts);
+
+    // Subscriptions: pausing an active monthly subscription takes its price out of MRR.
+    const subsBefore = await subscriptionsApi.getAnalytics();
+    const active = (await subscriptionsApi.list()).find(
+      (subscription) => subscription.status === 'active' && subscription.frequency === 'monthly',
+    )!;
+    await subscriptionsApi.pause(active.id);
+    const subsAfter = await subscriptionsApi.getAnalytics();
+    expect(subsAfter.activeSubscriptions).toBe(subsBefore.activeSubscriptions - 1);
+    expect(subsAfter.mrr).toBeCloseTo(subsBefore.mrr - active.totalAmount, 2);
+    expect(subsAfter.mrrGrowth).toBe(subsBefore.mrrGrowth);
+
+    // Creations reach the aggregates too, the dashboard included.
+    const dashboardBefore = await analyticsApi.getDashboardMetrics();
+    const order = await ordersApi.create({
+      customerId: 'cus_100',
+      items: [{ productId: 'prod_1', quantity: 1 }],
+    });
+    await returnsApi.create({
+      orderId: order.id,
+      items: [{ productId: 'prod_1', quantity: 1 }],
+      reason: 'Too small',
+      reasonCategory: 'wrong_size',
+    });
+    expect((await ordersApi.getAnalytics()).totalOrders).toBe(before.totalOrders + 1);
+    expect((await returnsApi.getAnalytics()).totalReturns).toBe(returnsBefore.totalReturns + 1);
+    const dashboardAfter = await analyticsApi.getDashboardMetrics();
+    expect(dashboardAfter.returnRate).toBeCloseTo(
+      (returnsBefore.totalReturns + 1) / (before.totalOrders + 1),
+      3,
+    );
+    expect(dashboardAfter.returnRate).not.toBe(dashboardBefore.returnRate);
+  });
+
+  it('honours a requested window in demo analytics', async () => {
+    useMockEngine();
+    const { ordersApi } = await import('@/lib/embedded');
+
+    const all = await ordersApi.list();
+    const day = all[0].createdAt.slice(0, 10);
+    const sameDay = all.filter((order) => order.createdAt.startsWith(day));
+    const analytics = await ordersApi.getAnalytics({ startDate: day, endDate: day });
+    expect(analytics.totalOrders).toBe(sameDay.length);
+    expect(analytics.totalOrders).toBeLessThan(all.length);
+    expect(analytics.ordersByDay).toEqual([
+      expect.objectContaining({ date: day, count: sameDay.length }),
+    ]);
+  });
+
   it('rejects explicit mock mode in production', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'true');
