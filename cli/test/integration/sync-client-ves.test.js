@@ -330,8 +330,12 @@ function engineConfig(mock, agentId) {
   });
 }
 
-/** A SyncEngine whose REST transport points at the mock with a plain-object config. */
-async function engineOn(t, mock, count) {
+/**
+ * A SyncEngine whose REST transport points at the mock with a plain-object config.
+ * `upperCaseIds` appends events under caller-supplied uppercase UUIDs, which
+ * the outbox keeps as spelled and the sequencer answers in lowercase.
+ */
+async function engineOn(t, mock, count, { upperCaseIds = false } = {}) {
   const agent = await registerAgent(mock);
   const db = new Database(':memory:');
   t.after(() => db.close());
@@ -355,8 +359,9 @@ async function engineOn(t, mock, count) {
   engine.client._client = rest;
   engine.client._transport = 'rest';
   for (let i = 0; i < count; i++) {
+    const eventId = crypto.randomUUID();
     await engine.outbox.append({
-      eventId: crypto.randomUUID(),
+      eventId: upperCaseIds ? eventId.toUpperCase() : eventId,
       commandId: crypto.randomUUID(),
       tenantId: mock.tenantId,
       storeId: mock.storeId,
@@ -463,6 +468,60 @@ describe('SyncEngine against the VES wire format', () => {
     assert.equal(retried.success, true, errors.at(-1)?.message);
     assert.equal(retried.receipt.eventsAccepted, 0);
     assert.equal(retried.pushed, 2);
+    assert.equal(engine.outbox.getPendingCount(), 0);
+  });
+
+  /**
+   * The outbox keeps a caller-supplied event id as spelled; the sequencer
+   * parses it as a UUID and answers in lowercase. Settlement compared the ids
+   * case-sensitively, so a receipt for AAAA... read as a foreign event and the
+   * whole batch stayed pending through every retry.
+   */
+  test('uppercase event UUIDs settle from the lowercase receipts and rejections', async (t) => {
+    const { db, engine, events, errors } = await engineOn(t, mock, 3, { upperCaseIds: true });
+    assert.ok(events.every((e) => e.eventId === e.eventId.toUpperCase()));
+    db.prepare('UPDATE _ves_outbox SET agent_key_id = 99 WHERE event_id = ?').run(
+      events[1].eventId,
+    );
+
+    const result = await engine.push();
+    assert.equal(result.success, true, errors.at(-1)?.message);
+    assert.equal(result.pushed, 2);
+    assert.equal(result.rejected, 1);
+    assert.equal(result.receipt.receipts[0].eventId, events[0].eventId.toLowerCase());
+    assert.equal(result.receipt.rejections[0].event_id, events[1].eventId.toLowerCase());
+
+    const [first, rejected, third] = events.map((e) => engine.outbox.getByEventId(e.eventId));
+    assert.equal(first.syncStatus, 'synced');
+    assert.equal(third.syncStatus, 'synced');
+    assert.equal(third.remoteSequence, first.remoteSequence + 1);
+    assert.equal(rejected.syncStatus, 'rejected');
+    assert.match(rejected.rejectionReason, /^agent_key_invalid/);
+    assert.equal(engine.outbox.getPendingCount(), 0);
+  });
+
+  test('a retry settles replayed receipts for uppercase event UUIDs', async (t) => {
+    const { engine, rest, events, errors } = await engineOn(t, mock, 3, { upperCaseIds: true });
+    const realPush = rest.pushWithRetry.bind(rest);
+    let lose = true;
+    engine.client.pushWithRetry = async (batch) => {
+      if (lose) {
+        lose = false;
+        await realPush({ ...batch, events: batch.events.slice(0, 2) });
+        throw new Error('socket hang up');
+      }
+      return realPush(batch);
+    };
+
+    assert.equal((await engine.push()).success, false);
+    const retried = await engine.push();
+    assert.equal(retried.success, true, errors.at(-1)?.message);
+    assert.equal(retried.receipt.eventsAccepted, 1);
+    assert.equal(retried.receipt.receipts.length, 3);
+    assert.equal(retried.pushed, 3);
+    for (const event of events) {
+      assert.equal(engine.outbox.getByEventId(event.eventId).syncStatus, 'synced');
+    }
     assert.equal(engine.outbox.getPendingCount(), 0);
   });
 

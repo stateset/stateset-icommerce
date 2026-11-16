@@ -6,7 +6,7 @@ import { SyncConfig } from '../../src/sync/config.js';
 import { SyncEngine } from '../../src/sync/engine.js';
 import { SequencerClient } from '../../src/sync/client.js';
 
-async function setup(t, count = 3) {
+async function setup(t, count = 3, { eventId = () => crypto.randomUUID() } = {}) {
   const db = new Database(':memory:');
   t.after(() => db.close());
   const pair = crypto.generateKeyPairSync('ed25519');
@@ -33,7 +33,7 @@ async function setup(t, count = 3) {
   engine.on('error', () => {});
   for (let i = 0; i < count; i++)
     await engine.outbox.append({
-      eventId: crypto.randomUUID(),
+      eventId: eventId(i),
       tenantId: config.tenantId,
       storeId: config.storeId,
       sourceAgent: config.agentId,
@@ -237,6 +237,82 @@ for (const late of ['rejected', 'same', 'conflicting']) {
     assert.equal(engine.outbox.getSyncState().lastPushedSequence, 10);
   });
 }
+
+/**
+ * The outbox keeps a caller-supplied event id as spelled; the sequencer
+ * parses event ids as UUIDs and serializes them in lowercase. Settlement
+ * keyed its lookups by the submitted spelling, so every lowercase receipt or
+ * rejection of an uppercase id read as a foreign event and the batch could
+ * never settle.
+ */
+const upper = () => crypto.randomUUID().toUpperCase();
+
+test('uppercase event UUIDs settle from lowercase receipts', async (t) => {
+  const { engine, events } = await setup(t, 3, { eventId: upper });
+  engine.client = {
+    pushWithRetry: async () => ({
+      ...accepted(3, 7),
+      receipts: events.map((event, i) => ({
+        eventId: event.eventId.toLowerCase(),
+        sequenceNumber: 7 + i,
+      })),
+    }),
+  };
+  const result = await engine.push();
+  assert.equal(result.success, true, result.error);
+  assert.equal(result.pushed, 3);
+  events.forEach((event, i) => {
+    const stored = engine.outbox.getByEventId(event.eventId);
+    assert.equal(stored.syncStatus, 'synced');
+    assert.equal(stored.remoteSequence, 7 + i);
+  });
+});
+
+test('uppercase event UUIDs settle from replayed receipts and lowercase rejections', async (t) => {
+  const { engine, events } = await setup(t, 3, { eventId: upper });
+  engine.client = {
+    pushWithRetry: async () => ({
+      // events[0] is an exact replay (sequenced earlier, counted nowhere),
+      // events[1] is rejected, events[2] is newly accepted.
+      eventsAccepted: 1,
+      eventsRejected: 1,
+      sequenceStart: 12,
+      sequenceEnd: 12,
+      headSequence: 12,
+      rejections: [{ event_id: events[1].eventId.toLowerCase(), reason: 'invalid' }],
+      receipts: [
+        { eventId: events[0].eventId.toLowerCase(), sequenceNumber: 4 },
+        { eventId: events[2].eventId.toLowerCase(), sequenceNumber: 12 },
+      ],
+    }),
+  };
+  const result = await engine.push();
+  assert.equal(result.success, true, result.error);
+  assert.equal(result.pushed, 2);
+  assert.equal(result.rejected, 1);
+  assert.equal(engine.outbox.getByEventId(events[0].eventId).remoteSequence, 4);
+  assert.equal(engine.outbox.getByEventId(events[1].eventId).syncStatus, 'rejected');
+  assert.equal(engine.outbox.getByEventId(events[2].eventId).remoteSequence, 12);
+  assert.equal(engine.outbox.getPendingCount(), 0);
+});
+
+test('a receipt naming one UUID twice in different case is still a duplicate', async (t) => {
+  const { db, engine, events } = await setup(t, 2);
+  const before = db.prepare('SELECT * FROM _ves_outbox').all();
+  engine.client = {
+    pushWithRetry: async () => ({
+      ...accepted(2, 1),
+      receipts: [
+        { eventId: events[0].eventId.toLowerCase(), sequenceNumber: 1 },
+        { eventId: events[0].eventId.toUpperCase(), sequenceNumber: 2 },
+      ],
+    }),
+  };
+  const result = await engine.push();
+  assert.equal(result.success, false);
+  assert.match(result.error, /Invalid push receipt/);
+  assert.deepEqual(db.prepare('SELECT * FROM _ves_outbox').all(), before);
+});
 
 test('late acceptance supersedes an earlier rejection without leaving stale failure metadata', async (t) => {
   const { engine, events } = await setup(t, 1);

@@ -372,6 +372,11 @@ finance writes carry an authenticated identity.
   lifecycle catalog adds the immediate cancellation of a paused or pending
   subscription (to `expired`), which the engine accepts and the generated
   catalog omits, so reads and refusal guidance list it too.
+- Sync push settlement compares event ids as UUIDs, case-insensitively. The
+  outbox keeps a caller-supplied id as spelled and the sequencer answers in
+  lowercase, so a push of `AAAAAAAA-...` events read their receipts and
+  rejections as foreign and the whole batch stayed pending through every
+  retry.
 
 ## [1.40.0] - 2026-10-22
 
