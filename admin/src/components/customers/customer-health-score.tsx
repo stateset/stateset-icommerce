@@ -22,6 +22,8 @@ import type {
   AtRiskCustomer,
   CustomerSegmentDetail,
 } from '@/lib/types/dashboard-data';
+import { isEngineFeatureUnavailable } from '@/lib/types/dashboard-data';
+import { EngineFeatureNotice } from '@/components/shared/engine-feature-notice';
 
 interface CustomerHealthScoreProps {
   data?: CustomerHealthData;
@@ -51,6 +53,10 @@ function CustomerHealthScoreInner({ data: propData }: CustomerHealthScoreProps) 
         </CardContent>
       </Card>
     );
+  }
+
+  if (isEngineFeatureUnavailable(data)) {
+    return <EngineFeatureNotice title="Customer health" message={data.unavailable} />;
   }
 
   if (error || !data) {

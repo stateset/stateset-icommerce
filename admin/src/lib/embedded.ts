@@ -11,35 +11,164 @@
 
 import 'server-only';
 
-// Commerce engine interface matching the API surface
+import {
+  AP_AGING_EXCLUDED_BILL_STATUSES,
+  AR_OPEN_INVOICE_STATUSES,
+  ORDER_LIFECYCLE,
+  RETURN_LIFECYCLE,
+  RETURN_REASONS,
+  SUBSCRIPTION_LIFECYCLE,
+  canTransition,
+  normalizeEngineStatus,
+  statusIn,
+  type BillStatus,
+  type OrderStatusUpdate,
+  type ReturnReason,
+  type ReturnStatus,
+  type GlAccountStatus,
+  type InspectionStatus,
+  type InvoiceStatus,
+  type JournalEntryStatus,
+  type LotStatus,
+  type NcrSeverity,
+  type NcrStatus,
+  type PickTaskStatus,
+  type PurchaseOrderStatus,
+  type ReceiptStatus,
+  type SerialStatus,
+  type WaveStatus,
+  type WorkOrderStatus,
+} from './engine-lifecycles';
+import type {
+  Address,
+  Customer,
+  CustomerAnalytics,
+  DashboardMetrics,
+  HourlyActivity,
+  InventoryAnalytics,
+  InventoryItem,
+  Order,
+  OrderAnalytics,
+  OrderItem,
+  Product,
+  ProductVariant,
+  Return,
+  ReturnAnalytics,
+  ReturnItem,
+  Subscription,
+  SubscriptionAnalytics,
+  SystemHealth,
+} from './types';
+
+// The commerce record shapes are declared once, in `./types` (client-safe),
+// and re-exported here so server code can keep importing them from the
+// engine module. Their status unions derive from the native binding via
+// `./engine-lifecycles`; nothing in this file redeclares them.
+export type {
+  Address,
+  Customer,
+  CustomerAnalytics,
+  DashboardMetrics,
+  HourlyActivity,
+  InventoryAnalytics,
+  InventoryItem,
+  Order,
+  OrderAnalytics,
+  OrderItem,
+  Product,
+  ProductVariant,
+  Return,
+  ReturnAnalytics,
+  ReturnItem,
+  Subscription,
+  SubscriptionAnalytics,
+  SystemHealth,
+};
+
+/**
+ * Thrown when the connected engine build has no equivalent for an admin
+ * feature (the native binding lacks several methods the admin's mock offers).
+ * Server actions catch it and hand the page an explanation instead of
+ * crashing with `x is not a function`.
+ */
+export class EngineCapabilityError extends Error {
+  readonly code = 'ENGINE_CAPABILITY_UNAVAILABLE';
+
+  constructor(
+    readonly feature: string,
+    explanation: string,
+  ) {
+    super(`${explanation} (${feature} is not available on this engine build)`);
+    this.name = 'EngineCapabilityError';
+  }
+}
+
+// Commerce engine interface matching the API surface. Members marked
+// optional exist on the mock but not on the native binding; the `*Api`
+// wrappers below route them to a native equivalent or raise
+// `EngineCapabilityError`.
 export interface CommerceEngine {
   orders: {
-    list: (params?: { status?: string; limit?: number; offset?: number }) => Promise<Order[]>;
+    list: (params?: {
+      status?: string;
+      customerId?: string;
+      limit?: number;
+      offset?: number;
+    }) => Promise<Order[]>;
     get: (id: string) => Promise<Order | null>;
     create: (params: CreateOrderParams) => Promise<Order>;
     updateStatus: (id: string, status: string) => Promise<Order>;
     cancel: (id: string, reason?: string) => Promise<Order>;
-    getAnalytics: (params?: { startDate?: string; endDate?: string }) => Promise<OrderAnalytics>;
+    /** Mock-only aggregate; `ordersApi` derives it from the order list otherwise. */
+    getAnalytics?: (params?: { startDate?: string; endDate?: string }) => Promise<OrderAnalytics>;
   };
   inventory: {
-    list: (params?: { warehouseId?: string; lowStock?: boolean }) => Promise<InventoryItem[]>;
-    get: (sku: string) => Promise<InventoryItem | null>;
+    /** Mock-only: the binding has no inventory listing. */
+    list?: (params?: { warehouseId?: string; lowStock?: boolean }) => Promise<InventoryItem[]>;
+    /** Mock-only; the native lookup is `getStock`. */
+    get?: (sku: string) => Promise<InventoryItem | null>;
+    /** Native stock lookup (`Inventory.getStock`). */
+    getStock?: (sku: string) => Promise<NativeStockLevel | null>;
     adjust: (sku: string, quantity: number, reason?: string) => Promise<InventoryAdjustment>;
-    reserve: (sku: string, quantity: number, orderId: string) => Promise<InventoryItem>;
-    release: (sku: string, quantity: number, orderId: string) => Promise<InventoryItem>;
-    getLowStock: (threshold?: number) => Promise<InventoryItem[]>;
-    getAnalytics: () => Promise<InventoryAnalytics>;
-    forecast: (sku: string, days: number) => Promise<DemandForecast>;
+    /** The binding's signature: a reservation references its source record. */
+    reserve: (
+      sku: string,
+      quantity: number,
+      referenceType: string,
+      referenceId: string,
+    ) => Promise<unknown>;
+    /** Mock-only: the binding releases by reservation id (`releaseReservation`). */
+    release?: (sku: string, quantity: number, orderId: string) => Promise<InventoryItem>;
+    /** Mock-only; natively `analytics.lowStockItems`. */
+    getLowStock?: (threshold?: number) => Promise<InventoryItem[]>;
+    /** Mock-only; natively `analytics.inventoryHealth`. */
+    getAnalytics?: () => Promise<InventoryAnalytics>;
+    /** Mock-only; natively `analytics.demandForecast`. */
+    forecast?: (sku: string, days: number) => Promise<DemandForecast>;
   };
+  /**
+   * Return lifecycle, named after the native binding's methods
+   * (`bindings/node/index.d.ts` `class Returns`). Each one moves a return to
+   * a single state of `RETURN_LIFECYCLE`; the engine refuses every other move.
+   */
   returns: {
     list: (params?: { status?: string; customerId?: string }) => Promise<Return[]>;
     get: (id: string) => Promise<Return | null>;
     create: (params: CreateReturnParams) => Promise<Return>;
+    /** requested → approved */
     approve: (id: string) => Promise<Return>;
-    reject: (id: string, reason?: string) => Promise<Return>;
-    receive: (id: string, items?: { productId: string; condition: string }[]) => Promise<Return>;
-    processRefund: (id: string, method?: Return['refundMethod']) => Promise<Return>;
-    getAnalytics: (params?: { startDate?: string; endDate?: string }) => Promise<ReturnAnalytics>;
+    /** requested | inspecting → rejected */
+    reject: (id: string, reason: string) => Promise<Return>;
+    /** requested | approved → cancelled */
+    cancel: (id: string) => Promise<Return>;
+    /** approved → in_transit (records the carrier tracking number) */
+    addTracking: (id: string, trackingNumber: string) => Promise<Return>;
+    /** in_transit → received */
+    markReceived: (id: string) => Promise<Return>;
+    /** received | inspecting → completed (settles the refund) */
+    complete: (id: string) => Promise<Return>;
+    /** Mock-only aggregate; the binding has none, so `returnsApi` derives it. */
+    getAnalytics?: (params?: { startDate?: string; endDate?: string }) => Promise<ReturnAnalytics>;
   };
   customers: {
     list: (params?: { segment?: string; limit?: number; offset?: number }) => Promise<Customer[]>;
@@ -47,10 +176,14 @@ export interface CommerceEngine {
     getByEmail: (email: string) => Promise<Customer | null>;
     create: (params: Partial<Customer>) => Promise<Customer>;
     update: (id: string, params: Partial<Customer>) => Promise<Customer>;
-    getOrders: (customerId: string) => Promise<Order[]>;
-    getHealthScore: (customerId: string) => Promise<CustomerHealthScore>;
-    getSegments: () => Promise<CustomerSegment[]>;
-    getAnalytics: () => Promise<CustomerAnalytics>;
+    /** Mock-only; natively `orders.list({ customerId })`. */
+    getOrders?: (customerId: string) => Promise<Order[]>;
+    /** Mock-only: the engine computes no customer health score. */
+    getHealthScore?: (customerId: string) => Promise<CustomerHealthScore>;
+    /** Mock-only: engine segments are a separate rule-based API. */
+    getSegments?: () => Promise<CustomerSegment[]>;
+    /** Mock-only: the engine has no equivalent customer aggregate. */
+    getAnalytics?: () => Promise<CustomerAnalytics>;
   };
   products: {
     list: (params?: { status?: string; category?: string }) => Promise<Product[]>;
@@ -59,14 +192,24 @@ export interface CommerceEngine {
     update: (id: string, params: Partial<Product>) => Promise<Product>;
     delete: (id: string) => Promise<void>;
   };
+  /**
+   * Subscriptions, named after the native binding's methods
+   * (`bindings/node/index.d.ts` `class Subscriptions`); moves follow
+   * `SUBSCRIPTION_LIFECYCLE`.
+   */
   subscriptions: {
     list: (params?: { status?: string; customerId?: string }) => Promise<Subscription[]>;
     get: (id: string) => Promise<Subscription | null>;
-    create: (params: Partial<Subscription>) => Promise<Subscription>;
+    /** Start a subscription to a plan (the binding has no `create`). */
+    subscribe: (input: { customerId: string; planId: string }) => Promise<Subscription>;
+    /** active → paused */
     pause: (id: string) => Promise<Subscription>;
+    /** paused → active */
     resume: (id: string) => Promise<Subscription>;
-    cancel: (id: string, reason?: string) => Promise<Subscription>;
-    getAnalytics: () => Promise<SubscriptionAnalytics>;
+    /** pending | trial | active | paused | past_due → cancelled */
+    cancel: (id: string, input?: { reason?: string }) => Promise<Subscription>;
+    /** Mock-only aggregate; the binding has none, so `subscriptionsApi` derives it. */
+    getAnalytics?: () => Promise<SubscriptionAnalytics>;
   };
   generalLedger: {
     getAutoPostingConfig: () => Promise<AutoPostingConfig | null>;
@@ -146,21 +289,81 @@ export interface CommerceEngine {
   receiving?: {
     listReceipts: () => Promise<Receipt[]>;
   };
+  /**
+   * The admin's dashboard aggregates are mock-only: the native `Analytics`
+   * class exposes differently shaped reports (`salesSummary`,
+   * `revenueByPeriod`, ...), so these raise `EngineCapabilityError` there.
+   */
   analytics: {
-    getDashboardMetrics: () => Promise<DashboardMetrics>;
-    getHourlyActivity: (date?: string) => Promise<HourlyActivity[]>;
-    getSystemHealth: () => Promise<SystemHealth>;
-    getRevenueByPeriod: (params: {
+    getDashboardMetrics?: () => Promise<DashboardMetrics>;
+    getHourlyActivity?: (date?: string) => Promise<HourlyActivity[]>;
+    getSystemHealth?: () => Promise<SystemHealth>;
+    getRevenueByPeriod?: (params: {
       startDate: string;
       endDate: string;
       groupBy: 'day' | 'week' | 'month';
     }) => Promise<{ period: string; revenue: number; orders: number }[]>;
-    getTopProducts: (
+    getTopProducts?: (
       limit?: number,
     ) => Promise<{ productId: string; name: string; revenue: number; units: number }[]>;
-    getConversionFunnel: () => Promise<{ stage: string; count: number; rate: number }[]>;
+    getConversionFunnel?: () => Promise<{ stage: string; count: number; rate: number }[]>;
+    /** Native only (`Analytics.returnMetrics`): engine-computed return rate and refund total. */
+    returnMetrics?: () => Promise<NativeReturnMetrics>;
+    /** Native only (`Analytics.lowStockItems`). */
+    lowStockItems?: (threshold?: number) => Promise<NativeLowStockItem[]>;
+    /** Native only (`Analytics.inventoryHealth`). */
+    inventoryHealth?: () => Promise<NativeInventoryHealth>;
+    /** Native only (`Analytics.demandForecast`). */
+    demandForecast?: (skus?: string[], daysAhead?: number) => Promise<NativeDemandForecast[]>;
   };
   initialize?: () => Promise<void>;
+}
+
+/** The binding's `StockLevelOutput` (`Inventory.getStock`); quantities are decimal strings. */
+export interface NativeStockLevel {
+  sku: string;
+  name: string;
+  totalOnHand: string;
+  totalAllocated: string;
+  totalAvailable: string;
+}
+
+/** The binding's `LowStockItemOutput` (`Analytics.lowStockItems`). */
+export interface NativeLowStockItem {
+  sku: string;
+  name: string;
+  onHand: number;
+  allocated: number;
+  available: number;
+  reorderPoint?: number;
+}
+
+/** The fields of the binding's `InventoryHealthOutput` the admin reads. */
+export interface NativeInventoryHealth {
+  totalSkus: number;
+  lowStockSkus: number;
+  outOfStockSkus: number;
+  totalValue: number;
+  totalValueExact?: string;
+}
+
+/** The fields of the binding's `DemandForecastOutput` the admin reads. */
+export interface NativeDemandForecast {
+  sku: string;
+  averageDailyDemand: number;
+  forecastedDemand: number;
+  confidence: number;
+  currentStock: number;
+  daysUntilStockout?: number;
+  recommendedReorderQty?: number;
+}
+
+/** The fields of the binding's `ReturnMetricsOutput` the admin reads. */
+export interface NativeReturnMetrics {
+  totalReturns: number;
+  returnRatePercent: number;
+  totalRefunded: number;
+  totalRefundedExact?: string;
 }
 
 // Dynamic import to prevent bundling issues
@@ -271,6 +474,100 @@ async function loadCommerceModule() {
   }
 }
 
+// ============================================================================
+// Native boundary: one normalisation for the binding's Debug-cased enums
+// ============================================================================
+
+/**
+ * Enum-valued fields the native binding renders in the Rust `Debug` form
+ * (`'PartiallyPaid'`, `'InProgress'`) instead of the engine's canonical
+ * snake_case, keyed by the sub-API that returns them (see the "rendered Debug"
+ * unions in `bindings/node/index.d.ts`). The binding's output is deliberately
+ * left as-is — other consumers depend on it — and the admin normalises here,
+ * once, so every page compares against one vocabulary
+ * (`src/lib/engine-lifecycles.ts`) whether it runs on the native engine or
+ * the mock.
+ */
+const NATIVE_DEBUG_ENUM_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  lots: ['status'],
+  serials: ['status'],
+  quality: ['status', 'severity', 'source', 'disposition', 'inspectionType', 'holdType'],
+  fulfillment: ['status'],
+  receiving: ['status', 'receiptType'],
+  warehouse: ['warehouseType', 'locationType'],
+  accountsPayable: ['status'],
+  accountsReceivable: ['status', 'reason'],
+  generalLedger: ['status', 'accountType'],
+};
+
+/** Rewrite the listed enum fields to snake_case on a record, a list, or nested records. */
+function normalizeNativeOutput(value: unknown, fields: readonly string[], depth = 0): unknown {
+  if (depth > 3 || value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeNativeOutput(entry, fields, depth + 1));
+  }
+  const record = value as Record<string, unknown>;
+  let changed: Record<string, unknown> | null = null;
+  for (const [key, entry] of Object.entries(record)) {
+    const next =
+      typeof entry === 'string'
+        ? fields.includes(key)
+          ? normalizeEngineStatus(entry)
+          : entry
+        : normalizeNativeOutput(entry, fields, depth + 1);
+    if (next !== entry) {
+      changed = changed ?? { ...record };
+      changed[key] = next;
+    }
+  }
+  return changed ?? record;
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    (typeof value === 'object' || typeof value === 'function') &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
+}
+
+function wrapNativeSubApi(api: object, fields: readonly string[]): object {
+  return new Proxy(api, {
+    get(target, property) {
+      const member: unknown = Reflect.get(target, property, target);
+      if (typeof member !== 'function') return member;
+      return (...args: unknown[]) => {
+        const result: unknown = Reflect.apply(member, target, args);
+        return isThenable(result)
+          ? result.then((resolved) => normalizeNativeOutput(resolved, fields))
+          : normalizeNativeOutput(result, fields);
+      };
+    },
+  });
+}
+
+/**
+ * Wrap a native `Commerce` instance so the sub-APIs in
+ * `NATIVE_DEBUG_ENUM_FIELDS` return snake_case enum values. Every other member
+ * passes through untouched (methods stay bound to the native instance).
+ */
+export function adaptNativeEngine<T extends object>(engine: T): T {
+  return new Proxy(engine, {
+    get(target, property) {
+      const member: unknown = Reflect.get(target, property, target);
+      if (
+        typeof property === 'string' &&
+        Object.prototype.hasOwnProperty.call(NATIVE_DEBUG_ENUM_FIELDS, property) &&
+        member !== null &&
+        typeof member === 'object'
+      ) {
+        return wrapNativeSubApi(member, NATIVE_DEBUG_ENUM_FIELDS[property]);
+      }
+      return typeof member === 'function' ? member.bind(target) : member;
+    },
+  });
+}
+
 /**
  * Initialize or get the embedded commerce engine instance.
  * Mock data is only allowed when explicitly enabled for demo or test mode.
@@ -279,7 +576,7 @@ export async function getCommerceEngine(): Promise<CommerceEngine> {
   if (!commerceInstance) {
     const CommerceModule = await loadCommerceModule();
     if (CommerceModule) {
-      commerceInstance = new CommerceModule(DEFAULT_DATABASE_PATH);
+      commerceInstance = adaptNativeEngine(new CommerceModule(DEFAULT_DATABASE_PATH));
       await commerceInstance.initialize?.();
     } else {
       commerceInstance = createMockCommerceEngine();
@@ -300,36 +597,43 @@ function buildMockCommerceData(): MockCommerceData {
     { plan: 'Pro', planId: 'pro', amount: 79, frequency: 'monthly' as const },
     { plan: 'Enterprise', planId: 'enterprise', amount: 249, frequency: 'quarterly' as const },
   ];
+  // Every engine order status (weighted towards delivered), including the
+  // `partially_shipped` and `refunded` states the admin used to ignore.
   const statusPool: Order['status'][] = [
     'delivered',
     'delivered',
     'shipped',
+    'partially_shipped',
     'processing',
     'confirmed',
     'pending',
     'cancelled',
+    'refunded',
   ];
+  // Every state of the engine's return lifecycle, so demo mode exercises the
+  // same queue (and the same action gating) as the native engine.
   const returnStatuses: Return['status'][] = [
     'requested',
     'approved',
+    'in_transit',
     'received',
-    'inspected',
-    'refunded',
+    'inspecting',
+    'completed',
     'rejected',
+    'cancelled',
   ];
-  const returnReasons: Return['reasonCategory'][] = [
-    'defective',
-    'wrong_item',
-    'not_as_described',
-    'changed_mind',
-    'other',
-  ];
+  const returnReasons: Return['reasonCategory'][] = [...RETURN_REASONS];
+  // Every engine subscription status, weighted towards active.
   const subscriptionStatuses: Subscription['status'][] = [
     'active',
     'active',
     'active',
+    'trial',
     'paused',
+    'past_due',
+    'pending',
     'cancelled',
+    'expired',
   ];
 
   const products = Array.from({ length: 50 }, (_, index) => {
@@ -429,17 +733,21 @@ function buildMockCommerceData(): MockCommerceData {
     } satisfies InventoryItem;
   });
 
+  const shippedBack: Return['status'][] = ['in_transit', 'received', 'inspecting', 'completed'];
   const returns = Array.from({ length: 25 }, (_, index) => {
     const order = orders[(index * 2) % orders.length];
     const amount = roundCurrency(
       order.totalAmount * (0.35 + deterministicNumber(index + 801, 0, 0.45)),
     );
     const createdAt = formatMockDate(-(13 - (index % 14)), index % 12);
+    const status = returnStatuses[index % returnStatuses.length];
     return {
       id: `ret_${1000 + index}`,
       orderId: order.id,
       customerId: order.customerId,
-      status: deterministicChoice(index + 901, returnStatuses),
+      status,
+      // The engine records a tracking number when a return ships back.
+      trackingNumber: shippedBack.includes(status) ? `1ZRET${10_000 + index}` : undefined,
       items: order.items.map((item) => ({
         productId: item.productId,
         sku: item.sku,
@@ -753,6 +1061,26 @@ function getMockOrder(id: string): Order | null {
   return getMockData().orders.find((order) => order.id === id) || null;
 }
 
+/**
+ * Move a mock order the way the engine's `update_status` does: the same
+ * state is a no-op (the catalog marks order states re-entrant), any other
+ * move must be an `ORDER_LIFECYCLE` edge. Persisted for the demo session.
+ */
+function transitionMockOrder(id: string, to: Order['status']): Order {
+  const data = getMockData();
+  const index = data.orders.findIndex((order) => order.id === id);
+  if (index === -1) {
+    throw new Error(`Order not found: ${id}`);
+  }
+  const current = data.orders[index];
+  if (current.status !== to && !canTransition(ORDER_LIFECYCLE, current.status, to)) {
+    throw new Error(`Order cannot move from ${current.status} to ${to}`);
+  }
+  const next: Order = { ...current, status: to, updatedAt: new Date().toISOString() };
+  data.orders[index] = next;
+  return next;
+}
+
 function getMockInventoryItem(sku: string): InventoryItem | null {
   return getMockData().inventory.find((item) => item.sku === sku) || null;
 }
@@ -761,8 +1089,45 @@ function getMockReturn(id: string): Return | null {
   return getMockData().returns.find((entry) => entry.id === id) || null;
 }
 
+/**
+ * Move a mock return the way the engine would: refuse any move
+ * `RETURN_LIFECYCLE` does not allow, otherwise persist the new state so the
+ * next action in a demo session sees it (the engine's own guard messages are
+ * mirrored loosely; callers only rely on the throw).
+ */
+function transitionMockReturn(id: string, to: ReturnStatus, patch: Partial<Return> = {}): Return {
+  const data = getMockData();
+  const index = data.returns.findIndex((entry) => entry.id === id);
+  if (index === -1) {
+    throw new Error(`Return not found: ${id}`);
+  }
+  const current = data.returns[index];
+  if (!canTransition(RETURN_LIFECYCLE, current.status, to)) {
+    throw new Error(`Return cannot move from ${current.status} to ${to}`);
+  }
+  const next: Return = { ...current, ...patch, status: to, updatedAt: new Date().toISOString() };
+  data.returns[index] = next;
+  return next;
+}
+
 function getMockSubscription(id: string): Subscription | null {
   return getMockData().subscriptions.find((subscription) => subscription.id === id) || null;
+}
+
+/** Move a mock subscription along `SUBSCRIPTION_LIFECYCLE`, refusing anything else. */
+function transitionMockSubscription(id: string, to: Subscription['status']): Subscription {
+  const data = getMockData();
+  const index = data.subscriptions.findIndex((subscription) => subscription.id === id);
+  if (index === -1) {
+    throw new Error(`Subscription not found: ${id}`);
+  }
+  const current = data.subscriptions[index];
+  if (!canTransition(SUBSCRIPTION_LIFECYCLE, current.status, to)) {
+    throw new Error(`Subscription cannot move from ${current.status} to ${to}`);
+  }
+  const next: Subscription = { ...current, status: to, updatedAt: new Date().toISOString() };
+  data.subscriptions[index] = next;
+  return next;
 }
 
 function getMockCustomer(id: string): Customer | null {
@@ -912,21 +1277,9 @@ function createMockCommerceEngine(): CommerceEngine {
       },
       get: async (id: string) => getMockOrder(id),
       create: async (params: CreateOrderParams) => buildMockOrderFromParams(params),
-      updateStatus: async (id: string, status: string) => {
-        const current =
-          getMockOrder(id) || buildMockOrderFromParams({ customerId: 'cus_100', items: [] });
-        return {
-          ...current,
-          id,
-          status: status as Order['status'],
-          updatedAt: new Date().toISOString(),
-        };
-      },
-      cancel: async (id: string) => {
-        const current =
-          getMockOrder(id) || buildMockOrderFromParams({ customerId: 'cus_100', items: [] });
-        return { ...current, id, status: 'cancelled', updatedAt: new Date().toISOString() };
-      },
+      updateStatus: async (id: string, status: string) =>
+        transitionMockOrder(id, status as Order['status']),
+      cancel: async (id: string) => transitionMockOrder(id, 'cancelled'),
       getAnalytics: async () => getMockData().orderAnalytics,
     },
     inventory: {
@@ -1028,62 +1381,14 @@ function createMockCommerceEngine(): CommerceEngine {
       },
       get: async (id: string) => getMockReturn(id),
       create: async (params: CreateReturnParams) => buildMockReturnFromParams(params),
-      approve: async (id: string) => {
-        const current =
-          getMockReturn(id) ||
-          buildMockReturnFromParams({
-            orderId: 'ord_1000',
-            items: [],
-            reason: 'Manual review',
-            reasonCategory: 'other',
-          });
-        return { ...current, id, status: 'approved', updatedAt: new Date().toISOString() };
-      },
-      reject: async (id: string, reason?: string) => {
-        const current =
-          getMockReturn(id) ||
-          buildMockReturnFromParams({
-            orderId: 'ord_1000',
-            items: [],
-            reason: reason || 'Rejected',
-            reasonCategory: 'other',
-          });
-        return {
-          ...current,
-          id,
-          status: 'rejected',
-          notes: reason,
-          updatedAt: new Date().toISOString(),
-        };
-      },
-      receive: async (id: string) => {
-        const current =
-          getMockReturn(id) ||
-          buildMockReturnFromParams({
-            orderId: 'ord_1000',
-            items: [],
-            reason: 'Received',
-            reasonCategory: 'other',
-          });
-        return { ...current, id, status: 'received', updatedAt: new Date().toISOString() };
-      },
-      processRefund: async (id: string, method?: Return['refundMethod']) => {
-        const current =
-          getMockReturn(id) ||
-          buildMockReturnFromParams({
-            orderId: 'ord_1000',
-            items: [],
-            reason: 'Refunded',
-            reasonCategory: 'other',
-          });
-        return {
-          ...current,
-          id,
-          status: 'refunded',
-          refundMethod: method || 'original',
-          updatedAt: new Date().toISOString(),
-        };
-      },
+      approve: async (id: string) => transitionMockReturn(id, 'approved'),
+      reject: async (id: string, reason: string) =>
+        transitionMockReturn(id, 'rejected', { notes: reason }),
+      cancel: async (id: string) => transitionMockReturn(id, 'cancelled'),
+      addTracking: async (id: string, trackingNumber: string) =>
+        transitionMockReturn(id, 'in_transit', { trackingNumber }),
+      markReceived: async (id: string) => transitionMockReturn(id, 'received'),
+      complete: async (id: string) => transitionMockReturn(id, 'completed'),
       getAnalytics: async () => getMockData().returnAnalytics,
     },
     customers: {
@@ -1178,26 +1483,14 @@ function createMockCommerceEngine(): CommerceEngine {
         return subscriptions;
       },
       get: async (id: string) => getMockSubscription(id),
-      create: async (params: Partial<Subscription>) =>
-        buildMockSubscription(params, nextMockId('sub')),
-      pause: async (id: string) => ({
-        ...(getMockSubscription(id) || buildMockSubscription({}, id)),
-        id,
-        status: 'paused',
-        updatedAt: new Date().toISOString(),
-      }),
-      resume: async (id: string) => ({
-        ...(getMockSubscription(id) || buildMockSubscription({}, id)),
-        id,
-        status: 'active',
-        updatedAt: new Date().toISOString(),
-      }),
-      cancel: async (id: string) => ({
-        ...(getMockSubscription(id) || buildMockSubscription({}, id)),
-        id,
-        status: 'cancelled',
-        updatedAt: new Date().toISOString(),
-      }),
+      subscribe: async (input: { customerId: string; planId: string }) =>
+        buildMockSubscription(
+          { customerId: input.customerId, planId: input.planId, plan: input.planId },
+          nextMockId('sub'),
+        ),
+      pause: async (id: string) => transitionMockSubscription(id, 'paused'),
+      resume: async (id: string) => transitionMockSubscription(id, 'active'),
+      cancel: async (id: string) => transitionMockSubscription(id, 'cancelled'),
       getAnalytics: async () => getMockData().subscriptionAnalytics,
     },
     generalLedger: {
@@ -1332,37 +1625,6 @@ function createMockCommerceEngine(): CommerceEngine {
 // Orders API
 // ============================================================================
 
-export interface Order {
-  id: string;
-  customerId: string;
-  status: 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
-  items: OrderItem[];
-  totalAmount: number;
-  currency: string;
-  shippingAddress?: Address;
-  billingAddress?: Address;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface OrderItem {
-  productId: string;
-  sku: string;
-  name: string;
-  quantity: number;
-  unitPrice: number;
-  totalPrice: number;
-}
-
-export interface Address {
-  line1: string;
-  line2?: string;
-  city: string;
-  state: string;
-  postalCode: string;
-  country: string;
-}
-
 export interface CreateOrderParams {
   customerId: string;
   items: { productId: string; quantity: number }[];
@@ -1386,7 +1648,7 @@ export const ordersApi = {
     return commerce.orders.create(params);
   },
 
-  async updateStatus(orderId: string, status: Order['status']): Promise<Order> {
+  async updateStatus(orderId: string, status: OrderStatusUpdate): Promise<Order> {
     const commerce = await getCommerceEngine();
     return commerce.orders.updateStatus(orderId, status);
   },
@@ -1398,36 +1660,65 @@ export const ordersApi = {
 
   async getAnalytics(params?: { startDate?: string; endDate?: string }): Promise<OrderAnalytics> {
     const commerce = await getCommerceEngine();
-    return commerce.orders.getAnalytics(params);
+    if (typeof commerce.orders.getAnalytics === 'function') {
+      return commerce.orders.getAnalytics(params);
+    }
+    // The binding has no order aggregate; every figure here is derivable
+    // from the order records themselves.
+    return summarizeOrders(await commerce.orders.list());
   },
 };
 
-export interface OrderAnalytics {
-  totalOrders: number;
-  totalRevenue: number;
-  averageOrderValue: number;
-  ordersByStatus: Record<string, number>;
-  ordersByDay: { date: string; count: number; revenue: number }[];
+/** Order analytics computed from the order records (engines without an aggregate). */
+export function summarizeOrders(orders: Order[], now: number = Date.now()): OrderAnalytics {
+  const totalRevenue = roundCurrency(orders.reduce((sum, order) => sum + order.totalAmount, 0));
+  const ordersByStatus = orders.reduce<Record<string, number>>((acc, order) => {
+    acc[order.status] = (acc[order.status] || 0) + 1;
+    return acc;
+  }, {});
+  const ordersByDay = Array.from({ length: 30 }, (_, index) => {
+    const date = toDateKey(new Date(now - (29 - index) * DAY_MS).toISOString());
+    const daily = orders.filter((order) => toDateKey(order.createdAt) === date);
+    return {
+      date,
+      count: daily.length,
+      revenue: roundCurrency(daily.reduce((sum, order) => sum + order.totalAmount, 0)),
+    };
+  });
+  return {
+    totalOrders: orders.length,
+    totalRevenue,
+    averageOrderValue: orders.length ? roundCurrency(totalRevenue / orders.length) : 0,
+    ordersByStatus,
+    ordersByDay,
+  };
 }
 
 // ============================================================================
 // Inventory API
 // ============================================================================
 
-export interface InventoryItem {
-  id: string;
+function toInventoryItem(stock: {
   sku: string;
-  productId: string;
-  productName: string;
-  quantity: number;
-  reservedQuantity: number;
-  availableQuantity: number;
-  reorderPoint: number;
-  reorderQuantity: number;
-  warehouseId?: string;
-  location?: string;
-  lastRestocked?: string;
-  updatedAt: string;
+  name: string;
+  onHand: number;
+  allocated: number;
+  available: number;
+  reorderPoint?: number;
+}): InventoryItem {
+  return {
+    id: stock.sku,
+    sku: stock.sku,
+    productId: '',
+    productName: stock.name,
+    quantity: stock.onHand,
+    reservedQuantity: stock.allocated,
+    availableQuantity: stock.available,
+    // Not reported by the engine's stock lookup; 0 means "no reorder rule".
+    reorderPoint: stock.reorderPoint ?? 0,
+    reorderQuantity: 0,
+    updatedAt: '',
+  };
 }
 
 export interface InventoryAdjustment {
@@ -1442,14 +1733,41 @@ export interface InventoryAdjustment {
 }
 
 export const inventoryApi = {
+  /** Whether this engine can list inventory (the native binding cannot). */
+  async supportsListing(): Promise<boolean> {
+    const commerce = await getCommerceEngine();
+    return typeof commerce.inventory.list === 'function';
+  },
+
   async list(params?: { warehouseId?: string; lowStock?: boolean }): Promise<InventoryItem[]> {
     const commerce = await getCommerceEngine();
+    if (typeof commerce.inventory.list !== 'function') {
+      throw new EngineCapabilityError(
+        'inventory.list',
+        'The embedded engine has no inventory listing; look stock up by SKU instead',
+      );
+    }
     return commerce.inventory.list(params);
   },
 
   async get(sku: string): Promise<InventoryItem | null> {
     const commerce = await getCommerceEngine();
-    return commerce.inventory.get(sku);
+    if (typeof commerce.inventory.get === 'function') {
+      return commerce.inventory.get(sku);
+    }
+    if (typeof commerce.inventory.getStock === 'function') {
+      const stock = await commerce.inventory.getStock(sku);
+      return stock
+        ? toInventoryItem({
+            sku: stock.sku,
+            name: stock.name,
+            onHand: Number(stock.totalOnHand),
+            allocated: Number(stock.totalAllocated),
+            available: Number(stock.totalAvailable),
+          })
+        : null;
+    }
+    throw new EngineCapabilityError('inventory.get', 'This engine cannot look up stock by SKU');
   },
 
   async adjust(sku: string, quantity: number, reason?: string): Promise<InventoryAdjustment> {
@@ -1457,42 +1775,91 @@ export const inventoryApi = {
     return commerce.inventory.adjust(sku, quantity, reason);
   },
 
-  async reserve(sku: string, quantity: number, orderId: string): Promise<InventoryItem> {
+  /** Reserve stock for an order (the binding records the order as the reservation's source). */
+  async reserve(sku: string, quantity: number, orderId: string): Promise<unknown> {
     const commerce = await getCommerceEngine();
-    return commerce.inventory.reserve(sku, quantity, orderId);
+    return commerce.inventory.reserve(sku, quantity, 'order', orderId);
   },
 
   async release(sku: string, quantity: number, orderId: string): Promise<InventoryItem> {
     const commerce = await getCommerceEngine();
+    if (typeof commerce.inventory.release !== 'function') {
+      throw new EngineCapabilityError(
+        'inventory.release',
+        'The embedded engine releases stock by reservation id, not by SKU and order',
+      );
+    }
     return commerce.inventory.release(sku, quantity, orderId);
   },
 
   async getLowStock(threshold?: number): Promise<InventoryItem[]> {
     const commerce = await getCommerceEngine();
-    return commerce.inventory.getLowStock(threshold);
+    if (typeof commerce.inventory.getLowStock === 'function') {
+      return commerce.inventory.getLowStock(threshold);
+    }
+    if (typeof commerce.analytics.lowStockItems === 'function') {
+      return (await commerce.analytics.lowStockItems(threshold)).map(toInventoryItem);
+    }
+    throw new EngineCapabilityError('inventory.getLowStock', 'This engine reports no low stock');
   },
 
   async getAnalytics(): Promise<InventoryAnalytics> {
     const commerce = await getCommerceEngine();
-    return commerce.inventory.getAnalytics();
+    if (typeof commerce.inventory.getAnalytics === 'function') {
+      return commerce.inventory.getAnalytics();
+    }
+    if (typeof commerce.analytics.inventoryHealth === 'function') {
+      const health = await commerce.analytics.inventoryHealth();
+      return {
+        totalSKUs: health.totalSkus,
+        // Not part of the engine's health report.
+        totalUnits: 0,
+        totalValue: Number(health.totalValueExact ?? health.totalValue),
+        lowStockItems: health.lowStockSkus,
+        outOfStockItems: health.outOfStockSkus,
+        turnoverRate: 0,
+        topMovingItems: [],
+        slowMovingItems: [],
+      };
+    }
+    throw new EngineCapabilityError(
+      'inventory.getAnalytics',
+      'This engine reports no inventory health',
+    );
   },
 
   async forecast(sku: string, days: number): Promise<DemandForecast> {
     const commerce = await getCommerceEngine();
-    return commerce.inventory.forecast(sku, days);
+    if (typeof commerce.inventory.forecast === 'function') {
+      return commerce.inventory.forecast(sku, days);
+    }
+    if (typeof commerce.analytics.demandForecast === 'function') {
+      const [forecast] = await commerce.analytics.demandForecast([sku], days);
+      if (!forecast) {
+        throw new EngineCapabilityError(
+          'inventory.forecast',
+          `The engine has no forecast for ${sku}`,
+        );
+      }
+      return {
+        sku: forecast.sku,
+        currentStock: forecast.currentStock,
+        // The engine forecasts an average daily rate; spread it over the window.
+        forecastedDemand: Array.from(
+          { length: Math.max(days, 1) },
+          () => forecast.averageDailyDemand,
+        ),
+        recommendedReorder: forecast.recommendedReorderQty ?? 0,
+        stockoutDate:
+          forecast.daysUntilStockout === undefined
+            ? undefined
+            : new Date(Date.now() + forecast.daysUntilStockout * DAY_MS).toISOString(),
+        confidence: forecast.confidence,
+      };
+    }
+    throw new EngineCapabilityError('inventory.forecast', 'This engine has no demand forecast');
   },
 };
-
-export interface InventoryAnalytics {
-  totalSKUs: number;
-  totalUnits: number;
-  totalValue: number;
-  lowStockItems: number;
-  outOfStockItems: number;
-  turnoverRate: number;
-  topMovingItems: { sku: string; name: string; velocity: number }[];
-  slowMovingItems: { sku: string; name: string; daysSinceLastSale: number }[];
-}
 
 export interface DemandForecast {
   sku: string;
@@ -1507,31 +1874,6 @@ export interface DemandForecast {
 // Returns API
 // ============================================================================
 
-export interface Return {
-  id: string;
-  orderId: string;
-  customerId: string;
-  status: 'requested' | 'approved' | 'received' | 'inspected' | 'refunded' | 'rejected' | 'closed';
-  items: ReturnItem[];
-  reason: string;
-  reasonCategory: 'defective' | 'wrong_item' | 'not_as_described' | 'changed_mind' | 'other';
-  refundAmount?: number;
-  refundMethod?: 'original' | 'store_credit' | 'exchange';
-  trackingNumber?: string;
-  notes?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ReturnItem {
-  productId: string;
-  sku: string;
-  name: string;
-  quantity: number;
-  condition?: 'new' | 'opened' | 'damaged' | 'used';
-  returnReason?: string;
-}
-
 export interface CreateReturnParams {
   orderId: string;
   items: { productId: string; quantity: number; reason?: string }[];
@@ -1539,81 +1881,128 @@ export interface CreateReturnParams {
   reasonCategory: Return['reasonCategory'];
 }
 
+function isReturnReason(value: unknown): value is ReturnReason {
+  return typeof value === 'string' && (RETURN_REASONS as readonly string[]).includes(value);
+}
+
+/**
+ * The native `ReturnOutput` is a header — id, orderId, status, the reason
+ * *code* and createdAt — while the admin's `Return` also carries the customer,
+ * line items and a free-text reason. Fill those so list views never read
+ * `undefined.length`; mock records already carry every field and pass through.
+ */
+export function toAdminReturn(record: Return): Return {
+  const partial = record as Partial<Return> & Pick<Return, 'id' | 'orderId' | 'status'>;
+  const reasonCategory = isReturnReason(partial.reasonCategory)
+    ? partial.reasonCategory
+    : isReturnReason(partial.reason)
+      ? partial.reason
+      : 'other';
+  const createdAt = partial.createdAt ?? '';
+  return {
+    ...partial,
+    customerId: partial.customerId ?? '',
+    items: partial.items ?? [],
+    reason: partial.reason ?? '',
+    reasonCategory,
+    createdAt,
+    updatedAt: partial.updatedAt ?? createdAt,
+  };
+}
+
+/**
+ * Return analytics computed from the return records themselves, for engines
+ * without an aggregate. Rate and refund total come from the engine's
+ * `analytics.returnMetrics` when supplied; figures nothing reports (processing
+ * time, top products) are left empty rather than invented.
+ */
+export function summarizeReturns(
+  returns: Return[],
+  metrics?: NativeReturnMetrics,
+): ReturnAnalytics {
+  const tally = (key: (entry: Return) => string) =>
+    returns.reduce<Record<string, number>>((acc, entry) => {
+      acc[key(entry)] = (acc[key(entry)] || 0) + 1;
+      return acc;
+    }, {});
+  const refundTotal = metrics
+    ? Number(metrics.totalRefundedExact ?? metrics.totalRefunded)
+    : roundCurrency(returns.reduce((sum, entry) => sum + (entry.refundAmount || 0), 0));
+  return {
+    totalReturns: returns.length,
+    returnRate: metrics ? metrics.returnRatePercent / 100 : 0,
+    refundTotal,
+    returnsByReason: tally((entry) => entry.reasonCategory),
+    returnsByStatus: tally((entry) => entry.status),
+    averageProcessingTime: 0,
+    topReturnedProducts: [],
+  };
+}
+
 export const returnsApi = {
   async list(params?: { status?: string; customerId?: string }): Promise<Return[]> {
     const commerce = await getCommerceEngine();
-    return commerce.returns.list(params);
+    return (await commerce.returns.list(params)).map(toAdminReturn);
   },
 
   async get(returnId: string): Promise<Return | null> {
     const commerce = await getCommerceEngine();
-    return commerce.returns.get(returnId);
+    const record = await commerce.returns.get(returnId);
+    return record ? toAdminReturn(record) : null;
   },
 
   async create(params: CreateReturnParams): Promise<Return> {
     const commerce = await getCommerceEngine();
-    return commerce.returns.create(params);
+    return toAdminReturn(await commerce.returns.create(params));
   },
 
   async approve(returnId: string): Promise<Return> {
     const commerce = await getCommerceEngine();
-    return commerce.returns.approve(returnId);
+    return toAdminReturn(await commerce.returns.approve(returnId));
   },
 
   async reject(returnId: string, reason: string): Promise<Return> {
     const commerce = await getCommerceEngine();
-    return commerce.returns.reject(returnId, reason);
+    return toAdminReturn(await commerce.returns.reject(returnId, reason));
   },
 
-  async receive(
-    returnId: string,
-    items: { productId: string; condition: string }[],
-  ): Promise<Return> {
+  async cancel(returnId: string): Promise<Return> {
     const commerce = await getCommerceEngine();
-    return commerce.returns.receive(returnId, items);
+    return toAdminReturn(await commerce.returns.cancel(returnId));
   },
 
-  async processRefund(returnId: string, method: Return['refundMethod']): Promise<Return> {
+  async addTracking(returnId: string, trackingNumber: string): Promise<Return> {
     const commerce = await getCommerceEngine();
-    return commerce.returns.processRefund(returnId, method);
+    return toAdminReturn(await commerce.returns.addTracking(returnId, trackingNumber));
+  },
+
+  async markReceived(returnId: string): Promise<Return> {
+    const commerce = await getCommerceEngine();
+    return toAdminReturn(await commerce.returns.markReceived(returnId));
+  },
+
+  /** Completes the return; the engine settles its refund in the same step. */
+  async complete(returnId: string): Promise<Return> {
+    const commerce = await getCommerceEngine();
+    return toAdminReturn(await commerce.returns.complete(returnId));
   },
 
   async getAnalytics(params?: { startDate?: string; endDate?: string }): Promise<ReturnAnalytics> {
     const commerce = await getCommerceEngine();
-    return commerce.returns.getAnalytics(params);
+    if (typeof commerce.returns.getAnalytics === 'function') {
+      return commerce.returns.getAnalytics(params);
+    }
+    const metrics =
+      typeof commerce.analytics?.returnMetrics === 'function'
+        ? await commerce.analytics.returnMetrics()
+        : undefined;
+    return summarizeReturns(await returnsApi.list(), metrics);
   },
 };
-
-export interface ReturnAnalytics {
-  totalReturns: number;
-  returnRate: number;
-  refundTotal: number;
-  returnsByReason: Record<string, number>;
-  returnsByStatus: Record<string, number>;
-  averageProcessingTime: number;
-  topReturnedProducts: { productId: string; name: string; count: number; rate: number }[];
-}
 
 // ============================================================================
 // Customers API
 // ============================================================================
-
-export interface Customer {
-  id: string;
-  email: string;
-  firstName?: string;
-  lastName?: string;
-  phone?: string;
-  defaultAddress?: Address;
-  addresses: Address[];
-  tags: string[];
-  totalOrders: number;
-  totalSpent: number;
-  averageOrderValue: number;
-  lastOrderDate?: string;
-  createdAt: string;
-  updatedAt: string;
-}
 
 export interface CustomerSegment {
   id: string;
@@ -1651,21 +2040,43 @@ export const customersApi = {
 
   async getOrders(customerId: string): Promise<Order[]> {
     const commerce = await getCommerceEngine();
-    return commerce.customers.getOrders(customerId);
+    if (typeof commerce.customers.getOrders === 'function') {
+      return commerce.customers.getOrders(customerId);
+    }
+    // The binding filters orders by customer instead.
+    return commerce.orders.list({ customerId });
   },
 
   async getHealthScore(customerId: string): Promise<CustomerHealthScore> {
     const commerce = await getCommerceEngine();
+    if (typeof commerce.customers.getHealthScore !== 'function') {
+      throw new EngineCapabilityError(
+        'customers.getHealthScore',
+        'The embedded engine does not score customer health',
+      );
+    }
     return commerce.customers.getHealthScore(customerId);
   },
 
   async getSegments(): Promise<CustomerSegment[]> {
     const commerce = await getCommerceEngine();
+    if (typeof commerce.customers.getSegments !== 'function') {
+      throw new EngineCapabilityError(
+        'customers.getSegments',
+        'The embedded engine keeps segments as rules, not as a customer breakdown',
+      );
+    }
     return commerce.customers.getSegments();
   },
 
   async getAnalytics(): Promise<CustomerAnalytics> {
     const commerce = await getCommerceEngine();
+    if (typeof commerce.customers.getAnalytics !== 'function') {
+      throw new EngineCapabilityError(
+        'customers.getAnalytics',
+        'The embedded engine has no customer health and retention analytics',
+      );
+    }
     return commerce.customers.getAnalytics();
   },
 };
@@ -1685,48 +2096,9 @@ export interface CustomerHealthScore {
   churnRisk: number;
 }
 
-export interface CustomerAnalytics {
-  totalCustomers: number;
-  newCustomersThisMonth: number;
-  activeCustomers: number;
-  averageLifetimeValue: number;
-  averageOrdersPerCustomer: number;
-  customersBySegment: Record<string, number>;
-  acquisitionTrend: { date: string; count: number }[];
-  retentionRate: number;
-  churnRate: number;
-}
-
 // ============================================================================
 // Products API
 // ============================================================================
-
-export interface Product {
-  id: string;
-  sku: string;
-  name: string;
-  description?: string;
-  price: number;
-  compareAtPrice?: number;
-  costPrice?: number;
-  currency: string;
-  category?: string;
-  tags: string[];
-  status: 'active' | 'draft' | 'archived';
-  images: string[];
-  variants: ProductVariant[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ProductVariant {
-  id: string;
-  sku: string;
-  name: string;
-  price: number;
-  options: Record<string, string>;
-  inventoryQuantity: number;
-}
 
 export const productsApi = {
   async list(params?: { status?: string; category?: string }): Promise<Product[]> {
@@ -1759,49 +2131,32 @@ export const productsApi = {
 // Analytics API
 // ============================================================================
 
-export interface DashboardMetrics {
-  gmvToday: number;
-  gmvChange: number;
-  ordersToday: number;
-  ordersChange: number;
-  averageOrderValue: number;
-  aovChange: number;
-  conversionRate: number;
-  conversionChange: number;
-  activeCustomers: number;
-  newCustomers: number;
-  returnRate: number;
-  inventoryHealth: number;
-}
-
-export interface HourlyActivity {
-  hour: string;
-  orders: number;
-  revenue: number;
-}
-
-export interface SystemHealth {
-  databaseLatency: number;
-  errorRate: number;
-  activeConnections: number;
-  queueDepth: number;
-  processingSpeed: number;
+/** Resolve a mock-only dashboard aggregate, or explain that the engine lacks it. */
+async function dashboardAggregate<K extends keyof CommerceEngine['analytics']>(
+  name: K,
+): Promise<NonNullable<CommerceEngine['analytics'][K]>> {
+  const commerce = await getCommerceEngine();
+  const method = commerce.analytics[name];
+  if (typeof method !== 'function') {
+    throw new EngineCapabilityError(
+      `analytics.${String(name)}`,
+      'The embedded engine has no equivalent dashboard aggregate',
+    );
+  }
+  return method.bind(commerce.analytics) as NonNullable<CommerceEngine['analytics'][K]>;
 }
 
 export const analyticsApi = {
   async getDashboardMetrics(): Promise<DashboardMetrics> {
-    const commerce = await getCommerceEngine();
-    return commerce.analytics.getDashboardMetrics();
+    return (await dashboardAggregate('getDashboardMetrics'))();
   },
 
   async getHourlyActivity(date?: string): Promise<HourlyActivity[]> {
-    const commerce = await getCommerceEngine();
-    return commerce.analytics.getHourlyActivity(date);
+    return (await dashboardAggregate('getHourlyActivity'))(date);
   },
 
   async getSystemHealth(): Promise<SystemHealth> {
-    const commerce = await getCommerceEngine();
-    return commerce.analytics.getSystemHealth();
+    return (await dashboardAggregate('getSystemHealth'))();
   },
 
   async getRevenueByPeriod(params: {
@@ -1809,20 +2164,17 @@ export const analyticsApi = {
     endDate: string;
     groupBy: 'day' | 'week' | 'month';
   }): Promise<{ period: string; revenue: number; orders: number }[]> {
-    const commerce = await getCommerceEngine();
-    return commerce.analytics.getRevenueByPeriod(params);
+    return (await dashboardAggregate('getRevenueByPeriod'))(params);
   },
 
   async getTopProducts(
     limit?: number,
   ): Promise<{ productId: string; name: string; revenue: number; units: number }[]> {
-    const commerce = await getCommerceEngine();
-    return commerce.analytics.getTopProducts(limit);
+    return (await dashboardAggregate('getTopProducts'))(limit);
   },
 
   async getConversionFunnel(): Promise<{ stage: string; count: number; rate: number }[]> {
-    const commerce = await getCommerceEngine();
-    return commerce.analytics.getConversionFunnel();
+    return (await dashboardAggregate('getConversionFunnel'))();
   },
 };
 
@@ -1830,71 +2182,141 @@ export const analyticsApi = {
 // Subscriptions API
 // ============================================================================
 
-export interface Subscription {
-  id: string;
-  customerId: string;
-  status: 'active' | 'paused' | 'cancelled' | 'expired';
-  plan: string;
-  planId?: string;
-  frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'annually';
-  nextBillingDate: string;
-  currentPeriodEnd?: string;
-  items: { productId: string; quantity: number }[];
-  quantity: number;
-  totalAmount: number;
-  createdAt: string;
-  updatedAt: string;
+/** The fields of the binding's `SubscriptionOutput` the admin maps onto `Subscription`. */
+interface NativeSubscriptionFields {
+  planName?: string;
+  billingInterval?: string;
+  price?: number;
+}
+
+/**
+ * The native `SubscriptionOutput` names its plan, price and interval
+ * `planName`, `price` and `billingInterval` and has no line items; map those
+ * onto the admin's `Subscription` so the subscription views read real values
+ * instead of `undefined`. Mock records already match and pass through.
+ */
+export function toAdminSubscription(record: Subscription): Subscription {
+  const partial = record as Partial<Subscription> &
+    NativeSubscriptionFields &
+    Pick<Subscription, 'id' | 'customerId' | 'status'>;
+  const createdAt = partial.createdAt ?? '';
+  return {
+    ...partial,
+    plan: partial.plan ?? partial.planName ?? partial.planId ?? '',
+    frequency: partial.frequency ?? (partial.billingInterval as Subscription['frequency']),
+    nextBillingDate: partial.nextBillingDate ?? '',
+    items: partial.items ?? [],
+    quantity: partial.quantity ?? 1,
+    totalAmount: partial.totalAmount ?? partial.price ?? 0,
+    createdAt,
+    updatedAt: partial.updatedAt ?? createdAt,
+  };
+}
+
+/** Months per billing period, for both the admin's and the engine's interval names. */
+const MONTHS_PER_INTERVAL: Record<string, number> = {
+  weekly: 12 / 52,
+  biweekly: 12 / 26,
+  'bi-weekly': 12 / 26,
+  monthly: 1,
+  'bi-monthly': 2,
+  quarterly: 3,
+  'semi-annual': 6,
+  annually: 12,
+  yearly: 12,
+};
+
+/**
+ * Subscription analytics computed from the subscription records, for
+ * engines without an aggregate. MRR covers active subscriptions whose
+ * interval is known; figures nothing reports (growth, lifetime) are left at
+ * zero rather than invented.
+ */
+export function summarizeSubscriptions(subscriptions: Subscription[]): SubscriptionAnalytics {
+  const active = subscriptions.filter((subscription) => subscription.status === 'active');
+  const mrr = roundCurrency(
+    active.reduce((sum, subscription) => {
+      const months = MONTHS_PER_INTERVAL[subscription.frequency];
+      return months ? sum + subscription.totalAmount / months : sum;
+    }, 0),
+  );
+  const churned = subscriptions.filter(
+    (subscription) => subscription.status === 'cancelled' || subscription.status === 'expired',
+  ).length;
+  const tally = (key: (subscription: Subscription) => string) =>
+    subscriptions.reduce<Record<string, number>>((acc, subscription) => {
+      const k = key(subscription) || 'unknown';
+      acc[k] = (acc[k] || 0) + 1;
+      return acc;
+    }, {});
+  return {
+    totalSubscriptions: subscriptions.length,
+    activeSubscriptions: active.length,
+    mrr,
+    arr: roundCurrency(mrr * 12),
+    churnRate: subscriptions.length ? Number((churned / subscriptions.length).toFixed(3)) : 0,
+    arpu: active.length ? roundCurrency(mrr / active.length) : 0,
+    averageLifetime: 0,
+    subscriptionsByPlan: tally((subscription) => subscription.plan),
+    subscriptionsByFrequency: tally((subscription) => subscription.frequency),
+  };
 }
 
 export const subscriptionsApi = {
   async list(params?: { status?: string; customerId?: string }): Promise<Subscription[]> {
     const commerce = await getCommerceEngine();
-    return commerce.subscriptions.list(params);
+    return (await commerce.subscriptions.list(params)).map(toAdminSubscription);
   },
 
   async get(subscriptionId: string): Promise<Subscription | null> {
     const commerce = await getCommerceEngine();
-    return commerce.subscriptions.get(subscriptionId);
+    const record = await commerce.subscriptions.get(subscriptionId);
+    return record ? toAdminSubscription(record) : null;
   },
 
+  /**
+   * Start a subscription. The engine's `subscribe` needs the customer and the
+   * plan; everything else (price, interval, trial) comes from the plan.
+   */
   async create(params: Partial<Subscription>): Promise<Subscription> {
+    if (!params.customerId || !params.planId) {
+      throw new Error('A subscription needs a customerId and a planId');
+    }
     const commerce = await getCommerceEngine();
-    return commerce.subscriptions.create(params);
+    return toAdminSubscription(
+      await commerce.subscriptions.subscribe({
+        customerId: params.customerId,
+        planId: params.planId,
+      }),
+    );
   },
 
   async pause(subscriptionId: string): Promise<Subscription> {
     const commerce = await getCommerceEngine();
-    return commerce.subscriptions.pause(subscriptionId);
+    return toAdminSubscription(await commerce.subscriptions.pause(subscriptionId));
   },
 
   async resume(subscriptionId: string): Promise<Subscription> {
     const commerce = await getCommerceEngine();
-    return commerce.subscriptions.resume(subscriptionId);
+    return toAdminSubscription(await commerce.subscriptions.resume(subscriptionId));
   },
 
   async cancel(subscriptionId: string, reason?: string): Promise<Subscription> {
     const commerce = await getCommerceEngine();
-    return commerce.subscriptions.cancel(subscriptionId, reason);
+    // The binding takes `CancelSubscriptionInput`, not a bare reason string.
+    return toAdminSubscription(
+      await commerce.subscriptions.cancel(subscriptionId, reason ? { reason } : undefined),
+    );
   },
 
   async getAnalytics(): Promise<SubscriptionAnalytics> {
     const commerce = await getCommerceEngine();
-    return commerce.subscriptions.getAnalytics();
+    if (typeof commerce.subscriptions.getAnalytics === 'function') {
+      return commerce.subscriptions.getAnalytics();
+    }
+    return summarizeSubscriptions(await subscriptionsApi.list());
   },
 };
-
-export interface SubscriptionAnalytics {
-  totalSubscriptions: number;
-  activeSubscriptions: number;
-  mrr: number;
-  mrrGrowth?: number;
-  arr: number;
-  churnRate: number;
-  arpu?: number;
-  averageLifetime: number;
-  subscriptionsByPlan: Record<string, number>;
-  subscriptionsByFrequency: Record<string, number>;
-}
 
 // ============================================================================
 // Finance API (General Ledger + Accounts Payable)
@@ -1933,9 +2355,10 @@ export interface GlAccount {
   id: string;
   accountNumber: string;
   name: string;
+  /** asset, liability, equity, revenue, expense (normalised from the binding's `Debug` form) */
   accountType: string;
   balance: number;
-  status: string;
+  status: GlAccountStatus;
   description?: string;
 }
 
@@ -1944,7 +2367,7 @@ export interface JournalEntry {
   entryNumber: string;
   entryDate: string;
   description: string;
-  status: string;
+  status: JournalEntryStatus;
   createdAt: string;
 }
 
@@ -2003,7 +2426,7 @@ export interface Bill {
   billNumber: string;
   supplierId: string;
   currency?: string;
-  status: string;
+  status: BillStatus;
   totalAmount: string | number;
   amountPaid: string | number;
   amountDue: string | number;
@@ -2036,7 +2459,7 @@ export interface Invoice {
   currency?: string;
   balanceDue?: string;
   orderId?: string;
-  status: string;
+  status: InvoiceStatus;
   subtotal: string | number;
   taxAmount: string | number;
   total: string | number;
@@ -2246,16 +2669,34 @@ function buildMockFinanceData(): MockFinanceData {
     ['5000', 'Cost of Goods Sold', 'expense', 118_200.2],
   ];
 
-  const glAccounts = accountSpecs.map(([accountNumber, name, accountType, balance]) => ({
-    id: `gl_${accountNumber}`,
-    accountNumber,
-    name,
-    accountType,
-    balance,
-    status: 'active',
-    description: `${name} account`,
-  }));
+  const glAccounts = accountSpecs.map(
+    ([accountNumber, name, accountType, balance]) =>
+      ({
+        id: `gl_${accountNumber}`,
+        accountNumber,
+        name,
+        accountType,
+        balance,
+        status: 'active',
+        description: `${name} account`,
+      }) satisfies GlAccount,
+  );
 
+  // The engine's journal entry vocabulary (`GlJournalEntryStatus`).
+  const journalStatuses: JournalEntryStatus[] = [
+    'draft',
+    'posted',
+    'posted',
+    'pending',
+    'posted',
+    'posted',
+    'reversed',
+    'posted',
+    'voided',
+    'posted',
+    'posted',
+    'posted',
+  ];
   const journalEntries = Array.from({ length: 12 }, (_, index) => {
     const createdAt = formatMockDate(-(index * 2) - 1, index % 8);
     return {
@@ -2268,9 +2709,9 @@ function buildMockFinanceData(): MockFinanceData {
           : index % 3 === 1
             ? 'Inventory receipt accrual'
             : 'Supplier bill accrual',
-      status: index % 5 === 0 ? 'draft' : 'posted',
+      status: journalStatuses[index],
       createdAt,
-    };
+    } satisfies JournalEntry;
   });
 
   const glPeriods: GlPeriod[] = [
@@ -2304,11 +2745,27 @@ function buildMockFinanceData(): MockFinanceData {
     },
   ];
 
-  const billStatuses = ['open', 'approved', 'paid', 'overdue', 'open', 'approved'];
+  // The engine's bill vocabulary (`BillStatus`, normalised from its `Debug` render).
+  const billStatuses: BillStatus[] = [
+    'pending',
+    'approved',
+    'paid',
+    'overdue',
+    'draft',
+    'partially_paid',
+    'approved',
+    'disputed',
+    'cancelled',
+  ];
   const bills = Array.from({ length: 18 }, (_, index) => {
     const totalAmount = roundCurrency(320 + deterministicNumber(index + 1601, 0, 4200));
     const status = billStatuses[index % billStatuses.length];
-    const amountPaid = status === 'paid' ? totalAmount : 0;
+    const amountPaid =
+      status === 'paid'
+        ? totalAmount
+        : status === 'partially_paid'
+          ? roundCurrency(totalAmount * 0.4)
+          : 0;
     const createdAt = formatMockDate(-(index * 4) - 2, index % 9);
     return {
       id: `bill_${3000 + index}`,
@@ -2323,7 +2780,10 @@ function buildMockFinanceData(): MockFinanceData {
     } satisfies Bill;
   });
 
-  const openBills = bills.filter((bill) => bill.amountDue > 0);
+  // Same scope as the engine's AP aging: everything but paid and cancelled.
+  const openBills = bills.filter(
+    (bill) => !statusIn(AP_AGING_EXCLUDED_BILL_STATUSES, bill.status) && bill.amountDue > 0,
+  );
   const bucketTotal = (predicate: (index: number) => boolean) =>
     roundCurrency(
       openBills
@@ -2339,7 +2799,16 @@ function buildMockFinanceData(): MockFinanceData {
     total: roundCurrency(openBills.reduce((sum, bill) => sum + bill.amountDue, 0)),
   };
 
-  const invoiceStatuses = ['sent', 'paid', 'overdue', 'sent', 'partially_paid', 'sent'];
+  const invoiceStatuses: InvoiceStatus[] = [
+    'sent',
+    'paid',
+    'overdue',
+    'viewed',
+    'partially_paid',
+    'disputed',
+    'draft',
+    'sent',
+  ];
   const invoices = Array.from({ length: 24 }, (_, index) => {
     const subtotal = roundCurrency(480 + deterministicNumber(index + 1701, 0, 5200));
     const taxAmount = roundCurrency(subtotal * 0.08);
@@ -2363,8 +2832,10 @@ function buildMockFinanceData(): MockFinanceData {
     } satisfies Invoice;
   });
 
+  // Same scope as the engine's AR aging: issued, open invoices only.
   const openInvoices = invoices.filter(
-    (invoice) => invoice.status !== 'paid' && invoice.total - invoice.amountPaid > 0,
+    (invoice) =>
+      statusIn(AR_OPEN_INVOICE_STATUSES, invoice.status) && invoice.total - invoice.amountPaid > 0,
   );
   const arBucketTotal = (predicate: (daysPastDue: number) => boolean) =>
     roundCurrency(
@@ -2746,6 +3217,8 @@ export const ediDocumentsApi = {
 //
 // Types mirror the napi binding outputs in bindings/node/index.d.ts. Amounts
 // are passed through untouched; formatting is display-only in components.
+// Status (and other enum) fields carry the engine's snake_case vocabulary:
+// `adaptNativeEngine` normalises the binding's `Debug`-cased renders.
 // ============================================================================
 
 /** A purchase order header (`commerce.purchaseOrders.list`). */
@@ -2753,7 +3226,7 @@ export interface PurchaseOrder {
   id: string;
   poNumber: string;
   supplierId: string;
-  status: string;
+  status: PurchaseOrderStatus;
   subtotal: number;
   total: number;
   createdAt: string;
@@ -2776,6 +3249,7 @@ export interface WarehouseRecord {
   id: number;
   code: string;
   name: string;
+  /** distribution, manufacturing, retail, third_party, consignment, returns */
   warehouseType: string;
   isActive: boolean;
   timezone?: string;
@@ -2787,6 +3261,7 @@ export interface WarehouseLocation {
   id: number;
   warehouseId: number;
   code: string;
+  /** bulk, pick, staging, receiving, shipping, quarantine, returns, production, packing, cross_dock */
   locationType: string;
   zone?: string;
   aisle?: string;
@@ -2837,7 +3312,7 @@ export interface WorkOrder {
   workOrderNumber: string;
   productId: string;
   bomId?: string;
-  status: string;
+  status: WorkOrderStatus;
   priority: string;
   quantityToBuild: number;
   quantityCompleted: number;
@@ -2850,10 +3325,11 @@ export interface WorkOrder {
 export interface QualityInspection {
   id: string;
   inspectionNumber: string;
+  /** incoming, receiving, in_process, final, random, return */
   inspectionType: string;
   referenceType: string;
   referenceId: string;
-  status: string;
+  status: InspectionStatus;
   createdAt: string;
   updatedAt: string;
 }
@@ -2862,11 +3338,12 @@ export interface QualityInspection {
 export interface NonConformanceReport {
   id: string;
   ncrNumber: string;
+  /** inspection, customer_complaint, internal_audit, supplier_issue, production_defect, shipping_damage */
   source: string;
-  severity: string;
+  severity: NcrSeverity;
   sku: string;
   quantityAffected: number;
-  status: string;
+  status: NcrStatus;
   description: string;
   createdAt: string;
 }
@@ -2877,8 +3354,7 @@ export interface Wave {
   waveNumber: string;
   warehouseId: number;
   orderCount: number;
-  /** created, released, picking, completed, cancelled */
-  status: string;
+  status: WaveStatus;
   createdAt: string;
 }
 
@@ -2890,8 +3366,7 @@ export interface PickTask {
   sku: string;
   quantityRequested: number;
   quantityPicked: number;
-  /** pending, assigned, in_progress, picked, cancelled */
-  status: string;
+  status: PickTaskStatus;
   sourceLocationId: number;
   assignedTo?: string;
 }
@@ -2904,8 +3379,7 @@ export interface Lot {
   quantityProduced: number;
   quantityAvailable: number;
   quantityReserved: number;
-  /** active, quarantined, expired, consumed */
-  status: string;
+  status: LotStatus;
   productionDate?: string;
   expirationDate?: string;
   createdAt: string;
@@ -2917,8 +3391,7 @@ export interface SerialNumber {
   serial: string;
   sku: string;
   lotId?: string;
-  /** available, allocated, sold, quarantined */
-  status: string;
+  status: SerialStatus;
   ownerId?: string;
   locationId?: number;
   createdAt: string;
@@ -2928,10 +3401,10 @@ export interface SerialNumber {
 export interface Receipt {
   id: string;
   receiptNumber: string;
+  /** purchase_order, transfer, return, adjustment, production, other */
   receiptType: string;
   warehouseId: number;
-  /** pending, receiving, completed, cancelled */
-  status: string;
+  status: ReceiptStatus;
   carrier?: string;
   trackingNumber?: string;
   createdAt: string;
@@ -2976,7 +3449,18 @@ function buildMockOperationsData(): MockOperationsData {
       }) satisfies Supplier,
   );
 
-  const poStatuses = ['draft', 'submitted', 'approved', 'sent', 'received', 'cancelled'];
+  const poStatuses: PurchaseOrderStatus[] = [
+    'draft',
+    'pending_approval',
+    'approved',
+    'sent',
+    'acknowledged',
+    'partially_received',
+    'received',
+    'completed',
+    'on_hold',
+    'cancelled',
+  ];
   const purchaseOrders = Array.from({ length: 20 }, (_, index) => {
     const subtotal = roundCurrency(750 + deterministicNumber(index + 2101, 0, 9400));
     const createdAt = formatMockDate(-(index * 3) - 1, index % 11);
@@ -2994,7 +3478,7 @@ function buildMockOperationsData(): MockOperationsData {
 
   const warehouseSpecs: [string, string, string][] = [
     ['WH-MAIN', 'Reno Distribution Center', 'distribution'],
-    ['WH-EAST', 'Columbus Fulfillment', 'fulfillment'],
+    ['WH-EAST', 'Columbus Fulfillment', 'third_party'],
     ['WH-MFG', 'Fremont Manufacturing', 'manufacturing'],
   ];
   const warehouses = warehouseSpecs.map(
@@ -3010,7 +3494,7 @@ function buildMockOperationsData(): MockOperationsData {
       }) satisfies WarehouseRecord,
   );
 
-  const locationTypes = ['bin', 'bulk', 'staging', 'receiving'];
+  const locationTypes = ['pick', 'bulk', 'staging', 'receiving'];
   const locations: WarehouseLocation[] = [];
   let locationId = 0;
   for (const warehouse of warehouses) {
@@ -3070,7 +3554,14 @@ function buildMockOperationsData(): MockOperationsData {
     } satisfies CycleCount;
   });
 
-  const workOrderStatuses = ['draft', 'released', 'in_progress', 'completed', 'cancelled'];
+  const workOrderStatuses: WorkOrderStatus[] = [
+    'planned',
+    'in_progress',
+    'completed',
+    'partially_completed',
+    'on_hold',
+    'cancelled',
+  ];
   const priorities = ['low', 'normal', 'high', 'urgent'];
   const workOrders = Array.from({ length: 16 }, (_, index) => {
     const status = workOrderStatuses[index % workOrderStatuses.length];
@@ -3078,7 +3569,7 @@ function buildMockOperationsData(): MockOperationsData {
     const quantityCompleted =
       status === 'completed'
         ? quantityToBuild
-        : status === 'in_progress'
+        : status === 'in_progress' || status === 'partially_completed'
           ? Math.floor(quantityToBuild / 2)
           : 0;
     const createdAt = formatMockDate(-(index * 4) - 1, index % 12);
@@ -3098,7 +3589,16 @@ function buildMockOperationsData(): MockOperationsData {
   });
 
   const inspectionTypes = ['incoming', 'in_process', 'final', 'return'];
-  const inspectionStatuses = ['pending', 'in_progress', 'passed', 'failed'];
+  const inspectionStatuses: InspectionStatus[] = [
+    'pending',
+    'scheduled',
+    'in_progress',
+    'passed',
+    'failed',
+    'partial_pass',
+    'on_hold',
+    'cancelled',
+  ];
   const inspections = Array.from({ length: 14 }, (_, index) => {
     const createdAt = formatMockDate(-(index * 3) - 1, index % 9);
     return {
@@ -3113,15 +3613,22 @@ function buildMockOperationsData(): MockOperationsData {
     } satisfies QualityInspection;
   });
 
-  const severities = ['minor', 'major', 'critical'];
-  const ncrStatuses = ['open', 'under_review', 'closed'];
+  const severities: NcrSeverity[] = ['minor', 'major', 'critical', 'observation'];
+  const ncrStatuses: NcrStatus[] = [
+    'open',
+    'under_review',
+    'closed',
+    'pending_disposition',
+    'corrective_action',
+    'cancelled',
+  ];
   const ncrs = Array.from(
     { length: 9 },
     (_, index) =>
       ({
         id: `ncr_${9700 + index}`,
         ncrNumber: `NCR-${9700 + index}`,
-        source: index % 2 === 0 ? 'inspection' : 'customer_return',
+        source: index % 2 === 0 ? 'inspection' : 'customer_complaint',
         severity: severities[index % severities.length],
         sku: `SKU-${1000 + (index % 40)}`,
         quantityAffected: 1 + deterministicNumber(index + 2401, 0, 60),
@@ -3131,7 +3638,7 @@ function buildMockOperationsData(): MockOperationsData {
       }) satisfies NonConformanceReport,
   );
 
-  const waveStatuses = ['created', 'released', 'picking', 'completed', 'cancelled'];
+  const waveStatuses: WaveStatus[] = ['draft', 'released', 'in_progress', 'completed', 'cancelled'];
   const waves = Array.from(
     { length: 10 },
     (_, index) =>
@@ -3145,14 +3652,21 @@ function buildMockOperationsData(): MockOperationsData {
       }) satisfies Wave,
   );
 
-  const pickStatuses = ['pending', 'assigned', 'in_progress', 'picked', 'cancelled'];
+  const pickStatuses: PickTaskStatus[] = [
+    'pending',
+    'assigned',
+    'in_progress',
+    'completed',
+    'short',
+    'cancelled',
+  ];
   const picks = Array.from({ length: 24 }, (_, index) => {
     const status = pickStatuses[index % pickStatuses.length];
     const quantityRequested = 1 + deterministicNumber(index + 2601, 0, 24);
     const quantityPicked =
-      status === 'picked'
+      status === 'completed'
         ? quantityRequested
-        : status === 'in_progress'
+        : status === 'in_progress' || status === 'short'
           ? Math.floor(quantityRequested / 2)
           : 0;
     return {
@@ -3168,7 +3682,15 @@ function buildMockOperationsData(): MockOperationsData {
     } satisfies PickTask;
   });
 
-  const lotStatuses = ['active', 'active', 'quarantined', 'expired', 'consumed'];
+  const lotStatuses: LotStatus[] = [
+    'active',
+    'active',
+    'quarantine',
+    'expired',
+    'consumed',
+    'on_hold',
+    'recalled',
+  ];
   const lots = Array.from({ length: 18 }, (_, index) => {
     const status = lotStatuses[index % lotStatuses.length];
     const quantityProduced = 100 + deterministicNumber(index + 2701, 0, 900);
@@ -3191,7 +3713,14 @@ function buildMockOperationsData(): MockOperationsData {
     } satisfies Lot;
   });
 
-  const serialStatuses = ['available', 'allocated', 'sold', 'quarantined'];
+  const serialStatuses: SerialStatus[] = [
+    'available',
+    'reserved',
+    'sold',
+    'quarantined',
+    'shipped',
+    'returned',
+  ];
   const serials = Array.from({ length: 20 }, (_, index) => {
     const status = serialStatuses[index % serialStatuses.length];
     return {
@@ -3206,7 +3735,14 @@ function buildMockOperationsData(): MockOperationsData {
     } satisfies SerialNumber;
   });
 
-  const receiptStatuses = ['pending', 'receiving', 'completed', 'completed', 'cancelled'];
+  const receiptStatuses: ReceiptStatus[] = [
+    'expected',
+    'in_progress',
+    'received',
+    'putting_away',
+    'completed',
+    'cancelled',
+  ];
   const receiptTypes = ['purchase_order', 'return', 'transfer'];
   const carriers = ['UPS', 'FedEx', 'DHL'];
   const receipts = Array.from(

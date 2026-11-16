@@ -9,6 +9,7 @@ import {
   XCircleIcon,
   ClockIcon,
   ArrowRightIcon,
+  ArrowUturnLeftIcon,
 } from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
 import { memo } from 'react';
@@ -18,6 +19,7 @@ import { getOrderPipelineData } from '@/app/actions/commerce';
 import { formatCurrency, formatCompactNumber } from '@/lib/utils';
 import type { OrderPipelineData, OrderPipelineStatusGroup } from '@/lib/types/dashboard-data';
 import type { Order } from '@/lib/types';
+import type { OrderStatus } from '@/lib/engine-lifecycles';
 
 interface OrderPipelineProps {
   data?: OrderPipelineData;
@@ -30,13 +32,17 @@ type HeroIcon = ForwardRefExoticComponent<
   } & RefAttributes<SVGSVGElement>
 >;
 
-const statusIcons: Record<string, HeroIcon> = {
+// One entry per engine order status (`OrderStatus`); `Record<OrderStatus, …>`
+// makes a status the engine adds a compile error here.
+const statusIcons: Record<OrderStatus, HeroIcon> = {
   pending: ClockIcon,
   confirmed: CheckCircleIcon,
   processing: ShoppingCartIcon,
+  partially_shipped: TruckIcon,
   shipped: TruckIcon,
   delivered: CheckCircleIcon,
   cancelled: XCircleIcon,
+  refunded: ArrowUturnLeftIcon,
 };
 
 type DsBadgeVariant =
@@ -48,22 +54,26 @@ type DsBadgeVariant =
   | 'danger'
   | 'outline';
 
-const statusBadgeVariants: Record<string, DsBadgeVariant> = {
+const statusBadgeVariants: Record<OrderStatus, DsBadgeVariant> = {
   pending: 'warning',
   confirmed: 'primary',
   processing: 'primary',
+  partially_shipped: 'accent',
   shipped: 'accent',
   delivered: 'success',
   cancelled: 'danger',
+  refunded: 'outline',
 };
 
-const progressColors: Record<string, Color> = {
+const progressColors: Record<OrderStatus, Color> = {
   pending: 'amber',
   confirmed: 'blue',
   processing: 'indigo',
+  partially_shipped: 'purple',
   shipped: 'violet',
   delivered: 'emerald',
   cancelled: 'red',
+  refunded: 'gray',
 };
 
 function OrderPipelineInner({ data: propData }: OrderPipelineProps) {
@@ -137,7 +147,7 @@ function OrderPipelineInner({ data: propData }: OrderPipelineProps) {
 
           <div className="flex items-center justify-between overflow-x-auto pb-4">
             {statusGroups.map((group: OrderPipelineStatusGroup, index: number) => {
-              const Icon = statusIcons[group.key] || ClockIcon;
+              const Icon = statusIcons[group.key as OrderStatus] || ClockIcon;
 
               return (
                 <motion.div
@@ -205,13 +215,16 @@ function OrderPipelineInner({ data: propData }: OrderPipelineProps) {
                     <div className="flex justify-between mb-1">
                       <p className="text-sm font-medium text-ds-foreground">{group.label}</p>
                       <div className="flex items-center space-x-2">
-                        <Badge variant={statusBadgeVariants[group.key] || 'default'}>
+                        <Badge variant={statusBadgeVariants[group.key as OrderStatus] || 'default'}>
                           {group.count}
                         </Badge>
                         <p className="text-sm text-ds-muted-foreground">{percentage.toFixed(1)}%</p>
                       </div>
                     </div>
-                    <ProgressBar value={percentage} color={progressColors[group.key] || 'indigo'} />
+                    <ProgressBar
+                      value={percentage}
+                      color={progressColors[group.key as OrderStatus] || 'indigo'}
+                    />
                   </div>
                 );
               })}
@@ -235,7 +248,7 @@ function OrderPipelineInner({ data: propData }: OrderPipelineProps) {
                 <div key={group.key} className="border border-ds-enterprise-line rounded-lg p-4">
                   <div className="flex items-center justify-between mb-3">
                     <p className="text-sm font-medium text-ds-foreground">{group.label}</p>
-                    <Badge variant={statusBadgeVariants[group.key] || 'default'}>
+                    <Badge variant={statusBadgeVariants[group.key as OrderStatus] || 'default'}>
                       {group.count}
                     </Badge>
                   </div>

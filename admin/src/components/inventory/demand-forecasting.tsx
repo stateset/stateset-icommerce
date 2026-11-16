@@ -20,6 +20,8 @@ import type {
   DemandHighProduct,
   DemandAlert,
 } from '@/lib/types/dashboard-data';
+import { isEngineFeatureUnavailable } from '@/lib/types/dashboard-data';
+import { EngineFeatureNotice } from '@/components/shared/engine-feature-notice';
 
 interface DemandForecastingProps {
   data?: DemandForecastingData;
@@ -42,6 +44,10 @@ export default function DemandForecasting({ data: propData }: DemandForecastingP
         </CardContent>
       </Card>
     );
+  }
+
+  if (isEngineFeatureUnavailable(data)) {
+    return <EngineFeatureNotice title="Demand forecasting" message={data.unavailable} />;
   }
 
   if (error || !data) {

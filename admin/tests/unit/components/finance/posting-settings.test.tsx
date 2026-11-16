@@ -25,7 +25,7 @@ const accounts = ['asset', 'liability', 'revenue', 'expense'].map((kind) => ({
   accountNumber: kind,
   name: kind,
   accountType: kind,
-  status: 'active',
+  status: 'active' as const,
   balance: 0,
 }));
 

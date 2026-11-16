@@ -27,6 +27,7 @@ import type {
   ChurnReason,
   UpcomingRenewal,
 } from '@/lib/types/dashboard-data';
+import type { SubscriptionStatus } from '@/lib/engine-lifecycles';
 
 type DsStatus = 'ok' | 'run' | 'warn' | 'fail' | 'review' | 'idle';
 
@@ -34,12 +35,15 @@ interface SubscriptionAnalyticsProps {
   data?: SubscriptionAnalyticsData;
 }
 
-const statusPills: Record<string, DsStatus> = {
+/** One pill per engine subscription status (`SubscriptionStatus`). */
+const statusPills: Record<SubscriptionStatus, DsStatus> = {
+  pending: 'review',
+  trial: 'run',
   active: 'ok',
-  trialing: 'run',
-  past_due: 'warn',
-  canceled: 'fail',
   paused: 'idle',
+  past_due: 'warn',
+  cancelled: 'fail',
+  expired: 'idle',
 };
 
 function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsProps) {
@@ -186,7 +190,7 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
                   key={status}
                   className="text-center p-4 border border-ds-enterprise-line rounded-lg"
                 >
-                  <StatusPill status={statusPills[status] || 'idle'}>
+                  <StatusPill status={statusPills[status as SubscriptionStatus] || 'idle'}>
                     {status.replace('_', ' ')}
                   </StatusPill>
                   <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">
@@ -378,13 +382,13 @@ function generateDemoChurnReasons() {
   ];
 }
 
-function generateDemoStatusBreakdown() {
+function generateDemoStatusBreakdown(): Partial<Record<SubscriptionStatus, number>> {
   return {
     active: 1150,
-    trialing: 85,
+    trial: 85,
     past_due: 12,
     paused: 25,
-    canceled: 38,
+    cancelled: 38,
   };
 }
 

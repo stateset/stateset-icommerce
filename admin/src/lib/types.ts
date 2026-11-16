@@ -2,8 +2,22 @@
  * TypeScript Types for StateSet Commerce
  *
  * These types are shared between client and server components.
- * Import these types in client components instead of from embedded.ts
+ * Import these types in client components instead of from embedded.ts.
+ *
+ * This is the only declaration of the commerce record shapes: `embedded.ts`
+ * re-exports them rather than keeping a second copy, so the two can no
+ * longer drift apart.
+ *
+ * Status unions are not written out here: they come from the native binding
+ * through `./engine-lifecycles` (type-only import, safe in client bundles).
  */
+
+import type {
+  OrderStatus,
+  ReturnReason,
+  ReturnStatus,
+  SubscriptionStatus,
+} from './engine-lifecycles';
 
 // ============================================================================
 // Orders Types
@@ -12,7 +26,8 @@
 export interface Order {
   id: string;
   customerId: string;
-  status: 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
+  /** The engine's order lifecycle (`ORDER_LIFECYCLE` in `./engine-lifecycles`). */
+  status: OrderStatus;
   items: OrderItem[];
   totalAmount: number;
   currency: string;
@@ -87,10 +102,12 @@ export interface Return {
   id: string;
   orderId: string;
   customerId: string;
-  status: 'requested' | 'approved' | 'received' | 'inspected' | 'refunded' | 'rejected' | 'closed';
+  /** The engine's return lifecycle (`RETURN_LIFECYCLE` in `./engine-lifecycles`). */
+  status: ReturnStatus;
   items: ReturnItem[];
+  /** Free-text detail; the engine's own reason code is `reasonCategory`. */
   reason: string;
-  reasonCategory: 'defective' | 'wrong_item' | 'not_as_described' | 'changed_mind' | 'other';
+  reasonCategory: ReturnReason;
   refundAmount?: number;
   refundMethod?: 'original' | 'store_credit' | 'exchange';
   trackingNumber?: string;
@@ -201,7 +218,8 @@ export interface ProductAnalytics {
 export interface Subscription {
   id: string;
   customerId: string;
-  status: 'active' | 'paused' | 'cancelled' | 'expired';
+  /** The engine's subscription lifecycle (`SUBSCRIPTION_LIFECYCLE` in `./engine-lifecycles`). */
+  status: SubscriptionStatus;
   plan: string;
   planId?: string;
   frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'annually';

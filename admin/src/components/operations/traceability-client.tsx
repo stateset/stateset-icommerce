@@ -5,6 +5,7 @@ import { Card, CardContent, Badge } from '@stateset/design';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getTraceabilityPageData } from '@/app/actions/operations';
 import type { Lot, Receipt, SerialNumber } from '@/lib/embedded';
+import type { LotStatus, ReceiptStatus, SerialStatus } from '@/lib/engine-lifecycles';
 
 type DsBadgeVariant =
   | 'default'
@@ -15,23 +16,41 @@ type DsBadgeVariant =
   | 'danger'
   | 'outline';
 
-const lotStatusVariants: Record<string, DsBadgeVariant> = {
+/** One badge per engine lot status (`LotStatus`). */
+const lotStatusVariants: Record<LotStatus, DsBadgeVariant> = {
   active: 'success',
-  quarantined: 'warning',
+  quarantine: 'warning',
+  on_hold: 'warning',
   expired: 'danger',
+  recalled: 'danger',
   consumed: 'outline',
+  scrapped: 'outline',
 };
 
-const serialStatusVariants: Record<string, DsBadgeVariant> = {
+/** One badge per engine serial status (`SerialStatus`). */
+const serialStatusVariants: Record<SerialStatus, DsBadgeVariant> = {
+  in_production: 'outline',
   available: 'success',
-  allocated: 'primary',
+  reserved: 'primary',
+  shipped: 'accent',
   sold: 'accent',
+  returned: 'primary',
+  in_service: 'success',
+  in_warranty: 'success',
   quarantined: 'warning',
+  recalled: 'danger',
+  lost: 'danger',
+  transferred: 'default',
+  scrapped: 'outline',
 };
 
-const receiptStatusVariants: Record<string, DsBadgeVariant> = {
-  pending: 'outline',
-  receiving: 'primary',
+/** One badge per engine receipt status (`ReceiptStatus`). */
+const receiptStatusVariants: Record<ReceiptStatus, DsBadgeVariant> = {
+  expected: 'outline',
+  in_progress: 'primary',
+  received: 'accent',
+  inspecting: 'warning',
+  putting_away: 'accent',
   completed: 'success',
   cancelled: 'outline',
 };

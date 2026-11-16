@@ -6,6 +6,7 @@ import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getPurchasingPageData } from '@/app/actions/operations';
 import { formatMoney } from '@/lib/finance/format';
 import type { PurchaseOrder } from '@/lib/embedded';
+import type { PurchaseOrderStatus } from '@/lib/engine-lifecycles';
 
 type DsBadgeVariant =
   | 'default'
@@ -16,12 +17,17 @@ type DsBadgeVariant =
   | 'danger'
   | 'outline';
 
-const statusBadgeVariants: Record<string, DsBadgeVariant> = {
+/** One badge per engine purchase-order status (`PurchaseOrderStatus`). */
+const statusBadgeVariants: Record<PurchaseOrderStatus, DsBadgeVariant> = {
   draft: 'outline',
-  submitted: 'primary',
+  pending_approval: 'warning',
   approved: 'accent',
   sent: 'primary',
+  acknowledged: 'primary',
+  partially_received: 'accent',
   received: 'success',
+  completed: 'success',
+  on_hold: 'warning',
   cancelled: 'outline',
 };
 

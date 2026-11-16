@@ -6,6 +6,7 @@
 
 import { z } from 'zod';
 
+import { ORDER_STATUS_UPDATES, RETURN_REASONS, SUBSCRIPTION_STATUSES } from '../engine-lifecycles';
 import { ValidationError } from './errors';
 
 // ============================================================================
@@ -312,22 +313,28 @@ export const addressSchema = z.object({
   country: z.string().min(1, 'Country is required').max(60),
 });
 
-export const orderStatusSchema = z.enum([
-  'pending',
-  'confirmed',
-  'processing',
-  'shipped',
-  'delivered',
-  'cancelled',
-]);
+/**
+ * The statuses `orders.updateStatus` accepts (`OrderStatusUpdate` in the
+ * binding): every engine order status except `partially_shipped`, which only
+ * `ship` derives. Whether a given move is legal is the engine's call
+ * (`ORDER_LIFECYCLE`); this only refuses names it would never accept.
+ */
+export const orderStatusSchema = z.enum(ORDER_STATUS_UPDATES);
 
-export const returnReasonCategorySchema = z.enum([
-  'defective',
-  'wrong_item',
-  'not_as_described',
-  'changed_mind',
-  'other',
-]);
+/** The engine's return reason codes (`ReturnReason` in the binding). */
+export const returnReasonCategorySchema = z.enum(RETURN_REASONS);
+
+/**
+ * Carrier tracking number recorded when a return ships back
+ * (`returns.addTracking`). Bounded and restricted to the characters carriers
+ * actually use so it cannot carry markup or a payload.
+ */
+export const trackingNumberSchema = z
+  .string()
+  .trim()
+  .min(1, 'Tracking number is required')
+  .max(100, 'Tracking number too long')
+  .regex(/^[A-Za-z0-9 _.-]+$/, 'Tracking number contains invalid characters');
 
 export const refundMethodSchema = z.enum(['original', 'store_credit', 'exchange']);
 
@@ -335,7 +342,8 @@ export const returnItemConditionSchema = z.enum(['new', 'opened', 'damaged', 'us
 
 export const productStatusSchema = z.enum(['active', 'draft', 'archived']);
 
-export const subscriptionStatusSchema = z.enum(['active', 'paused', 'cancelled', 'expired']);
+/** The engine's subscription statuses (`SubscriptionStatus` in the binding). */
+export const subscriptionStatusSchema = z.enum(SUBSCRIPTION_STATUSES);
 
 export const subscriptionFrequencySchema = z.enum([
   'weekly',
@@ -416,17 +424,9 @@ export const rejectReturnArgsSchema = z.object({
   reason: reasonSchema,
 });
 
-export const receiveReturnArgsSchema = z.object({
+export const addReturnTrackingArgsSchema = z.object({
   returnId: safeIdSchema,
-  items: z
-    .array(z.object({ productId: safeIdSchema, condition: returnItemConditionSchema }))
-    .min(1, 'Receiving a return needs at least one line item')
-    .max(500, 'Too many line items'),
-});
-
-export const processRefundArgsSchema = z.object({
-  returnId: safeIdSchema,
-  method: refundMethodSchema.optional(),
+  trackingNumber: trackingNumberSchema,
 });
 
 /** Shared shape for `Partial<Customer>` create/update payloads. */
@@ -457,14 +457,16 @@ export const updateCustomerArgsSchema = z.object({
   params: customerFieldsSchema,
 });
 
+// The engine's `subscriptions.subscribe` needs a customer and a plan; the
+// plan supplies price, interval and trial, so the other fields are optional.
 export const createSubscriptionArgsSchema = z.object({
   params: z
     .object({
       id: safeIdSchema.optional(),
-      customerId: safeIdSchema.optional(),
+      customerId: safeIdSchema,
       status: subscriptionStatusSchema.optional(),
       plan: z.string().min(1).max(200).optional(),
-      planId: safeIdSchema.optional(),
+      planId: safeIdSchema,
       frequency: subscriptionFrequencySchema.optional(),
       quantity: quantitySchema.optional(),
       totalAmount: moneyNumberSchema.optional(),

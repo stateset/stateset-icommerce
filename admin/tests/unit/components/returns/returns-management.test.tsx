@@ -53,7 +53,11 @@ afterEach(() => {
 
 describe('ReturnsManagement', () => {
   it('renders the error card on hook failure', () => {
-    useEmbeddedDataMock.mockReturnValue({ data: undefined, isLoading: false, error: new Error('x') });
+    useEmbeddedDataMock.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error('x'),
+    });
     render(<ReturnsManagement />);
     expect(screen.getByText('Failed to load returns data')).toBeInTheDocument();
   });
@@ -77,5 +81,48 @@ describe('ReturnsManagement', () => {
     render(<ReturnsManagement />);
     expect(screen.getByText('Total Returns')).toBeInTheDocument();
     expect(screen.getByText('Return Rate')).toBeInTheDocument();
+  });
+
+  it('renders engine return statuses and reason codes', () => {
+    const base = {
+      orderId: 'ord_123456789',
+      customerId: 'cus_1',
+      items: [],
+      reason: '',
+      createdAt: '2026-05-07T12:00:00.000Z',
+      updatedAt: '2026-05-07T12:00:00.000Z',
+    };
+    useEmbeddedDataMock.mockReturnValue({
+      data: {
+        returns: [
+          {
+            ...base,
+            id: 'ret_in_transit',
+            status: 'in_transit',
+            reasonCategory: 'better_price_found',
+          },
+          { ...base, id: 'ret_completed', status: 'completed', reasonCategory: 'damaged' },
+        ],
+        analytics: {
+          totalReturns: 2,
+          returnRate: 0,
+          refundTotal: 0,
+          averageProcessingTime: 0,
+          returnsByReason: { better_price_found: 1, damaged: 1 },
+          returnsByStatus: { in_transit: 1, completed: 1 },
+          topReturnedProducts: [],
+        },
+        pipeline: [
+          { stage: 'In transit', count: 1 },
+          { stage: 'Completed', count: 1 },
+        ],
+      },
+      isLoading: false,
+      error: null,
+    });
+    render(<ReturnsManagement />);
+    expect(screen.getAllByText('in transit').length).toBeGreaterThan(0);
+    expect(screen.getByText('Better Price Found')).toBeInTheDocument();
+    expect(screen.getByText('Damaged')).toBeInTheDocument();
   });
 });

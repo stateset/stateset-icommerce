@@ -12,6 +12,25 @@ import type { Order, InventoryItem, Return } from '@/lib/types';
 // Shared / Reusable Types
 // ============================================================================
 
+/**
+ * Returned by a dashboard data action instead of its payload when the
+ * connected engine build has no equivalent for a capability the widget needs
+ * (the native binding lacks several of the mock's aggregates). Plain data,
+ * so the explanation survives the server-action boundary in production,
+ * where thrown error messages are redacted.
+ */
+export interface EngineFeatureUnavailable {
+  unavailable: string;
+}
+
+export function isEngineFeatureUnavailable(value: unknown): value is EngineFeatureUnavailable {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { unavailable?: unknown }).unavailable === 'string'
+  );
+}
+
 /** Tremor color string used for Badge/ProgressBar color props */
 export type TremorColor =
   | 'amber'
