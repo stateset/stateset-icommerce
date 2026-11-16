@@ -101,6 +101,7 @@ test('declarations: index.d.ts types the kernel surface (needs a rebuild after e
     'orders.transition',
     'orders.ship',
     'returns.transition',
+    'returns.item.disposition.set',
     'ledger.post',
     'x402.settle',
     'checkout.commit',

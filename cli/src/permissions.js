@@ -1149,6 +1149,7 @@ export const TOOL_PERMISSIONS = {
   complete_return: 'write',
   cancel_return: 'write',
   add_return_tracking: 'write',
+  set_return_item_disposition: 'write',
   // revenue-recognition.js
   list_revenue_contracts: 'read',
   get_revenue_contract: 'read',

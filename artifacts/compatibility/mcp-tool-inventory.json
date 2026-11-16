@@ -1,12 +1,12 @@
 {
   "source": "cli/src/mcp-server-registry.js",
-  "totalTools": 1022,
+  "totalTools": 1023,
   "serverCount": 3,
   "servers": [
     {
       "name": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
-      "count": 1004
+      "count": 1005
     },
     {
       "name": "stateset-scaffold",
@@ -271,7 +271,7 @@
     },
     {
       "name": "returns",
-      "count": 12
+      "count": 13
     },
     {
       "name": "revenue_recognition",
@@ -401,14 +401,14 @@
     },
     {
       "name": "write",
-      "count": 408
+      "count": 409
     }
   ],
   "permissionCounts": {
     "admin": 103,
     "delete": 20,
     "read": 491,
-    "write": 408
+    "write": 409
   },
   "tools": [
     {
@@ -5759,7 +5759,7 @@
     },
     {
       "name": "get_return",
-      "description": "Get a specific return by ID.",
+      "description": "Get a specific return by ID, with its items and their dispositions.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_return",
@@ -8383,6 +8383,15 @@
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__set_price_schedule_entry",
       "policyDomain": "price_schedules",
+      "permission": "write"
+    },
+    {
+      "name": "set_return_item_disposition",
+      "description": "Record what the warehouse did with a received return item: restock or quarantine (back into stock; the SKU needs an inventory item), refurbish, scrap or return_to_vendor. The return must be received or inspecting, and each item is dispositioned once. complete_return needs every item dispositioned. Item ids are in get_return.",
+      "serverName": "stateset-commerce",
+      "source": "cli/src/mcp-server.js",
+      "qualifiedName": "mcp__stateset-commerce__set_return_item_disposition",
+      "policyDomain": "returns",
       "permission": "write"
     },
     {

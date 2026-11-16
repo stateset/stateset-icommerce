@@ -31,6 +31,7 @@ export const GOVERNED_AUTONOMOUS_CAPABILITIES = Object.freeze([
   'payments.create_refund',
   'products.create',
   'returns.create',
+  'returns.item.disposition.set',
   'returns.tracking.add',
   'returns.transition',
   'shipments.create',

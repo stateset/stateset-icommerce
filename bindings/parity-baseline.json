@@ -693,7 +693,8 @@
         "list_for_order",
         "list_pending",
         "mark_received",
-        "reject"
+        "reject",
+        "set_item_disposition"
       ],
       "revenue_recognition": [
         "create_contract",
@@ -2011,7 +2012,8 @@
         "list_for_customer",
         "list_for_order",
         "list_pending",
-        "mark_received"
+        "mark_received",
+        "set_item_disposition"
       ],
       "serials": [
         "count",
@@ -2652,7 +2654,8 @@
         "list_for_customer",
         "list_for_order",
         "list_pending",
-        "mark_received"
+        "mark_received",
+        "set_item_disposition"
       ],
       "revenue_recognition": [
         "create_contract",

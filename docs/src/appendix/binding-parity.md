@@ -33,8 +33,8 @@ inventory this builds on is [Binding API Inventory](binding-api-inventory.md).
 
 | Binding | Evidence | Gated | Exposed | Coverage | Parity vs Node |
 | --- | --- | --- | --- | --- | --- |
-| Node.js | traced: #[napi] methods -> engine calls | yes | 785/1233 | 63.7% | reference |
-| Python | traced: #[pymethods] methods -> engine calls | yes | 599/1233 | 48.6% | 75.5% |
+| Node.js | traced: #[napi] methods -> engine calls | yes | 786/1233 | 63.7% | reference |
+| Python | traced: #[pymethods] methods -> engine calls | yes | 599/1233 | 48.6% | 75.4% |
 | Go | traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls | yes | 80/1233 | 6.5% | 10.2% |
 | .NET | native reach: engine calls anywhere in the Rust layer | no | 48/1233 | 3.9% | 6% |
 | Java | native reach: engine calls anywhere in the Rust layer | no | 77/1233 | 6.2% | 9.2% |
@@ -107,7 +107,7 @@ Cells are exposed / applicable engine methods.
 | `purgatory` | 7 | 0 | 7/7 | 7/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 | 0/7 |
 | `quality` | 33 | 0 | 17/33 | 10/33 | 0/33 | 1/33 | 4/33 | 2/33 | 4/33 | 0/33 | 2/33 | 0/33 |
 | `receiving` | 24 | 0 | 18/24 | 5/24 | 0/24 | 0/24 | 4/24 | 0/24 | 4/24 | 0/24 | 0/24 | 0/24 |
-| `returns` | 15 | 0 | 13/15 | 6/15 | 6/15 | 2/15 | 6/15 | 6/15 | 5/15 | 0/15 | 2/15 | 0/15 |
+| `returns` | 15 | 0 | 14/15 | 6/15 | 6/15 | 2/15 | 6/15 | 6/15 | 5/15 | 0/15 | 2/15 | 0/15 |
 | `revenue_recognition` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
 | `reviews` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
 | `search_config` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
@@ -150,8 +150,8 @@ unless `--allow-loss` is also passed. Gated bindings: `node`, `python`, `go`
 
 | Binding | Known gaps vs Node (baseline) |
 | --- | --- |
-| python | 192 |
-| go | 705 |
+| python | 193 |
+| go | 706 |
 
 ## Exemptions
 
@@ -1366,7 +1366,7 @@ None found.
 | `list_pending` | yes | — | — |
 | `mark_received` | yes | — | — |
 | `reject` | yes | yes | yes |
-| `set_item_disposition` | — | — | — |
+| `set_item_disposition` | yes | — | — |
 | `update` | — | — | — |
 
 ### `commerce.revenue_recognition()`

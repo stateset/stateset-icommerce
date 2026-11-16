@@ -217,6 +217,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       complete: ['complete_return'],
       cancel: ['cancel_return'],
       addTracking: ['add_return_tracking'],
+      setItemDisposition: ['set_return_item_disposition'],
     },
   },
   Warranties: {

@@ -285,7 +285,7 @@
         "className": "X402"
       }
     ],
-    "toolCount": 810,
+    "toolCount": 811,
     "readOnlyCount": 398,
     "readOnlyPrefixes": [
       "calculate",
@@ -8377,6 +8377,49 @@
         "sku"
       ],
       "additionalProperties": false
+    },
+    "SetReturnItemDispositionInput": {
+      "type": "object",
+      "properties": {
+        "disposition": {
+          "type": "string",
+          "enum": [
+            "restock",
+            "refurbish",
+            "scrap",
+            "return_to_vendor",
+            "quarantine"
+          ],
+          "description": "An unrecognised disposition is refused with `VALIDATION`."
+        },
+        "warehouseId": {
+          "type": "number",
+          "description": "Warehouse receiving `restock` / `quarantine` stock (default 1)."
+        },
+        "binId": {
+          "type": "number",
+          "description": "Explicit target bin; defaults to the warehouse's returns or quarantine bin."
+        },
+        "dispositionBy": {
+          "type": "string"
+        },
+        "lotId": {
+          "type": "string",
+          "description": "Lot the units belong to (UUID); restored on `restock` / `quarantine`."
+        },
+        "serialIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Serials physically received (UUIDs); the count must equal the item quantity."
+        }
+      },
+      "required": [
+        "disposition"
+      ],
+      "additionalProperties": false,
+      "description": "What the warehouse did with a received return item (`setItemDisposition`)."
     },
     "ShipmentFilterInput": {
       "type": "object",
@@ -27333,6 +27376,42 @@
         "required": [
           "id",
           "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "returns.setItemDisposition",
+      "module": "returns",
+      "className": "Returns",
+      "method": "setItemDisposition",
+      "description": "Record a received item's disposition (operator path) and apply its stock, serial and lot effects atomically. The return must be `received` or `inspecting`; an item is dispositioned once. A governed agent uses the `returns.item.disposition.set` kernel command instead.",
+      "signature": "setItemDisposition(returnId: string, itemId: string, input: SetReturnItemDispositionInput): Promise<ReturnItemOutput>",
+      "returnType": "Promise<ReturnItemOutput>",
+      "readOnly": false,
+      "permission": "write",
+      "positional": [
+        "returnId",
+        "itemId",
+        "input"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "returnId": {
+            "type": "string"
+          },
+          "itemId": {
+            "type": "string"
+          },
+          "input": {
+            "$ref": "#/definitions/SetReturnItemDispositionInput"
+          }
+        },
+        "required": [
+          "returnId",
+          "itemId",
+          "input"
         ],
         "additionalProperties": false
       }

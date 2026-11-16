@@ -1834,7 +1834,7 @@
       "evidence": "traced: #[napi] methods -> engine calls",
       "engineBacked": true,
       "gated": true,
-      "exposedCount": 785,
+      "exposedCount": 786,
       "applicableCount": 1233,
       "coverage": 63.7,
       "notes": null,
@@ -2933,7 +2933,7 @@
           ]
         },
         "returns": {
-          "coverage": 86.7,
+          "coverage": 93.3,
           "exposed": [
             "add_tracking",
             "approve",
@@ -2947,10 +2947,10 @@
             "list_for_order",
             "list_pending",
             "mark_received",
-            "reject"
+            "reject",
+            "set_item_disposition"
           ],
           "missing": [
-            "set_item_disposition",
             "update"
           ]
         },
@@ -7950,8 +7950,8 @@
   "parityVsReference": {
     "python": {
       "shared": 593,
-      "referenceExposed": 785,
-      "parity": 75.5,
+      "referenceExposed": 786,
+      "parity": 75.4,
       "beyondReference": [
         "accounts_payable.pay_bill",
         "cost_accounting.get_inventory_valuation",
@@ -7963,13 +7963,13 @@
     },
     "go": {
       "shared": 80,
-      "referenceExposed": 785,
+      "referenceExposed": 786,
       "parity": 10.2,
       "beyondReference": []
     },
     "dotnet": {
       "shared": 47,
-      "referenceExposed": 785,
+      "referenceExposed": 786,
       "parity": 6,
       "beyondReference": [
         "accounts_receivable.get_customer_aging"
@@ -7977,7 +7977,7 @@
     },
     "java": {
       "shared": 72,
-      "referenceExposed": 785,
+      "referenceExposed": 786,
       "parity": 9.2,
       "beyondReference": [
         "fulfillment.create_picks_for_order",
@@ -7989,7 +7989,7 @@
     },
     "kotlin": {
       "shared": 59,
-      "referenceExposed": 785,
+      "referenceExposed": 786,
       "parity": 7.5,
       "beyondReference": [
         "shipments.mark_in_transit",
@@ -7998,7 +7998,7 @@
     },
     "php": {
       "shared": 161,
-      "referenceExposed": 785,
+      "referenceExposed": 786,
       "parity": 20.5,
       "beyondReference": [
         "bom.delete",
@@ -8022,19 +8022,19 @@
     },
     "ruby": {
       "shared": 0,
-      "referenceExposed": 785,
+      "referenceExposed": 786,
       "parity": 0,
       "beyondReference": []
     },
     "swift": {
       "shared": 51,
-      "referenceExposed": 785,
+      "referenceExposed": 786,
       "parity": 6.5,
       "beyondReference": []
     },
     "wasm": {
       "shared": 0,
-      "referenceExposed": 785,
+      "referenceExposed": 786,
       "parity": 0,
       "beyondReference": []
     }
@@ -9154,7 +9154,7 @@
       {
         "className": "Returns",
         "domain": "returns",
-        "methodCount": 13
+        "methodCount": 14
       },
       {
         "className": "RevenueRecognition",

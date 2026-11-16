@@ -30,6 +30,48 @@ pub struct CreateReturnInput {
     pub items: Vec<CreateReturnItemInput>,
 }
 
+/// One line of a return. `id` is what `setItemDisposition` addresses.
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ReturnItemOutput {
+    pub id: String,
+    pub return_id: String,
+    pub order_item_id: String,
+    pub sku: String,
+    pub name: String,
+    pub quantity: i32,
+    pub condition: String,
+    /// Exact decimal string.
+    pub refund_amount: String,
+    /// Absent until the received item is dispositioned.
+    #[napi(ts_type = "ReturnDisposition | null")]
+    pub disposition: Option<String>,
+    pub disposition_at: Option<String>,
+    pub disposition_by: Option<String>,
+    pub lot_id: Option<String>,
+    pub serial_ids: Vec<String>,
+}
+
+impl From<stateset_core::ReturnItem> for ReturnItemOutput {
+    fn from(item: stateset_core::ReturnItem) -> Self {
+        Self {
+            id: item.id.to_string(),
+            return_id: item.return_id.to_string(),
+            order_item_id: item.order_item_id.to_string(),
+            sku: item.sku,
+            name: item.name,
+            quantity: item.quantity,
+            condition: item.condition.to_string(),
+            refund_amount: item.refund_amount.to_string(),
+            disposition: item.disposition.map(|disposition| disposition.to_string()),
+            disposition_at: item.disposition_at.map(|at| at.to_rfc3339()),
+            disposition_by: item.disposition_by,
+            lot_id: item.lot_id.map(|id| id.to_string()),
+            serial_ids: item.serial_ids.iter().map(ToString::to_string).collect(),
+        }
+    }
+}
+
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ReturnOutput {
@@ -42,6 +84,8 @@ pub struct ReturnOutput {
     pub version: i32,
     pub created_at: String,
     pub idempotency_key: Option<String>,
+    /// The return's lines, with their dispositions.
+    pub items: Vec<ReturnItemOutput>,
 }
 
 impl From<stateset_core::Return> for ReturnOutput {
@@ -54,9 +98,31 @@ impl From<stateset_core::Return> for ReturnOutput {
             version: r.version,
             created_at: r.created_at.to_rfc3339(),
             idempotency_key: r.idempotency_key,
+            items: r.items.into_iter().map(Into::into).collect(),
         }
     }
 }
+
+/// What the warehouse did with a received return item (`setItemDisposition`).
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SetReturnItemDispositionInput {
+    /// An unrecognised disposition is refused with `VALIDATION`.
+    #[napi(ts_type = "ReturnDisposition")]
+    pub disposition: String,
+    /// Warehouse receiving `restock` / `quarantine` stock (default 1).
+    pub warehouse_id: Option<i32>,
+    /// Explicit target bin; defaults to the warehouse's returns or quarantine bin.
+    pub bin_id: Option<i32>,
+    pub disposition_by: Option<String>,
+    /// Lot the units belong to (UUID); restored on `restock` / `quarantine`.
+    pub lot_id: Option<String>,
+    /// Serials physically received (UUIDs); the count must equal the item quantity.
+    pub serial_ids: Option<Vec<String>>,
+}
+
+const RETURN_DISPOSITIONS: [&str; 5] =
+    ["restock", "refurbish", "scrap", "return_to_vendor", "quarantine"];
 
 #[napi]
 pub struct Returns {
@@ -263,6 +329,56 @@ impl Returns {
             .cancel(uuid.into())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel return", e))?;
         Ok(ret.into())
+    }
+
+    /// Record a received item's disposition (operator path) and apply its
+    /// stock, serial and lot effects atomically. The return must be
+    /// `received` or `inspecting`; an item is dispositioned once. A governed
+    /// agent uses the `returns.item.disposition.set` kernel command instead.
+    #[napi]
+    pub async fn set_item_disposition(
+        &self,
+        return_id: String,
+        item_id: String,
+        input: SetReturnItemDispositionInput,
+    ) -> Result<ReturnItemOutput> {
+        let commerce = self.commerce.get()?;
+        let return_id: uuid::Uuid =
+            return_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid return UUID"))?;
+        let item_id: uuid::Uuid =
+            item_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid return item UUID"))?;
+        let disposition: stateset_core::ReturnDisposition =
+            input.disposition.trim().parse().map_err(|_| {
+                unknown_variant("return disposition", &input.disposition, &RETURN_DISPOSITIONS)
+            })?;
+        let lot_id = input
+            .lot_id
+            .map(|raw| raw.parse::<uuid::Uuid>())
+            .transpose()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid lot UUID"))?;
+        let serial_ids = input
+            .serial_ids
+            .unwrap_or_default()
+            .iter()
+            .map(|raw| raw.parse::<uuid::Uuid>())
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|_| coded(ErrCode::Validation, "Invalid serial UUID"))?;
+        let item = commerce
+            .returns()
+            .set_item_disposition(
+                return_id.into(),
+                item_id,
+                stateset_core::SetReturnDisposition {
+                    disposition,
+                    warehouse_id: input.warehouse_id,
+                    bin_id: input.bin_id,
+                    disposition_by: input.disposition_by,
+                    lot_id,
+                    serial_ids,
+                },
+            )
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to set return item disposition", e))?;
+        Ok(item.into())
     }
 
     #[napi]

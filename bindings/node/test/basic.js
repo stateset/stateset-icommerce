@@ -416,6 +416,37 @@ test('Commerce: basic operations', async (t) => {
     // Count returns
     const count = await commerce.returns.count();
     assert.strictEqual(count, 1);
+
+    // The return carries its lines; dispositioning them is what completion needs.
+    assert.strictEqual(ret.items.length, 1);
+    const item = ret.items[0];
+    assert.strictEqual(item.disposition ?? null, null, 'not dispositioned yet');
+    await commerce.returns.addTracking(ret.id, 'RET-TRACK-1');
+    await assert.rejects(
+      commerce.returns.setItemDisposition(ret.id, item.id, { disposition: 'scrap' }),
+      (error) => /once received/.test(error.message),
+      'a return in transit cannot be dispositioned',
+    );
+    await commerce.returns.markReceived(ret.id);
+    await assert.rejects(
+      commerce.returns.setItemDisposition(ret.id, item.id, { disposition: 'donate' }),
+      (error) => error.code === 'VALIDATION',
+    );
+    await assert.rejects(
+      commerce.returns.complete(ret.id),
+      'undispositioned items block completion',
+    );
+    const dispositioned = await commerce.returns.setItemDisposition(ret.id, item.id, {
+      disposition: 'scrap',
+      dispositionBy: 'operator:carol',
+    });
+    assert.strictEqual(dispositioned.disposition, 'scrap');
+    assert.strictEqual(dispositioned.dispositionBy, 'operator:carol');
+    assert.ok(dispositioned.dispositionAt);
+    const reloaded = await commerce.returns.get(ret.id);
+    assert.strictEqual(reloaded.items[0].disposition, 'scrap');
+    const completed = await commerce.returns.complete(ret.id);
+    assert.strictEqual(completed.status, 'completed');
   });
 
   await t.test('should run analytics and currency operations', async () => {

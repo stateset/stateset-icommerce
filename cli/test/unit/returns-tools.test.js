@@ -52,9 +52,9 @@ function makeCommerce(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 describe('Return Tools — structure', () => {
-  it('exports an array of 12 tools', () => {
+  it('exports an array of 13 tools', () => {
     assert.ok(Array.isArray(returnTools));
-    assert.strictEqual(returnTools.length, 12);
+    assert.strictEqual(returnTools.length, 13);
   });
 
   it('every tool has name, handler, permission, and inputSchema', () => {
@@ -281,5 +281,55 @@ describe('reject_return', () => {
       () => tool.handler({ commerce, params, allowApply: true }),
       /Already processed/,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// set_return_item_disposition
+// ---------------------------------------------------------------------------
+
+describe('set_return_item_disposition', () => {
+  const tool = findTool('set_return_item_disposition');
+  const params = { returnId: 'ret_001', returnItemId: 'ri_001', disposition: 'restock' };
+
+  it('has write permission', () => {
+    assert.strictEqual(tool.permission, 'write');
+  });
+
+  it('accepts exactly the return_items.disposition vocabulary', () => {
+    for (const value of ['restock', 'refurbish', 'scrap', 'return_to_vendor', 'quarantine']) {
+      assert.ok(tool.inputSchema.disposition.safeParse(value).success, value);
+    }
+    assert.equal(tool.inputSchema.disposition.safeParse('donate').success, false);
+    assert.equal(tool.inputSchema.note.safeParse('x'.repeat(1001)).success, false);
+  });
+
+  it('previews without --apply and never calls the binding', async () => {
+    let called = false;
+    const commerce = makeCommerce({
+      setItemDisposition: async () => {
+        called = true;
+      },
+    });
+    const result = await tool.handler({ commerce, params, allowApply: false });
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(called, false);
+  });
+
+  it('records the disposition through the binding when applied', async () => {
+    const commerce = makeCommerce({
+      setItemDisposition: async (returnId, itemId, input) => ({
+        id: itemId,
+        returnId,
+        disposition: input.disposition,
+      }),
+    });
+    const result = await tool.handler({ commerce, params, allowApply: true });
+    assert.strictEqual(result.success, true);
+    assert.deepEqual(result.returnItem, {
+      id: 'ri_001',
+      returnId: 'ret_001',
+      disposition: 'restock',
+    });
   });
 });
