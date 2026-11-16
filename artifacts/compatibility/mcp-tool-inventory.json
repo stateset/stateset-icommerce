@@ -3302,7 +3302,7 @@
     },
     {
       "name": "complete_return",
-      "description": "Complete a return (the engine accepts this from received or inspecting). It closes the return only: no refund is created. Refund the payment separately with create_refund.",
+      "description": "Complete a return (the engine accepts this from received or inspecting). Every item needs a disposition first (set_return_item_disposition). Completing creates the pending payment refund for the return's refund amount: do not also call create_refund for it.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__complete_return",

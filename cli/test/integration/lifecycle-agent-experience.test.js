@@ -499,17 +499,21 @@ describe('status filters offer what is stored, and older values still work', () 
 describe('return tools describe the lifecycle they move', () => {
   const describeTool = (name) => server.getAdaptedTools().find((t) => t.name === name).description;
 
-  it('say where each move is accepted from, and complete_return issues no refund', () => {
+  it('say where each move is accepted from, and what complete_return needs and refunds', () => {
     assert.match(describeTool('mark_return_received'), /only from in_transit/);
     assert.match(describeTool('mark_return_received'), /add_return_tracking/);
     assert.match(describeTool('approve_return'), /from requested/);
     assert.match(describeTool('cancel_return'), /from requested or approved/);
     assert.match(describeTool('add_return_tracking'), /from approved/);
-    assert.doesNotMatch(describeTool('complete_return'), /process the refund/);
-    assert.match(describeTool('complete_return'), /no refund is created/);
+    // Governed completion requires dispositions and creates the refund itself,
+    // so the description must not send an agent to create_refund for it.
+    assert.match(describeTool('complete_return'), /set_return_item_disposition/);
+    assert.match(describeTool('complete_return'), /creates the pending payment refund/);
+    assert.match(describeTool('complete_return'), /do not also call create_refund/);
+    assert.doesNotMatch(describeTool('complete_return'), /no refund is created/);
   });
 
-  it('the documented route works, and completing a return creates no refund', async () => {
+  it('the documented route works, and completing a return creates exactly its refund', async () => {
     const order = await processingOrder(1);
     const payment = entity(
       await call('create_payment', { orderId: order.id, amount: '3.00' }),
@@ -528,12 +532,27 @@ describe('return tools describe the lifecycle they move', () => {
     await call('approve_return', { returnId: ret.id });
     await call('add_return_tracking', { returnId: ret.id, trackingNumber: 'RET-1' });
     await call('mark_return_received', { returnId: ret.id });
+
+    // Completing before every item has a disposition is refused, with nothing refunded.
+    const early = await server.executeTool('complete_return', { returnId: ret.id });
+    assert.equal(early.ok, false);
+    assert.match(JSON.stringify(early.failure), /return_items_undispositioned/);
+    assert.deepEqual((await call('get_payment', { paymentId: payment.id })).refunds, []);
+
+    const [item] = (await call('get_return', { returnId: ret.id })).return.items;
+    await call('set_return_item_disposition', {
+      returnId: ret.id,
+      returnItemId: item.id,
+      disposition: 'scrap',
+    });
     await call('complete_return', { returnId: ret.id });
     assert.equal((await call('get_return', { returnId: ret.id })).return.status, 'completed');
 
     const after = await call('get_payment', { paymentId: payment.id });
     assert.equal(after.payment.status, 'completed');
-    assert.deepEqual(after.refunds, []);
+    assert.equal(after.refunds.length, 1, 'completion creates exactly one refund');
+    assert.equal(after.refunds[0].status, 'pending');
+    assert.equal(Number(after.refunds[0].amount), 3);
   });
 });
 

@@ -276,8 +276,9 @@ export const returnTools = withPolicyDomain('returns', [
   {
     name: 'complete_return',
     description:
-      `Complete a return (the engine accepts this from ${from('completed')}). It closes the ` +
-      'return only: no refund is created. Refund the payment separately with create_refund.',
+      `Complete a return (the engine accepts this from ${from('completed')}). Every item needs ` +
+      'a disposition first (set_return_item_disposition). Completing creates the pending ' +
+      "payment refund for the return's refund amount: do not also call create_refund for it.",
     inputSchema: {
       returnId: z.string().min(1).describe('Return ID (UUID)'),
     },
