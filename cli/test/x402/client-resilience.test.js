@@ -919,3 +919,150 @@ describe('X402SequencerClient — resilience', () => {
     });
   });
 });
+
+// ===========================================================================
+// HALF_OPEN admits a limited number of trial requests
+// ===========================================================================
+
+describe('HALF_OPEN trial limiting', () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  afterEach(() => restoreFetch());
+
+  it('admits at most halfOpenMax trial requests until they report back', async () => {
+    const cb = new SequencerCircuitBreaker({
+      failureThreshold: 1,
+      resetTimeoutMs: 30,
+      halfOpenMax: 2,
+    });
+    cb.recordFailure();
+    await sleep(50);
+
+    assert.strictEqual(cb.canRequest(), true);
+    assert.strictEqual(cb.canRequest(), true);
+    assert.strictEqual(cb.canRequest(), false, 'a third concurrent trial is refused');
+    assert.strictEqual(cb.state, CircuitState.HALF_OPEN);
+
+    cb.recordSuccess(); // one trial reported back: its slot is free again
+    assert.strictEqual(cb.canRequest(), true);
+    assert.strictEqual(cb.canRequest(), false);
+
+    cb.recordSuccess();
+    assert.strictEqual(cb.state, CircuitState.CLOSED);
+    assert.strictEqual(cb.canRequest(), true);
+    assert.strictEqual(cb.canRequest(), true);
+  });
+
+  it('trials that never report back stop blocking after resetTimeoutMs', async () => {
+    const cb = new SequencerCircuitBreaker({
+      failureThreshold: 1,
+      resetTimeoutMs: 30,
+      halfOpenMax: 1,
+    });
+    cb.recordFailure();
+    await sleep(50);
+    assert.strictEqual(cb.canRequest(), true);
+    assert.strictEqual(cb.canRequest(), false);
+    await sleep(50);
+    assert.strictEqual(cb.canRequest(), true);
+    assert.strictEqual(cb.state, CircuitState.HALF_OPEN);
+  });
+
+  it('sends only halfOpenMax concurrent requests to a recovering sequencer', async () => {
+    let fetches = 0;
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const client = new X402SequencerClient(
+      fastConfig({
+        retryOptions: { maxRetries: 0, baseDelayMs: 1, maxDelayMs: 1 },
+        circuitBreaker: { failureThreshold: 1, resetTimeoutMs: 30, halfOpenMax: 1 },
+      }),
+    );
+    client._circuitBreaker.recordFailure();
+    await sleep(50);
+    mockFetch(async () => {
+      fetches++;
+      await gate;
+      return okResponse({ ok: true });
+    });
+
+    const requests = [1, 2, 3].map((n) =>
+      client._request('GET', `/probe/${n}`).then(
+        (value) => ({ value }),
+        (error) => ({ error }),
+      ),
+    );
+    await sleep(10);
+    release();
+    const settled = await Promise.all(requests);
+
+    assert.strictEqual(fetches, 1, 'only the admitted trial reaches the sequencer');
+    assert.strictEqual(settled.filter((s) => s.value).length, 1);
+    for (const refused of settled.filter((s) => s.error)) {
+      assert.match(refused.error.message, /HALF_OPEN/);
+    }
+    assert.strictEqual(client.getCircuitStatus().state, 'closed');
+  });
+
+  it('submitPaymentIntent claims one trial slot per payment, not two', async () => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    let fetches = 0;
+    const client = new X402SequencerClient(
+      fastConfig({
+        retryOptions: { maxRetries: 0, baseDelayMs: 1, maxDelayMs: 1 },
+        circuitBreaker: { failureThreshold: 1, resetTimeoutMs: 30, halfOpenMax: 2 },
+      }),
+    );
+    client._circuitBreaker.recordFailure();
+    await sleep(50);
+    mockFetch(async () => {
+      fetches++;
+      await gate;
+      return okResponse({ intent_id: `INT-${fetches}` });
+    });
+
+    const payment = client.submitPaymentIntent({ amount: 1 });
+    const probe = client._request('GET', '/probe');
+    await sleep(10);
+    release();
+    await Promise.all([payment, probe]);
+    assert.strictEqual(fetches, 2, 'both fit in the two trial slots');
+  });
+
+  it('flushes queued payments only once the circuit has closed', async () => {
+    const origWarn = console.warn;
+    console.warn = () => {};
+    try {
+      const paths = [];
+      const client = new X402SequencerClient(
+        fastConfig({
+          retryOptions: { maxRetries: 0, baseDelayMs: 1, maxDelayMs: 1 },
+          circuitBreaker: { failureThreshold: 1, resetTimeoutMs: 30, halfOpenMax: 2 },
+        }),
+      );
+      client._circuitBreaker.recordFailure();
+      const queued = client.submitPaymentIntent({ amount: 7 });
+      assert.strictEqual(client._offlineQueue.length, 1);
+      await sleep(50);
+      mockFetch(async (url) => {
+        paths.push(new URL(url).pathname);
+        return okResponse({ intent_id: 'INT-QUEUED' });
+      });
+
+      await client._request('GET', '/probe/1'); // 1 of 2 successes: still half-open
+      assert.strictEqual(client._circuitBreaker.state, CircuitState.HALF_OPEN);
+      assert.strictEqual(client._offlineQueue.length, 1, 'no flush while half-open');
+
+      await client._request('GET', '/probe/2'); // closes the circuit, then flushes
+      assert.strictEqual((await queued).intent_id, 'INT-QUEUED');
+      assert.strictEqual(client._offlineQueue.length, 0);
+      assert.deepStrictEqual(paths, ['/probe/1', '/probe/2', '/api/v1/x402/payments']);
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+});

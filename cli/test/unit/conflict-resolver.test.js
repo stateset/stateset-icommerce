@@ -7,10 +7,17 @@
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import Database from 'better-sqlite3';
 
 import { ConflictResolver, createConflictResolver } from '../../src/sync/conflict.js';
+import { createOutbox } from '../../src/sync/outbox.js';
+import { SyncEngine } from '../../src/sync/engine.js';
+import { SyncConfig } from '../../src/sync/config.js';
 
 // ---------------------------------------------------------------------------
 // Mock Outbox
@@ -419,5 +426,199 @@ describe('conflict persistence is idempotent', () => {
       'resolved',
     );
     assert.equal(resolver.getConflictCount(), 0);
+  });
+});
+
+/**
+ * `_ves_conflicts.status` is unresolved -> resolved | skipped, and resolving
+ * supersedes the local event, which must still be unsettled. Before these
+ * guards, resolving an already-resolved conflict three times appended three
+ * rebased events and called markRejected on an event that had synced; the
+ * append (async, unawaited) and the markRejected were not atomic; and
+ * skipConflict flipped a resolved conflict to skipped (and resolve flipped a
+ * skipped one back to resolved). These run against a real outbox and SQLite.
+ */
+describe('conflict resolution is guarded and atomic', () => {
+  const TENANT = '550e8400-e29b-41d4-a716-446655440001';
+  const STORE = '550e8400-e29b-41d4-a716-446655440002';
+  const AGENT = '550e8400-e29b-41d4-a716-446655440003';
+  let db;
+  let configDir;
+  let outbox;
+  let resolver;
+
+  function keyManager() {
+    const pair = crypto.generateKeyPairSync('ed25519');
+    const key = {
+      keyId: 1,
+      publicKey: pair.publicKey.export({ type: 'spki', format: 'der' }).subarray(-32),
+      privateKey: pair.privateKey.export({ type: 'pkcs8', format: 'der' }).subarray(-32),
+    };
+    return { getCurrentSigningKey: async () => key, getCurrentEncryptionKey: async () => null };
+  }
+
+  /** Append a local event and record a conflict over it. */
+  async function seed({ conflictStatus = 'unresolved', payload = { total: '10.00' } } = {}) {
+    const seq = Number(
+      await outbox.append({
+        tenantId: TENANT,
+        storeId: STORE,
+        entityType: 'cart',
+        entityId: 'cart-1',
+        eventType: 'cart.updated',
+        payload,
+        sourceAgent: AGENT,
+        baseVersion: 1,
+      }),
+    );
+    const id = `version:${seq}:cart:cart-1`;
+    db.prepare(
+      `INSERT INTO _ves_conflicts (id, conflict_type, local_event_seq, entity_type, entity_id, description, suggested_strategy, status)
+       VALUES (?, 'version', ?, 'cart', 'cart-1', 'behind', 'local-wins', ?)`,
+    ).run(id, seq, conflictStatus);
+    return { id, seq };
+  }
+
+  const outboxCount = () => db.prepare('SELECT COUNT(*) AS n FROM _ves_outbox').get().n;
+  const syncStatus = (seq) =>
+    db.prepare('SELECT sync_status FROM _ves_outbox WHERE local_seq = ?').get(seq).sync_status;
+  const conflictRow = (id) => db.prepare('SELECT * FROM _ves_conflicts WHERE id = ?').get(id);
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    configDir = mkdtempSync(join(tmpdir(), 'conflict-resolver-'));
+    outbox = createOutbox(db, { keyManager: keyManager(), configDir });
+    outbox.initialize();
+    resolver = new ConflictResolver(outbox);
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  it('refuses to re-resolve a resolved conflict over a synced event (no appends, no rejection)', async () => {
+    const { id, seq } = await seed({ conflictStatus: 'resolved' });
+    outbox.markSynced([{ localSeq: seq, remoteSeq: 5 }]);
+    const before = outboxCount();
+
+    const results = [];
+    for (let i = 0; i < 3; i++) results.push(await resolver.resolve(id, 'local-wins'));
+
+    assert.deepEqual(
+      results.map((r) => r.success),
+      [false, false, false],
+    );
+    assert.match(results[0].error, /already resolved/);
+    assert.equal(outboxCount(), before, 'no rebased events may be appended');
+    assert.equal(syncStatus(seq), 'synced', 'a synced event must not be marked rejected');
+    assert.equal(conflictRow(id).status, 'resolved');
+  });
+
+  it('refuses to resolve an unresolved conflict whose local event already synced', async () => {
+    const { id, seq } = await seed();
+    outbox.markSynced([{ localSeq: seq, remoteSeq: 5 }]);
+    const before = outboxCount();
+
+    for (const strategy of ['local-wins', 'remote-wins', 'merge']) {
+      const result = await resolver.resolve(id, strategy);
+      assert.equal(result.success, false, strategy);
+      assert.match(result.error, /already synced/);
+    }
+    assert.equal(outboxCount(), before);
+    assert.equal(syncStatus(seq), 'synced');
+    assert.equal(conflictRow(id).status, 'unresolved');
+  });
+
+  it('skipConflict only skips an unresolved conflict, and a skipped one cannot be resolved', async () => {
+    const resolved = await seed({ conflictStatus: 'resolved' });
+    assert.equal(resolver.skipConflict(resolved.id, 'late'), false);
+    assert.equal(conflictRow(resolved.id).status, 'resolved');
+
+    const open = await seed();
+    assert.equal(resolver.skipConflict(open.id, 'not now'), true);
+    assert.equal(conflictRow(open.id).status, 'skipped');
+    assert.equal(resolver.skipConflict(open.id, 'again'), false);
+
+    const result = await resolver.resolve(open.id, 'local-wins');
+    assert.equal(result.success, false);
+    assert.match(result.error, /already skipped/);
+    assert.equal(conflictRow(open.id).status, 'skipped');
+    assert.equal(syncStatus(open.seq), 'pending');
+  });
+
+  it('local-wins supersedes a pending event exactly once, with a real local sequence', async () => {
+    const { id, seq } = await seed();
+    const before = outboxCount();
+
+    const result = await resolver.resolve(id, 'local-wins');
+    assert.equal(result.success, true, result.error);
+    assert.equal(typeof result.result.newSeq, 'number');
+    assert.equal(outboxCount(), before + 1);
+    assert.equal(syncStatus(seq), 'rejected');
+    assert.equal(syncStatus(result.result.newSeq), 'pending');
+    const stored = conflictRow(id);
+    assert.equal(stored.status, 'resolved');
+    assert.equal(stored.resolution_strategy, 'local-wins');
+    assert.equal(JSON.parse(stored.resolution_data).newSeq, result.result.newSeq);
+
+    const again = await resolver.resolve(id, 'local-wins');
+    assert.equal(again.success, false);
+    assert.equal(outboxCount(), before + 1);
+  });
+
+  it('remote-wins rejects the pending event and resolves the conflict', async () => {
+    const { id, seq } = await seed();
+    const result = await resolver.resolve(id, 'remote-wins');
+    assert.equal(result.success, true, result.error);
+    assert.equal(syncStatus(seq), 'rejected');
+    assert.equal(conflictRow(id).status, 'resolved');
+  });
+
+  it('concurrent resolutions of one conflict apply exactly one', async () => {
+    const { id } = await seed();
+    const before = outboxCount();
+
+    const results = await Promise.all([
+      resolver.resolve(id, 'local-wins'),
+      resolver.resolve(id, 'local-wins'),
+    ]);
+
+    assert.equal(results.filter((r) => r.success).length, 1);
+    assert.equal(outboxCount(), before + 1);
+  });
+
+  it('a failed append leaves the local event pending and the conflict unresolved', async () => {
+    const { id, seq } = await seed();
+    db.exec(
+      "CREATE TRIGGER refuse_rebase BEFORE INSERT ON _ves_outbox BEGIN SELECT RAISE(ABORT, 'disk full'); END",
+    );
+
+    const result = await resolver.resolve(id, 'local-wins');
+
+    assert.equal(result.success, false);
+    assert.match(result.error, /disk full/);
+    assert.equal(syncStatus(seq), 'pending');
+    assert.equal(conflictRow(id).status, 'unresolved');
+  });
+
+  it('the engine refuses to skip a conflict that is not unresolved', async () => {
+    const { id } = await seed({ conflictStatus: 'resolved' });
+    const engine = new SyncEngine({
+      db,
+      keyManager: keyManager(),
+      preferGrpc: false,
+      config: new SyncConfig({
+        sequencer: { url: 'https://sequencer.invalid' },
+        identity: { tenantId: TENANT, storeId: STORE, agentId: AGENT },
+      }),
+    });
+    let emitted = 0;
+    engine.on('conflictSkipped', () => emitted++);
+
+    assert.throws(() => engine.skipConflict(id, 'late'), /already resolved/);
+    assert.throws(() => engine.skipConflict('no-such-conflict'), /not found/);
+    assert.equal(emitted, 0);
+    assert.equal(conflictRow(id).status, 'resolved');
   });
 });

@@ -46,6 +46,28 @@ function getErrorMessage(error) {
 }
 
 /**
+ * Instance lifecycle: running <-> paused, and running | paused -> completed
+ * (final state reached, from running only), failed or cancelled. Completed,
+ * failed and cancelled are terminal: nothing moves an instance out of them.
+ */
+const LIVE_STATUSES = new Set(['running', 'paused']);
+const RUNNING_ONLY = new Set(['running']);
+
+/**
+ * Throw unless the instance is in one of `allowed`.
+ * @param {WorkflowInstance} instance
+ * @param {string} action
+ * @param {ReadonlySet<string>} allowed
+ */
+function assertInstanceStatus(instance, action, allowed) {
+  if (!allowed.has(instance.status)) {
+    throw new Error(
+      `Cannot ${action} instance ${instance.id}: it is ${instance.status} (allowed from: ${[...allowed].join(', ')})`,
+    );
+  }
+}
+
+/**
  * State definition
  */
 export class State {
@@ -349,9 +371,15 @@ export class WorkflowEngine extends EventEmitter {
         const data = JSON.parse(await fs.promises.readFile(instancesFile, 'utf-8'));
         for (const instanceData of data) {
           const instance = new WorkflowInstance(instanceData);
+          // Live instances (running or paused) are restored; finished ones
+          // (completed, failed, cancelled) are not carried across a restart.
+          // A paused instance has to be restored too: save() rewrites the file
+          // from memory, so skipping it here deleted it on the next save.
+          if (!LIVE_STATUSES.has(instance.status)) continue;
+          this.instances.set(instance.id, instance);
           if (instance.status === 'running') {
-            this.instances.set(instance.id, instance);
-            // Restart timeout timers
+            // Restart timeout timers (a paused instance gets its timer back
+            // when it is resumed)
             this.setupStateTimeout(instance);
           }
         }
@@ -688,6 +716,10 @@ export class WorkflowEngine extends EventEmitter {
       throw new Error(`Instance not found: ${instanceId}`);
     }
 
+    // Only a running instance can be paused; pausing a finished one would
+    // let resumeInstance() bring it back to running.
+    assertInstanceStatus(instance, 'pause', RUNNING_ONLY);
+
     if (instance.timeoutTimer) {
       clearTimeout(instance.timeoutTimer);
       instance.timeoutTimer = null;
@@ -751,6 +783,8 @@ export class WorkflowEngine extends EventEmitter {
       throw new Error(`Instance not found: ${instanceId}`);
     }
 
+    assertInstanceStatus(instance, 'cancel', LIVE_STATUSES);
+
     if (instance.timeoutTimer) {
       clearTimeout(instance.timeoutTimer);
       instance.timeoutTimer = null;
@@ -783,6 +817,8 @@ export class WorkflowEngine extends EventEmitter {
     if (!instance) {
       throw new Error(`Instance not found: ${instanceId}`);
     }
+
+    assertInstanceStatus(instance, 'fail', LIVE_STATUSES);
 
     if (instance.timeoutTimer) {
       clearTimeout(instance.timeoutTimer);

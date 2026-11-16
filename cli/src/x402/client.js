@@ -99,7 +99,8 @@ class SequencerCircuitBreaker {
    * @param {Object} [opts]
    * @param {number} [opts.failureThreshold=5]
    * @param {number} [opts.resetTimeoutMs=30000]
-   * @param {number} [opts.halfOpenMax=2]
+   * @param {number} [opts.halfOpenMax=2] - Trial requests admitted at a time
+   *   while half-open, and the successes needed to close again
    */
   constructor(opts = {}) {
     this.failureThreshold = opts.failureThreshold ?? 5;
@@ -108,30 +109,51 @@ class SequencerCircuitBreaker {
     this.state = CircuitState.CLOSED;
     this.failures = 0;
     this.halfOpenSuccesses = 0;
+    /** Trial requests admitted in this half-open window and not yet reported. */
+    this.halfOpenInFlight = 0;
+    this.halfOpenSince = 0;
     this.lastFailureTime = 0;
   }
 
-  /** @returns {boolean} */
+  /**
+   * Admit a request. While half-open this claims one of `halfOpenMax` trial
+   * slots, which the caller gives back by calling recordSuccess() or
+   * recordFailure(); further requests are refused until one does.
+   * @returns {boolean}
+   */
   canRequest() {
     if (this.state === CircuitState.CLOSED) return true;
     if (this.state === CircuitState.OPEN) {
-      if (Date.now() - this.lastFailureTime >= this.resetTimeoutMs) {
-        this.state = CircuitState.HALF_OPEN;
-        this.halfOpenSuccesses = 0;
-        return true;
-      }
-      return false;
+      if (Date.now() - this.lastFailureTime < this.resetTimeoutMs) return false;
+      this._enterHalfOpen();
     }
-    // HALF_OPEN — allow limited requests
+    // HALF_OPEN — admit a limited number of trial requests
+    if (this.halfOpenInFlight >= this.halfOpenMax) {
+      if (Date.now() - this.halfOpenSince < this.resetTimeoutMs) return false;
+      // Trials that never reported back: open a fresh probe window instead of
+      // staying shut for good.
+      this._enterHalfOpen();
+    }
+    this.halfOpenInFlight++;
     return true;
+  }
+
+  /** @private */
+  _enterHalfOpen() {
+    this.state = CircuitState.HALF_OPEN;
+    this.halfOpenSuccesses = 0;
+    this.halfOpenInFlight = 0;
+    this.halfOpenSince = Date.now();
   }
 
   recordSuccess() {
     if (this.state === CircuitState.HALF_OPEN) {
+      this.halfOpenInFlight = Math.max(0, this.halfOpenInFlight - 1);
       this.halfOpenSuccesses++;
       if (this.halfOpenSuccesses >= this.halfOpenMax) {
         this.state = CircuitState.CLOSED;
         this.failures = 0;
+        this.halfOpenInFlight = 0;
       }
     } else {
       this.failures = 0;
@@ -143,6 +165,7 @@ class SequencerCircuitBreaker {
     this.lastFailureTime = Date.now();
     if (this.state === CircuitState.HALF_OPEN || this.failures >= this.failureThreshold) {
       this.state = CircuitState.OPEN;
+      this.halfOpenInFlight = 0;
     }
   }
 
@@ -152,8 +175,7 @@ class SequencerCircuitBreaker {
       this.state === CircuitState.OPEN &&
       Date.now() - this.lastFailureTime >= this.resetTimeoutMs
     ) {
-      this.state = CircuitState.HALF_OPEN;
-      this.halfOpenSuccesses = 0;
+      this._enterHalfOpen();
     }
     return this.state;
   }
@@ -210,12 +232,19 @@ export class X402SequencerClient {
    * @param {string} method
    * @param {string} path
    * @param {unknown} [body]
-   * @param {{ maxRetries?: number }} [requestOptions]
+   * @param {{ maxRetries?: number, _admitted?: boolean }} [requestOptions] -
+   *   `_admitted` is internal: the caller already holds the breaker's admission
+   *   for this request, so it must not claim a second half-open slot.
    * @returns {Promise<any>}
    */
   async _request(method, path, body, requestOptions = {}) {
     // Check circuit breaker
-    if (!this._circuitBreaker.canRequest()) {
+    if (!requestOptions._admitted && !this._circuitBreaker.canRequest()) {
+      if (this._circuitBreaker.state === CircuitState.HALF_OPEN) {
+        throw new Error(
+          `Sequencer circuit breaker is HALF_OPEN — ${this._circuitBreaker.halfOpenInFlight} trial request(s) already in flight; requests blocked until they report back`,
+        );
+      }
       throw new Error(
         `Sequencer circuit breaker is OPEN — requests blocked. Will retry after ${this._circuitBreaker.resetTimeoutMs}ms`,
       );
@@ -251,8 +280,10 @@ export class X402SequencerClient {
           const result = await response.json();
           this._circuitBreaker.recordSuccess();
 
-          // Flush offline queue on success
-          if (this._offlineQueue.length > 0) {
+          // Flush the offline queue once the circuit has closed again. Not
+          // while half-open: that would push the whole backlog through the
+          // trial window the half-open limit exists to keep small.
+          if (this._offlineQueue.length > 0 && this._circuitBreaker.state === CircuitState.CLOSED) {
             this._flushOfflineQueue();
           }
 
@@ -289,7 +320,8 @@ export class X402SequencerClient {
         );
       });
     }
-    return this._request('POST', '/api/v1/x402/payments', payload);
+    // canRequest() above admitted this request; don't claim a second slot.
+    return this._request('POST', '/api/v1/x402/payments', payload, { _admitted: true });
   }
 
   /**
@@ -372,19 +404,20 @@ export class X402SequencerClient {
     const queued = [...this._offlineQueue];
     this._offlineQueue.length = 0;
 
-    for (const item of queued) {
+    for (let index = 0; index < queued.length; index++) {
+      // If the circuit is no longer closed (a failure re-opened it), stop
+      // flushing and re-queue what is left. This reads the state rather than
+      // calling canRequest(), which would claim a half-open trial slot.
+      if (this._circuitBreaker.getState() !== CircuitState.CLOSED) {
+        this._offlineQueue.push(...queued.slice(index));
+        break;
+      }
+      const item = queued[index];
       try {
         const result = await this._request('POST', '/api/v1/x402/payments', item.payload);
         item.resolve(result);
       } catch (err) {
         item.reject(err);
-        // If circuit re-opened, stop flushing
-        if (!this._circuitBreaker.canRequest()) {
-          // Re-queue remaining items
-          const remaining = queued.slice(queued.indexOf(item) + 1);
-          this._offlineQueue.push(...remaining);
-          break;
-        }
       }
     }
   }

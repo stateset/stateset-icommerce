@@ -1259,6 +1259,98 @@ describe('markRejected', () => {
 });
 
 // =============================================================================
+// 13b. sync_status setters are compare-and-set: settled rows stay settled
+// =============================================================================
+
+describe('sync_status setters refuse to move settled rows', () => {
+  const rowOf = (outbox, seq) =>
+    outbox.db
+      .prepare(
+        'SELECT sync_status, remote_sequence, rejection_reason, retry_count, last_error FROM _ves_outbox WHERE local_seq = ?',
+      )
+      .get(seq);
+
+  it('a synced event cannot be marked rejected', async () => {
+    const { outbox } = makeOutbox();
+    const seq = Number(await outbox.append(makeEvent()));
+    assert.equal(outbox.markSynced([{ localSeq: seq, remoteSeq: 42 }]), 1);
+
+    assert.equal(outbox.markRejected(seq, 'Conflict resolved: remote-wins'), false);
+    const row = rowOf(outbox, seq);
+    assert.equal(row.sync_status, 'synced');
+    assert.equal(row.remote_sequence, 42);
+    assert.equal(row.rejection_reason, null);
+  });
+
+  it('a synced event cannot be marked failed', async () => {
+    const { outbox } = makeOutbox();
+    const seq = Number(await outbox.append(makeEvent()));
+    outbox.markSynced([{ localSeq: seq, remoteSeq: 42 }]);
+
+    assert.equal(outbox.markFailed(seq, 'timeout'), false);
+    const row = rowOf(outbox, seq);
+    assert.equal(row.sync_status, 'synced');
+    assert.equal(row.retry_count, 0);
+    assert.equal(row.last_error, null);
+  });
+
+  it('a synced event keeps its remote sequence when acknowledged again', async () => {
+    const { outbox } = makeOutbox();
+    const seq = Number(await outbox.append(makeEvent()));
+    outbox.markSynced([{ localSeq: seq, remoteSeq: 42 }]);
+
+    assert.equal(outbox.markSynced([{ localSeq: seq, remoteSeq: 99 }]), 0);
+    assert.equal(rowOf(outbox, seq).remote_sequence, 42);
+  });
+
+  it('a rejected event cannot be parked as failed (and so revived by retryFailed)', async () => {
+    const { outbox } = makeOutbox();
+    const seq = Number(await outbox.append(makeEvent()));
+    outbox.markRejected(seq, 'invalid signature');
+
+    assert.equal(outbox.markFailed(seq, 'timeout'), false);
+    assert.equal(outbox.retryFailed(), 0);
+    assert.equal(rowOf(outbox, seq).sync_status, 'rejected');
+  });
+
+  it('a rejected event keeps its first reason', async () => {
+    const { outbox } = makeOutbox();
+    const seq = Number(await outbox.append(makeEvent()));
+    assert.equal(outbox.markRejected(seq, 'invalid signature'), true);
+    assert.equal(outbox.markRejected(seq, 'duplicate'), false);
+    assert.equal(rowOf(outbox, seq).rejection_reason, 'invalid signature');
+  });
+
+  it('keeps the intended moves: pending and failed rows settle, rejected can still be accepted', async () => {
+    const { outbox } = makeOutbox();
+    const a = Number(await outbox.append(makeEvent({ entityId: 'a' })));
+    const b = Number(await outbox.append(makeEvent({ entityId: 'b' })));
+    const c = Number(await outbox.append(makeEvent({ entityId: 'c' })));
+
+    assert.equal(outbox.markFailed(a, 'parked'), true);
+    assert.equal(outbox.markRejected(a, 'refused while parked'), true);
+    assert.equal(outbox.markFailed(b, 'parked'), true);
+    assert.equal(outbox.markSynced([{ localSeq: b, remoteSeq: 7 }]), 1);
+    // A late acceptance from an overlapping push supersedes a rejection.
+    assert.equal(outbox.markRejected(c, 'duplicate'), true);
+    assert.equal(outbox.markSynced([{ localSeq: c, remoteSeq: 8 }]), 1);
+
+    assert.equal(rowOf(outbox, a).sync_status, 'rejected');
+    assert.equal(rowOf(outbox, b).sync_status, 'synced');
+    assert.deepEqual(
+      { ...rowOf(outbox, c) },
+      {
+        sync_status: 'synced',
+        remote_sequence: 8,
+        rejection_reason: null,
+        retry_count: 0,
+        last_error: null,
+      },
+    );
+  });
+});
+
+// =============================================================================
 // 14. retryFailed
 // =============================================================================
 

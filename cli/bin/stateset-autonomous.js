@@ -44,7 +44,15 @@ const packageJson = JSON.parse(
 
 const DEFAULT_DB_PATH = './.stateset/commerce.db';
 const DEFAULT_STORE_PATH = './.stateset/autonomous';
-const JOB_STATUSES = ['pending', 'running', 'completed', 'failed', 'paused', 'cancelled'];
+const JOB_STATUSES = [
+  'pending',
+  'running',
+  'retrying',
+  'completed',
+  'failed',
+  'paused',
+  'cancelled',
+];
 
 function normalizeOptions(options = {}) {
   const resolved = options && typeof options.opts === 'function' ? options.opts() : options || {};

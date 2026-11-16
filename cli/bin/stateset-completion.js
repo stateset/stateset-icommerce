@@ -1085,7 +1085,7 @@ _stateset_autonomous() {
         '--init-defaults[Initialize defaults]' \\
         '--notify-config[Notification config]:path:_files' \\
         '--force[Overwrite existing autonomous data]' \\
-        '--status[Filter jobs by status]:status:(pending running completed failed paused cancelled)' \\
+        '--status[Filter jobs by status]:status:(pending running retrying completed failed paused cancelled)' \\
         '--enabled[Only enabled jobs]' \\
         '--disabled[Only disabled jobs]' \\
         '--json[JSON output]' \\

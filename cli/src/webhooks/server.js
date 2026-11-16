@@ -188,7 +188,7 @@ export class WebhookEvent {
     eventType,
     payload,
     headers = {},
-    status = 'pending', // pending, processing, completed, failed
+    status = 'pending', // pending, processing, completed, failed, unhandled
     receivedAt = new Date().toISOString(),
     processedAt = null,
     handlers = [],
@@ -378,70 +378,102 @@ export class WebhookServer extends EventEmitter {
   }
 
   /**
-   * Process a webhook event
+   * Process a webhook event.
+   *
+   * The final status says what happened, and every processed event enters
+   * the history whatever its outcome:
+   * - `completed` — at least one handler matched and every one succeeded;
+   * - `failed`    — a matching handler threw (`error` says which), or
+   *                 processing itself threw (the error is re-thrown);
+   * - `unhandled` — no handler matched.
+   * Each emits `event:<status>`.
    */
   async processEvent(event) {
-    event.status = 'processing';
-    this.emit('event:processing', { event: event.toJSON() });
+    try {
+      event.status = 'processing';
+      this.emit('event:processing', { event: event.toJSON() });
 
-    const handlers = this.findHandlers(event.sourceId, event.eventType).filter((h) =>
-      h.matches(event.eventType, event.payload),
-    );
+      const handlers = this.findHandlers(event.sourceId, event.eventType).filter((h) =>
+        h.matches(event.eventType, event.payload),
+      );
 
-    event.handlers = handlers.map((h) => h.id);
+      event.handlers = handlers.map((h) => h.id);
 
-    if (handlers.length === 0) {
-      event.status = 'completed';
-      event.processedAt = new Date().toISOString();
-      event.results.push({ message: 'No matching handlers' });
-      this.emit('event:completed', { event: event.toJSON() });
-      return event;
-    }
+      if (handlers.length === 0) {
+        event.results.push({ message: 'No matching handlers' });
+        return this._finishEvent(event, 'unhandled');
+      }
 
-    for (const handler of handlers) {
-      try {
-        let result = null;
+      const failures = [];
+      for (const handler of handlers) {
+        try {
+          let result = null;
 
-        if (this.executor && handler.action) {
-          // Interpolate payload values into action
-          const interpolatedAction = this.interpolateAction(handler.action, event);
-          result = await this.executor(interpolatedAction, {
-            eventId: event.id,
-            eventType: event.eventType,
-            sourceId: event.sourceId,
-            payload: event.payload,
+          if (this.executor && handler.action) {
+            // Interpolate payload values into action
+            const interpolatedAction = this.interpolateAction(handler.action, event);
+            result = await this.executor(interpolatedAction, {
+              eventId: event.id,
+              eventType: event.eventType,
+              sourceId: event.sourceId,
+              payload: event.payload,
+            });
+          }
+
+          event.results.push({
+            handlerId: handler.id,
+            handlerName: handler.name,
+            success: true,
+            result,
           });
+
+          this.emit('handler:executed', {
+            handler: handler.toJSON(),
+            event: event.toJSON(),
+            result,
+          });
+        } catch (error) {
+          failures.push(`${handler.name || handler.id}: ${error.message}`);
+          event.results.push({
+            handlerId: handler.id,
+            handlerName: handler.name,
+            success: false,
+            error: error.message,
+          });
+
+          this.emit('handler:failed', { handler: handler.toJSON(), event: event.toJSON(), error });
         }
+      }
 
-        event.results.push({
-          handlerId: handler.id,
-          handlerName: handler.name,
-          success: true,
-          result,
-        });
+      if (failures.length > 0) {
+        event.error = `${failures.length} of ${handlers.length} handler(s) failed: ${failures.join('; ')}`;
+        return this._finishEvent(event, 'failed');
+      }
+      return this._finishEvent(event, 'completed');
+    } catch (error) {
+      event.error = error.message;
+      this._finishEvent(event, 'failed', { error });
+      throw error;
+    }
+  }
 
-        this.emit('handler:executed', { handler: handler.toJSON(), event: event.toJSON(), result });
-      } catch (error) {
-        event.results.push({
-          handlerId: handler.id,
-          handlerName: handler.name,
-          success: false,
-          error: error.message,
-        });
+  /**
+   * Settle an event: set its final status, record it in the history (once)
+   * and emit `event:<status>`.
+   * @private
+   */
+  _finishEvent(event, status, extra = {}) {
+    event.status = status;
+    event.processedAt = new Date().toISOString();
 
-        this.emit('handler:failed', { handler: handler.toJSON(), event: event.toJSON(), error });
+    if (!this.eventHistory.includes(event)) {
+      this.eventHistory.push(event);
+      if (this.eventHistory.length > 1000) {
+        this.eventHistory = this.eventHistory.slice(-1000);
       }
     }
 
-    event.status = 'completed';
-    event.processedAt = new Date().toISOString();
-
-    this.eventHistory.push(event);
-    if (this.eventHistory.length > 1000) {
-      this.eventHistory = this.eventHistory.slice(-1000);
-    }
-
-    this.emit('event:completed', { event: event.toJSON() });
+    this.emit(`event:${status}`, { event: event.toJSON(), ...extra });
     return event;
   }
 
@@ -601,12 +633,10 @@ export class WebhookServer extends EventEmitter {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ received: true, eventId: event.id }));
 
-    // Process asynchronously
-    this.processEvent(event).catch((error) => {
-      event.status = 'failed';
-      event.error = error.message;
-      this.emit('event:failed', { event: event.toJSON(), error });
-    });
+    // Process asynchronously. processEvent records a failure (status, error,
+    // history, `event:failed`) before re-throwing, so there is nothing left
+    // to do with the rejection here.
+    this.processEvent(event).catch(() => {});
   }
 
   /**

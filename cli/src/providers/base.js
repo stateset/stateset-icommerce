@@ -303,6 +303,15 @@ async function _autoRegister(registry) {
 // ============================================================================
 
 /**
+ * This breaker has always reported its half-open state as `half-open`
+ * through getStatus()/FallbackChain.getCircuitStatus(), so it keeps emitting
+ * that; the x402 sequencer breaker spells it `half_open`. State checks accept
+ * either spelling.
+ */
+const HALF_OPEN = 'half-open';
+const isHalfOpen = (state) => state === HALF_OPEN || state === 'half_open';
+
+/**
  * Circuit breaker states for each provider.
  * Tracks failures and prevents cascading retries.
  */
@@ -310,30 +319,53 @@ class CircuitBreaker {
   constructor({ failureThreshold = 3, resetTimeoutMs = 60_000 } = {}) {
     this._failureThreshold = failureThreshold;
     this._resetTimeoutMs = resetTimeoutMs;
-    /** @type {Map<string, { failures: number, state: 'closed'|'open'|'half-open', openedAt: number }>} */
+    /** @type {Map<string, { failures: number, state: 'closed'|'open'|'half-open', openedAt: number, trialStartedAt: number | null }>} */
     this._breakers = new Map();
   }
 
   _getBreaker(provider) {
     if (!this._breakers.has(provider)) {
-      this._breakers.set(provider, { failures: 0, state: 'closed', openedAt: 0 });
+      this._breakers.set(provider, {
+        failures: 0,
+        state: 'closed',
+        openedAt: 0,
+        trialStartedAt: null,
+      });
     }
     return this._breakers.get(provider);
   }
 
-  /** Check if provider is available (circuit not open). */
+  /**
+   * Check whether a call to the provider may go ahead.
+   *
+   * While half-open exactly one trial call is admitted: the caller that gets
+   * `true` owns it until it calls recordSuccess(), recordFailure() or
+   * release(); everyone else gets `false` meanwhile. A trial that never
+   * reports back stops blocking after `resetTimeoutMs`.
+   */
   isAvailable(provider) {
     const b = this._getBreaker(provider);
     if (b.state === 'closed') return true;
     if (b.state === 'open') {
       // Check if enough time has passed to try again
-      if (Date.now() - b.openedAt >= this._resetTimeoutMs) {
-        b.state = 'half-open';
-        return true;
-      }
-      return false;
+      if (Date.now() - b.openedAt < this._resetTimeoutMs) return false;
+      b.state = HALF_OPEN;
+      b.trialStartedAt = null;
     }
-    return true; // half-open allows one attempt
+    if (isHalfOpen(b.state)) {
+      if (b.trialStartedAt !== null && Date.now() - b.trialStartedAt < this._resetTimeoutMs) {
+        return false;
+      }
+      b.trialStartedAt = Date.now();
+      return true;
+    }
+    return true;
+  }
+
+  /** Give back a half-open trial that was admitted but not attempted. */
+  release(provider) {
+    const b = this._breakers.get(provider);
+    if (b) b.trialStartedAt = null;
   }
 
   /** Record a successful call — reset breaker. */
@@ -341,16 +373,19 @@ class CircuitBreaker {
     const b = this._getBreaker(provider);
     b.failures = 0;
     b.state = 'closed';
+    b.trialStartedAt = null;
   }
 
   /** Record a failed call — increment failures, possibly open circuit. */
   recordFailure(provider) {
     const b = this._getBreaker(provider);
     b.failures++;
-    if (b.failures >= this._failureThreshold) {
+    // A failed half-open trial re-opens the circuit straight away.
+    if (isHalfOpen(b.state) || b.failures >= this._failureThreshold) {
       b.state = 'open';
       b.openedAt = Date.now();
     }
+    b.trialStartedAt = null;
   }
 
   /** Get status for all tracked providers. */
@@ -417,14 +452,6 @@ class FallbackChain {
     const order = [preferred, ...this._order.filter((p) => p !== preferred)];
 
     for (const providerName of order) {
-      // Skip if circuit breaker is open
-      if (!this._circuitBreaker.isAvailable(providerName)) {
-        if (this._verbose) {
-          console.debug(`[FallbackChain] Skipping ${providerName} (circuit open)`);
-        }
-        continue;
-      }
-
       // Skip claude in chat-only mode (claude uses Agent SDK, not chat API)
       if (providerName === 'claude') {
         // Claude is handled specially — if it fails, we fall through
@@ -435,9 +462,21 @@ class FallbackChain {
       const provider = registry.get(providerName);
       if (!provider) continue;
 
+      // Skip if circuit breaker is open. Checked last: while half-open this
+      // claims the single trial call, which must then be reported or released.
+      if (!this._circuitBreaker.isAvailable(providerName)) {
+        if (this._verbose) {
+          console.debug(`[FallbackChain] Skipping ${providerName} (circuit open)`);
+        }
+        continue;
+      }
+
       try {
         const available = await provider.isAvailable();
-        if (!available) continue;
+        if (!available) {
+          this._circuitBreaker.release(providerName);
+          continue;
+        }
 
         attempted.push(providerName);
         if (this._verbose && attempted.length > 1) {

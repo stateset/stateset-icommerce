@@ -1006,6 +1006,63 @@ describe('WorkflowEngine', () => {
     });
   });
 
+  // ---- terminal states are final ----
+  describe('completed, failed and cancelled are terminal', () => {
+    async function finished(how) {
+      const inst = await engine.startWorkflow(wfId);
+      if (how === 'completed') {
+        await engine.transition(inst.id, 'middle');
+        await engine.transition(inst.id, 'end');
+      } else if (how === 'failed') {
+        await engine.failInstance(inst.id, new Error('boom'));
+      } else {
+        await engine.cancelInstance(inst.id, 'stop');
+      }
+      assert.equal(inst.status, how);
+      return inst;
+    }
+
+    for (const how of ['completed', 'failed', 'cancelled']) {
+      it(`a ${how} instance cannot be paused (and so cannot be resumed to running)`, async () => {
+        const inst = await finished(how);
+        await assert.rejects(() => engine.pauseInstance(inst.id), /Cannot pause instance/);
+        await assert.rejects(() => engine.resumeInstance(inst.id), /Instance is not paused/);
+        assert.equal(inst.status, how);
+      });
+
+      it(`a ${how} instance cannot be cancelled or failed over`, async () => {
+        const inst = await finished(how);
+        const before = { ...inst.toJSON(), history: inst.history.length };
+        await assert.rejects(() => engine.cancelInstance(inst.id, 'late'), /Cannot cancel/);
+        await assert.rejects(() => engine.failInstance(inst.id, new Error('late')), /Cannot fail/);
+        assert.equal(inst.status, how);
+        assert.equal(inst.error, before.error);
+        assert.equal(inst.completedAt, before.completedAt);
+        assert.equal(inst.history.length, before.history);
+      });
+    }
+
+    it('keeps the intended moves: a paused instance can still be cancelled or failed', async () => {
+      const a = await engine.startWorkflow(wfId);
+      await engine.pauseInstance(a.id);
+      await engine.cancelInstance(a.id, 'operator');
+      assert.equal(a.status, 'cancelled');
+
+      const b = await engine.startWorkflow(wfId);
+      await engine.pauseInstance(b.id);
+      await engine.failInstance(b.id, new Error('upstream'));
+      assert.equal(b.status, 'failed');
+    });
+
+    it('a paused instance cannot be paused again', async () => {
+      const inst = await engine.startWorkflow(wfId);
+      await engine.pauseInstance(inst.id);
+      const entries = inst.history.length;
+      await assert.rejects(() => engine.pauseInstance(inst.id), /Cannot pause instance/);
+      assert.equal(inst.history.length, entries);
+    });
+  });
+
   // ---- getInstance ----
   describe('getInstance()', () => {
     it('returns instance by id', async () => {
@@ -1218,7 +1275,7 @@ describe('WorkflowEngine', () => {
       }
     });
 
-    it('load skips non-running instances', async () => {
+    it('load restores paused instances, which survive the next save', async () => {
       const os = await import('os');
       const fs = await import('fs');
       const pathMod = await import('path');
@@ -1233,7 +1290,45 @@ describe('WorkflowEngine', () => {
         const e2 = new WorkflowEngine({ storePath: tmpDir });
         e2.registerWorkflow({ ...simpleWorkflow(), id: wf.id });
         await e2.load();
-        assert.equal(e2.getInstance(inst.id), undefined);
+        const loaded = e2.getInstance(inst.id);
+        assert.ok(loaded, 'a paused instance must be restored');
+        assert.equal(loaded.status, 'paused');
+        assert.equal(loaded.timeoutTimer, null);
+
+        // Any later save (here: another instance starting) rewrites the file
+        // from memory; the paused instance must still be in it.
+        await e2.startWorkflow(wf.id);
+        const e3 = new WorkflowEngine({ storePath: tmpDir });
+        e3.registerWorkflow({ ...simpleWorkflow(), id: wf.id });
+        await e3.load();
+        assert.equal(e3.getInstance(inst.id)?.status, 'paused');
+
+        await e3.resumeInstance(inst.id);
+        assert.equal(e3.getInstance(inst.id).status, 'running');
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('load skips finished instances', async () => {
+      const os = await import('os');
+      const fs = await import('fs');
+      const pathMod = await import('path');
+      const tmpDir = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'sm-test-'));
+
+      try {
+        const e1 = new WorkflowEngine({ storePath: tmpDir });
+        const wf = e1.registerWorkflow(simpleWorkflow());
+        const cancelled = await e1.startWorkflow(wf.id);
+        await e1.cancelInstance(cancelled.id);
+        const failed = await e1.startWorkflow(wf.id);
+        await e1.failInstance(failed.id, new Error('boom'));
+
+        const e2 = new WorkflowEngine({ storePath: tmpDir });
+        e2.registerWorkflow({ ...simpleWorkflow(), id: wf.id });
+        await e2.load();
+        assert.equal(e2.getInstance(cancelled.id), undefined);
+        assert.equal(e2.getInstance(failed.id), undefined);
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }

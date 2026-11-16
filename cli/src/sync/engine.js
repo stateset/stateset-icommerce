@@ -1215,9 +1215,17 @@ export class SyncEngine extends EventEmitter {
    * Skip a conflict without resolving
    * @param {string} conflictId
    * @param {string} [reason]
+   * @throws {Error} When the conflict does not exist or is no longer unresolved
    */
   skipConflict(conflictId, reason) {
-    this.resolver.skipConflict(conflictId, reason);
+    if (!this.resolver.skipConflict(conflictId, reason)) {
+      const existing = this.resolver.getConflict(conflictId);
+      throw new Error(
+        existing
+          ? `Conflict ${conflictId} is already ${existing.status}; only an unresolved conflict can be skipped`
+          : `Conflict not found: ${conflictId}`,
+      );
+    }
     this.emit('conflictSkipped', { conflictId, reason });
   }
 

@@ -646,11 +646,90 @@ describe('WebhookServer', () => {
   // ---- processEvent ----
 
   describe('processEvent', () => {
-    it('completes with "No matching handlers" when none match', async () => {
+    it('is unhandled with "No matching handlers" when none match, and enters history', async () => {
       const ev = new WebhookEvent({ sourceId: 's', eventType: 'order.created', payload: {} });
+      const emitted = [];
+      server.on('event:unhandled', () => emitted.push('unhandled'));
+      server.on('event:completed', () => emitted.push('completed'));
       const result = await server.processEvent(ev);
-      assert.equal(result.status, 'completed');
+      assert.equal(result.status, 'unhandled');
       assert.equal(result.results[0].message, 'No matching handlers');
+      assert.ok(result.processedAt);
+      assert.deepEqual(emitted, ['unhandled']);
+      assert.deepEqual(
+        server.getHistory({ status: 'unhandled' }).map((e) => e.id),
+        [ev.id],
+      );
+    });
+
+    it('is failed, not completed, when every matching handler throws', async () => {
+      const s = new WebhookServer({
+        port: 0,
+        autoStart: false,
+        executor: async () => {
+          throw new Error('boom');
+        },
+      });
+      const emitted = [];
+      s.on('event:failed', () => emitted.push('failed'));
+      s.on('event:completed', () => emitted.push('completed'));
+      s.registerHandler({ id: 'h1', name: 'only', sourceId: 's1', action: { request: 'x' } });
+      const ev = new WebhookEvent({ sourceId: 's1', eventType: 'e', payload: {} });
+
+      const result = await s.processEvent(ev);
+
+      assert.equal(result.status, 'failed');
+      assert.match(result.error, /1 of 1 handler\(s\) failed: only: boom/);
+      assert.deepEqual(emitted, ['failed']);
+      assert.deepEqual(
+        s.getHistory({ status: 'failed' }).map((e) => e.id),
+        [ev.id],
+      );
+    });
+
+    it('is failed when some matching handlers throw', async () => {
+      let calls = 0;
+      const s = new WebhookServer({
+        port: 0,
+        autoStart: false,
+        executor: async () => {
+          calls++;
+          if (calls === 2) throw new Error('second failed');
+          return 'ok';
+        },
+      });
+      s.registerHandler({ id: 'a', name: 'a', sourceId: 's1', action: { request: 'a' } });
+      s.registerHandler({ id: 'b', name: 'b', sourceId: 's1', action: { request: 'b' } });
+      const ev = new WebhookEvent({ sourceId: 's1', eventType: 'e', payload: {} });
+
+      const result = await s.processEvent(ev);
+
+      assert.equal(result.status, 'failed');
+      assert.match(result.error, /1 of 2 handler\(s\) failed/);
+      assert.deepEqual(
+        result.results.map((r) => r.success),
+        [true, false],
+      );
+    });
+
+    it('records an event whose processing throws as failed, in history, once', async () => {
+      const emitted = [];
+      server.on('event:failed', ({ error }) => emitted.push(error?.message));
+      server.findHandlers = () => {
+        throw new Error('handler lookup broke');
+      };
+      const ev = new WebhookEvent({ sourceId: 's', eventType: 'e', payload: {} });
+
+      await assert.rejects(() => server.processEvent(ev), /handler lookup broke/);
+
+      assert.equal(ev.status, 'failed');
+      assert.equal(ev.error, 'handler lookup broke');
+      assert.ok(ev.processedAt);
+      assert.deepEqual(emitted, ['handler lookup broke']);
+      assert.deepEqual(
+        server.eventHistory.map((e) => e.id),
+        [ev.id],
+      );
     });
 
     it('invokes executor for matching handlers', async () => {
@@ -717,6 +796,7 @@ describe('WebhookServer', () => {
       const events = [];
       server.on('event:processing', () => events.push('processing'));
       server.on('event:completed', () => events.push('completed'));
+      server.registerHandler({ id: 'h1', name: 'h', sourceId: 's', action: {} });
       const ev = new WebhookEvent({ sourceId: 's', eventType: 'e', payload: {} });
       await server.processEvent(ev);
       assert.deepEqual(events, ['processing', 'completed']);

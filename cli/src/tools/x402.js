@@ -15,6 +15,13 @@ const SYNC_KEYS_MODULE = ['..', 'sync', 'keys.js'].join('/');
 const TREASURY_MODULE = ['..', 'treasury', 'index.js'].join('/');
 
 /**
+ * Intent states the engine's markSettled accepts. On-chain settlement is
+ * refused, before anything is paid, for any other state — a signed intent
+ * included, since the engine has no signed -> settled move.
+ */
+const SETTLEABLE_INTENT_STATUSES = Object.freeze(['sequenced', 'batched']);
+
+/**
  * @typedef {Record<string, unknown>} JsonRecord
  * @typedef {{ [key: string]: unknown }} RawEntity
  * @typedef {{
@@ -165,7 +172,7 @@ const TREASURY_MODULE = ['..', 'treasury', 'index.js'].join('/');
  * @typedef {{ payerAddress: string, asset?: string, network?: string }} CreditBalanceParams
  * @typedef {{ payerAddress: string, amount: number, asset?: string, network?: string, reason?: string, referenceId?: string, metadata?: string }} CreditMutationParams
  * @typedef {{ payerAddress?: string, asset?: string, network?: string, direction?: string, limit?: number }} CreditTransactionsParams
- * @typedef {ToolHandlerInput & { params: SettleIntentParams }} SettleIntentHandlerInput
+ * @typedef {ToolHandlerInput & { params: SettleIntentParams, chainsModule?: ChainsModuleLike }} SettleIntentHandlerInput
  * @typedef {{
  *   success: boolean,
  *   [key: string]: unknown,
@@ -689,7 +696,9 @@ async function signIntentWithLocalAgent({
 }
 
 /**
- * @param {SettleIntentHandlerInput} input
+ * @param {SettleIntentHandlerInput} input - `chainsModule` replaces the
+ *   chains module (wallets, payment execution); the server never sets it, so
+ *   the real module is used. Tests inject a fake so no chain is touched.
  * @returns {Promise<SettleIntentToolResult>}
  */
 async function handleSettleIntentOnchain({
@@ -701,6 +710,7 @@ async function handleSettleIntentOnchain({
   buildAuditContext,
   buildTreasuryIdentityMetadata,
   extra,
+  chainsModule,
 }) {
   const { intentId, agentId, payeeAgentId, chain, token } = params;
   if (!allowApply) {
@@ -731,10 +741,19 @@ async function handleSettleIntentOnchain({
   if (!intent.status) {
     return { success: false, error: 'Intent status is missing' };
   }
-  if (!['signed', 'sequenced', 'batched'].includes(String(intent.status).toLowerCase())) {
+  // Every refusal below happens before any funds move. They mirror what the
+  // engine's markSettled accepts (a sequenced or batched intent that has not
+  // expired): checking less here would execute the payment on-chain and then
+  // fail to record it, leaving money moved and the intent unsettled.
+  if (!SETTLEABLE_INTENT_STATUSES.includes(String(intent.status).toLowerCase())) {
     return {
       success: false,
-      error: `Intent must be signed, sequenced, or batched before settlement (current: ${intent.status})`,
+      error:
+        `Intent must be sequenced or batched before on-chain settlement (current: ${intent.status}). ` +
+        'Settlement can only be recorded for a sequenced or batched intent, so nothing was paid.',
+      intentId,
+      currentStatus: intent.status,
+      requiredStatus: [...SETTLEABLE_INTENT_STATUSES],
     };
   }
   if (intent.txHash) {
@@ -749,6 +768,26 @@ async function handleSettleIntentOnchain({
       },
     };
   }
+  const validUntil = Number(intent.validUntil);
+  if (
+    intent.validUntil === undefined ||
+    intent.validUntil === null ||
+    !Number.isFinite(validUntil)
+  ) {
+    return {
+      success: false,
+      error: 'Intent has no valid_until, so it cannot be confirmed unexpired; nothing was paid.',
+      intentId,
+    };
+  }
+  if (Math.floor(Date.now() / 1000) > validUntil) {
+    return {
+      success: false,
+      error: `Intent expired (valid_until ${validUntil}); an expired intent cannot be settled, so nothing was paid.`,
+      intentId,
+      validUntil,
+    };
+  }
 
   const {
     executePayment,
@@ -759,7 +798,7 @@ async function handleSettleIntentOnchain({
     listChains,
     fromSmallestUnit,
     isEvmChain,
-  } = await loadChainsModule();
+  } = chainsModule ?? (await loadChainsModule());
 
   let chainId = normalizeX402NetworkToChain(chain || intent.network);
   if ((!chainId || !getChain(chainId)) && intent.chainId !== undefined && intent.chainId !== null) {
@@ -890,7 +929,26 @@ async function handleSettleIntentOnchain({
     };
   }
 
-  const settledIntent = await x402.markSettled(intentId, paymentResult.txHash, settledBlockNumber);
+  /** @type {JsonRecord} */
+  let settledIntent;
+  try {
+    settledIntent = await x402.markSettled(intentId, paymentResult.txHash, settledBlockNumber);
+  } catch (error) {
+    // The payment is on-chain; say so, with the transaction, so nobody
+    // retries it and pays twice.
+    return {
+      success: false,
+      paymentExecuted: true,
+      error:
+        `The on-chain payment was sent (tx ${paymentResult.txHash}) but recording the settlement failed: ` +
+        `${messageFromError(error)}. Reconcile this intent; do not retry the payment.`,
+      intentId,
+      chain: chainId,
+      token: tokenConfig.symbol,
+      txHash: paymentResult.txHash,
+      blockNumber: settledBlockNumber,
+    };
+  }
 
   /** @type {JsonRecord | null} */
   let incomingSettlement = null;

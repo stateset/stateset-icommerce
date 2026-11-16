@@ -717,6 +717,25 @@ export class Outbox {
    * @returns {Promise<number>} Local sequence number
    */
   async append(event, options = {}) {
+    const prepared = await this.prepareAppend(event, options);
+    return prepared.insert();
+  }
+
+  /**
+   * Do the asynchronous half of `append` — key lookup, encryption, signing —
+   * and return a synchronous `insert()` that writes the signed row.
+   *
+   * better-sqlite3 transactions are synchronous, so a caller that must insert
+   * an event atomically with other writes (conflict resolution supersedes one
+   * event with another) prepares it first and calls `insert()` inside its
+   * transaction. `insert` may override `baseVersion`, which the signature does
+   * not cover, so the version can be read under the same transaction.
+   *
+   * @param {Object} event - Same shape as `append`
+   * @param {Object} [options] - Same options as `append`
+   * @returns {Promise<{ eventId: string, insert: (overrides?: { baseVersion?: number|null }) => number }>}
+   */
+  async prepareAppend(event, options = {}) {
     this.initialize();
 
     const vesVersion = options.vesVersion || 1;
@@ -823,30 +842,35 @@ export class Outbox {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const result = stmt.run(
-      eventId,
-      event.commandId || null,
-      event.tenantId,
-      event.storeId,
-      event.entityType,
-      event.entityId,
-      event.eventType,
-      vesVersion,
-      payloadJson,
-      payloadKind,
-      payloadEncrypted ? JSON.stringify(payloadEncrypted) : null,
-      bufferToHex(payloadPlainHash),
-      bufferToHex(payloadCipherHash),
-      signingKey.keyId,
-      bufferToHex(agentSignature),
-      agentSignatureScheme,
-      agentSignatureBundle ? JSON.stringify(agentSignatureBundle) : null,
-      event.baseVersion || null,
-      event.sourceAgent,
-      createdAt,
-    );
+    const insert = (overrides = {}) => {
+      const baseVersion =
+        overrides.baseVersion !== undefined ? overrides.baseVersion : event.baseVersion;
+      const result = stmt.run(
+        eventId,
+        event.commandId || null,
+        event.tenantId,
+        event.storeId,
+        event.entityType,
+        event.entityId,
+        event.eventType,
+        vesVersion,
+        payloadJson,
+        payloadKind,
+        payloadEncrypted ? JSON.stringify(payloadEncrypted) : null,
+        bufferToHex(payloadPlainHash),
+        bufferToHex(payloadCipherHash),
+        signingKey.keyId,
+        bufferToHex(agentSignature),
+        agentSignatureScheme,
+        agentSignatureBundle ? JSON.stringify(agentSignatureBundle) : null,
+        baseVersion || null,
+        event.sourceAgent,
+        createdAt,
+      );
+      return result.lastInsertRowid;
+    };
 
-    return result.lastInsertRowid;
+    return { eventId, insert };
   }
 
   /**
@@ -1138,9 +1162,44 @@ export class Outbox {
     return this.getByEventId(eventId) || this.getPulledEventByEventId(eventId);
   }
 
+  // ---------------------------------------------------------------------------
+  // sync_status transitions
+  //
+  //   pending  --markSynced-->   synced    (the sequencer accepted it)
+  //   pending  --markRejected--> rejected  (the sequencer, or a conflict
+  //                                         resolution, refused/superseded it)
+  //   pending  --markFailed-->   failed    (parked; operator-only, see below)
+  //   failed   --retryFailed-->  pending
+  //   rejected --markSynced-->   synced    (a late acceptance of an event an
+  //                                         overlapping push saw rejected: the
+  //                                         sequencer's log is the truth)
+  //
+  // `synced` is final: the event is on the sequencer's log under a remote
+  // sequence, and nothing local may relabel it or renumber it. Each setter is a
+  // compare-and-set on the source state, so a caller acting on a stale read
+  // (the conflict resolver, a delayed push settlement) changes nothing instead
+  // of overwriting a settled row, and the return value says whether it moved.
+  //
+  // Nothing in the push path calls markFailed, deliberately. A failed push is a
+  // batch-level, usually transient error that `pushWithRetry` has already
+  // retried; leaving the rows `pending` lets background sync re-push them on
+  // its next interval, in local_seq order. Parking them as `failed` would stop
+  // that recovery until an operator ran `retryFailed`, and — worse — the next
+  // push would send newer events for the same entities ahead of the parked
+  // ones, so their base versions would no longer line up. The push path also
+  // writes nothing on failure (the exact signed row survives a restart), so
+  // `retry_count`/`last_error` move only through markFailed. `failed` is an
+  // explicit, operator-set parking state that `retryFailed` honours.
+  // ---------------------------------------------------------------------------
+
   /**
-   * Mark events as synced
+   * Mark events as synced (accepted by the sequencer).
+   *
+   * Moves `pending`, `failed` or `rejected` rows. A row that is already
+   * `synced` is never rewritten, so its remote sequence cannot be renumbered.
+   *
    * @param {Array<{localSeq: number, remoteSeq: number}>} acks
+   * @returns {number} Number of rows that moved to `synced`
    */
   markSynced(acks) {
     this.initialize();
@@ -1152,22 +1211,30 @@ export class Outbox {
           rejection_reason = NULL,
           last_error = NULL,
           synced_at = datetime('now')
-      WHERE local_seq = ?
+      WHERE local_seq = ? AND sync_status != 'synced'
     `);
 
     const transaction = this.db.transaction(() => {
+      let changed = 0;
       for (const { localSeq, remoteSeq } of acks) {
-        stmt.run(remoteSeq, localSeq);
+        changed += stmt.run(remoteSeq, localSeq).changes;
       }
+      return changed;
     });
 
-    transaction();
+    return transaction();
   }
 
   /**
-   * Mark event as failed (retriable)
+   * Park an unsettled event as failed (retriable through `retryFailed`).
+   *
+   * Only `pending` (or already `failed`) rows move; a `synced` or `rejected`
+   * row is settled and is left alone. Not called by the push path — see the
+   * transition notes above.
+   *
    * @param {number} localSeq
    * @param {string} error
+   * @returns {boolean} Whether the row was marked failed
    */
   markFailed(localSeq, error) {
     this.initialize();
@@ -1177,16 +1244,22 @@ export class Outbox {
       SET sync_status = 'failed',
           retry_count = retry_count + 1,
           last_error = ?
-      WHERE local_seq = ?
+      WHERE local_seq = ? AND sync_status IN ('pending', 'failed')
     `);
 
-    stmt.run(error, localSeq);
+    return stmt.run(error, localSeq).changes > 0;
   }
 
   /**
-   * Mark event as rejected (not retriable)
+   * Mark an unsettled event as rejected (not retriable).
+   *
+   * Only `pending` or `failed` rows move. A `synced` event is on the
+   * sequencer's log and cannot be rejected locally; a `rejected` one keeps its
+   * first reason.
+   *
    * @param {number} localSeq
    * @param {string} reason
+   * @returns {boolean} Whether the row was marked rejected
    */
   markRejected(localSeq, reason) {
     this.initialize();
@@ -1195,10 +1268,10 @@ export class Outbox {
       UPDATE _ves_outbox
       SET sync_status = 'rejected',
           rejection_reason = ?
-      WHERE local_seq = ?
+      WHERE local_seq = ? AND sync_status IN ('pending', 'failed')
     `);
 
-    stmt.run(reason, localSeq);
+    return stmt.run(reason, localSeq).changes > 0;
   }
 
   /**
