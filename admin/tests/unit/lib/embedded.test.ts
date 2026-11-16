@@ -998,8 +998,8 @@ describe('embedded commerce engine', () => {
     await returnsApi.create({
       orderId: order.id,
       items: [{ productId: 'prod_1', quantity: 1 }],
-      reason: 'Too small',
-      reasonCategory: 'wrong_size',
+      reason: 'Not the one ordered',
+      reasonCategory: 'wrong_item',
     });
     expect((await ordersApi.getAnalytics()).totalOrders).toBe(before.totalOrders + 1);
     expect((await returnsApi.getAnalytics()).totalReturns).toBe(returnsBefore.totalReturns + 1);
