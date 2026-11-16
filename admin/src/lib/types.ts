@@ -267,8 +267,46 @@ export interface Subscription {
   totalAmount: number;
   /** Exact decimal string (the binding's `SubscriptionOutput.priceExact`). */
   totalAmountExact?: string;
+  /**
+   * When the subscription was cancelled (the binding's `cancelledAt`, set for
+   * both a period-end cancellation and an immediate one, which expires it).
+   */
+  cancelledAt?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Subscription starts and cancellations over the `days` to the analytics' clock. */
+export interface SubscriptionActivity {
+  days: number;
+  newSubscriptions: number;
+  /** MRR, exact, of the subscriptions started in the window that are active now. */
+  newMrrExact: string;
+  /** Null when a cancelled subscription carries no cancellation date. */
+  cancellations: number | null;
+  /**
+   * Monthly recurring revenue, exact, of the subscriptions cancelled in the
+   * window, at their price; null with `cancellations`.
+   */
+  churnedMrrExact: string | null;
+}
+
+/** Active subscriptions billing in the `days` from the analytics' clock. */
+export interface SubscriptionRenewals {
+  days: number;
+  count: number;
+  /** Exact sum of every renewal's per-period price. */
+  amountExact: string;
+  /** The soonest renewals, earliest first. */
+  next: {
+    id: string;
+    customerId: string;
+    plan: string;
+    /** The renewal's UTC date (`YYYY-MM-DD`). */
+    renewalDate: string;
+    /** The per-period price, exact. */
+    amountExact: string;
+  }[];
 }
 
 export interface SubscriptionAnalytics {
@@ -276,15 +314,23 @@ export interface SubscriptionAnalytics {
   activeSubscriptions: number;
   mrr: number;
   mrrExact?: string;
+  /** 0-1 ratio. Nothing records past MRR, so only demo mode reports it. */
   mrrGrowth?: number;
   arr: number;
   arrExact?: string;
+  /** 0-1 share of all subscriptions that are cancelled or expired. */
   churnRate: number;
   arpu?: number;
   arpuExact?: string;
   averageLifetime: number;
   subscriptionsByPlan: Record<string, number>;
   subscriptionsByFrequency: Record<string, number>;
+  /** The figures below are present when the admin derived them from records. */
+  subscriptionsByStatus?: Record<string, number>;
+  /** Active subscriptions and the MRR (exact) they bring, per plan. */
+  activeByPlan?: { plan: string; count: number; mrrExact: string }[];
+  recentActivity?: SubscriptionActivity;
+  upcomingRenewals?: SubscriptionRenewals;
   /** Present when the admin derived the figures from subscription records. */
   coverage?: AnalyticsCoverage;
 }
@@ -293,8 +339,10 @@ export interface SubscriptionAnalytics {
 // Analytics Types
 // ============================================================================
 
+/** Rates and changes are 0-1 ratios (0.12 is 12%); render them with `formatRatio`. */
 export interface DashboardMetrics {
   gmvToday: number;
+  /** Today vs. yesterday, as a 0-1 ratio. */
   gmvChange: number;
   ordersToday: number;
   ordersChange: number;

@@ -191,7 +191,9 @@ export default function DemandForecasting({ data: propData }: DemandForecastingP
                       </div>
                     </div>
                     <div className="text-right">
-                      <Badge variant="warning">{alert.daysUntilStockout} days</Badge>
+                      {alert.daysUntilStockout !== null && (
+                        <Badge variant="warning">{alert.daysUntilStockout} days</Badge>
+                      )}
                       <p className="text-xs text-ds-muted-foreground mt-1">
                         Restock: {formatNumber(alert.recommendedQuantity)}
                       </p>

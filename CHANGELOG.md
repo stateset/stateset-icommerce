@@ -6,6 +6,65 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- Admin percentages render at the right scale. Every rate the admin reads
+  (return, churn, conversion, success, reconciliation, growth) is a 0-1
+  ratio, but `formatPercentage` printed it as a 0-100 number, so a 25%
+  return rate read "0.25%". It is replaced by `formatRatio` (0-1 in,
+  `"25.0%"` out) in the returns, subscription, agent, reconciliation, ROI,
+  analytics and operations views. The operations dashboard's 3.5%
+  conversion target and 90%/80% inventory-health alert lines were compared
+  against ratios as if they were percentages (so inventory health always
+  alerted, at "0.95%"), and the analytics funnel drew a 29% stage 0.29%
+  wide; both now use the ratio scale. The analytics dashboard's change
+  captions say what they compare (today vs. yesterday) and are omitted when
+  there are no dashboard metrics, instead of reading "0% vs last period".
+- Admin views no longer invent figures for data they do not have. A missing
+  figure reads "—" (`formatMeasured`), a missing list says it is empty, and
+  a measured zero still reads zero; `x || 45000`-style fallbacks turned real
+  zeros into stand-ins too, so a store with no at-risk customers showed 127
+  and one with no open returns showed 23 pending transactions:
+  - Customer health: no stand-in score, customer count, at-risk count or
+    lifetime value, and no demo at-risk customers, health metrics, segments
+    or trend. With no acquisition history the trend timeline is empty
+    instead of an invented January.
+  - Reconciliation and agent performance: no stand-in amounts, rates,
+    counts or response times, and no demo agents, tasks, categories,
+    discrepancies, transactions or charts in place of missing ones. Net
+    cash, which is measured, could read $125,000 for a store with none.
+  - System health (settings, operations dashboard): the native engine
+    reports no snapshot, and the settings page showed "0ms", "0%" and
+    "1 connection(s)" beside a "Healthy" pill while the operations
+    dashboard rated zeros "Optimal" and "Healthy". They now say the
+    figures are unavailable.
+  - Analytics headline metrics that did not load read "—" instead of $0.00
+    revenue and 0 orders.
+  - Demand-forecast alerts no longer assume one reserved unit a week to
+    count down to a stockout, or a reorder point of 50 for items without
+    one; the countdown is left out when nothing forecasts a stockout.
+- Admin subscription analytics are derived from the subscription records
+  (every page) instead of being mostly synthetic. The MRR trend (a fixed
+  3%-a-month curve), churn reasons, new/expansion/churned MRR (fixed shares
+  of MRR), subscriber counts (fixed shares of the first page), plan revenue
+  ($29 per unit), renewal customers, emails, dates and amounts, and churn
+  risk were invented. Now:
+  - Derived: MRR, ARPU, churn rate (share cancelled or expired), the status
+    breakdown, active subscribers and exact MRR per plan, new subscriptions
+    and the MRR of those still active over the last 30 days, cancellations
+    and the MRR they took away over the last 30 days (from `cancelledAt`;
+    unknown if a cancelled record has none), and active subscriptions
+    renewing in the next 7 days, with the real customer's name and email,
+    the next billing date, the exact per-period price and the exact total.
+    Money stays exact decimal strings end to end.
+  - Unavailable, and the widget says so: MRR history and growth (nothing
+    records past MRR; demo mode keeps its seeded growth figure), upgrades
+    and expansion MRR (plan changes are not recorded), cancellation reasons
+    (kept in subscription events, which the admin does not read), and churn
+    risk (no model; the column is gone).
+  - Demo mode derives the same figures from its current records on the demo
+    clock, and a demo cancellation records `cancelledAt` as the engine does.
+
 ## [1.41.0] - 2026-11-15
 
 1.41.0 rolls up four lines of work: the 1.40.1 security fixes, which were

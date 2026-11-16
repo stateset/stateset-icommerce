@@ -90,4 +90,37 @@ describe('DemandForecasting', () => {
     expect(screen.getByText('No active restock alerts from live forecast data.')).toBeTruthy();
     expect(screen.queryByText('Wireless Headphones')).toBeNull();
   });
+
+  it('shows a stockout countdown only when one was forecast', () => {
+    useEmbeddedDataMock.mockReturnValue({
+      data: {
+        ...emptyForecastData,
+        alerts: [
+          {
+            productId: 'SKU-1',
+            productName: 'Widget',
+            reason: 'Reorder recommended',
+            daysUntilStockout: null,
+            recommendedQuantity: 10,
+          },
+          {
+            productId: 'SKU-2',
+            productName: 'Gadget',
+            reason: 'Forecasted stockout risk',
+            daysUntilStockout: 4,
+            recommendedQuantity: 20,
+          },
+        ],
+      },
+      isLoading: false,
+      error: null,
+    });
+
+    render(<DemandForecasting />);
+
+    expect(screen.getByText('Widget')).toBeInTheDocument();
+    expect(screen.getAllByText(/ days$/)).toHaveLength(1);
+    expect(screen.getByText('4 days')).toBeInTheDocument();
+    expect(screen.queryByText('null days')).toBeNull();
+  });
 });

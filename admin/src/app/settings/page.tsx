@@ -15,6 +15,7 @@ import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getSystemHealth } from '@/app/actions/commerce';
 import type { SystemHealth } from '@/lib/types';
 import { APP_VERSION } from '@/lib/version';
+import { formatMeasured } from '@/lib/utils';
 
 export default function SettingsPage() {
   const { data: systemHealth } = useEmbeddedData<SystemHealth>(() => getSystemHealth(), {
@@ -63,13 +64,13 @@ export default function SettingsPage() {
               <div className="p-4 bg-ds-muted rounded-lg">
                 <p className="text-sm text-ds-muted-foreground">Latency</p>
                 <p className="text-lg font-semibold text-ds-foreground">
-                  {systemHealth?.databaseLatency || 0}ms
+                  {formatMeasured(systemHealth?.databaseLatency, (ms) => `${ms}ms`)}
                 </p>
               </div>
               <div className="p-4 bg-ds-muted rounded-lg">
                 <p className="text-sm text-ds-muted-foreground">Error Rate</p>
                 <p className="text-lg font-semibold text-ds-foreground">
-                  {systemHealth?.errorRate || 0}%
+                  {formatMeasured(systemHealth?.errorRate, (percent) => `${percent}%`)}
                 </p>
               </div>
             </div>
@@ -109,10 +110,16 @@ export default function SettingsPage() {
                 <div>
                   <p className="text-sm font-medium text-ds-foreground">Active Connections</p>
                   <p className="text-sm text-ds-muted-foreground">
-                    {systemHealth?.activeConnections || 1} connection(s)
+                    {formatMeasured(
+                      systemHealth?.activeConnections,
+                      (count) => `${count} connection(s)`,
+                    )}
                   </p>
                 </div>
-                <StatusPill status="ok">Healthy</StatusPill>
+                {/* No health snapshot (the native engine reports none) is not "Healthy". */}
+                <StatusPill status={systemHealth ? 'ok' : 'idle'}>
+                  {systemHealth ? 'Healthy' : 'Unavailable'}
+                </StatusPill>
               </div>
 
               <div className="p-4 bg-ds-info/10 border border-ds-info/25 rounded-lg">

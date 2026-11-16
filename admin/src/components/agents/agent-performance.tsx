@@ -17,14 +17,8 @@ import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getAgentPerformanceData } from '@/app/actions/commerce';
 import { SimulatedDataBadge } from '@/components/shared/simulated-data-badge';
-import { formatNumber, formatPercentage } from '@/lib/utils';
-import type {
-  AgentPerformanceData,
-  Agent,
-  DailyOutcomeEntry,
-  RecentTask,
-  TaskDistributionEntry,
-} from '@/lib/types/dashboard-data';
+import { formatMeasured, formatNumber, formatRatio } from '@/lib/utils';
+import type { AgentPerformanceData, Agent, RecentTask } from '@/lib/types/dashboard-data';
 
 interface AgentPerformanceProps {
   data?: AgentPerformanceData;
@@ -78,25 +72,28 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
     >
       {/* Key Metrics */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {/* A missing figure reads as unavailable, never as a stand-in number. */}
         <MetricCard
           label="Active Agents"
-          value={summary?.activeAgents || 8}
+          value={formatMeasured(summary?.activeAgents, String)}
           tone="success"
-          subtitle={`${summary?.onlinePercentage || 95}% online`}
+          subtitle={
+            summary?.onlinePercentage === undefined ? '' : `${summary.onlinePercentage}% online`
+          }
         />
         <MetricCard
           label="Tasks Completed"
-          value={formatNumber(summary?.tasksCompleted || 12450)}
+          value={formatMeasured(summary?.tasksCompleted, formatNumber)}
           tone="primary"
         />
         <MetricCard
           label="Avg Response Time"
-          value={`${summary?.avgResponseTime || 1.2}s`}
+          value={formatMeasured(summary?.avgResponseTime, (seconds) => `${seconds}s`)}
           tone="warning"
         />
         <MetricCard
           label="Success Rate"
-          value={formatPercentage(summary?.successRate || 0.984)}
+          value={formatMeasured(summary?.successRate, (rate) => formatRatio(rate))}
           tone="accent"
         />
       </div>
@@ -116,7 +113,7 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
         <CardContent>
           <AreaChart
             className="h-64"
-            data={responseTimeTrend || generateDemoResponseTimeTrend()}
+            data={responseTimeTrend ?? []}
             index="time"
             categories={['avgTime', 'p95Time', 'p99Time']}
             colors={['emerald', 'amber', 'indigo']}
@@ -134,8 +131,11 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
           <CardDescription>Real-time status of all AI agents</CardDescription>
         </CardHeader>
         <CardContent>
+          {(agents ?? []).length === 0 && (
+            <p className="text-sm text-ds-muted-foreground">No agent activity reported</p>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {(agents || generateDemoAgents()).map((agent: Agent, index: number) => (
+            {(agents ?? []).map((agent: Agent, index: number) => (
               <motion.div
                 key={agent.id || index}
                 initial={{ opacity: 0, scale: 0.95 }}
@@ -161,9 +161,7 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
                   </div>
                   <div className="flex justify-between text-sm">
                     <p className="text-sm text-ds-muted-foreground">Success</p>
-                    <p className="text-sm text-ds-foreground">
-                      {formatPercentage(agent.successRate)}
-                    </p>
+                    <p className="text-sm text-ds-foreground">{formatRatio(agent.successRate)}</p>
                   </div>
                   <div className="flex justify-between text-sm">
                     <p className="text-sm text-ds-muted-foreground">Avg Time</p>
@@ -180,7 +178,7 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
                     }
                   />
                   <p className="text-xs text-ds-muted-foreground text-center">
-                    {formatPercentage(agent.utilization)} utilization
+                    {formatRatio(agent.utilization)} utilization
                   </p>
                 </div>
               </motion.div>
@@ -200,7 +198,7 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
           <CardContent>
             <DonutChart
               className="h-64"
-              data={taskMetrics?.distribution || generateDemoTaskDistribution()}
+              data={taskMetrics?.distribution ?? []}
               category="count"
               index="type"
               colors={['indigo', 'emerald', 'violet', 'amber', 'cyan']}
@@ -223,7 +221,7 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
           <CardContent>
             <BarChart
               className="h-64"
-              data={taskMetrics?.dailyOutcomes || generateDemoTaskOutcomes()}
+              data={taskMetrics?.dailyOutcomes ?? []}
               index="day"
               categories={['success', 'failed', 'timeout']}
               colors={['emerald', 'indigo', 'amber']}
@@ -266,49 +264,52 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
                 </tr>
               </thead>
               <tbody>
-                {(taskMetrics?.recentTasks || generateDemoRecentTasks()).map(
-                  (task: RecentTask, index: number) => (
-                    <motion.tr
-                      key={task.id || index}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: index * 0.03 }}
-                      className="border-b border-ds-enterprise-line hover:bg-ds-muted"
-                    >
-                      <td className="py-2 px-3 text-sm font-mono text-ds-foreground">{task.id}</td>
-                      <td className="py-2 px-3">
-                        <div className="flex items-center space-x-2">
-                          <CpuChipIcon className="w-4 h-4 text-ds-primary" />
-                          <p className="text-sm text-ds-foreground">{task.agent}</p>
-                        </div>
-                      </td>
-                      <td className="py-2 px-3">
-                        <Badge variant="primary">{task.type}</Badge>
-                      </td>
-                      <td className="py-2 px-3">
-                        {task.status === 'success' ? (
-                          <div className="flex items-center space-x-1">
-                            <CheckCircleIcon className="w-4 h-4 text-ds-status-ok" />
-                            <p className="text-sm text-ds-status-ok">Success</p>
-                          </div>
-                        ) : task.status === 'failed' ? (
-                          <div className="flex items-center space-x-1">
-                            <XCircleIcon className="w-4 h-4 text-ds-status-fail" />
-                            <p className="text-sm text-ds-status-fail">Failed</p>
-                          </div>
-                        ) : (
-                          <Badge variant="warning">{task.status}</Badge>
-                        )}
-                      </td>
-                      <td className="py-2 px-3 text-sm text-right text-ds-foreground">
-                        {task.duration}ms
-                      </td>
-                      <td className="py-2 px-3 text-sm text-ds-muted-foreground">
-                        {task.timestamp}
-                      </td>
-                    </motion.tr>
-                  ),
+                {(taskMetrics?.recentTasks ?? []).length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="py-4 px-3 text-sm text-ds-muted-foreground">
+                      No recent agent tasks
+                    </td>
+                  </tr>
                 )}
+                {(taskMetrics?.recentTasks ?? []).map((task: RecentTask, index: number) => (
+                  <motion.tr
+                    key={task.id || index}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: index * 0.03 }}
+                    className="border-b border-ds-enterprise-line hover:bg-ds-muted"
+                  >
+                    <td className="py-2 px-3 text-sm font-mono text-ds-foreground">{task.id}</td>
+                    <td className="py-2 px-3">
+                      <div className="flex items-center space-x-2">
+                        <CpuChipIcon className="w-4 h-4 text-ds-primary" />
+                        <p className="text-sm text-ds-foreground">{task.agent}</p>
+                      </div>
+                    </td>
+                    <td className="py-2 px-3">
+                      <Badge variant="primary">{task.type}</Badge>
+                    </td>
+                    <td className="py-2 px-3">
+                      {task.status === 'success' ? (
+                        <div className="flex items-center space-x-1">
+                          <CheckCircleIcon className="w-4 h-4 text-ds-status-ok" />
+                          <p className="text-sm text-ds-status-ok">Success</p>
+                        </div>
+                      ) : task.status === 'failed' ? (
+                        <div className="flex items-center space-x-1">
+                          <XCircleIcon className="w-4 h-4 text-ds-status-fail" />
+                          <p className="text-sm text-ds-status-fail">Failed</p>
+                        </div>
+                      ) : (
+                        <Badge variant="warning">{task.status}</Badge>
+                      )}
+                    </td>
+                    <td className="py-2 px-3 text-sm text-right text-ds-foreground">
+                      {task.duration}ms
+                    </td>
+                    <td className="py-2 px-3 text-sm text-ds-muted-foreground">{task.timestamp}</td>
+                  </motion.tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -316,172 +317,6 @@ function AgentPerformanceInner({ data: propData }: AgentPerformanceProps) {
       </Card>
     </motion.div>
   );
-}
-
-// Demo data generators
-function generateDemoResponseTimeTrend(): NonNullable<AgentPerformanceData['responseTimeTrend']> {
-  const data = [];
-  for (let i = 0; i < 24; i++) {
-    data.push({
-      time: `${i}:00`,
-      avgTime: 800 + Math.random() * 400,
-      p95Time: 1200 + Math.random() * 600,
-      p99Time: 1800 + Math.random() * 800,
-    });
-  }
-  return data;
-}
-
-function generateDemoAgents(): Agent[] {
-  return [
-    {
-      id: '1',
-      name: 'Order Agent',
-      status: 'online',
-      tasksCompleted: 3245,
-      successRate: 0.992,
-      avgResponseTime: 850,
-      utilization: 0.72,
-    },
-    {
-      id: '2',
-      name: 'Inventory Agent',
-      status: 'online',
-      tasksCompleted: 2890,
-      successRate: 0.988,
-      avgResponseTime: 920,
-      utilization: 0.65,
-    },
-    {
-      id: '3',
-      name: 'Returns Agent',
-      status: 'busy',
-      tasksCompleted: 1560,
-      successRate: 0.975,
-      avgResponseTime: 1100,
-      utilization: 0.88,
-    },
-    {
-      id: '4',
-      name: 'Customer Agent',
-      status: 'online',
-      tasksCompleted: 2100,
-      successRate: 0.981,
-      avgResponseTime: 780,
-      utilization: 0.55,
-    },
-    {
-      id: '5',
-      name: 'Analytics Agent',
-      status: 'online',
-      tasksCompleted: 1890,
-      successRate: 0.995,
-      avgResponseTime: 1250,
-      utilization: 0.42,
-    },
-    {
-      id: '6',
-      name: 'Support Agent',
-      status: 'online',
-      tasksCompleted: 2450,
-      successRate: 0.968,
-      avgResponseTime: 650,
-      utilization: 0.78,
-    },
-    {
-      id: '7',
-      name: 'Pricing Agent',
-      status: 'offline',
-      tasksCompleted: 980,
-      successRate: 0.991,
-      avgResponseTime: 450,
-      utilization: 0,
-    },
-    {
-      id: '8',
-      name: 'Fulfillment Agent',
-      status: 'online',
-      tasksCompleted: 3100,
-      successRate: 0.986,
-      avgResponseTime: 890,
-      utilization: 0.68,
-    },
-  ];
-}
-
-function generateDemoTaskDistribution(): TaskDistributionEntry[] {
-  return [
-    { type: 'Order Processing', count: 3245 },
-    { type: 'Inventory Check', count: 2890 },
-    { type: 'Customer Query', count: 2100 },
-    { type: 'Returns Processing', count: 1560 },
-    { type: 'Analytics', count: 1890 },
-  ];
-}
-
-function generateDemoTaskOutcomes(): DailyOutcomeEntry[] {
-  return [
-    { day: 'Mon', success: 1850, failed: 32, timeout: 15 },
-    { day: 'Tue', success: 1920, failed: 28, timeout: 12 },
-    { day: 'Wed', success: 1780, failed: 35, timeout: 18 },
-    { day: 'Thu', success: 2100, failed: 22, timeout: 10 },
-    { day: 'Fri', success: 2250, failed: 18, timeout: 8 },
-    { day: 'Sat', success: 1450, failed: 25, timeout: 14 },
-    { day: 'Sun', success: 1200, failed: 20, timeout: 11 },
-  ];
-}
-
-function generateDemoRecentTasks(): RecentTask[] {
-  return [
-    {
-      id: 'TSK-001',
-      agent: 'Order Agent',
-      type: 'order.process',
-      status: 'success',
-      duration: 856,
-      timestamp: '2 min ago',
-    },
-    {
-      id: 'TSK-002',
-      agent: 'Customer Agent',
-      type: 'customer.query',
-      status: 'success',
-      duration: 423,
-      timestamp: '3 min ago',
-    },
-    {
-      id: 'TSK-003',
-      agent: 'Returns Agent',
-      type: 'return.approve',
-      status: 'success',
-      duration: 1120,
-      timestamp: '5 min ago',
-    },
-    {
-      id: 'TSK-004',
-      agent: 'Inventory Agent',
-      type: 'stock.check',
-      status: 'failed',
-      duration: 2500,
-      timestamp: '6 min ago',
-    },
-    {
-      id: 'TSK-005',
-      agent: 'Analytics Agent',
-      type: 'report.generate',
-      status: 'success',
-      duration: 1890,
-      timestamp: '8 min ago',
-    },
-    {
-      id: 'TSK-006',
-      agent: 'Fulfillment Agent',
-      type: 'shipment.track',
-      status: 'success',
-      duration: 650,
-      timestamp: '10 min ago',
-    },
-  ];
 }
 
 const AgentPerformance = memo(AgentPerformanceInner);

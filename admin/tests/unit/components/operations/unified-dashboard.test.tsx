@@ -53,19 +53,20 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+// Rates and changes are 0-1 ratios, as mockDashboardMetrics reports them.
 const metrics: DashboardMetrics = {
   gmvToday: 12000,
-  gmvChange: 12,
+  gmvChange: 0.12,
   ordersToday: 240,
-  ordersChange: 9,
+  ordersChange: 0.09,
   averageOrderValue: 50,
-  aovChange: 2,
-  conversionRate: 4.2,
-  conversionChange: 0.6,
+  aovChange: 0.02,
+  conversionRate: 0.042,
+  conversionChange: 0.006,
   activeCustomers: 180,
   newCustomers: 24,
-  returnRate: 1.8,
-  inventoryHealth: 95,
+  returnRate: 0.018,
+  inventoryHealth: 0.95,
 };
 
 const hourlyActivity: HourlyActivity[] = [];
@@ -78,23 +79,27 @@ const systemHealth: SystemHealth = {
   processingSpeed: 98,
 };
 
+function serve(dashboardMetrics: DashboardMetrics, health: SystemHealth | null = systemHealth) {
+  useEmbeddedDataMock.mockImplementation(
+    (_fetcher: () => Promise<unknown>, options?: { refreshInterval?: number }) => {
+      switch (options?.refreshInterval) {
+        case 30000:
+          return { data: dashboardMetrics, isLoading: false, error: null };
+        case 60000:
+          return { data: hourlyActivity, isLoading: false, error: null };
+        case 10000:
+          return { data: health, isLoading: false, error: null };
+        default:
+          return { data: null, isLoading: false, error: null };
+      }
+    },
+  );
+}
+
 describe('UnifiedDashboard', () => {
   it('replaces hardcoded alerts with live coverage and derived insights', async () => {
     vi.useFakeTimers();
-    useEmbeddedDataMock.mockImplementation(
-      (_fetcher: () => Promise<unknown>, options?: { refreshInterval?: number }) => {
-        switch (options?.refreshInterval) {
-          case 30000:
-            return { data: metrics, isLoading: false, error: null };
-          case 60000:
-            return { data: hourlyActivity, isLoading: false, error: null };
-          case 10000:
-            return { data: systemHealth, isLoading: false, error: null };
-          default:
-            return { data: null, isLoading: false, error: null };
-        }
-      },
-    );
+    serve(metrics);
 
     render(<UnifiedDashboard />);
 
@@ -106,7 +111,42 @@ describe('UnifiedDashboard', () => {
 
     expect(screen.getByText('Live Data Coverage')).toBeTruthy();
     expect(screen.getByText('No active operational alerts in the current snapshot.')).toBeTruthy();
-    expect(screen.getByText('GMV is up 12% today')).toBeTruthy();
+    expect(screen.getByText('GMV is up 12.0% today')).toBeTruthy();
     expect(screen.queryByText('Inventory low for SKU-1234')).toBeNull();
+  });
+
+  it('renders the 0-1 dashboard rates as percentages against a 3.5% target', async () => {
+    vi.useFakeTimers();
+    serve({ ...metrics, inventoryHealth: 0.85 });
+
+    render(<UnifiedDashboard />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+
+    // Conversion 0.042 is 4.2%, above the 3.5% target (it used to read 0.042%).
+    expect(screen.getByText('4.2%')).toBeTruthy();
+    expect(screen.getByText('Conversion is above target at 4.2%')).toBeTruthy();
+    expect(screen.getByText('Target 3.5% · 120% attained')).toBeTruthy();
+    expect(screen.getByText('▲ 12.0% vs. yesterday')).toBeTruthy();
+    // Inventory health 0.85 is below the 90% alert line, not "0.85%".
+    expect(screen.getByText('85.0%')).toBeTruthy();
+    expect(screen.getByText('Inventory health is 85.0%')).toBeTruthy();
+  });
+
+  it('rates system health only when there is a snapshot', async () => {
+    vi.useFakeTimers();
+    // The native engine has no system health aggregate.
+    serve(metrics, null);
+
+    render(<UnifiedDashboard />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+
+    expect(screen.getByText('System health unavailable')).toBeTruthy();
+    // No "0ms Optimal" / "0% Healthy" verdicts on numbers nobody measured.
+    expect(screen.queryByText('0ms')).toBeNull();
+    expect(screen.queryByText('Optimal')).toBeNull();
   });
 });

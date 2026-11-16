@@ -101,5 +101,44 @@ describe('FinancialReconciliation', () => {
     // "Flagged Discrepancies" is unique to the supplied-data path.
     expect(screen.getByText('Flagged Discrepancies')).toBeInTheDocument();
     expect(screen.getByText('Missing receipt')).toBeInTheDocument();
+    // Reconciliation rates are 0-1 ratios.
+    expect(screen.getByText('95.0% of transactions')).toBeInTheDocument();
+    expect(screen.getByText('95.0% Complete')).toBeInTheDocument();
+  });
+
+  it('renders measured zeros as zeros, not stand-in figures', () => {
+    useEmbeddedDataMock.mockReturnValue({
+      data: {
+        ...SUCCESS_DATA,
+        // No open returns and no net cash: both are real zeros.
+        summary: { ...SUCCESS_DATA.summary, pendingCount: 0, netCash: 0 },
+      },
+      isLoading: false,
+      error: null,
+    });
+    render(<FinancialReconciliation />);
+    expect(screen.getByText('0 transactions')).toBeInTheDocument();
+    expect(screen.getByText('$0.00')).toBeInTheDocument();
+    expect(screen.queryByText('23 transactions')).toBeNull();
+    expect(screen.queryByText('$125,000.00')).toBeNull();
+  });
+
+  it('shows missing figures and lists as unavailable instead of demo data', () => {
+    useEmbeddedDataMock.mockReturnValue({
+      data: { summary: undefined },
+      isLoading: false,
+      error: null,
+    });
+    render(<FinancialReconciliation />);
+    // Four amounts and three captions read "—" (not $458,000 / 98.2% / 23 ...).
+    expect(screen.getAllByText('—')).toHaveLength(7);
+    expect(screen.queryByText('$458,000.00')).toBeNull();
+    expect(screen.queryByText(/Complete$/)).toBeNull();
+    // No demo discrepancies, categories or transactions.
+    expect(screen.queryByText('Payment amount mismatch')).toBeNull();
+    expect(screen.queryByText('TXN-2890')).toBeNull();
+    expect(screen.getByText('No flagged discrepancies')).toBeInTheDocument();
+    expect(screen.getByText('No reconciliation categories')).toBeInTheDocument();
+    expect(screen.getByText('No transactions')).toBeInTheDocument();
   });
 });

@@ -29,8 +29,19 @@ import {
   getConversionFunnel,
 } from '@/app/actions/commerce';
 import type { DashboardMetrics, OrderAnalytics, CustomerAnalytics } from '@/lib/types';
-import { formatCurrency, formatCompactNumber, formatPercentage } from '@/lib/utils';
+import { formatCurrency, formatCompactNumber, formatMeasured, formatRatio } from '@/lib/utils';
 import { formatMoney } from '@/lib/finance/format';
+
+/**
+ * A dashboard change (a 0-1 ratio, today vs. yesterday) as a caption. Without
+ * dashboard metrics there is nothing to compare, so no caption, rather than a
+ * "0%" change nobody measured.
+ */
+function changeCaption(change: number | undefined): string {
+  if (change === undefined) return '';
+  const sign = change > 0 ? '+' : change < 0 ? '-' : '';
+  return `${sign}${formatRatio(Math.abs(change))} today vs. yesterday`;
+}
 
 export default function AnalyticsDashboard() {
   const { data: metrics, isLoading: loadingMetrics } = useEmbeddedData<DashboardMetrics>(
@@ -103,40 +114,46 @@ export default function AnalyticsDashboard() {
 
         {/* Key Metrics */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          {/* Analytics that did not load read as unavailable, not as zero. */}
           <MetricCard
             label="Total Revenue"
-            value={formatMoney(
-              orderAnalytics?.totalRevenueExact ?? orderAnalytics?.totalRevenue ?? 0,
+            value={formatMeasured(
+              orderAnalytics?.totalRevenueExact ?? orderAnalytics?.totalRevenue,
+              (amount) => formatMoney(amount),
             )}
             tone="success"
             icon={CurrencyDollarIcon}
-            subtitle={`${metrics?.gmvChange || 0}% vs last period`}
+            subtitle={changeCaption(metrics?.gmvChange)}
           />
 
           <MetricCard
             label="Total Orders"
-            value={formatCompactNumber(orderAnalytics?.totalOrders || 0)}
+            value={formatMeasured(orderAnalytics?.totalOrders, formatCompactNumber)}
             tone="primary"
             icon={ShoppingBagIcon}
-            subtitle={`${metrics?.ordersChange || 0}% vs last period`}
+            subtitle={changeCaption(metrics?.ordersChange)}
           />
 
           <MetricCard
             label="Avg Order Value"
-            value={formatMoney(
-              orderAnalytics?.averageOrderValueExact ?? orderAnalytics?.averageOrderValue ?? 0,
+            value={formatMeasured(
+              orderAnalytics?.averageOrderValueExact ?? orderAnalytics?.averageOrderValue,
+              (amount) => formatMoney(amount),
             )}
             tone="primary"
             icon={ChartBarIcon}
-            subtitle={`${metrics?.aovChange || 0}% vs last period`}
+            subtitle={changeCaption(metrics?.aovChange)}
           />
 
           <MetricCard
             label="Active Customers"
-            value={formatCompactNumber(customerAnalytics?.activeCustomers || 0)}
+            value={formatMeasured(customerAnalytics?.activeCustomers, formatCompactNumber)}
             tone="accent"
             icon={UsersIcon}
-            subtitle={`${customerAnalytics?.newCustomersThisMonth || 0} new this month`}
+            subtitle={formatMeasured(
+              customerAnalytics?.newCustomersThisMonth,
+              (count) => `${count} new this month`,
+            )}
           />
         </div>
 
@@ -260,17 +277,17 @@ export default function AnalyticsDashboard() {
                         </p>
                         <Badge
                           variant={
-                            stage.rate > 50 ? 'success' : stage.rate > 25 ? 'warning' : 'danger'
+                            stage.rate > 0.5 ? 'success' : stage.rate > 0.25 ? 'warning' : 'danger'
                           }
                         >
-                          {formatPercentage(stage.rate)}
+                          {formatRatio(stage.rate)}
                         </Badge>
                       </div>
                     </div>
                     <div className="h-8 bg-ds-muted rounded">
                       <div
                         className="h-full bg-ds-primary rounded transition-all duration-500"
-                        style={{ width: `${stage.rate}%` }}
+                        style={{ width: formatRatio(stage.rate) }}
                       />
                     </div>
                   </div>

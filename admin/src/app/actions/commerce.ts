@@ -42,9 +42,11 @@ import type {
   EngineFeatureUnavailable,
   InventoryAnalyticsData,
   FinancialReconciliationData,
+  SubscriptionAnalyticsData,
   SystemHealthData,
   SystemEvent,
 } from '@/lib/types/dashboard-data';
+import { toDecimalString } from '@/lib/finance/decimal';
 import {
   ORDER_STATUSES,
   RETURN_LIFECYCLE,
@@ -722,12 +724,8 @@ async function loadCustomerHealthData(): Promise<CustomerHealthData> {
     },
     segments: analytics.customersBySegment,
     atRiskCustomers,
-    trends: {
-      timeline:
-        acquisitionTimeline.length > 0
-          ? acquisitionTimeline
-          : [{ month: 'Jan', excellent: 20, good: 25, fair: 10, atRisk: 4 }],
-    },
+    // No acquisition history means no timeline, not an invented month.
+    trends: { timeline: acquisitionTimeline },
   };
 }
 
@@ -1022,15 +1020,18 @@ async function loadDemandForecastingData(): Promise<DemandForecastingData> {
           : item.availableQuantity === 0
             ? 'Out of stock'
             : 'Reorder recommended',
+        // Without a forecast stockout date or reserved demand to project,
+        // the stockout day is unknown; it used to assume one reserved unit.
         daysUntilStockout: forecast.stockoutDate
           ? Math.max(1, Math.ceil((Date.parse(forecast.stockoutDate) - Date.now()) / DAY_MS))
-          : Math.max(
-              1,
-              Math.round(item.availableQuantity / Math.max(1, (item.reservedQuantity || 1) / 7)),
-            ),
+          : item.reservedQuantity > 0
+            ? Math.max(1, Math.round(item.availableQuantity / (item.reservedQuantity / 7)))
+            : null,
+        // Topping up to twice the reorder point needs a reorder point; an item
+        // without one used to be treated as having a reorder point of 50.
         recommendedQuantity: Math.max(
           forecast.recommendedReorder,
-          (item.reorderPoint || 50) * 2 - item.availableQuantity,
+          item.reorderPoint > 0 ? item.reorderPoint * 2 - item.availableQuantity : 0,
         ),
       })),
     accuracy: {
@@ -1039,111 +1040,79 @@ async function loadDemandForecastingData(): Promise<DemandForecastingData> {
   };
 }
 
-// Subscription Analytics data for generative UI
-export async function getSubscriptionAnalyticsData() {
+/** Display names for the customers behind the listed renewals. */
+async function renewalCustomers(ids: string[]): Promise<Map<string, Customer | null>> {
+  const unique = Array.from(new Set(ids));
+  const entries = await Promise.all(
+    unique.map(async (id) => {
+      // A customer the engine cannot return is shown by id, not invented.
+      const customer = await customersApi.get(id).catch(() => null);
+      return [id, customer] as const;
+    }),
+  );
+  return new Map(entries);
+}
+
+/**
+ * Subscription Analytics data for generative UI.
+ *
+ * Every figure is derived from the subscription records (all pages, via
+ * `subscriptionsApi.getAnalytics`), and the renewals name real customers.
+ * Figures no record supports are null and the widget says so: MRR history
+ * and growth (nothing records past MRR; demo mode reports a seeded growth),
+ * plan changes (upgrades, expansion MRR), cancellation reasons (kept in
+ * subscription events, which the admin does not read) and churn risk (no
+ * model exists).
+ */
+export async function getSubscriptionAnalyticsData(): Promise<SubscriptionAnalyticsData> {
   await requireAdminSession();
-  const [subscriptions, analytics] = await Promise.all([
-    subscriptionsApi.list(),
-    subscriptionsApi.getAnalytics(),
-  ]);
-
-  // Group by status
-  const statusBreakdown: Record<string, number> = {};
-  const planDistribution: Record<string, { count: number; revenue: number }> = {};
-
-  for (const sub of subscriptions) {
-    statusBreakdown[sub.status] = (statusBreakdown[sub.status] || 0) + 1;
-    const plan = sub.plan || 'Basic';
-    if (!planDistribution[plan]) {
-      planDistribution[plan] = { count: 0, revenue: 0 };
-    }
-    planDistribution[plan].count += 1;
-    planDistribution[plan].revenue += sub.currentPeriodEnd ? sub.quantity * 29 : 0;
-  }
-
-  // Generate MRR trend
-  const mrrTrend = [];
-  const baseMrr = analytics.mrr || 45000;
-  for (let i = 5; i >= 0; i--) {
-    const date = new Date();
-    date.setMonth(date.getMonth() - i);
-    const monthNames = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-    const mrr = baseMrr * (1 - i * 0.03);
-    mrrTrend.push({
-      month: monthNames[date.getMonth()],
-      mrr: Math.round(mrr),
-      newMrr: Math.round(mrr * 0.12),
-      churnedMrr: Math.round(mrr * 0.03),
-    });
-  }
+  const analytics = await subscriptionsApi.getAnalytics();
+  const activity = analytics.recentActivity;
+  const renewals = analytics.upcomingRenewals;
+  const customers = await renewalCustomers(renewals?.next.map((entry) => entry.customerId) ?? []);
+  const exact = (exactValue: string | undefined, value: number | undefined) =>
+    exactValue ?? (value === undefined ? null : toDecimalString(value));
 
   return {
     summary: {
-      mrr: analytics.mrr || baseMrr,
-      mrrGrowth: analytics.mrrGrowth || 0.08,
-      activeCount:
-        analytics.activeSubscriptions || subscriptions.filter((s) => s.status === 'active').length,
-      churnRate: analytics.churnRate || 0.032,
-      arpu: analytics.arpu || 36,
-      statusBreakdown,
-      newMrr: Math.round((analytics.mrr || baseMrr) * 0.12),
-      expansionMrr: Math.round((analytics.mrr || baseMrr) * 0.04),
-      churnedMrr: Math.round((analytics.mrr || baseMrr) * 0.03),
-      newSubscribers: Math.round(subscriptions.length * 0.1),
-      upgrades: Math.round(subscriptions.length * 0.02),
-      cancellations: Math.round(subscriptions.length * 0.025),
+      mrrExact: exact(analytics.mrrExact, analytics.mrr) ?? '0',
+      mrrGrowth: analytics.mrrGrowth ?? null,
+      activeCount: analytics.activeSubscriptions,
+      churnRate: analytics.totalSubscriptions > 0 ? analytics.churnRate : null,
+      arpuExact:
+        analytics.activeSubscriptions > 0 ? exact(analytics.arpuExact, analytics.arpu) : null,
+      statusBreakdown: analytics.subscriptionsByStatus ?? null,
+      activityDays: activity?.days ?? null,
+      newSubscribers: activity?.newSubscriptions ?? null,
+      newMrrExact: activity?.newMrrExact ?? null,
+      cancellations: activity?.cancellations ?? null,
+      churnedMrrExact: activity?.churnedMrrExact ?? null,
+      upgrades: null,
+      expansionMrrExact: null,
+      complete: analytics.coverage?.complete ?? true,
     },
-    mrrTrend,
-    churnAnalysis: {
-      reasons: [
-        { name: 'Too expensive', count: 15, percentage: 0.38 },
-        { name: 'Missing features', count: 8, percentage: 0.21 },
-        { name: 'Switched competitor', count: 7, percentage: 0.18 },
-        { name: 'No longer needed', count: 5, percentage: 0.13 },
-        { name: 'Other', count: 3, percentage: 0.1 },
-      ],
-    },
-    planDistribution: Object.entries(planDistribution).map(([plan, data]) => ({
-      plan,
-      ...data,
-    })),
-    upcomingRenewals: subscriptions
-      .filter((s) => s.status === 'active' && s.currentPeriodEnd)
-      .slice(0, 5)
-      .map((sub, i) => {
-        const renewalDate = new Date();
-        renewalDate.setDate(renewalDate.getDate() + i + 1);
-        return {
-          id: sub.id,
-          customerName: `Customer ${sub.customerId.slice(0, 4)}`,
-          email: `user${i}@example.com`,
-          plan: sub.planId || 'Pro',
-          renewalDate: formatIsoDate(renewalDate),
-          amount: sub.quantity * 29,
-          churnRisk: roundNumber(
-            clampNumber(
-              0.08 +
-                (sub.quantity > 2 ? 0.08 : 0) +
-                deterministicRatio(i + subscriptions.length, 0, 0.24),
-              0.05,
-              0.75,
-            ),
-          ),
-        };
-      }),
+    mrrTrend: null,
+    churnAnalysis: null,
+    planDistribution: analytics.activeByPlan ?? null,
+    upcomingRenewals: renewals
+      ? {
+          days: renewals.days,
+          count: renewals.count,
+          amountExact: renewals.amountExact,
+          next: renewals.next.map((entry) => {
+            const customer = customers.get(entry.customerId) ?? null;
+            const name = [customer?.firstName, customer?.lastName].filter(Boolean).join(' ');
+            return {
+              id: entry.id,
+              customerName: name || customer?.email || entry.customerId,
+              ...(customer?.email && { email: customer.email }),
+              plan: entry.plan,
+              renewalDate: entry.renewalDate,
+              amountExact: entry.amountExact,
+            };
+          }),
+        }
+      : null,
   };
 }
 

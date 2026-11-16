@@ -18,7 +18,7 @@ import {
   CheckCircleIcon,
 } from '@heroicons/react/24/outline';
 import { motion } from 'framer-motion';
-import { formatCurrency, formatNumber, formatPercentage } from '@/lib/utils';
+import { formatCurrency, formatNumber, formatRatio } from '@/lib/utils';
 import type {
   ROICalculatorData,
   CostCategory,
@@ -51,7 +51,7 @@ function ROICalculatorInner({ data: propData }: ROICalculatorProps) {
               {formatCurrency(summary.annualSavings)}
             </p>
             <p className="text-xs text-ds-status-ok mt-1">
-              +{formatPercentage(summary.savingsGrowth)} vs last year
+              +{formatRatio(summary.savingsGrowth)} vs last year
             </p>
           </CardContent>
         </Card>
@@ -80,7 +80,7 @@ function ROICalculatorInner({ data: propData }: ROICalculatorProps) {
               {formatCurrency(summary.costPerTransaction)}
             </p>
             <p className="text-xs text-ds-status-warn mt-1">
-              -{formatPercentage(summary.costReduction)} reduction
+              -{formatRatio(summary.costReduction)} reduction
             </p>
           </CardContent>
         </Card>
@@ -141,7 +141,7 @@ function ROICalculatorInner({ data: propData }: ROICalculatorProps) {
                   </div>
                   <ProgressBar value={(category.saved / category.previous) * 100} color="emerald" />
                   <p className="text-xs text-ds-muted-foreground mt-1">
-                    {formatPercentage(category.saved / category.previous)} reduction
+                    {formatRatio(category.saved / category.previous)} reduction
                   </p>
                 </div>
               ))}
