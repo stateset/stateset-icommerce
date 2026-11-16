@@ -173,6 +173,37 @@ describe('previewForMove', () => {
     assert.equal(previewForMove('create_order', {}), null);
   });
 
+  /**
+   * The catalog lists every move into a status, not the moves a particular
+   * tool makes. resume_subscription resumes only a paused subscription, but
+   * the preview advertised trial, past_due and pending too -- every state
+   * with a move into active.
+   */
+  it("names only the source states the tool itself accepts (its mapping's `from`)", () => {
+    const resume = previewForMove('resume_subscription', { subscriptionId: 'sub-1' });
+    assert.deepEqual(resume.transition, {
+      machine: 'subscription',
+      to: 'active',
+      acceptedFrom: ['paused'],
+    });
+    assert.match(
+      resume.sentence,
+      /only for a subscription in paused \(reached via pause_subscription\);/,
+    );
+    assert.doesNotMatch(resume.sentence, /trial|past_due|pending/);
+
+    // Same rule elsewhere: complete_payment does not settle a disputed
+    // payment, approve_purchase_order does not approve one on hold.
+    assert.deepEqual(
+      previewForMove('complete_payment', { paymentId: 'p-1' }).transition.acceptedFrom,
+      ['pending', 'processing', 'requires_action'],
+    );
+    assert.deepEqual(
+      previewForMove('approve_purchase_order', { id: 'po-1' }).transition.acceptedFrom,
+      ['pending_approval'],
+    );
+  });
+
   it('extends a preview decision without touching any other decision', () => {
     const preview = withMovePreview(
       'complete_return',

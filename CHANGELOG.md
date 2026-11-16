@@ -361,6 +361,11 @@ finance writes carry an authenticated identity.
   its outcome but arms no retry, and a recurring job goes back to `paused`
   or `pending`, so it can still be resumed. A disabled one-time job's manual
   run settles as its outcome, without a retry.
+- MCP previews of a status move name only the states the called tool
+  accepts. The preview listed every catalogued move into the target, so
+  `resume_subscription` advertised trial, past_due and pending although the
+  engine resumes only a paused subscription; `complete_payment` (disputed)
+  and `approve_purchase_order` (on hold) overstated theirs the same way.
 
 ## [1.40.0] - 2026-10-22
 

@@ -564,6 +564,23 @@ describe('a preview of a catalogued move states its precondition', () => {
     assert.deepEqual(text.wouldDo.transition.acceptedFrom, ['delivered']);
   });
 
+  it('names only the states the tool accepts, not every move into its target', async () => {
+    // The engine resumes only a paused subscription (resume_subscription
+    // refuses trial, past_due and pending, though the catalog moves them into
+    // active too).
+    const preview = await previewServer.executeTool('resume_subscription', {
+      subscriptionId: 'sub-1',
+    });
+    assert.equal(preview.preview, true);
+    assert.deepEqual(preview.wouldDo.transition, {
+      machine: 'subscription',
+      to: 'active',
+      acceptedFrom: ['paused'],
+    });
+    assert.match(preview.notice.message, /only for a subscription in paused \(reached via/);
+    assert.doesNotMatch(preview.notice.message, /trial|past_due|pending/);
+  });
+
   it('a kernel preview that would be refused carries the refusal guidance', async () => {
     await server.close?.();
     server = null;
