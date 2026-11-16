@@ -167,7 +167,8 @@ export interface DemandAlert {
   productId: string;
   productName: string;
   reason: string;
-  daysUntilStockout: number;
+  /** Null when nothing forecasts a stockout. */
+  daysUntilStockout: number | null;
   recommendedQuantity: number;
 }
 

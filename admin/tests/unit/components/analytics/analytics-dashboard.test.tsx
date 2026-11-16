@@ -104,4 +104,41 @@ describe('AnalyticsDashboard', () => {
     expect(screen.getByText('Total Revenue')).toBeInTheDocument();
     expect(screen.queryByText(/vs\. yesterday|vs last period/)).toBeNull();
   });
+
+  it('shows analytics that did not load as unavailable, not as zero', () => {
+    render(<AnalyticsDashboard />);
+
+    // Revenue, orders, average order value, active customers, new this month.
+    expect(screen.getAllByText('—')).toHaveLength(5);
+    expect(screen.queryByText('$0.00')).toBeNull();
+    expect(screen.queryByText('0 new this month')).toBeNull();
+  });
+
+  it('renders loaded zeros as zeros', () => {
+    responses.set('orders', {
+      totalOrders: 0,
+      totalRevenue: 0,
+      totalRevenueExact: '0',
+      averageOrderValue: 0,
+      averageOrderValueExact: '0',
+      ordersByStatus: {},
+      ordersByDay: [],
+    });
+    responses.set('customers', {
+      totalCustomers: 0,
+      newCustomersThisMonth: 0,
+      activeCustomers: 0,
+      averageLifetimeValue: 0,
+      averageOrdersPerCustomer: 0,
+      customersBySegment: {},
+      acquisitionTrend: [],
+      retentionRate: 0,
+      churnRate: 0,
+    });
+    render(<AnalyticsDashboard />);
+
+    expect(screen.getAllByText('$0.00')).toHaveLength(2);
+    expect(screen.getByText('0 new this month')).toBeInTheDocument();
+    expect(screen.queryByText('—')).toBeNull();
+  });
 });

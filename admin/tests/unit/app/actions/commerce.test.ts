@@ -123,6 +123,7 @@ import {
   deleteProduct,
   getInventoryAnalyticsData,
   getCustomerHealthData,
+  getDemandForecastingData,
 } from '@/app/actions/commerce';
 import {
   ordersApi,
@@ -255,6 +256,65 @@ describe('commerce actions auth guard', () => {
     it('still surfaces genuine engine failures', async () => {
       vi.mocked(inventoryApi.list).mockRejectedValueOnce(new Error('database is locked'));
       await expect(getInventoryAnalyticsData()).rejects.toThrow('database is locked');
+    });
+
+    it('gives customer health no trend timeline without acquisition history', async () => {
+      vi.mocked(customersApi.getAnalytics).mockResolvedValueOnce({
+        totalCustomers: 0,
+        newCustomersThisMonth: 0,
+        activeCustomers: 0,
+        averageLifetimeValue: 0,
+        averageOrdersPerCustomer: 0,
+        customersBySegment: {},
+        acquisitionTrend: [],
+        retentionRate: 0,
+        churnRate: 0,
+      });
+      const health = await getCustomerHealthData();
+      // It used to invent a January of 59 customers.
+      expect(health).toMatchObject({ trends: { timeline: [] } });
+    });
+
+    it('invents no demand or reorder point for a forecast alert', async () => {
+      vi.mocked(inventoryApi.list).mockResolvedValueOnce([
+        {
+          id: 'inv-1',
+          sku: 'SKU-1',
+          productId: 'prod-1',
+          productName: 'Widget',
+          quantity: 5,
+          reservedQuantity: 0,
+          availableQuantity: 5,
+          reorderPoint: 0,
+          reorderQuantity: 0,
+          updatedAt: '2026-11-01T00:00:00.000Z',
+        },
+      ]);
+      vi.mocked(inventoryApi.getAnalytics).mockResolvedValueOnce({
+        totalSKUs: 1,
+        totalUnits: 5,
+        totalValue: 50,
+        lowStockItems: 0,
+        outOfStockItems: 0,
+        turnoverRate: 0,
+        topMovingItems: [{ sku: 'SKU-1', name: 'Widget', velocity: 1 }],
+        slowMovingItems: [],
+      });
+      vi.mocked(inventoryApi.forecast).mockResolvedValueOnce({
+        sku: 'SKU-1',
+        currentStock: 5,
+        forecastedDemand: [1, 2],
+        recommendedReorder: 10,
+        confidence: 0.8,
+      });
+
+      const data = await getDemandForecastingData();
+      // No stockout date and nothing reserved: the stockout day is unknown
+      // (it assumed one reserved unit a week: 35 days). No reorder point: the
+      // forecast's 10 stands (it assumed a reorder point of 50: 95).
+      expect(data).toMatchObject({
+        alerts: [{ productId: 'SKU-1', daysUntilStockout: null, recommendedQuantity: 10 }],
+      });
     });
   });
 

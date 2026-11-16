@@ -527,38 +527,47 @@ function UnifiedDashboardInner() {
             <CardTitle>System Health Monitor</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
-              <HealthStat
-                label="Database Latency"
-                value={`${systemHealth?.databaseLatency ?? 0}ms`}
-                status={(systemHealth?.databaseLatency ?? 0) < 100 ? 'ok' : 'warn'}
-                caption={(systemHealth?.databaseLatency ?? 0) < 100 ? 'Optimal' : 'Slow'}
+            {/* Without a snapshot (the native engine reports none) there is
+                nothing to rate, so no "0ms Optimal" verdicts. */}
+            {systemHealth ? (
+              <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+                <HealthStat
+                  label="Database Latency"
+                  value={`${systemHealth.databaseLatency}ms`}
+                  status={systemHealth.databaseLatency < 100 ? 'ok' : 'warn'}
+                  caption={systemHealth.databaseLatency < 100 ? 'Optimal' : 'Slow'}
+                />
+                <HealthStat
+                  label="Error Rate"
+                  value={`${systemHealth.errorRate}%`}
+                  status={systemHealth.errorRate < 0.1 ? 'ok' : 'fail'}
+                  caption={systemHealth.errorRate < 0.1 ? 'Healthy' : 'High'}
+                />
+                <HealthStat
+                  label="Active Connections"
+                  value={`${systemHealth.activeConnections}`}
+                  status="run"
+                  caption="Running"
+                />
+                <HealthStat
+                  label="Queue Depth"
+                  value={`${systemHealth.queueDepth}`}
+                  status={systemHealth.queueDepth < 50 ? 'ok' : 'warn'}
+                  caption={systemHealth.queueDepth < 50 ? 'Normal' : 'Elevated'}
+                />
+                <HealthStat
+                  label="Processing Speed"
+                  value={`${systemHealth.processingSpeed}%`}
+                  status={systemHealth.processingSpeed > 95 ? 'ok' : 'warn'}
+                  caption={systemHealth.processingSpeed > 95 ? 'Fast' : 'Degraded'}
+                />
+              </div>
+            ) : (
+              <EmptyState
+                title="System health unavailable"
+                description="The connected engine reports no system health metrics."
               />
-              <HealthStat
-                label="Error Rate"
-                value={`${systemHealth?.errorRate ?? 0}%`}
-                status={(systemHealth?.errorRate ?? 0) < 0.1 ? 'ok' : 'fail'}
-                caption={(systemHealth?.errorRate ?? 0) < 0.1 ? 'Healthy' : 'High'}
-              />
-              <HealthStat
-                label="Active Connections"
-                value={`${systemHealth?.activeConnections ?? 0}`}
-                status="run"
-                caption="Running"
-              />
-              <HealthStat
-                label="Queue Depth"
-                value={`${systemHealth?.queueDepth ?? 0}`}
-                status={(systemHealth?.queueDepth ?? 0) < 50 ? 'ok' : 'warn'}
-                caption={(systemHealth?.queueDepth ?? 0) < 50 ? 'Normal' : 'Elevated'}
-              />
-              <HealthStat
-                label="Processing Speed"
-                value={`${systemHealth?.processingSpeed ?? 0}%`}
-                status={(systemHealth?.processingSpeed ?? 0) > 95 ? 'ok' : 'warn'}
-                caption={(systemHealth?.processingSpeed ?? 0) > 95 ? 'Fast' : 'Degraded'}
-              />
-            </div>
+            )}
           </CardContent>
         </Card>
       </div>

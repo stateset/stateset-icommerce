@@ -66,10 +66,10 @@ describe('CustomerHealthScore', () => {
     expect(screen.getByText('Customer health unavailable')).toBeInTheDocument();
   });
 
-  it('renders demo at-risk customers when the payload omits them', () => {
+  it('shows no invented customers or figures when the payload omits them', () => {
     useEmbeddedDataMock.mockReturnValue({
       data: {
-        summary: { overallScore: 80, totalCustomers: 100, atRiskCount: 4, avgLifetimeValue: 500 },
+        summary: undefined,
         segments: {},
         atRiskCustomers: undefined,
         trends: undefined,
@@ -79,8 +79,36 @@ describe('CustomerHealthScore', () => {
     });
     render(<CustomerHealthScore />);
     expect(screen.getByText('Overall Health Score')).toBeInTheDocument();
-    // Demo at-risk fallback name
-    expect(screen.getByText('John Smith')).toBeInTheDocument();
+    // The four key metrics read "—", not 78/100, 2,450, 127 and $485.
+    expect(screen.getAllByText('—')).toHaveLength(4);
+    expect(screen.queryByText('127')).toBeNull();
+    expect(screen.queryByText('78/100')).toBeNull();
+    // No demo at-risk customers, health metrics or segments.
+    expect(screen.queryByText('John Smith')).toBeNull();
+    expect(screen.queryByText('Purchase Frequency')).toBeNull();
+    expect(screen.queryByText('Avg LTV: $1,250.00')).toBeNull();
+    expect(screen.getByText('No at-risk customers')).toBeInTheDocument();
+    expect(screen.getByText('No health metrics reported')).toBeInTheDocument();
+  });
+
+  it('renders a store with no at-risk customers as zero', () => {
+    useEmbeddedDataMock.mockReturnValue({
+      data: {
+        summary: { overallScore: 0, totalCustomers: 0, atRiskCount: 0, avgLifetimeValue: 0 },
+        segments: {},
+        atRiskCustomers: [],
+        trends: { timeline: [] },
+      },
+      isLoading: false,
+      error: null,
+    });
+    render(<CustomerHealthScore />);
+    // `|| 127` used to turn a real zero into 127 at-risk customers.
+    expect(screen.getByText('0/100')).toBeInTheDocument();
+    expect(screen.getByText('0 customers')).toBeInTheDocument();
+    expect(screen.getByText('$0.00')).toBeInTheDocument();
+    expect(screen.queryByText('127')).toBeNull();
+    expect(screen.queryByText('—')).toBeNull();
   });
 
   it('renders provided at-risk customers when supplied', () => {

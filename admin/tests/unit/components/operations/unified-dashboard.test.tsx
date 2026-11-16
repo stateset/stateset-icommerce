@@ -79,7 +79,7 @@ const systemHealth: SystemHealth = {
   processingSpeed: 98,
 };
 
-function serve(dashboardMetrics: DashboardMetrics) {
+function serve(dashboardMetrics: DashboardMetrics, health: SystemHealth | null = systemHealth) {
   useEmbeddedDataMock.mockImplementation(
     (_fetcher: () => Promise<unknown>, options?: { refreshInterval?: number }) => {
       switch (options?.refreshInterval) {
@@ -88,7 +88,7 @@ function serve(dashboardMetrics: DashboardMetrics) {
         case 60000:
           return { data: hourlyActivity, isLoading: false, error: null };
         case 10000:
-          return { data: systemHealth, isLoading: false, error: null };
+          return { data: health, isLoading: false, error: null };
         default:
           return { data: null, isLoading: false, error: null };
       }
@@ -132,5 +132,21 @@ describe('UnifiedDashboard', () => {
     // Inventory health 0.85 is below the 90% alert line, not "0.85%".
     expect(screen.getByText('85.0%')).toBeTruthy();
     expect(screen.getByText('Inventory health is 85.0%')).toBeTruthy();
+  });
+
+  it('rates system health only when there is a snapshot', async () => {
+    vi.useFakeTimers();
+    // The native engine has no system health aggregate.
+    serve(metrics, null);
+
+    render(<UnifiedDashboard />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+
+    expect(screen.getByText('System health unavailable')).toBeTruthy();
+    // No "0ms Optimal" / "0% Healthy" verdicts on numbers nobody measured.
+    expect(screen.queryByText('0ms')).toBeNull();
+    expect(screen.queryByText('Optimal')).toBeNull();
   });
 });

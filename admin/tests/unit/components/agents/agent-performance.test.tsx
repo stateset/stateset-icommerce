@@ -103,4 +103,47 @@ describe('AgentPerformance', () => {
     expect(screen.getByText('99.0%')).toBeInTheDocument();
     expect(screen.getByText('50.0% utilization')).toBeInTheDocument();
   });
+
+  it('shows missing figures as unavailable instead of invented ones', () => {
+    useEmbeddedDataMock.mockReturnValue({
+      data: { summary: undefined, agents: undefined, taskMetrics: undefined },
+      isLoading: false,
+      error: null,
+    });
+
+    render(<AgentPerformance />);
+    // The four key metrics read "—", not 8 agents / 12,450 tasks / 1.2s / 98.4%.
+    expect(screen.getAllByText('—')).toHaveLength(4);
+    expect(screen.queryByText('12,450')).toBeNull();
+    expect(screen.queryByText('98.4%')).toBeNull();
+    expect(screen.queryByText('95% online')).toBeNull();
+    // No demo agents or tasks stand in for missing ones.
+    expect(screen.queryByText('Pricing Agent')).toBeNull();
+    expect(screen.getByText('No agent activity reported')).toBeInTheDocument();
+    expect(screen.getByText('No recent agent tasks')).toBeInTheDocument();
+  });
+
+  it('renders a measured zero as zero', () => {
+    useEmbeddedDataMock.mockReturnValue({
+      data: {
+        summary: {
+          activeAgents: 0,
+          onlinePercentage: 0,
+          tasksCompleted: 0,
+          avgResponseTime: 0,
+          successRate: 0,
+        },
+        agents: [],
+        taskMetrics: { recentTasks: [], distribution: [], dailyOutcomes: [] },
+      },
+      isLoading: false,
+      error: null,
+    });
+
+    render(<AgentPerformance />);
+    expect(screen.getByText('0% online')).toBeInTheDocument();
+    expect(screen.getByText('0.0%')).toBeInTheDocument();
+    expect(screen.getByText('0s')).toBeInTheDocument();
+    expect(screen.queryByText('—')).toBeNull();
+  });
 });

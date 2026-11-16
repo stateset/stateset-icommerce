@@ -29,7 +29,7 @@ import {
   getConversionFunnel,
 } from '@/app/actions/commerce';
 import type { DashboardMetrics, OrderAnalytics, CustomerAnalytics } from '@/lib/types';
-import { formatCurrency, formatCompactNumber, formatRatio } from '@/lib/utils';
+import { formatCurrency, formatCompactNumber, formatMeasured, formatRatio } from '@/lib/utils';
 import { formatMoney } from '@/lib/finance/format';
 
 /**
@@ -114,10 +114,12 @@ export default function AnalyticsDashboard() {
 
         {/* Key Metrics */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          {/* Analytics that did not load read as unavailable, not as zero. */}
           <MetricCard
             label="Total Revenue"
-            value={formatMoney(
-              orderAnalytics?.totalRevenueExact ?? orderAnalytics?.totalRevenue ?? 0,
+            value={formatMeasured(
+              orderAnalytics?.totalRevenueExact ?? orderAnalytics?.totalRevenue,
+              (amount) => formatMoney(amount),
             )}
             tone="success"
             icon={CurrencyDollarIcon}
@@ -126,7 +128,7 @@ export default function AnalyticsDashboard() {
 
           <MetricCard
             label="Total Orders"
-            value={formatCompactNumber(orderAnalytics?.totalOrders || 0)}
+            value={formatMeasured(orderAnalytics?.totalOrders, formatCompactNumber)}
             tone="primary"
             icon={ShoppingBagIcon}
             subtitle={changeCaption(metrics?.ordersChange)}
@@ -134,8 +136,9 @@ export default function AnalyticsDashboard() {
 
           <MetricCard
             label="Avg Order Value"
-            value={formatMoney(
-              orderAnalytics?.averageOrderValueExact ?? orderAnalytics?.averageOrderValue ?? 0,
+            value={formatMeasured(
+              orderAnalytics?.averageOrderValueExact ?? orderAnalytics?.averageOrderValue,
+              (amount) => formatMoney(amount),
             )}
             tone="primary"
             icon={ChartBarIcon}
@@ -144,10 +147,13 @@ export default function AnalyticsDashboard() {
 
           <MetricCard
             label="Active Customers"
-            value={formatCompactNumber(customerAnalytics?.activeCustomers || 0)}
+            value={formatMeasured(customerAnalytics?.activeCustomers, formatCompactNumber)}
             tone="accent"
             icon={UsersIcon}
-            subtitle={`${customerAnalytics?.newCustomersThisMonth || 0} new this month`}
+            subtitle={formatMeasured(
+              customerAnalytics?.newCustomersThisMonth,
+              (count) => `${count} new this month`,
+            )}
           />
         </div>
 

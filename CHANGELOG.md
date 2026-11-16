@@ -20,6 +20,29 @@ This project follows Keep a Changelog and Semantic Versioning.
   wide; both now use the ratio scale. The analytics dashboard's change
   captions say what they compare (today vs. yesterday) and are omitted when
   there are no dashboard metrics, instead of reading "0% vs last period".
+- Admin views no longer invent figures for data they do not have. A missing
+  figure reads "—" (`formatMeasured`), a missing list says it is empty, and
+  a measured zero still reads zero; `x || 45000`-style fallbacks turned real
+  zeros into stand-ins too, so a store with no at-risk customers showed 127
+  and one with no open returns showed 23 pending transactions:
+  - Customer health: no stand-in score, customer count, at-risk count or
+    lifetime value, and no demo at-risk customers, health metrics, segments
+    or trend. With no acquisition history the trend timeline is empty
+    instead of an invented January.
+  - Reconciliation and agent performance: no stand-in amounts, rates,
+    counts or response times, and no demo agents, tasks, categories,
+    discrepancies, transactions or charts in place of missing ones. Net
+    cash, which is measured, could read $125,000 for a store with none.
+  - System health (settings, operations dashboard): the native engine
+    reports no snapshot, and the settings page showed "0ms", "0%" and
+    "1 connection(s)" beside a "Healthy" pill while the operations
+    dashboard rated zeros "Optimal" and "Healthy". They now say the
+    figures are unavailable.
+  - Analytics headline metrics that did not load read "—" instead of $0.00
+    revenue and 0 orders.
+  - Demand-forecast alerts no longer assume one reserved unit a week to
+    count down to a stockout, or a reorder point of 50 for items without
+    one; the countdown is left out when nothing forecasts a stockout.
 
 ## [1.41.0] - 2026-11-15
 

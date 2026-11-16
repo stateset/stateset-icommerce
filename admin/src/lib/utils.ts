@@ -38,6 +38,18 @@ export function formatRatio(ratio: number, decimals: number = 1): string {
 /** The placeholder a figure shows when nothing measured it. */
 export const NOT_AVAILABLE = '—';
 
+/**
+ * `format(value)`, or {@link NOT_AVAILABLE} when the figure is missing. A
+ * measured zero still renders as zero; only an absent value reads as
+ * unavailable, never as an invented stand-in number.
+ */
+export function formatMeasured<T>(
+  value: T | null | undefined,
+  format: (value: T) => string,
+): string {
+  return value === null || value === undefined ? NOT_AVAILABLE : format(value);
+}
+
 export function formatDate(date: string | Date): string {
   return new Intl.DateTimeFormat('en-US', {
     year: 'numeric',

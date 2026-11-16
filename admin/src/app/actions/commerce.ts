@@ -722,12 +722,8 @@ async function loadCustomerHealthData(): Promise<CustomerHealthData> {
     },
     segments: analytics.customersBySegment,
     atRiskCustomers,
-    trends: {
-      timeline:
-        acquisitionTimeline.length > 0
-          ? acquisitionTimeline
-          : [{ month: 'Jan', excellent: 20, good: 25, fair: 10, atRisk: 4 }],
-    },
+    // No acquisition history means no timeline, not an invented month.
+    trends: { timeline: acquisitionTimeline },
   };
 }
 
@@ -1022,15 +1018,18 @@ async function loadDemandForecastingData(): Promise<DemandForecastingData> {
           : item.availableQuantity === 0
             ? 'Out of stock'
             : 'Reorder recommended',
+        // Without a forecast stockout date or reserved demand to project,
+        // the stockout day is unknown; it used to assume one reserved unit.
         daysUntilStockout: forecast.stockoutDate
           ? Math.max(1, Math.ceil((Date.parse(forecast.stockoutDate) - Date.now()) / DAY_MS))
-          : Math.max(
-              1,
-              Math.round(item.availableQuantity / Math.max(1, (item.reservedQuantity || 1) / 7)),
-            ),
+          : item.reservedQuantity > 0
+            ? Math.max(1, Math.round(item.availableQuantity / (item.reservedQuantity / 7)))
+            : null,
+        // Topping up to twice the reorder point needs a reorder point; an item
+        // without one used to be treated as having a reorder point of 50.
         recommendedQuantity: Math.max(
           forecast.recommendedReorder,
-          (item.reorderPoint || 50) * 2 - item.availableQuantity,
+          item.reorderPoint > 0 ? item.reorderPoint * 2 - item.availableQuantity : 0,
         ),
       })),
     accuracy: {
