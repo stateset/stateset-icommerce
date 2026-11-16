@@ -1834,9 +1834,9 @@
       "evidence": "traced: #[napi] methods -> engine calls",
       "engineBacked": true,
       "gated": true,
-      "exposedCount": 786,
+      "exposedCount": 788,
       "applicableCount": 1233,
-      "coverage": 63.7,
+      "coverage": 63.9,
       "notes": null,
       "domains": {
         "commerce": {
@@ -2481,13 +2481,15 @@
           "missing": []
         },
         "inventory": {
-          "coverage": 41.2,
+          "coverage": 52.9,
           "exposed": [
             "adjust",
             "confirm_reservation",
             "create_item",
             "fulfill_order_stock",
+            "get_reorder_needed",
             "get_stock",
+            "list",
             "release_reservation",
             "reserve"
           ],
@@ -2496,11 +2498,9 @@
             "expire_reservations",
             "get_item",
             "get_item_by_sku",
-            "get_reorder_needed",
             "get_reservation",
             "get_transactions",
             "has_stock",
-            "list",
             "list_reservations_by_reference"
           ]
         },
@@ -7950,8 +7950,8 @@
   "parityVsReference": {
     "python": {
       "shared": 593,
-      "referenceExposed": 786,
-      "parity": 75.4,
+      "referenceExposed": 788,
+      "parity": 75.3,
       "beyondReference": [
         "accounts_payable.pay_bill",
         "cost_accounting.get_inventory_valuation",
@@ -7963,33 +7963,32 @@
     },
     "go": {
       "shared": 80,
-      "referenceExposed": 786,
+      "referenceExposed": 788,
       "parity": 10.2,
       "beyondReference": []
     },
     "dotnet": {
       "shared": 47,
-      "referenceExposed": 786,
+      "referenceExposed": 788,
       "parity": 6,
       "beyondReference": [
         "accounts_receivable.get_customer_aging"
       ]
     },
     "java": {
-      "shared": 72,
-      "referenceExposed": 786,
-      "parity": 9.2,
+      "shared": 73,
+      "referenceExposed": 788,
+      "parity": 9.3,
       "beyondReference": [
         "fulfillment.create_picks_for_order",
         "inventory.get_item",
         "inventory.get_item_by_sku",
-        "inventory.list",
         "orders.deliver"
       ]
     },
     "kotlin": {
       "shared": 59,
-      "referenceExposed": 786,
+      "referenceExposed": 788,
       "parity": 7.5,
       "beyondReference": [
         "shipments.mark_in_transit",
@@ -7997,15 +7996,14 @@
       ]
     },
     "php": {
-      "shared": 161,
-      "referenceExposed": 786,
-      "parity": 20.5,
+      "shared": 162,
+      "referenceExposed": 788,
+      "parity": 20.6,
       "beyondReference": [
         "bom.delete",
         "bom.remove_component",
         "inventory.get_item",
         "inventory.get_item_by_sku",
-        "inventory.list",
         "invoices.customer_balance",
         "invoices.for_customer",
         "orders.deliver",
@@ -8022,19 +8020,19 @@
     },
     "ruby": {
       "shared": 0,
-      "referenceExposed": 786,
+      "referenceExposed": 788,
       "parity": 0,
       "beyondReference": []
     },
     "swift": {
       "shared": 51,
-      "referenceExposed": 786,
+      "referenceExposed": 788,
       "parity": 6.5,
       "beyondReference": []
     },
     "wasm": {
       "shared": 0,
-      "referenceExposed": 786,
+      "referenceExposed": 788,
       "parity": 0,
       "beyondReference": []
     }
@@ -9059,7 +9057,7 @@
       {
         "className": "Inventory",
         "domain": "inventory",
-        "methodCount": 7
+        "methodCount": 8
       },
       {
         "className": "Invoices",
@@ -9990,8 +9988,7 @@
   "crossDomainReach": {
     "node": {
       "inventory": [
-        "get_item",
-        "list"
+        "get_item"
       ]
     },
     "python": {},

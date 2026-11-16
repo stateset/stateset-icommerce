@@ -155,6 +155,14 @@ finance writes carry an authenticated identity.
 
 ### Added
 
+- `inventory.list(filter?)` on the Node binding: inventory items in SKU order
+  with `onHand`, `allocated` and `available` (exact decimal strings, summed
+  over locations) and a `lowStock` flag, filtered by `sku` (substring,
+  ASCII case-insensitive), `isActive` and `lowStock` (the engine's reorder
+  rule: below reorder point plus safety stock at some location) and paged by
+  `limit` (default 100, capped at 1000) / `offset`. The binding could only
+  look stock up by SKU before, so nothing could enumerate inventory.
+
 - Governed kernel command `returns.item.disposition.set` on both databases
   (owner-approved), so a strict agent can take a return from `received` to
   `completed`: governed completion now requires every item to be
@@ -452,6 +460,10 @@ finance writes carry an authenticated identity.
   governed completion creates the pending payment refunds
   `returns.complete` creates, and its `returns.updated.v1` fact carries the
   repository payload, including `payment_refund_ids`.
+- `stateset-direct inventory list` lists inventory items through
+  `inventory.list` instead of walking product variants, so items created with
+  `inventory create` (which no product carries) appear. Older bindings keep
+  the product walk.
 
 ## [1.40.0] - 2026-10-22
 

@@ -2425,6 +2425,40 @@ export interface ReservationOutput {
   quantity: string
   status: ReservationStatus
 }
+/** Filter for `Inventory.list`. Every field is optional. */
+export interface InventoryListFilter {
+  /** Lists SKUs containing this text (ASCII case-insensitive). */
+  sku?: string
+  /** `true` lists only active items, `false` only inactive ones; omit for both. */
+  isActive?: boolean
+  /**
+   * `true` lists only items below their reorder threshold (reorder point
+   * plus safety stock) at some location, the rule the engine's reorder
+   * report applies; `false` lists only items that are not.
+   */
+  lowStock?: boolean
+  /** Page size: default 100, capped at 1000. */
+  limit?: number
+  /** Items to skip, in SKU order. */
+  offset?: number
+}
+/** One inventory item with its stock summed over every location. */
+export interface InventoryListItemOutput {
+  id: number
+  sku: string
+  name: string
+  description?: string
+  unitOfMeasure: string
+  isActive: boolean
+  /** Exact decimal string summed over locations (`"0"` with no balance). */
+  onHand: string
+  /** Exact decimal string: reserved or held units. */
+  allocated: string
+  /** Exact decimal string: on hand minus allocated. */
+  available: string
+  /** Below its reorder threshold at some location. */
+  lowStock: boolean
+}
 export interface CreateInvoiceItemInput {
   description: string
   quantity: string
@@ -7070,6 +7104,16 @@ export declare class IntegrationMappings {
 }
 export declare class Inventory {
   createItem(input: CreateInventoryItemInput): Promise<InventoryItemOutput>
+  /**
+   * List inventory items in SKU order, each with its stock summed over
+   * every location, so items created with `createItem` are listed even
+   * when no product variant carries their SKU.
+   *
+   * `lowStock` uses the engine's reorder rule (below reorder point plus
+   * safety stock at some location, as `get_reorder_needed` reports it).
+   * Pages hold at most 1000 items (default 100).
+   */
+  list(filter?: InventoryListFilter | undefined | null): Promise<Array<InventoryListItemOutput>>
   getStock(sku: string): Promise<StockLevelOutput | null>
   adjust(sku: string, quantity: number, reason: string): Promise<void>
   reserve(sku: string, quantity: number, referenceType: string, referenceId: string, expiresInSeconds?: number | undefined | null): Promise<ReservationOutput>

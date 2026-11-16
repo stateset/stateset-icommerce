@@ -97,6 +97,17 @@ describe('stateset-direct flows', () => {
     assert.equal(stock.sku, 'INV-TEST');
     const onHand = stock.totalOnHand ?? stock.total_on_hand ?? stock.totalOnhand;
     assert.equal(onHand, '7');
+
+    // `inventory list` lists inventory items, so an item no product carries
+    // appears (it used to walk product variants and show nothing here).
+    const listRes = runDirect(['--db', dbPath, '--json', 'inventory', 'list']);
+    assert.equal(listRes.status, 0, listRes.stderr || listRes.stdout);
+    assert.deepEqual(JSON.parse(listRes.stdout), [
+      { sku: 'INV-TEST', name: 'TestItem', onHand: '7', available: '7', allocated: '0' },
+    ]);
+    const tableRes = runDirect(['--db', dbPath, 'inventory', 'list']);
+    assert.equal(tableRes.status, 0, tableRes.stderr || tableRes.stdout);
+    assert.match(tableRes.stdout, /INV-TEST/);
   });
 
   it('requires --apply for write actions', () => {

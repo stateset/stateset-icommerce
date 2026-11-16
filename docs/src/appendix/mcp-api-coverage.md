@@ -21,9 +21,9 @@ listed, with its reason, as deliberately unexposed.
 | Commerce getters | 68 |
 | Mapped getters | 68 |
 | Audited classes | 32 |
-| Audited methods | 462 |
+| Audited methods | 463 |
 | Mapped audited methods | 460 |
-| Deliberately unexposed audited methods | 2 |
+| Deliberately unexposed audited methods | 3 |
 | Fully covered | yes |
 
 ## Commerce Getter Coverage
@@ -116,7 +116,7 @@ listed, with its reason, as deliberately unexposed.
 | `CustomObjects` | 12 | 12 | 0 | 0 | 0 | 0 |
 | `Fulfillment` | 14 | 14 | 0 | 0 | 0 | 0 |
 | `GeneralLedger` | 27 | 27 | 0 | 0 | 0 | 0 |
-| `Inventory` | 7 | 7 | 0 | 0 | 0 | 0 |
+| `Inventory` | 8 | 7 | 1 | 0 | 0 | 0 |
 | `Invoices` | 9 | 9 | 0 | 0 | 0 | 0 |
 | `Lots` | 12 | 12 | 0 | 0 | 0 | 0 |
 | `Orders` | 10 | 10 | 0 | 0 | 0 | 0 |
@@ -150,6 +150,7 @@ None.
 
 ## Deliberately Unexposed Audited Methods
 
+- `Inventory.list`: No MCP tool lists inventory items yet: hosts (stateset-direct inventory list, the admin) call the binding directly, and agents look stock up by SKU with get_stock.
 - `Payments.completeRefund`: No MCP tool completes a refund: create_refund records it as pending and settlement happens outside the tool surface.
 - `Payments.failRefund`: No MCP tool fails a refund: create_refund records it as pending and settlement happens outside the tool surface.
 

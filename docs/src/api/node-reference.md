@@ -464,6 +464,8 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`IntegrationMappingOutput`](#integrationmappingoutput)
   - [`InventoryHealthOutput`](#inventoryhealthoutput)
   - [`InventoryItemOutput`](#inventoryitemoutput)
+  - [`InventoryListFilter`](#inventorylistfilter)
+  - [`InventoryListItemOutput`](#inventorylistitemoutput)
   - [`InventoryMovementOutput`](#inventorymovementoutput)
   - [`InventorySearchResultOutput`](#inventorysearchresultoutput)
   - [`InvoiceFilterInput`](#invoicefilterinput)
@@ -1295,6 +1297,18 @@ Class `Inventory`.
 - **`createItem(input: CreateInventoryItemInput): Promise<InventoryItemOutput>`**
 
   Types: [`CreateInventoryItemInput`](#createinventoryiteminput), [`InventoryItemOutput`](#inventoryitemoutput)
+
+- **`list(filter?: InventoryListFilter | undefined | null): Promise<Array<InventoryListItemOutput>>`**
+
+  List inventory items in SKU order, each with its stock summed over
+  every location, so items created with `createItem` are listed even
+  when no product variant carries their SKU.
+
+  `lowStock` uses the engine's reorder rule (below reorder point plus
+  safety stock at some location, as `get_reorder_needed` reports it).
+  Pages hold at most 1000 items (default 100).
+
+  Types: [`InventoryListFilter`](#inventorylistfilter), [`InventoryListItemOutput`](#inventorylistitemoutput)
 
 - **`getStock(sku: string): Promise<StockLevelOutput | null>`**
 
@@ -9892,6 +9906,35 @@ One of: `'incoming'`, `'receiving'`, `'in_process'`, `'inprocess'`, `'final'`, `
 | `description?` | `string` |  |
 | `unitOfMeasure` | `string` |  |
 | `isActive` | `boolean` |  |
+
+### InventoryListFilter
+
+Filter for `Inventory.list`. Every field is optional.
+
+| Field | Type | Description |
+|---|---|---|
+| `sku?` | `string` | Lists SKUs containing this text (ASCII case-insensitive). |
+| `isActive?` | `boolean` | `true` lists only active items, `false` only inactive ones; omit for both. |
+| `lowStock?` | `boolean` | `true` lists only items below their reorder threshold (reorder point plus safety stock) at some location, the rule the engine's reorder report applies; `false` lists only items that are not. |
+| `limit?` | `number` | Page size: default 100, capped at 1000. |
+| `offset?` | `number` | Items to skip, in SKU order. |
+
+### InventoryListItemOutput
+
+One inventory item with its stock summed over every location.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `number` |  |
+| `sku` | `string` |  |
+| `name` | `string` |  |
+| `description?` | `string` |  |
+| `unitOfMeasure` | `string` |  |
+| `isActive` | `boolean` |  |
+| `onHand` | `string` | Exact decimal string summed over locations (`"0"` with no balance). |
+| `allocated` | `string` | Exact decimal string: reserved or held units. |
+| `available` | `string` | Exact decimal string: on hand minus allocated. |
+| `lowStock` | `boolean` | Below its reorder threshold at some location. |
 
 ### InventoryMovementOutput
 

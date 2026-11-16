@@ -59,6 +59,51 @@ async function loadStockSnapshot(commerce, products) {
   }));
 }
 
+/** Page size for `inventory.list` (the engine caps a page at 1000). */
+const INVENTORY_LIST_PAGE = 500;
+
+/**
+ * Every inventory item with its stock, paged through `inventory.list`, so an
+ * item created with `inventory create` is listed even when no product carries
+ * its SKU.
+ */
+async function listInventoryItems(commerce) {
+  const items = [];
+  for (let offset = 0; ; offset += INVENTORY_LIST_PAGE) {
+    const page = await commerce.inventory.list({ limit: INVENTORY_LIST_PAGE, offset });
+    items.push(...page);
+    if (page.length < INVENTORY_LIST_PAGE) return items;
+  }
+}
+
+/**
+ * The rows `inventory list` shows (`sku`, `name`, `onHand`, `available`,
+ * `allocated`), shared by `stateset-direct` and `executeCommand`: every
+ * inventory item through `inventory.list`, or, on older bindings without it,
+ * the stock of every product variant (which misses items no product carries).
+ */
+export async function loadInventoryRows(commerce) {
+  if (typeof commerce.inventory.list === 'function') {
+    const items = await listInventoryItems(commerce);
+    return items.map((item) => ({
+      sku: item.sku,
+      name: item.name,
+      onHand: item.onHand,
+      available: item.available,
+      allocated: item.allocated,
+    }));
+  }
+  const products = await commerce.products.list();
+  const snapshot = await loadStockSnapshot(commerce, products);
+  return snapshot.map((entry) => ({
+    sku: entry.sku,
+    name: entry.name,
+    onHand: entry.stock?.totalOnHand ?? 0,
+    available: entry.stock?.totalAvailable ?? 0,
+    allocated: entry.stock?.totalAllocated ?? 0,
+  }));
+}
+
 /**
  * Execute inventory commands
  * @param {string} action - The action to perform
@@ -74,17 +119,7 @@ export async function execute(
 ) {
   switch (action) {
     case 'list': {
-      const products = await commerce.products.list();
-      const snapshot = await loadStockSnapshot(commerce, products);
-      const skuItems = snapshot.map((entry) => ({
-        sku: entry.sku,
-        name: entry.name,
-        onHand: entry.stock?.totalOnHand ?? 0,
-        available: entry.stock?.totalAvailable ?? 0,
-        allocated: entry.stock?.totalAllocated ?? 0,
-      }));
-
-      return formatInventoryList(skuItems, { output, jsonOutput });
+      return formatInventoryList(await loadInventoryRows(commerce), { output, jsonOutput });
     }
 
     case 'stock': {

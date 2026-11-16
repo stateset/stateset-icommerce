@@ -33,13 +33,13 @@ inventory this builds on is [Binding API Inventory](binding-api-inventory.md).
 
 | Binding | Evidence | Gated | Exposed | Coverage | Parity vs Node |
 | --- | --- | --- | --- | --- | --- |
-| Node.js | traced: #[napi] methods -> engine calls | yes | 786/1233 | 63.7% | reference |
-| Python | traced: #[pymethods] methods -> engine calls | yes | 599/1233 | 48.6% | 75.4% |
+| Node.js | traced: #[napi] methods -> engine calls | yes | 788/1233 | 63.9% | reference |
+| Python | traced: #[pymethods] methods -> engine calls | yes | 599/1233 | 48.6% | 75.3% |
 | Go | traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls | yes | 80/1233 | 6.5% | 10.2% |
 | .NET | native reach: engine calls anywhere in the Rust layer | no | 48/1233 | 3.9% | 6% |
-| Java | native reach: engine calls anywhere in the Rust layer | no | 77/1233 | 6.2% | 9.2% |
+| Java | native reach: engine calls anywhere in the Rust layer | no | 77/1233 | 6.2% | 9.3% |
 | Kotlin | native reach: engine calls anywhere in the Rust layer | no | 61/1233 | 4.9% | 7.5% |
-| PHP | native reach: engine calls anywhere in the Rust layer | no | 178/1233 | 14.4% | 20.5% |
+| PHP | native reach: engine calls anywhere in the Rust layer | no | 178/1233 | 14.4% | 20.6% |
 | Ruby | native reach: engine calls anywhere in the Rust layer | no | 0/1233 | 0% | 0% |
 | Swift | native reach: engine calls anywhere in the Rust layer | no | 51/1233 | 4.1% | 6.5% |
 | WASM | native reach: engine calls anywhere in the Rust layer | no | 0/1233 | 0% | 0% |
@@ -87,7 +87,7 @@ Cells are exposed / applicable engine methods.
 | `inbound_shipments` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
 | `integration_field_mappings` | 9 | 0 | 9/9 | 9/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
 | `integration_mappings` | 8 | 0 | 8/8 | 8/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 | 0/8 |
-| `inventory` | 17 | 0 | 7/17 | 6/17 | 3/17 | 3/17 | 8/17 | 3/17 | 8/17 | 0/17 | 3/17 | 0/17 |
+| `inventory` | 17 | 0 | 9/17 | 6/17 | 3/17 | 3/17 | 8/17 | 3/17 | 8/17 | 0/17 | 3/17 | 0/17 |
 | `invoices` | 21 | 0 | 8/21 | 8/21 | 7/21 | 0/21 | 0/21 | 0/21 | 10/21 | 0/21 | 0/21 | 0/21 |
 | `kernel_audit` | 3 | 0 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 | 0/3 |
 | `lots` | 35 | 0 | 12/35 | 6/35 | 0/35 | 2/35 | 4/35 | 2/35 | 5/35 | 0/35 | 2/35 | 0/35 |
@@ -150,8 +150,8 @@ unless `--allow-loss` is also passed. Gated bindings: `node`, `python`, `go`
 
 | Binding | Known gaps vs Node (baseline) |
 | --- | --- |
-| python | 193 |
-| go | 706 |
+| python | 195 |
+| go | 708 |
 
 ## Exemptions
 
@@ -939,12 +939,12 @@ None found.
 | `fulfill_order_stock` | yes | — | — |
 | `get_item` | — | — | — |
 | `get_item_by_sku` | — | — | — |
-| `get_reorder_needed` | — | — | — |
+| `get_reorder_needed` | yes | — | — |
 | `get_reservation` | — | — | — |
 | `get_stock` | yes | yes | yes |
 | `get_transactions` | — | — | — |
 | `has_stock` | — | — | — |
-| `list` | — | — | — |
+| `list` | yes | — | — |
 | `list_reservations_by_reference` | — | — | — |
 | `release_reservation` | yes | yes | — |
 | `reserve` | yes | yes | — |

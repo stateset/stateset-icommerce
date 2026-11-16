@@ -200,6 +200,11 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       fulfillOrderStock: ['fulfill_order_stock'],
       releaseReservation: ['release_reservation'],
     },
+    unexposedMethods: {
+      list:
+        'No MCP tool lists inventory items yet: hosts (stateset-direct inventory list, the ' +
+        'admin) call the binding directly, and agents look stock up by SKU with get_stock.',
+    },
   },
   Returns: {
     tools: [...returnTools, ...explainTools],
