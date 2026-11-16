@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Subscription } from '@/lib/types';
 
 vi.mock('server-only', () => ({}));
 
@@ -1039,6 +1040,151 @@ describe('embedded commerce engine', () => {
     const pending = all.find((subscription) => subscription.status === 'pending')!;
     await expect(subscriptionsApi.pause(pending.id)).rejects.toThrow(
       /cannot move from pending to paused/,
+    );
+  });
+
+  it('derives subscription status, plan, activity and renewal figures from the records', async () => {
+    const { summarizeSubscriptions } = await import('@/lib/embedded');
+    const now = Date.parse('2026-06-15T12:00:00.000Z');
+    const at = (days: number) => new Date(now + days * 24 * 60 * 60 * 1000).toISOString();
+    const subscription = (
+      id: string,
+      fields: Partial<Subscription> & Pick<Subscription, 'status' | 'frequency' | 'plan'>,
+    ): Subscription => ({
+      id,
+      customerId: `cus_${id}`,
+      nextBillingDate: '',
+      items: [],
+      quantity: 1,
+      totalAmount: 0,
+      createdAt: at(-200),
+      updatedAt: at(-1),
+      ...fields,
+    });
+    const records = [
+      subscription('a', {
+        status: 'active',
+        frequency: 'monthly',
+        plan: 'Pro',
+        totalAmountExact: '10.00',
+        createdAt: at(-5),
+        nextBillingDate: at(2),
+      }),
+      subscription('b', {
+        status: 'active',
+        frequency: 'quarterly',
+        plan: 'Pro',
+        totalAmountExact: '90.00',
+        createdAt: at(-60),
+        nextBillingDate: at(10),
+      }),
+      subscription('c', {
+        status: 'active',
+        frequency: 'annually',
+        plan: 'Basic',
+        totalAmountExact: '120.00',
+        createdAt: at(-40),
+        nextBillingDate: at(1),
+      }),
+      subscription('d', {
+        status: 'cancelled',
+        frequency: 'monthly',
+        plan: 'Basic',
+        totalAmountExact: '20.00',
+        cancelledAt: at(-3),
+      }),
+      // An immediate cancellation expires the subscription; 45 days ago is
+      // outside the 30-day window.
+      subscription('e', {
+        status: 'expired',
+        frequency: 'monthly',
+        plan: 'Basic',
+        totalAmountExact: '15.00',
+        cancelledAt: at(-45),
+      }),
+      subscription('f', {
+        status: 'paused',
+        frequency: 'monthly',
+        plan: 'Pro',
+        totalAmountExact: '30.00',
+        createdAt: at(-10),
+      }),
+    ];
+
+    const analytics = summarizeSubscriptions(records, { now });
+    expect(analytics).toMatchObject({
+      // 10 x 12 + 90 x 4 + 120 = 600 a year.
+      mrrExact: '50.00',
+      subscriptionsByStatus: { active: 3, cancelled: 1, expired: 1, paused: 1 },
+      activeByPlan: [
+        { plan: 'Pro', count: 2, mrrExact: '40.00' },
+        { plan: 'Basic', count: 1, mrrExact: '10.00' },
+      ],
+      // a and f started in the last 30 days; only a is active, so new MRR is
+      // its 10.00. d's cancellation took away 20.00.
+      recentActivity: {
+        days: 30,
+        newSubscriptions: 2,
+        newMrrExact: '10.00',
+        cancellations: 1,
+        churnedMrrExact: '20.00',
+      },
+      // c and a renew in the next 7 days, soonest first; b renews in 10.
+      upcomingRenewals: {
+        days: 7,
+        count: 2,
+        amountExact: '130.00',
+        next: [
+          {
+            id: 'c',
+            customerId: 'cus_c',
+            plan: 'Basic',
+            renewalDate: '2026-06-16',
+            amountExact: '120.00',
+          },
+          {
+            id: 'a',
+            customerId: 'cus_a',
+            plan: 'Pro',
+            renewalDate: '2026-06-17',
+            amountExact: '10.00',
+          },
+        ],
+      },
+    });
+
+    // A cancelled subscription without a cancellation date makes the
+    // cancellation figures unknown, not undercounted.
+    const undated = summarizeSubscriptions(
+      [...records, subscription('g', { status: 'cancelled', frequency: 'monthly', plan: 'Pro' })],
+      { now },
+    );
+    expect(undated.recentActivity).toMatchObject({ cancellations: null, churnedMrrExact: null });
+  });
+
+  it('derives demo subscription activity on the demo clock and follows cancellations', async () => {
+    useMockEngine();
+    const { subscriptionsApi } = await import('@/lib/embedded');
+
+    // Demo records are dated around the demo clock, so renewals fall due.
+    const before = await subscriptionsApi.getAnalytics();
+    expect(before.upcomingRenewals!.count).toBeGreaterThan(0);
+    expect(before.recentActivity!.cancellations).not.toBeNull();
+
+    const active = (await subscriptionsApi.list()).find(
+      (entry) => entry.status === 'active' && entry.frequency === 'monthly',
+    )!;
+    const cancelled = await subscriptionsApi.cancel(active.id);
+    expect(cancelled.cancelledAt).toBe(cancelled.updatedAt);
+
+    const after = await subscriptionsApi.getAnalytics();
+    expect(after.recentActivity!.cancellations).toBe(before.recentActivity!.cancellations! + 1);
+    expect(Number(after.recentActivity!.churnedMrrExact)).toBeCloseTo(
+      Number(before.recentActivity!.churnedMrrExact) + active.totalAmount,
+      2,
+    );
+    expect(after.subscriptionsByStatus!.cancelled).toBe(
+      before.subscriptionsByStatus!.cancelled + 1,
     );
   });
 

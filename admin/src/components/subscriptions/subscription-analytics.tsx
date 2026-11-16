@@ -21,7 +21,8 @@ import {
 import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getSubscriptionAnalyticsData } from '@/app/actions/commerce';
-import { formatCurrency, formatNumber, formatRatio } from '@/lib/utils';
+import { formatCurrency, formatMeasured, formatNumber, formatRatio } from '@/lib/utils';
+import { formatMoney } from '@/lib/finance/format';
 import type {
   SubscriptionAnalyticsData,
   ChurnReason,
@@ -45,6 +46,17 @@ const statusPills: Record<SubscriptionStatus, DsStatus> = {
   cancelled: 'fail',
   expired: 'idle',
 };
+
+const money = (amount: string) => formatMoney(amount);
+
+/** A card body that explains why there is nothing to show. */
+function Unavailable({ children, className = '' }: { children: string; className?: string }) {
+  return (
+    <div className={`flex items-center justify-center ${className}`}>
+      <p className="text-sm text-ds-muted-foreground text-center">{children}</p>
+    </div>
+  );
+}
 
 function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsProps) {
   const { data, isLoading, error } = useEmbeddedData(() => getSubscriptionAnalyticsData(), {
@@ -75,7 +87,11 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
     );
   }
 
+  // Every figure here is derived from the subscription records; a figure no
+  // record supports is null and says it is unavailable, never a stand-in.
   const { summary, mrrTrend, churnAnalysis, planDistribution, upcomingRenewals } = data;
+  const growth = summary?.mrrGrowth ?? null;
+  const days = summary?.activityDays ?? null;
 
   return (
     <motion.div
@@ -83,27 +99,38 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
       animate={{ opacity: 1, y: 0 }}
       className="space-y-6"
     >
+      {summary?.complete === false && (
+        <p className="text-sm text-ds-status-warn">
+          These figures stop short of every subscription: the scan reached its record limit.
+        </p>
+      )}
+
       {/* Key Metrics */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <MetricCard
           label="Monthly Recurring Revenue"
-          value={formatCurrency(summary?.mrr || 45000)}
-          subtitle={`+${formatRatio(summary?.mrrGrowth || 0.12)} vs last month`}
+          value={formatMeasured(summary?.mrrExact, money)}
+          subtitle={
+            growth === null
+              ? 'No MRR history to compare'
+              : `${growth > 0 ? '+' : growth < 0 ? '-' : ''}${formatRatio(Math.abs(growth))} vs last month`
+          }
           tone="success"
         />
         <MetricCard
           label="Active Subscriptions"
-          value={formatNumber(summary?.activeCount || 1250)}
+          value={formatMeasured(summary?.activeCount, formatNumber)}
           tone="primary"
         />
         <MetricCard
           label="Churn Rate"
-          value={formatRatio(summary?.churnRate || 0.032)}
+          value={formatMeasured(summary?.churnRate, (rate) => formatRatio(rate))}
+          subtitle="Cancelled or expired, all time"
           tone="warning"
         />
         <MetricCard
           label="Avg Revenue/User"
-          value={formatCurrency(summary?.arpu || 36)}
+          value={formatMeasured(summary?.arpuExact, money)}
           tone="accent"
         />
       </div>
@@ -115,16 +142,22 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
           <CardDescription>Monthly recurring revenue over time</CardDescription>
         </CardHeader>
         <CardContent>
-          <AreaChart
-            className="h-72"
-            data={mrrTrend || generateDemoMrrTrend()}
-            index="month"
-            categories={['mrr', 'newMrr', 'churnedMrr']}
-            colors={['emerald', 'indigo', 'rose']}
-            showAnimation
-            curveType="monotone"
-            valueFormatter={(value) => formatCurrency(value)}
-          />
+          {mrrTrend && mrrTrend.length > 0 ? (
+            <AreaChart
+              className="h-72"
+              data={mrrTrend}
+              index="month"
+              categories={['mrr', 'newMrr', 'churnedMrr']}
+              colors={['emerald', 'indigo', 'rose']}
+              showAnimation
+              curveType="monotone"
+              valueFormatter={(value) => formatCurrency(value)}
+            />
+          ) : (
+            <Unavailable className="h-72">
+              MRR history is not available: the engine keeps current subscriptions, not past MRR.
+            </Unavailable>
+          )}
         </CardContent>
       </Card>
 
@@ -134,18 +167,38 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
         <Card>
           <CardHeader>
             <CardTitle>Plan Distribution</CardTitle>
-            <CardDescription>Subscribers by plan type</CardDescription>
+            <CardDescription>Active subscribers by plan</CardDescription>
           </CardHeader>
           <CardContent>
-            <DonutChart
-              className="h-64"
-              data={planDistribution || generateDemoPlanDistribution()}
-              category="count"
-              index="plan"
-              colors={['indigo', 'emerald', 'violet', 'amber']}
-              showAnimation
-              valueFormatter={(value) => `${value} subscribers`}
-            />
+            {planDistribution && planDistribution.length > 0 ? (
+              <>
+                <DonutChart
+                  className="h-64"
+                  data={planDistribution}
+                  category="count"
+                  index="plan"
+                  colors={['indigo', 'emerald', 'violet', 'amber']}
+                  showAnimation
+                  valueFormatter={(value) => `${value} subscribers`}
+                />
+                <div className="mt-4 space-y-2">
+                  {planDistribution.map((entry) => (
+                    <div key={entry.plan} className="flex justify-between text-sm">
+                      <p className="text-ds-muted-foreground">
+                        {entry.plan} · {formatNumber(entry.count)} active
+                      </p>
+                      <p className="font-medium text-ds-foreground">
+                        {formatMoney(entry.mrrExact)} MRR
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <Unavailable className="h-64">
+                {planDistribution ? 'No active subscriptions' : 'Plan distribution unavailable'}
+              </Unavailable>
+            )}
           </CardContent>
         </Card>
 
@@ -156,22 +209,28 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
             <CardDescription>Cancellation reasons</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {(churnAnalysis?.reasons || generateDemoChurnReasons()).map((reason: ChurnReason) => (
-                <div key={reason.name}>
-                  <div className="flex justify-between mb-1">
-                    <p className="text-sm font-medium text-ds-foreground">{reason.name}</p>
-                    <div className="flex items-center space-x-2">
-                      <Badge variant="default">{reason.count}</Badge>
-                      <p className="text-sm text-ds-muted-foreground">
-                        {formatRatio(reason.percentage)}
-                      </p>
+            {churnAnalysis && churnAnalysis.reasons.length > 0 ? (
+              <div className="space-y-4">
+                {churnAnalysis.reasons.map((reason: ChurnReason) => (
+                  <div key={reason.name}>
+                    <div className="flex justify-between mb-1">
+                      <p className="text-sm font-medium text-ds-foreground">{reason.name}</p>
+                      <div className="flex items-center space-x-2">
+                        <Badge variant="default">{reason.count}</Badge>
+                        <p className="text-sm text-ds-muted-foreground">
+                          {formatRatio(reason.percentage)}
+                        </p>
+                      </div>
                     </div>
+                    <ProgressBar value={reason.percentage * 100} color="rose" />
                   </div>
-                  <ProgressBar value={reason.percentage * 100} color="rose" />
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <Unavailable className="h-64">
+                Cancellation reasons are not available: they are not on subscription records.
+              </Unavailable>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -183,9 +242,9 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
           <CardDescription>Current status distribution</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-            {Object.entries(summary?.statusBreakdown || generateDemoStatusBreakdown()).map(
-              ([status, count]) => (
+          {summary?.statusBreakdown && Object.keys(summary.statusBreakdown).length > 0 ? (
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+              {Object.entries(summary.statusBreakdown).map(([status, count]) => (
                 <div
                   key={status}
                   className="text-center p-4 border border-ds-enterprise-line rounded-lg"
@@ -193,13 +252,15 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
                   <StatusPill status={statusPills[status as SubscriptionStatus] || 'idle'}>
                     {status.replace('_', ' ')}
                   </StatusPill>
-                  <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">
-                    {count as number}
-                  </p>
+                  <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">{count}</p>
                 </div>
-              ),
-            )}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <Unavailable>
+              {summary?.statusBreakdown ? 'No subscriptions' : 'Status breakdown unavailable'}
+            </Unavailable>
+          )}
         </CardContent>
       </Card>
 
@@ -209,46 +270,45 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
           <div className="flex items-center justify-between">
             <div>
               <CardTitle>Upcoming Renewals</CardTitle>
-              <CardDescription>Subscriptions renewing in the next 7 days</CardDescription>
+              <CardDescription>
+                {upcomingRenewals
+                  ? `Active subscriptions renewing in the next ${upcomingRenewals.days} days`
+                  : 'Active subscriptions renewing soon'}
+              </CardDescription>
             </div>
-            <Badge variant="primary">
-              {formatCurrency(
-                (upcomingRenewals || []).reduce(
-                  (sum: number, r: UpcomingRenewal) => sum + r.amount,
-                  0,
-                ),
-              )}{' '}
-              expected
-            </Badge>
+            {upcomingRenewals && (
+              <Badge variant="primary">{formatMoney(upcomingRenewals.amountExact)} expected</Badge>
+            )}
           </div>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-ds-enterprise-line">
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
-                    Customer
-                  </th>
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
-                    Plan
-                  </th>
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
-                    Renewal Date
-                  </th>
-                  <th className="text-right py-2 px-3 text-sm font-medium text-ds-muted-foreground">
-                    Amount
-                  </th>
-                  <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
-                    Risk
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {(upcomingRenewals || generateDemoUpcomingRenewals()).map(
-                  (renewal: UpcomingRenewal, index: number) => (
+          {!upcomingRenewals ? (
+            <Unavailable>Renewal schedule unavailable</Unavailable>
+          ) : upcomingRenewals.next.length === 0 ? (
+            <Unavailable>{`No renewals in the next ${upcomingRenewals.days} days`}</Unavailable>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-ds-enterprise-line">
+                    <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                      Customer
+                    </th>
+                    <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                      Plan
+                    </th>
+                    <th className="text-left py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                      Renewal Date
+                    </th>
+                    <th className="text-right py-2 px-3 text-sm font-medium text-ds-muted-foreground">
+                      Amount
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {upcomingRenewals.next.map((renewal: UpcomingRenewal, index: number) => (
                     <motion.tr
-                      key={renewal.id || index}
+                      key={renewal.id}
                       initial={{ opacity: 0, x: -20 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: index * 0.05 }}
@@ -259,7 +319,9 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
                           <p className="text-sm font-medium text-ds-foreground">
                             {renewal.customerName}
                           </p>
-                          <p className="text-xs text-ds-muted-foreground">{renewal.email}</p>
+                          {renewal.email && (
+                            <p className="text-xs text-ds-muted-foreground">{renewal.email}</p>
+                          )}
                         </div>
                       </td>
                       <td className="py-3 px-3">
@@ -273,32 +335,20 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
                       </td>
                       <td className="py-3 px-3 text-right">
                         <p className="text-sm font-medium text-ds-foreground">
-                          {formatCurrency(renewal.amount)}
+                          {formatMoney(renewal.amountExact)}
                         </p>
                       </td>
-                      <td className="py-3 px-3">
-                        <StatusPill
-                          status={
-                            renewal.churnRisk < 0.2
-                              ? 'ok'
-                              : renewal.churnRisk < 0.5
-                                ? 'warn'
-                                : 'fail'
-                          }
-                        >
-                          {renewal.churnRisk < 0.2
-                            ? 'Low'
-                            : renewal.churnRisk < 0.5
-                              ? 'Medium'
-                              : 'High'}
-                        </StatusPill>
-                      </td>
                     </motion.tr>
-                  ),
-                )}
-              </tbody>
-            </table>
-          </div>
+                  ))}
+                </tbody>
+              </table>
+              {upcomingRenewals.count > upcomingRenewals.next.length && (
+                <p className="mt-2 text-xs text-ds-muted-foreground">
+                  The next {upcomingRenewals.next.length} of {upcomingRenewals.count} renewals
+                </p>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -311,10 +361,12 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
               <p className="text-sm font-medium text-ds-foreground">New MRR</p>
             </div>
             <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">
-              {formatCurrency(summary?.newMrr || 5200)}
+              {formatMeasured(summary?.newMrrExact, money)}
             </p>
             <p className="text-xs text-ds-muted-foreground">
-              From {summary?.newSubscribers || 145} new subscribers
+              {summary?.newSubscribers == null || days === null
+                ? 'New subscriptions unavailable'
+                : `From ${formatNumber(summary.newSubscribers)} new subscriptions in the last ${days} days`}
             </p>
           </CardContent>
         </Card>
@@ -325,10 +377,12 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
               <p className="text-sm font-medium text-ds-foreground">Expansion MRR</p>
             </div>
             <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">
-              {formatCurrency(summary?.expansionMrr || 1800)}
+              {formatMeasured(summary?.expansionMrrExact, money)}
             </p>
             <p className="text-xs text-ds-muted-foreground">
-              From {summary?.upgrades || 32} upgrades
+              {summary?.upgrades == null
+                ? 'Plan changes are not recorded'
+                : `From ${formatNumber(summary.upgrades)} upgrades`}
             </p>
           </CardContent>
         </Card>
@@ -339,107 +393,18 @@ function SubscriptionAnalyticsInner({ data: propData }: SubscriptionAnalyticsPro
               <p className="text-sm font-medium text-ds-foreground">Churned MRR</p>
             </div>
             <p className="ds-instrument-number text-3xl text-ds-foreground mt-2">
-              {formatCurrency(summary?.churnedMrr || 1400)}
+              {formatMeasured(summary?.churnedMrrExact, money)}
             </p>
             <p className="text-xs text-ds-muted-foreground">
-              From {summary?.cancellations || 38} cancellations
+              {summary?.cancellations == null || days === null
+                ? 'Cancellation dates unavailable'
+                : `From ${formatNumber(summary.cancellations)} cancellations in the last ${days} days`}
             </p>
           </CardContent>
         </Card>
       </div>
     </motion.div>
   );
-}
-
-// Demo data generators
-function generateDemoMrrTrend() {
-  return [
-    { month: 'Jun', mrr: 38000, newMrr: 4200, churnedMrr: 1100 },
-    { month: 'Jul', mrr: 40000, newMrr: 4500, churnedMrr: 1200 },
-    { month: 'Aug', mrr: 41500, newMrr: 4800, churnedMrr: 1300 },
-    { month: 'Sep', mrr: 43000, newMrr: 5000, churnedMrr: 1200 },
-    { month: 'Oct', mrr: 44200, newMrr: 5100, churnedMrr: 1350 },
-    { month: 'Nov', mrr: 45000, newMrr: 5200, churnedMrr: 1400 },
-  ];
-}
-
-function generateDemoPlanDistribution() {
-  return [
-    { plan: 'Basic', count: 450, revenue: 8550 },
-    { plan: 'Pro', count: 520, revenue: 20280 },
-    { plan: 'Business', count: 230, revenue: 13800 },
-    { plan: 'Enterprise', count: 50, revenue: 12500 },
-  ];
-}
-
-function generateDemoChurnReasons() {
-  return [
-    { name: 'Too expensive', count: 15, percentage: 0.38 },
-    { name: 'Missing features', count: 8, percentage: 0.21 },
-    { name: 'Switched competitor', count: 7, percentage: 0.18 },
-    { name: 'No longer needed', count: 5, percentage: 0.13 },
-    { name: 'Other', count: 3, percentage: 0.1 },
-  ];
-}
-
-function generateDemoStatusBreakdown(): Partial<Record<SubscriptionStatus, number>> {
-  return {
-    active: 1150,
-    trial: 85,
-    past_due: 12,
-    paused: 25,
-    cancelled: 38,
-  };
-}
-
-function generateDemoUpcomingRenewals() {
-  return [
-    {
-      id: '1',
-      customerName: 'Acme Corp',
-      email: 'billing@acme.com',
-      plan: 'Business',
-      renewalDate: '2024-12-22',
-      amount: 99,
-      churnRisk: 0.1,
-    },
-    {
-      id: '2',
-      customerName: 'TechStart Inc',
-      email: 'admin@techstart.io',
-      plan: 'Pro',
-      renewalDate: '2024-12-23',
-      amount: 49,
-      churnRisk: 0.3,
-    },
-    {
-      id: '3',
-      customerName: 'Global Retail',
-      email: 'it@globalretail.com',
-      plan: 'Enterprise',
-      renewalDate: '2024-12-24',
-      amount: 299,
-      churnRisk: 0.15,
-    },
-    {
-      id: '4',
-      customerName: 'Local Shop',
-      email: 'owner@localshop.com',
-      plan: 'Basic',
-      renewalDate: '2024-12-25',
-      amount: 19,
-      churnRisk: 0.55,
-    },
-    {
-      id: '5',
-      customerName: 'Digital Agency',
-      email: 'accounts@digital.agency',
-      plan: 'Pro',
-      renewalDate: '2024-12-26',
-      amount: 49,
-      churnRisk: 0.2,
-    },
-  ];
 }
 
 const SubscriptionAnalytics = memo(SubscriptionAnalyticsInner);

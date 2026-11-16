@@ -268,19 +268,36 @@ export interface ReturnsManagementData {
 // 6. Subscription Analytics
 // ============================================================================
 
+/**
+ * Every figure is derived from the subscription records (all pages). A
+ * figure nothing records is null, and the widget says it is unavailable;
+ * money is exact decimal strings.
+ */
 export interface SubscriptionSummary {
-  mrr: number;
-  mrrGrowth: number;
+  /** Monthly recurring revenue of active subscriptions. */
+  mrrExact: string;
+  /** Month-over-month MRR growth (0-1); null when nothing records past MRR (demo mode seeds one). */
+  mrrGrowth: number | null;
   activeCount: number;
-  churnRate: number;
-  arpu: number;
-  statusBreakdown?: Record<string, number>;
-  newMrr?: number;
-  expansionMrr?: number;
-  churnedMrr?: number;
-  newSubscribers?: number;
-  upgrades?: number;
-  cancellations?: number;
+  /** Share (0-1) of all subscriptions cancelled or expired; null with none. */
+  churnRate: number | null;
+  /** Null with no active subscriptions. */
+  arpuExact: string | null;
+  /** Subscriptions per engine status. */
+  statusBreakdown: Record<string, number> | null;
+  /** Days the start and cancellation figures cover. */
+  activityDays: number | null;
+  newSubscribers: number | null;
+  /** MRR of the subscriptions started in the window that are active now. */
+  newMrrExact: string | null;
+  /** Null when a cancelled subscription has no cancellation date. */
+  cancellations: number | null;
+  churnedMrrExact: string | null;
+  /** Plan changes are not recorded on subscriptions, so these are null. */
+  upgrades: number | null;
+  expansionMrrExact: string | null;
+  /** False when the figures stop short of every subscription (the scan cap). */
+  complete: boolean;
 }
 
 export interface MrrTrendEntry {
@@ -296,30 +313,41 @@ export interface ChurnReason {
   percentage: number;
 }
 
+/** Active subscriptions on a plan and the MRR they bring. */
 export interface PlanDistributionEntry {
   plan: string;
   count: number;
-  revenue: number;
+  mrrExact: string;
 }
 
 export interface UpcomingRenewal {
   id: string;
+  /** The customer's name, else their email, else their id. */
   customerName: string;
-  email: string;
+  email?: string;
   plan: string;
+  /** UTC date, `YYYY-MM-DD`. */
   renewalDate: string;
-  amount: number;
-  churnRisk: number;
+  /** The per-period price. */
+  amountExact: string;
+}
+
+export interface UpcomingRenewals {
+  days: number;
+  /** Every renewal in the window; `next` lists the soonest. */
+  count: number;
+  amountExact: string;
+  next: UpcomingRenewal[];
 }
 
 export interface SubscriptionAnalyticsData {
   summary: SubscriptionSummary;
-  mrrTrend?: MrrTrendEntry[];
-  churnAnalysis?: {
-    reasons: ChurnReason[];
-  };
-  planDistribution?: PlanDistributionEntry[];
-  upcomingRenewals?: UpcomingRenewal[];
+  /** Null: nothing records MRR over time. */
+  mrrTrend: MrrTrendEntry[] | null;
+  /** Null: cancellation reasons are not on subscription records. */
+  churnAnalysis: { reasons: ChurnReason[] } | null;
+  planDistribution: PlanDistributionEntry[] | null;
+  upcomingRenewals: UpcomingRenewals | null;
 }
 
 // ============================================================================

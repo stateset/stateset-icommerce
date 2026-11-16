@@ -43,6 +43,27 @@ This project follows Keep a Changelog and Semantic Versioning.
   - Demand-forecast alerts no longer assume one reserved unit a week to
     count down to a stockout, or a reorder point of 50 for items without
     one; the countdown is left out when nothing forecasts a stockout.
+- Admin subscription analytics are derived from the subscription records
+  (every page) instead of being mostly synthetic. The MRR trend (a fixed
+  3%-a-month curve), churn reasons, new/expansion/churned MRR (fixed shares
+  of MRR), subscriber counts (fixed shares of the first page), plan revenue
+  ($29 per unit), renewal customers, emails, dates and amounts, and churn
+  risk were invented. Now:
+  - Derived: MRR, ARPU, churn rate (share cancelled or expired), the status
+    breakdown, active subscribers and exact MRR per plan, new subscriptions
+    and the MRR of those still active over the last 30 days, cancellations
+    and the MRR they took away over the last 30 days (from `cancelledAt`;
+    unknown if a cancelled record has none), and active subscriptions
+    renewing in the next 7 days, with the real customer's name and email,
+    the next billing date, the exact per-period price and the exact total.
+    Money stays exact decimal strings end to end.
+  - Unavailable, and the widget says so: MRR history and growth (nothing
+    records past MRR; demo mode keeps its seeded growth figure), upgrades
+    and expansion MRR (plan changes are not recorded), cancellation reasons
+    (kept in subscription events, which the admin does not read), and churn
+    risk (no model; the column is gone).
+  - Demo mode derives the same figures from its current records on the demo
+    clock, and a demo cancellation records `cancelledAt` as the engine does.
 
 ## [1.41.0] - 2026-11-15
 

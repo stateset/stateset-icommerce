@@ -124,6 +124,7 @@ import {
   getInventoryAnalyticsData,
   getCustomerHealthData,
   getDemandForecastingData,
+  getSubscriptionAnalyticsData,
 } from '@/app/actions/commerce';
 import {
   ordersApi,
@@ -273,6 +274,143 @@ describe('commerce actions auth guard', () => {
       const health = await getCustomerHealthData();
       // It used to invent a January of 59 customers.
       expect(health).toMatchObject({ trends: { timeline: [] } });
+    });
+
+    it('builds subscription analytics from the derived figures and real customers', async () => {
+      vi.mocked(subscriptionsApi.getAnalytics).mockResolvedValueOnce({
+        totalSubscriptions: 4,
+        activeSubscriptions: 2,
+        mrr: 63.36,
+        mrrExact: '63.36',
+        arr: 760.28,
+        arrExact: '760.28',
+        churnRate: 0.25,
+        arpu: 31.68,
+        arpuExact: '31.68',
+        averageLifetime: 0,
+        subscriptionsByPlan: { Pro: 3, Basic: 1 },
+        subscriptionsByFrequency: { monthly: 4 },
+        subscriptionsByStatus: { active: 2, paused: 1, cancelled: 1 },
+        activeByPlan: [{ plan: 'Pro', count: 2, mrrExact: '63.36' }],
+        recentActivity: {
+          days: 30,
+          newSubscriptions: 1,
+          newMrrExact: '19.99',
+          cancellations: 1,
+          churnedMrrExact: '10.00',
+        },
+        upcomingRenewals: {
+          days: 7,
+          count: 2,
+          amountExact: '39.98',
+          next: [
+            {
+              id: 'sub_1',
+              customerId: 'cus_1',
+              plan: 'Pro',
+              renewalDate: '2026-11-16',
+              amountExact: '19.99',
+            },
+            {
+              id: 'sub_2',
+              customerId: 'cus_gone',
+              plan: 'Pro',
+              renewalDate: '2026-11-18',
+              amountExact: '19.99',
+            },
+          ],
+        },
+        coverage: { complete: true, records: 4 },
+      });
+      // Looked up in renewal order: cus_1, then cus_gone.
+      vi.mocked(customersApi.get)
+        .mockResolvedValueOnce({
+          id: 'cus_1',
+          email: 'ada@example.com',
+          firstName: 'Ada',
+          lastName: 'Lovelace',
+          addresses: [],
+          tags: [],
+          totalOrders: 0,
+          totalSpent: 0,
+          averageOrderValue: 0,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        })
+        .mockResolvedValueOnce(null);
+
+      const data = await getSubscriptionAnalyticsData();
+      expect(data.summary).toEqual({
+        mrrExact: '63.36',
+        // Nothing records past MRR, plan changes or cancellation reasons.
+        mrrGrowth: null,
+        activeCount: 2,
+        churnRate: 0.25,
+        arpuExact: '31.68',
+        statusBreakdown: { active: 2, paused: 1, cancelled: 1 },
+        activityDays: 30,
+        newSubscribers: 1,
+        newMrrExact: '19.99',
+        cancellations: 1,
+        churnedMrrExact: '10.00',
+        upgrades: null,
+        expansionMrrExact: null,
+        complete: true,
+      });
+      expect(data.mrrTrend).toBeNull();
+      expect(data.churnAnalysis).toBeNull();
+      expect(data.planDistribution).toEqual([{ plan: 'Pro', count: 2, mrrExact: '63.36' }]);
+      // Renewals name the real customer; one the engine cannot return shows by id.
+      expect(data.upcomingRenewals).toEqual({
+        days: 7,
+        count: 2,
+        amountExact: '39.98',
+        next: [
+          {
+            id: 'sub_1',
+            customerName: 'Ada Lovelace',
+            email: 'ada@example.com',
+            plan: 'Pro',
+            renewalDate: '2026-11-16',
+            amountExact: '19.99',
+          },
+          {
+            id: 'sub_2',
+            customerName: 'cus_gone',
+            plan: 'Pro',
+            renewalDate: '2026-11-18',
+            amountExact: '19.99',
+          },
+        ],
+      });
+    });
+
+    it('reports subscription figures with no population as unavailable', async () => {
+      vi.mocked(subscriptionsApi.getAnalytics).mockResolvedValueOnce({
+        totalSubscriptions: 0,
+        activeSubscriptions: 0,
+        mrr: 0,
+        arr: 0,
+        churnRate: 0,
+        arpu: 0,
+        averageLifetime: 0,
+        subscriptionsByPlan: {},
+        subscriptionsByFrequency: {},
+      });
+
+      const data = await getSubscriptionAnalyticsData();
+      // No subscriptions: no churn rate or ARPU, and an engine aggregate
+      // without the record-derived figures leaves them unavailable.
+      expect(data.summary).toMatchObject({
+        mrrExact: '0',
+        churnRate: null,
+        arpuExact: null,
+        statusBreakdown: null,
+        newSubscribers: null,
+        cancellations: null,
+      });
+      expect(data.planDistribution).toBeNull();
+      expect(data.upcomingRenewals).toBeNull();
     });
 
     it('invents no demand or reorder point for a forecast alert', async () => {

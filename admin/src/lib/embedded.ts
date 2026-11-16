@@ -807,10 +807,12 @@ function buildMockCommerceData(): MockCommerceData {
     const plan = plans[index % plans.length];
     const quantity = deterministicInt(index + 1101, 1, 4);
     const createdAt = formatMockDate(-120 + index * 2, index % 10);
+    const updatedAt = formatMockDate(-(index % 10), index % 6);
+    const status = deterministicChoice(index + 1201, subscriptionStatuses);
     return {
       id: `sub_${1000 + index}`,
       customerId: customer.id,
-      status: deterministicChoice(index + 1201, subscriptionStatuses),
+      status,
       plan: plan.plan,
       planId: plan.planId,
       frequency: plan.frequency,
@@ -819,8 +821,10 @@ function buildMockCommerceData(): MockCommerceData {
       items: [{ productId: products[index % products.length].id, quantity }],
       quantity,
       totalAmount: roundCurrency(plan.amount * quantity),
+      // The engine stamps a cancellation; its last update is the demo's.
+      ...(status === 'cancelled' && { cancelledAt: updatedAt }),
       createdAt,
-      updatedAt: formatMockDate(-(index % 10), index % 6),
+      updatedAt,
     } satisfies Subscription;
   });
 
@@ -956,7 +960,10 @@ function mockReturnAnalytics(params?: { startDate?: string; endDate?: string }):
 
 function mockSubscriptionAnalytics(): SubscriptionAnalytics {
   const data = getMockData();
-  return { ...summarizeSubscriptions(data.subscriptions), ...data.simulated.subscriptions };
+  return {
+    ...summarizeSubscriptions(data.subscriptions, { now: MOCK_NOW }),
+    ...data.simulated.subscriptions,
+  };
 }
 
 function mockDashboardMetrics(): DashboardMetrics {
@@ -1127,7 +1134,14 @@ function applyMockSubscriptionAction(id: string, action: SubscriptionAction): Su
   if (!canApplySubscriptionAction(current.status, action)) {
     throw new Error(`Subscription cannot move from ${current.status} to ${to}`);
   }
-  const next: Subscription = { ...current, status: to, updatedAt: new Date().toISOString() };
+  const updatedAt = new Date().toISOString();
+  const next: Subscription = {
+    ...current,
+    status: to,
+    updatedAt,
+    // Like the engine, a cancellation records when it happened.
+    ...(action === 'cancel' && { cancelledAt: updatedAt }),
+  };
   data.subscriptions[index] = next;
   return next;
 }
@@ -2483,6 +2497,39 @@ const PERIODS_PER_YEAR: Record<string, number> = {
   yearly: 1,
 };
 
+/** Days of subscription starts and cancellations the analytics report. */
+const SUBSCRIPTION_ACTIVITY_DAYS = 30;
+/** Days ahead the renewal schedule covers. */
+const SUBSCRIPTION_RENEWAL_DAYS = 7;
+/** Renewals listed one by one; the count and amount cover all of them. */
+const SUBSCRIPTION_RENEWALS_LISTED = 5;
+
+function subscriptionPrice(subscription: Subscription): string {
+  return toDecimalString(subscription.totalAmountExact ?? subscription.totalAmount);
+}
+
+/**
+ * Monthly recurring revenue of `subscriptions`, exact: the sum of price x
+ * periods per year (subscriptions with an unknown interval contribute
+ * nothing), divided by 12 and rounded once, half to even, at the sum's scale
+ * and at least cents. Also returns that yearly sum.
+ */
+function recurringRevenue(subscriptions: Subscription[]): { arrExact: string; mrrExact: string } {
+  const arrExact = sumDecimals(
+    subscriptions.flatMap((subscription) => {
+      const periods = PERIODS_PER_YEAR[subscription.frequency];
+      return periods ? [multiplyDecimal(subscriptionPrice(subscription), periods)] : [];
+    }),
+  );
+  return { arrExact, mrrExact: divideDecimal(arrExact, 12, Math.max(2, decimalScale(arrExact))) };
+}
+
+/** Epoch milliseconds of an RFC 3339 field, or undefined when absent or unparseable. */
+function timestampOf(value: string | undefined): number | undefined {
+  const parsed = value ? Date.parse(value) : Number.NaN;
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
 /**
  * Subscription analytics computed from the subscription records, for
  * engines without an aggregate. Recurring revenue covers active
@@ -2490,31 +2537,67 @@ const PERIODS_PER_YEAR: Record<string, number> = {
  * sum of price x periods per year, and MRR and ARPU are rounded once from
  * it. Figures nothing reports (growth, lifetime) are left at zero rather
  * than invented.
+ *
+ * Measured against `now` (the demo clock in demo mode): starts and
+ * cancellations since `SUBSCRIPTION_ACTIVITY_DAYS` before it, from
+ * `createdAt` and `cancelledAt`, and active subscriptions whose next billing
+ * date falls in the `SUBSCRIPTION_RENEWAL_DAYS` after it. A cancelled
+ * subscription without a `cancelledAt` makes the cancellation figures
+ * unknown (null) rather than undercounted.
  */
 export function summarizeSubscriptions(
   subscriptions: Subscription[],
-  options: { complete?: boolean } = {},
+  options: { complete?: boolean; now?: number } = {},
 ): SubscriptionAnalytics {
+  const now = options.now ?? Date.now();
   const active = subscriptions.filter((subscription) => subscription.status === 'active');
-  const arrExact = sumDecimals(
-    active.flatMap((subscription) => {
-      const periods = PERIODS_PER_YEAR[subscription.frequency];
-      const price = toDecimalString(subscription.totalAmountExact ?? subscription.totalAmount);
-      return periods ? [multiplyDecimal(price, periods)] : [];
-    }),
-  );
+  const { arrExact, mrrExact } = recurringRevenue(active);
   const scale = Math.max(2, decimalScale(arrExact));
-  const mrrExact = divideDecimal(arrExact, 12, scale);
   const arpuExact = active.length ? divideDecimal(arrExact, 12 * active.length, scale) : '0';
   const churned = subscriptions.filter(
     (subscription) => subscription.status === 'cancelled' || subscription.status === 'expired',
   ).length;
-  const tally = (key: (subscription: Subscription) => string) =>
+  const keyOf = (value: string | undefined) => value || 'unknown';
+  const tally = (key: (subscription: Subscription) => string | undefined) =>
     subscriptions.reduce<Record<string, number>>((acc, subscription) => {
-      const k = key(subscription) || 'unknown';
+      const k = keyOf(key(subscription));
       acc[k] = (acc[k] || 0) + 1;
       return acc;
     }, {});
+
+  const plans = new Map<string, Subscription[]>();
+  for (const subscription of active) {
+    const plan = keyOf(subscription.plan);
+    const members = plans.get(plan);
+    if (members) members.push(subscription);
+    else plans.set(plan, [subscription]);
+  }
+  const activeByPlan = Array.from(plans, ([plan, members]) => ({
+    plan,
+    count: members.length,
+    mrrExact: recurringRevenue(members).mrrExact,
+  })).sort((left, right) => right.count - left.count || left.plan.localeCompare(right.plan));
+
+  const since = now - SUBSCRIPTION_ACTIVITY_DAYS * DAY_MS;
+  const started = subscriptions.filter(
+    (subscription) => (timestampOf(subscription.createdAt) ?? -Infinity) >= since,
+  );
+  const cancellationDatesKnown = subscriptions.every(
+    (subscription) =>
+      subscription.status !== 'cancelled' || timestampOf(subscription.cancelledAt) !== undefined,
+  );
+  const cancelled = subscriptions.filter(
+    (subscription) => (timestampOf(subscription.cancelledAt) ?? -Infinity) >= since,
+  );
+
+  const until = now + SUBSCRIPTION_RENEWAL_DAYS * DAY_MS;
+  const renewals = active
+    .map((subscription) => ({ subscription, at: timestampOf(subscription.nextBillingDate) }))
+    .filter((entry): entry is { subscription: Subscription; at: number } => {
+      return entry.at !== undefined && entry.at >= now && entry.at < until;
+    })
+    .sort((left, right) => left.at - right.at);
+
   return {
     totalSubscriptions: subscriptions.length,
     activeSubscriptions: active.length,
@@ -2528,6 +2611,29 @@ export function summarizeSubscriptions(
     averageLifetime: 0,
     subscriptionsByPlan: tally((subscription) => subscription.plan),
     subscriptionsByFrequency: tally((subscription) => subscription.frequency),
+    subscriptionsByStatus: tally((subscription) => subscription.status),
+    activeByPlan,
+    recentActivity: {
+      days: SUBSCRIPTION_ACTIVITY_DAYS,
+      newSubscriptions: started.length,
+      newMrrExact: recurringRevenue(
+        started.filter((subscription) => subscription.status === 'active'),
+      ).mrrExact,
+      cancellations: cancellationDatesKnown ? cancelled.length : null,
+      churnedMrrExact: cancellationDatesKnown ? recurringRevenue(cancelled).mrrExact : null,
+    },
+    upcomingRenewals: {
+      days: SUBSCRIPTION_RENEWAL_DAYS,
+      count: renewals.length,
+      amountExact: sumDecimals(renewals.map(({ subscription }) => subscriptionPrice(subscription))),
+      next: renewals.slice(0, SUBSCRIPTION_RENEWALS_LISTED).map(({ subscription, at }) => ({
+        id: subscription.id,
+        customerId: subscription.customerId,
+        plan: keyOf(subscription.plan),
+        renewalDate: new Date(at).toISOString().slice(0, 10),
+        amountExact: subscriptionPrice(subscription),
+      })),
+    },
     coverage: coverageOf(subscriptions, options.complete ?? true),
   };
 }
