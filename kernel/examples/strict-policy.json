@@ -131,6 +131,26 @@
       "requires_agent_delegation": true,
       "requires_signed_authority": false
     },
+    "orders.transition": {
+      "required_capabilities": ["orders.transition"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    },
+    "orders.ship": {
+      "required_capabilities": ["orders.ship"],
+      "requires_approval": false,
+      "requires_tenant": true,
+      "requires_store": true,
+      "allowed_tenant_ids": ["tenant:replace-me"],
+      "allowed_store_ids": ["store:replace-me"],
+      "requires_agent_delegation": true,
+      "requires_signed_authority": false
+    },
     "shipments.create": {
       "required_capabilities": ["shipments.create"],
       "requires_approval": false,

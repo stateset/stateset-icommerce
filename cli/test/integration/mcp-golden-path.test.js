@@ -8,18 +8,21 @@
  * where it changes hands. Each piece has unit tests; this checks that they
  * compose, as an agent using the product composes them.
  *
- * The journey runs twice: on a legacy-migration endpoint (`kernel.strict:
- * false`) and on the recommended production posture (`kernel.strict: true`),
- * where only governed commands are exposed for writes. On the strict endpoint
- * every write step is a typed kernel command with a sealed receipt. Promotions
- * and coupons are operator configuration, not agent actions, so the strict
- * journey provisions the welcome coupon directly on the store (as an operator
- * would) and the agent only redeems it.
+ * The journey runs three times: on a legacy-migration endpoint
+ * (`kernel.strict: false`), on the recommended production posture
+ * (`kernel.strict: true`), where only governed commands are exposed for
+ * writes, and on that strict posture under the operator templates in
+ * `kernel/examples/` that AGENTS.md and docs/src/kernel-execution.md point
+ * operators at -- so those templates keep granting the whole journey. On the
+ * strict endpoints every write step is a typed kernel command with a sealed
+ * receipt. Promotions and coupons are operator configuration, not agent
+ * actions, so the strict journey provisions the welcome coupon directly on the
+ * store (as an operator would) and the agent only redeems it.
  */
 
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -39,6 +42,40 @@ const commandPolicy = (capability) => ({
   requires_signed_authority: false,
 });
 
+/** Grants every governed command, none behind approval. */
+const GOLDEN_KERNEL = {
+  storeId: 'store:golden',
+  principal: {
+    id: 'agent:golden',
+    kind: 'agent',
+    tenantId: 'tenant:golden',
+    delegatedBy: 'user:golden',
+    capabilities,
+  },
+  policy: {
+    version: 'golden-v1',
+    commands: Object.fromEntries(capabilities.map((c) => [c, commandPolicy(c)])),
+    trusted_authority_keys: {},
+  },
+};
+
+const repoFile = (relative) => new URL(`../../../${relative}`, import.meta.url);
+const kernelExample = (name) =>
+  JSON.parse(readFileSync(repoFile(`kernel/examples/${name}`), 'utf8'));
+
+/** The operator templates, unedited: their placeholder store is the one they allow. */
+const EXAMPLE_KERNEL = {
+  storeId: 'store:replace-me',
+  principal: kernelExample('strict-principal.json'),
+  policy: kernelExample('strict-policy.json'),
+};
+
+const ENDPOINTS = [
+  { label: 'kernel.strict: false', strict: false, kernel: GOLDEN_KERNEL },
+  { label: 'kernel.strict: true', strict: true, kernel: GOLDEN_KERNEL },
+  { label: 'kernel.strict: true, kernel/examples policy', strict: true, kernel: EXAMPLE_KERNEL },
+];
+
 const money = (value) => Number(value);
 
 /** The welcome promotion: 10% off a customer's first order, by coupon. */
@@ -50,7 +87,7 @@ const WELCOME = {
   conditions: [{ conditionType: 'first_order', operator: 'equals', value: 'true' }],
 };
 
-function journeyFor(strict) {
+function journeyFor({ strict, kernel }) {
   const dir = mkdtempSync(path.join(os.tmpdir(), `mcp-golden-${strict ? 'strict' : 'legacy'}-`));
   const dbPath = path.join(dir, 'store.db');
   const state = { journey: {}, server: null, seq: 0, governed: [] };
@@ -102,22 +139,7 @@ function journeyFor(strict) {
     state.server = createStatesetMcpServer({
       dbPath,
       allowApply: true,
-      kernel: {
-        strict,
-        storeId: 'store:golden',
-        principal: {
-          id: 'agent:golden',
-          kind: 'agent',
-          tenantId: 'tenant:golden',
-          delegatedBy: 'user:golden',
-          capabilities,
-        },
-        policy: {
-          version: 'golden-v1',
-          commands: Object.fromEntries(capabilities.map((c) => [c, commandPolicy(c)])),
-          trusted_authority_keys: {},
-        },
-      },
+      kernel: { strict, ...kernel },
     });
     const { journey } = state;
 
@@ -232,9 +254,9 @@ function journeyFor(strict) {
   return state;
 }
 
-for (const strict of [false, true]) {
-  describe(`the commerce journey through the MCP server (kernel.strict: ${strict})`, () => {
-    const state = journeyFor(strict);
+for (const { label, strict, kernel } of ENDPOINTS) {
+  describe(`the commerce journey through the MCP server (${label})`, () => {
+    const state = journeyFor({ strict, kernel });
     const { journey } = state;
 
     it('prices the cart: first-order coupon applied to a new customer', () => {
@@ -280,7 +302,11 @@ for (const strict of [false, true]) {
     it('dispositions the received item under the operator principal', () => {
       assert.equal(journey.disposition.disposition, 'restock');
       const by = journey.disposition.disposition_by ?? journey.disposition.dispositionBy;
-      assert.equal(by, 'agent:golden', 'the kernel records its principal, not a tool argument');
+      assert.equal(
+        by,
+        kernel.principal.id,
+        'the kernel records its principal, not a tool argument',
+      );
     });
 
     it('runs every write through a governed command with a sealed, allowed receipt', () => {
@@ -337,6 +363,68 @@ for (const strict of [false, true]) {
     });
   });
 }
+
+/**
+ * The documented checkout: the tool/command table under "A complete checkout
+ * on the strict profile" in docs/src/kernel-execution.md, the flow AGENTS.md
+ * summarises before pointing operators at `kernel/examples/`.
+ */
+function documentedCheckout() {
+  const doc = readFileSync(repoFile('docs/src/kernel-execution.md'), 'utf8');
+  const section = doc
+    .split('\n## A complete checkout on the strict profile\n')[1]
+    ?.split('\n## ')[0];
+  assert.ok(section, 'docs/src/kernel-execution.md lost its strict checkout section');
+  const rows = [];
+  for (const line of section.split('\n')) {
+    // | `tool` [… `tool`] | `command` | delegates to |
+    const cells = line.split('|').map((cell) => cell.trim());
+    const command = /^`([a-z0-9_.]+)`$/.exec(cells[2] ?? '')?.[1];
+    if (!command) continue;
+    rows.push({ command, tools: [...cells[1].matchAll(/`([a-z0-9_]+)`/g)].map((m) => m[1]) });
+  }
+  assert.ok(rows.length > 0, 'the strict checkout section lost its command table');
+  return rows;
+}
+
+describe('the kernel/examples strict templates grant the documented checkout', () => {
+  const { policy, principal, storeId } = EXAMPLE_KERNEL;
+
+  it('documents each step with the command its tool runs', () => {
+    for (const { command, tools } of documentedCheckout()) {
+      assert.ok(tools.length > 0, `no tool documented for ${command}`);
+      for (const tool of tools) {
+        assert.equal(KERNEL_CAPABILITY_BY_TOOL[tool], command, `${tool} (docs say ${command})`);
+      }
+    }
+  });
+
+  it('allows every documented command for the example principal', () => {
+    assert.ok(principal.delegated_by, 'strict policies require agent delegation');
+    for (const { command } of documentedCheckout()) {
+      const rule = policy.commands[command];
+      assert.ok(rule, `strict-policy.json does not allow ${command}`);
+      for (const capability of rule.required_capabilities ?? []) {
+        assert.ok(
+          principal.capabilities.includes(capability),
+          `strict-principal.json lacks ${capability}, which ${command} requires`,
+        );
+      }
+      assert.ok(rule.allowed_tenant_ids.includes(principal.tenant_id), `${command} tenant`);
+      assert.ok(rule.allowed_store_ids.includes(storeId), `${command} store`);
+      // The strict endpoint attaches none of these, so requiring one would block the step.
+      for (const evidence of ['requires_signed_authority', 'requires_mandate', 'requires_budget']) {
+        assert.ok(!rule[evidence], `${command} ${evidence}`);
+      }
+      // Refunds wait for a human; every other step runs on the agent's delegation.
+      assert.equal(
+        rule.requires_approval,
+        command === 'payments.create_refund',
+        `${command} requires_approval`,
+      );
+    }
+  });
+});
 
 describe('the strict endpoint exposes no ungoverned write', () => {
   it('refuses promotion provisioning from a strict agent', async () => {

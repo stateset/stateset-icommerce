@@ -6,6 +6,20 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- The strict operator templates `kernel/examples/strict-policy.json` and
+  `strict-principal.json` now grant `orders.transition` (`update_order_status`)
+  and `orders.ship` (`ship_order`), neither behind approval. AGENTS.md and the
+  strict-checkout docs point operators at these templates for a complete
+  checkout, but without the order commands a strict agent stopped at the
+  first order transition with `policy.command_not_allowed`. The golden-path
+  MCP test now runs the whole journey under the unedited templates and checks
+  them against the documented command table, so they cannot fall behind
+  again. AGENTS.md now also lists return item dispositions and says that the
+  templates hold a direct `create_refund` for approval, which an MCP tool call
+  never carries.
+
 ## [1.41.0] - 2026-11-15
 
 1.41.0 rolls up four lines of work: the 1.40.1 security fixes, which were
