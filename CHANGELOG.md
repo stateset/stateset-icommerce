@@ -336,6 +336,47 @@ finance writes carry an authenticated identity.
   - A sequencer without `GET /api/v1/agents/:id/signing-keys` (stateset-sequencer
     PR #6, unmerged) yields a `key_directory_unsupported` error that says to
     supply peer keys another way, instead of a bare 404.
+- A sync conflict recorded by a pull whose local event a later push saw the
+  sequencer reject can be settled: remote-wins (or a merge that falls back to
+  it) resolves it and leaves the rejected event, and its reason, as they are.
+  The conflict-resolution guard refused every strategy for a rejected event,
+  so such a conflict stayed unresolved forever. Local-wins and a combining
+  merge are still refused there, since they would re-append an event that is
+  already superseded.
+- x402 payments queued while the sequencer circuit is open always settle.
+  With the default `halfOpenMax: 2`, one successful request after recovery
+  left the circuit half-open, and the queue was flushed only on close, so a
+  queued payment's promise hung until some other caller made a second
+  request. The client now drains its own queue: once the reset timeout
+  passes, queued payments go out as the half-open trial requests, at most
+  `halfOpenMax` at a time, and the rest are flushed when the circuit closes.
+  A payment whose trial fails is rejected and the rest wait for the next
+  window. New `X402SequencerClient.close()` stops the drain and rejects what
+  is still queued.
+- A manual run (`runNow`) of a disabled scheduler job no longer strands it.
+  A failed run armed a retry whose timer then skipped the disabled job,
+  leaving it `retrying` with nothing armed, which `resumeJob` refused; a
+  successful or cancelled run likewise replaced the `paused` (or added
+  disabled `pending`) status `resumeJob` looks for. Such a run now records
+  its outcome but arms no retry, and a recurring job goes back to `paused`
+  or `pending`, so it can still be resumed. A disabled one-time job's manual
+  run settles as its outcome, without a retry.
+- MCP previews of a status move name only the states the called tool
+  accepts. The preview listed every catalogued move into the target, so
+  `resume_subscription` advertised trial, past_due and pending although the
+  engine resumes only a paused subscription; `complete_payment` (disputed)
+  and `approve_purchase_order` (on hold) overstated theirs the same way.
+- A preview of `cancel_subscription` with `immediate: true` names `expired`,
+  the status the engine stores for an immediate cancellation, instead of
+  `cancelled` (still named for the default end-of-period cancellation). The
+  lifecycle catalog adds the immediate cancellation of a paused or pending
+  subscription (to `expired`), which the engine accepts and the generated
+  catalog omits, so reads and refusal guidance list it too.
+- Sync push settlement compares event ids as UUIDs, case-insensitively. The
+  outbox keeps a caller-supplied id as spelled and the sequencer answers in
+  lowercase, so a push of `AAAAAAAA-...` events read their receipts and
+  rejections as foreign and the whole batch stayed pending through every
+  retry.
 
 ## [1.40.0] - 2026-10-22
 

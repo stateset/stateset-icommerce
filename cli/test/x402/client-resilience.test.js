@@ -502,18 +502,18 @@ describe('X402SequencerClient — resilience', () => {
       const warnings = [];
       const origWarn = console.warn;
       console.warn = (...args) => warnings.push(args.join(' '));
+      const client = new X402SequencerClient(fastConfig({
+        circuitBreaker: { failureThreshold: 1, resetTimeoutMs: 60_000, halfOpenMax: 2 },
+      }));
 
       try {
-        const client = new X402SequencerClient(fastConfig({
-          circuitBreaker: { failureThreshold: 1, resetTimeoutMs: 60_000, halfOpenMax: 2 },
-        }));
-
         // Force circuit open
         client._circuitBreaker.recordFailure();
         assert.strictEqual(client._circuitBreaker.getState(), CircuitState.OPEN);
 
         // Submit should queue, not throw
         const promise = client.submitPaymentIntent({ amount: 100 });
+        promise.catch(() => {}); // close() below rejects it
 
         // Verify it returned a promise (pending — not resolved)
         assert.ok(promise instanceof Promise);
@@ -526,45 +526,48 @@ describe('X402SequencerClient — resilience', () => {
         assert.ok(warnings.some((w) => w.includes('circuit OPEN') && w.includes('queued')));
       } finally {
         console.warn = origWarn;
+        client.close(); // stop the scheduled drain
       }
     });
 
     it('queues multiple payments and reports correct depth', async () => {
       const origWarn = console.warn;
       console.warn = () => {};
+      const client = new X402SequencerClient(fastConfig({
+        circuitBreaker: { failureThreshold: 1, resetTimeoutMs: 60_000, halfOpenMax: 2 },
+      }));
 
       try {
-        const client = new X402SequencerClient(fastConfig({
-          circuitBreaker: { failureThreshold: 1, resetTimeoutMs: 60_000, halfOpenMax: 2 },
-        }));
         client._circuitBreaker.recordFailure();
 
-        client.submitPaymentIntent({ amount: 10 });
-        client.submitPaymentIntent({ amount: 20 });
-        client.submitPaymentIntent({ amount: 30 });
+        for (const amount of [10, 20, 30]) {
+          client.submitPaymentIntent({ amount }).catch(() => {}); // close() rejects them
+        }
 
         assert.strictEqual(client.getCircuitStatus().queueDepth, 3);
       } finally {
         console.warn = origWarn;
+        client.close();
       }
     });
 
     it('queued payment stores the correct payload', async () => {
       const origWarn = console.warn;
       console.warn = () => {};
+      const client = new X402SequencerClient(fastConfig({
+        circuitBreaker: { failureThreshold: 1, resetTimeoutMs: 60_000, halfOpenMax: 2 },
+      }));
 
       try {
-        const client = new X402SequencerClient(fastConfig({
-          circuitBreaker: { failureThreshold: 1, resetTimeoutMs: 60_000, halfOpenMax: 2 },
-        }));
         client._circuitBreaker.recordFailure();
 
         const payload = { amount: 42, currency: 'USDC' };
-        client.submitPaymentIntent(payload);
+        client.submitPaymentIntent(payload).catch(() => {}); // close() rejects it
 
         assert.deepStrictEqual(client._offlineQueue[0].payload, payload);
       } finally {
         console.warn = origWarn;
+        client.close();
       }
     });
 
@@ -851,13 +854,14 @@ describe('X402SequencerClient — resilience', () => {
         const queuedPromise = client.submitPaymentIntent({ amount: 99 });
         assert.strictEqual(client._offlineQueue.length, 1);
 
+        // The sequencer is reachable again (mocked before the reset timeout
+        // passes: the queue drains itself then, without outside traffic)
+        mockFetch(() => okResponse({ intent_id: 'INT-FLUSHED' }));
+
         // Wait for circuit to transition to HALF_OPEN
         await new Promise((r) => setTimeout(r, 50));
 
-        // Mock fetch to succeed now
-        mockFetch(() => okResponse({ intent_id: 'INT-FLUSHED' }));
-
-        // Make a direct request that succeeds (triggers flush)
+        // A direct request succeeds as well
         const directResult = await client._request('GET', '/api/v1/health');
         assert.ok(directResult);
 
@@ -1033,36 +1037,208 @@ describe('HALF_OPEN trial limiting', () => {
     assert.strictEqual(fetches, 2, 'both fit in the two trial slots');
   });
 
-  it('flushes queued payments only once the circuit has closed', async () => {
+  it('sends the backlog through the half-open window at most halfOpenMax at a time', async () => {
     const origWarn = console.warn;
     console.warn = () => {};
+    // The gated trials must not look stale (resetTimeoutMs without reporting
+    // back) before the test releases them, or the breaker opens a fresh window.
+    const client = new X402SequencerClient(
+      fastConfig({
+        retryOptions: { maxRetries: 0, baseDelayMs: 1, maxDelayMs: 1 },
+        circuitBreaker: { failureThreshold: 1, resetTimeoutMs: 200, halfOpenMax: 2 },
+      }),
+    );
     try {
-      const paths = [];
-      const client = new X402SequencerClient(
-        fastConfig({
-          retryOptions: { maxRetries: 0, baseDelayMs: 1, maxDelayMs: 1 },
-          circuitBreaker: { failureThreshold: 1, resetTimeoutMs: 30, halfOpenMax: 2 },
-        }),
-      );
-      client._circuitBreaker.recordFailure();
-      const queued = client.submitPaymentIntent({ amount: 7 });
-      assert.strictEqual(client._offlineQueue.length, 1);
-      await sleep(50);
-      mockFetch(async (url) => {
-        paths.push(new URL(url).pathname);
-        return okResponse({ intent_id: 'INT-QUEUED' });
+      let inFlight = 0;
+      let maxInFlightHalfOpen = 0;
+      let release;
+      const gate = new Promise((resolve) => {
+        release = resolve;
       });
+      let sent = 0;
+      mockFetch(async () => {
+        inFlight++;
+        if (client._circuitBreaker.state === CircuitState.HALF_OPEN) {
+          maxInFlightHalfOpen = Math.max(maxInFlightHalfOpen, inFlight);
+        }
+        const n = ++sent;
+        await gate;
+        inFlight--;
+        return okResponse({ intent_id: `INT-${n}` });
+      });
+      client._circuitBreaker.recordFailure();
+      const queued = [1, 2, 3, 4, 5].map((amount) => client.submitPaymentIntent({ amount }));
+      assert.strictEqual(client._offlineQueue.length, 5);
 
-      await client._request('GET', '/probe/1'); // 1 of 2 successes: still half-open
-      assert.strictEqual(client._circuitBreaker.state, CircuitState.HALF_OPEN);
-      assert.strictEqual(client._offlineQueue.length, 1, 'no flush while half-open');
+      await sleep(300); // past resetTimeoutMs: the drain admits trials
+      assert.strictEqual(sent, 2, 'only halfOpenMax queued payments go out while half-open');
+      assert.strictEqual(client._offlineQueue.length, 3, 'the rest of the backlog waits');
+      release();
 
-      await client._request('GET', '/probe/2'); // closes the circuit, then flushes
-      assert.strictEqual((await queued).intent_id, 'INT-QUEUED');
+      const results = await withTimeout(Promise.all(queued), 2_000);
+      assert.deepStrictEqual(results.map((r) => r.intent_id).sort(), [
+        'INT-1',
+        'INT-2',
+        'INT-3',
+        'INT-4',
+        'INT-5',
+      ]);
+      assert.ok(maxInFlightHalfOpen <= 2, `half-open in-flight peaked at ${maxInFlightHalfOpen}`);
       assert.strictEqual(client._offlineQueue.length, 0);
-      assert.deepStrictEqual(paths, ['/probe/1', '/probe/2', '/api/v1/x402/payments']);
+      assert.strictEqual(client.getCircuitStatus().state, 'closed');
     } finally {
       console.warn = origWarn;
+      client.close();
     }
   });
 });
+
+// ===========================================================================
+// The offline queue drains itself once the sequencer recovers
+// ===========================================================================
+
+/**
+ * A payment submitted while the circuit is open waits in the offline queue,
+ * and only a flush settles its promise. With halfOpenMax: 2, one successful
+ * request no longer closes the circuit, and nothing scheduled a second probe,
+ * so a queued payment hung forever once outside traffic stopped.
+ */
+describe('offline queue drains without outside traffic', () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let client;
+  let origWarn;
+
+  beforeEach(() => {
+    origWarn = console.warn;
+    console.warn = () => {};
+  });
+
+  afterEach(() => {
+    client?.close();
+    client = undefined;
+    console.warn = origWarn;
+    restoreFetch();
+  });
+
+  function recoveringClient(overrides = {}) {
+    return new X402SequencerClient(
+      fastConfig({
+        retryOptions: { maxRetries: 0, baseDelayMs: 1, maxDelayMs: 1 },
+        circuitBreaker: { failureThreshold: 1, resetTimeoutMs: 30, halfOpenMax: 2 },
+        ...overrides,
+      }),
+    );
+  }
+
+  it('settles a queued payment after one successful request leaves the circuit half-open', async () => {
+    const paths = [];
+    mockFetch(async (url) => {
+      paths.push(new URL(url).pathname);
+      return okResponse({ intent_id: 'INT-QUEUED' });
+    });
+    // A reset timeout far beyond the test, so only the recovery request itself
+    // can get the queued payment moving.
+    client = recoveringClient({
+      circuitBreaker: { failureThreshold: 1, resetTimeoutMs: 60_000, halfOpenMax: 2 },
+    });
+    client._circuitBreaker.recordFailure();
+    const queued = client.submitPaymentIntent({ amount: 7 });
+    assert.strictEqual(client._offlineQueue.length, 1);
+
+    // The sequencer recovers and the reset timeout has passed ...
+    client._circuitBreaker.lastFailureTime -= 60_000;
+    // ... one getPaymentStatus succeeds (1 of 2 half-open successes), and then
+    // traffic stops.
+    await client.getPaymentStatus('INT-OTHER');
+
+    const result = await withTimeout(queued, 2_000);
+    assert.strictEqual(result.intent_id, 'INT-QUEUED');
+    assert.strictEqual(client._offlineQueue.length, 0);
+    assert.deepStrictEqual(paths, ['/api/v1/x402/payments/INT-OTHER', '/api/v1/x402/payments']);
+    assert.strictEqual(client.getCircuitStatus().state, 'closed');
+  });
+
+  it('settles a queued payment with no outside traffic at all', async () => {
+    let fetches = 0;
+    mockFetch(async () => {
+      fetches++;
+      return okResponse({ intent_id: 'INT-ALONE' });
+    });
+    client = recoveringClient();
+    client._circuitBreaker.recordFailure();
+    const queued = client.submitPaymentIntent({ amount: 3 });
+
+    const result = await withTimeout(queued, 2_000);
+    assert.strictEqual(result.intent_id, 'INT-ALONE');
+    assert.strictEqual(fetches, 1, 'the queued payment itself is the trial request');
+  });
+
+  it('settles every queued payment and closes the circuit, with no outside traffic', async () => {
+    mockFetch(async (url, init) => okResponse({ echoed: JSON.parse(init.body).amount }));
+    client = recoveringClient();
+    client._circuitBreaker.recordFailure();
+    const queued = [1, 2, 3].map((amount) => client.submitPaymentIntent({ amount }));
+
+    const results = await withTimeout(Promise.all(queued), 2_000);
+    assert.deepStrictEqual(
+      results.map((r) => r.echoed),
+      [1, 2, 3],
+    );
+    assert.strictEqual(client.getCircuitStatus().state, 'closed');
+    assert.strictEqual(client.getCircuitStatus().queueDepth, 0);
+  });
+
+  it('rejects a queued payment whose trial fails, and keeps draining the rest later', async () => {
+    let calls = 0;
+    mockFetch(async () => {
+      calls++;
+      if (calls === 1) throw new Error('still down');
+      return okResponse({ intent_id: `INT-${calls}` });
+    });
+    client = recoveringClient({
+      circuitBreaker: { failureThreshold: 1, resetTimeoutMs: 30, halfOpenMax: 1 },
+    });
+    client._circuitBreaker.recordFailure();
+    const first = client.submitPaymentIntent({ amount: 1 });
+    const second = client.submitPaymentIntent({ amount: 2 });
+
+    await assert.rejects(withTimeout(first, 2_000), /still down/);
+    assert.strictEqual(client.getCircuitStatus().queueDepth, 1, 'the second waits for a new window');
+    const result = await withTimeout(second, 2_000);
+    assert.strictEqual(result.intent_id, 'INT-2');
+  });
+
+  it('close() stops draining and rejects what is still queued', async () => {
+    let fetches = 0;
+    mockFetch(async () => {
+      fetches++;
+      return okResponse({});
+    });
+    client = recoveringClient();
+    client._circuitBreaker.recordFailure();
+    const queued = client.submitPaymentIntent({ amount: 1 });
+
+    client.close();
+    await assert.rejects(queued, /closed/);
+    // A payment that would have to wait is refused rather than queued.
+    await assert.rejects(client.submitPaymentIntent({ amount: 2 }), /closed/);
+    await sleep(60);
+    assert.strictEqual(fetches, 0, 'nothing is sent after close()');
+    assert.strictEqual(client.getCircuitStatus().queueDepth, 0);
+  });
+});
+
+/**
+ * Fail instead of hanging when a promise never settles.
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {number} ms
+ * @returns {Promise<T>}
+ */
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`did not settle within ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}

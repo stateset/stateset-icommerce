@@ -265,6 +265,11 @@ function getNextCronTime(expression, fromDate = new Date()) {
  *                 a one-time job is disabled.
  * - `paused`    — disabled by `pauseJob`; stays paused (even if a run was in
  *                 flight when it was paused) until `resumeJob`.
+ *
+ * `runNow` also runs a disabled job. For a recurring job that manual run is a
+ * one-off: it records its outcome (history, `lastRunAt`, counters,
+ * `lastError`) but arms no retry, and the job returns to `paused` or (added
+ * disabled) `pending`, so `resumeJob` still enables it.
  */
 /** @type {{ PENDING: JobStatusValue, RUNNING: JobStatusValue, RETRYING: JobStatusValue, COMPLETED: JobStatusValue, FAILED: JobStatusValue, PAUSED: JobStatusValue, CANCELLED: JobStatusValue }} */
 export const JobStatus = {
@@ -464,7 +469,11 @@ export class Scheduler extends EventEmitter {
 
     /** @type {Map<string, Job>} */
     this.jobs = new Map();
-    /** @type {Map<string, { runId: string, abortController: AbortController, startedAt: Date, cancelled?: boolean }>} */
+    /**
+     * In-flight runs. `restingStatus` is set for a manual run of a disabled
+     * recurring job: the status it returns to whatever the run's outcome.
+     * @type {Map<string, { runId: string, abortController: AbortController, startedAt: Date, restingStatus: JobStatusValue | null, cancelled?: boolean }>}
+     */
     this.runningJobs = new Map();
     /** @type {JobResult[]} */
     this.jobHistory = [];
@@ -695,15 +704,21 @@ export class Scheduler extends EventEmitter {
   }
 
   /**
-   * A recurring job paused while a run was in flight stays paused whatever
-   * that run's outcome; a one-time job's run is its whole life, so the outcome
-   * stands.
+   * The status a recurring job keeps whatever its run's outcome, or null when
+   * the outcome sets it. A job paused while a run was in flight stays paused;
+   * a manual run (`runNow`) of a disabled job goes back to the status it
+   * rested in — paused, or pending for a job added disabled — so `resumeJob`
+   * can still enable it. A one-time job's run is its whole life, so the
+   * outcome stands.
    * @private
    * @param {Job} job
-   * @returns {boolean}
+   * @returns {JobStatusValue | null}
    */
-  _staysPaused(job) {
-    return job.type !== 'once' && job.status === JobStatus.PAUSED;
+  _restingStatus(job) {
+    if (job.type === 'once') return null;
+    if (job.status === JobStatus.PAUSED) return JobStatus.PAUSED;
+    const restingStatus = this.runningJobs.get(job.id)?.restingStatus ?? null;
+    return restingStatus !== null && !job.enabled ? restingStatus : null;
   }
 
   /**
@@ -713,7 +728,11 @@ export class Scheduler extends EventEmitter {
    * @param {Date} at
    */
   _settleCancelled(job, at) {
-    if (this._staysPaused(job)) return;
+    const restingStatus = this._restingStatus(job);
+    if (restingStatus !== null) {
+      job.status = restingStatus;
+      return;
+    }
     job.status = JobStatus.CANCELLED;
     if (job.type === 'once') {
       job.enabled = false;
@@ -815,10 +834,20 @@ export class Scheduler extends EventEmitter {
     // armed retry, so the job never has two attempts in flight.
     this._clearRetry(job.id);
 
+    // Only runNow starts a disabled job. For a recurring job that run is a
+    // one-off: it arms no retry (retries are scheduled runs, and a disabled
+    // job has none) and the job returns to its resting status afterwards.
+    const restingStatus =
+      !job.enabled && job.type !== 'once'
+        ? job.status === JobStatus.PAUSED
+          ? JobStatus.PAUSED
+          : JobStatus.PENDING
+        : null;
+
     // Mark as running
     job.status = JobStatus.RUNNING;
     const abortController = new AbortController();
-    this.runningJobs.set(job.id, { runId, abortController, startedAt });
+    this.runningJobs.set(job.id, { runId, abortController, startedAt, restingStatus });
 
     this.emit('job:started', { job, runId });
 
@@ -878,9 +907,7 @@ export class Scheduler extends EventEmitter {
         retryCount,
       });
 
-      if (!this._staysPaused(job)) {
-        job.status = JobStatus.COMPLETED;
-      }
+      job.status = this._restingStatus(job) ?? JobStatus.COMPLETED;
       job.lastRunAt = completedAt.toISOString();
       job.runCount++;
       job.lastError = null;
@@ -936,18 +963,24 @@ export class Scheduler extends EventEmitter {
         job.lastError = errorMessage;
         job.failCount++;
 
-        // Retry — unless the job was paused or removed while this attempt ran.
-        const stillScheduled = this.jobs.get(job.id) === job && job.status !== JobStatus.PAUSED;
+        // Retry — unless the job was paused, disabled or removed (or this was
+        // a manual run of a disabled job): the retry timer would skip a
+        // disabled job and leave it `retrying` with nothing armed.
+        const stillScheduled =
+          this.jobs.get(job.id) === job && job.enabled && job.status !== JobStatus.PAUSED;
         if (stillScheduled && retryCount < job.maxRetries) {
           this.emit('job:retry', { job, result, nextRetry: retryCount + 1 });
           this._armRetry(job, retryCount + 1, job.retryDelay * Math.pow(2, retryCount)); // Exponential backoff
         } else {
           job.lastRunAt = completedAt.toISOString();
+          const restingStatus = this._restingStatus(job);
 
           if (job.type === 'once') {
             job.status = JobStatus.FAILED;
             job.enabled = false;
-          } else if (!this._staysPaused(job)) {
+          } else if (restingStatus !== null) {
+            job.status = restingStatus;
+          } else {
             // A recurring job keeps its schedule; `failed` stays visible
             // until the next scheduled run starts.
             job.status = JobStatus.FAILED;
@@ -975,7 +1008,8 @@ export class Scheduler extends EventEmitter {
   }
 
   /**
-   * Run a job immediately (manual trigger)
+   * Run a job immediately (manual trigger). A disabled job runs too; see
+   * `JobStatus` for how such a run settles (no retry, job stays resumable).
    * @param {string} jobId
    * @returns {Promise<JobResult>}
    */

@@ -766,6 +766,134 @@ describe('Scheduler lifecycle guards', () => {
     assert.ok(job.nextRunAt);
   });
 
+  /**
+   * runNow runs a job even while it is disabled. A failed manual run used to
+   * arm a retry whose timer then skipped the disabled job, leaving it
+   * `retrying` with no timer — and resumeJob refused a `retrying` job, so it
+   * was stuck. A successful or cancelled manual run likewise overwrote the
+   * paused/added-disabled status that resumeJob looks for.
+   */
+  it('a failed manual run of a disabled job arms no retry and leaves it resumable', async () => {
+    let calls = 0;
+    const s = make({
+      executor: async () => {
+        calls++;
+        throw new Error('boom');
+      },
+    });
+    const job = s.addJob({
+      name: 'disabled-manual',
+      type: 'interval',
+      schedule: 60_000,
+      action: { agent: 'test' },
+      enabled: false,
+      maxRetries: 1,
+      retryDelay: 20,
+    });
+
+    const result = await s.runNow(job.id);
+    assert.equal(result.status, JobStatus.FAILED);
+    assert.equal(s.retryTimers.size, 0, 'no retry is armed for a disabled job');
+    assert.equal(job.status, JobStatus.PENDING, 'back to its added-disabled status');
+    assert.equal(job.enabled, false);
+    assert.equal(job.nextRunAt, null);
+    assert.equal(job.lastError, 'boom');
+    assert.equal(job.failCount, 1);
+    assert.ok(job.lastRunAt);
+
+    await sleep(80); // past the retry delay
+    assert.equal(calls, 1, 'nothing ran after the manual run');
+    assert.equal(job.status, JobStatus.PENDING);
+
+    s.resumeJob(job.id);
+    assert.equal(job.enabled, true);
+    assert.equal(job.status, JobStatus.PENDING);
+    assert.ok(job.nextRunAt);
+  });
+
+  for (const [outcome, executor, expected] of [
+    ['successful', async () => ({ ok: true }), JobStatus.COMPLETED],
+    [
+      'failed',
+      async () => {
+        throw new Error('boom');
+      },
+      JobStatus.FAILED,
+    ],
+  ]) {
+    it(`a ${outcome} manual run of a paused job leaves it paused and resumable`, async () => {
+      const s = make({ executor });
+      const job = s.addJob({
+        name: `paused-${outcome}`,
+        type: 'interval',
+        schedule: 60_000,
+        action: { agent: 'test' },
+        maxRetries: 2,
+        retryDelay: 20,
+      });
+      s.pauseJob(job.id);
+
+      assert.equal((await s.runNow(job.id)).status, expected);
+      assert.equal(job.status, JobStatus.PAUSED);
+      assert.equal(job.enabled, false);
+      assert.equal(job.nextRunAt, null);
+      assert.equal(s.retryTimers.size, 0);
+      assert.ok(job.lastRunAt);
+
+      s.resumeJob(job.id);
+      assert.equal(job.enabled, true);
+      assert.equal(job.status, JobStatus.PENDING);
+      assert.ok(job.nextRunAt);
+    });
+  }
+
+  it('a cancelled manual run of a disabled job leaves it resumable', async () => {
+    const counter = { calls: 0 };
+    const s = make({ executor: untilAborted(counter) });
+    const job = s.addJob({
+      name: 'disabled-cancelled',
+      type: 'interval',
+      schedule: 60_000,
+      action: { agent: 'test' },
+      enabled: false,
+    });
+    const run = s.runNow(job.id);
+    await sleep(10);
+    assert.equal(s.cancelJob(job.id), true);
+    assert.equal((await run).status, JobStatus.CANCELLED);
+
+    assert.equal(job.status, JobStatus.PENDING);
+    assert.equal(job.enabled, false);
+    s.resumeJob(job.id);
+    assert.equal(job.enabled, true);
+  });
+
+  it('a failed manual run of a disabled one-time job settles as failed without a retry', async () => {
+    let calls = 0;
+    const s = make({
+      executor: async () => {
+        calls++;
+        throw new Error('boom');
+      },
+    });
+    const job = s.addJob({
+      name: 'disabled-once',
+      type: 'once',
+      schedule: new Date(Date.now() + 86_400_000).toISOString(),
+      action: { agent: 'test' },
+      enabled: false,
+      maxRetries: 2,
+      retryDelay: 20,
+    });
+
+    assert.equal((await s.runNow(job.id)).status, JobStatus.FAILED);
+    await sleep(80);
+    assert.equal(calls, 1);
+    assert.equal(s.retryTimers.size, 0);
+    assert.equal(job.status, JobStatus.FAILED);
+    assert.equal(job.enabled, false);
+  });
+
   it('resumeJob only resumes a paused (or added-disabled) job', async () => {
     const counter = { calls: 0 };
     const s = make({ executor: untilAborted(counter) });

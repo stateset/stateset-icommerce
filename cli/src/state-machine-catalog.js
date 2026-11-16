@@ -12,9 +12,10 @@
  * an order's payment and fulfilment status, ...). Those are named in
  * `./state-machine-operations.js` so they are reported as "known, not yet
  * catalogued" rather than "unknown"; their moves are never guessed. That file
- * also says which tool performs each catalogued move, and lists the one move
+ * also says which tool performs each catalogued move, and lists the few moves
  * the persistence layer accepts that the generator omits (payment
- * pending -> completed), which is merged in here with its Rust source cited.
+ * pending -> completed; an immediate subscription cancellation from paused or
+ * pending, which stores expired), merged in here with their Rust source cited.
  *
  * Regenerate after changing a transition rule:
  *   UPDATE_STATE_MACHINES=1 cargo test -p stateset-core --test state_machine_catalog
@@ -174,15 +175,31 @@ export function formatMoves(moves) {
     .join(', ');
 }
 
-/** tool -> { machine, targets } for every tool named in TRANSITION_TOOLS. */
+/**
+ * Whether a call with `params` makes `move`: true unless the move names
+ * parameter values (`when`) the call does not pass.
+ * @param {import('./state-machine-operations.js').MoveTool} move
+ * @param {Record<string, unknown> | null | undefined} params
+ * @returns {boolean}
+ */
+export function moveMatchesParams(move, params) {
+  if (!move.when) return true;
+  return Object.entries(move.when).every(([name, values]) => values.includes(params?.[name]));
+}
+
+/**
+ * tool -> { machine, moves } for every tool named in TRANSITION_TOOLS, each
+ * move with the target status it reaches.
+ * @type {Map<string, { machine: string, moves: { target: string, move: import('./state-machine-operations.js').MoveTool }[] }>}
+ */
 const TOOL_MOVES = (() => {
   const index = new Map();
   for (const [machine, targets] of Object.entries(TRANSITION_TOOLS)) {
     for (const [target, moves] of Object.entries(targets)) {
-      for (const { tool } of moves) {
-        const entry = index.get(tool) ?? { machine, targets: [] };
-        entry.targets.push(target);
-        index.set(tool, entry);
+      for (const move of moves) {
+        const entry = index.get(move.tool) ?? { machine, moves: [] };
+        entry.moves.push({ target, move });
+        index.set(move.tool, entry);
       }
     }
   }
@@ -200,8 +217,10 @@ export function machineForTool(toolName) {
 
 /**
  * The move a call of `toolName` with `params` asks for: the machine and the
- * status(es) it would move the record into. `null` when the call is not a
- * catalogued move (e.g. `update_customer` without a `status`).
+ * status(es) it would move the record into -- read from the status parameter,
+ * or from parameters that pick the outcome (`cancel_subscription` with
+ * `immediate: true` stores expired, otherwise cancelled). `null` when the call
+ * is not a catalogued move (e.g. `update_customer` without a `status`).
  * @returns {{ machine: string, targets: string[] } | null}
  */
 export function requestedMove(toolName, params = {}) {
@@ -212,7 +231,12 @@ export function requestedMove(toolName, params = {}) {
     const target = canonicalState(entry.machine, params?.[statusParam]);
     return target ? { machine: entry.machine, targets: [target] } : null;
   }
-  return { machine: entry.machine, targets: [...entry.targets] };
+  const targets = [
+    ...new Set(
+      entry.moves.filter(({ move }) => moveMatchesParams(move, params)).map(({ target }) => target),
+    ),
+  ];
+  return targets.length > 0 ? { machine: entry.machine, targets } : null;
 }
 
 /**

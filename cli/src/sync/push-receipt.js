@@ -25,6 +25,11 @@
  * a retry of events the sequencer did accept comes back as replays and
  * settles.
  *
+ * Event ids are compared as UUIDs, in lowercase: the sequencer parses them
+ * and serializes them in lowercase, while the outbox keeps a caller-supplied
+ * id as spelled (`AAAAAAAA-...` comes back as `aaaaaaaa-...`). The returned
+ * settlements carry the submitted event objects, original spelling intact.
+ *
  * @param {object} receipt - `SequencerClient#push` result
  * @param {Array<{eventId: string}>} pending - the submitted outbox events, in submission order
  * @returns {Array<{event: object, rejected: true, reason: string|number, message: string|null}
@@ -42,14 +47,14 @@ export function validatePushReceipt(receipt, pending) {
     !integer(receipt.headSequence)
   )
     fail();
-  const submitted = new Map(pending.map((event) => [event.eventId, event]));
+  const submitted = new Map(pending.map((event) => [uuidKey(event.eventId), event]));
   if (submitted.size !== pending.length) fail();
 
   const rejections = receipt.rejections ?? [];
   if (!Array.isArray(rejections) || rejections.length !== receipt.eventsRejected) fail();
   const rejected = new Map();
   for (const rejection of rejections) {
-    const eventId = rejection?.event_id ?? rejection?.eventId;
+    const eventId = uuidKey(rejection?.event_id ?? rejection?.eventId);
     if (
       !submitted.has(eventId) ||
       rejected.has(eventId) ||
@@ -86,18 +91,19 @@ export function validatePushReceipt(receipt, pending) {
     // cover the batch and the contiguous range maps the rest in order.
     if (accepted + receipt.eventsRejected !== pending.length) fail();
     let sequence = start;
-    return pending.map((event) =>
-      rejected.has(event.eventId)
-        ? { event, rejected: true, ...rejected.get(event.eventId) }
-        : { event, rejected: false, remoteSeq: sequence++ },
-    );
+    return pending.map((event) => {
+      const key = uuidKey(event.eventId);
+      return rejected.has(key)
+        ? { event, rejected: true, ...rejected.get(key) }
+        : { event, rejected: false, remoteSeq: sequence++ };
+    });
   }
 
   const sequenced = new Map();
   const sequenceNumbers = new Set();
   let newlyAccepted = 0;
   for (const entry of receipts) {
-    const eventId = entry?.eventId ?? entry?.event_id;
+    const eventId = uuidKey(entry?.eventId ?? entry?.event_id);
     const seq = entry?.sequenceNumber ?? entry?.sequence_number;
     if (
       !submitted.has(eventId) ||
@@ -120,13 +126,25 @@ export function validatePushReceipt(receipt, pending) {
     sequenceNumbers.add(seq);
   }
   if (newlyAccepted !== accepted) fail();
-  for (const event of pending) {
-    if (!sequenced.has(event.eventId) && !rejected.has(event.eventId)) fail();
+  for (const key of submitted.keys()) {
+    if (!sequenced.has(key) && !rejected.has(key)) fail();
   }
 
-  return pending.map((event) =>
-    rejected.has(event.eventId)
-      ? { event, rejected: true, ...rejected.get(event.eventId) }
-      : { event, rejected: false, remoteSeq: sequenced.get(event.eventId) },
-  );
+  return pending.map((event) => {
+    const key = uuidKey(event.eventId);
+    return rejected.has(key)
+      ? { event, rejected: true, ...rejected.get(key) }
+      : { event, rejected: false, remoteSeq: sequenced.get(key) };
+  });
+}
+
+/**
+ * The lookup key for an event id: its lowercase spelling, which is how the
+ * sequencer writes a UUID back. A non-string (a malformed receipt entry) is
+ * returned as it is, so it matches no submitted event.
+ * @param {unknown} eventId
+ * @returns {unknown}
+ */
+function uuidKey(eventId) {
+  return typeof eventId === 'string' ? eventId.toLowerCase() : eventId;
 }

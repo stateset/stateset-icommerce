@@ -575,6 +575,98 @@ describe('conflict resolution is guarded and atomic', () => {
     assert.equal(conflictRow(id).status, 'resolved');
   });
 
+  /**
+   * A pull records the conflict while the local event is still pending; a
+   * later push can then have the sequencer reject that event. The guard used to
+   * refuse every strategy for a `rejected` event, so the conflict stayed
+   * unresolved forever although its local event was already discarded.
+   */
+  it('remote-wins settles a conflict whose local event the sequencer has since rejected', async () => {
+    const { id, seq } = await seed();
+    assert.equal(outbox.markRejected(seq, 'sequencer: base version behind'), true);
+    const before = outboxCount();
+
+    const result = await resolver.resolve(id, 'remote-wins');
+
+    assert.equal(result.success, true, result.error);
+    assert.equal(result.result.action, 'local_event_rejected');
+    assert.equal(result.result.alreadyRejected, true);
+    assert.equal(outboxCount(), before, 'nothing is appended');
+    assert.equal(syncStatus(seq), 'rejected');
+    assert.equal(
+      db.prepare('SELECT rejection_reason FROM _ves_outbox WHERE local_seq = ?').get(seq)
+        .rejection_reason,
+      'sequencer: base version behind',
+      "the sequencer's rejection reason is kept",
+    );
+    const stored = conflictRow(id);
+    assert.equal(stored.status, 'resolved');
+    assert.equal(stored.resolution_strategy, 'remote-wins');
+    assert.equal(resolver.getConflictCount(), 0);
+
+    const again = await resolver.resolve(id, 'remote-wins');
+    assert.equal(again.success, false);
+    assert.match(again.error, /already resolved/);
+  });
+
+  it('merge that falls back to remote-wins also settles a conflict over a rejected event', async () => {
+    const { id, seq } = await seed();
+    outbox.markRejected(seq, 'sequencer: base version behind');
+    const before = outboxCount();
+
+    const result = await resolver.resolve(id, 'merge');
+
+    assert.equal(result.success, true, result.error);
+    assert.equal(result.result.alreadyRejected, true);
+    assert.equal(outboxCount(), before);
+    assert.equal(conflictRow(id).status, 'resolved');
+  });
+
+  it('refuses to re-append a local event that is already rejected (local-wins, combining merge)', async () => {
+    const { id, seq } = await seed();
+    outbox.markRejected(seq, 'sequencer: base version behind');
+    const before = outboxCount();
+
+    const localWins = await resolver.resolve(id, 'local-wins');
+    assert.equal(localWins.success, false);
+    assert.match(localWins.error, /already rejected/);
+    assert.match(localWins.error, /remote-wins/);
+
+    // A merge that would append a combined event is a re-append as well.
+    const conflict = resolver.getConflict(id);
+    conflict.remoteEvent = { sequenceNumber: 9, payload: conflict.localEvent.payload };
+    const merge = await resolver.resolve(conflict, 'merge');
+    assert.equal(merge.success, false);
+    assert.match(merge.error, /already rejected/);
+
+    assert.equal(outboxCount(), before, 'no replacement may be appended');
+    assert.equal(syncStatus(seq), 'rejected');
+    assert.equal(conflictRow(id).status, 'unresolved');
+  });
+
+  it('a second conflict over an event a local-wins already superseded cannot re-append it', async () => {
+    const { id, seq } = await seed();
+    const second = `concurrent:${seq}:cart:cart-1`;
+    db.prepare(
+      `INSERT INTO _ves_conflicts (id, conflict_type, local_event_seq, entity_type, entity_id, description, suggested_strategy, status)
+       VALUES (?, 'concurrent', ?, 'cart', 'cart-1', 'other agent', 'local-wins', 'unresolved')`,
+    ).run(second, seq);
+
+    const first = await resolver.resolve(id, 'local-wins');
+    assert.equal(first.success, true, first.error);
+    const afterFirst = outboxCount();
+
+    const twice = await resolver.resolve(second, 'local-wins');
+    assert.equal(twice.success, false);
+    assert.match(twice.error, /already rejected/);
+    assert.equal(outboxCount(), afterFirst, 'the superseded event is not appended a second time');
+
+    const settled = await resolver.resolve(second, 'remote-wins');
+    assert.equal(settled.success, true, settled.error);
+    assert.equal(outboxCount(), afterFirst);
+    assert.equal(syncStatus(first.result.newSeq), 'pending', 'the rebased copy is untouched');
+  });
+
   it('concurrent resolutions of one conflict apply exactly one', async () => {
     const { id } = await seed();
     const before = outboxCount();
