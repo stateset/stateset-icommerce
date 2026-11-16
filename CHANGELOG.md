@@ -6,6 +6,23 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- `inventory.list(filter?)` on the Node binding: inventory items in SKU order
+  with `onHand`, `allocated` and `available` (exact decimal strings, summed
+  over locations) and a `lowStock` flag, filtered by `sku` (substring,
+  ASCII case-insensitive), `isActive` and `lowStock` (the engine's reorder
+  rule: below reorder point plus safety stock at some location) and paged by
+  `limit` (default 100, capped at 1000) / `offset`. The binding could only
+  look stock up by SKU before, so nothing could enumerate inventory.
+
+### Fixed
+
+- `stateset-direct inventory list` lists inventory items through
+  `inventory.list` instead of walking product variants, so items created with
+  `inventory create` (which no product carries) appear. Older bindings keep
+  the product walk.
+
 ## [1.41.0] - 2026-11-15
 
 1.41.0 rolls up four lines of work: the 1.40.1 security fixes, which were

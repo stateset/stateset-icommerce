@@ -15,6 +15,7 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { createConfirmHandler } from '../src/utils/confirm.js';
+import { loadInventoryRows } from '../src/commands/inventory.js';
 import {
   StateSetError,
   ValidationError,
@@ -729,24 +730,10 @@ Default: ${variant.isDefault ? 'Yes' : 'No'}
       case 'inventory':
         switch (action) {
           case 'list': {
-            const products = await commerce.products.list();
-            const skuItems = [];
-            for (const product of products) {
-              if (product.variants) {
-                for (const variant of product.variants) {
-                  if (variant.sku) {
-                    const stock = await commerce.inventory.getStock(variant.sku);
-                    skuItems.push({
-                      sku: variant.sku,
-                      name: variant.name || product.name,
-                      onHand: stock?.totalOnHand ?? 0,
-                      available: stock?.totalAvailable ?? 0,
-                    });
-                  }
-                }
-              }
-            }
-            output(formatTable(skuItems, ['sku', 'name', 'onHand', 'available']));
+            // Inventory items (not product variants), so items created with
+            // `inventory create` are listed; older bindings walk variants.
+            const skuItems = await loadInventoryRows(commerce);
+            output(formatTable(skuItems, ['sku', 'name', 'onHand', 'allocated', 'available']));
             break;
           }
           case 'stock': {

@@ -435,7 +435,9 @@
         "confirm_reservation",
         "create_item",
         "fulfill_order_stock",
+        "get_reorder_needed",
         "get_stock",
+        "list",
         "release_reservation",
         "reserve"
       ],
@@ -1934,7 +1936,9 @@
         "void_journal_entry"
       ],
       "inventory": [
-        "fulfill_order_stock"
+        "fulfill_order_stock",
+        "get_reorder_needed",
+        "list"
       ],
       "lots": [
         "count",
@@ -2433,6 +2437,8 @@
       "inventory": [
         "confirm_reservation",
         "fulfill_order_stock",
+        "get_reorder_needed",
+        "list",
         "release_reservation",
         "reserve"
       ],

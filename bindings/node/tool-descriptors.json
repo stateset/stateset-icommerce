@@ -285,8 +285,8 @@
         "className": "X402"
       }
     ],
-    "toolCount": 810,
-    "readOnlyCount": 398,
+    "toolCount": 811,
+    "readOnlyCount": 399,
     "readOnlyPrefixes": [
       "calculate",
       "check",
@@ -6462,6 +6462,33 @@
         }
       },
       "additionalProperties": false
+    },
+    "InventoryListFilter": {
+      "type": "object",
+      "properties": {
+        "sku": {
+          "type": "string",
+          "description": "Lists SKUs containing this text (ASCII case-insensitive)."
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "`true` lists only active items, `false` only inactive ones; omit for both."
+        },
+        "lowStock": {
+          "type": "boolean",
+          "description": "`true` lists only items below their reorder threshold (reorder point plus safety stock) at some location, the rule the engine's reorder report applies; `false` lists only items that are not."
+        },
+        "limit": {
+          "type": "number",
+          "description": "Page size: default 100, capped at 1000."
+        },
+        "offset": {
+          "type": "number",
+          "description": "Items to skip, in SKU order."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Filter for `Inventory.list`. Every field is optional."
     },
     "InvoiceFilterInput": {
       "type": "object",
@@ -21074,6 +21101,36 @@
         "required": [
           "sku"
         ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "inventory.list",
+      "module": "inventory",
+      "className": "Inventory",
+      "method": "list",
+      "description": "List inventory items in SKU order, each with its stock summed over every location, so items created with `createItem` are listed even when no product variant carries their SKU.\n\n`lowStock` uses the engine's reorder rule (below reorder point plus safety stock at some location, as `get_reorder_needed` reports it). Pages hold at most 1000 items (default 100).",
+      "signature": "list(filter?: InventoryListFilter | undefined | null): Promise<Array<InventoryListItemOutput>>",
+      "returnType": "Promise<Array<InventoryListItemOutput>>",
+      "readOnly": true,
+      "permission": "read",
+      "positional": [
+        "filter"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filter": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/InventoryListFilter"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
         "additionalProperties": false
       }
     },

@@ -352,10 +352,14 @@
     }
   ],
   "totalAuditedClasses": 32,
-  "totalAuditedMethods": 461,
+  "totalAuditedMethods": 462,
   "mappedAuditedMethods": 459,
   "uncoveredAuditedMethods": [],
   "unexposedAuditedMethods": [
+    {
+      "method": "Inventory.list",
+      "reason": "No MCP tool lists inventory items yet: hosts (stateset-direct inventory list, the admin) call the binding directly, and agents look stock up by SKU with get_stock."
+    },
     {
       "method": "Payments.completeRefund",
       "reason": "No MCP tool completes a refund: create_refund records it as pending and settlement happens outside the tool surface."
@@ -487,10 +491,15 @@
     },
     {
       "className": "Inventory",
-      "methodCount": 7,
+      "methodCount": 8,
       "mappedMethodCount": 7,
       "uncoveredMethods": [],
-      "unexposedMethods": [],
+      "unexposedMethods": [
+        {
+          "method": "list",
+          "reason": "No MCP tool lists inventory items yet: hosts (stateset-direct inventory list, the admin) call the binding directly, and agents look stock up by SKU with get_stock."
+        }
+      ],
       "staleMappedMethods": [],
       "invalidToolReferences": []
     },
