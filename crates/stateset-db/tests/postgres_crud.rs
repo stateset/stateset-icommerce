@@ -479,3 +479,72 @@ async fn postgres_search_config_update_activation_takes_the_activation_lock() {
         "exactly one config is active: the later activation"
     );
 }
+
+/// `list_async` honours the filters SQLite honours: `sku` (case-insensitive
+/// substring) and `is_active` (narrowing only when given). It used to ignore
+/// both and list every active item.
+#[cfg(feature = "postgres")]
+#[tokio::test]
+async fn postgres_inventory_list_honours_sku_and_is_active() {
+    use stateset_core::InventoryFilter;
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping inventory list test");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations");
+    let inventory = db.inventory();
+    let prefix = format!("LISTF-{}", &Uuid::new_v4().simple().to_string()[..12]).to_uppercase();
+    let item = |sku: String| CreateInventoryItem {
+        sku,
+        name: "List filter item".into(),
+        description: None,
+        unit_of_measure: None,
+        initial_quantity: Some(dec!(1)),
+        location_id: None,
+        reorder_point: None,
+        safety_stock: None,
+    };
+    for suffix in ["A", "B", "OFF"] {
+        inventory.create_item_async(item(format!("{prefix}-{suffix}"))).await.expect("create item");
+    }
+    inventory
+        .create_item_async(item(format!("OTHER-{}", Uuid::new_v4().simple())))
+        .await
+        .expect("create unrelated item");
+    sqlx::query("UPDATE inventory_items SET is_active = FALSE WHERE sku = $1")
+        .bind(format!("{prefix}-OFF"))
+        .execute(db.pool())
+        .await
+        .expect("deactivate item");
+
+    let skus = |items: Vec<stateset_core::InventoryItem>| {
+        let mut skus: Vec<String> = items.into_iter().map(|item| item.sku).collect();
+        skus.sort();
+        skus
+    };
+    let list = |sku: &str, is_active: Option<bool>| {
+        inventory.list_async(InventoryFilter {
+            sku: Some(sku.to_string()),
+            is_active,
+            limit: Some(1000),
+            ..Default::default()
+        })
+    };
+    let all = vec![format!("{prefix}-A"), format!("{prefix}-B"), format!("{prefix}-OFF")];
+
+    assert_eq!(skus(list(&prefix, None).await.expect("list by sku")), all, "no is_active filter");
+    assert_eq!(
+        skus(list(&prefix.to_lowercase(), None).await.expect("list by lowercase sku")),
+        all,
+        "the sku match is case-insensitive, like SQLite's LIKE"
+    );
+    assert_eq!(
+        skus(list(&format!("{prefix}-"), Some(true)).await.expect("list active")),
+        vec![format!("{prefix}-A"), format!("{prefix}-B")]
+    );
+    assert_eq!(
+        skus(list(&prefix, Some(false)).await.expect("list inactive")),
+        vec![format!("{prefix}-OFF")]
+    );
+    assert!(list("NO-SUCH-SKU-", None).await.expect("list no match").is_empty());
+}

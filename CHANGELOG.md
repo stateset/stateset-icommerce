@@ -36,6 +36,12 @@ This project follows Keep a Changelog and Semantic Versioning.
   check and the bulk deactivation, in the update's transaction, so it
   serializes with concurrent activations. An activation of an unknown id
   changes nothing and returns `NotFound`.
+- Postgres `inventory().list` now honours `InventoryFilter.sku` (a
+  case-insensitive substring match) and `InventoryFilter.is_active`, as SQLite
+  does. It ignored both and always listed active items only, so a SKU search
+  over HTTP returned unrelated items, `is_active: false` could never list
+  inactive items, and the portability export left inactive items out. With no
+  `is_active` filter the listing now includes inactive items on Postgres too.
 
 ## [1.41.0] - 2026-11-15
 

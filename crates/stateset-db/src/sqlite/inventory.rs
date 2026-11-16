@@ -3107,6 +3107,32 @@ mod tests {
         assert!(listed.iter().all(|i| i.sku.starts_with("LIST")));
     }
 
+    /// The semantics the Postgres twin
+    /// (`postgres_inventory_list_honours_sku_and_is_active`) matches: a
+    /// case-insensitive `sku` substring, and `is_active` narrowing only when
+    /// given.
+    #[test]
+    fn list_filters_by_is_active_and_case_insensitive_sku() {
+        let repo = fresh_repo();
+        for sku in ["LISTF-A", "LISTF-B", "LISTF-OFF", "OTHER-001"] {
+            repo.create_item(item(sku)).expect("create");
+        }
+        repo.conn()
+            .expect("conn")
+            .execute("UPDATE inventory_items SET is_active = 0 WHERE sku = 'LISTF-OFF'", [])
+            .expect("deactivate");
+        let skus = |sku: &str, is_active: Option<bool>| {
+            repo.list(InventoryFilter { sku: Some(sku.into()), is_active, ..Default::default() })
+                .expect("list")
+                .into_iter()
+                .map(|i| i.sku)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(skus("listf", None), ["LISTF-A", "LISTF-B", "LISTF-OFF"]);
+        assert_eq!(skus("LISTF-", Some(true)), ["LISTF-A", "LISTF-B"]);
+        assert_eq!(skus("LISTF", Some(false)), ["LISTF-OFF"]);
+    }
+
     #[test]
     fn get_reorder_needed_returns_below_threshold() {
         let repo = fresh_repo();
