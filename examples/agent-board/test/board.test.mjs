@@ -25,8 +25,6 @@ import { SequencerClient } from '../../../cli/src/sync/client.js';
 import { validatePushReceipt } from '../../../cli/src/sync/push-receipt.js';
 import { startMockSequencer } from '../mock-sequencer.mjs';
 import { clientConfig, sequencerSettings } from '../lib/config.mjs';
-import { settlePush } from '../lib/board.mjs';
-import { BoardSequencerClient } from '../lib/ves-client.mjs';
 
 const BOARD = fileURLToPath(new URL('../board.mjs', import.meta.url));
 
@@ -383,7 +381,7 @@ describe('agent board on the mock sequencer', () => {
   });
 });
 
-describe('CLI sync client against the real wire format (documents the mismatches)', () => {
+describe('CLI sync client against the real wire format', () => {
   let localMock;
   let settings;
   before(async () => {
@@ -446,67 +444,78 @@ describe('CLI sync client against the real wire format (documents the mismatches
     };
   }
 
-  test('SequencerClient#pull reads the legacy /api/v1/events route and sees no VES events', async () => {
+  test('SequencerClient#pull reads the VES stream, not the legacy /api/v1/events route', async () => {
     await seedOneEvent();
-    const cliClient = new SequencerClient(clientConfig(settings));
-    const legacy = await cliClient.pull(0, 100);
-    assert.equal(legacy.events.length, 0, 'the legacy table never holds VES-ingested events');
-    assert.ok(localMock.requests.some((r) => r.path === '/api/v1/events'));
-
-    const vesClient = new BoardSequencerClient(clientConfig(settings));
-    const ves = await vesClient.pull(1, 100);
-    assert.equal(ves.events.length, 1);
-    assert.equal(ves.events[0].envelope.sourceAgent, localMock.events()[0].source_agent_id);
+    const client = new SequencerClient(clientConfig(settings));
+    const page = await client.pull(0, 100);
+    assert.equal(page.events.length, 1);
+    assert.equal(page.events[0].envelope.sourceAgent, localMock.events()[0].source_agent_id);
+    assert.ok(localMock.requests.some((r) => r.path === '/api/v1/ves/events'));
+    assert.ok(!localMock.requests.some((r) => r.path === '/api/v1/events'));
   });
 
-  test('an exact replay returns its stored receipt uncounted, which validatePushReceipt refuses', async () => {
+  test('an exact replay returns its stored receipt uncounted, and validatePushReceipt settles it', async () => {
     const { stored, envelope } = storedAsPushEnvelope();
-    const client = new BoardSequencerClient(clientConfig(settings));
+    const client = new SequencerClient(clientConfig(settings));
     const response = await client.push({ agentId: stored.source_agent_id, events: [envelope] });
     assert.equal(response.eventsAccepted, 0);
     assert.equal(response.eventsRejected, 0);
     assert.equal(response.receipts.length, 1);
 
     const pending = [{ eventId: stored.event_id, localSeq: 1 }];
-    assert.throws(() => validatePushReceipt(response, pending), /Invalid push receipt/);
-    const [settled] = settlePush(response, pending);
-    assert.equal(settled.status, 'sequenced');
-    assert.equal(settled.sequenceNumber, stored.sequence_number);
+    const [settled] = validatePushReceipt(response, pending);
+    assert.equal(settled.rejected, false);
+    assert.equal(settled.remoteSeq, stored.sequence_number);
   });
 
   test('the mock refuses, at ingest, a signature that does not cover the event', async () => {
     const { stored, envelope } = storedAsPushEnvelope();
-    const client = new BoardSequencerClient(clientConfig(settings));
+    const client = new SequencerClient(clientConfig(settings));
     // event_id is in the signing preimage, so the old signature no longer covers it.
     const moved = { ...envelope, eventId: randomUUID(), commandId: randomUUID() };
     const response = await client.push({ agentId: stored.source_agent_id, events: [moved] });
     assert.equal(response.eventsAccepted, 0);
     assert.equal(response.rejections[0].event_id, moved.eventId);
     assert.equal(response.rejections[0].reason, 'invalid_signature');
-    const [settled] = settlePush(response, [{ eventId: moved.eventId, localSeq: 2 }]);
-    assert.equal(settled.status, 'rejected');
+    const [settled] = validatePushReceipt(response, [{ eventId: moved.eventId, localSeq: 2 }]);
+    assert.equal(settled.rejected, true);
+    assert.equal(settled.reason, 'invalid_signature');
   });
 
-  test('rejections arrive as snake_case event_id, which validatePushReceipt cannot match', () => {
+  test('rejections arrive as snake_case event_id, which validatePushReceipt settles', () => {
     const response = {
       eventsAccepted: 0,
       eventsRejected: 1,
       headSequence: 4,
       rejections: [{ event_id: 'e-1', reason: 'invalid_signature', message: 'bad' }],
-      receipts: [],
     };
     const pending = [{ eventId: 'e-1', localSeq: 7 }];
-    assert.throws(() => validatePushReceipt(response, pending), /Invalid push receipt/);
-    const [settled] = settlePush(response, pending);
-    assert.equal(settled.status, 'rejected');
+    const [settled] = validatePushReceipt(response, pending);
+    assert.equal(settled.rejected, true);
     assert.equal(settled.reason, 'invalid_signature');
+    assert.equal(settled.message, 'bad');
     assert.throws(
-      () => settlePush({ receipts: [], rejections: [] }, pending),
-      /neither sequenced nor rejected/,
+      () =>
+        validatePushReceipt(
+          { eventsAccepted: 0, eventsRejected: 0, headSequence: 4, receipts: [], rejections: [] },
+          pending,
+        ),
+      /Invalid push receipt/,
+      'an event that is neither sequenced nor rejected leaves the batch pending',
     );
   });
 
-  test('the mock accepts the documented auth forms and refuses an API key sent as Bearer', async () => {
+  test('the client authenticates as ApiKey; the mock refuses an API key sent as Bearer', async () => {
+    // Only the API routes: on a shared machine other local processes
+    // sometimes probe the ephemeral port (unauthenticated `GET /`).
+    const fromClient = localMock.requests.filter((r) => r.path.startsWith('/api/'));
+    assert.ok(fromClient.length > 0);
+    assert.deepEqual(
+      fromClient.filter((r) => r.auth !== 'ApiKey'),
+      [],
+      'CLI client and board use ApiKey',
+    );
+
     const url = `${localMock.url}/api/v1/ves/head?tenant_id=${localMock.tenantId}&store_id=${localMock.storeId}`;
     const ok = await fetch(url, { headers: { Authorization: `ApiKey ${localMock.readApiKey}` } });
     assert.equal(ok.status, 200);

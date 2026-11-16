@@ -398,6 +398,40 @@ export class UnifiedSequencerClient extends EventEmitter {
   }
 
   /**
+   * The REST client, for VES commitment and proof routes the gRPC client
+   * does not wrap.
+   * @private
+   * @param {string} method
+   * @returns {SequencerClient}
+   */
+  _restOnly(method) {
+    if (this._transport !== 'rest') {
+      throw new Error(`${method} uses the VES REST routes; connect with an https:// sequencer URL`);
+    }
+    return this._client;
+  }
+
+  /** See SequencerClient#listCommitments. REST only. */
+  async listCommitments() {
+    return this._restOnly('listCommitments').listCommitments();
+  }
+
+  /** See SequencerClient#createCommitment. REST only. */
+  async createCommitment(sequenceStart, sequenceEnd) {
+    return this._restOnly('createCommitment').createCommitment(sequenceStart, sequenceEnd);
+  }
+
+  /** See SequencerClient#getInclusionProof. REST only. */
+  async getInclusionProof(sequenceNumber, batchId) {
+    return this._restOnly('getInclusionProof').getInclusionProof(sequenceNumber, batchId);
+  }
+
+  /** See SequencerClient#verifyEventInclusion. REST only. */
+  async verifyEventInclusion(event, commitment) {
+    return this._restOnly('verifyEventInclusion').verifyEventInclusion(event, commitment);
+  }
+
+  /**
    * Verify inclusion proof
    * @param {Object} envelope
    * @param {Object} proof

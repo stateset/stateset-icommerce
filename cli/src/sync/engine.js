@@ -377,16 +377,17 @@ export class SyncEngine extends EventEmitter {
         })
         .immediate();
 
-      this.emit('push', {
-        pushed: receipt.eventsAccepted,
-        rejected: receipt.eventsRejected,
-        receipt,
-      });
+      // Counted from the settlements, not the receipt totals: an exact replay
+      // (a retry after a lost response) is acknowledged with its stored
+      // receipt but counted in neither eventsAccepted nor eventsRejected.
+      const rejected = settlements.filter((settlement) => settlement.rejected).length;
+      const pushed = settlements.length - rejected;
+      this.emit('push', { pushed, rejected, receipt });
 
       return {
         success: true,
-        pushed: receipt.eventsAccepted,
-        rejected: receipt.eventsRejected,
+        pushed,
+        rejected,
         receipt,
       };
     } catch (error) {

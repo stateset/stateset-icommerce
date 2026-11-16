@@ -63,19 +63,22 @@ import {
  * @typedef {Object} SequencedEvent
  * @property {EventEnvelope} envelope
  * @property {number} sequenceNumber
- * @property {string} sequencedAt
- * @property {string} [receiptHash] - Sequencer receipt hash
+ * @property {string|null} sequencedAt
  */
 
 /**
  * @typedef {Object} IngestReceipt
  * @property {string} batchId
- * @property {number} eventsAccepted
+ * @property {number} eventsAccepted - newly sequenced events only (an exact
+ *   replay of an already-sequenced event is counted in neither total)
  * @property {number} eventsRejected
  * @property {number} [sequenceStart]
  * @property {number} [sequenceEnd]
  * @property {number} headSequence
- * @property {Array<{eventId: string, reason: string}>} rejections
+ * @property {Array<{event_id: string, reason: string, message: string}>} rejections -
+ *   as served: snake_case inside the camelCase body
+ * @property {Array<{eventId: string, sequenceNumber: number}>} receipts - one per
+ *   newly sequenced or exactly replayed event
  */
 
 /**
@@ -83,26 +86,46 @@ import {
  * @property {string} tenantId
  * @property {string} storeId
  * @property {number} headSequence
- * @property {string} [stateRoot]
- * @property {string} [lastCommitmentId]
+ * @property {string} [stateRoot] - gRPC only; GET /api/v1/ves/head serves none
+ * @property {string} [lastCommitmentId] - gRPC only
  */
 
 /**
- * @typedef {Object} BatchCommitment
+ * A VES batch commitment (GET/POST /api/v1/ves/commitments).
+ * @typedef {Object} VesCommitment
  * @property {string} batchId
- * @property {string} merkleRoot
- * @property {number} startSequence
- * @property {number} endSequence
- * @property {number} eventCount
+ * @property {string} tenantId
+ * @property {string} storeId
+ * @property {number} vesVersion
+ * @property {number} treeDepth
+ * @property {number} leafCount - committed events (unpadded): the tree size
+ *   an inclusion proof must be bound to
+ * @property {number} paddedLeafCount
+ * @property {string} merkleRoot - lowercase hex, no 0x
+ * @property {string|null} prevStateRoot
+ * @property {string|null} newStateRoot
+ * @property {number} sequenceStart - inclusive
+ * @property {number} sequenceEnd - inclusive
  * @property {string} committedAt
+ * @property {boolean} isAnchored
+ * @property {number|null} chainId
+ * @property {string|null} chainTxHash
+ * @property {number|null} chainBlockNumber
+ * @property {string|null} anchoredAt
  */
 
 /**
+ * A VES inclusion proof (GET /api/v1/ves/proofs/:sequence_number). It states
+ * no tree size: bind one from the commitment (see `verifyEventInclusion`).
  * @typedef {Object} InclusionProof
- * @property {string} merkleRoot
+ * @property {number} sequenceNumber
+ * @property {string} batchId
+ * @property {string|null} merkleRoot - lowercase hex, no 0x
+ * @property {string|null} leafHash
  * @property {number} leafIndex
  * @property {string[]} proofHashes
- * @property {number} leafCount
+ * @property {boolean[]|null} directions
+ * @property {number} [leafCount] - never served by the VES route
  */
 
 /**
@@ -119,14 +142,139 @@ import {
  * `key_unresolved`, which names the sequencer's key registry as the suspect
  * even when the real fault is a missing line in the local config.
  *
+ * `key_directory_unsupported` is not a refusal: the sequencer simply has no
+ * key directory route, so `PeerKeyDirectory` treats it like any other failure
+ * to obtain a key (`key_unresolved`, with this message as the detail).
+ *
  * @param {string} message
- * @param {'sequencer_key_not_configured'|'directory_untrusted'} code
+ * @param {'sequencer_key_not_configured'|'directory_untrusted'|'key_directory_unsupported'} code
+ * @param {ErrorOptions} [options]
  * @returns {Error}
  */
-function keyDirectoryError(message, code) {
-  const error = new Error(message);
+function keyDirectoryError(message, code, options) {
+  const error = new Error(message, options);
   error.code = code;
   return error;
+}
+
+/**
+ * Page size for GET /api/v1/ves/entities/... (MAX_ENTITY_HISTORY_PAGE in
+ * stateset-sequencer; larger requests are clamped to it).
+ */
+const ENTITY_HISTORY_PAGE = 100;
+/** Hard cap on one entity's history, so a misbehaving server cannot loop us. */
+const MAX_ENTITY_HISTORY_EVENTS = 100_000;
+const HASH32_HEX = /^(?:0x)?[0-9a-fA-F]{64}$/;
+
+/**
+ * Map one VES stream record to a SequencedEvent.
+ *
+ * GET /api/v1/ves/events and /api/v1/ves/entities/... serve
+ * `SequencedVesEvent` records: `{ envelope: VesEventEnvelope }`, serde
+ * snake_case, with the sequencer-assigned `sequence_number` and
+ * `sequenced_at` INSIDE the envelope and no receipt fields at all
+ * (stateset-sequencer src/domain/ves_event.rs).
+ *
+ * Signed fields are mapped as served and never defaulted: a missing
+ * signature, key id or hash stays missing, so the event fails verification
+ * instead of carrying a placeholder that looks like a value.
+ *
+ * @param {any} record
+ * @returns {SequencedEvent}
+ */
+function sequencedEventFromVesWire(record) {
+  const env = record?.envelope;
+  if (!env || typeof env !== 'object') {
+    throw new Error('Invalid VES event record: expected { envelope }');
+  }
+  return {
+    envelope: {
+      eventId: env.event_id,
+      commandId: env.command_id ?? null,
+      tenantId: env.tenant_id,
+      storeId: env.store_id,
+      entityType: env.entity_type,
+      entityId: env.entity_id,
+      eventType: env.event_type,
+      payload: env.payload,
+      vesVersion: env.ves_version ?? 1,
+      payloadKind: env.payload_kind ?? 0,
+      payloadEncrypted: normalizePayloadEncryptedFromWire(env.payload_encrypted),
+      payloadPlainHash: env.payload_plain_hash,
+      payloadCipherHash: env.payload_cipher_hash,
+      agentKeyId: env.agent_key_id,
+      agentSignature: env.agent_signature,
+      agentSignatureScheme: env.agent_signature_scheme ?? 0,
+      agentSignatureBundle: fromSnakeCaseSignatureBundle(env.agent_signature_bundle),
+      baseVersion: env.base_version ?? null,
+      createdAt: env.created_at,
+      sourceAgent: env.source_agent_id,
+    },
+    sequenceNumber: env.sequence_number,
+    sequencedAt: env.sequenced_at ?? null,
+  };
+}
+
+/** Lowercase, 0x-less form of a 32-byte hex hash, or a thrown error. */
+function normalizeHash32(value, label) {
+  if (typeof value !== 'string' || !HASH32_HEX.test(value)) {
+    throw new Error(`Invalid ${label}: expected a 32-byte hex hash`);
+  }
+  return value.replace(/^0x/, '').toLowerCase();
+}
+
+/**
+ * Map a VES commitment record (stateset-sequencer
+ * src/api/handlers/ves/commitments.rs) to a VesCommitment.
+ *
+ * @param {any} record
+ * @returns {VesCommitment}
+ */
+function vesCommitmentFromWire(record) {
+  if (!record || typeof record !== 'object') {
+    throw new Error('Invalid VES commitment: expected an object');
+  }
+  return {
+    batchId: record.batch_id,
+    tenantId: record.tenant_id,
+    storeId: record.store_id,
+    vesVersion: record.ves_version,
+    treeDepth: record.tree_depth,
+    leafCount: record.leaf_count,
+    paddedLeafCount: record.padded_leaf_count,
+    merkleRoot: normalizeHash32(record.merkle_root, 'commitment merkle_root'),
+    prevStateRoot: record.prev_state_root ?? null,
+    newStateRoot: record.new_state_root ?? null,
+    sequenceStart: record.sequence_start,
+    sequenceEnd: record.sequence_end,
+    committedAt: record.committed_at,
+    isAnchored: record.is_anchored === true,
+    chainId: record.chain_id ?? null,
+    chainTxHash: record.chain_tx_hash ?? null,
+    chainBlockNumber: record.chain_block_number ?? null,
+    anchoredAt: record.anchored_at ?? null,
+  };
+}
+
+/**
+ * A 404 from a VES read route means the sequencer predates them, not that the
+ * stream is empty. Say so instead of surfacing a bare status line.
+ *
+ * @param {any} error
+ * @param {string} route - route template, without ids
+ * @returns {any}
+ */
+function vesRouteError(error, route) {
+  if (error?.status !== 404) return error;
+  const failure = new Error(
+    `The sequencer does not serve GET ${route} (HTTP 404). VES stream reads need ` +
+      'stateset-sequencer v0.6.0 or later; the pre-VES /api/v1/events, /api/v1/head and ' +
+      '/api/v1/entities routes read a table VES ingest never writes.',
+    { cause: error },
+  );
+  failure.status = 404;
+  failure.code = 'SEQUENCER_ROUTE_NOT_FOUND';
+  return failure;
 }
 
 const ALLOWED_SEQUENCER_PROTOCOLS = new Set(['grpc:', 'grpcs:', 'http:', 'https:']);
@@ -411,13 +559,12 @@ export class SequencerClient {
 
     const creds = this.config.getCredentials();
     if (creds.apiKey) {
-      // API keys with ss_ prefix go in x-api-key header;
-      // otherwise fall back to Authorization Bearer
-      if (creds.apiKey.startsWith('ss_')) {
-        headers['x-api-key'] = creds.apiKey;
-      } else {
-        headers['Authorization'] = `Bearer ${creds.apiKey}`;
-      }
+      // stateset-sequencer's auth extractor (src/auth/middleware.rs) accepts
+      // `Authorization: ApiKey <key>`, a bare `ss_...` key, or either in
+      // x-api-key, and validates `Authorization: Bearer <token>` as a JWT
+      // ONLY: an API key sent as Bearer is refused as "Invalid JWT".
+      // `ApiKey` is the documented form (docs/AGENT_INTEGRATION.md).
+      headers['Authorization'] = `ApiKey ${creds.apiKey}`;
     } else if (creds.jwt) {
       headers['Authorization'] = `Bearer ${creds.jwt}`;
     }
@@ -458,7 +605,9 @@ export class SequencerClient {
       const response = await fetch(url, options);
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(`Sequencer request failed: ${response.status} ${text}`);
+        const error = new Error(`Sequencer request failed: ${response.status} ${text}`);
+        error.status = response.status;
+        throw error;
       }
       // Await consumption here so the deadline covers a stalled response body.
       return await response.json();
@@ -625,72 +774,57 @@ export class SequencerClient {
     throw lastError;
   }
 
+  /** tenant_id + store_id query, plus any extra parameters. */
+  _scopeParams(extra = {}) {
+    return new URLSearchParams({
+      tenant_id: this.config.tenantId,
+      store_id: this.config.storeId,
+      ...extra,
+    });
+  }
+
   /**
-   * Pull VES v1.0 events from the sequencer
+   * Pull VES v1.0 events from the sequencer: one bounded page of the store's
+   * VES stream from GET /api/v1/ves/events.
+   *
+   * `fromSequence` is inclusive (VES sequence numbers start at 1; 0 reads
+   * from the start). The server caps a page at 1000 events.
+   *
    * @param {number} fromSequence - Start sequence number
    * @param {number} [limit=100] - Max events to pull
    * @returns {Promise<{events: SequencedEvent[], nextSequence: number, hasMore: boolean, headSequence: number}>}
    */
   async pull(fromSequence, limit = 100) {
     validatePullRequest(fromSequence, limit);
-    const params = new URLSearchParams({
-      tenant_id: this.config.tenantId,
-      store_id: this.config.storeId,
-      from: fromSequence.toString(),
-      limit: limit.toString(),
-    });
+    const params = this._scopeParams({ from: String(fromSequence), limit: String(limit) });
 
-    const response = await this._request('GET', `/api/v1/events?${params}`);
+    let response;
+    try {
+      response = await this._request('GET', `/api/v1/ves/events?${params}`);
+    } catch (error) {
+      throw vesRouteError(error, '/api/v1/ves/events');
+    }
 
-    const events = (response.events || []).map((e) => ({
-      envelope: {
-        // Core event fields
-        eventId: e.envelope.event_id,
-        commandId: e.envelope.command_id,
-        tenantId: e.envelope.tenant_id,
-        storeId: e.envelope.store_id,
-        entityType: e.envelope.entity_type,
-        entityId: e.envelope.entity_id,
-        eventType: e.envelope.event_type,
-        // VES v1.0 payload fields
-        payload: e.envelope.payload,
-        vesVersion: e.envelope.ves_version || 1,
-        payloadKind: e.envelope.payload_kind || 0,
-        payloadEncrypted: normalizePayloadEncryptedFromWire(e.envelope.payload_encrypted),
-        // Backwards compat: use payload_hash if payload_plain_hash not present
-        payloadPlainHash: e.envelope.payload_plain_hash || e.envelope.payload_hash,
-        payloadCipherHash:
-          e.envelope.payload_cipher_hash ||
-          '0000000000000000000000000000000000000000000000000000000000000000',
-        // VES v1.0 signature fields (may be null for legacy events)
-        agentKeyId: e.envelope.agent_key_id || 0,
-        agentSignature:
-          e.envelope.agent_signature ||
-          '0000000000000000000000000000000000000000000000000000000000000000',
-        agentSignatureScheme: e.envelope.agent_signature_scheme || 0,
-        agentSignatureBundle: fromSnakeCaseSignatureBundle(e.envelope.agent_signature_bundle),
-        // Metadata
-        baseVersion: e.envelope.base_version,
-        createdAt: e.envelope.created_at,
-        sourceAgent: e.envelope.source_agent,
-      },
-      sequenceNumber: e.envelope.sequence_number,
-      sequencedAt: e.sequenced_at,
-      receiptHash: e.receipt_hash,
-      receiptSignatureScheme: e.receipt_signature_scheme || 0,
-      receiptSignatureBundle: fromSnakeCaseSignatureBundle(e.receipt_signature_bundle),
-    }));
-
-    const maxSeq =
-      events.length > 0 ? Math.max(...events.map((e) => e.sequenceNumber)) : fromSequence;
+    const events = (response?.events ?? []).map(sequencedEventFromVesWire);
+    const maxSeq = events.reduce((max, e) => Math.max(max, e.sequenceNumber), fromSequence - 1);
 
     const page = {
       events,
       nextSequence: events.length ? maxSeq + 1 : fromSequence,
-      hasMore: response.has_more ?? events.length === limit,
+      hasMore:
+        typeof response?.has_more === 'boolean' ? response.has_more : events.length === limit,
       headSequence:
-        response.head_sequence ?? (events.length ? maxSeq : Math.max(0, fromSequence - 1)),
+        response?.head_sequence ?? (events.length ? maxSeq : Math.max(0, fromSequence - 1)),
     };
+    // The server states its own continuation; a cursor that disagrees with
+    // the events it served is a broken page, not one to guess around.
+    if (
+      events.length &&
+      response?.next_sequence !== undefined &&
+      response.next_sequence !== page.nextSequence
+    ) {
+      throw new Error('Invalid pull page: next_sequence disagrees with the events served');
+    }
     validatePullPage(page, fromSequence, limit);
     return page;
   }
@@ -720,16 +854,20 @@ export class SequencerClient {
   }
 
   /**
-   * Get the current head sequence
+   * Get the current head of the store's VES stream (GET /api/v1/ves/head).
+   *
+   * The route serves only `head_sequence`; it has no state root and no
+   * latest commitment (use `listCommitments` for those).
+   *
    * @returns {Promise<SyncState>}
    */
   async getHead() {
-    const params = new URLSearchParams({
-      tenant_id: this.config.tenantId,
-      store_id: this.config.storeId,
-    });
-
-    const response = await this._request('GET', `/api/v1/head?${params}`);
+    let response;
+    try {
+      response = await this._request('GET', `/api/v1/ves/head?${this._scopeParams()}`);
+    } catch (error) {
+      throw vesRouteError(error, '/api/v1/ves/head');
+    }
     if (!Number.isSafeInteger(response?.head_sequence) || response.head_sequence < 0) {
       throw new Error('Invalid remote head: expected a safe nonnegative sequence number');
     }
@@ -738,30 +876,70 @@ export class SequencerClient {
       tenantId: this.config.tenantId,
       storeId: this.config.storeId,
       headSequence: response.head_sequence,
-      stateRoot: response.state_root,
-      lastCommitmentId: response.latest_commitment?.batch_id,
     };
   }
 
   /**
-   * Get a batch commitment
+   * List the store's VES commitments (GET /api/v1/ves/commitments).
+   *
+   * The sequencer lists only commitments not yet anchored on chain; fetch an
+   * anchored one by id with `getCommitment`.
+   *
+   * @returns {Promise<VesCommitment[]>}
+   */
+  async listCommitments() {
+    const response = await this._request('GET', `/api/v1/ves/commitments?${this._scopeParams()}`);
+    if (!Array.isArray(response?.commitments)) {
+      throw new Error('Invalid commitment list: expected { commitments: [...] }');
+    }
+    return response.commitments.map(vesCommitmentFromWire);
+  }
+
+  /**
+   * Commit the store's VES events [sequenceStart, sequenceEnd] into a batch
+   * (POST /api/v1/ves/commitments; write permission). The sequencer requires
+   * the range to start right after the last committed sequence.
+   *
+   * @param {number} sequenceStart - inclusive
+   * @param {number} sequenceEnd - inclusive
+   * @returns {Promise<VesCommitment>}
+   */
+  async createCommitment(sequenceStart, sequenceEnd) {
+    if (
+      !Number.isSafeInteger(sequenceStart) ||
+      sequenceStart < 1 ||
+      !Number.isSafeInteger(sequenceEnd) ||
+      sequenceEnd < sequenceStart
+    ) {
+      throw new Error('Commitment range must be safe integers with 1 <= start <= end');
+    }
+    const response = await this._request('POST', '/api/v1/ves/commitments', {
+      tenant_id: this.config.tenantId,
+      store_id: this.config.storeId,
+      sequence_start: sequenceStart,
+      sequence_end: sequenceEnd,
+    });
+    return vesCommitmentFromWire(response);
+  }
+
+  /**
+   * Get a VES batch commitment (GET /api/v1/ves/commitments/:batch_id).
+   *
+   * VES events are committed only by VES commitments; the pre-VES
+   * /api/v1/commitments routes commit a table VES ingest never writes.
+   *
    * @param {string} batchId
-   * @returns {Promise<BatchCommitment|null>}
+   * @returns {Promise<VesCommitment|null>} null when the sequencer has no such batch
    */
   async getCommitment(batchId) {
     try {
-      const response = await this._request('GET', `/api/v1/commitments/${batchId}`);
-
-      return {
-        batchId: response.batch_id,
-        merkleRoot: response.merkle_root,
-        startSequence: response.start_sequence,
-        endSequence: response.end_sequence,
-        eventCount: response.event_count,
-        committedAt: response.committed_at,
-      };
+      const response = await this._request(
+        'GET',
+        `/api/v1/ves/commitments/${encodeURIComponent(batchId)}`,
+      );
+      return vesCommitmentFromWire(response);
     } catch (error) {
-      if (error.message.includes('404')) {
+      if (error?.status === 404) {
         return null;
       }
       throw error;
@@ -769,51 +947,162 @@ export class SequencerClient {
   }
 
   /**
-   * Get entity event history (VES v1.0)
+   * Get the sequencer's inclusion proof for one event of a VES commitment
+   * (GET /api/v1/ves/proofs/:sequence_number).
+   *
+   * The proof carries no leaf count. Verify it with `verifyEventInclusion`,
+   * which binds the tree size from the commitment, or pass the commitment's
+   * `leafCount` to `verifyInclusionDetailed` yourself.
+   *
+   * @param {number} sequenceNumber
+   * @param {string} batchId - the commitment whose range holds the event
+   * @returns {Promise<InclusionProof>}
+   */
+  async getInclusionProof(sequenceNumber, batchId) {
+    if (!Number.isSafeInteger(sequenceNumber) || sequenceNumber < 1) {
+      throw new Error('sequenceNumber must be a positive safe integer');
+    }
+    const params = this._scopeParams({ batch_id: String(batchId) });
+    const response = await this._request('GET', `/api/v1/ves/proofs/${sequenceNumber}?${params}`);
+    return {
+      sequenceNumber: response?.sequence_number,
+      batchId: response?.batch_id,
+      merkleRoot:
+        typeof response?.merkle_root === 'string'
+          ? response.merkle_root.replace(/^0x/, '').toLowerCase()
+          : null,
+      leafHash: response?.leaf_hash ?? null,
+      leafIndex: response?.leaf_index,
+      proofHashes: response?.proof_path,
+      directions: response?.directions ?? null,
+    };
+  }
+
+  /**
+   * Fetch and verify the inclusion proof of a pulled event in a VES
+   * commitment.
+   *
+   * The tree size comes from the commitment record, never from the proof
+   * (which states none): `commitment.leafCount` is passed to
+   * `verifyInclusionDetailed` as the caller-bound `leafCount`, after checking
+   * that it agrees with the range the commitment covers. `valid` is true only
+   * for a path bound to that size that reaches `commitment.merkleRoot`.
+   *
+   * A failure to fetch the proof is thrown, so a caller can tell "the
+   * sequencer could not serve a proof" from "the proof does not verify".
+   *
+   * @param {SequencedEvent} event - from `pull` or `getEntityHistory`
+   * @param {VesCommitment} commitment - from `getCommitment` or `listCommitments`
+   * @returns {Promise<{ valid: boolean, pathBound: boolean, leafCountSource: 'caller'|'proof'|null,
+   *   batchId: string|null, leafCount: number|null, reason?: string }>}
+   */
+  async verifyEventInclusion(event, commitment) {
+    const base = {
+      batchId: commitment?.batchId ?? null,
+      leafCount: commitment?.leafCount ?? null,
+    };
+    const refuse = (reason) => ({
+      valid: false,
+      pathBound: false,
+      leafCountSource: null,
+      ...base,
+      reason,
+    });
+    const seq = event?.sequenceNumber;
+    if (!Number.isSafeInteger(seq) || seq < 1) return refuse('event has no valid sequence number');
+    const start = commitment?.sequenceStart;
+    const end = commitment?.sequenceEnd;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 1 || end < start) {
+      return refuse('commitment has no valid sequence range');
+    }
+    if (seq < start || seq > end) return refuse('event is outside the commitment range');
+    // The commitment states its size twice; the proof states it not at all.
+    // If the two disagree there is no size to bind the path to.
+    if (commitment.leafCount !== end - start + 1) {
+      return refuse('commitment leaf_count disagrees with its sequence range');
+    }
+
+    const proof = await this.getInclusionProof(seq, commitment.batchId);
+    if (proof.sequenceNumber !== seq || proof.batchId !== commitment.batchId) {
+      return refuse('proof is for a different event or batch');
+    }
+    if (proof.merkleRoot !== null && proof.merkleRoot !== commitment.merkleRoot) {
+      return refuse('proof names a different root than the commitment');
+    }
+    if (proof.leafIndex !== seq - start) {
+      return refuse("proof leaf index does not match the event's position in the commitment");
+    }
+
+    let verdict;
+    try {
+      verdict = this.verifyInclusionDetailed(
+        event.envelope,
+        { leafIndex: proof.leafIndex, proofHashes: proof.proofHashes },
+        commitment.merkleRoot,
+        { sequenceNumber: seq, leafCount: commitment.leafCount },
+      );
+    } catch (error) {
+      // A malformed envelope (bad UUID, bad hex) cannot be hashed into a leaf.
+      return refuse(`cannot compute the event's leaf: ${error.message}`);
+    }
+    const valid = verdict.valid && verdict.pathBound;
+    return {
+      ...verdict,
+      valid,
+      ...base,
+      ...(!valid && { reason: verdict.reason ?? 'path does not reach the commitment root' }),
+    };
+  }
+
+  /**
+   * Get an entity's VES event history, every page, in sequence order
+   * (GET /api/v1/ves/entities/:entity_type/:entity_id).
+   *
+   * The route pages by offset (`from`, 0-based) at most 100 events at a time
+   * and says `has_more`; this follows it to the end.
+   *
    * @param {string} entityType
    * @param {string} entityId
    * @returns {Promise<SequencedEvent[]>}
    */
   async getEntityHistory(entityType, entityId) {
-    const params = new URLSearchParams({
-      tenant_id: this.config.tenantId,
-      store_id: this.config.storeId,
-    });
+    const path = `/api/v1/ves/entities/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`;
+    const lifecycle = this._lifecycle.signal;
+    const events = [];
+    for (;;) {
+      lifecycle.throwIfAborted();
+      const params = this._scopeParams({
+        from: String(events.length),
+        limit: String(ENTITY_HISTORY_PAGE),
+      });
+      let response;
+      try {
+        response = await this._request('GET', `${path}?${params}`);
+      } catch (error) {
+        throw vesRouteError(error, '/api/v1/ves/entities/:entity_type/:entity_id');
+      }
+      const page = (response?.events ?? []).map(sequencedEventFromVesWire);
+      events.push(...page);
+      if (response?.has_more !== true || page.length === 0) break;
+      if (events.length > MAX_ENTITY_HISTORY_EVENTS) {
+        throw new Error(`Entity history exceeds ${MAX_ENTITY_HISTORY_EVENTS} events`);
+      }
+    }
 
-    const response = await this._request(
-      'GET',
-      `/api/v1/entities/${entityType}/${entityId}?${params}`,
-    );
-
-    return (response.events || []).map((e) => ({
-      envelope: {
-        // Core event fields
-        eventId: e.event_id,
-        commandId: e.command_id,
-        tenantId: e.tenant_id,
-        storeId: e.store_id,
-        entityType: e.entity_type,
-        entityId: e.entity_id,
-        eventType: e.event_type,
-        // VES v1.0 payload fields
-        payload: e.payload,
-        vesVersion: e.ves_version || 1,
-        payloadKind: e.payload_kind || 0,
-        payloadEncrypted: normalizePayloadEncryptedFromWire(e.payload_encrypted),
-        payloadPlainHash: e.payload_plain_hash,
-        payloadCipherHash: e.payload_cipher_hash,
-        // VES v1.0 signature fields
-        agentKeyId: e.agent_key_id,
-        agentSignature: e.agent_signature,
-        // Metadata
-        baseVersion: e.base_version,
-        createdAt: e.created_at,
-        sourceAgent: e.source_agent,
-      },
-      sequenceNumber: e.sequence_number,
-      sequencedAt: e.sequenced_at,
-      receiptHash: e.receipt_hash,
-    }));
+    // Offset paging over an append-only, sequence-ordered history: a page
+    // that repeats, reorders or strays into another entity is a broken
+    // response, not something to merge.
+    let previous = 0;
+    for (const event of events) {
+      if (!Number.isSafeInteger(event.sequenceNumber) || event.sequenceNumber <= previous) {
+        throw new Error('Invalid entity history: sequence numbers must strictly increase');
+      }
+      if (event.envelope.entityType !== entityType || event.envelope.entityId !== entityId) {
+        throw new Error('Invalid entity history: an event belongs to another entity');
+      }
+      previous = event.sequenceNumber;
+    }
+    return events;
   }
 
   /**
@@ -1137,12 +1426,34 @@ export class SequencerClient {
    * Failures carry a `code` (`sequencer_key_not_configured` or
    * `directory_untrusted`) that `PeerKeyDirectory` maps to a quarantine reason.
    *
+   * The route itself is not on stateset-sequencer's main branch yet (it is
+   * proposed in stateset-sequencer PR #6; an unknown agent gets an empty key
+   * list there, not a 404). So a 404 means the sequencer has no key directory
+   * at all, and fails with `code: 'key_directory_unsupported'` and a message
+   * saying so, rather than as an opaque request failure.
+   *
    * @param {string} agentId
    * @returns {Promise<{agentId: string, tenantId: string, keys: Array<Object>, signedAt: string}>}
    */
   async getAgentSigningKeys(agentId) {
     const params = new URLSearchParams({ tenant_id: this.config.tenantId });
-    const response = await this._request('GET', `/api/v1/agents/${agentId}/signing-keys?${params}`);
+    let response;
+    try {
+      response = await this._request(
+        'GET',
+        `/api/v1/agents/${encodeURIComponent(agentId)}/signing-keys?${params}`,
+      );
+    } catch (error) {
+      if (error?.status !== 404) throw error;
+      throw keyDirectoryError(
+        'The sequencer does not expose signed agent key lists: GET ' +
+          '/api/v1/agents/:agent_id/signing-keys returned 404 (the route is proposed in ' +
+          'stateset-sequencer PR #6 and is not deployed here). Supply peer public keys ' +
+          'another way, such as an operator-distributed key roster.',
+        'key_directory_unsupported',
+        { cause: error },
+      );
+    }
 
     const sequencerPublicKey = this.config.sequencerPublicKey ?? this.config.sequencer?.publicKey;
     if (!sequencerPublicKey) {

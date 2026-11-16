@@ -44,7 +44,6 @@ import {
   registerKey,
   renderBoard,
 } from './lib/board.mjs';
-import { requestStatus } from './lib/ves-client.mjs';
 
 // The CLI's crypto helpers report native-fallback noise on console.debug,
 // which is stdout in Node and would corrupt --json output.
@@ -152,7 +151,8 @@ function out(values, json, text) {
 }
 
 function hintFor(error) {
-  const status = requestStatus(error);
+  // SequencerClient request failures carry the HTTP status.
+  const status = error?.status ?? null;
   if (status === 401) return 'check SEQUENCER_API_KEY';
   if (status === 403)
     return 'the API key lacks permission for this tenant/store (key registration needs an admin key)';
@@ -202,7 +202,7 @@ async function cmdRegister(values, raw) {
     try {
       await registerKey({ agent, settings });
     } catch (error) {
-      if (requestStatus(error) === 500) {
+      if (error?.status === 500) {
         error.message +=
           ' (the sequencer answers 500 when this agent and key id are already registered)';
       }

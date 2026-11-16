@@ -1141,9 +1141,11 @@ describe('pull verification — end to end through the real client and directory
         agent_signature_scheme: 0,
         base_version: null,
         created_at: envelope.createdAt,
-        source_agent: AGENT,
+        // The VES wire field (SequencedVesEvent): source_agent_id, with the
+        // sequencer-assigned fields inside the envelope.
+        source_agent_id: AGENT,
+        sequenced_at: '2026-09-12T00:00:01.000Z',
       },
-      sequenced_at: '2026-09-12T00:00:01.000Z',
     };
   }
 
@@ -1189,7 +1191,7 @@ describe('pull verification — end to end through the real client and directory
     const rest = new SequencerClient(config);
     rest._request = async (method, path) => {
       requests.push(`${method} ${path.split('?')[0]}`);
-      if (path.startsWith('/api/v1/events')) {
+      if (path.startsWith('/api/v1/ves/events')) {
         const event = signedWireEvent(agentKey, { tamper });
         if (tamperPayload) event.envelope.payload = { total: '0.01' };
         return { events: [event], head_sequence: 1 };

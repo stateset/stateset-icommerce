@@ -10,7 +10,8 @@
  * names as JSON keys, and its values win over the environment):
  *
  *   SEQUENCER_URL         origin of the sequencer, e.g. https://seq.example.com
- *   SEQUENCER_API_KEY     an `ss_...` API key (sent by the CLI client as x-api-key)
+ *   SEQUENCER_API_KEY     an `ss_...` API key (sent by the CLI client as
+ *                         `Authorization: ApiKey <key>`)
  *   SEQUENCER_TENANT_ID   tenant UUID
  *   SEQUENCER_STORE_ID    store UUID -- the board is one store's event stream
  *   SEQUENCER_PUBLIC_KEY  optional: the sequencer's Ed25519 public key (hex),
