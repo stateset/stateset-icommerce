@@ -1026,6 +1026,22 @@ describe('embedded commerce engine', () => {
     ]);
   });
 
+  it('pauses a demo trial subscription, as the engine pause action does', async () => {
+    useMockEngine();
+    const { subscriptionsApi } = await import('@/lib/embedded');
+    const all = await subscriptionsApi.list();
+
+    const trial = all.find((subscription) => subscription.status === 'trial')!;
+    expect((await subscriptionsApi.pause(trial.id)).status).toBe('paused');
+    expect((await subscriptionsApi.resume(trial.id)).status).toBe('active');
+
+    // The engine refuses to pause anything but an active or trial subscription.
+    const pending = all.find((subscription) => subscription.status === 'pending')!;
+    await expect(subscriptionsApi.pause(pending.id)).rejects.toThrow(
+      /cannot move from pending to paused/,
+    );
+  });
+
   it('rejects explicit mock mode in production', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'true');

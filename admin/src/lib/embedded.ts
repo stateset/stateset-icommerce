@@ -17,7 +17,8 @@ import {
   ORDER_LIFECYCLE,
   RETURN_LIFECYCLE,
   RETURN_REASONS,
-  SUBSCRIPTION_LIFECYCLE,
+  SUBSCRIPTION_ACTION_TARGETS,
+  canApplySubscriptionAction,
   canTransition,
   normalizeEngineStatus,
   statusIn,
@@ -25,6 +26,7 @@ import {
   type OrderStatusUpdate,
   type ReturnReason,
   type ReturnStatus,
+  type SubscriptionAction,
   type GlAccountStatus,
   type InspectionStatus,
   type InvoiceStatus,
@@ -216,8 +218,8 @@ export interface CommerceEngine {
   };
   /**
    * Subscriptions, named after the native binding's methods
-   * (`bindings/node/index.d.ts` `class Subscriptions`); moves follow
-   * `SUBSCRIPTION_LIFECYCLE`.
+   * (`bindings/node/index.d.ts` `class Subscriptions`); each action accepts
+   * the states in `SUBSCRIPTION_ACTION_SOURCES` (the engine's action guards).
    */
   subscriptions: {
     list: (params?: {
@@ -229,7 +231,7 @@ export interface CommerceEngine {
     get: (id: string) => Promise<Subscription | null>;
     /** Start a subscription to a plan (the binding has no `create`). */
     subscribe: (input: { customerId: string; planId: string }) => Promise<Subscription>;
-    /** active → paused */
+    /** active | trial → paused */
     pause: (id: string) => Promise<Subscription>;
     /** paused → active */
     resume: (id: string) => Promise<Subscription>;
@@ -1108,15 +1110,21 @@ function getMockSubscription(id: string): Subscription | null {
   return getMockData().subscriptions.find((subscription) => subscription.id === id) || null;
 }
 
-/** Move a mock subscription along `SUBSCRIPTION_LIFECYCLE`, refusing anything else. */
-function transitionMockSubscription(id: string, to: Subscription['status']): Subscription {
+/**
+ * Apply a subscription action to a mock subscription the way the engine
+ * does: the action's own guard (`SUBSCRIPTION_ACTION_SOURCES`, which lets
+ * `pause` take a trial as `pause_subscription` does), not just the catalog's
+ * edges. Persisted for the demo session.
+ */
+function applyMockSubscriptionAction(id: string, action: SubscriptionAction): Subscription {
   const data = getMockData();
   const index = data.subscriptions.findIndex((subscription) => subscription.id === id);
   if (index === -1) {
     throw new Error(`Subscription not found: ${id}`);
   }
   const current = data.subscriptions[index];
-  if (!canTransition(SUBSCRIPTION_LIFECYCLE, current.status, to)) {
+  const to = SUBSCRIPTION_ACTION_TARGETS[action];
+  if (!canApplySubscriptionAction(current.status, action)) {
     throw new Error(`Subscription cannot move from ${current.status} to ${to}`);
   }
   const next: Subscription = { ...current, status: to, updatedAt: new Date().toISOString() };
@@ -1485,9 +1493,9 @@ function createMockCommerceEngine(): CommerceEngine {
             nextMockId('sub'),
           ),
         ),
-      pause: async (id: string) => transitionMockSubscription(id, 'paused'),
-      resume: async (id: string) => transitionMockSubscription(id, 'active'),
-      cancel: async (id: string) => transitionMockSubscription(id, 'cancelled'),
+      pause: async (id: string) => applyMockSubscriptionAction(id, 'pause'),
+      resume: async (id: string) => applyMockSubscriptionAction(id, 'resume'),
+      cancel: async (id: string) => applyMockSubscriptionAction(id, 'cancel'),
       getAnalytics: async () => mockSubscriptionAnalytics(),
     },
     generalLedger: {

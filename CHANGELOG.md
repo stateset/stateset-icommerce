@@ -342,6 +342,11 @@ finance writes carry an authenticated identity.
     seed time, so a cancelled demo order still counted as pending and a
     paused subscription still counted in MRR. Figures demo mode invents
     (processing time, MRR growth) are kept as seeded.
+  - A demo trial subscription can be paused, as `pause_subscription`
+    allows on both databases. Demo subscription actions now check the
+    engine's action guards (`SUBSCRIPTION_ACTION_SOURCES` in
+    `engine-lifecycles.ts`, tested against the Rust pause guard) instead of
+    the state-machine catalog, which has no `trial -> paused` edge.
 - The CLI sync client works against the real stateset-sequencer API
   (checked against its source at master e97829b):
   - `pull()`, `getHead()` and `getEntityHistory()` read the VES routes
