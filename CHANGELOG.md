@@ -336,6 +336,13 @@ finance writes carry an authenticated identity.
   - A sequencer without `GET /api/v1/agents/:id/signing-keys` (stateset-sequencer
     PR #6, unmerged) yields a `key_directory_unsupported` error that says to
     supply peer keys another way, instead of a bare 404.
+- A sync conflict recorded by a pull whose local event a later push saw the
+  sequencer reject can be settled: remote-wins (or a merge that falls back to
+  it) resolves it and leaves the rejected event, and its reason, as they are.
+  The conflict-resolution guard refused every strategy for a rejected event,
+  so such a conflict stayed unresolved forever. Local-wins and a combining
+  merge are still refused there, since they would re-append an event that is
+  already superseded.
 
 ## [1.40.0] - 2026-10-22
 
