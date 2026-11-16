@@ -123,3 +123,69 @@ fn sqlite_search_config_set_active_missing_id_changes_nothing() {
     let active = configs.get_active().expect("get active").expect("an active config");
     assert_eq!(active.id, config.id, "the refused activation deactivated nothing");
 }
+
+/// Activating a config through `update` (`is_active: Some(true)`) deactivates
+/// the others, as `set_active` does, and an activation of a missing config
+/// changes nothing. Twin of the Postgres
+/// `postgres_search_config_update_activation_deactivates_others`.
+#[test]
+fn sqlite_search_config_update_activation_deactivates_others() {
+    use stateset_core::{
+        CommerceError, CreateSearchConfig, SearchConfigId, SearchConfigRepository,
+        UpdateSearchConfig,
+    };
+    let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
+    let configs = db.search_configs();
+    let create = |name: &str| {
+        configs
+            .create(CreateSearchConfig {
+                name: name.into(),
+                description: None,
+                searchable_fields: vec![],
+                facets: vec![],
+                synonyms: vec![],
+                boost_rules: vec![],
+            })
+            .expect("create config")
+    };
+    let active = || {
+        configs
+            .list(SearchConfigFilter { is_active: Some(true), ..Default::default() })
+            .expect("list active")
+            .into_iter()
+            .map(|config| config.id)
+            .collect::<Vec<_>>()
+    };
+    let first = create("First");
+    let second = create("Second");
+    configs.set_active(first.id).expect("activate first");
+
+    let updated = configs
+        .update(
+            second.id,
+            UpdateSearchConfig {
+                name: Some("Renamed".into()),
+                is_active: Some(true),
+                ..Default::default()
+            },
+        )
+        .expect("activate second through update");
+    assert!(updated.is_active);
+    assert_eq!(updated.name, "Renamed", "the update's other fields still apply");
+    assert_eq!(active(), vec![second.id], "exactly one config is active");
+
+    let err = configs
+        .update(
+            SearchConfigId::new(),
+            UpdateSearchConfig { is_active: Some(true), ..Default::default() },
+        )
+        .expect_err("missing id");
+    assert!(matches!(err, CommerceError::NotFound), "{err:?}");
+    assert_eq!(active(), vec![second.id], "the refused activation deactivated nothing");
+
+    let deactivated = configs
+        .update(second.id, UpdateSearchConfig { is_active: Some(false), ..Default::default() })
+        .expect("deactivate second");
+    assert!(!deactivated.is_active);
+    assert!(active().is_empty());
+}

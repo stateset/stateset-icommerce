@@ -29,6 +29,13 @@ This project follows Keep a Changelog and Semantic Versioning.
   a cast to send them. The binding test now reads the dispatch table in
   `Commerce::execute_kernel_command` and fails when the union and the engine
   disagree.
+- Activating a search config through `update` (`is_active: Some(true)`) now
+  deactivates every other config, as `set_active` does, on both backends, so
+  two configs can no longer be active at once. On Postgres the update takes
+  `set_active`'s path: the same advisory lock (42_420_021), the existence
+  check and the bulk deactivation, in the update's transaction, so it
+  serializes with concurrent activations. An activation of an unknown id
+  changes nothing and returns `NotFound`.
 
 ## [1.41.0] - 2026-11-15
 

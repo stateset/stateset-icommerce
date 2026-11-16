@@ -2,8 +2,8 @@
 
 use super::map_db_error;
 use chrono::{DateTime, Utc};
-use sqlx::FromRow;
 use sqlx::postgres::PgPool;
+use sqlx::{FromRow, Postgres, Transaction};
 use stateset_core::{
     BoostRule, CommerceError, CreateSearchConfig, FacetConfig, Result, SearchConfig,
     SearchConfigFilter, SearchConfigId, SearchConfigRepository, SearchField, SynonymGroup,
@@ -11,8 +11,9 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
-/// Transaction-scoped advisory lock serializing `set_active_async`; next in
-/// this crate's fixed `4242_00xx` advisory keys.
+/// Transaction-scoped advisory lock serializing activations (`set_active_async`
+/// and `update_async` with `is_active: Some(true)`); next in this crate's fixed
+/// `4242_00xx` advisory keys.
 const SET_ACTIVE_LOCK_KEY: i64 = 42_420_021;
 
 /// PostgreSQL search configuration repository
@@ -136,13 +137,60 @@ impl PgSearchConfigRepository {
         row.map(Self::row_to_config).transpose()
     }
 
-    /// Update a search configuration (async)
+    /// Start an activation of `id` inside `tx`: take the activation lock,
+    /// confirm the config exists, then deactivate every config. The caller
+    /// then sets `is_active = true` on `id` in the same transaction, so exactly
+    /// one config is active when it commits.
+    async fn begin_activation(
+        tx: &mut Transaction<'_, Postgres>,
+        id: SearchConfigId,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        // Activations take turns. Each rewrites every row, so two that each
+        // locked their own target and then reached the other's row in the
+        // bulk update deadlocked, and Postgres aborted one valid activation.
+        // The lock is released at commit or rollback.
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(SET_ACTIVE_LOCK_KEY)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+        // A missing id must change nothing (as on SQLite, whose transaction
+        // rolls back): check it first, before deactivating everything else.
+        let exists: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM search_configs WHERE id = $1 FOR UPDATE")
+                .bind(id.into_uuid())
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if exists.is_none() {
+            return Err(CommerceError::NotFound);
+        }
+
+        // Deactivate all configs
+        sqlx::query("UPDATE search_configs SET is_active = false, updated_at = $1")
+            .bind(now)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        Ok(())
+    }
+
+    /// Update a search configuration (async). `is_active: Some(true)`
+    /// activates it exactly as `set_active_async` does, deactivating every
+    /// other config in the same transaction.
     pub async fn update_async(
         &self,
         id: SearchConfigId,
         input: UpdateSearchConfig,
     ) -> Result<SearchConfig> {
         let now = Utc::now();
+
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        if input.is_active == Some(true) {
+            Self::begin_activation(&mut tx, id, now).await?;
+        }
 
         let mut sets = vec!["updated_at = $1".to_string()];
         let mut param_idx: u32 = 2;
@@ -220,7 +268,8 @@ impl PgSearchConfigRepository {
 
         query = query.bind(id.into_uuid());
 
-        query.execute(&self.pool).await.map_err(map_db_error)?;
+        query.execute(tx.as_mut()).await.map_err(map_db_error)?;
+        tx.commit().await.map_err(map_db_error)?;
 
         self.get_async(id).await?.ok_or(CommerceError::NotFound)
     }
@@ -299,35 +348,7 @@ impl PgSearchConfigRepository {
         let now = Utc::now();
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-
-        // Activations take turns. Each rewrites every row, so two that each
-        // locked their own target and then reached the other's row in the
-        // bulk update deadlocked, and Postgres aborted one valid activation.
-        // The lock is released at commit or rollback.
-        sqlx::query("SELECT pg_advisory_xact_lock($1)")
-            .bind(SET_ACTIVE_LOCK_KEY)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
-
-        // A missing id must change nothing (as on SQLite, whose transaction
-        // rolls back): check it first, before deactivating everything else.
-        let exists: Option<Uuid> =
-            sqlx::query_scalar("SELECT id FROM search_configs WHERE id = $1 FOR UPDATE")
-                .bind(id.into_uuid())
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        if exists.is_none() {
-            return Err(CommerceError::NotFound);
-        }
-
-        // Deactivate all configs
-        sqlx::query("UPDATE search_configs SET is_active = false, updated_at = $1")
-            .bind(now)
-            .execute(tx.as_mut())
-            .await
-            .map_err(map_db_error)?;
+        Self::begin_activation(&mut tx, id, now).await?;
 
         // Activate the requested config
         sqlx::query("UPDATE search_configs SET is_active = true, updated_at = $1 WHERE id = $2")

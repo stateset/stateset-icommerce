@@ -309,3 +309,173 @@ async fn postgres_concurrent_search_config_activations_do_not_deadlock() {
         .expect("read active configs");
     assert_eq!(active, vec![second.id.into_uuid()], "exactly one config is active: the last one");
 }
+
+#[cfg(feature = "postgres")]
+async fn active_search_configs(db: &PostgresDatabase) -> Vec<Uuid> {
+    sqlx::query_scalar("SELECT id FROM search_configs WHERE is_active")
+        .fetch_all(db.pool())
+        .await
+        .expect("read active configs")
+}
+
+/// Activating a config through `update_async` (`is_active: Some(true)`)
+/// deactivates the others, as `set_active_async` does. It used to set the
+/// flag directly, leaving two configs active. Twin of the SQLite
+/// `sqlite_search_config_update_activation_deactivates_others`.
+#[cfg(feature = "postgres")]
+#[tokio::test]
+async fn postgres_search_config_update_activation_deactivates_others() {
+    use stateset_core::{CommerceError, SearchConfigId, UpdateSearchConfig};
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping search config test");
+        return;
+    };
+    let _turn = SEARCH_CONFIG_ACTIVATION.lock().await;
+    let db = PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations");
+    let configs = db.search_configs();
+    let first = create_search_config(&db, "First").await;
+    let second = create_search_config(&db, "Second").await;
+    configs.set_active_async(first.id).await.expect("activate first");
+
+    let renamed = format!("Renamed {}", Uuid::new_v4());
+    let updated = configs
+        .update_async(
+            second.id,
+            UpdateSearchConfig {
+                name: Some(renamed.clone()),
+                is_active: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("activate second through update");
+    assert!(updated.is_active);
+    assert_eq!(updated.name, renamed, "the update's other fields still apply");
+    assert_eq!(
+        active_search_configs(&db).await,
+        vec![second.id.into_uuid()],
+        "exactly one config is active: the one the update activated"
+    );
+    let first = configs.get_async(first.id).await.expect("get first").expect("first exists");
+    assert!(!first.is_active);
+
+    // An activation of a missing config changes nothing, as with set_active.
+    let err = configs
+        .update_async(
+            SearchConfigId::new(),
+            UpdateSearchConfig { is_active: Some(true), ..Default::default() },
+        )
+        .await
+        .expect_err("missing id");
+    assert!(matches!(err, CommerceError::NotFound), "{err:?}");
+    assert_eq!(active_search_configs(&db).await, vec![second.id.into_uuid()]);
+
+    // Deactivating through an update touches only that config.
+    let deactivated = configs
+        .update_async(
+            second.id,
+            UpdateSearchConfig { is_active: Some(false), ..Default::default() },
+        )
+        .await
+        .expect("deactivate second");
+    assert!(!deactivated.is_active);
+    assert!(active_search_configs(&db).await.is_empty());
+}
+
+/// An activation through `update_async` takes the activation advisory lock,
+/// so it queues behind a `set_active_async` in flight and runs after it: the
+/// later activation wins and only one config is active.
+#[cfg(feature = "postgres")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn postgres_search_config_update_activation_takes_the_activation_lock() {
+    use stateset_core::UpdateSearchConfig;
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping search config test");
+        return;
+    };
+    let _turn = SEARCH_CONFIG_ACTIVATION.lock().await;
+    let db = PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations");
+    let first = create_search_config(&db, "First").await;
+    let second = create_search_config(&db, "Second").await;
+    let names = [
+        format!("set_active_{}", Uuid::new_v4().simple()),
+        format!("update_active_{}", Uuid::new_v4().simple()),
+    ];
+    let separator = if url.contains('?') { '&' } else { '?' };
+    let mut tagged = Vec::new();
+    for name in &names {
+        tagged.push(
+            PostgresDatabase::connect_with_options(
+                format!("{url}{separator}application_name={name}"),
+                1,
+                30,
+            )
+            .await
+            .expect("connect tagged pool"),
+        );
+    }
+
+    // The gate holds `set_active_async` after it took the activation lock,
+    // at its bulk update.
+    let mut gate = db.pool().begin().await.expect("begin gate");
+    sqlx::query("LOCK TABLE search_configs IN SHARE MODE")
+        .execute(gate.as_mut())
+        .await
+        .expect("gate blocks writes to search_configs");
+    let configs = tagged[0].search_configs();
+    let first_id = first.id;
+    let set_active = tokio::spawn(async move { configs.set_active_async(first_id).await });
+    let set_active_waiting = wait_for_lock(&db, &names[0]).await;
+    let configs = tagged[1].search_configs();
+    let second_id = second.id;
+    let update = tokio::spawn(async move {
+        configs
+            .update_async(
+                second_id,
+                UpdateSearchConfig { is_active: Some(true), ..Default::default() },
+            )
+            .await
+    });
+    // The update waits on the activation lock itself, not on the gate.
+    let update_waiting = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let event: Option<String> = sqlx::query_scalar(
+                "SELECT wait_event FROM pg_stat_activity
+                 WHERE application_name = $1 AND wait_event_type = 'Lock'",
+            )
+            .bind(&names[1])
+            .fetch_optional(db.pool())
+            .await
+            .expect("poll pg_stat_activity");
+            if let Some(event) = event {
+                break event;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    gate.commit().await.expect("release the gate");
+
+    let set_active = tokio::time::timeout(std::time::Duration::from_secs(60), set_active).await;
+    let update = tokio::time::timeout(std::time::Duration::from_secs(60), update).await;
+    for pool in &tagged {
+        pool.pool().close().await;
+    }
+    set_active_waiting.expect("set_active queued behind the gate");
+    assert_eq!(
+        update_waiting.expect("the update queued on a lock"),
+        "advisory",
+        "the update waits on the activation advisory lock"
+    );
+    set_active
+        .expect("set_active finished")
+        .expect("set_active task")
+        .expect("set_active succeeded");
+    let updated = update.expect("update finished").expect("update task").expect("update succeeded");
+    assert!(updated.is_active);
+    assert_eq!(
+        active_search_configs(&db).await,
+        vec![second.id.into_uuid()],
+        "exactly one config is active: the later activation"
+    );
+}
