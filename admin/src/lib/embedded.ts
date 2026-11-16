@@ -41,6 +41,7 @@ import {
 } from './engine-lifecycles';
 import type {
   Address,
+  AnalyticsCoverage,
   Customer,
   CustomerAnalytics,
   DashboardMetrics,
@@ -66,6 +67,7 @@ import type {
 // `./engine-lifecycles`; nothing in this file redeclares them.
 export type {
   Address,
+  AnalyticsCoverage,
   Customer,
   CustomerAnalytics,
   DashboardMetrics,
@@ -152,7 +154,12 @@ export interface CommerceEngine {
    * a single state of `RETURN_LIFECYCLE`; the engine refuses every other move.
    */
   returns: {
-    list: (params?: { status?: string; customerId?: string }) => Promise<Return[]>;
+    list: (params?: {
+      status?: string;
+      customerId?: string;
+      limit?: number;
+      offset?: number;
+    }) => Promise<Return[]>;
     get: (id: string) => Promise<Return | null>;
     create: (params: CreateReturnParams) => Promise<Return>;
     /** requested → approved */
@@ -198,7 +205,12 @@ export interface CommerceEngine {
    * `SUBSCRIPTION_LIFECYCLE`.
    */
   subscriptions: {
-    list: (params?: { status?: string; customerId?: string }) => Promise<Subscription[]>;
+    list: (params?: {
+      status?: string;
+      customerId?: string;
+      limit?: number;
+      offset?: number;
+    }) => Promise<Subscription[]>;
     get: (id: string) => Promise<Subscription | null>;
     /** Start a subscription to a plan (the binding has no `create`). */
     subscribe: (input: { customerId: string; planId: string }) => Promise<Subscription>;
@@ -1057,6 +1069,13 @@ function groupRevenueByPeriod(
     }));
 }
 
+/** Apply a list call's `limit`/`offset`, as the engine's lists do. */
+function mockPage<T>(records: T[], params?: { limit?: number; offset?: number }): T[] {
+  const offset = params?.offset || 0;
+  const end = params?.limit ? offset + params.limit : undefined;
+  return records.slice(offset, end);
+}
+
 function getMockOrder(id: string): Order | null {
   return getMockData().orders.find((order) => order.id === id) || null;
 }
@@ -1271,9 +1290,7 @@ function createMockCommerceEngine(): CommerceEngine {
         if (params?.status) {
           orders = orders.filter((order) => order.status === params.status);
         }
-        const offset = params?.offset || 0;
-        const end = params?.limit ? offset + params.limit : undefined;
-        return orders.slice(offset, end);
+        return mockPage(orders, params);
       },
       get: async (id: string) => getMockOrder(id),
       create: async (params: CreateOrderParams) => buildMockOrderFromParams(params),
@@ -1377,7 +1394,7 @@ function createMockCommerceEngine(): CommerceEngine {
         if (params?.customerId) {
           returns = returns.filter((entry) => entry.customerId === params.customerId);
         }
-        return returns;
+        return mockPage(returns, params);
       },
       get: async (id: string) => getMockReturn(id),
       create: async (params: CreateReturnParams) => buildMockReturnFromParams(params),
@@ -1480,7 +1497,7 @@ function createMockCommerceEngine(): CommerceEngine {
             (subscription) => subscription.customerId === params.customerId,
           );
         }
-        return subscriptions;
+        return mockPage(subscriptions, params);
       },
       get: async (id: string) => getMockSubscription(id),
       subscribe: async (input: { customerId: string; planId: string }) =>
@@ -1622,6 +1639,69 @@ function createMockCommerceEngine(): CommerceEngine {
 }
 
 // ============================================================================
+// Derived analytics: every record, not the first page
+// ============================================================================
+
+/**
+ * Page size for the admin's scans of native lists. The engine pages every
+ * list (`append_limit_offset` in `crates/stateset-db/src/sqlite/mod.rs`: 500
+ * rows when no limit is given, never more than 1000), so a single `list()`
+ * call is never "the whole collection".
+ */
+export const NATIVE_LIST_PAGE_SIZE = 500;
+
+/**
+ * The most records one derived aggregate reads. A scan that stops here
+ * reports `coverage.complete: false` instead of passing a subset off as the
+ * whole store.
+ */
+export const ANALYTICS_SCAN_LIMIT = 50_000;
+
+/**
+ * Read a paged list to the end (or to `ANALYTICS_SCAN_LIMIT`). `complete` is
+ * true only when the engine signalled the last page; an engine that repeats
+ * a page (ignores `offset`) or a collection past the cap yields `false`.
+ */
+async function collectAllPages<T extends { id: string }>(
+  fetchPage: (page: { limit: number; offset: number }) => Promise<T[]>,
+): Promise<{ records: T[]; complete: boolean }> {
+  const seen = new Set<string>();
+  const records: T[] = [];
+  let offset = 0;
+  for (;;) {
+    const page = await fetchPage({ limit: NATIVE_LIST_PAGE_SIZE, offset });
+    let added = 0;
+    for (const record of page) {
+      if (records.length === ANALYTICS_SCAN_LIMIT) {
+        return { records, complete: false };
+      }
+      if (!seen.has(record.id)) {
+        seen.add(record.id);
+        records.push(record);
+        added += 1;
+      }
+    }
+    // A short page is the last one; a page longer than asked for means the
+    // engine ignored paging and returned everything at once.
+    if (page.length !== NATIVE_LIST_PAGE_SIZE) {
+      return { records, complete: true };
+    }
+    if (added === 0) {
+      return { records, complete: false };
+    }
+    if (records.length === ANALYTICS_SCAN_LIMIT) {
+      const [next] = await fetchPage({ limit: 1, offset: offset + page.length });
+      return { records, complete: next === undefined };
+    }
+    offset += page.length;
+  }
+}
+
+function coverageOf(records: readonly unknown[], complete: boolean): AnalyticsCoverage {
+  return { complete, records: records.length };
+}
+
+// ============================================================================
 // Orders API
 // ============================================================================
 
@@ -1664,13 +1744,18 @@ export const ordersApi = {
       return commerce.orders.getAnalytics(params);
     }
     // The binding has no order aggregate; every figure here is derivable
-    // from the order records themselves.
-    return summarizeOrders(await commerce.orders.list());
+    // from the order records themselves, all of them.
+    const { records, complete } = await collectAllPages((page) => commerce.orders.list(page));
+    return summarizeOrders(records, { complete });
   },
 };
 
 /** Order analytics computed from the order records (engines without an aggregate). */
-export function summarizeOrders(orders: Order[], now: number = Date.now()): OrderAnalytics {
+export function summarizeOrders(
+  orders: Order[],
+  options: { now?: number; complete?: boolean } = {},
+): OrderAnalytics {
+  const now = options.now ?? Date.now();
   const totalRevenue = roundCurrency(orders.reduce((sum, order) => sum + order.totalAmount, 0));
   const ordersByStatus = orders.reduce<Record<string, number>>((acc, order) => {
     acc[order.status] = (acc[order.status] || 0) + 1;
@@ -1691,6 +1776,7 @@ export function summarizeOrders(orders: Order[], now: number = Date.now()): Orde
     averageOrderValue: orders.length ? roundCurrency(totalRevenue / orders.length) : 0,
     ordersByStatus,
     ordersByDay,
+    coverage: coverageOf(orders, options.complete ?? true),
   };
 }
 
@@ -1919,6 +2005,7 @@ export function toAdminReturn(record: Return): Return {
 export function summarizeReturns(
   returns: Return[],
   metrics?: NativeReturnMetrics,
+  options: { complete?: boolean } = {},
 ): ReturnAnalytics {
   const tally = (key: (entry: Return) => string) =>
     returns.reduce<Record<string, number>>((acc, entry) => {
@@ -1936,11 +2023,17 @@ export function summarizeReturns(
     returnsByStatus: tally((entry) => entry.status),
     averageProcessingTime: 0,
     topReturnedProducts: [],
+    coverage: coverageOf(returns, options.complete ?? true),
   };
 }
 
 export const returnsApi = {
-  async list(params?: { status?: string; customerId?: string }): Promise<Return[]> {
+  async list(params?: {
+    status?: string;
+    customerId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<Return[]> {
     const commerce = await getCommerceEngine();
     return (await commerce.returns.list(params)).map(toAdminReturn);
   },
@@ -1996,7 +2089,8 @@ export const returnsApi = {
       typeof commerce.analytics?.returnMetrics === 'function'
         ? await commerce.analytics.returnMetrics()
         : undefined;
-    return summarizeReturns(await returnsApi.list(), metrics);
+    const { records, complete } = await collectAllPages((page) => commerce.returns.list(page));
+    return summarizeReturns(records.map(toAdminReturn), metrics, { complete });
   },
 };
 
@@ -2232,7 +2326,10 @@ const MONTHS_PER_INTERVAL: Record<string, number> = {
  * interval is known; figures nothing reports (growth, lifetime) are left at
  * zero rather than invented.
  */
-export function summarizeSubscriptions(subscriptions: Subscription[]): SubscriptionAnalytics {
+export function summarizeSubscriptions(
+  subscriptions: Subscription[],
+  options: { complete?: boolean } = {},
+): SubscriptionAnalytics {
   const active = subscriptions.filter((subscription) => subscription.status === 'active');
   const mrr = roundCurrency(
     active.reduce((sum, subscription) => {
@@ -2259,11 +2356,17 @@ export function summarizeSubscriptions(subscriptions: Subscription[]): Subscript
     averageLifetime: 0,
     subscriptionsByPlan: tally((subscription) => subscription.plan),
     subscriptionsByFrequency: tally((subscription) => subscription.frequency),
+    coverage: coverageOf(subscriptions, options.complete ?? true),
   };
 }
 
 export const subscriptionsApi = {
-  async list(params?: { status?: string; customerId?: string }): Promise<Subscription[]> {
+  async list(params?: {
+    status?: string;
+    customerId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<Subscription[]> {
     const commerce = await getCommerceEngine();
     return (await commerce.subscriptions.list(params)).map(toAdminSubscription);
   },
@@ -2314,7 +2417,10 @@ export const subscriptionsApi = {
     if (typeof commerce.subscriptions.getAnalytics === 'function') {
       return commerce.subscriptions.getAnalytics();
     }
-    return summarizeSubscriptions(await subscriptionsApi.list());
+    const { records, complete } = await collectAllPages((page) =>
+      commerce.subscriptions.list(page),
+    );
+    return summarizeSubscriptions(records.map(toAdminSubscription), { complete });
   },
 };
 

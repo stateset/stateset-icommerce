@@ -309,6 +309,7 @@ describe('embedded commerce engine', () => {
       returnsByStatus: { in_transit: 1 },
       averageProcessingTime: 0,
       topReturnedProducts: [],
+      coverage: { complete: true, records: 1 },
     });
   });
 
@@ -518,6 +519,138 @@ describe('embedded commerce engine', () => {
       code: 'ENGINE_CAPABILITY_UNAVAILABLE',
       feature: 'analytics.getDashboardMetrics',
     });
+  });
+
+  /**
+   * A stand-in for a native list that pages the way the engine does
+   * (`append_limit_offset`): 500 rows when no limit is given, never more than
+   * 1000, `offset` rows skipped.
+   */
+  function nativePager<T>(rows: (offset: number, limit: number) => T[]) {
+    return vi.fn(async (filter?: { limit?: number; offset?: number }) => {
+      const limit = Math.min(filter?.limit ?? 500, 1000);
+      return rows(filter?.offset ?? 0, limit);
+    });
+  }
+
+  function pagedSlice<T>(all: T[]) {
+    return nativePager((offset, limit) => all.slice(offset, offset + limit));
+  }
+
+  it('derives native analytics from every page, not the first 500 records', async () => {
+    vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'false');
+    const createdAt = new Date().toISOString();
+    const orders = Array.from({ length: 1_200 }, (_, index) => ({
+      id: `ord_${index}`,
+      customerId: 'cus_1',
+      status: index < 700 ? 'delivered' : 'pending',
+      totalAmount: 10,
+      totalAmountExact: '10.00',
+      items: [],
+      currency: 'USD',
+      createdAt,
+      updatedAt: createdAt,
+    }));
+    const returns = Array.from({ length: 600 }, (_, index) => ({
+      id: `ret_${index}`,
+      orderId: `ord_${index}`,
+      status: 'requested',
+      reason: 'damaged',
+      version: 1,
+      createdAt,
+    }));
+    // The finding's example: 600 active $10/month subscriptions are $6,000 MRR.
+    const subscriptions = Array.from({ length: 600 }, (_, index) => ({
+      id: `sub_${index}`,
+      customerId: 'cus_1',
+      planId: 'plan_basic',
+      planName: 'Basic',
+      status: 'active',
+      billingInterval: 'monthly',
+      price: 10,
+      priceExact: '10.00',
+      createdAt,
+      updatedAt: createdAt,
+    }));
+    const listOrders = pagedSlice(orders);
+    class NativeCommerce {
+      get orders() {
+        return { list: listOrders };
+      }
+      get returns() {
+        return { list: pagedSlice(returns) };
+      }
+      get subscriptions() {
+        return { list: pagedSlice(subscriptions) };
+      }
+      get analytics() {
+        return {
+          returnMetrics: async () => ({
+            totalReturns: 600,
+            returnRatePercent: 50,
+            totalRefunded: 0,
+            totalRefundedExact: '0',
+          }),
+        };
+      }
+    }
+    vi.doMock('@stateset/embedded', () => ({ Commerce: NativeCommerce }));
+
+    const { ordersApi, returnsApi, subscriptionsApi } = await import('@/lib/embedded');
+
+    const orderAnalytics = await ordersApi.getAnalytics();
+    expect(orderAnalytics).toMatchObject({
+      totalOrders: 1_200,
+      totalRevenue: 12_000,
+      ordersByStatus: { delivered: 700, pending: 500 },
+      coverage: { complete: true, records: 1_200 },
+    });
+    expect(listOrders.mock.calls.length).toBeGreaterThan(1);
+
+    const returnAnalytics = await returnsApi.getAnalytics();
+    expect(returnAnalytics).toMatchObject({
+      totalReturns: 600,
+      returnsByStatus: { requested: 600 },
+      coverage: { complete: true, records: 600 },
+    });
+
+    expect(await subscriptionsApi.getAnalytics()).toMatchObject({
+      totalSubscriptions: 600,
+      activeSubscriptions: 600,
+      mrr: 6_000,
+      coverage: { complete: true, records: 600 },
+    });
+  });
+
+  it('marks a derived aggregate partial when the scan stops at its cap', async () => {
+    vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'false');
+    const createdAt = new Date().toISOString();
+    // A collection that never ends: every page is full.
+    const listOrders = nativePager((offset, limit) =>
+      Array.from({ length: limit }, (_, index) => ({
+        id: `ord_${offset + index}`,
+        customerId: 'cus_1',
+        status: 'pending',
+        totalAmount: 1,
+        totalAmountExact: '1',
+        items: [],
+        currency: 'USD',
+        createdAt,
+        updatedAt: createdAt,
+      })),
+    );
+    class NativeCommerce {
+      get orders() {
+        return { list: listOrders };
+      }
+    }
+    vi.doMock('@stateset/embedded', () => ({ Commerce: NativeCommerce }));
+
+    const { ordersApi, ANALYTICS_SCAN_LIMIT } = await import('@/lib/embedded');
+
+    const analytics = await ordersApi.getAnalytics();
+    expect(analytics.totalOrders).toBe(ANALYTICS_SCAN_LIMIT);
+    expect(analytics.coverage).toMatchObject({ complete: false, records: ANALYTICS_SCAN_LIMIT });
   });
 
   it('rejects explicit mock mode in production', async () => {

@@ -308,6 +308,12 @@ finance writes carry an authenticated identity.
 - The HTTP negotiation counter-offer, accept and reject endpoints keep the
   negotiation when its transition is refused; a refused transition (400)
   used to delete it.
+- Admin analytics derived from records on the native engine:
+  - Order revenue, return counts and subscription MRR read every page of
+    the engine's lists. They summarized only the first 500 records (the
+    engine's default page), so a store with 600 $10 subscriptions showed
+    $5,000 MRR. A scan that stops at its 50,000-record cap now says so
+    (`coverage.complete: false`).
 - The CLI sync client works against the real stateset-sequencer API
   (checked against its source at master e97829b):
   - `pull()`, `getHead()` and `getEntityHistory()` read the VES routes
