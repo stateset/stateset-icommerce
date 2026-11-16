@@ -308,6 +308,45 @@ finance writes carry an authenticated identity.
 - The HTTP negotiation counter-offer, accept and reject endpoints keep the
   negotiation when its transition is refused; a refused transition (400)
   used to delete it.
+- Admin analytics derived from records on the native engine:
+  - Order revenue, return counts and subscription MRR read every page of
+    the engine's lists. They summarized only the first 500 records (the
+    engine's default page), so a store with 600 $10 subscriptions showed
+    $5,000 MRR. A scan that stops at its 50,000-record cap now says so
+    (`coverage.complete: false`).
+  - Order and return analytics honour a requested `startDate`/`endDate`
+    (a bare date covers the whole UTC day); they summarized every record.
+    Undated return analytics ask the engine for all-time metrics, so the
+    return count and the refund total and rate describe the same returns;
+    the engine's default 30-day metrics were mixed with an undated count.
+    For a requested window the return rate is returns per order in that
+    window, and the refund total, which native return records do not carry,
+    is reported unavailable (`coverage.unavailable`) instead of taken from
+    another window.
+  - Revenue, average order value, refund totals, MRR, ARR, ARPU and
+    inventory value are exact decimal strings (`totalRevenueExact`,
+    `refundTotalExact`, `mrrExact`, ...), summed from the engine's exact
+    twins (`totalAmountExact`, `priceExact`, `totalRefundedExact`,
+    `totalValueExact`) with BigInt arithmetic. ARR is the exact sum of
+    price x periods per year and MRR is rounded once from it; summing
+    rounded float monthly shares had reported ARR 760.32 for 760.28. The
+    analytics dashboard and the returns view render the exact strings.
+- Admin demo mode (`STATESET_ADMIN_ALLOW_MOCK_DATA=true`) follows the
+  engine's lifecycle rules end to end:
+  - Orders, returns and subscriptions created in a demo session are kept, so
+    they can be confirmed, approved or paused. Creation returned a record
+    the stricter lifecycle checks then refused as not found.
+  - Order, return and subscription analytics and the dashboard metrics are
+    derived from the session's current records on every read, with the
+    native fallbacks' summaries and window rules. They were computed once at
+    seed time, so a cancelled demo order still counted as pending and a
+    paused subscription still counted in MRR. Figures demo mode invents
+    (processing time, MRR growth) are kept as seeded.
+  - A demo trial subscription can be paused, as `pause_subscription`
+    allows on both databases. Demo subscription actions now check the
+    engine's action guards (`SUBSCRIPTION_ACTION_SOURCES` in
+    `engine-lifecycles.ts`, tested against the Rust pause guard) instead of
+    the state-machine catalog, which has no `trial -> paused` edge.
 - The CLI sync client works against the real stateset-sequencer API
   (checked against its source at master e97829b):
   - `pull()`, `getHead()` and `getEntityHistory()` read the VES routes

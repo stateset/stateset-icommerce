@@ -69,10 +69,14 @@ import {
   RETURN_REASONS,
   RETURN_STATUSES,
   SERIAL_STATUSES,
+  SUBSCRIPTION_ACTION_SOURCES,
+  SUBSCRIPTION_ACTION_TARGETS,
+  SUBSCRIPTION_LIFECYCLE,
   SUBSCRIPTION_STATUSES,
   WAVE_STATUSES,
   WORK_ORDER_STATUSES,
   canApplyReturnAction,
+  canApplySubscriptionAction,
   canTransition,
   isTerminal,
   nextStates,
@@ -81,6 +85,7 @@ import {
   ORDER_LIFECYCLE,
   type Lifecycle,
   type ReturnAction,
+  type SubscriptionAction,
 } from '@/lib/engine-lifecycles';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..');
@@ -288,4 +293,65 @@ describe('lifecycle helpers', () => {
       expect(actions.filter((action) => canApplyReturnAction(status, action))).toEqual(allowed);
     },
   );
+});
+
+describe('subscription actions', () => {
+  // Which subscription actions the engine accepts in each state. Pause is the
+  // one that is wider than the catalog: the engine pauses a trial too.
+  const SUBSCRIPTION_ACTIONS_BY_STATUS: Record<string, SubscriptionAction[]> = {
+    pending: ['cancel'],
+    trial: ['pause', 'cancel'],
+    active: ['pause', 'cancel'],
+    paused: ['resume', 'cancel'],
+    past_due: ['cancel'],
+    cancelled: [],
+    expired: [],
+  };
+
+  it.each(Object.entries(SUBSCRIPTION_ACTIONS_BY_STATUS))(
+    'subscription actions allowed from %s',
+    (status, allowed) => {
+      const actions: SubscriptionAction[] = ['pause', 'resume', 'cancel'];
+      expect(actions.filter((action) => canApplySubscriptionAction(status, action))).toEqual(
+        allowed,
+      );
+    },
+  );
+
+  /** The variants of the first `matches!(status, ...)` guard in `fnName` of a Rust file. */
+  function pauseGuard(file: string, fnName: string): string[] {
+    const source = readFileSync(path.join(REPO_ROOT, file), 'utf8');
+    const body = source.slice(source.indexOf(`fn ${fnName}(`));
+    const guard = /matches!\(status,\s*([^)]*)\)/.exec(body);
+    if (!guard) throw new Error(`${file} ${fnName} has no matches!(status, ...) guard`);
+    return Array.from(guard[1].matchAll(/SubscriptionStatus::(\w+)/g), (match) =>
+      normalizeEngineStatus(match[1]),
+    );
+  }
+
+  it('pause accepts exactly what both engine backends accept', () => {
+    // The action contract, read from the engine code rather than the catalog.
+    for (const [file, fnName] of [
+      ['crates/stateset-db/src/sqlite/subscriptions.rs', 'pause_subscription'],
+      ['crates/stateset-db/src/postgres/subscriptions.rs', 'pause_subscription_async'],
+    ]) {
+      expect(sorted(pauseGuard(file, fnName))).toEqual(sorted(SUBSCRIPTION_ACTION_SOURCES.pause));
+    }
+  });
+
+  it('every other subscription action move is a catalog edge', () => {
+    for (const action of Object.keys(SUBSCRIPTION_ACTION_SOURCES) as SubscriptionAction[]) {
+      for (const status of SUBSCRIPTION_ACTION_SOURCES[action]) {
+        const edge = canTransition(
+          SUBSCRIPTION_LIFECYCLE,
+          status,
+          SUBSCRIPTION_ACTION_TARGETS[action],
+        );
+        // trial -> paused is accepted by pause_subscription but missing from
+        // the engine's StateMachine catalog; when the catalog gains it, drop
+        // the special case here.
+        expect(edge).toBe(!(action === 'pause' && status === 'trial'));
+      }
+    }
+  });
 });

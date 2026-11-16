@@ -511,6 +511,41 @@ export function canApplyReturnAction(status: string, action: ReturnAction): bool
 }
 
 // ============================================================================
+// Subscription actions (binding method → states it accepts)
+// ============================================================================
+
+/**
+ * The states each subscription action the binding exposes accepts, mirroring
+ * the engine's action guards (`crates/stateset-db/src/{sqlite,postgres}/subscriptions.rs`).
+ * These are action rules, not catalog edges: `pause_subscription` accepts an
+ * `active` OR `trial` subscription, while the catalog's only `paused` edge
+ * leaves `active` (an engine catalog gap; `engine-lifecycles.test.ts` reads
+ * the pause guard from both backends).
+ */
+export const SUBSCRIPTION_ACTION_SOURCES = {
+  /** `pause_subscription`: `matches!(status, Active | Trial)`. */
+  pause: ['active', 'trial'],
+  /** `resume_subscription`: `status == Paused`. */
+  resume: ['paused'],
+  /** `cancel_subscription`: refuses only terminal statuses (`cancelled`, `expired`). */
+  cancel: ['pending', 'trial', 'active', 'paused', 'past_due'],
+} as const satisfies Record<string, readonly SubscriptionStatus[]>;
+
+export type SubscriptionAction = keyof typeof SUBSCRIPTION_ACTION_SOURCES;
+
+/** The state each subscription action moves to (the admin cancels at period end). */
+export const SUBSCRIPTION_ACTION_TARGETS = {
+  pause: 'paused',
+  resume: 'active',
+  cancel: 'cancelled',
+} as const satisfies Record<SubscriptionAction, SubscriptionStatus>;
+
+/** Whether the engine accepts `action` on a subscription currently in `status`. */
+export function canApplySubscriptionAction(status: string, action: SubscriptionAction): boolean {
+  return statusIn(SUBSCRIPTION_ACTION_SOURCES[action], status);
+}
+
+// ============================================================================
 // Action and reporting rules the catalog does not cover
 // ============================================================================
 

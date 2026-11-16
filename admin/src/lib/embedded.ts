@@ -17,7 +17,8 @@ import {
   ORDER_LIFECYCLE,
   RETURN_LIFECYCLE,
   RETURN_REASONS,
-  SUBSCRIPTION_LIFECYCLE,
+  SUBSCRIPTION_ACTION_TARGETS,
+  canApplySubscriptionAction,
   canTransition,
   normalizeEngineStatus,
   statusIn,
@@ -25,6 +26,7 @@ import {
   type OrderStatusUpdate,
   type ReturnReason,
   type ReturnStatus,
+  type SubscriptionAction,
   type GlAccountStatus,
   type InspectionStatus,
   type InvoiceStatus,
@@ -39,8 +41,16 @@ import {
   type WaveStatus,
   type WorkOrderStatus,
 } from './engine-lifecycles';
+import {
+  decimalScale,
+  divideDecimal,
+  multiplyDecimal,
+  sumDecimals,
+  toDecimalString,
+} from './finance/decimal';
 import type {
   Address,
+  AnalyticsCoverage,
   Customer,
   CustomerAnalytics,
   DashboardMetrics,
@@ -66,6 +76,7 @@ import type {
 // `./engine-lifecycles`; nothing in this file redeclares them.
 export type {
   Address,
+  AnalyticsCoverage,
   Customer,
   CustomerAnalytics,
   DashboardMetrics,
@@ -112,6 +123,10 @@ export interface CommerceEngine {
     list: (params?: {
       status?: string;
       customerId?: string;
+      /** RFC 3339, inclusive (native `OrderFilterInput.fromDate`). */
+      fromDate?: string;
+      /** RFC 3339, inclusive (native `OrderFilterInput.toDate`). */
+      toDate?: string;
       limit?: number;
       offset?: number;
     }) => Promise<Order[]>;
@@ -152,7 +167,16 @@ export interface CommerceEngine {
    * a single state of `RETURN_LIFECYCLE`; the engine refuses every other move.
    */
   returns: {
-    list: (params?: { status?: string; customerId?: string }) => Promise<Return[]>;
+    list: (params?: {
+      status?: string;
+      customerId?: string;
+      /** RFC 3339, inclusive (native `ReturnFilterInput.fromDate`). */
+      fromDate?: string;
+      /** RFC 3339, inclusive (native `ReturnFilterInput.toDate`). */
+      toDate?: string;
+      limit?: number;
+      offset?: number;
+    }) => Promise<Return[]>;
     get: (id: string) => Promise<Return | null>;
     create: (params: CreateReturnParams) => Promise<Return>;
     /** requested → approved */
@@ -194,15 +218,20 @@ export interface CommerceEngine {
   };
   /**
    * Subscriptions, named after the native binding's methods
-   * (`bindings/node/index.d.ts` `class Subscriptions`); moves follow
-   * `SUBSCRIPTION_LIFECYCLE`.
+   * (`bindings/node/index.d.ts` `class Subscriptions`); each action accepts
+   * the states in `SUBSCRIPTION_ACTION_SOURCES` (the engine's action guards).
    */
   subscriptions: {
-    list: (params?: { status?: string; customerId?: string }) => Promise<Subscription[]>;
+    list: (params?: {
+      status?: string;
+      customerId?: string;
+      limit?: number;
+      offset?: number;
+    }) => Promise<Subscription[]>;
     get: (id: string) => Promise<Subscription | null>;
     /** Start a subscription to a plan (the binding has no `create`). */
     subscribe: (input: { customerId: string; planId: string }) => Promise<Subscription>;
-    /** active → paused */
+    /** active | trial → paused */
     pause: (id: string) => Promise<Subscription>;
     /** paused → active */
     resume: (id: string) => Promise<Subscription>;
@@ -307,8 +336,12 @@ export interface CommerceEngine {
       limit?: number,
     ) => Promise<{ productId: string; name: string; revenue: number; units: number }[]>;
     getConversionFunnel?: () => Promise<{ stage: string; count: number; rate: number }[]>;
-    /** Native only (`Analytics.returnMetrics`): engine-computed return rate and refund total. */
-    returnMetrics?: () => Promise<NativeReturnMetrics>;
+    /**
+     * Native only (`Analytics.returnMetrics`): engine-computed return rate and
+     * refund total. `period` takes only named windows (`AnalyticsPeriod`) and
+     * defaults to the last 30 days.
+     */
+    returnMetrics?: (query?: { period?: string }) => Promise<NativeReturnMetrics>;
     /** Native only (`Analytics.lowStockItems`). */
     lowStockItems?: (threshold?: number) => Promise<NativeLowStockItem[]>;
     /** Native only (`Analytics.inventoryHealth`). */
@@ -375,20 +408,27 @@ const DEFAULT_DATABASE_PATH = process.env.DATABASE_PATH || './data/admin.db';
 const MOCK_FLAG = 'STATESET_ADMIN_ALLOW_MOCK_DATA';
 const MOCK_NOW = Date.parse('2026-03-01T12:00:00.000Z');
 
+/**
+ * The demo session's state. Orders, returns and subscriptions change during a
+ * session (creation, lifecycle moves), so their aggregates are not cached
+ * here: `mockOrderAnalytics` and friends derive them from these records on
+ * every read. `simulated` holds the figures demo mode invents because no
+ * record supports them; they are kept as seeded.
+ */
 type MockCommerceData = {
   orders: Order[];
-  orderAnalytics: OrderAnalytics;
   inventory: InventoryItem[];
   inventoryAnalytics: InventoryAnalytics;
   returns: Return[];
-  returnAnalytics: ReturnAnalytics;
   customers: Customer[];
   customerAnalytics: CustomerAnalytics;
   products: Product[];
   subscriptions: Subscription[];
-  subscriptionAnalytics: SubscriptionAnalytics;
-  dashboardMetrics: DashboardMetrics;
   hourlyActivity: HourlyActivity[];
+  simulated: {
+    returns: Pick<ReturnAnalytics, 'averageProcessingTime' | 'topReturnedProducts'>;
+    subscriptions: Pick<SubscriptionAnalytics, 'mrrGrowth' | 'averageLifetime'>;
+  };
 };
 
 let commerceInstance: CommerceEngine | null = null;
@@ -784,22 +824,6 @@ function buildMockCommerceData(): MockCommerceData {
     } satisfies Subscription;
   });
 
-  const ordersByStatus = orders.reduce<Record<string, number>>((acc, order) => {
-    acc[order.status] = (acc[order.status] || 0) + 1;
-    return acc;
-  }, {});
-
-  const ordersByDay = Array.from({ length: 30 }, (_, index) => {
-    const day = toDateKey(formatMockDate(-(29 - index)));
-    const dailyOrders = orders.filter((order) => toDateKey(order.createdAt) === day);
-    return {
-      date: day,
-      count: dailyOrders.length,
-      revenue: roundCurrency(dailyOrders.reduce((sum, order) => sum + order.totalAmount, 0)),
-    };
-  });
-
-  const totalRevenue = roundCurrency(orders.reduce((sum, order) => sum + order.totalAmount, 0));
   const totalUnits = inventory.reduce((sum, item) => sum + item.quantity, 0);
   const inventoryValue = roundCurrency(
     inventory.reduce((sum, item) => {
@@ -825,62 +849,6 @@ function buildMockCommerceData(): MockCommerceData {
     acc[segment] = (acc[segment] || 0) + 1;
     return acc;
   }, {});
-  const subscriptionMrr = roundCurrency(
-    subscriptions
-      .filter((subscription) => subscription.status === 'active')
-      .reduce((sum, subscription) => {
-        const monthlyFactor =
-          subscription.frequency === 'quarterly'
-            ? 1 / 3
-            : subscription.frequency === 'annually'
-              ? 1 / 12
-              : subscription.frequency === 'biweekly'
-                ? 2
-                : subscription.frequency === 'weekly'
-                  ? 4
-                  : 1;
-        return sum + subscription.totalAmount * monthlyFactor;
-      }, 0),
-  );
-
-  const dashboardMetrics = (() => {
-    const today = toDateKey(formatMockDate(0));
-    const yesterday = toDateKey(formatMockDate(-1));
-    const todayOrders = orders.filter((order) => toDateKey(order.createdAt) === today);
-    const yesterdayOrders = orders.filter((order) => toDateKey(order.createdAt) === yesterday);
-    const gmvToday = roundCurrency(todayOrders.reduce((sum, order) => sum + order.totalAmount, 0));
-    const gmvYesterday = roundCurrency(
-      yesterdayOrders.reduce((sum, order) => sum + order.totalAmount, 0),
-    );
-    const averageOrderValue = orders.length ? roundCurrency(totalRevenue / orders.length) : 0;
-    const gmvChange =
-      gmvYesterday > 0 ? Number(((gmvToday - gmvYesterday) / gmvYesterday).toFixed(3)) : 0;
-    const ordersChange =
-      yesterdayOrders.length > 0
-        ? Number(
-            ((todayOrders.length - yesterdayOrders.length) / yesterdayOrders.length).toFixed(3),
-          )
-        : 0;
-
-    return {
-      gmvToday,
-      gmvChange,
-      ordersToday: todayOrders.length,
-      ordersChange,
-      averageOrderValue,
-      aovChange: Number((averageOrderValue / 140).toFixed(3)),
-      conversionRate: Number(Math.min(0.12, orders.length / 1200).toFixed(3)),
-      conversionChange: 0.018,
-      activeCustomers: customers.filter((customer) => customer.totalOrders > 2).length,
-      newCustomers: customers.filter((customer) => customer.createdAt >= formatMockDate(-30))
-        .length,
-      returnRate: Number((returns.length / Math.max(orders.length, 1)).toFixed(3)),
-      inventoryHealth: Number(
-        (1 - lowStockItems.length / Math.max(inventory.length, 1)).toFixed(3),
-      ),
-    } satisfies DashboardMetrics;
-  })();
-
   const hourlyActivity = Array.from({ length: 24 }, (_, hour) => {
     const ordersCount = deterministicInt(hour + 1301, 4, 18);
     const averageRevenue = deterministicNumber(hour + 1401, 550, 1950);
@@ -893,13 +861,6 @@ function buildMockCommerceData(): MockCommerceData {
 
   return {
     orders,
-    orderAnalytics: {
-      totalOrders: orders.length,
-      totalRevenue,
-      averageOrderValue: orders.length ? roundCurrency(totalRevenue / orders.length) : 0,
-      ordersByStatus,
-      ordersByDay,
-    },
     inventory,
     inventoryAnalytics: {
       totalSKUs: inventory.length,
@@ -920,26 +881,6 @@ function buildMockCommerceData(): MockCommerceData {
       })),
     },
     returns,
-    returnAnalytics: {
-      totalReturns: returns.length,
-      returnRate: Number((returns.length / Math.max(orders.length, 1)).toFixed(3)),
-      refundTotal: roundCurrency(returns.reduce((sum, item) => sum + (item.refundAmount || 0), 0)),
-      returnsByReason: returns.reduce<Record<string, number>>((acc, item) => {
-        acc[item.reasonCategory] = (acc[item.reasonCategory] || 0) + 1;
-        return acc;
-      }, {}),
-      returnsByStatus: returns.reduce<Record<string, number>>((acc, item) => {
-        acc[item.status] = (acc[item.status] || 0) + 1;
-        return acc;
-      }, {}),
-      averageProcessingTime: 48,
-      topReturnedProducts: returns.slice(0, 3).map((item, index) => ({
-        productId: item.items[0]?.productId || `prod_${index}`,
-        name: item.items[0]?.name || `Product ${index + 1}`,
-        count: 2 + index,
-        rate: Number((0.02 + index * 0.01).toFixed(2)),
-      })),
-    },
     customers,
     customerAnalytics: {
       totalCustomers: customers.length,
@@ -967,41 +908,19 @@ function buildMockCommerceData(): MockCommerceData {
     },
     products,
     subscriptions,
-    subscriptionAnalytics: {
-      totalSubscriptions: subscriptions.length,
-      activeSubscriptions: subscriptions.filter((subscription) => subscription.status === 'active')
-        .length,
-      mrr: subscriptionMrr,
-      mrrGrowth: 0.08,
-      arr: roundCurrency(subscriptionMrr * 12),
-      churnRate: Number(
-        (
-          subscriptions.filter((subscription) => subscription.status === 'cancelled').length /
-          Math.max(subscriptions.length, 1)
-        ).toFixed(3),
-      ),
-      arpu: roundCurrency(
-        subscriptionMrr /
-          Math.max(
-            subscriptions.filter((subscription) => subscription.status === 'active').length,
-            1,
-          ),
-      ),
-      averageLifetime: 18,
-      subscriptionsByPlan: subscriptions.reduce<Record<string, number>>((acc, subscription) => {
-        acc[subscription.plan] = (acc[subscription.plan] || 0) + 1;
-        return acc;
-      }, {}),
-      subscriptionsByFrequency: subscriptions.reduce<Record<string, number>>(
-        (acc, subscription) => {
-          acc[subscription.frequency] = (acc[subscription.frequency] || 0) + 1;
-          return acc;
-        },
-        {},
-      ),
-    },
-    dashboardMetrics,
     hourlyActivity,
+    simulated: {
+      returns: {
+        averageProcessingTime: 48,
+        topReturnedProducts: returns.slice(0, 3).map((item, index) => ({
+          productId: item.items[0]?.productId || `prod_${index}`,
+          name: item.items[0]?.name || `Product ${index + 1}`,
+          count: 2 + index,
+          rate: Number((0.02 + index * 0.01).toFixed(2)),
+        })),
+      },
+      subscriptions: { mrrGrowth: 0.08, averageLifetime: 18 },
+    },
   };
 }
 
@@ -1010,6 +929,67 @@ function getMockData(): MockCommerceData {
     mockDataCache = buildMockCommerceData();
   }
   return mockDataCache;
+}
+
+// Demo aggregates are derived from the session's current records on every
+// read, with the same summaries (and the same window rules) the native
+// fallbacks use, so a demo lifecycle move or creation shows up in them.
+
+function mockOrderAnalytics(params?: { startDate?: string; endDate?: string }): OrderAnalytics {
+  return summarizeOrders(getMockData().orders, {
+    now: MOCK_NOW,
+    window: resolveAnalyticsWindow(params),
+  });
+}
+
+function mockReturnAnalytics(params?: { startDate?: string; endDate?: string }): ReturnAnalytics {
+  const data = getMockData();
+  const window = resolveAnalyticsWindow(params);
+  return {
+    ...summarizeReturns(data.returns, {
+      orderCount: data.orders.filter((order) => isWithinWindow(order.createdAt, window)).length,
+      window,
+    }),
+    ...data.simulated.returns,
+  };
+}
+
+function mockSubscriptionAnalytics(): SubscriptionAnalytics {
+  const data = getMockData();
+  return { ...summarizeSubscriptions(data.subscriptions), ...data.simulated.subscriptions };
+}
+
+function mockDashboardMetrics(): DashboardMetrics {
+  const { orders, customers, returns, inventory } = getMockData();
+  const totalOf = (subset: Order[]) => Number(sumDecimals(subset.map(exactOrderTotal)));
+  const today = toDateKey(formatMockDate(0));
+  const yesterday = toDateKey(formatMockDate(-1));
+  const todayOrders = orders.filter((order) => toDateKey(order.createdAt) === today);
+  const yesterdayOrders = orders.filter((order) => toDateKey(order.createdAt) === yesterday);
+  const gmvToday = totalOf(todayOrders);
+  const gmvYesterday = totalOf(yesterdayOrders);
+  const averageOrderValue = orders.length ? roundCurrency(totalOf(orders) / orders.length) : 0;
+  const lowStockItems = inventory.filter((item) => item.availableQuantity <= item.reorderPoint);
+  return {
+    gmvToday,
+    gmvChange: gmvYesterday > 0 ? Number(((gmvToday - gmvYesterday) / gmvYesterday).toFixed(3)) : 0,
+    ordersToday: todayOrders.length,
+    ordersChange:
+      yesterdayOrders.length > 0
+        ? Number(
+            ((todayOrders.length - yesterdayOrders.length) / yesterdayOrders.length).toFixed(3),
+          )
+        : 0,
+    averageOrderValue,
+    // Simulated: demo mode has no prior period to compare with.
+    aovChange: Number((averageOrderValue / 140).toFixed(3)),
+    conversionRate: Number(Math.min(0.12, orders.length / 1200).toFixed(3)),
+    conversionChange: 0.018,
+    activeCustomers: customers.filter((customer) => customer.totalOrders > 2).length,
+    newCustomers: customers.filter((customer) => customer.createdAt >= formatMockDate(-30)).length,
+    returnRate: Number((returns.length / Math.max(orders.length, 1)).toFixed(3)),
+    inventoryHealth: Number((1 - lowStockItems.length / Math.max(inventory.length, 1)).toFixed(3)),
+  };
 }
 
 function groupRevenueByPeriod(
@@ -1055,6 +1035,22 @@ function groupRevenueByPeriod(
       revenue: roundCurrency(current.revenue),
       orders: current.orders,
     }));
+}
+
+/**
+ * Keep a record created in demo mode, newest first as the engine lists, so
+ * the session can list it, read it and move it through its lifecycle.
+ */
+function persistMockRecord<T>(records: T[], record: T): T {
+  records.unshift(record);
+  return record;
+}
+
+/** Apply a list call's `limit`/`offset`, as the engine's lists do. */
+function mockPage<T>(records: T[], params?: { limit?: number; offset?: number }): T[] {
+  const offset = params?.offset || 0;
+  const end = params?.limit ? offset + params.limit : undefined;
+  return records.slice(offset, end);
 }
 
 function getMockOrder(id: string): Order | null {
@@ -1114,15 +1110,21 @@ function getMockSubscription(id: string): Subscription | null {
   return getMockData().subscriptions.find((subscription) => subscription.id === id) || null;
 }
 
-/** Move a mock subscription along `SUBSCRIPTION_LIFECYCLE`, refusing anything else. */
-function transitionMockSubscription(id: string, to: Subscription['status']): Subscription {
+/**
+ * Apply a subscription action to a mock subscription the way the engine
+ * does: the action's own guard (`SUBSCRIPTION_ACTION_SOURCES`, which lets
+ * `pause` take a trial as `pause_subscription` does), not just the catalog's
+ * edges. Persisted for the demo session.
+ */
+function applyMockSubscriptionAction(id: string, action: SubscriptionAction): Subscription {
   const data = getMockData();
   const index = data.subscriptions.findIndex((subscription) => subscription.id === id);
   if (index === -1) {
     throw new Error(`Subscription not found: ${id}`);
   }
   const current = data.subscriptions[index];
-  if (!canTransition(SUBSCRIPTION_LIFECYCLE, current.status, to)) {
+  const to = SUBSCRIPTION_ACTION_TARGETS[action];
+  if (!canApplySubscriptionAction(current.status, action)) {
     throw new Error(`Subscription cannot move from ${current.status} to ${to}`);
   }
   const next: Subscription = { ...current, status: to, updatedAt: new Date().toISOString() };
@@ -1271,16 +1273,15 @@ function createMockCommerceEngine(): CommerceEngine {
         if (params?.status) {
           orders = orders.filter((order) => order.status === params.status);
         }
-        const offset = params?.offset || 0;
-        const end = params?.limit ? offset + params.limit : undefined;
-        return orders.slice(offset, end);
+        return mockPage(orders, params);
       },
       get: async (id: string) => getMockOrder(id),
-      create: async (params: CreateOrderParams) => buildMockOrderFromParams(params),
+      create: async (params: CreateOrderParams) =>
+        persistMockRecord(getMockData().orders, buildMockOrderFromParams(params)),
       updateStatus: async (id: string, status: string) =>
         transitionMockOrder(id, status as Order['status']),
       cancel: async (id: string) => transitionMockOrder(id, 'cancelled'),
-      getAnalytics: async () => getMockData().orderAnalytics,
+      getAnalytics: async (params) => mockOrderAnalytics(params),
     },
     inventory: {
       list: async (params) => {
@@ -1377,10 +1378,11 @@ function createMockCommerceEngine(): CommerceEngine {
         if (params?.customerId) {
           returns = returns.filter((entry) => entry.customerId === params.customerId);
         }
-        return returns;
+        return mockPage(returns, params);
       },
       get: async (id: string) => getMockReturn(id),
-      create: async (params: CreateReturnParams) => buildMockReturnFromParams(params),
+      create: async (params: CreateReturnParams) =>
+        persistMockRecord(getMockData().returns, buildMockReturnFromParams(params)),
       approve: async (id: string) => transitionMockReturn(id, 'approved'),
       reject: async (id: string, reason: string) =>
         transitionMockReturn(id, 'rejected', { notes: reason }),
@@ -1389,7 +1391,7 @@ function createMockCommerceEngine(): CommerceEngine {
         transitionMockReturn(id, 'in_transit', { trackingNumber }),
       markReceived: async (id: string) => transitionMockReturn(id, 'received'),
       complete: async (id: string) => transitionMockReturn(id, 'completed'),
-      getAnalytics: async () => getMockData().returnAnalytics,
+      getAnalytics: async (params) => mockReturnAnalytics(params),
     },
     customers: {
       list: async (params) => {
@@ -1480,18 +1482,21 @@ function createMockCommerceEngine(): CommerceEngine {
             (subscription) => subscription.customerId === params.customerId,
           );
         }
-        return subscriptions;
+        return mockPage(subscriptions, params);
       },
       get: async (id: string) => getMockSubscription(id),
       subscribe: async (input: { customerId: string; planId: string }) =>
-        buildMockSubscription(
-          { customerId: input.customerId, planId: input.planId, plan: input.planId },
-          nextMockId('sub'),
+        persistMockRecord(
+          getMockData().subscriptions,
+          buildMockSubscription(
+            { customerId: input.customerId, planId: input.planId, plan: input.planId },
+            nextMockId('sub'),
+          ),
         ),
-      pause: async (id: string) => transitionMockSubscription(id, 'paused'),
-      resume: async (id: string) => transitionMockSubscription(id, 'active'),
-      cancel: async (id: string) => transitionMockSubscription(id, 'cancelled'),
-      getAnalytics: async () => getMockData().subscriptionAnalytics,
+      pause: async (id: string) => applyMockSubscriptionAction(id, 'pause'),
+      resume: async (id: string) => applyMockSubscriptionAction(id, 'resume'),
+      cancel: async (id: string) => applyMockSubscriptionAction(id, 'cancel'),
+      getAnalytics: async () => mockSubscriptionAnalytics(),
     },
     generalLedger: {
       getAutoPostingConfig: async () => null,
@@ -1569,7 +1574,7 @@ function createMockCommerceEngine(): CommerceEngine {
     },
     ...createMockOperationsSections(),
     analytics: {
-      getDashboardMetrics: async () => getMockData().dashboardMetrics,
+      getDashboardMetrics: async () => mockDashboardMetrics(),
       getHourlyActivity: async () => getMockData().hourlyActivity,
       getSystemHealth: async () => ({
         databaseLatency: 0.48,
@@ -1622,6 +1627,132 @@ function createMockCommerceEngine(): CommerceEngine {
 }
 
 // ============================================================================
+// Derived analytics: every record, not the first page
+// ============================================================================
+
+/**
+ * Page size for the admin's scans of native lists. The engine pages every
+ * list (`append_limit_offset` in `crates/stateset-db/src/sqlite/mod.rs`: 500
+ * rows when no limit is given, never more than 1000), so a single `list()`
+ * call is never "the whole collection".
+ */
+export const NATIVE_LIST_PAGE_SIZE = 500;
+
+/**
+ * The most records one derived aggregate reads. A scan that stops here
+ * reports `coverage.complete: false` instead of passing a subset off as the
+ * whole store.
+ */
+export const ANALYTICS_SCAN_LIMIT = 50_000;
+
+/**
+ * Read a paged list to the end (or to `ANALYTICS_SCAN_LIMIT`). `complete` is
+ * true only when the engine signalled the last page; an engine that repeats
+ * a page (ignores `offset`) or a collection past the cap yields `false`.
+ */
+async function collectAllPages<T extends { id: string }>(
+  fetchPage: (page: { limit: number; offset: number }) => Promise<T[]>,
+): Promise<{ records: T[]; complete: boolean }> {
+  const seen = new Set<string>();
+  const records: T[] = [];
+  let offset = 0;
+  for (;;) {
+    const page = await fetchPage({ limit: NATIVE_LIST_PAGE_SIZE, offset });
+    let added = 0;
+    for (const record of page) {
+      if (records.length === ANALYTICS_SCAN_LIMIT) {
+        return { records, complete: false };
+      }
+      if (!seen.has(record.id)) {
+        seen.add(record.id);
+        records.push(record);
+        added += 1;
+      }
+    }
+    // A short page is the last one; a page longer than asked for means the
+    // engine ignored paging and returned everything at once.
+    if (page.length !== NATIVE_LIST_PAGE_SIZE) {
+      return { records, complete: true };
+    }
+    if (added === 0) {
+      return { records, complete: false };
+    }
+    if (records.length === ANALYTICS_SCAN_LIMIT) {
+      const [next] = await fetchPage({ limit: 1, offset: offset + page.length });
+      return { records, complete: next === undefined };
+    }
+    offset += page.length;
+  }
+}
+
+/** A requested reporting window: inclusive epoch-millisecond bounds, either one optional. */
+export interface AnalyticsWindow {
+  start?: number;
+  end?: number;
+}
+
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseWindowBound(value: string, field: 'startDate' | 'endDate'): number {
+  // A bare date means the whole (UTC) day: from its first to its last millisecond.
+  const text = DATE_ONLY.test(value)
+    ? `${value}T${field === 'startDate' ? '00:00:00.000' : '23:59:59.999'}Z`
+    : value;
+  const parsed = Date.parse(text);
+  if (Number.isNaN(parsed)) {
+    throw new Error(`Invalid analytics ${field}: ${value}`);
+  }
+  return parsed;
+}
+
+/**
+ * The window an analytics caller asked for, or `undefined` for all time.
+ * Refuses an unparseable date rather than silently reporting all time.
+ */
+export function resolveAnalyticsWindow(params?: {
+  startDate?: string;
+  endDate?: string;
+}): AnalyticsWindow | undefined {
+  const start = params?.startDate ? parseWindowBound(params.startDate, 'startDate') : undefined;
+  const end = params?.endDate ? parseWindowBound(params.endDate, 'endDate') : undefined;
+  return start === undefined && end === undefined ? undefined : { start, end };
+}
+
+/** The window as the native list filters take it (`fromDate`/`toDate`, RFC 3339, inclusive). */
+function nativeDateFilter(window?: AnalyticsWindow): { fromDate?: string; toDate?: string } {
+  return {
+    ...(window?.start !== undefined && { fromDate: new Date(window.start).toISOString() }),
+    ...(window?.end !== undefined && { toDate: new Date(window.end).toISOString() }),
+  };
+}
+
+/** Whether a record's timestamp falls in the window (all records do when there is none). */
+function isWithinWindow(timestamp: string, window?: AnalyticsWindow): boolean {
+  if (!window) return true;
+  const at = Date.parse(timestamp);
+  if (Number.isNaN(at)) return false;
+  return (
+    (window.start === undefined || at >= window.start) &&
+    (window.end === undefined || at <= window.end)
+  );
+}
+
+function coverageOf(
+  records: readonly unknown[],
+  complete: boolean,
+  window?: AnalyticsWindow,
+  unavailable: string[] = [],
+): AnalyticsCoverage {
+  const range = nativeDateFilter(window);
+  return {
+    complete,
+    records: records.length,
+    ...(window && { window: { start: range.fromDate, end: range.toDate } }),
+    ...(unavailable.length > 0 && { unavailable }),
+  };
+}
+
+// ============================================================================
 // Orders API
 // ============================================================================
 
@@ -1664,33 +1795,79 @@ export const ordersApi = {
       return commerce.orders.getAnalytics(params);
     }
     // The binding has no order aggregate; every figure here is derivable
-    // from the order records themselves.
-    return summarizeOrders(await commerce.orders.list());
+    // from the order records themselves, all of them, in the requested window
+    // (the engine filters by order date; `summarizeOrders` re-applies the
+    // window in case a build ignores the filter).
+    const window = resolveAnalyticsWindow(params);
+    const { records, complete } = await collectAllPages((page) =>
+      commerce.orders.list({ ...nativeDateFilter(window), ...page }),
+    );
+    return summarizeOrders(records, { complete, window });
   },
 };
 
-/** Order analytics computed from the order records (engines without an aggregate). */
-export function summarizeOrders(orders: Order[], now: number = Date.now()): OrderAnalytics {
-  const totalRevenue = roundCurrency(orders.reduce((sum, order) => sum + order.totalAmount, 0));
+/** An order's total as an exact decimal string (the native exact twin when present). */
+function exactOrderTotal(order: Order): string {
+  return toDecimalString(order.totalAmountExact ?? order.totalAmount);
+}
+
+/** The UTC days the daily breakdown spans: the window, or the 30 days to `now`; at most 366. */
+function dailyBreakdownDays(now: number, window?: AnalyticsWindow): string[] {
+  const end = window?.end ?? now;
+  const start = window?.start ?? end - 29 * DAY_MS;
+  const lastDay = Date.parse(toDateKey(new Date(end).toISOString()));
+  const firstDay = Math.max(
+    Date.parse(toDateKey(new Date(start).toISOString())),
+    lastDay - 365 * DAY_MS,
+  );
+  const days: string[] = [];
+  for (let day = firstDay; day <= lastDay; day += DAY_MS) {
+    days.push(toDateKey(new Date(day).toISOString()));
+  }
+  return days;
+}
+
+/**
+ * Order analytics computed from the order records (engines without an
+ * aggregate). With a `window`, every figure covers only the orders created in
+ * it and the daily breakdown spans it.
+ */
+export function summarizeOrders(
+  allOrders: Order[],
+  options: { now?: number; complete?: boolean; window?: AnalyticsWindow } = {},
+): OrderAnalytics {
+  const now = options.now ?? Date.now();
+  const orders = allOrders.filter((order) => isWithinWindow(order.createdAt, options.window));
+  const revenueOf = (subset: Order[]) => sumDecimals(subset.map(exactOrderTotal));
+  const totalRevenueExact = revenueOf(orders);
+  const averageOrderValueExact = orders.length
+    ? divideDecimal(totalRevenueExact, orders.length)
+    : '0';
   const ordersByStatus = orders.reduce<Record<string, number>>((acc, order) => {
     acc[order.status] = (acc[order.status] || 0) + 1;
     return acc;
   }, {});
-  const ordersByDay = Array.from({ length: 30 }, (_, index) => {
-    const date = toDateKey(new Date(now - (29 - index) * DAY_MS).toISOString());
-    const daily = orders.filter((order) => toDateKey(order.createdAt) === date);
-    return {
-      date,
-      count: daily.length,
-      revenue: roundCurrency(daily.reduce((sum, order) => sum + order.totalAmount, 0)),
-    };
+  const byDay = new Map<string, Order[]>();
+  for (const order of orders) {
+    const day = toDateKey(order.createdAt);
+    const bucket = byDay.get(day);
+    if (bucket) bucket.push(order);
+    else byDay.set(day, [order]);
+  }
+  const ordersByDay = dailyBreakdownDays(now, options.window).map((date) => {
+    const daily = byDay.get(date) ?? [];
+    const revenueExact = revenueOf(daily);
+    return { date, count: daily.length, revenue: Number(revenueExact), revenueExact };
   });
   return {
     totalOrders: orders.length,
-    totalRevenue,
-    averageOrderValue: orders.length ? roundCurrency(totalRevenue / orders.length) : 0,
+    totalRevenue: Number(totalRevenueExact),
+    totalRevenueExact,
+    averageOrderValue: Number(averageOrderValueExact),
+    averageOrderValueExact,
     ordersByStatus,
     ordersByDay,
+    coverage: coverageOf(orders, options.complete ?? true, options.window),
   };
 }
 
@@ -1810,11 +1987,13 @@ export const inventoryApi = {
     }
     if (typeof commerce.analytics.inventoryHealth === 'function') {
       const health = await commerce.analytics.inventoryHealth();
+      const totalValueExact = toDecimalString(health.totalValueExact ?? health.totalValue);
       return {
         totalSKUs: health.totalSkus,
         // Not part of the engine's health report.
         totalUnits: 0,
-        totalValue: Number(health.totalValueExact ?? health.totalValue),
+        totalValue: Number(totalValueExact),
+        totalValueExact,
         lowStockItems: health.lowStockSkus,
         outOfStockItems: health.outOfStockSkus,
         turnoverRate: 0,
@@ -1912,35 +2091,81 @@ export function toAdminReturn(record: Return): Return {
 
 /**
  * Return analytics computed from the return records themselves, for engines
- * without an aggregate. Rate and refund total come from the engine's
- * `analytics.returnMetrics` when supplied; figures nothing reports (processing
- * time, top products) are left empty rather than invented.
+ * without an aggregate. Every figure describes ONE population: the returns in
+ * `window` (all of them when there is none).
+ *
+ *  - `metrics` (the engine's `analytics.returnMetrics`) supplies the rate and
+ *    refund total; pass it only when it was computed over that same
+ *    population.
+ *  - Otherwise the rate is returns per order over `orderCount` (the orders
+ *    created in the window, as the engine computes it), and the refund total
+ *    is summed from the records' refund amounts.
+ *
+ * A figure neither source can supply reads zero and is listed in
+ * `coverage.unavailable`; figures nothing reports (processing time, top
+ * products) are left empty rather than invented.
  */
 export function summarizeReturns(
-  returns: Return[],
-  metrics?: NativeReturnMetrics,
+  allReturns: Return[],
+  options: {
+    metrics?: NativeReturnMetrics;
+    orderCount?: number;
+    window?: AnalyticsWindow;
+    complete?: boolean;
+  } = {},
 ): ReturnAnalytics {
+  const { metrics, orderCount, window } = options;
+  const returns = allReturns.filter((entry) => isWithinWindow(entry.createdAt, window));
+  const unavailable: string[] = [];
   const tally = (key: (entry: Return) => string) =>
     returns.reduce<Record<string, number>>((acc, entry) => {
       acc[key(entry)] = (acc[key(entry)] || 0) + 1;
       return acc;
     }, {});
-  const refundTotal = metrics
-    ? Number(metrics.totalRefundedExact ?? metrics.totalRefunded)
-    : roundCurrency(returns.reduce((sum, entry) => sum + (entry.refundAmount || 0), 0));
+
+  let returnRate = 0;
+  if (metrics) {
+    returnRate = metrics.returnRatePercent / 100;
+  } else if (orderCount !== undefined) {
+    returnRate = orderCount > 0 ? Number((returns.length / orderCount).toFixed(4)) : 0;
+  } else {
+    unavailable.push('returnRate');
+  }
+
+  let refundTotalExact = '0';
+  const refundAmounts = returns.flatMap((entry) =>
+    entry.refundAmount === undefined ? [] : [entry.refundAmount],
+  );
+  if (metrics) {
+    refundTotalExact = toDecimalString(metrics.totalRefundedExact ?? metrics.totalRefunded);
+  } else if (refundAmounts.length > 0) {
+    refundTotalExact = sumDecimals(refundAmounts);
+  } else if (returns.length > 0) {
+    // Records without refund amounts (the native return header) and no
+    // engine total for this population: the refund total is unknown.
+    unavailable.push('refundTotal');
+  }
+
   return {
     totalReturns: returns.length,
-    returnRate: metrics ? metrics.returnRatePercent / 100 : 0,
-    refundTotal,
+    returnRate,
+    refundTotal: Number(refundTotalExact),
+    refundTotalExact,
     returnsByReason: tally((entry) => entry.reasonCategory),
     returnsByStatus: tally((entry) => entry.status),
     averageProcessingTime: 0,
     topReturnedProducts: [],
+    coverage: coverageOf(returns, options.complete ?? true, window, unavailable),
   };
 }
 
 export const returnsApi = {
-  async list(params?: { status?: string; customerId?: string }): Promise<Return[]> {
+  async list(params?: {
+    status?: string;
+    customerId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<Return[]> {
     const commerce = await getCommerceEngine();
     return (await commerce.returns.list(params)).map(toAdminReturn);
   },
@@ -1992,11 +2217,34 @@ export const returnsApi = {
     if (typeof commerce.returns.getAnalytics === 'function') {
       return commerce.returns.getAnalytics(params);
     }
+    const window = resolveAnalyticsWindow(params);
+    const dateFilter = nativeDateFilter(window);
+    const returns = await collectAllPages((page) =>
+      commerce.returns.list({ ...dateFilter, ...page }),
+    );
+    // The engine's metrics take only named periods (and default to the last
+    // 30 days), so they describe the same returns as the listing only for an
+    // undated request, asked for explicitly as all time.
     const metrics =
-      typeof commerce.analytics?.returnMetrics === 'function'
-        ? await commerce.analytics.returnMetrics()
+      !window && typeof commerce.analytics?.returnMetrics === 'function'
+        ? await commerce.analytics.returnMetrics({ period: 'all_time' })
         : undefined;
-    return summarizeReturns(await returnsApi.list(), metrics);
+    if (metrics) {
+      return summarizeReturns(returns.records.map(toAdminReturn), {
+        metrics,
+        complete: returns.complete,
+      });
+    }
+    // For a requested window, derive the rate as the engine does: returns per
+    // order created in the same window.
+    const orders = await collectAllPages((page) =>
+      commerce.orders.list({ ...dateFilter, ...page }),
+    );
+    return summarizeReturns(returns.records.map(toAdminReturn), {
+      orderCount: orders.records.filter((order) => isWithinWindow(order.createdAt, window)).length,
+      window,
+      complete: returns.complete && orders.complete,
+    });
   },
 };
 
@@ -2187,6 +2435,8 @@ interface NativeSubscriptionFields {
   planName?: string;
   billingInterval?: string;
   price?: number;
+  /** Exact decimal twin of `price`. */
+  priceExact?: string;
 }
 
 /**
@@ -2208,38 +2458,54 @@ export function toAdminSubscription(record: Subscription): Subscription {
     items: partial.items ?? [],
     quantity: partial.quantity ?? 1,
     totalAmount: partial.totalAmount ?? partial.price ?? 0,
+    totalAmountExact:
+      partial.totalAmountExact ??
+      partial.priceExact ??
+      toDecimalString(partial.totalAmount ?? partial.price ?? 0),
     createdAt,
     updatedAt: partial.updatedAt ?? createdAt,
   };
 }
 
-/** Months per billing period, for both the admin's and the engine's interval names. */
-const MONTHS_PER_INTERVAL: Record<string, number> = {
-  weekly: 12 / 52,
-  biweekly: 12 / 26,
-  'bi-weekly': 12 / 26,
-  monthly: 1,
-  'bi-monthly': 2,
-  quarterly: 3,
-  'semi-annual': 6,
-  annually: 12,
-  yearly: 12,
+/**
+ * Billing periods per year, for both the admin's and the engine's interval
+ * names. Whole numbers, so a yearly value is an exact product.
+ */
+const PERIODS_PER_YEAR: Record<string, number> = {
+  weekly: 52,
+  biweekly: 26,
+  'bi-weekly': 26,
+  monthly: 12,
+  'bi-monthly': 6,
+  quarterly: 4,
+  'semi-annual': 2,
+  annually: 1,
+  yearly: 1,
 };
 
 /**
  * Subscription analytics computed from the subscription records, for
- * engines without an aggregate. MRR covers active subscriptions whose
- * interval is known; figures nothing reports (growth, lifetime) are left at
- * zero rather than invented.
+ * engines without an aggregate. Recurring revenue covers active
+ * subscriptions whose interval is known, in exact decimals: ARR is the exact
+ * sum of price x periods per year, and MRR and ARPU are rounded once from
+ * it. Figures nothing reports (growth, lifetime) are left at zero rather
+ * than invented.
  */
-export function summarizeSubscriptions(subscriptions: Subscription[]): SubscriptionAnalytics {
+export function summarizeSubscriptions(
+  subscriptions: Subscription[],
+  options: { complete?: boolean } = {},
+): SubscriptionAnalytics {
   const active = subscriptions.filter((subscription) => subscription.status === 'active');
-  const mrr = roundCurrency(
-    active.reduce((sum, subscription) => {
-      const months = MONTHS_PER_INTERVAL[subscription.frequency];
-      return months ? sum + subscription.totalAmount / months : sum;
-    }, 0),
+  const arrExact = sumDecimals(
+    active.flatMap((subscription) => {
+      const periods = PERIODS_PER_YEAR[subscription.frequency];
+      const price = toDecimalString(subscription.totalAmountExact ?? subscription.totalAmount);
+      return periods ? [multiplyDecimal(price, periods)] : [];
+    }),
   );
+  const scale = Math.max(2, decimalScale(arrExact));
+  const mrrExact = divideDecimal(arrExact, 12, scale);
+  const arpuExact = active.length ? divideDecimal(arrExact, 12 * active.length, scale) : '0';
   const churned = subscriptions.filter(
     (subscription) => subscription.status === 'cancelled' || subscription.status === 'expired',
   ).length;
@@ -2252,18 +2518,27 @@ export function summarizeSubscriptions(subscriptions: Subscription[]): Subscript
   return {
     totalSubscriptions: subscriptions.length,
     activeSubscriptions: active.length,
-    mrr,
-    arr: roundCurrency(mrr * 12),
+    mrr: Number(mrrExact),
+    mrrExact,
+    arr: Number(arrExact),
+    arrExact,
     churnRate: subscriptions.length ? Number((churned / subscriptions.length).toFixed(3)) : 0,
-    arpu: active.length ? roundCurrency(mrr / active.length) : 0,
+    arpu: Number(arpuExact),
+    arpuExact,
     averageLifetime: 0,
     subscriptionsByPlan: tally((subscription) => subscription.plan),
     subscriptionsByFrequency: tally((subscription) => subscription.frequency),
+    coverage: coverageOf(subscriptions, options.complete ?? true),
   };
 }
 
 export const subscriptionsApi = {
-  async list(params?: { status?: string; customerId?: string }): Promise<Subscription[]> {
+  async list(params?: {
+    status?: string;
+    customerId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<Subscription[]> {
     const commerce = await getCommerceEngine();
     return (await commerce.subscriptions.list(params)).map(toAdminSubscription);
   },
@@ -2314,7 +2589,10 @@ export const subscriptionsApi = {
     if (typeof commerce.subscriptions.getAnalytics === 'function') {
       return commerce.subscriptions.getAnalytics();
     }
-    return summarizeSubscriptions(await subscriptionsApi.list());
+    const { records, complete } = await collectAllPages((page) =>
+      commerce.subscriptions.list(page),
+    );
+    return summarizeSubscriptions(records.map(toAdminSubscription), { complete });
   },
 };
 

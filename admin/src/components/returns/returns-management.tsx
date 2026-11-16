@@ -22,6 +22,7 @@ import { motion } from 'framer-motion';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getReturnsManagementData } from '@/app/actions/commerce';
 import { formatCurrency, formatPercentage, formatDateTime } from '@/lib/utils';
+import { formatMoney } from '@/lib/finance/format';
 import type { ReturnsManagementData, ReturnsPipelineStage } from '@/lib/types/dashboard-data';
 import type { Return } from '@/lib/types';
 import type { ReturnReason, ReturnStatus } from '@/lib/engine-lifecycles';
@@ -118,7 +119,7 @@ function ReturnsManagementInner({ data: propData }: ReturnsManagementProps) {
         />
         <MetricCard
           label="Refund Total"
-          value={formatCurrency(analytics.refundTotal)}
+          value={formatMoney(analytics.refundTotalExact ?? analytics.refundTotal)}
           tone="danger"
         />
         <MetricCard

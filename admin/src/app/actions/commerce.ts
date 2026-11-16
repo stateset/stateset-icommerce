@@ -555,6 +555,7 @@ export async function getReturnsManagementData() {
       totalReturns: analytics.totalReturns,
       returnRate: analytics.returnRate,
       refundTotal: analytics.refundTotal,
+      refundTotalExact: analytics.refundTotalExact,
       averageProcessingTime: analytics.averageProcessingTime,
       returnsByReason: analytics.returnsByReason,
       returnsByStatus: analytics.returnsByStatus,
