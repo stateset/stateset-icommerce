@@ -343,6 +343,16 @@ finance writes carry an authenticated identity.
   so such a conflict stayed unresolved forever. Local-wins and a combining
   merge are still refused there, since they would re-append an event that is
   already superseded.
+- x402 payments queued while the sequencer circuit is open always settle.
+  With the default `halfOpenMax: 2`, one successful request after recovery
+  left the circuit half-open, and the queue was flushed only on close, so a
+  queued payment's promise hung until some other caller made a second
+  request. The client now drains its own queue: once the reset timeout
+  passes, queued payments go out as the half-open trial requests, at most
+  `halfOpenMax` at a time, and the rest are flushed when the circuit closes.
+  A payment whose trial fails is rejected and the rest wait for the next
+  window. New `X402SequencerClient.close()` stops the drain and rejects what
+  is still queued.
 
 ## [1.40.0] - 2026-10-22
 

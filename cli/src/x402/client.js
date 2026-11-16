@@ -5,7 +5,9 @@
  *   - Circuit breaker (closed → open → half-open)
  *   - Exponential backoff retries (max 3 per request)
  *   - Fallback sequencer URL
- *   - Offline payment queue (in-memory, flushed when circuit closes)
+ *   - Offline payment queue (in-memory; drained by the client itself once the
+ *     breaker admits requests again — trial-sized while half-open, flushed
+ *     when the circuit closes)
  *   - Health check endpoint polling
  */
 
@@ -179,7 +181,26 @@ class SequencerCircuitBreaker {
     }
     return this.state;
   }
+
+  /**
+   * Milliseconds until canRequest() could next admit a request: 0 when it can
+   * now, the rest of the reset timeout while open, and — while every half-open
+   * trial slot is taken — the time until those trials count as lost (a slot
+   * that is given back sooner makes it 0 again). Does not change state.
+   * @returns {number}
+   */
+  admissionDelayMs() {
+    const now = Date.now();
+    if (this.state === CircuitState.CLOSED) return 0;
+    if (this.state === CircuitState.OPEN) {
+      return Math.max(0, this.lastFailureTime + this.resetTimeoutMs - now);
+    }
+    if (this.halfOpenInFlight < this.halfOpenMax) return 0;
+    return Math.max(0, this.halfOpenSince + this.resetTimeoutMs - now);
+  }
 }
+
+const PAYMENTS_PATH = '/api/v1/x402/payments';
 
 // ── Client ──────────────────────────────────────────────────────────────
 
@@ -209,8 +230,16 @@ export class X402SequencerClient {
     this._circuitBreaker = new SequencerCircuitBreaker(cbOpts);
 
     // Offline queue for payments when circuit is open
-    /** @type {Array<{payload: unknown, resolve: Function, reject: Function}>} */
+    /** @type {Array<{payload: unknown, resolve: (value: any) => void, reject: (reason?: unknown) => void}>} */
     this._offlineQueue = [];
+    /**
+     * Timer for the next attempt to drain the offline queue, armed only while
+     * the queue holds payments the breaker is not yet admitting.
+     * @type {ReturnType<typeof setTimeout> | null}
+     */
+    this._drainTimer = null;
+    this._drainDueAt = 0;
+    this._closed = false;
   }
 
   /**
@@ -280,12 +309,10 @@ export class X402SequencerClient {
           const result = await response.json();
           this._circuitBreaker.recordSuccess();
 
-          // Flush the offline queue once the circuit has closed again. Not
-          // while half-open: that would push the whole backlog through the
-          // trial window the half-open limit exists to keep small.
-          if (this._offlineQueue.length > 0 && this._circuitBreaker.state === CircuitState.CLOSED) {
-            this._flushOfflineQueue();
-          }
+          // A success may have closed the circuit or given back a half-open
+          // trial slot: let the offline queue move. It never pushes more than
+          // the free trial slots' worth of the backlog while half-open.
+          this._scheduleDrain();
 
           return result;
         } catch (err) {
@@ -302,26 +329,38 @@ export class X402SequencerClient {
 
     // All retries exhausted
     this._circuitBreaker.recordFailure();
+    // The circuit may have (re-)opened: queued payments wait for the next
+    // probe window instead of for outside traffic.
+    this._scheduleDrain();
     throw lastError;
   }
 
   /**
-   * Submit a payment intent. If circuit is open, queues for later submission.
+   * Submit a payment intent. If the circuit is not admitting requests, the
+   * payment is queued and submitted by the client itself once the breaker
+   * admits it again (see `_drainOfflineQueue`); the returned promise settles
+   * then, without needing any other request to come along.
    * @param {unknown} payload
    * @returns {Promise<any>}
    */
   async submitPaymentIntent(payload) {
     if (!this._circuitBreaker.canRequest()) {
+      if (this._closed) {
+        throw new Error(
+          'X402 sequencer client is closed — the circuit is not admitting requests and the payment was not queued',
+        );
+      }
       // Queue for later
       return new Promise((resolve, reject) => {
         this._offlineQueue.push({ payload, resolve, reject });
         console.warn(
           `[x402] Sequencer circuit OPEN — payment queued (queue depth: ${this._offlineQueue.length})`,
         );
+        this._scheduleDrain();
       });
     }
     // canRequest() above admitted this request; don't claim a second slot.
-    return this._request('POST', '/api/v1/x402/payments', payload, { _admitted: true });
+    return this._request('POST', PAYMENTS_PATH, payload, { _admitted: true });
   }
 
   /**
@@ -398,6 +437,80 @@ export class X402SequencerClient {
   }
 
   /**
+   * Stop draining the offline queue and reject the payments still in it.
+   * Afterwards a payment the breaker does not admit right away is refused
+   * instead of queued. Call this when discarding a client: while payments are
+   * queued, the drain timer keeps the process alive until each has settled.
+   */
+  close() {
+    this._closed = true;
+    this._clearDrainTimer();
+    const queued = this._offlineQueue.splice(0);
+    for (const item of queued) {
+      item.reject(new Error('X402 sequencer client closed — queued payment was not submitted'));
+    }
+  }
+
+  /** @private */
+  _clearDrainTimer() {
+    if (this._drainTimer) {
+      clearTimeout(this._drainTimer);
+      this._drainTimer = null;
+    }
+  }
+
+  /**
+   * Arrange for the offline queue to be drained as soon as the breaker can
+   * admit a request — after the open circuit's reset timeout, or when a
+   * half-open trial slot frees up — so queued payments settle without any
+   * outside request traffic. An earlier deadline replaces a later one.
+   * @private
+   */
+  _scheduleDrain() {
+    if (this._closed || this._offlineQueue.length === 0) return;
+    const delay = this._circuitBreaker.admissionDelayMs();
+    const dueAt = Date.now() + delay;
+    if (this._drainTimer) {
+      if (this._drainDueAt <= dueAt) return;
+      clearTimeout(this._drainTimer);
+    }
+    this._drainDueAt = dueAt;
+    this._drainTimer = setTimeout(() => {
+      this._drainTimer = null;
+      this._drainOfflineQueue();
+    }, delay);
+  }
+
+  /**
+   * Move the offline queue forward. Once the circuit is closed, flush it.
+   * While half-open, send queued payments as the trial requests themselves —
+   * one per free trial slot, so at most `halfOpenMax` of the backlog is in
+   * flight while the sequencer is on probation; each settles its own promise
+   * and, by reporting back, schedules the next step. A payment whose trial
+   * fails is rejected (as in a flush) and the circuit re-opens, so the rest
+   * wait for the next window. When nothing can be admitted now, re-arm the
+   * timer for when something can.
+   * @private
+   */
+  _drainOfflineQueue() {
+    while (!this._closed && this._offlineQueue.length > 0) {
+      if (this._circuitBreaker.getState() === CircuitState.CLOSED) {
+        this._flushOfflineQueue();
+        return;
+      }
+      // Claims a half-open trial slot when one is free.
+      if (!this._circuitBreaker.canRequest()) break;
+      const item = this._offlineQueue.shift();
+      if (!item) break;
+      this._request('POST', PAYMENTS_PATH, item.payload, { _admitted: true }).then(
+        item.resolve,
+        item.reject,
+      );
+    }
+    this._scheduleDrain();
+  }
+
+  /**
    * Flush the offline payment queue (called when circuit closes).
    */
   async _flushOfflineQueue() {
@@ -406,15 +519,17 @@ export class X402SequencerClient {
 
     for (let index = 0; index < queued.length; index++) {
       // If the circuit is no longer closed (a failure re-opened it), stop
-      // flushing and re-queue what is left. This reads the state rather than
-      // calling canRequest(), which would claim a half-open trial slot.
+      // flushing and re-queue what is left for the next probe window. This
+      // reads the state rather than calling canRequest(), which would claim a
+      // half-open trial slot.
       if (this._circuitBreaker.getState() !== CircuitState.CLOSED) {
         this._offlineQueue.push(...queued.slice(index));
+        this._scheduleDrain();
         break;
       }
       const item = queued[index];
       try {
-        const result = await this._request('POST', '/api/v1/x402/payments', item.payload);
+        const result = await this._request('POST', PAYMENTS_PATH, item.payload);
         item.resolve(result);
       } catch (err) {
         item.reject(err);
