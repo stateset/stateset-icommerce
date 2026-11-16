@@ -6,77 +6,14 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
-### Fixed
-
-- Postgres checkout no longer revives a terminal order. When an order was
-  already minted for the cart (`orders.create_from_cart`), checkout moved it
-  back to `confirmed` even if it had been cancelled, refunded, shipped or
-  delivered; it now accepts only `pending` (or an already `confirmed`
-  order), refuses anything else with `InvalidOrderStatusTransition` as
-  SQLite does, and writes under the order's version.
-- Kernel `x402.settle` applies the repository's settlement rules on both
-  databases. It writes `tx_hash_key`, so the unique index from migrations
-  082/089 covers governed settles (one on-chain transaction could settle two
-  intents), refuses a hash that already settled another intent
-  (`commerce.x402.tx_hash_already_settled`) and refuses an intent past
-  `valid_until` (`commerce.x402.intent_expired`).
-- Refunding a disputed A2A escrow through the kernel (`a2a.escrow.refund`)
-  resolves its open dispute as a `full_refund` in the same transaction and
-  records an `a2a.dispute_resolved.v1` fact, on both databases. The dispute
-  used to stay open, so `payments.create_refund` refused the escrow's
-  payment forever.
-- Warehouse pick and ship refuse a serial held by an open reservation for
-  another order (or any other reference), on both databases. Such a serial
-  could be picked and shipped for the wrong order, and the shipment closed
-  the other order's reservation. Unreserved serials, serials reserved for
-  the order being fulfilled, and lapsed unconfirmed reservations work as
-  before.
-- Postgres `search_configs.set_active` with an unknown id changes nothing,
-  as on SQLite. It used to commit "deactivate every config" before
-  returning `NotFound`.
-- HTTP idempotency keys no longer stick after a transient client error. A
-  401, 403, 405, 413, 415, 429 or any other 4xx that is not replayed (only
-  400, 404, 409 and 422 are) releases the durable reservation through the
-  new `HttpIdempotencyRepository::release`, so the same key can be retried;
-  such keys used to answer 409 forever. 5xx responses still keep the
-  reservation for reconciliation.
-- The HTTP negotiation counter-offer, accept and reject endpoints keep the
-  negotiation when its transition is refused; a refused transition (400)
-  used to delete it.
-- The CLI sync client works against the real stateset-sequencer API
-  (checked against its source at master e97829b):
-  - `pull()`, `getHead()` and `getEntityHistory()` read the VES routes
-    (`/api/v1/ves/events`, `/api/v1/ves/head`,
-    `/api/v1/ves/entities/{type}/{id}`). They read the deprecated pre-VES
-    routes, whose table VES ingest never writes, so pushed events never came
-    back. There is no fallback to the old routes: no sequencer version served
-    VES events there. A sequencer older than v0.6.0 (no VES read routes) now
-    gets a clear error instead of an empty stream.
-  - Pulled events map the VES envelope: `source_agent_id` (read as
-    `source_agent`, so no pulled event could verify), `sequenced_at` inside
-    the envelope, and no `receipt_hash`. A missing signature, key id or hash
-    stays missing instead of being filled with zeros. Entity history follows
-    `has_more` across pages and URL-encodes the id.
-  - Push settlement reads rejections as `event_id` and settles exact replays
-    (a retry after a lost response) from their stored receipts. Before, any
-    rejection or replay made the receipt "invalid" and left the whole batch
-    pending forever.
-  - `getCommitment()` reads the VES commitment (`/api/v1/ves/commitments/{id}`);
-    new `listCommitments()`, `createCommitment()`, `getInclusionProof()` and
-    `verifyEventInclusion()`, which binds the proof to the commitment's leaf
-    count. `getHead()` no longer returns `stateRoot`/`lastCommitmentId`,
-    which the head route never served.
-  - API keys go out as `Authorization: ApiKey <key>`; the sequencer reads
-    `Bearer` as a JWT only, so non-`ss_` keys sent as Bearer always failed.
-  - A sequencer without `GET /api/v1/agents/:id/signing-keys` (stateset-sequencer
-    PR #6, unmerged) yields a `key_directory_unsupported` error that says to
-    supply peer keys another way, instead of a bare 404.
-
 ## [1.41.0] - 2026-11-15
 
-1.41.0 rolls up three lines of work: the 1.40.1 security fixes, which were
-prepared but never published (they ship here), the ERP fix plan, and the
-agentic-commerce safety work. Back up and reconcile existing stores before
+1.41.0 rolls up four lines of work: the 1.40.1 security fixes, which were
+prepared but never published (they ship here), the ERP fix plan, the
+agentic-commerce safety work, and a lifecycle pass that makes the engine's
+state-machine catalog the single source for agent tools, the admin and
+refusal messages, fixes engine and JS lifecycle bugs, and makes the CLI's VES
+sync client work against the real sequencer. Back up and reconcile existing stores before
 upgrading; see [docs/src/guides/erp-upgrade.md](docs/src/guides/erp-upgrade.md).
 
 The ERP fix plan makes 59 corrections so that documents move stock, the ledger
@@ -336,6 +273,69 @@ finance writes carry an authenticated identity.
   could see a live WAL, and a second in-process SQLite could hit SIGBUS or
   "database disk image is malformed". `close()` now also waits for calls
   already in flight. (#452)
+- Postgres checkout no longer revives a terminal order. When an order was
+  already minted for the cart (`orders.create_from_cart`), checkout moved it
+  back to `confirmed` even if it had been cancelled, refunded, shipped or
+  delivered; it now accepts only `pending` (or an already `confirmed`
+  order), refuses anything else with `InvalidOrderStatusTransition` as
+  SQLite does, and writes under the order's version.
+- Kernel `x402.settle` applies the repository's settlement rules on both
+  databases. It writes `tx_hash_key`, so the unique index from migrations
+  082/089 covers governed settles (one on-chain transaction could settle two
+  intents), refuses a hash that already settled another intent
+  (`commerce.x402.tx_hash_already_settled`) and refuses an intent past
+  `valid_until` (`commerce.x402.intent_expired`).
+- Refunding a disputed A2A escrow through the kernel (`a2a.escrow.refund`)
+  resolves its open dispute as a `full_refund` in the same transaction and
+  records an `a2a.dispute_resolved.v1` fact, on both databases. The dispute
+  used to stay open, so `payments.create_refund` refused the escrow's
+  payment forever.
+- Warehouse pick and ship refuse a serial held by an open reservation for
+  another order (or any other reference), on both databases. Such a serial
+  could be picked and shipped for the wrong order, and the shipment closed
+  the other order's reservation. Unreserved serials, serials reserved for
+  the order being fulfilled, and lapsed unconfirmed reservations work as
+  before.
+- Postgres `search_configs.set_active` with an unknown id changes nothing,
+  as on SQLite. It used to commit "deactivate every config" before
+  returning `NotFound`.
+- HTTP idempotency keys no longer stick after a transient client error. A
+  401, 403, 405, 413, 415, 429 or any other 4xx that is not replayed (only
+  400, 404, 409 and 422 are) releases the durable reservation through the
+  new `HttpIdempotencyRepository::release`, so the same key can be retried;
+  such keys used to answer 409 forever. 5xx responses still keep the
+  reservation for reconciliation.
+- The HTTP negotiation counter-offer, accept and reject endpoints keep the
+  negotiation when its transition is refused; a refused transition (400)
+  used to delete it.
+- The CLI sync client works against the real stateset-sequencer API
+  (checked against its source at master e97829b):
+  - `pull()`, `getHead()` and `getEntityHistory()` read the VES routes
+    (`/api/v1/ves/events`, `/api/v1/ves/head`,
+    `/api/v1/ves/entities/{type}/{id}`). They read the deprecated pre-VES
+    routes, whose table VES ingest never writes, so pushed events never came
+    back. There is no fallback to the old routes: no sequencer version served
+    VES events there. A sequencer older than v0.6.0 (no VES read routes) now
+    gets a clear error instead of an empty stream.
+  - Pulled events map the VES envelope: `source_agent_id` (read as
+    `source_agent`, so no pulled event could verify), `sequenced_at` inside
+    the envelope, and no `receipt_hash`. A missing signature, key id or hash
+    stays missing instead of being filled with zeros. Entity history follows
+    `has_more` across pages and URL-encodes the id.
+  - Push settlement reads rejections as `event_id` and settles exact replays
+    (a retry after a lost response) from their stored receipts. Before, any
+    rejection or replay made the receipt "invalid" and left the whole batch
+    pending forever.
+  - `getCommitment()` reads the VES commitment (`/api/v1/ves/commitments/{id}`);
+    new `listCommitments()`, `createCommitment()`, `getInclusionProof()` and
+    `verifyEventInclusion()`, which binds the proof to the commitment's leaf
+    count. `getHead()` no longer returns `stateRoot`/`lastCommitmentId`,
+    which the head route never served.
+  - API keys go out as `Authorization: ApiKey <key>`; the sequencer reads
+    `Bearer` as a JWT only, so non-`ss_` keys sent as Bearer always failed.
+  - A sequencer without `GET /api/v1/agents/:id/signing-keys` (stateset-sequencer
+    PR #6, unmerged) yields a `key_directory_unsupported` error that says to
+    supply peer keys another way, instead of a bare 404.
 
 ## [1.40.0] - 2026-10-22
 
