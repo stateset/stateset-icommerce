@@ -1082,6 +1082,32 @@ describe('getPending', () => {
     outbox.markRejected(Number(seq), 'invalid payload');
     assert.equal(outbox.getPending().length, 0);
   });
+
+  it('with a scope, limits after filtering so older events of another store cannot starve it', async () => {
+    const otherStore = '550e8400-e29b-41d4-a716-446655440099';
+    for (let i = 0; i < 5; i++) {
+      await outbox.append(makeEvent({ entityId: `other${i}`, storeId: otherStore }));
+    }
+    await outbox.append(makeEvent({ entityId: 'mine0' }));
+    await outbox.append(makeEvent({ entityId: 'mine1' }));
+
+    // Unscoped, the oldest batch is all the other store's.
+    assert.ok(outbox.getPending(5).every((e) => e.storeId === otherStore));
+
+    const mine = outbox.getPending(5, { tenantId: TENANT_ID, storeId: STORE_ID });
+    assert.deepEqual(
+      mine.map((e) => e.entityId),
+      ['mine0', 'mine1'],
+    );
+    assert.equal(outbox.getPending(1, { tenantId: TENANT_ID, storeId: STORE_ID }).length, 1);
+    assert.equal(outbox.getPending(100, { tenantId: TENANT_ID, storeId: otherStore }).length, 5);
+    assert.deepEqual(outbox.getPending(100, { tenantId: 'another-tenant', storeId: STORE_ID }), []);
+  });
+
+  it('refuses a scope without both tenantId and storeId', () => {
+    assert.throws(() => outbox.getPending(10, { tenantId: TENANT_ID }), /tenantId and storeId/);
+    assert.throws(() => outbox.getPending(10, null), /tenantId and storeId/);
+  });
 });
 
 // =============================================================================

@@ -182,6 +182,13 @@ What to expect, from the stateset-sequencer source (main, Sep 2026):
   tree size taken from the **commitment record**, not from the proof. The
   commitment is served by the same sequencer, so this is independent evidence
   only once the commitment is anchored (`[included, anchored]`).
+- `[MALFORMED: replyTo, refs]`: optional fields signed in the wrong shape (by
+  another client, say) are dropped (`null` in `--json`, named in `malformed`);
+  the message and every other message still read.
+- Text output shows terminal control characters from the log (escape
+  sequences, carriage returns, bidi overrides) as visible escapes such as
+  `\x1b`, so a post cannot erase a warning or overprint a label. `--json`
+  keeps the exact values, with those characters JSON-escaped.
 
 ## Real Claude agents: a coordinator recipe
 
@@ -223,7 +230,8 @@ subagent, a `claude -p` run, or an Agent SDK agent with a shell tool.
    `examples/agent-board` with the worker's environment.
 
 4. **Coordinate on the log.** The coordinator posts the task to a thread,
-   polls `read --thread task-42 --json`, and moves on when the verified
+   polls `read --thread task-42 --json` (add `--from <last seen + 1>` to get
+   only newer messages), and moves on when the verified
    messages it needs are there (for example every worker's `state.done`).
    Sequence numbers give everyone the same order; `--reply-to` threads
    answers; `commit` periodically makes every message provable.

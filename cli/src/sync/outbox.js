@@ -1008,22 +1008,44 @@ export class Outbox {
   }
 
   /**
-   * Get pending events (not yet synced)
+   * Get pending events (not yet synced), oldest first.
+   *
+   * With a scope, only events signed for that tenant/store are returned, and
+   * the limit applies after that filter: filtering a global batch instead
+   * lets a full batch of another scope's older events starve this one.
+   *
    * @param {number} [limit=100] - Maximum events to return
+   * @param {{ tenantId: string, storeId: string }} [scope] - Only this tenant/store
    * @returns {Array<OutboxEvent>}
    */
-  getPending(limit = 100) {
+  getPending(limit = 100, scope) {
     this.initialize();
 
+    if (scope === undefined) {
+      const stmt = this.db.prepare(`
+        SELECT * FROM _ves_outbox
+        WHERE sync_status = 'pending'
+        ORDER BY local_seq ASC
+        LIMIT ?
+      `);
+      return stmt.all(limit).map(this._rowToEvent);
+    }
+
+    if (
+      typeof scope?.tenantId !== 'string' ||
+      !scope.tenantId ||
+      typeof scope.storeId !== 'string' ||
+      !scope.storeId
+    ) {
+      throw new Error('getPending scope requires tenantId and storeId');
+    }
     const stmt = this.db.prepare(`
       SELECT * FROM _ves_outbox
-      WHERE sync_status = 'pending'
+      WHERE sync_status = 'pending' AND tenant_id = ? AND store_id = ?
       ORDER BY local_seq ASC
       LIMIT ?
     `);
-
-    const rows = stmt.all(limit);
-    return rows.map(this._rowToEvent);
+    return stmt.all(scope.tenantId, scope.storeId, limit).map(this._rowToEvent);
   }
 
   /**

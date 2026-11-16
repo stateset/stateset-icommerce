@@ -24,9 +24,20 @@ import { fileURLToPath } from 'node:url';
 import { SequencerClient } from '../../../cli/src/sync/client.js';
 import { validatePushReceipt } from '../../../cli/src/sync/push-receipt.js';
 import { startMockSequencer } from '../mock-sequencer.mjs';
+import { openAgent } from '../lib/agent.mjs';
 import { clientConfig, sequencerSettings } from '../lib/config.mjs';
 
 const BOARD = fileURLToPath(new URL('../board.mjs', import.meta.url));
+
+const ESC = '\u001b';
+/**
+ * Characters a terminal acts on rather than prints: C0 controls (bar tab and
+ * newline), DEL, C1 controls (U+009B is an 8-bit CSI), bidi embeddings,
+ * overrides and isolates, and the Unicode line/paragraph separators.
+ */
+const TERMINAL_CONTROL =
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
 
 let mock;
 let home;
@@ -105,6 +116,32 @@ async function post(agent, thread, text, extra = []) {
 
 async function readThread(thread, extra = [], env) {
   return (await boardOk(['read', '--thread', thread, ...extra, '--json'], env)).json;
+}
+
+/**
+ * Sign a board event straight into an agent's outbox, bypassing the CLI's
+ * payload validation, as another client (or an older version) might. It is
+ * pushed by that agent's next post.
+ */
+async function appendRaw(name, thread, payloads, scope = {}) {
+  const agent = await openAgent(agents[name].dir, name);
+  try {
+    for (const payload of payloads) {
+      await agent.outbox.append({
+        eventId: randomUUID(),
+        commandId: randomUUID(),
+        tenantId: scope.tenantId ?? mock.tenantId,
+        storeId: scope.storeId ?? mock.storeId,
+        entityType: 'board_thread',
+        entityId: thread,
+        eventType: 'board.post',
+        payload,
+        sourceAgent: agent.manifest.agentId,
+      });
+    }
+  } finally {
+    agent.close();
+  }
 }
 
 describe('agent board on the mock sequencer', () => {
@@ -328,6 +365,139 @@ describe('agent board on the mock sequencer', () => {
     } finally {
       mock.setKeyDirectory(true);
     }
+  });
+
+  test('a thread read with --from returns only messages from that sequence on', async () => {
+    const first = await post('alice', 'polling', 'alice: first');
+    const second = await post('bob', 'polling', 'bob: second');
+    const third = await post('carol', 'polling', 'carol: third');
+
+    const all = await readThread('polling', ['--no-proofs']);
+    assert.deepEqual(
+      all.messages.map((m) => m.sequenceNumber),
+      [first, second, third],
+    );
+    // A polling reader resumes after the last message it processed.
+    const suffix = await readThread('polling', ['--no-proofs', '--from', String(second)]);
+    assert.deepEqual(
+      suffix.messages.map((m) => m.sequenceNumber),
+      [second, third],
+    );
+    assert.deepEqual(suffix.counts, { total: 2, verified: 2, unverified: 0 });
+    const caughtUp = await readThread('polling', ['--no-proofs', '--from', String(third + 1)]);
+    assert.deepEqual(caughtUp.messages, []);
+  });
+
+  test('a malformed replyTo or refs marks that message; the read still completes', async () => {
+    await appendRaw('alice', 'malformed', [
+      { author: 'alice', text: 'alice: refs is a string', refs: 'audit:1' },
+      {
+        author: 'alice',
+        text: 'alice: neither field can be printed',
+        replyTo: { toString: 1, valueOf: 1 },
+        refs: ['audit:1', { toString: 1 }],
+      },
+    ]);
+    const good = await post('alice', 'malformed', 'alice: a well-formed post', [
+      '--ref',
+      'audit:2',
+    ]);
+
+    const view = await readThread('malformed', ['--no-proofs']);
+    assert.equal(view.messages.length, 3);
+    // alice signed them exactly as they are, so they verify; the schema is a separate check.
+    for (const m of view.messages) assert.equal(m.verified, true);
+    const [stringRefs, objects, wellFormed] = view.messages;
+    assert.equal(stringRefs.text, 'alice: refs is a string');
+    assert.equal(stringRefs.refs, null);
+    assert.deepEqual(stringRefs.malformed, ['refs']);
+    assert.equal(objects.replyTo, null);
+    assert.equal(objects.refs, null);
+    assert.deepEqual(objects.malformed, ['replyTo', 'refs']);
+    assert.equal(wellFormed.sequenceNumber, good);
+    assert.deepEqual(wellFormed.malformed, []);
+    assert.deepEqual(wellFormed.refs, ['audit:2']);
+
+    const text = (await boardOk(['read', '--thread', 'malformed', '--no-proofs'])).stdout;
+    assert.match(text, /3 message\(s\), 3 verified/);
+    assert.match(text, /\[MALFORMED: refs\]/);
+    assert.match(text, /\[MALFORMED: replyTo, refs\]/);
+    assert.match(text, /refs: audit:2/);
+  });
+
+  test('a full batch of pending posts for another store does not hold up this board', async () => {
+    agents.frank = (await boardOk(['init', '--agent', 'frank', '--json'])).json;
+    await boardOk(['register', '--agent', 'frank'], asAdmin());
+    // An outage left a full push batch (100) signed for another store.
+    const elsewhere = { tenantId: mock.tenantId, storeId: randomUUID() };
+    await appendRaw(
+      'frank',
+      'other-store',
+      Array.from({ length: 100 }, (_, i) => ({ author: 'frank', text: `frank: queued ${i}` })),
+      elsewhere,
+    );
+
+    await post('frank', 'this-store', 'frank: still gets through');
+    const who = (await boardOk(['whoami', '--agent', 'frank', '--json'])).json;
+    assert.equal(who.outbox.synced, 1);
+    assert.equal(who.outbox.pending, 100, "the other store's posts wait for their own board");
+    assert.deepEqual(mock.events(elsewhere.tenantId, elsewhere.storeId), []);
+  });
+
+  test('terminal controls in the log are neutralised in text output and exact in --json', async () => {
+    const short = (name) => agents[name].agentId.slice(0, 8);
+    // A signed post that climbs back up to overwrite its header with a forged one...
+    const spoof =
+      `fine${ESC}[1A${ESC}[2K\r#1  2026-11-15T00:00:00Z  alice (${short('alice')})  [verified]` +
+      `\u009b2K\u202egnp.exe\u2066`;
+    const signed = await post('carol', 'escapes', spoof);
+    // ...an unverified one that erases its own warning and borrows a name...
+    const forged = await post('bob', 'escapes', 'bob: about to be rewritten');
+    mock.tamperPayload(
+      forged,
+      {
+        author: `alice${ESC}[2K`,
+        text: `${ESC}[2K${ESC}[1Aalice: [verified]`,
+        refs: [`audit${ESC}]0;pwned\u0007`],
+        state: { note: '\u009b2J\u007f' },
+      },
+      { rehash: true },
+    );
+    // ...and a thread id the CLI would never accept, served by the sequencer.
+    const renamed = await post('alice', 'escapes-renamed', 'alice: look at my thread');
+    mock.tamperEvent(renamed, (e) => {
+      e.entity_id = `escapes${ESC}[2J`;
+    });
+
+    const text = (await boardOk(['read', '--thread', 'escapes', '--no-proofs'])).stdout;
+    assert.doesNotMatch(text, TERMINAL_CONTROL);
+    assert.ok(text.includes('    fine\\x1b[1A\\x1b[2K\\x0d#1  '), text);
+    assert.ok(text.includes('\\x9b2K\\u202egnp.exe\\u2066'), text);
+    const headers = text.split('\n').filter((line) => line.startsWith('#'));
+    assert.deepEqual(
+      headers.map((line) => line.split(' ')[0]),
+      [`#${signed}`, `#${forged}`],
+      'no forged header line',
+    );
+    assert.match(
+      headers[1],
+      /^#\d+ .* alice\\x1b\[2K \([0-9a-f]{8}\) .*\[UNVERIFIED: signature_invalid/,
+    );
+    assert.ok(text.includes('refs: audit\\x1b]0;pwned\\x07'), text);
+    assert.ok(text.includes('state: {"note":"\\x9b2J\\x7f"}'), text);
+
+    const whole = (await boardOk(['read', '--no-proofs'])).stdout;
+    assert.doesNotMatch(whole, TERMINAL_CONTROL);
+    assert.ok(whole.includes('Thread "escapes\\x1b[2J"'), 'the served thread id, defanged');
+
+    const raw = (await boardOk(['read', '--thread', 'escapes', '--no-proofs', '--json'])).stdout;
+    assert.doesNotMatch(raw, TERMINAL_CONTROL, 'JSON output escapes them as \\uXXXX');
+    const bySeq = new Map(JSON.parse(raw).messages.map((m) => [m.sequenceNumber, m]));
+    assert.equal(bySeq.get(signed).text, spoof, 'the exact signed text');
+    assert.equal(bySeq.get(signed).verified, true);
+    assert.equal(bySeq.get(forged).author, `alice${ESC}[2K`);
+    assert.equal(bySeq.get(forged).verified, false);
+    assert.deepEqual(bySeq.get(forged).state, { note: '\u009b2J\u007f' });
   });
 
   test('configuration errors name the variable, never a value', async () => {

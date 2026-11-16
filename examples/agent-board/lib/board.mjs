@@ -40,7 +40,12 @@ export const EVENT_TYPE = 'board.post';
 const THREAD_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const MAX_TEXT = 8000;
 const MAX_REFS = 32;
+const MAX_REF = 512;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const isReplyTo = (value) => Number.isSafeInteger(value) && value >= 1;
+const isRef = (value) => typeof value === 'string' && value.length > 0 && value.length <= MAX_REF;
+const isRefs = (value) => Array.isArray(value) && value.length <= MAX_REFS && value.every(isRef);
 
 /** Key-resolution failures a trusted roster may stand in for. */
 const ROSTER_FALLBACK = new Set(['key_unresolved', 'sequencer_key_not_configured']);
@@ -62,18 +67,14 @@ export function buildPayload({ author, text, replyTo, refs, state }) {
   if (text.length > MAX_TEXT) throw new Error(`Message text is longer than ${MAX_TEXT} characters`);
   const payload = { author, text };
   if (replyTo !== undefined) {
-    if (!Number.isSafeInteger(replyTo) || replyTo < 1) {
+    if (!isReplyTo(replyTo)) {
       throw new Error('--reply-to must be a sequence number (a positive integer)');
     }
     payload.replyTo = replyTo;
   }
   if (refs !== undefined && refs.length) {
     if (refs.length > MAX_REFS) throw new Error(`At most ${MAX_REFS} --ref values`);
-    for (const ref of refs) {
-      if (typeof ref !== 'string' || !ref || ref.length > 512) {
-        throw new Error('--ref values must be 1-512 characters');
-      }
-    }
+    if (!refs.every(isRef)) throw new Error(`--ref values must be 1-${MAX_REF} characters`);
     payload.refs = refs;
   }
   if (state !== undefined) payload.state = state;
@@ -141,11 +142,13 @@ function toPushEnvelope(e) {
  * and any earlier unsent ones). Events stay pending when the request itself
  * fails, so the next post retries them; a per-event rejection is final and
  * recorded on the outbox row. Pending events signed for another tenant/store
- * are left alone until the configuration points there again.
+ * are left alone until the configuration points there again; they are
+ * filtered out in the query, before the batch limit, so a backlog for another
+ * board can never fill the batch and starve this one.
  */
 export async function flushOutbox({ agent, client, batchSize = 100 }) {
   const scope = { tenantId: client.config.tenantId, storeId: client.config.storeId };
-  const pending = agent.outbox.getPending(batchSize).filter((e) => matchesReceiveScope(e, scope));
+  const pending = agent.outbox.getPending(batchSize, scope);
   if (!pending.length) return [];
   assertOutgoingScope(pending, client.config);
   const response = await client.push({
@@ -367,6 +370,20 @@ function toMessage(record, verification, inclusion, roster) {
     env.eventType === EVENT_TYPE &&
     typeof payload.author === 'string' &&
     typeof payload.text === 'string';
+  // Optional fields another client signed in the wrong shape are dropped and
+  // named in `malformed`, so one odd post cannot abort the read (or the
+  // rendering) of every other message.
+  const malformed = [];
+  let replyTo = null;
+  if (payload.replyTo != null) {
+    if (isReplyTo(payload.replyTo)) replyTo = payload.replyTo;
+    else malformed.push('replyTo');
+  }
+  let refs = null;
+  if (payload.refs != null) {
+    if (isRefs(payload.refs)) refs = payload.refs;
+    else malformed.push('refs');
+  }
   const signerName = roster?.nameFor(env.sourceAgent) ?? null;
   return {
     sequenceNumber: record.sequenceNumber,
@@ -375,10 +392,11 @@ function toMessage(record, verification, inclusion, roster) {
     eventType: env.eventType,
     author: wellFormed ? payload.author : null,
     text: wellFormed ? payload.text : null,
-    replyTo: payload.replyTo ?? null,
-    refs: payload.refs ?? null,
+    replyTo,
+    refs,
     state: payload.state ?? null,
     wellFormed,
+    malformed,
     signer: { agentId: env.sourceAgent, keyId: env.agentKeyId, rosterName: signerName },
     authorMatchesRoster: signerName === null ? null : signerName === payload.author,
     createdAt: env.createdAt,
@@ -417,8 +435,10 @@ export async function readBoard({
     records = records.filter((r) => r.envelope.entityType === ENTITY_TYPE);
   }
   // Belt and braces: the history route is per entity, but trust nothing.
+  // The history route has no starting sequence, so --from is applied here
+  // for thread reads (the pull route already starts at it).
   records = records
-    .filter((r) => r.envelope.entityType === ENTITY_TYPE)
+    .filter((r) => r.envelope.entityType === ENTITY_TYPE && r.sequenceNumber >= from)
     .filter((r) => thread === undefined || r.envelope.entityId === thread)
     .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
 
@@ -476,11 +496,64 @@ export async function commitNext({ settings }) {
 // Rendering
 // ---------------------------------------------------------------------------
 
+/**
+ * Characters a terminal acts on rather than prints: C0 controls, DEL, C1
+ * controls (U+009B is an 8-bit CSI), the Arabic letter mark, LRM/RLM, bidi
+ * embeddings, overrides and isolates, and the Unicode line/paragraph
+ * separators. Showing ESC and CSI as text defangs every escape sequence: what
+ * follows them is printable.
+ */
+const TERMINAL_CONTROLS =
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/gu;
+/** The subset JSON.stringify leaves raw (it already escapes U+0000-U+001F). */
+const JSON_RAW_CONTROLS =
+  /[\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/gu;
+
+const hex = (ch, width) => ch.codePointAt(0).toString(16).padStart(width, '0');
+
+/**
+ * One line of terminal text with every control character shown as a visible
+ * escape (`\x1b`, `\u202e`) instead of being acted on. Tabs are kept.
+ */
+export function neutralizeLine(line) {
+  return String(line).replace(TERMINAL_CONTROLS, (ch) => {
+    if (ch === '\t') return ch;
+    return ch.codePointAt(0) <= 0xff ? `\\x${hex(ch, 2)}` : `\\u${hex(ch, 4)}`;
+  });
+}
+
+/** Multi-line terminal text: newlines kept, every other control neutralised. */
+export function neutralizeText(text) {
+  return String(text).split('\n').map(neutralizeLine).join('\n');
+}
+
+/**
+ * JSON.stringify whose output carries no raw terminal controls: the ones it
+ * leaves raw are written as \uXXXX escapes. They can only occur inside JSON
+ * strings, so the document parses back to exactly the same values.
+ */
+export function safeJsonStringify(value, space) {
+  const json = JSON.stringify(value, null, space);
+  return json === undefined ? json : json.replace(JSON_RAW_CONTROLS, (ch) => `\\u${hex(ch, 4)}`);
+}
+
+/** A value served by the sequencer as text, whatever its JSON type. */
+function show(value) {
+  if (typeof value === 'string') return value;
+  if (value === null || value === undefined || typeof value !== 'object') return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return '(unprintable)';
+  }
+}
+
 function verificationLabel(m) {
   if (m.verified)
     return m.verification.keySource === 'roster' ? '[verified: roster key]' : '[verified]';
-  const detail = m.verification.detail ? ` - ${m.verification.detail}` : '';
-  return `[UNVERIFIED: ${m.verification.reason}${detail}]`;
+  const detail = m.verification.detail ? ` - ${show(m.verification.detail)}` : '';
+  return `[UNVERIFIED: ${show(m.verification.reason)}${detail}]`;
 }
 
 function inclusionLabel(m) {
@@ -492,12 +565,23 @@ function inclusionLabel(m) {
     case 'skipped':
       return '';
     case 'failed':
-      return `[INCLUSION FAILED: ${m.inclusion.reason}]`;
+      return `[INCLUSION FAILED: ${show(m.inclusion.reason)}]`;
     default:
-      return `[inclusion unavailable: ${m.inclusion.reason}]`;
+      return `[inclusion unavailable: ${show(m.inclusion.reason)}]`;
   }
 }
 
+function malformedLabel(m) {
+  return m.malformed?.length ? `[MALFORMED: ${m.malformed.join(', ')}]` : '';
+}
+
+/**
+ * The board as terminal text. Everything in it that came from the log
+ * (thread ids, authors, text, refs, state, sequencer error details) is
+ * attacker-controlled, so every line is neutralised: an escape sequence in a
+ * post is shown, never executed, and cannot erase a warning or forge a label.
+ * Use `--json` for the exact values.
+ */
 export function renderBoard(board) {
   const lines = [];
   const threads = new Map();
@@ -505,18 +589,19 @@ export function renderBoard(board) {
     if (!threads.has(m.thread)) threads.set(m.thread, []);
     threads.get(m.thread).push(m);
   }
+  const head = show(board.headSequence);
   if (!threads.size) {
     lines.push(
       board.thread
-        ? `Thread "${board.thread}" has no messages (stream head #${board.headSequence}).`
-        : `No board messages (stream head #${board.headSequence}).`,
+        ? `Thread "${show(board.thread)}" has no messages (stream head #${head}).`
+        : `No board messages (stream head #${head}).`,
     );
   }
   for (const [thread, messages] of threads) {
     const seen = new Set(messages.map((m) => m.sequenceNumber));
     lines.push(
-      `Thread "${thread}" - ${messages.length} message(s), ` +
-        `${messages.filter((m) => m.verified).length} verified, stream head #${board.headSequence}`,
+      `Thread "${show(thread)}" - ${messages.length} message(s), ` +
+        `${messages.filter((m) => m.verified).length} verified, stream head #${head}`,
     );
     for (const m of messages) {
       const who = m.wellFormed ? m.author : '(not a board post)';
@@ -527,18 +612,22 @@ export function renderBoard(board) {
         m.authorMatchesRoster === false
           ? ` [author label "${m.author}" but roster names the signer "${m.signer.rosterName}"]`
           : '';
-      const labels = [verificationLabel(m), inclusionLabel(m)].filter(Boolean).join(' ');
+      const labels = [verificationLabel(m), inclusionLabel(m), malformedLabel(m)]
+        .filter(Boolean)
+        .join(' ');
       lines.push(
-        `#${m.sequenceNumber}  ${m.createdAt}  ${who} (${String(m.signer.agentId).slice(0, 8)})${reply}  ${labels}${mismatch}`,
+        `#${show(m.sequenceNumber)}  ${show(m.createdAt)}  ${who} (${show(m.signer.agentId).slice(0, 8)})${reply}  ${labels}${mismatch}`,
       );
       if (m.text !== null) {
-        for (const textLine of m.text.split('\n')) lines.push(`    ${textLine}`);
+        // A lone CR stays in the line (and is neutralised): it would return
+        // the cursor to column 0 and overprint the indentation.
+        for (const textLine of m.text.split(/\r?\n/)) lines.push(`    ${textLine}`);
       } else {
-        lines.push(`    (${m.eventType})`);
+        lines.push(`    (${show(m.eventType)})`);
       }
-      if (m.refs) lines.push(`    refs: ${m.refs.join(', ')}`);
+      if (m.refs?.length) lines.push(`    refs: ${m.refs.join(', ')}`);
       if (m.state !== null) lines.push(`    state: ${JSON.stringify(m.state)}`);
     }
   }
-  return lines.join('\n');
+  return lines.map(neutralizeLine).join('\n');
 }
