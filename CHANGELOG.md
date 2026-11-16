@@ -301,7 +301,9 @@ finance writes carry an authenticated identity.
   before.
 - Postgres `search_configs.set_active` with an unknown id changes nothing,
   as on SQLite. It used to commit "deactivate every config" before
-  returning `NotFound`.
+  returning `NotFound`. Concurrent activations take turns behind a
+  transaction-scoped advisory lock, so two activations of different
+  configs no longer deadlock (Postgres aborted one).
 - HTTP idempotency keys no longer stick after a transient client error. A
   401, 403, 405, 413, 415, 429 or any other 4xx that is not replayed (only
   400, 404, 409 and 422 are) releases the durable reservation through the
