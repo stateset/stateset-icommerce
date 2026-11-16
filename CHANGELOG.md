@@ -289,7 +289,10 @@ finance writes carry an authenticated identity.
   resolves its open dispute as a `full_refund` in the same transaction and
   records an `a2a.dispute_resolved.v1` fact, on both databases. The dispute
   used to stay open, so `payments.create_refund` refused the escrow's
-  payment forever.
+  payment forever. On Postgres, `a2a.dispute.resolve` now locks the escrow
+  before the dispute, as the refund does, so a refund and a resolution of
+  the same escrow running together no longer deadlock (Postgres aborted one
+  with a database error instead of a receipt).
 - Warehouse pick and ship refuse a serial held by an open reservation for
   another order (or any other reference), on both databases. Such a serial
   could be picked and shipped for the wrong order, and the shipment closed
