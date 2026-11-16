@@ -97,6 +97,7 @@ describe('Core commerce domain registry', () => {
         'complete_return',
         'cancel_return',
         'add_return_tracking',
+        'set_return_item_disposition',
       ],
     );
   });
@@ -616,5 +617,34 @@ describe('Return Tools', () => {
     });
     assert.equal(result.success, true);
     assert.deepEqual(received, { id: 'ret_001', tracking: 'TRK123' });
+  });
+
+  it('set_return_item_disposition forwards ids and disposition, and previews without apply', async () => {
+    let received;
+    const commerce = makeCommerce({
+      setItemDisposition: async (returnId, itemId, input) => {
+        received = { returnId, itemId, input };
+        return { id: itemId, returnId, disposition: input.disposition };
+      },
+    });
+    const tool = findTool(returnTools, 'set_return_item_disposition');
+    const params = {
+      returnId: 'ret_001',
+      returnItemId: 'item_001',
+      disposition: 'scrap',
+      note: 'cracked',
+    };
+    const preview = await tool.handler({ commerce, params, allowApply: false });
+    assert.equal(preview.success, false);
+    assert.equal(received, undefined, 'nothing is written without --apply');
+    const result = await tool.handler({ commerce, params, allowApply: true });
+    assert.equal(result.success, true);
+    assert.equal(result.returnItem.disposition, 'scrap');
+    assert.deepEqual(received, {
+      returnId: 'ret_001',
+      itemId: 'item_001',
+      input: { disposition: 'scrap' },
+    });
+    assert.equal(tool.inputSchema.disposition.safeParse('donate').success, false);
   });
 });

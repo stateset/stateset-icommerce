@@ -5,7 +5,7 @@ use serde_json::Value;
 use stateset_core::{
     AddCartItemCommand, AddReturnTracking, ApplyCartCoupon, CalculateCartTax, CompletePayment,
     CreateCart, CreateCustomer, CreateReturn, CreateShipment, SetCartPaymentMethod,
-    SetCartShippingAddress,
+    SetCartShippingAddress, SetReturnItemDisposition,
 };
 use stateset_core::{
     CanonicalTransactionApi, ChargeSubscription, CommandEnvelope, CommerceError, CommitCheckout,
@@ -263,6 +263,9 @@ impl Commerce {
             "shipments.create" => execute!(CreateShipment, execute_create_shipment),
             "returns.create" => execute!(CreateReturn, execute_create_return),
             "returns.tracking.add" => execute!(AddReturnTracking, execute_add_return_tracking),
+            "returns.item.disposition.set" => {
+                execute!(SetReturnItemDisposition, execute_set_return_item_disposition)
+            }
             _ => Err(CommerceError::ValidationError(format!(
                 "unsupported governed kernel command type: {command_type}"
             ))),

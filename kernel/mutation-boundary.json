@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "digest": "sha256:ba0dfcaae775733e5c0aa104ddd1a3cff6676f5b14b56bdb8abeed4e5659ae8a",
+  "digest": "sha256:6d375f52d62fe8c969a04534a4741d258a180f081001ea2c9f44fed5a3cf6594",
   "counts": {
-    "total": 1004,
+    "total": 1005,
     "readOnly": 482,
-    "mutations": 522,
-    "governed": 36,
+    "mutations": 523,
+    "governed": 37,
     "governedComposite": 2,
     "blocked": 484
   },
@@ -6211,6 +6211,13 @@
       "mutation": true,
       "disposition": "blocked",
       "commandType": null
+    },
+    {
+      "name": "set_return_item_disposition",
+      "permission": "write",
+      "mutation": true,
+      "disposition": "governed",
+      "commandType": "returns.item.disposition.set"
     },
     {
       "name": "set_tax_enabled",

@@ -17,7 +17,8 @@ use super::payments::{
     void_in_flight_payments_for_order_conn,
 };
 use super::returns::{
-    SqliteReturnRepository, apply_update_tx, insert_return_tx, row_to_return_item,
+    SqliteReturnRepository, apply_update_published_tx, apply_update_tx, insert_return_tx,
+    load_return_conn, row_to_return_item, set_item_disposition_tx,
 };
 use super::shipments::create_shipment_tx;
 use super::subscriptions::SqliteSubscriptionRepository;
@@ -53,7 +54,11 @@ use crate::kernel::plans::payments::{
     RefundSnapshot, create_payment_guard, economic_counterparty_guard, economic_money_guard,
     plan_refund,
 };
-use crate::kernel::plans::returns::transition_return_guard;
+use crate::kernel::plans::returns::{
+    RETURN_DISPOSITION_UNVERSIONED, set_return_item_disposition_guard,
+    set_return_item_disposition_state_guard, transition_return_guard,
+    transition_return_state_guard,
+};
 use crate::kernel::plans::storefront::{
     DomainOutcome, PAYMENT_UNVERSIONED, RETURN_TRACKING_UNVERSIONED, SealDecision,
     StorefrontAggregate, add_cart_item_guard, add_return_tracking_guard, apply_cart_coupon_guard,
@@ -67,8 +72,8 @@ use crate::kernel::receipt::{
     receipt_record, rejected_receipt, succeeded_receipt,
 };
 use crate::kernel::{
-    BudgetSnapshot, CommandRun, EnvelopeGuard, Replay, budget_at_storage_precision, plan_budget,
-    resolve_replay,
+    BudgetSnapshot, CommandRun, EnvelopeGuard, GuardRejection, Replay, budget_at_storage_precision,
+    plan_budget, resolve_replay,
 };
 use crate::{KernelOutboxEvent, KernelReceiptRecord};
 use chrono::Utc;
@@ -96,7 +101,8 @@ use stateset_core::{
 use stateset_core::{
     AddCartItemCommand, AddReturnTracking, ApplyCartCoupon, CalculateCartTax, Cart, CartRepository,
     CartTaxCalculated, CompletePayment, CreateCart, CreateCustomer, CreateReturn, CreateShipment,
-    Customer, SetCartPaymentMethod, SetCartShippingAddress, Shipment, UpdateReturn,
+    Customer, ReturnItem, SetCartPaymentMethod, SetCartShippingAddress, SetReturnDisposition,
+    SetReturnItemDisposition, Shipment, UpdateReturn,
 };
 use uuid::Uuid;
 
@@ -133,6 +139,7 @@ const COMPLETE_PAYMENT_COMMAND: &str = "payments.complete";
 const CREATE_SHIPMENT_COMMAND: &str = "shipments.create";
 const CREATE_RETURN_COMMAND: &str = "returns.create";
 const ADD_RETURN_TRACKING_COMMAND: &str = "returns.tracking.add";
+const SET_RETURN_ITEM_DISPOSITION_COMMAND: &str = "returns.item.disposition.set";
 
 fn to_sql_err(error: CommerceError) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(error))
@@ -2086,6 +2093,25 @@ impl SqliteKernelExecutor {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
+            // The repository's rules on every return status write: terminal
+            // returns are immutable, dispositioned items pin the return, and
+            // completion needs every item dispositioned.
+            if let Some(rejection) =
+                transition_return_state_guard(&returned, command.payload.status)
+            {
+                let mut receipt = rejected_receipt(
+                    command,
+                    Some(policy.clone()),
+                    rejection.code,
+                    &rejection.message,
+                    rejection.retry,
+                    "return",
+                );
+                receipt.aggregate_id = Some(returned.id.to_string());
+                receipt.version_before = Some(version_before);
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
             if command.mode == ExecutionMode::Preview {
                 let mut receipt = preview_receipt(command, policy.clone(), "return");
                 receipt.result = Some(returned);
@@ -2094,17 +2120,19 @@ impl SqliteKernelExecutor {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
-            let changed = tx.execute(
-                "UPDATE returns SET status = ?, updated_at = ?, version = version + 1
-                 WHERE id = ? AND version = ?",
-                params![
-                    command.payload.status.to_string(),
-                    started_at.to_rfc3339(),
-                    command.payload.return_id.to_string(),
-                    version_before
-                ],
+            // The repository's own status write, in this transaction: the
+            // guards above re-checked on the locked row, the version bump,
+            // and — on completion — the payment refunds `settle_refund_tx`
+            // creates. Its `returns.updated.v1` fact is this command's fact.
+            let (applied, event_id) = apply_update_published_tx(
+                tx,
+                command.payload.return_id,
+                &UpdateReturn { status: Some(command.payload.status), ..Default::default() },
+                started_at,
+                Some(command.idempotency_key.clone()),
+                |event| attach_command_context(event, command),
             )?;
-            if changed == 0 {
+            if applied.version != version_before + 1 {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                     CommerceError::VersionConflict {
                         entity: "return".into(),
@@ -2113,33 +2141,7 @@ impl SqliteKernelExecutor {
                     },
                 )));
             }
-            let mut event = KernelOutboxEvent::domain(
-                "returns.updated.v1",
-                "return",
-                command.payload.return_id.to_string(),
-                serde_json::json!({"return_id": command.payload.return_id.to_string(),
-                    "status_before": returned.status.to_string(), "status_after": command.payload.status.to_string(),
-                    "version_before": version_before, "version_after": version_before + 1,
-                    "refund_amount": returned.refund_amount.map(|amount| amount.to_string())}),
-                Some(command.idempotency_key.clone()),
-            );
-            attach_command_context(&mut event, command);
-            append_kernel_event_tx(tx, &event)?;
-            returned = tx.query_row(
-                "SELECT * FROM returns WHERE id = ?",
-                [command.payload.return_id.to_string()],
-                SqliteReturnRepository::row_to_return,
-            )?;
-            let mut stmt = tx.prepare(
-                "SELECT id, return_id, order_item_id, sku, name, quantity, condition,
-                        refund_amount, disposition, disposition_at, disposition_by,
-                        lot_id, serial_ids
-                 FROM return_items WHERE return_id = ? ORDER BY rowid",
-            )?;
-            returned.items = stmt
-                .query_map([command.payload.return_id.to_string()], row_to_return_item)?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            drop(stmt);
+            returned = applied;
             let mut receipt = ExecutionReceipt {
                 contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
                 receipt_id: Uuid::new_v4(),
@@ -2155,7 +2157,7 @@ impl SqliteKernelExecutor {
                 aggregate_id: Some(returned.id.to_string()),
                 version_before: Some(version_before),
                 version_after: Some(returned.version),
-                event_ids: vec![event.id],
+                event_ids: vec![event_id],
                 policy: Some(policy.clone()),
                 economic_context: Some(stateset_core::EconomicReceiptContext::from_command(
                     command,
@@ -4713,6 +4715,93 @@ impl SqliteKernelExecutor {
                     done.version_before = Some(returned.version - 1);
                     done.version_after = Some(returned.version);
                     Ok(done)
+                },
+            )
+        })
+    }
+
+    /// Preview or atomically record a received return item's disposition
+    /// (`returns.item.disposition.set`) through the repository's own
+    /// disposition write: the same stock, serial and lot effects an operator's
+    /// `set_item_disposition` applies, with the command's principal recorded
+    /// as `disposition_by`.
+    pub fn execute_set_return_item_disposition(
+        &self,
+        command: &CommandEnvelope<SetReturnItemDisposition>,
+    ) -> Result<ExecutionReceipt<ReturnItem>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(
+                SET_RETURN_ITEM_DISPOSITION_COMMAND,
+                RETURN_DISPOSITION_UNVERSIONED,
+            ),
+            "return",
+        )?
+        .then_guard(|_| set_return_item_disposition_guard(input));
+        let request_hash = run.request_hash.clone();
+        let target = Some(input.return_id.to_string());
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "return")? {
+                return Ok(receipt);
+            }
+            // The repository's disposition rules on the locked return, sealed
+            // as typed rejections before preview or apply.
+            let rejection = match load_return_conn(tx, &input.return_id.to_string())? {
+                None => Some(GuardRejection::never(
+                    "commerce.return_not_found",
+                    "return does not exist",
+                )),
+                Some(returned) => {
+                    set_return_item_disposition_state_guard(&returned, input.return_item_id)
+                }
+            };
+            if let Some(rejection) = rejection {
+                let mut receipt = run.rejected_by(&rejection);
+                receipt.aggregate_id = target.clone();
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            let disposition = SetReturnDisposition {
+                disposition: input.parsed_disposition().ok_or_else(|| {
+                    to_sql_err(CommerceError::Internal(
+                        "disposition passed the payload guard but does not parse".into(),
+                    ))
+                })?,
+                disposition_by: Some(command.principal.id.clone()),
+                ..Default::default()
+            };
+            seal_storefront_step(
+                tx,
+                &run,
+                &request_hash,
+                StorefrontAggregate::Return,
+                target.clone(),
+                |tx| {
+                    let item = set_item_disposition_tx(
+                        tx,
+                        input.return_id,
+                        input.return_item_id,
+                        &disposition,
+                    )
+                    .map_err(map_db_error)?;
+                    let payload = serde_json::json!({
+                        "return_id": input.return_id.to_string(),
+                        "return_item_id": item.id.to_string(),
+                        "sku": &item.sku,
+                        "quantity": item.quantity,
+                        "disposition": disposition.disposition.to_string(),
+                        "disposition_by": &item.disposition_by,
+                        "note": &input.note,
+                    });
+                    outcome(
+                        item,
+                        input.return_id.to_string(),
+                        "returns.item_dispositioned.v1",
+                        payload,
+                    )
                 },
             )
         })

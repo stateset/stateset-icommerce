@@ -5,13 +5,13 @@
 
 Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/tool-tiers.js` (tiers).
 
-**989 tools** across **89 domains**, plus 15 agentic runtime tools.
+**990 tools** across **89 domains**, plus 15 agentic runtime tools.
 
 ## Stability tiers
 
 | Tier | Tools | Meaning |
 | --- | ---: | --- |
-| core | 210 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
+| core | 211 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
 | extended | 530 | Real, specialised domains (finance, manufacturing, WMS, B2B, engagement). Opt in with `--profile` or `--domains`. |
 | experimental | 264 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete. Only `--profile all`, a curated profile naming the domain, or `--domains`. |
 
@@ -19,8 +19,8 @@ Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/t
 
 | Profile | Tools | Domains |
 | --- | ---: | --- |
-| all | 1004 | every domain |
-| core (default) | 210 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain, simulations |
+| all | 1005 | every domain |
+| core (default) | 211 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain, simulations |
 | operations | 214 | inventory, simulations, manufacturing, shipments, suppliers, warranties, warehouse, receiving, fulfillment, quality, lots, serials, cycle-counts, transfer-orders, production-batches, supplier-skus, inbound-shipments, backorders, vendor-returns |
 | finance | 161 | payments, invoices, treasury, accounts-payable, accounts-receivable, cost-accounting, credit, general-ledger, fixed-assets, revenue-recognition, prepayments, vendor-credits, payment-obligations |
 | agents | 257 | simulations, agent-runtime, agent-cards, agent-receipt, a2a, a2a-platform, a2a-automation, a2a-observability, a2a-intelligence, x402, stablecoin, erc8004, treasury, payment-obligations, proofs, audit, policies |
@@ -37,7 +37,7 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | [products](#products) | core | 14 |
 | [inventory](#inventory) | core | 7 |
 | [custom-objects](#custom-objects) | extended | 12 |
-| [returns](#returns) | core | 12 |
+| [returns](#returns) | core | 13 |
 | [carts](#carts) | core | 30 |
 | [analytics](#analytics) | core | 14 |
 | [currency](#currency) | extended | 13 |
@@ -214,7 +214,7 @@ Tier: **core**
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
 | `list_returns` | core | read | List all returns. Shows return status, order, and reason. |
-| `get_return` | core | read | Get a specific return by ID, with `allowedNext`: the statuses the return can move to from its current one. |
+| `get_return` | core | read | Get a specific return by ID, with its items and their dispositions, and `allowedNext`: the statuses the return can move to from its current one. |
 | `list_returns_for_order` | core | read | List all returns filed against a specific order. |
 | `list_returns_for_customer` | core | read | List all returns filed by a specific customer. |
 | `list_pending_returns` | core | read | List returns awaiting approval (status requested). |
@@ -225,6 +225,7 @@ Tier: **core**
 | `complete_return` | core | write | Complete a return (the engine accepts this from received or inspecting). It closes the return only: no refund is created. Refund the payment separately with create_refund. |
 | `cancel_return` | core | write | Cancel a return (the engine accepts this from requested or approved). |
 | `add_return_tracking` | core | write | Add a return-shipping tracking number and mark the return in transit (the engine accepts this from approved). This is the step before mark_return_received. |
+| `set_return_item_disposition` | core | write | Record what the warehouse did with a received return item: restock or quarantine (back into stock; the SKU needs an inventory item), refurbish, scrap or return_to_vendor. The return must be received or inspecting, and each item is dispositioned once. complete_return needs every item dispositioned. Item ids are in get_return. |
 
 ## carts
 

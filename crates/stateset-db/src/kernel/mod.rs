@@ -24,7 +24,7 @@
 //! # Conversion status
 //!
 //! **Every governed op on both backends** builds a [`run::CommandRun`] and
-//! evaluates [`envelope::EnvelopeGuard`], so all 33 command kinds share one
+//! evaluates [`envelope::EnvelopeGuard`], so all 34 command kinds share one
 //! contract validation, one semantic request hash, one policy evaluation, one
 //! envelope guard chain (including the actor-coherence check that refuses a
 //! self-delegated agent or a self-approved command), one verified replay
@@ -42,7 +42,7 @@
 //! | [`plans::escrow`] | `a2a.escrow.create` / `.fund` / `.dispute` / `.release` / `.refund`, `a2a.dispute.file` / `.evidence.submit` / `.resolve` |
 //! | [`plans::catalog`] | `inventory.item.create`, `products.create` |
 //! | [`plans::inventory`] | `inventory.reserve`, `inventory.reservation.confirm` / `.release` |
-//! | [`plans::returns`] | `returns.transition` |
+//! | [`plans::returns`] | `returns.transition`, `returns.item.disposition.set` |
 //! | [`plans::finance`] | `subscriptions.charge`, `checkout.commit`, `ledger.post`, `x402.settle` |
 //! | [`plans::storefront`] | `customers.create`, `carts.create` / `.item.add` / `.shipping_address.set` / `.payment_method.set` / `.coupon.apply` / `.tax.calculate`, `payments.complete`, `shipments.create`, `returns.create`, `returns.tracking.add` |
 //!

@@ -19,6 +19,9 @@ const from = (to) => {
     : `${states.slice(0, -1).join(', ')} or ${states.at(-1)}`;
 };
 
+/** The `return_items.disposition` vocabulary (`ReturnDisposition`). */
+const RETURN_DISPOSITIONS = ['restock', 'refurbish', 'scrap', 'return_to_vendor', 'quarantine'];
+
 function returnSummary(ret) {
   return {
     id: ret.id,
@@ -76,8 +79,8 @@ export const returnTools = withPolicyDomain('returns', [
   {
     name: 'get_return',
     description:
-      'Get a specific return by ID, with `allowedNext`: the statuses the return can move to ' +
-      'from its current one.',
+      'Get a specific return by ID, with its items and their dispositions, and `allowedNext`: ' +
+      'the statuses the return can move to from its current one.',
     inputSchema: {
       returnId: z.string().min(1).describe('Return ID (UUID)'),
     },
@@ -334,6 +337,44 @@ export const returnTools = withPolicyDomain('returns', [
         success: true,
         message: 'Tracking added',
         return: { id: ret.id, status: ret.status },
+      };
+    },
+  },
+
+  {
+    name: 'set_return_item_disposition',
+    description:
+      'Record what the warehouse did with a received return item: restock or quarantine ' +
+      '(back into stock; the SKU needs an inventory item), refurbish, scrap or return_to_vendor. ' +
+      'The return must be received or inspecting, and each item is dispositioned once. ' +
+      'complete_return needs every item dispositioned. Item ids are in get_return.',
+    inputSchema: {
+      returnId: z.string().min(1).describe('Return ID (UUID)'),
+      returnItemId: z.string().min(1).describe('Return item ID (UUID) from the return items'),
+      disposition: z
+        .enum(RETURN_DISPOSITIONS)
+        .describe(
+          'What happened to the units: restock, refurbish, scrap, return_to_vendor, quarantine',
+        ),
+      note: z
+        .string()
+        .max(1000)
+        .optional()
+        .describe('Inspection note (recorded on the governed outbox fact)'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Set return item disposition', params);
+      }
+
+      const item = await commerce.returns.setItemDisposition(params.returnId, params.returnItemId, {
+        disposition: params.disposition,
+      });
+      return {
+        success: true,
+        message: `Return item ${item.disposition}`,
+        returnItem: item,
       };
     },
   },

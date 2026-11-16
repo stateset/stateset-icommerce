@@ -14,7 +14,7 @@ use stateset_core::{
 use stateset_embedded::Commerce;
 use uuid::Uuid;
 
-const STOREFRONT: [&str; 17] = [
+const STOREFRONT: [&str; 18] = [
     "customers.create",
     "carts.create",
     "carts.item.add",
@@ -31,6 +31,7 @@ const STOREFRONT: [&str; 17] = [
     "returns.create",
     "returns.transition",
     "returns.tracking.add",
+    "returns.item.disposition.set",
     "payments.create_refund",
 ];
 
@@ -254,7 +255,45 @@ fn governed_storefront_runs_a_complete_checkout_through_the_json_dispatcher() {
     );
     assert_eq!(tracked["status"], "in_transit");
     agent.apply("returns.transition", json!({"return_id": return_id, "status": "received"}));
-    agent.apply("returns.transition", json!({"return_id": return_id, "status": "completed"}));
+    // `returns.transition` runs the repository's status write: completing a
+    // return whose items have no disposition is refused, exactly as
+    // `returns().complete()` refuses it.
+    assert_eq!(
+        agent
+            .rejected("returns.transition", json!({"return_id": return_id, "status": "completed"})),
+        "commerce.return_items_undispositioned"
+    );
+    // The agent dispositions the item on the governed surface (shaped as
+    // `set_return_item_disposition` builds it); then the governed completion
+    // goes through and refunds the captured payment.
+    let item_id = tracked["items"][0]["id"].as_str().expect("item id").to_owned();
+    let disposition = |value: &str| {
+        json!({"return_id": return_id, "return_item_id": item_id, "disposition": value,
+               "note": "cracked housing"})
+    };
+    assert_eq!(
+        agent.rejected("returns.item.disposition.set", disposition("donate")),
+        "commerce.return_disposition_invalid"
+    );
+    let item = agent.apply("returns.item.disposition.set", disposition("scrap"));
+    assert_eq!(item["disposition"], "scrap");
+    assert_eq!(item["disposition_by"], "agent:storefront");
+    assert_eq!(
+        agent.rejected("returns.item.disposition.set", disposition("restock")),
+        "commerce.return_item_already_dispositioned"
+    );
+    let completed =
+        agent.apply("returns.transition", json!({"return_id": return_id, "status": "completed"}));
+    assert_eq!(completed["status"], "completed");
+    let refunds = agent
+        .commerce
+        .payments()
+        .get_refunds(payment_id.parse::<Uuid>().expect("uuid").into())
+        .expect("refunds");
+    assert_eq!(refunds.len(), 1, "the governed completion refunds the captured payment");
+    let refund_amount: rust_decimal::Decimal =
+        completed["refund_amount"].as_str().expect("amount").parse().expect("decimal");
+    assert_eq!(refunds[0].amount, refund_amount);
 
     let chain = agent.commerce.kernel_audit().expect("audit").verify_chain().expect("verify");
     assert!(chain.valid, "{chain:?}");

@@ -4197,6 +4197,24 @@ export interface CreateReturnInput {
   idempotencyKey?: string
   items: Array<CreateReturnItemInput>
 }
+/** One line of a return. `id` is what `setItemDisposition` addresses. */
+export interface ReturnItemOutput {
+  id: string
+  returnId: string
+  orderItemId: string
+  sku: string
+  name: string
+  quantity: number
+  condition: string
+  /** Exact decimal string. */
+  refundAmount: string
+  /** Absent until the received item is dispositioned. */
+  disposition?: ReturnDisposition | null
+  dispositionAt?: string
+  dispositionBy?: string
+  lotId?: string
+  serialIds: Array<string>
+}
 export interface ReturnOutput {
   id: string
   orderId: string
@@ -4205,6 +4223,22 @@ export interface ReturnOutput {
   version: number
   createdAt: string
   idempotencyKey?: string
+  /** The return's lines, with their dispositions. */
+  items: Array<ReturnItemOutput>
+}
+/** What the warehouse did with a received return item (`setItemDisposition`). */
+export interface SetReturnItemDispositionInput {
+  /** An unrecognised disposition is refused with `VALIDATION`. */
+  disposition: ReturnDisposition
+  /** Warehouse receiving `restock` / `quarantine` stock (default 1). */
+  warehouseId?: number
+  /** Explicit target bin; defaults to the warehouse's returns or quarantine bin. */
+  binId?: number
+  dispositionBy?: string
+  /** Lot the units belong to (UUID); restored on `restock` / `quarantine`. */
+  lotId?: string
+  /** Serials physically received (UUIDs); the count must equal the item quantity. */
+  serialIds?: Array<string>
 }
 export interface CreatePerformanceObligationInput {
   description: string
@@ -7485,6 +7519,13 @@ export declare class Returns {
   markReceived(id: string): Promise<ReturnOutput>
   complete(id: string): Promise<ReturnOutput>
   cancel(id: string): Promise<ReturnOutput>
+  /**
+   * Record a received item's disposition (operator path) and apply its
+   * stock, serial and lot effects atomically. The return must be
+   * `received` or `inspecting`; an item is dispositioned once. A governed
+   * agent uses the `returns.item.disposition.set` kernel command instead.
+   */
+  setItemDisposition(returnId: string, itemId: string, input: SetReturnItemDispositionInput): Promise<ReturnItemOutput>
   addTracking(id: string, trackingNumber: string): Promise<ReturnOutput>
 }
 export declare class RevenueRecognition {
@@ -8077,6 +8118,9 @@ export type ReturnReason =
   | 'no_longer_needed'
   | 'damaged'
   | 'other'
+
+/** What the warehouse did with a received return item (`ReturnItemOutput.disposition`, `SetReturnItemDispositionInput.disposition`). */
+export type ReturnDisposition = 'restock' | 'refurbish' | 'scrap' | 'return_to_vendor' | 'quarantine'
 
 // ---- payments --------------------------------------------------------------
 
@@ -9086,6 +9130,20 @@ export interface KernelTransitionReturnPayload {
   status: 'requested' | 'approved' | 'rejected' | 'in_transit' | 'received' | 'inspecting' | 'completed' | 'cancelled'
 }
 
+/**
+ * `returns.item.disposition.set` (`SetReturnItemDisposition`). The return
+ * must be `received` or `inspecting`; `disposition_by` is the command's
+ * principal. An unknown disposition is a sealed
+ * `commerce.return_disposition_invalid` rejection.
+ */
+export interface KernelSetReturnItemDispositionPayload {
+  return_id: string
+  return_item_id: string
+  disposition: ReturnDisposition
+  /** Recorded on the `returns.item_dispositioned.v1` fact; at most 1000 characters. */
+  note?: string | null
+}
+
 /** `ledger.post` (`PostJournalEntry`). */
 export interface KernelPostJournalEntryPayload {
   journal_entry_id: string
@@ -9206,6 +9264,7 @@ export type KernelCommand =
   | KernelCommandEnvelope<'orders.transition', KernelTransitionOrderPayload>
   | KernelCommandEnvelope<'orders.ship', KernelShipOrderPayload>
   | KernelCommandEnvelope<'returns.transition', KernelTransitionReturnPayload>
+  | KernelCommandEnvelope<'returns.item.disposition.set', KernelSetReturnItemDispositionPayload>
   | KernelCommandEnvelope<'ledger.post', KernelPostJournalEntryPayload>
   | KernelCommandEnvelope<'x402.settle', KernelSettleX402IntentPayload>
   | KernelCommandEnvelope<'checkout.commit', KernelCommitCheckoutPayload>

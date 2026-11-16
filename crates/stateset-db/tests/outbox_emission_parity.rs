@@ -570,7 +570,7 @@ const OUTBOX_EMISSION_BACKLOG: &[(&str, &str)] = &[
     ("returns.rs", "delete_return_tx"),
     ("returns.rs", "serial_hop"),
     ("returns.rs", "apply_lot_restore_tx"),
-    ("returns.rs", "set_item_disposition"),
+    ("returns.rs", "set_item_disposition_tx"),
     ("revenue_recognition.rs", "create_contract"),
     ("revenue_recognition.rs", "update_contract"),
     ("revenue_recognition.rs", "generate_schedule"),

@@ -235,6 +235,14 @@
       "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint", "exact_money"]
     },
     {
+      "name": "returns.item.disposition.set",
+      "risk": "high",
+      "capability": "returns.item.disposition.set",
+      "sqliteExecutor": "execute_set_return_item_disposition",
+      "postgresExecutor": "execute_set_return_item_disposition_async",
+      "guarantees": ["preview", "policy", "tenant_scope", "delegation", "idempotency", "atomic_receipt", "atomic_events", "audit_chain", "external_checkpoint"]
+    },
+    {
       "name": "returns.tracking.add",
       "risk": "high",
       "capability": "returns.tracking.add",

@@ -512,6 +512,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`KernelReserveInventoryPayload`](#kernelreserveinventorypayload)
   - [`KernelResolveA2ADisputePayload`](#kernelresolvea2adisputepayload)
   - [`KernelRetryDisposition`](#kernelretrydisposition)
+  - [`KernelSetReturnItemDispositionPayload`](#kernelsetreturnitemdispositionpayload)
   - [`KernelSettleX402IntentPayload`](#kernelsettlex402intentpayload)
   - [`KernelShipOrderPayload`](#kernelshiporderpayload)
   - [`KernelShipmentLine`](#kernelshipmentline)
@@ -661,7 +662,9 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`ReservationStatus`](#reservationstatus)
   - [`RestoreOptionsInput`](#restoreoptionsinput)
   - [`RestoreReportOutput`](#restorereportoutput)
+  - [`ReturnDisposition`](#returndisposition)
   - [`ReturnFilterInput`](#returnfilterinput)
+  - [`ReturnItemOutput`](#returnitemoutput)
   - [`ReturnMetricsOutput`](#returnmetricsoutput)
   - [`ReturnOutput`](#returnoutput)
   - [`ReturnReason`](#returnreason)
@@ -704,6 +707,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`SetCartShippingInput`](#setcartshippinginput)
   - [`SetExchangeRateInput`](#setexchangerateinput)
   - [`SetItemCostInput`](#setitemcostinput)
+  - [`SetReturnItemDispositionInput`](#setreturnitemdispositioninput)
   - [`ShipmentFilterInput`](#shipmentfilterinput)
   - [`ShipmentItemOutput`](#shipmentitemoutput)
   - [`ShipmentMethod`](#shipmentmethod)
@@ -1364,6 +1368,15 @@ Class `Returns`.
 - **`cancel(id: string): Promise<ReturnOutput>`**
 
   Types: [`ReturnOutput`](#returnoutput)
+
+- **`setItemDisposition(returnId: string, itemId: string, input: SetReturnItemDispositionInput): Promise<ReturnItemOutput>`**
+
+  Record a received item's disposition (operator path) and apply its
+  stock, serial and lot effects atomically. The return must be
+  `received` or `inspecting`; an item is dispositioned once. A governed
+  agent uses the `returns.item.disposition.set` kernel command instead.
+
+  Types: [`SetReturnItemDispositionInput`](#setreturnitemdispositioninput), [`ReturnItemOutput`](#returnitemoutput)
 
 - **`addTracking(id: string, trackingNumber: string): Promise<ReturnOutput>`**
 
@@ -10106,10 +10119,10 @@ A governed command: the envelope discriminated by `command_type`, each
 variant carrying its own payload shape.
 
 ```ts
-type KernelCommand = KernelCommandEnvelope<'inventory.item.create', KernelCreateInventoryItemPayload> | KernelCommandEnvelope<'products.create', KernelCreateProductPayload> | KernelCommandEnvelope<'payments.create', KernelCreatePaymentPayload> | KernelCommandEnvelope<'payments.create_refund', KernelCreateRefundPayload> | KernelCommandEnvelope<'inventory.reserve', KernelReserveInventoryPayload> | KernelCommandEnvelope<'inventory.reservation.confirm', KernelConfirmInventoryReservationPayload> | KernelCommandEnvelope<'inventory.reservation.release', KernelReleaseInventoryReservationPayload> | KernelCommandEnvelope<'orders.transition', KernelTransitionOrderPayload> | KernelCommandEnvelope<'orders.ship', KernelShipOrderPayload> | KernelCommandEnvelope<'returns.transition', KernelTransitionReturnPayload> | KernelCommandEnvelope<'ledger.post', KernelPostJournalEntryPayload> | KernelCommandEnvelope<'x402.settle', KernelSettleX402IntentPayload> | KernelCommandEnvelope<'checkout.commit', KernelCommitCheckoutPayload> | KernelCommandEnvelope<'subscriptions.charge', KernelChargeSubscriptionPayload> | KernelCommandEnvelope<'a2a.escrow.create', KernelCreateA2AEscrowPayload> | KernelCommandEnvelope<'a2a.escrow.dispute', KernelDisputeA2AEscrowPayload> | KernelCommandEnvelope<'a2a.escrow.fund', KernelA2AEscrowRefPayload> | KernelCommandEnvelope<'a2a.escrow.release', KernelA2AEscrowRefPayload> | KernelCommandEnvelope<'a2a.escrow.refund', KernelRefundA2AEscrowPayload> | KernelCommandEnvelope<'a2a.dispute.file', KernelFileA2ADisputePayload> | KernelCommandEnvelope<'a2a.dispute.evidence.submit', KernelSubmitA2ADisputeEvidencePayload> | KernelCommandEnvelope<'a2a.dispute.resolve', KernelResolveA2ADisputePayload>
+type KernelCommand = KernelCommandEnvelope<'inventory.item.create', KernelCreateInventoryItemPayload> | KernelCommandEnvelope<'products.create', KernelCreateProductPayload> | KernelCommandEnvelope<'payments.create', KernelCreatePaymentPayload> | KernelCommandEnvelope<'payments.create_refund', KernelCreateRefundPayload> | KernelCommandEnvelope<'inventory.reserve', KernelReserveInventoryPayload> | KernelCommandEnvelope<'inventory.reservation.confirm', KernelConfirmInventoryReservationPayload> | KernelCommandEnvelope<'inventory.reservation.release', KernelReleaseInventoryReservationPayload> | KernelCommandEnvelope<'orders.transition', KernelTransitionOrderPayload> | KernelCommandEnvelope<'orders.ship', KernelShipOrderPayload> | KernelCommandEnvelope<'returns.transition', KernelTransitionReturnPayload> | KernelCommandEnvelope<'returns.item.disposition.set', KernelSetReturnItemDispositionPayload> | KernelCommandEnvelope<'ledger.post', KernelPostJournalEntryPayload> | KernelCommandEnvelope<'x402.settle', KernelSettleX402IntentPayload> | KernelCommandEnvelope<'checkout.commit', KernelCommitCheckoutPayload> | KernelCommandEnvelope<'subscriptions.charge', KernelChargeSubscriptionPayload> | KernelCommandEnvelope<'a2a.escrow.create', KernelCreateA2AEscrowPayload> | KernelCommandEnvelope<'a2a.escrow.dispute', KernelDisputeA2AEscrowPayload> | KernelCommandEnvelope<'a2a.escrow.fund', KernelA2AEscrowRefPayload> | KernelCommandEnvelope<'a2a.escrow.release', KernelA2AEscrowRefPayload> | KernelCommandEnvelope<'a2a.escrow.refund', KernelRefundA2AEscrowPayload> | KernelCommandEnvelope<'a2a.dispute.file', KernelFileA2ADisputePayload> | KernelCommandEnvelope<'a2a.dispute.evidence.submit', KernelSubmitA2ADisputeEvidencePayload> | KernelCommandEnvelope<'a2a.dispute.resolve', KernelResolveA2ADisputePayload>
 ```
 
-Types: [`KernelCommandEnvelope`](#kernelcommandenvelope), [`KernelCreateInventoryItemPayload`](#kernelcreateinventoryitempayload), [`KernelCreateProductPayload`](#kernelcreateproductpayload), [`KernelCreatePaymentPayload`](#kernelcreatepaymentpayload), [`KernelCreateRefundPayload`](#kernelcreaterefundpayload), [`KernelReserveInventoryPayload`](#kernelreserveinventorypayload), [`KernelConfirmInventoryReservationPayload`](#kernelconfirminventoryreservationpayload), [`KernelReleaseInventoryReservationPayload`](#kernelreleaseinventoryreservationpayload), [`KernelTransitionOrderPayload`](#kerneltransitionorderpayload), [`KernelShipOrderPayload`](#kernelshiporderpayload), [`KernelTransitionReturnPayload`](#kerneltransitionreturnpayload), [`KernelPostJournalEntryPayload`](#kernelpostjournalentrypayload), [`KernelSettleX402IntentPayload`](#kernelsettlex402intentpayload), [`KernelCommitCheckoutPayload`](#kernelcommitcheckoutpayload), [`KernelChargeSubscriptionPayload`](#kernelchargesubscriptionpayload), [`KernelCreateA2AEscrowPayload`](#kernelcreatea2aescrowpayload), [`KernelDisputeA2AEscrowPayload`](#kerneldisputea2aescrowpayload), [`KernelA2AEscrowRefPayload`](#kernela2aescrowrefpayload), [`KernelRefundA2AEscrowPayload`](#kernelrefunda2aescrowpayload), [`KernelFileA2ADisputePayload`](#kernelfilea2adisputepayload), [`KernelSubmitA2ADisputeEvidencePayload`](#kernelsubmita2adisputeevidencepayload), [`KernelResolveA2ADisputePayload`](#kernelresolvea2adisputepayload)
+Types: [`KernelCommandEnvelope`](#kernelcommandenvelope), [`KernelCreateInventoryItemPayload`](#kernelcreateinventoryitempayload), [`KernelCreateProductPayload`](#kernelcreateproductpayload), [`KernelCreatePaymentPayload`](#kernelcreatepaymentpayload), [`KernelCreateRefundPayload`](#kernelcreaterefundpayload), [`KernelReserveInventoryPayload`](#kernelreserveinventorypayload), [`KernelConfirmInventoryReservationPayload`](#kernelconfirminventoryreservationpayload), [`KernelReleaseInventoryReservationPayload`](#kernelreleaseinventoryreservationpayload), [`KernelTransitionOrderPayload`](#kerneltransitionorderpayload), [`KernelShipOrderPayload`](#kernelshiporderpayload), [`KernelTransitionReturnPayload`](#kerneltransitionreturnpayload), [`KernelSetReturnItemDispositionPayload`](#kernelsetreturnitemdispositionpayload), [`KernelPostJournalEntryPayload`](#kernelpostjournalentrypayload), [`KernelSettleX402IntentPayload`](#kernelsettlex402intentpayload), [`KernelCommitCheckoutPayload`](#kernelcommitcheckoutpayload), [`KernelChargeSubscriptionPayload`](#kernelchargesubscriptionpayload), [`KernelCreateA2AEscrowPayload`](#kernelcreatea2aescrowpayload), [`KernelDisputeA2AEscrowPayload`](#kerneldisputea2aescrowpayload), [`KernelA2AEscrowRefPayload`](#kernela2aescrowrefpayload), [`KernelRefundA2AEscrowPayload`](#kernelrefunda2aescrowpayload), [`KernelFileA2ADisputePayload`](#kernelfilea2adisputepayload), [`KernelSubmitA2ADisputeEvidencePayload`](#kernelsubmita2adisputeevidencepayload), [`KernelResolveA2ADisputePayload`](#kernelresolvea2adisputepayload)
 
 ### KernelCommandEnvelope
 
@@ -10545,6 +10558,20 @@ type KernelRetryDisposition = 'never' | 'same_key' | 'after_conflict' | 'after_d
 ```
 
 One of: `'never'`, `'same_key'`, `'after_conflict'`, `'after_delay'`.
+
+### KernelSetReturnItemDispositionPayload
+
+`returns.item.disposition.set` (`SetReturnItemDisposition`). The return
+must be `received` or `inspecting`; `disposition_by` is the command's
+principal. An unknown disposition is a sealed
+`commerce.return_disposition_invalid` rejection.
+
+| Field | Type | Description |
+|---|---|---|
+| `return_id` | `string` |  |
+| `return_item_id` | `string` |  |
+| `disposition` | `ReturnDisposition` | Types: [`ReturnDisposition`](#returndisposition) |
+| `note?` | `string \| null` | Recorded on the `returns.item_dispositioned.v1` fact; at most 1000 characters. |
 
 ### KernelSettleX402IntentPayload
 
@@ -12313,6 +12340,16 @@ Result of a database restore.
 | `checksumVerified` | `boolean` |  |
 | `replacedExisting` | `boolean` |  |
 
+### ReturnDisposition
+
+What the warehouse did with a received return item (`ReturnItemOutput.disposition`, `SetReturnItemDispositionInput.disposition`).
+
+```ts
+type ReturnDisposition = 'restock' | 'refurbish' | 'scrap' | 'return_to_vendor' | 'quarantine'
+```
+
+One of: `'restock'`, `'refurbish'`, `'scrap'`, `'return_to_vendor'`, `'quarantine'`.
+
 ### ReturnFilterInput
 
 Filter for `returns.list()`
@@ -12328,6 +12365,26 @@ Filter for `returns.list()`
 | `limit?` | `number` | Page size |
 | `offset?` | `number` |  |
 | `afterCursor?` | `Array<string>` | Keyset cursor: `[createdAt, id]` |
+
+### ReturnItemOutput
+
+One line of a return. `id` is what `setItemDisposition` addresses.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `returnId` | `string` |  |
+| `orderItemId` | `string` |  |
+| `sku` | `string` |  |
+| `name` | `string` |  |
+| `quantity` | `number` |  |
+| `condition` | `string` |  |
+| `refundAmount` | `string` | Exact decimal string. |
+| `disposition?` | `ReturnDisposition \| null` | Absent until the received item is dispositioned. Types: [`ReturnDisposition`](#returndisposition) |
+| `dispositionAt?` | `string` |  |
+| `dispositionBy?` | `string` |  |
+| `lotId?` | `string` |  |
+| `serialIds` | `Array<string>` |  |
 
 ### ReturnMetricsOutput
 
@@ -12349,6 +12406,7 @@ Filter for `returns.list()`
 | `version` | `number` |  |
 | `createdAt` | `string` |  |
 | `idempotencyKey?` | `string` |  |
+| `items` | `Array<ReturnItemOutput>` | The return's lines, with their dispositions. Types: [`ReturnItemOutput`](#returnitemoutput) |
 
 ### ReturnReason
 
@@ -12800,6 +12858,19 @@ Types: [`SerialStatus`](#serialstatus)
 | `materialCost?` | `string` |  |
 | `laborCost?` | `string` |  |
 | `overheadCost?` | `string` |  |
+
+### SetReturnItemDispositionInput
+
+What the warehouse did with a received return item (`setItemDisposition`).
+
+| Field | Type | Description |
+|---|---|---|
+| `disposition` | `ReturnDisposition` | An unrecognised disposition is refused with `VALIDATION`. Types: [`ReturnDisposition`](#returndisposition) |
+| `warehouseId?` | `number` | Warehouse receiving `restock` / `quarantine` stock (default 1). |
+| `binId?` | `number` | Explicit target bin; defaults to the warehouse's returns or quarantine bin. |
+| `dispositionBy?` | `string` |  |
+| `lotId?` | `string` | Lot the units belong to (UUID); restored on `restock` / `quarantine`. |
+| `serialIds?` | `Array<string>` | Serials physically received (UUIDs); the count must equal the item quantity. |
 
 ### ShipmentFilterInput
 

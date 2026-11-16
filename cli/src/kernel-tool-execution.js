@@ -40,6 +40,9 @@ export const KERNEL_CAPABILITY_BY_TOOL = Object.freeze({
   create_shipment: 'shipments.create',
   create_return: 'returns.create',
   add_return_tracking: 'returns.tracking.add',
+  // Completing a return needs every item dispositioned, so a strict endpoint
+  // records dispositions too (owner-approved).
+  set_return_item_disposition: 'returns.item.disposition.set',
 });
 
 /**
@@ -66,6 +69,7 @@ export const KERNEL_OPTIONAL_TOOLS = Object.freeze(
     'create_shipment',
     'create_return',
     'add_return_tracking',
+    'set_return_item_disposition',
   ]),
 );
 
@@ -83,6 +87,7 @@ const LEGACY_ENTITY_KEY_BY_TOOL = Object.freeze({
   create_shipment: 'shipment',
   create_return: 'return',
   add_return_tracking: 'return',
+  set_return_item_disposition: 'returnItem',
 });
 
 /** serde spellings of the carriers whose strum aliases differ. */
@@ -429,6 +434,14 @@ function payloadFor(toolName, params, issuedAt = new Date(), actorAddress = null
       };
     case 'add_return_tracking':
       return { return_id: params.returnId, tracking_number: params.trackingNumber };
+    case 'set_return_item_disposition':
+      // `disposition_by` is the kernel principal, never a tool argument.
+      return {
+        return_id: params.returnId,
+        return_item_id: params.returnItemId,
+        disposition: params.disposition,
+        note: params.note ?? null,
+      };
     case 'a2a_refund_escrow':
       return { escrow_id: params.escrowId, reason: params.reason || null };
     default:

@@ -4,7 +4,7 @@
     "coverageModel": "cli/src/coverage/mcp-api-coverage.js"
   },
   "totalDomainModules": 89,
-  "totalDomainTools": 989,
+  "totalDomainTools": 990,
   "totalCommerceGetters": 68,
   "mappedCommerceGetters": 68,
   "uncoveredCommerceGetters": [],
@@ -238,7 +238,7 @@
     {
       "getter": "returns",
       "module": "returns",
-      "toolCount": 12
+      "toolCount": 13
     },
     {
       "getter": "revenueRecognition",
@@ -352,8 +352,8 @@
     }
   ],
   "totalAuditedClasses": 32,
-  "totalAuditedMethods": 461,
-  "mappedAuditedMethods": 459,
+  "totalAuditedMethods": 462,
+  "mappedAuditedMethods": 460,
   "uncoveredAuditedMethods": [],
   "unexposedAuditedMethods": [
     {
@@ -586,8 +586,8 @@
     },
     {
       "className": "Returns",
-      "methodCount": 13,
-      "mappedMethodCount": 13,
+      "methodCount": 14,
+      "mappedMethodCount": 14,
       "uncoveredMethods": [],
       "unexposedMethods": [],
       "staleMappedMethods": [],

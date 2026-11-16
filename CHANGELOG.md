@@ -155,6 +155,26 @@ finance writes carry an authenticated identity.
 
 ### Added
 
+- Governed kernel command `returns.item.disposition.set` on both databases
+  (owner-approved), so a strict agent can take a return from `received` to
+  `completed`: governed completion now requires every item to be
+  dispositioned, and nothing on the governed surface could disposition one.
+  Payload `return_id`, `return_item_id`, `disposition` (the
+  `return_items.disposition` vocabulary) and an optional `note`; it runs the
+  repository's own disposition write (stock, serial and lot effects) in the
+  kernel transaction, records the command's principal as `disposition_by`,
+  seals a receipt and a `returns.item_dispositioned.v1` fact, and refuses with
+  typed codes (`commerce.return_disposition_invalid`,
+  `commerce.return_not_found`, `commerce.return_not_dispositionable`,
+  `commerce.return_item_not_found`,
+  `commerce.return_item_already_dispositioned`). Exposed as the core MCP tool
+  `set_return_item_disposition` (kernel-optional: without a kernel it calls the
+  binding) and as `returns.setItemDisposition` on the Node binding, whose
+  `ReturnOutput` now carries `items` (with each item's id and disposition).
+  The strict example policy and principal grant `returns.transition` and
+  `returns.item.disposition.set`, and the autonomous-business bootstrap grants
+  the new capability.
+
 - HTTP routes for cost accounting, customer credit, posting settings, period
   reclose, account balances, receipts from purchase orders, put-away
   assign, start and cancel, backorder allocation, lot transfer, adjust and
@@ -416,6 +436,17 @@ finance writes carry an authenticated identity.
   lowercase, so a push of `AAAAAAAA-...` events read their receipts and
   rejections as foreign and the whole batch stayed pending through every
   retry.
+- Kernel `returns.transition` runs the repository's return status write on
+  both databases (owner-approved). It checked only the state-machine edge,
+  so a governed `complete_return` completed returns with undispositioned
+  items and issued no payment refund. Governed transitions now refuse
+  completing with an undispositioned item
+  (`commerce.return_items_undispositioned`), rejecting or cancelling after
+  an item was dispositioned (`commerce.return_items_dispositioned`) and
+  re-sending a terminal return's own status (`commerce.return_terminal`); a
+  governed completion creates the pending payment refunds
+  `returns.complete` creates, and its `returns.updated.v1` fact carries the
+  repository payload, including `payment_refund_ids`.
 
 ## [1.40.0] - 2026-10-22
 
