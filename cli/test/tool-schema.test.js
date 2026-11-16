@@ -377,13 +377,13 @@ describe('inputSchemaDefToJsonSchema — objects', () => {
 
 describe('inputSchemaDefToJsonSchema — record', () => {
   it('converts ZodRecord to {type:"object", additionalProperties:{...}}', () => {
-    const js = inputSchemaDefToJsonSchema({ meta: z.record(z.string()) });
+    const js = inputSchemaDefToJsonSchema({ meta: z.record(z.string(), z.string()) });
     assert.strictEqual(js.properties.meta.type, 'object');
     assert.strictEqual(js.properties.meta.additionalProperties.type, 'string');
   });
 
   it('converts ZodRecord with numeric values', () => {
-    const js = inputSchemaDefToJsonSchema({ counts: z.record(z.number()) });
+    const js = inputSchemaDefToJsonSchema({ counts: z.record(z.string(), z.number()) });
     assert.strictEqual(js.properties.counts.additionalProperties.type, 'number');
   });
 });

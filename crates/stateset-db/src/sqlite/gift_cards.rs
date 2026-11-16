@@ -180,6 +180,8 @@ impl GiftCardRepository for SqliteGiftCardRepository {
                 params.push(Box::new(status.to_string()));
             }
             if let Some(ref recipient_email) = input.recipient_email {
+                // Not a typo: the SQLite table (migration 037) stores the
+                // recipient in `customer_id`, as `create` and the row mapper do.
                 sets.push("customer_id = ?".into());
                 params.push(Box::new(recipient_email.clone()));
             }

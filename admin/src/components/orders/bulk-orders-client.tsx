@@ -7,26 +7,34 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { cancelOrder, updateOrderStatus } from '@/app/actions/commerce';
 import { ordersToCsv, downloadCsv } from '@/lib/orders/csv';
+import {
+  ORDER_LIFECYCLE,
+  ORDER_STATUSES,
+  canTransition,
+  type OrderStatus,
+  type OrderStatusUpdate,
+} from '@/lib/engine-lifecycles';
 import type { Order } from '@/lib/types';
 
-const STATUS_BADGE_COLOR: Record<Order['status'], React.ComponentProps<typeof Badge>['color']> = {
+/** One colour per engine order status (`OrderStatus`). */
+const STATUS_BADGE_COLOR: Record<OrderStatus, React.ComponentProps<typeof Badge>['color']> = {
   pending: 'amber',
   confirmed: 'blue',
   processing: 'indigo',
+  partially_shipped: 'violet',
   shipped: 'purple',
   delivered: 'emerald',
   cancelled: 'red',
+  refunded: 'gray',
 };
 
-const STATUS_FILTER_OPTIONS: Array<Order['status'] | 'all'> = [
-  'all',
-  'pending',
-  'confirmed',
-  'processing',
-  'shipped',
-  'delivered',
-  'cancelled',
-];
+const STATUS_FILTER_OPTIONS: Array<OrderStatus | 'all'> = ['all', ...ORDER_STATUSES];
+
+/** Whether the engine's order lifecycle allows moving every listed status to `target`. */
+function allCanMoveTo(statuses: Iterable<OrderStatus>, target: OrderStatusUpdate): boolean {
+  const list = Array.from(statuses);
+  return list.length > 0 && list.every((status) => canTransition(ORDER_LIFECYCLE, status, target));
+}
 
 export interface BulkOrdersClientProps {
   initialOrders: Order[];
@@ -88,7 +96,7 @@ export function BulkOrdersClient({ initialOrders }: BulkOrdersClientProps) {
   }, [selected, replaceOrder]);
 
   const onBulkAdvance = useCallback(
-    async (target: Order['status']) => {
+    async (target: OrderStatusUpdate) => {
       const ids = Array.from(selected);
       if (ids.length === 0) return;
       setBusy(true);
@@ -121,24 +129,22 @@ export function BulkOrdersClient({ initialOrders }: BulkOrdersClientProps) {
   const allVisibleSelected = visible.length > 0 && selected.size === visible.length;
 
   // What bulk actions make sense given the current selection?
-  // We're conservative: only enable an action when *every* selected row is
-  // in a state that allows it, otherwise the operator gets a partial-failure
-  // surprise via the per-row error list.
+  // We're conservative: only enable an action when the engine's order
+  // lifecycle allows it for *every* selected row, otherwise the operator gets
+  // a partial-failure surprise via the per-row error list. (Cancel is legal
+  // from pending, confirmed and processing only — never once shipped,
+  // delivered or refunded.)
   const selectedStatuses = useMemo(() => {
-    const statuses = new Set<Order['status']>();
+    const statuses = new Set<OrderStatus>();
     for (const o of orders) {
       if (selected.has(o.id)) statuses.add(o.status);
     }
     return statuses;
   }, [orders, selected]);
 
-  const canBulkCancel =
-    selected.size > 0 &&
-    Array.from(selectedStatuses).every((s) => s !== 'cancelled' && s !== 'delivered');
-  const canBulkConfirm =
-    selected.size > 0 && Array.from(selectedStatuses).every((s) => s === 'pending');
-  const canBulkProcess =
-    selected.size > 0 && Array.from(selectedStatuses).every((s) => s === 'confirmed');
+  const canBulkCancel = allCanMoveTo(selectedStatuses, 'cancelled');
+  const canBulkConfirm = allCanMoveTo(selectedStatuses, 'confirmed');
+  const canBulkProcess = allCanMoveTo(selectedStatuses, 'processing');
 
   return (
     <div className="space-y-4">
@@ -157,7 +163,7 @@ export function BulkOrdersClient({ initialOrders }: BulkOrdersClientProps) {
                 size="sm"
                 onClick={() => setFilter(opt)}
               >
-                {opt}
+                {opt.replaceAll('_', ' ')}
               </Button>
             ))}
           </div>
@@ -251,7 +257,9 @@ export function BulkOrdersClient({ initialOrders }: BulkOrdersClientProps) {
                         {o.currency} {o.totalAmount.toFixed(2)}
                       </td>
                       <td className="px-4 py-3">
-                        <Badge color={STATUS_BADGE_COLOR[o.status]}>{o.status}</Badge>
+                        <Badge color={STATUS_BADGE_COLOR[o.status] ?? 'gray'}>
+                          {o.status.replaceAll('_', ' ')}
+                        </Badge>
                       </td>
                       <td className="px-4 py-3 text-xs text-ds-muted-foreground">
                         {o.createdAt.slice(0, 10)}

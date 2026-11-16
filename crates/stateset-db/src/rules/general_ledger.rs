@@ -10,7 +10,7 @@ pub(crate) fn source_document_key(
     source_document_type: Option<&str>,
     source_document_id: Option<Uuid>,
 ) -> Option<String> {
-    const SINGLE_ENTRY_TYPES: [&str; 8] = [
+    const SINGLE_ENTRY_TYPES: &[&str] = &[
         "invoice",
         "payment",
         "bill",
@@ -19,6 +19,12 @@ pub(crate) fn source_document_key(
         "write_off",
         "period_close",
         "reversal",
+        "fx_revaluation",
+        "credit_memo",
+        "fixed_asset_acquisition",
+        "fixed_asset_disposal",
+        "fixed_asset_proceeds",
+        "refund",
     ];
     match (source_document_type, source_document_id) {
         (Some(kind), Some(id)) if SINGLE_ENTRY_TYPES.contains(&kind) => {

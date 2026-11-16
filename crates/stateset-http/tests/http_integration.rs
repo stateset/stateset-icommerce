@@ -83,6 +83,73 @@ fn tenant_app(base_dir: &std::path::Path, token: &str, tenant_id: &str) -> axum:
         .build()
 }
 
+/// Bearer token bound to the actor that finance routes stamp as audit identity.
+const FINANCE_TOKEN: &str = "finance-token";
+
+/// The test's own engine on the store a [`finance_app`] server uses.
+struct FinanceStore {
+    commerce: Commerce,
+    _dir: tempfile::TempDir,
+}
+
+impl FinanceStore {
+    const fn commerce(&self) -> &Commerce {
+        &self.commerce
+    }
+}
+
+/// Finance routes take their audit identity from an actor-bound credential, so
+/// these tests run a full server with one. A file-backed store lets the test
+/// seed the same data through its own engine.
+fn finance_app() -> (axum::Router, FinanceStore) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("finance.db");
+    let path = path.to_str().expect("utf-8 path");
+    let server = Commerce::new(path).expect("server store");
+    let router = ServerBuilder::new(server)
+        .with_ignore_tenant_header()
+        .add_bearer_auth_for_actor(FINANCE_TOKEN, "finance-1")
+        .build();
+    let commerce = Commerce::new(path).expect("test store");
+    (router, FinanceStore { commerce, _dir: dir })
+}
+
+/// A JSON POST from the finance actor, with its own idempotency key. Keys are
+/// scoped by tenant, so the request names one.
+fn finance_post(uri: &str) -> axum::http::request::Builder {
+    Request::post(uri)
+        .header("authorization", format!("Bearer {FINANCE_TOKEN}"))
+        .header("x-tenant-id", "test")
+        .header("content-type", "application/json")
+        .header("idempotency-key", Uuid::new_v4().to_string())
+}
+
+/// Month-end close refuses until automatic ledger posting is configured.
+fn configure_close_posting(commerce: &Commerce) {
+    let gl = commerce.general_ledger();
+    let by_number = |n: &str| gl.get_account_by_number(n).unwrap().expect("standard chart").id;
+    gl.set_auto_posting_config(stateset_core::CreateAutoPostingConfig {
+        config_name: "Close tests".into(),
+        cash_account_id: by_number("1010"),
+        accounts_receivable_account_id: by_number("1100"),
+        inventory_account_id: by_number("1200"),
+        accounts_payable_account_id: by_number("2010"),
+        unearned_revenue_account_id: None,
+        sales_revenue_account_id: by_number("4010"),
+        shipping_revenue_account_id: None,
+        sales_tax_payable_account_id: None,
+        goods_received_not_invoiced_account_id: None,
+        inventory_adjustment_account_id: None,
+        work_in_progress_account_id: None,
+        cogs_account_id: by_number("5010"),
+        bad_debt_expense_account_id: None,
+        fx_gain_loss_account_id: None,
+        auto_post_depreciation: true,
+        auto_post_revenue_recognition: true,
+    })
+    .expect("configure ledger posting");
+}
+
 fn test_commerce() -> Commerce {
     Commerce::new(":memory:").expect("in-memory Commerce")
 }
@@ -1687,7 +1754,7 @@ async fn create_return_against_unshipped_order_surfaces_invariant_code() {
 /// `commerce.ledger.line_not_single_sided`.
 #[tokio::test]
 async fn gl_posting_surfaces_ledger_invariant_codes() {
-    let (router, state) = app_with_state();
+    let (router, state) = finance_app();
     let gl = state.commerce().general_ledger();
     gl.initialize_chart_of_accounts().unwrap();
     let period = gl
@@ -1708,8 +1775,7 @@ async fn gl_posting_surfaces_ledger_invariant_codes() {
     let resp = router
         .clone()
         .oneshot(
-            Request::post("/api/v1/gl/journal-entries")
-                .header("content-type", "application/json")
+            finance_post("/api/v1/gl/journal-entries")
                 .body(Body::from(
                     serde_json::json!({
                         "entry_date": today,
@@ -1744,14 +1810,14 @@ async fn gl_posting_surfaces_ledger_invariant_codes() {
             source_document_type: None,
             source_document_id: None,
             auto_post: None,
+            fx: None,
         })
         .unwrap();
 
     let resp = router
         .clone()
         .oneshot(
-            Request::post(format!("/api/v1/gl/journal-entries/{}/post", entry.id))
-                .header("content-type", "application/json")
+            finance_post(&format!("/api/v1/gl/journal-entries/{}/post", entry.id))
                 .body(Body::from(serde_json::json!({}).to_string()))
                 .unwrap(),
         )
@@ -4376,7 +4442,7 @@ async fn requests_without_idempotency_key_are_not_deduplicated() {
 /// closes the period.
 #[tokio::test]
 async fn gl_close_month_dry_run_then_close() {
-    let (router, state) = app_with_state();
+    let (router, state) = finance_app();
     let gl = state.commerce().general_ledger();
     gl.initialize_chart_of_accounts().unwrap();
 
@@ -4406,15 +4472,16 @@ async fn gl_close_month_dry_run_then_close() {
         source_document_type: None,
         source_document_id: None,
         auto_post: Some(true),
+        fx: None,
     })
     .unwrap();
 
     // Dry run: 200, per-step dry_run statuses, period stays open.
+    configure_close_posting(state.commerce());
     let resp = router
         .clone()
         .oneshot(
-            Request::post("/api/v1/gl/close-month")
-                .header("content-type", "application/json")
+            finance_post("/api/v1/gl/close-month")
                 .body(Body::from(
                     serde_json::json!({ "period_id": period.id.to_string(), "dry_run": true })
                         .to_string(),
@@ -4435,8 +4502,7 @@ async fn gl_close_month_dry_run_then_close() {
     let resp = router
         .clone()
         .oneshot(
-            Request::post("/api/v1/gl/close-month")
-                .header("content-type", "application/json")
+            finance_post("/api/v1/gl/close-month")
                 .body(Body::from(
                     serde_json::json!({
                         "period_id": period.id.to_string(),
@@ -4457,18 +4523,18 @@ async fn gl_close_month_dry_run_then_close() {
     assert_eq!(json["closing_entry"]["is_balanced"], true);
     let closed = state.commerce().general_ledger().get_period(period.id).unwrap().unwrap();
     assert_eq!(closed.status, stateset_core::PeriodStatus::Closed);
-    assert_eq!(closed.closed_by.as_deref(), Some("integration-test"));
+    // The authenticated actor is the audit identity; a body `closed_by` is ignored.
+    assert_eq!(closed.closed_by.as_deref(), Some("finance-1"));
 }
 
 /// POST /gl/close-month with an invalid period id is a 400; unknown period is 404.
 #[tokio::test]
 async fn gl_close_month_bad_period_ids() {
-    let (router, _state) = app_with_state();
+    let (router, _state) = finance_app();
     let resp = router
         .clone()
         .oneshot(
-            Request::post("/api/v1/gl/close-month")
-                .header("content-type", "application/json")
+            finance_post("/api/v1/gl/close-month")
                 .body(Body::from(serde_json::json!({ "period_id": "not-a-uuid" }).to_string()))
                 .unwrap(),
         )
@@ -4479,8 +4545,7 @@ async fn gl_close_month_bad_period_ids() {
     let resp = router
         .clone()
         .oneshot(
-            Request::post("/api/v1/gl/close-month")
-                .header("content-type", "application/json")
+            finance_post("/api/v1/gl/close-month")
                 .body(Body::from(
                     serde_json::json!({ "period_id": Uuid::new_v4().to_string() }).to_string(),
                 ))
@@ -4497,7 +4562,7 @@ async fn gl_close_month_bad_period_ids() {
 /// and a per-item failure count in the response.
 #[tokio::test]
 async fn gl_close_month_fail_on_warnings_is_strict() {
-    let (router, state) = app_with_state();
+    let (router, state) = finance_app();
     let commerce = state.commerce();
     let gl = commerce.general_ledger();
     gl.initialize_chart_of_accounts().unwrap();
@@ -4527,6 +4592,7 @@ async fn gl_close_month_fail_on_warnings_is_strict() {
         source_document_type: None,
         source_document_id: None,
         auto_post: Some(true),
+        fx: None,
     })
     .unwrap();
 
@@ -4547,6 +4613,8 @@ async fn gl_close_month_fail_on_warnings_is_strict() {
             location_id: None,
             asset_account_id: None,
             accumulated_depreciation_account_id: None,
+            acquisition_offset_account_id: None,
+            disposal_gain_loss_account_id: None,
             depreciation_expense_account_id: None,
             currency: None,
         })
@@ -4557,11 +4625,11 @@ async fn gl_close_month_fail_on_warnings_is_strict() {
         .unwrap();
 
     // Strict: 422, period left open.
+    configure_close_posting(state.commerce());
     let resp = router
         .clone()
         .oneshot(
-            Request::post("/api/v1/gl/close-month")
-                .header("content-type", "application/json")
+            finance_post("/api/v1/gl/close-month")
                 .body(Body::from(
                     serde_json::json!({
                         "period_id": period.id.to_string(),
@@ -4581,8 +4649,7 @@ async fn gl_close_month_fail_on_warnings_is_strict() {
     let resp = router
         .clone()
         .oneshot(
-            Request::post("/api/v1/gl/close-month")
-                .header("content-type", "application/json")
+            finance_post("/api/v1/gl/close-month")
                 .body(Body::from(
                     serde_json::json!({ "period_id": period.id.to_string() }).to_string(),
                 ))

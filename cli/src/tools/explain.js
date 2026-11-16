@@ -11,6 +11,8 @@
  *    promotions applied and refused (with reason codes), tax by jurisdiction,
  *    shipping, and a reconciliation of the explained total against the stored
  *    grand total.
+ *  - `explain_state_machine` (../state-machine-catalog.js) answers "what can this
+ *    record's status move to next?" from the engine's own transition rules.
  *
  * Nothing here writes: `tax.calculate` and `promotions.apply` evaluate without
  * persisting. Every section degrades on its own -- a domain that is missing or
@@ -29,6 +31,7 @@ import {
   roundDecimal,
   subtractDecimals,
 } from '../utils/exact-decimal.js';
+import { allowedNextField, stateMachineTool } from '../state-machine-catalog.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -724,6 +727,7 @@ async function explainOrder({ commerce, params }) {
   return {
     success: true,
     order: summarizeOrder(order),
+    ...allowedNextField('order', order.status),
     timeline: sortTimeline(timeline),
     money,
     tax: recomputedTax ? { basis: 'recomputed_now', ...recomputedTax } : null,
@@ -970,8 +974,9 @@ export const explainTools = [
     description:
       'Explain an order to a customer or merchant: one chronological timeline (checkout, payments, ' +
       'shipments, returns, refunds, fraud, activity), the money charged/refunded/net as exact ' +
-      'strings, tax recomputed from the address, and flags for inconsistencies (e.g. paid but ' +
-      'paymentStatus pending, refunded more than charged). Read-only; lists what it cannot see.',
+      'strings, tax recomputed from the address, flags for inconsistencies (e.g. paid but ' +
+      'paymentStatus pending, refunded more than charged), and `allowedNext`: the statuses the ' +
+      'order can move to next. Read-only; lists what it cannot see.',
     inputSchema: {
       orderId: z.string().min(1).describe('Order ID (UUID) or order number'),
     },
@@ -996,6 +1001,7 @@ export const explainTools = [
     permission: 'read',
     handler: explainCartPricing,
   },
+  stateMachineTool,
 ];
 
 export default explainTools;

@@ -15,6 +15,7 @@ from stateset_embedded import (
     InboundShipmentItemInput,
     SupplierSkuBulkItemInput,
     TransferOrderItemInput,
+    CreateProductVariantInput,
 )
 
 
@@ -46,13 +47,14 @@ def test_prepayment_full_lifecycle(commerce):
     assert found is not None and found.id == prepayment.id
     assert any(p.id == prepayment.id for p in api.list(supplier_id=supplier_id, status="open"))
 
-    target_id = str(uuid.uuid4())
-    applied = api.apply(prepayment.id, "bill", target_id, "400.00")
+    target_id = commerce.payment_obligations.create(supplier_id=supplier_id, amount="1000.00", due_date="2026-12-01", currency="USD").id
+    applied = api.apply(prepayment.id, "payment_obligation", target_id, "400.00")
+    assert commerce.payment_obligations.get(target_id).outstanding == "600.00"
     assert applied.remaining == "600.00"
 
     applications = api.list_applications(prepayment.id)
     assert len(applications) == 1
-    assert applications[0].target_type == "bill"
+    assert applications[0].target_type == "payment_obligation"
     assert applications[0].target_id == target_id
     assert applications[0].amount == "400.00"
     assert applications[0].reversed is False
@@ -80,7 +82,9 @@ def test_vendor_credit_full_lifecycle(commerce):
     assert found is not None and found.id == credit.id
     assert any(c.id == credit.id for c in api.list(supplier_id=supplier_id))
 
-    applied = api.apply(credit.id, "bill", str(uuid.uuid4()), "100.00")
+    target_id = commerce.payment_obligations.create(supplier_id=supplier_id, amount="250.00", due_date="2026-12-01", currency="USD").id
+    applied = api.apply(credit.id, "payment_obligation", target_id, "100.00")
+    assert commerce.payment_obligations.get(target_id).outstanding == "150.00"
     assert applied.remaining == "150.00"
 
     applications = api.list_applications(credit.id)
@@ -175,12 +179,21 @@ def test_transfer_order_full_lifecycle(commerce):
 
     source = str(uuid.uuid4())
     destination = str(uuid.uuid4())
-    product_id = str(uuid.uuid4())
+    sku = "TRANSFER-STOCK"
+    product = commerce.products.create(name="Transfer stock", variants=[CreateProductVariantInput(sku=sku, price=1.0)])
+    product_id = product.id
+    locations = []
+    for code in ["SRC", "DST"]:
+        warehouse = commerce.warehouse.create_warehouse(code=code, name=code)
+        locations.append(int(commerce.warehouse.create_location(warehouse_id=warehouse.id, code="STOCK").id))
+    commerce.warehouse.adjust_inventory(locations[0], sku, "10", "test stock")
 
     order = api.create(
         source_warehouse_id=source,
         destination_warehouse_id=destination,
-        items=[TransferOrderItemInput(product_id, "10")],
+        source_location_id=locations[0],
+        destination_location_id=locations[1],
+        items=[TransferOrderItemInput(product_id, sku, "10")],
         notes="restock east coast",
     )
     assert order.id
@@ -209,7 +222,9 @@ def test_transfer_order_full_lifecycle(commerce):
     other = api.create(
         source_warehouse_id=source,
         destination_warehouse_id=destination,
-        items=[TransferOrderItemInput(product_id, "5")],
+        source_location_id=locations[0],
+        destination_location_id=locations[1],
+        items=[TransferOrderItemInput(product_id, sku, "5")],
     )
     assert api.cancel(other.id).status == "cancelled"
 
@@ -218,8 +233,9 @@ def test_production_batch_full_lifecycle(commerce):
     api = commerce.production_batches
     assert api.is_supported() is True
 
-    work_order_a = str(uuid.uuid4())
-    work_order_b = str(uuid.uuid4())
+    product = commerce.products.create(name="Batch product")
+    work_order_a = commerce.work_orders.create(product.id, 1).id
+    work_order_b = commerce.work_orders.create(product.id, 1).id
 
     batch = api.create(name="July widgets", work_order_ids=[work_order_a], notes="first run")
     assert batch.id
@@ -230,9 +246,9 @@ def test_production_batch_full_lifecycle(commerce):
     assert found is not None and found.id == batch.id
     assert any(b.id == batch.id for b in api.list(status="planned"))
 
-    updated = api.update(batch.id, name="July widgets v2", status="in_progress")
+    updated = api.update(batch.id, name="July widgets v2")
     assert updated.name == "July widgets v2"
-    assert updated.status == "in_progress"
+    assert updated.status == "planned"
 
     added = api.add_work_orders(batch.id, [work_order_b])
     assert len(added.work_order_ids) == 2

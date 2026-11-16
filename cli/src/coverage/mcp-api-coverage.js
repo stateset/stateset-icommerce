@@ -200,6 +200,11 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       fulfillOrderStock: ['fulfill_order_stock'],
       releaseReservation: ['release_reservation'],
     },
+    unexposedMethods: {
+      list:
+        'No MCP tool lists inventory items yet: hosts (stateset-direct inventory list, the ' +
+        'admin) call the binding directly, and agents look stock up by SKU with get_stock.',
+    },
   },
   Returns: {
     tools: [...returnTools, ...explainTools],
@@ -217,6 +222,7 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       complete: ['complete_return'],
       cancel: ['cancel_return'],
       addTracking: ['add_return_tracking'],
+      setItemDisposition: ['set_return_item_disposition'],
     },
   },
   Warranties: {
@@ -271,6 +277,15 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       createPeriod: ['create_gl_period'],
       listPeriods: ['list_gl_periods'],
       openPeriod: ['open_gl_period'],
+      closePeriod: ['close_gl_period'],
+      createJournalEntry: ['create_journal_entry'],
+      getAutoPostingConfig: ['get_gl_posting_config'],
+      getPeriod: ['get_gl_period'],
+      lockPeriod: ['lock_gl_period'],
+      reclosePeriod: ['reclose_gl_period'],
+      reopenPeriod: ['reopen_gl_period'],
+      reverseJournalEntry: ['reverse_journal_entry'],
+      setAutoPostingConfig: ['set_gl_posting_config'],
     },
   },
   AccountsPayable: {
@@ -289,6 +304,17 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       getTotalOutstanding: ['get_accounts_payable_total_outstanding'],
       countBills: ['count_accounts_payable_bills'],
       threeWayMatch: ['three_way_match_bill'],
+      approvePaymentRun: ['approve_bill_payment_run'],
+      cancelPaymentRun: ['cancel_bill_payment_run'],
+      createPayment: ['create_bill_payment'],
+      createPaymentRun: ['create_bill_payment_run'],
+      disputeBill: ['dispute_bill'],
+      getPayment: ['get_bill_payment'],
+      getPaymentRun: ['get_bill_payment_run'],
+      listPaymentRuns: ['list_bill_payment_runs'],
+      processPaymentRun: ['process_bill_payment_run'],
+      resolveBillDispute: ['resolve_bill_dispute'],
+      voidPayment: ['void_bill_payment'],
     },
   },
   AccountsReceivable: {
@@ -302,6 +328,13 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       listCreditMemos: ['list_credit_memos'],
       voidCreditMemo: ['void_credit_memo'],
       getUnappliedCredits: ['list_unapplied_credits'],
+      applyCreditMemo: ['apply_credit_memo'],
+      applyPaymentToInvoices: ['apply_payment_to_invoices'],
+      createWriteOff: ['create_write_off'],
+      getPaymentApplications: ['list_invoice_payment_applications'],
+      listWriteOffs: ['list_write_offs'],
+      reverseWriteOff: ['reverse_write_off'],
+      unapplyPayment: ['unapply_invoice_payment'],
     },
   },
   Payments: {
@@ -318,9 +351,21 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       createRefundExact: ['create_refund'],
       getRefund: ['get_payment'],
       getRefunds: ['get_payment'],
-      completeRefund: ['create_refund'],
-      failRefund: ['create_refund'],
       count: ['list_payments'],
+      // Capability probes for the idempotent write paths these tools use.
+      supportsPaymentIdempotency: ['create_payment', 'complete_payment'],
+      supportsRefundIdempotency: ['create_refund'],
+    },
+    // create_refund creates a refund in `pending` (the governed
+    // payments.create_refund command); it does not settle it. These were
+    // credited to create_refund, which never calls them.
+    unexposedMethods: {
+      completeRefund:
+        'No MCP tool completes a refund: create_refund records it as pending and settlement ' +
+        'happens outside the tool surface.',
+      failRefund:
+        'No MCP tool fails a refund: create_refund records it as pending and settlement ' +
+        'happens outside the tool surface.',
     },
   },
   Shipments: {
@@ -349,6 +394,8 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       recordPayment: ['record_invoice_payment'],
       getOverdue: ['get_overdue_invoices'],
       count: ['list_invoices'],
+      // Capability probe for the idempotent write path these tools use.
+      supportsPaymentIdempotency: ['record_invoice_payment'],
     },
   },
   Bom: {
@@ -373,6 +420,8 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       complete: ['complete_work_order'],
       cancel: ['cancel_work_order'],
       count: ['list_work_orders'],
+      completeExact: ['complete_work_order'],
+      configureStock: ['configure_work_order_stock'],
     },
   },
   X402: {
@@ -640,6 +689,14 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       cancelReceipt: ['cancel_receipt'],
       createReceiptFromPo: ['create_receipt_from_purchase_order'],
       countReceipts: ['count_receipts'],
+      assignPutAway: ['assign_put_away'],
+      cancelPutAway: ['cancel_put_away'],
+      completePutAway: ['complete_put_away'],
+      createPutAway: ['create_put_away'],
+      getPutAway: ['get_put_away'],
+      listPutAways: ['list_put_aways'],
+      receiveItems: ['receive_receipt_items'],
+      startPutAway: ['start_put_away'],
     },
   },
   Fulfillment: {
@@ -751,9 +808,21 @@ export function buildMcpApiCoverage() {
     .map(([className, coverage]) => {
       const bindingMethods = [...getBindingClassMethodNames(source, className)].sort();
       const mappedMethods = Object.keys(coverage.methodToTools).sort();
+      // Methods deliberately not behind any tool, each with the reason. They
+      // are neither mapped nor uncovered; naming one that is also mapped, or
+      // that the binding no longer has, is a stale mapping.
+      const unexposed = coverage.unexposedMethods ?? {};
+      const unexposedMethods = Object.keys(unexposed).sort();
       const exportedToolNames = new Set(coverage.tools.map((tool) => tool.name));
-      const uncoveredMethods = bindingMethods.filter((method) => !coverage.methodToTools[method]);
-      const staleMappedMethods = mappedMethods.filter((method) => !bindingMethods.includes(method));
+      const uncoveredMethods = bindingMethods.filter(
+        (method) => !coverage.methodToTools[method] && !unexposed[method],
+      );
+      const staleMappedMethods = [
+        ...mappedMethods.filter((method) => !bindingMethods.includes(method)),
+        ...unexposedMethods.filter(
+          (method) => !bindingMethods.includes(method) || coverage.methodToTools[method],
+        ),
+      ];
       const invalidToolReferences = mappedMethods.flatMap((method) =>
         (coverage.methodToTools[method] ?? [])
           .filter((toolName) => !exportedToolNames.has(toolName))
@@ -763,8 +832,12 @@ export function buildMcpApiCoverage() {
       return {
         className,
         methodCount: bindingMethods.length,
-        mappedMethodCount: bindingMethods.length - uncoveredMethods.length,
+        mappedMethodCount: bindingMethods.filter((method) => coverage.methodToTools[method]).length,
         uncoveredMethods,
+        unexposedMethods: unexposedMethods.map((method) => ({
+          method,
+          reason: unexposed[method],
+        })),
         staleMappedMethods,
         invalidToolReferences,
       };
@@ -772,6 +845,12 @@ export function buildMcpApiCoverage() {
 
   const uncoveredAuditedMethods = auditedClasses.flatMap((entry) =>
     entry.uncoveredMethods.map((method) => `${entry.className}.${method}`),
+  );
+  const unexposedAuditedMethods = auditedClasses.flatMap((entry) =>
+    entry.unexposedMethods.map(({ method, reason }) => ({
+      method: `${entry.className}.${method}`,
+      reason,
+    })),
   );
   const staleAuditedMethodMappings = auditedClasses.flatMap((entry) =>
     entry.staleMappedMethods.map((method) => `${entry.className}.${method}`),
@@ -796,6 +875,7 @@ export function buildMcpApiCoverage() {
     totalAuditedMethods: auditedClasses.reduce((sum, entry) => sum + entry.methodCount, 0),
     mappedAuditedMethods: auditedClasses.reduce((sum, entry) => sum + entry.mappedMethodCount, 0),
     uncoveredAuditedMethods,
+    unexposedAuditedMethods,
     staleAuditedMethodMappings,
     invalidAuditedToolReferences,
     auditedClasses,

@@ -29,6 +29,8 @@ tempfile = { version = "3.23", optional = true }
 rusqlite = { workspace = true, optional = true }
 r2d2 = { workspace = true, optional = true }
 r2d2_sqlite = { workspace = true, optional = true }
+# Not used directly: caps r2d2's pool below a release that breaks the MSRV.
+scheduled-thread-pool = { workspace = true, optional = true }
 
 # PostgreSQL dependencies (optional)
 #
@@ -63,7 +65,7 @@ workspace = true
 
 [features]
 default = ["sqlite"]
-sqlite = ["dep:stateset-migrations", "dep:rusqlite", "dep:r2d2", "dep:r2d2_sqlite", "dep:tracing", "dep:tempfile", "stateset-core/rusqlite"]
+sqlite = ["dep:stateset-migrations", "dep:rusqlite", "dep:r2d2", "dep:r2d2_sqlite", "dep:scheduled-thread-pool", "dep:tracing", "dep:tempfile", "stateset-core/rusqlite"]
 postgres = ["dep:sqlx", "dep:tokio", "dep:tracing", "stateset-core/sqlx-postgres"]
 vector = ["sqlite", "stateset-migrations/vector", "stateset-core/embeddings"]
 # Experimental: persisted saga coordinator for multi-step orchestration.

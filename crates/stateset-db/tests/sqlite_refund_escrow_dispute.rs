@@ -12,8 +12,36 @@ use stateset_core::{
 use stateset_db::SqliteDatabase;
 
 fn policy() -> KernelPolicy {
-    KernelPolicy::new("commerce-policy-1")
-        .allow("payments.create_refund", KernelCommandPolicy::requiring(["payments.create_refund"]))
+    [
+        "payments.create_refund",
+        "a2a.escrow.create",
+        "a2a.escrow.fund",
+        "a2a.escrow.refund",
+        "a2a.dispute.file",
+    ]
+    .into_iter()
+    .fold(KernelPolicy::new("commerce-policy-1"), |policy, command| {
+        policy.allow(command, KernelCommandPolicy::requiring([command]))
+    })
+}
+
+fn governed<T>(command_type: &str, key: &str, actor: &str, payload: T) -> CommandEnvelope<T> {
+    let mut command = CommandEnvelope::preview(
+        command_type,
+        key,
+        KernelPrincipal {
+            id: actor.into(),
+            kind: PrincipalKind::Agent,
+            tenant_id: Some("tenant-1".into()),
+            delegated_by: Some("user-1".into()),
+            capabilities: vec![command_type.into()],
+        },
+        payload,
+    );
+    command.store_id = Some("store-1".into());
+    command.policy_version = Some("commerce-policy-1".into());
+    command.mode = ExecutionMode::Apply;
+    command
 }
 
 fn refund_command(
@@ -146,6 +174,124 @@ fn sqlite_refund_is_refused_while_a_filed_dispute_is_open_and_allowed_after_reso
         .execute_create_refund(&refund_command("refund-after-resolution", payment.id))
         .expect("receipt");
     assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{receipt:?}");
+}
+
+/// Refunding a disputed escrow through the kernel returns everything to the
+/// buyer — the outcome `a2a.dispute.resolve` records as `full_refund` — so the
+/// open dispute is resolved that way in the same transaction. It used to stay
+/// open, which froze the payment for good: `payments.create_refund` refuses
+/// while a dispute is open, and the dispute could no longer be resolved
+/// because its escrow was no longer `disputed`. Twin of the Postgres
+/// `postgres_refunding_a_disputed_escrow_resolves_its_dispute_as_a_full_refund`.
+#[test]
+fn sqlite_refunding_a_disputed_escrow_resolves_its_dispute_as_a_full_refund() {
+    use stateset_core::{
+        A2ADisputeResolutionType, A2ADisputeStatus, A2AEscrowStatus, CreateA2AEscrow,
+        FileA2ADispute, FundA2AEscrow, RefundA2AEscrow,
+    };
+    let db = SqliteDatabase::in_memory().expect("db");
+    let payment = completed_payment(&db);
+    let kernel = db.kernel_executor(policy());
+    let escrow = kernel
+        .execute_create_a2a_escrow(&governed(
+            "a2a.escrow.create",
+            "dispute-refund-create",
+            "agent:escrow",
+            CreateA2AEscrow {
+                quote_id: None,
+                payment_id: Some(payment.id.to_string()),
+                buyer_address: "did:key:buyer".into(),
+                seller_address: "did:key:seller".into(),
+                amount: dec!(10.00),
+                asset: "USDC".into(),
+                network: "set_chain".into(),
+                release_conditions: vec![],
+                expires_at: chrono::Utc::now() + chrono::Duration::days(30),
+                auto_release_after: None,
+                metadata: None,
+            },
+        ))
+        .expect("create escrow")
+        .result
+        .expect("escrow");
+    let funded = kernel
+        .execute_fund_a2a_escrow(&governed(
+            "a2a.escrow.fund",
+            "dispute-refund-fund",
+            "agent:escrow",
+            FundA2AEscrow { escrow_id: escrow.id.clone() },
+        ))
+        .expect("fund escrow");
+    assert_eq!(funded.status, ExecutionStatus::Succeeded, "{funded:?}");
+    let now = chrono::Utc::now();
+    let dispute = kernel
+        .execute_file_a2a_dispute(&governed(
+            "a2a.dispute.file",
+            "dispute-refund-file",
+            "did:key:buyer",
+            FileA2ADispute {
+                escrow_id: escrow.id.clone(),
+                claimant_address: "did:key:buyer".into(),
+                reason: "never delivered".into(),
+                category: "non_delivery".into(),
+                evidence_deadline: now + chrono::Duration::days(7),
+                review_deadline: now + chrono::Duration::days(14),
+                metadata: None,
+            },
+        ))
+        .expect("file dispute")
+        .result
+        .expect("dispute");
+
+    let refunded = kernel
+        .execute_refund_a2a_escrow(&governed(
+            "a2a.escrow.refund",
+            "dispute-refund-refund",
+            "agent:escrow",
+            RefundA2AEscrow { escrow_id: escrow.id, reason: Some("buyer refunded".into()) },
+        ))
+        .expect("refund escrow");
+    assert_eq!(refunded.status, ExecutionStatus::Succeeded, "{refunded:?}");
+    assert_eq!(refunded.result.as_ref().expect("escrow").status, A2AEscrowStatus::Refunded);
+    assert_eq!(refunded.event_ids.len(), 2, "the escrow fact and the dispute fact");
+
+    #[allow(clippy::type_complexity)]
+    let (status, resolution, buyer, seller, resolved_by): (
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = db
+        .conn()
+        .unwrap()
+        .query_row(
+            "SELECT status, resolution_type, buyer_amount_decimal, seller_amount_decimal,
+                    resolved_by
+             FROM a2a_disputes WHERE id = ?",
+            [&dispute.id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )
+        .unwrap();
+    assert_eq!(status, A2ADisputeStatus::Resolved.to_string());
+    assert_eq!(resolution, Some(A2ADisputeResolutionType::FullRefund.to_string()));
+    assert_eq!(
+        buyer.as_deref().map(|value| value.parse::<rust_decimal::Decimal>().unwrap()),
+        Some(dec!(10))
+    );
+    assert_eq!(
+        seller.as_deref().map(|value| value.parse::<rust_decimal::Decimal>().unwrap()),
+        Some(dec!(0))
+    );
+    assert_eq!(resolved_by.as_deref(), Some("agent:escrow"));
+
+    // The payment is no longer frozen.
+    let receipt = db
+        .kernel_executor(policy())
+        .execute_create_refund(&refund_command("refund-after-escrow-refund", payment.id))
+        .expect("receipt");
+    assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{receipt:?}");
+    assert!(db.kernel_outbox().verify_audit_chain().expect("verify chain").valid);
 }
 
 #[test]

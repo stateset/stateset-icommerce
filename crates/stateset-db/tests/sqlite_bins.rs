@@ -341,14 +341,14 @@ fn delete_bin_with_stock_is_rejected() {
 }
 
 #[test]
-fn reconcile_reports_variance_when_warehouse_level_changes_outside_bins() {
+fn warehouse_adjustments_keep_bin_projection_balanced() {
     let db = db();
     let wh = warehouse(&db, "WH1");
     let a = bin(&db, wh, "A", BinType::Pick);
     item(&db, "SKU-1");
     adjust(&db, a, "SKU-1", dec!(5)).unwrap();
-    // A warehouse-level adjustment (receipt not yet put away) creates drift
-    // that reconcile surfaces rather than hides.
+    // A warehouse-level adjustment receives into explicit unassigned stock
+    // and its bin projection.
     db.inventory()
         .adjust(stateset_core::AdjustInventory {
             sku: "SKU-1".into(),
@@ -360,8 +360,8 @@ fn reconcile_reports_variance_when_warehouse_level_changes_outside_bins() {
         })
         .unwrap();
     let rec = db.bins().reconcile(wh, "SKU-1").unwrap();
-    assert_eq!(rec.bin_on_hand, dec!(5));
+    assert_eq!(rec.bin_on_hand, dec!(7));
     assert_eq!(rec.warehouse_on_hand, dec!(7));
-    assert_eq!(rec.variance, dec!(2));
-    assert!(!rec.is_balanced());
+    assert_eq!(rec.variance, dec!(0));
+    assert!(rec.is_balanced());
 }

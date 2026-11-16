@@ -55,7 +55,7 @@ For Claude Desktop, Cursor, Windsurf, or any MCP client:
 ```
 
 **Writes are preview-only by default.** The `core` profile — the default —
-exposes only the smoke-gated core tier (196 tools); `finance`, `operations`,
+exposes only the smoke-gated core tier (211 tools); `finance`, `operations`,
 `agents`, and `all` open it up, and `--domains a2a,x402` adds individual
 domains. Each tool's tier (`core`, `extended`, `experimental`) is listed in
 [`cli/docs/TOOLS.md`](cli/docs/TOOLS.md). Give an agent apply
@@ -71,6 +71,14 @@ authority only through operator-owned files, never through tool arguments:
   ]
 }
 ```
+
+That strict profile exposes only typed governed write commands plus read tools.
+Plans and replays work there too: `agentic_execute_plan` and
+`agentic_replay_mutation` run at the top level, and every step inside them must
+itself be a governed command, executed with the operator's principal and policy.
+Tools advertise MCP `readOnlyHint` / `destructiveHint` annotations derived from
+their permission, and `stateset-agent-report` summarises an agent's session
+(calls, kernel refusals by reason, charges, latency) from the replay log.
 
 For hosted deployments, `stateset-mcp-http` serves the same tools over MCP
 Streamable HTTP (protocol revision 2026-07-28), stateless by construction — no
@@ -90,13 +98,13 @@ transport boundary, or `--strict-protocol` to refuse pre-2026-07-28 clients.
 | Channel | Command |
 | ------- | ------- |
 | **crates.io** | `cargo add stateset-sdk --features full` |
-| **npm** | `npm install @stateset/embedded@1.40.0` |
-| **PyPI** | `pip install stateset-embedded==1.40.0` |
-| **CLI + MCP servers** | `npm install -g @stateset/cli@1.40.0` |
+| **npm** | `npm install @stateset/embedded@1.41.0` |
+| **PyPI** | `pip install stateset-embedded==1.41.0` |
+| **CLI + MCP servers** | `npm install -g @stateset/cli@1.41.0` |
 
 The Ruby and WASM bindings have published packages that are not kept current:
 RubyGems `stateset_embedded` is at 0.1.9 and npm `@stateset/embedded-wasm` at
-0.7.22, both far behind 1.40.0. PHP, Java, Kotlin, Swift, .NET, and Go have no
+0.7.22, both far behind 1.41.0. PHP, Java, Kotlin, Swift, .NET, and Go have no
 published package at all — build those from source, and see
 [`docs/src/api/`](docs/src/api/) for each binding's API and install snippet.
 
@@ -208,14 +216,17 @@ JSON-schema tools rather than stdio MCP, use the embedded toolkit:
 | `stateset_embedded.openai` / `.langchain` / `.crewai` / `.autogen` | Python equivalents |
 
 Install the Python framework extras in one step with
-`pip install "stateset-embedded[agents]==1.40.0"`.
+`pip install "stateset-embedded[agents]==1.41.0"`.
 
 The toolkit also exposes payment-aware helpers (`getPayableToolCatalog()`,
 `executePaidTool()`, `discoverRemotePaymentService()`) and contract/replay
 helpers (`getRuntimeContract()`, `simulatePlan()`, `executePlan()`,
 `replayMutation()`). Call `simulateMutation()` or
 `executePlan({ dryRun: true })` before enabling writes, then set `allowApply`
-only on agents that should mutate commerce state.
+only on agents that should mutate commerce state. A toolkit's `capabilities`
+(tool names, `permission:<p>`, `read:*`, `<domain>.*` or kernel capabilities)
+bound everything it can reach, including steps run by plans, simulations,
+replays and rollbacks; `delegate_to_agent` needs an explicit grant.
 
 Working examples: [Embedded Agent Toolkit](docs/src/guides/agent-toolkit.md) ·
 [AI Agents](docs/src/ai-agents.md)
@@ -306,7 +317,7 @@ Security: [SECURITY.md](SECURITY.md)
   payments, security, policy, adapters, operations, and the API reference.
   Build it locally with `mdbook serve docs`.
 - **[Tool catalog](cli/docs/TOOLS.md)** — generated, authoritative list of the
-  MCP/CLI tool surface (923 tools across 87 domains today).
+  MCP/CLI tool surface (990 domain tools across 89 domains today).
 - **[API reference per binding](docs/src/api/)** — Rust, Node, Python, Go,
   Java, Kotlin, Swift, .NET, Ruby, PHP, WASM.
 - **[Examples](examples/README.md)** — runnable end-to-end programs.

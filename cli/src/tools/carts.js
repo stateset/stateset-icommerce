@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import { allowedNextField } from '../state-machine-catalog.js';
 import { applyRequired } from '../utils/apply-guard.js';
 
 const cartAddressInputSchema = {
@@ -81,7 +82,8 @@ export const cartTools = [
   {
     name: 'get_cart',
     description:
-      'Get a specific cart by ID or cart number. Returns full cart details including items.',
+      'Get a specific cart by ID or cart number. Returns full cart details including items, and ' +
+      '`allowedNext`: the statuses the cart can move to from its current one.',
     inputSchema: {
       identifier: z.string().min(1).describe('Cart ID (UUID) or cart number'),
     },
@@ -127,6 +129,7 @@ export const cartTools = [
           updatedAt: cart.updatedAt,
           expiresAt: cart.expiresAt,
         },
+        ...allowedNextField('cart', cart.status),
       };
     },
   },

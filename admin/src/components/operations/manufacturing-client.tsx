@@ -1,10 +1,17 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { Card, CardContent, Badge } from '@stateset/design';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getManufacturingPageData } from '@/app/actions/operations';
 import type { WorkOrder } from '@/lib/embedded';
+import {
+  NCR_CLOSED_STATUSES,
+  statusIn,
+  type NcrSeverity,
+  type WorkOrderStatus,
+} from '@/lib/engine-lifecycles';
 
 type DsBadgeVariant =
   | 'default'
@@ -15,15 +22,18 @@ type DsBadgeVariant =
   | 'danger'
   | 'outline';
 
-const workOrderStatusVariants: Record<string, DsBadgeVariant> = {
-  draft: 'outline',
-  released: 'primary',
+/** One badge per engine work-order status (`WorkOrderStatus`). */
+const workOrderStatusVariants: Record<WorkOrderStatus, DsBadgeVariant> = {
+  planned: 'outline',
   in_progress: 'accent',
+  partially_completed: 'primary',
+  on_hold: 'warning',
   completed: 'success',
   cancelled: 'outline',
 };
 
-const severityVariants: Record<string, DsBadgeVariant> = {
+const severityVariants: Record<NcrSeverity, DsBadgeVariant> = {
+  observation: 'outline',
   minor: 'default',
   major: 'warning',
   critical: 'danger',
@@ -84,16 +94,19 @@ export default function ManufacturingClient() {
       ? data.workOrders
       : data.workOrders.filter((order) => order.status === statusFilter);
 
-  const openNcrs = data.ncrs.filter((ncr) => ncr.status !== 'closed');
+  // Open = anything not closed or cancelled (under review, awaiting
+  // disposition, corrective/preventive action, verification all still count).
+  const openNcrs = data.ncrs.filter((ncr) => !statusIn(NCR_CLOSED_STATUSES, ncr.status));
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Manufacturing</h1>
-          <p className="text-sm text-ds-muted-foreground">
-            Work orders and quality inspections (read-only)
-          </p>
+          <Link href="/operations/manufacturing/setup" className="text-sm underline">
+            Manage BOMs, batches and costs
+          </Link>
+          <p className="text-sm text-ds-muted-foreground">Work orders and quality inspections</p>
         </div>
         <label className="flex items-center gap-2 text-sm">
           <span className="text-ds-muted-foreground">Status</span>

@@ -148,11 +148,15 @@ where
 /// The engine is `Sync` and pools its own connections (the HTTP server shares a
 /// bare `Arc<Commerce>` across threads), so nothing here serialises calls. Each
 /// call clones the inner `Arc` under a brief read lock and releases the lock
-/// before touching the database, so readers and writers proceed concurrently
-/// and `close` never waits on in-flight work: it empties the slot, and the
-/// engine drops when the last in-flight call finishes.
+/// before touching the database, so readers and writers proceed concurrently.
+/// `close` empties the slot at once — later calls are refused — and then
+/// waits, without blocking the JavaScript thread, until the engine has
+/// actually dropped: when the last in-flight call finishes and the connection
+/// pool has closed every database file.
 pub(crate) struct EngineHandle {
     slot: std::sync::RwLock<Option<Arc<Engine>>>,
+    /// Becomes `true` once the engine has dropped and released its files.
+    released: tokio::sync::watch::Receiver<bool>,
 }
 
 /// What every sub-API holds. Cheap to clone; identity is the engine.
@@ -164,31 +168,46 @@ pub(crate) type Handle = Arc<EngineHandle>;
 /// the event store), and tokio refuses to drop a runtime from inside another
 /// runtime's worker — which is exactly where the last `Arc` clone usually
 /// goes out of scope: at the end of an in-flight napi async call, or in
-/// `close()`. Hand the drop to a plain thread in that case.
-pub(crate) struct Engine(Option<RustCommerce>);
+/// `close()`. Hand the drop to a plain thread in that case. Either way the
+/// `released` signal fires only after the drop has finished, which is what
+/// `close()` waits for: the drop closes the pool, so a WAL database is
+/// checkpointed and its `-wal`/`-shm` files removed before `close()` resolves.
+pub(crate) struct Engine {
+    commerce: Option<RustCommerce>,
+    released: Option<tokio::sync::watch::Sender<bool>>,
+}
 
 impl std::ops::Deref for Engine {
     type Target = RustCommerce;
     fn deref(&self) -> &RustCommerce {
         // `None` only ever exists inside `drop`.
-        self.0.as_ref().unwrap_or_else(|| unreachable!("engine taken outside drop"))
+        self.commerce.as_ref().unwrap_or_else(|| unreachable!("engine taken outside drop"))
     }
 }
 
 impl Drop for Engine {
     fn drop(&mut self) {
-        let Some(commerce) = self.0.take() else { return };
-        if tokio::runtime::Handle::try_current().is_ok() {
-            std::thread::spawn(move || drop(commerce));
-        } else {
+        let Some(commerce) = self.commerce.take() else { return };
+        let released = self.released.take();
+        let release = move || {
             drop(commerce);
+            if let Some(released) = released {
+                released.send_replace(true);
+            }
+        };
+        if tokio::runtime::Handle::try_current().is_ok() {
+            std::thread::spawn(release);
+        } else {
+            release();
         }
     }
 }
 
 impl EngineHandle {
     fn new(commerce: RustCommerce) -> Handle {
-        Arc::new(Self { slot: std::sync::RwLock::new(Some(Arc::new(Engine(Some(commerce))))) })
+        let (released, receiver) = tokio::sync::watch::channel(false);
+        let engine = Engine { commerce: Some(commerce), released: Some(released) };
+        Arc::new(Self { slot: std::sync::RwLock::new(Some(Arc::new(engine))), released: receiver })
     }
 
     /// The live engine, or `PRECONDITION_FAILED` once `close` has run.
@@ -341,6 +360,24 @@ fn optional_money_input(
     }
 }
 
+/// Finance surfaces accept exact strings for both canonical and legacy Exact names.
+fn finance_money_input(exact: Option<&str>, value: Option<String>, field: &str) -> Result<Decimal> {
+    exact
+        .or(value.as_deref())
+        .ok_or_else(|| coded(ErrCode::Validation, format!("Missing {field}: use a decimal string")))
+        .and_then(|text| parse_decimal_str(text, field))
+}
+fn optional_finance_money_input(
+    exact: Option<&str>,
+    value: Option<String>,
+    field: &str,
+) -> Result<Option<Decimal>> {
+    exact.or(value.as_deref()).map(|text| parse_decimal_str(text, field)).transpose()
+}
+fn optional_decimal_string(value: Option<String>, field: &str) -> Result<Option<Decimal>> {
+    value.as_deref().map(|text| parse_decimal_str(text, field)).transpose()
+}
+
 /// Options for `Commerce.open`.
 #[napi(object)]
 #[derive(Clone, Default)]
@@ -446,13 +483,21 @@ impl Commerce {
         AsyncTask::new(OpenTask { db_path, options })
     }
 
-    /// Release the engine. Calls already in flight complete; every later call
-    /// rejects with `PRECONDITION_FAILED`. Idempotent.
+    /// Release the engine. Every later call rejects with `PRECONDITION_FAILED`;
+    /// calls already in flight complete first. Resolves only once the engine
+    /// has dropped and the database files are released (the connection pool
+    /// is closed, so a WAL database has been checkpointed), so the same file
+    /// can be reopened or copied straight away. Idempotent: every call
+    /// resolves after that release.
     #[napi]
     pub async fn close(&self) -> Result<()> {
-        // The drop closes the connection pool; it runs here on the worker
-        // rather than on the JavaScript thread.
+        let mut released = self.inner.released.clone();
+        // The drop closes the connection pool. It runs on a plain thread (or
+        // on whichever in-flight call finishes last); this only awaits it.
         drop(self.inner.close());
+        // An error means the sender is gone, which only happens once the
+        // engine itself has dropped.
+        let _ = released.wait_for(|done| *done).await;
         Ok(())
     }
 

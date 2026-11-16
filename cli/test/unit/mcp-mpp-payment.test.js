@@ -175,6 +175,26 @@ describe('createPreparePaymentForTool', () => {
     assert.equal(out.error, "Unknown tool 'nope'");
   });
 
+  it('names the capability scope when it excludes the tool', async () => {
+    const message = "Tool 'delete_customer' is outside this toolkit's capability scope.";
+    const prepare = createPreparePaymentForTool({
+      toolDefsByName,
+      getAgenticToolPricing: async () => PRICING,
+      serviceInfo: SERVICE_INFO,
+      describeUnavailableTool: (name) =>
+        name === 'delete_customer' ? { reason: 'outside_capability_scope', message } : null,
+    });
+    assert.deepEqual(await prepare({ tool: 'mcp__stateset-commerce__delete_customer' }), {
+      success: false,
+      tool: 'delete_customer',
+      payable: false,
+      error: message,
+      errorCode: 'PERMISSION_DENIED',
+      refusal: 'outside_capability_scope',
+    });
+    assert.equal((await prepare({ tool: 'nope' })).error, "Unknown tool 'nope'");
+  });
+
   it('normalizes legacy prefixes and reports validation issues', async () => {
     const out = await build(PRICING)({ tool: 'mcp__stateset-commerce__create_order', params: {} });
     assert.equal(out.success, false);

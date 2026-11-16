@@ -10,7 +10,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+vi.mock('server-only', () => ({}));
 import { ADMIN_SESSION_COOKIE } from '@/lib/shared/auth-session';
+import type { Bill } from '@/lib/embedded';
 
 // Mock next/headers cookies() — must be before imports
 const cookieStore = vi.hoisted(() => new Map<string, { value: string }>());
@@ -24,7 +26,7 @@ vi.mock('next/headers', () => ({
       delete: (name: string) => {
         cookieStore.delete(name);
       },
-    })
+    }),
   ),
 }));
 
@@ -32,6 +34,8 @@ vi.mock('next/headers', () => ({
 // (a Proxy-based mock makes the module look thenable and hangs the import).
 vi.mock('@/lib/embedded', () => ({
   generalLedgerApi: {
+    getAutoPostingConfig: vi.fn().mockResolvedValue(null),
+    setAutoPostingConfig: vi.fn(),
     listAccounts: vi.fn().mockResolvedValue([]),
     getTrialBalance: vi.fn().mockResolvedValue({
       asOfDate: '2026-07-20',
@@ -85,6 +89,8 @@ vi.mock('@/lib/embedded', () => ({
 }));
 
 import {
+  getGlPostingConfig,
+  setGlPostingConfig,
   getGlAccounts,
   getTrialBalance,
   getJournalEntries,
@@ -116,6 +122,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 const UNAUTHORIZED = { statusCode: 401, code: 'UNAUTHORIZED' };
@@ -128,6 +135,9 @@ const VALIDATION_ERROR = {
 describe('finance actions auth guard', () => {
   describe('without a session', () => {
     it('rejects GL reads and never reaches the embedded engine', async () => {
+      await expect(getGlPostingConfig()).rejects.toMatchObject(UNAUTHORIZED);
+      await expect(setGlPostingConfig({} as never)).rejects.toMatchObject(UNAUTHORIZED);
+      expect(generalLedgerApi.setAutoPostingConfig).not.toHaveBeenCalled();
       await expect(getGlAccounts()).rejects.toMatchObject(UNAUTHORIZED);
       await expect(getTrialBalance('2026-07-20')).rejects.toMatchObject(UNAUTHORIZED);
       await expect(getJournalEntries()).rejects.toMatchObject(UNAUTHORIZED);
@@ -165,6 +175,13 @@ describe('finance actions auth guard', () => {
   describe('with a valid session cookie', () => {
     beforeEach(() => {
       cookieStore.set(ADMIN_SESSION_COOKIE, { value: 'test-session-token' });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({ user: { id: 'verified-admin', role: 'admin' } }),
+        }),
+      );
     });
 
     it('allows GL reads through to the embedded engine', async () => {
@@ -196,9 +213,8 @@ describe('finance actions auth guard', () => {
 
     it('aggregates bills + aging for the bills page', async () => {
       const result = await getBillsPageData();
-      expect(result).toMatchObject({ bills: [], aging: { total: 0 } });
+      expect(result).toMatchObject({ bills: [], aging: { total: '0' } });
       expect(accountsPayableApi.listBills).toHaveBeenCalled();
-      expect(accountsPayableApi.getAgingSummary).toHaveBeenCalled();
     });
 
     it('closeMonthDryRun always forces dryRun: true', async () => {
@@ -210,7 +226,7 @@ describe('finance actions auth guard', () => {
       await runCloseMonth('per_1', 'dom@stateset.com');
       expect(generalLedgerApi.closeMonth).toHaveBeenCalledWith('per_1', {
         dryRun: false,
-        closedBy: 'dom@stateset.com',
+        closedBy: 'verified-admin',
       });
     });
 
@@ -248,19 +264,101 @@ describe('finance actions auth guard', () => {
       const result = await getReceivablesPageData();
       expect(result.dso).toBe(31.5);
       expect(result.dsoWindowDays).toBeGreaterThan(0);
-      expect(result.aging.total).toBe(0);
+      expect(result.aging.total).toBe('100');
       // Paid invoice excluded; open invoice bucketed at 90+
       expect(result.customers).toEqual([
         {
           customerId: 'cus_1',
-          current: 0,
-          days130: 0,
-          days3160: 0,
-          days6190: 0,
-          daysOver90: 100,
-          total: 100,
+          currency: 'USD',
+          current: '0',
+          days130: '0',
+          days3160: '0',
+          days6190: '0',
+          daysOver90: '100',
+          total: '100',
         },
       ]);
+    });
+
+    it('uses the collectible balance after partial write-offs and keeps currencies separate', async () => {
+      const base = {
+        invoiceNumber: 'INV',
+        customerId: 'cus_1',
+        subtotal: '100.00',
+        taxAmount: '0',
+        total: '100.00',
+        amountPaid: '20.00',
+        dueDate: '2020-01-01',
+        createdAt: '2020-01-01T00:00:00Z',
+        updatedAt: '2020-01-01T00:00:00Z',
+      };
+      vi.mocked(accountsReceivableApi.listInvoices).mockResolvedValueOnce([
+        { ...base, id: 'partial', status: 'partially_paid', currency: 'USD', balanceDue: '7.01' },
+        { ...base, id: 'draft', status: 'draft', currency: 'USD', balanceDue: '100.00' },
+        { ...base, id: 'foreign', status: 'sent', currency: 'EUR', balanceDue: '80.00' },
+      ]);
+      const result = await getReceivablesPageData('USD');
+      expect(result.aging.total).toBe('7.01');
+      expect(result.customers).toHaveLength(1);
+      expect(result.customers[0]).toMatchObject({ currency: 'USD', total: '7.01' });
+      expect(result.currencies).toEqual(['EUR', 'USD']);
+      expect(result.dso).toBeNull();
+    });
+
+    it('ages disputed invoices like the engine does', async () => {
+      vi.mocked(accountsReceivableApi.listInvoices).mockResolvedValueOnce([
+        {
+          id: 'disputed',
+          invoiceNumber: 'INV-D',
+          customerId: 'cus_1',
+          status: 'disputed',
+          subtotal: '40.00',
+          taxAmount: '0',
+          total: '40.00',
+          amountPaid: '0',
+          balanceDue: '40.00',
+          currency: 'USD',
+          dueDate: '2020-01-01',
+          createdAt: '2020-01-01T00:00:00Z',
+          updatedAt: '2020-01-01T00:00:00Z',
+        },
+      ]);
+      const result = await getReceivablesPageData('USD');
+      expect(result.aging.total).toBe('40.00');
+      expect(result.customers[0]).toMatchObject({ daysOver90: '40.00' });
+    });
+
+    it('ages every bill the engine ages: all but paid and cancelled', async () => {
+      const bill = (status: Bill['status']) => ({
+        id: `bill_${status}`,
+        billNumber: `BILL-${status}`,
+        supplierId: 'sup_1',
+        currency: 'USD',
+        status,
+        totalAmount: '10.00',
+        amountPaid: '0',
+        amountDue: status === 'paid' ? '0' : '10.00',
+        dueDate: '2099-01-01',
+        createdAt: '2026-01-01T00:00:00Z',
+      });
+      vi.mocked(accountsPayableApi.listBills).mockResolvedValueOnce(
+        (
+          [
+            'draft',
+            'pending',
+            'approved',
+            'partially_paid',
+            'overdue',
+            'disputed',
+            'paid',
+            'cancelled',
+          ] as const
+        ).map(bill),
+      );
+      const result = await getBillsPageData('USD');
+      // Six open bills of 10.00 each, all current (due in the future).
+      expect(result.aging.total).toBe('60.00');
+      expect(result.aging.current).toBe('60.00');
     });
 
     it('passes the status filter through to fixed assets and validates it', async () => {
@@ -306,11 +404,12 @@ describe('finance actions auth guard', () => {
       expect(generalLedgerApi.closeMonth).not.toHaveBeenCalled();
     });
 
-    it('runCloseMonth rejects a blank closer identity', async () => {
-      // closedBy is optional, but "present and empty" is not a valid audit
-      // trail on an irreversible posting.
-      await expect(runCloseMonth('per_1', '   ')).rejects.toMatchObject(VALIDATION_ERROR);
-      expect(generalLedgerApi.closeMonth).not.toHaveBeenCalled();
+    it('ignores a caller-supplied closer identity', async () => {
+      await runCloseMonth('per_1', '   ');
+      expect(generalLedgerApi.closeMonth).toHaveBeenCalledWith('per_1', {
+        dryRun: false,
+        closedBy: 'verified-admin',
+      });
     });
 
     it('close-month rejects a period id with path separators', async () => {
@@ -320,8 +419,8 @@ describe('finance actions auth guard', () => {
     });
 
     it('names the offending field in the error details', async () => {
-      await expect(runCloseMonth('per_1', '')).rejects.toMatchObject({
-        details: [{ field: 'closedBy' }],
+      await expect(runCloseMonth('')).rejects.toMatchObject({
+        details: expect.arrayContaining([expect.objectContaining({ field: 'periodId' })]),
       });
     });
   });

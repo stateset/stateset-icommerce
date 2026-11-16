@@ -35,6 +35,20 @@ function makeExecutor(overrides = {}) {
       },
     ],
     ['no_handler', { name: 'no_handler', inputSchema: {}, permission: 'write' }],
+    [
+      'agentic_execute_plan',
+      {
+        name: 'agentic_execute_plan',
+        description: 'Composite',
+        inputSchema: {},
+        permission: 'write',
+        handler: async (payload) => {
+          handlerCalls.push(payload);
+          return { finalStatus: 'success' };
+        },
+      },
+    ],
+    ...(overrides.extraToolDefs ?? []),
   ]);
   const hookRunner = {
     hasHooks: () => true,
@@ -85,6 +99,84 @@ describe('createExecuteToolStepInPlan — validation exits', () => {
     const noHandler = await execute({ ...base, toolName: 'no_handler' });
     assert.equal(noHandler.status, 'invalid');
     assert.equal(noHandler.error, "No executable handler for tool 'no_handler'");
+  });
+
+  it('refuses a scope-excluded tool before hooks, policy or its handler run', async () => {
+    const message = "Tool 'delete_customer' is outside this toolkit's capability scope.";
+    let policyCalls = 0;
+    let scoped = true;
+    const handlerCalls = [];
+    // delete_customer is a real, executable entry in the map, and its metadata
+    // is a known write tool. The server never hands the executor such a pair
+    // (an excluded tool is absent from its map), but it proves the scope
+    // refusal is checked first: without it, every gate and the handler run,
+    // as the control at the end shows.
+    const { execute, hookCalls } = makeExecutor({
+      extraToolDefs: [
+        [
+          'delete_customer',
+          {
+            name: 'delete_customer',
+            description: 'Delete customer',
+            inputSchema: { customerId: z.string().min(1) },
+            permission: 'write',
+            handler: async (payload) => {
+              handlerCalls.push(payload.params);
+              return { success: true, deleted: payload.params.customerId };
+            },
+          },
+        ],
+      ],
+      deps: {
+        getToolRuntimeMeta: (name) => ({
+          name,
+          permission: 'write',
+          policyDomain: 'customers',
+          sideEffect: 'write',
+          compensations: [],
+          idempotent: false,
+          ...(scoped
+            ? { unavailable: { reason: 'outside_capability_scope', message, sideEffect: 'write' } }
+            : {}),
+        }),
+        evaluatePolicy: async (tool, params, extra, domain) => {
+          policyCalls += 1;
+          return { allowed: true, params, domain, actions: [] };
+        },
+      },
+    });
+    const params = { customerId: 'c1' };
+    for (const dryRun of [false, true]) {
+      const out = await execute({ ...base, toolName: 'delete_customer', params, dryRun });
+      assert.equal(out.status, 'permission_block');
+      assert.equal(out.error, message);
+      assert.deepEqual(out.permission, { allowed: false, preview: false, reason: message });
+      assert.equal(out.simulation, dryRun);
+      assert.equal(out.runtime.sideEffect, 'write');
+      assert.equal(out.notes.scope.reason, 'outside_capability_scope');
+    }
+    const rollback = await execute({
+      ...base,
+      toolName: 'delete_customer',
+      params,
+      isRollback: true,
+    });
+    assert.equal(rollback.status, 'rollback_failed');
+    assert.equal(rollback.isRollback, true);
+    assert.equal(policyCalls, 0);
+    assert.equal(hookCalls.length, 0);
+    assert.equal(handlerCalls.length, 0);
+
+    // Control: lift the scope and the same call passes every gate and runs.
+    scoped = false;
+    const ran = await execute({ ...base, toolName: 'delete_customer', params });
+    assert.equal(ran.status, 'success');
+    assert.equal(policyCalls, 1);
+    assert.deepEqual(
+      hookCalls.map((call) => call.hook),
+      ['before_tool_call', 'after_tool_call'],
+    );
+    assert.deepEqual(handlerCalls, [params]);
   });
 
   it('returns invalid with validation notes when params fail the schema', async () => {
@@ -227,6 +319,96 @@ describe('createExecuteToolStepInPlan — execution', () => {
     assert.equal(governedCalls[0].toolName, 'create_order');
     assert.equal(governedCalls[0].options.requireGoverned, true);
     assert.equal(handlerCalls.length, 0);
+  });
+
+  it('exempts only a top-level governed composite from the typed-command requirement', async () => {
+    const governedCalls = [];
+    const { execute, handlerCalls } = makeExecutor({
+      deps: {
+        executeGovernedTool: async (toolName, params, options) => {
+          governedCalls.push({ toolName, options });
+          return null;
+        },
+      },
+    });
+    const composite = { ...base, toolName: 'agentic_execute_plan', params: {} };
+
+    assert.equal((await execute({ ...composite, topLevel: true })).status, 'success');
+    assert.equal((await execute(composite)).status, 'success');
+    // A non-composite gets no exemption at the top level.
+    assert.equal((await execute({ ...base, topLevel: true })).status, 'success');
+    assert.deepEqual(
+      governedCalls.map(({ toolName, options }) => [toolName, options.requireGoverned]),
+      [
+        ['agentic_execute_plan', false],
+        ['agentic_execute_plan', true],
+        ['create_order', true],
+      ],
+    );
+    assert.equal(handlerCalls.length, 3);
+  });
+
+  it('never lets a caller-supplied option switch off requireGoverned', async () => {
+    const governedCalls = [];
+    const { execute } = makeExecutor({
+      deps: {
+        executeGovernedTool: async (toolName, params, options) => {
+          governedCalls.push(options);
+          return null;
+        },
+      },
+    });
+    await execute({ ...base, extra: { requireGoverned: false, traceId: 't-1' } });
+    assert.equal(governedCalls[0].requireGoverned, true);
+    assert.equal(governedCalls[0].traceId, 't-1');
+  });
+
+  describe('kernel strict mode', () => {
+    const strictExecutor = () => {
+      const governedCalls = [];
+      const executor = makeExecutor({
+        deps: {
+          strictKernel: { isWithheld: (toolName) => toolName === 'create_order' },
+          executeGovernedTool: async (toolName, params, options) => {
+            governedCalls.push({ toolName, options });
+            return null;
+          },
+        },
+      });
+      return { ...executor, governedCalls };
+    };
+
+    it('refuses a withheld write before anything runs, live, dry, or top level', async () => {
+      const { execute, handlerCalls, hookCalls, governedCalls } = strictExecutor();
+      for (const input of [base, { ...base, dryRun: true }, { ...base, topLevel: true }]) {
+        const out = await execute(input);
+        assert.equal(out.status, 'permission_block');
+        assert.equal(out.notes.strictKernel, 'withheld');
+        assert.match(out.error, /'create_order' is a write mutation outside the governed kernel/);
+        assert.equal(out.simulation, input.dryRun === true);
+      }
+      assert.equal(handlerCalls.length, 0);
+      assert.equal(hookCalls.length, 0);
+      assert.equal(governedCalls.length, 0);
+    });
+
+    it('refuses a nested composite but runs a top-level one', async () => {
+      const { execute, handlerCalls, governedCalls } = strictExecutor();
+      const composite = { ...base, toolName: 'agentic_execute_plan', params: {} };
+
+      for (const dryRun of [false, true]) {
+        const nested = await execute({ ...composite, dryRun });
+        assert.equal(nested.status, 'permission_block');
+        assert.equal(nested.notes.strictKernel, 'nested_composite');
+        assert.match(nested.error, /only as a top-level call/);
+      }
+      assert.equal(handlerCalls.length, 0);
+
+      const top = await execute({ ...composite, topLevel: true });
+      assert.equal(top.status, 'success');
+      assert.equal(handlerCalls.length, 1);
+      assert.equal(governedCalls[0].options.requireGoverned, false);
+    });
   });
 
   it('executes the handler with the lazily-read tool context and runs after_tool_call', async () => {

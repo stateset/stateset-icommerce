@@ -5,6 +5,7 @@ import { Card, CardContent, Badge } from '@stateset/design';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getFulfillmentPageData } from '@/app/actions/operations';
 import type { PickTask, Wave } from '@/lib/embedded';
+import type { PickTaskStatus, WaveStatus } from '@/lib/engine-lifecycles';
 
 type DsBadgeVariant =
   | 'default'
@@ -15,19 +16,22 @@ type DsBadgeVariant =
   | 'danger'
   | 'outline';
 
-const waveStatusVariants: Record<string, DsBadgeVariant> = {
-  created: 'outline',
+/** One badge per engine wave status (`WaveStatus`). */
+const waveStatusVariants: Record<WaveStatus, DsBadgeVariant> = {
+  draft: 'outline',
   released: 'primary',
-  picking: 'accent',
+  in_progress: 'accent',
   completed: 'success',
   cancelled: 'outline',
 };
 
-const pickStatusVariants: Record<string, DsBadgeVariant> = {
+/** One badge per engine pick-task status (`PickTaskStatus`). */
+const pickStatusVariants: Record<PickTaskStatus, DsBadgeVariant> = {
   pending: 'outline',
   assigned: 'primary',
   in_progress: 'accent',
-  picked: 'success',
+  completed: 'success',
+  short: 'warning',
   cancelled: 'outline',
 };
 

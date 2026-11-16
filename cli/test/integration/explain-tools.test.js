@@ -3,7 +3,8 @@
  *
  * Builds the same journey as mcp-golden-path.test.js -- customer, first-order
  * coupon, cart, tax, checkout through the kernel, payment, shipment, return,
- * refund -- with real `executeTool` calls on a fresh store, then asks the
+ * disposition and the refund the completion settles -- with real
+ * `executeTool` calls on a fresh store, then asks the
  * explain tools to tell the story back and checks it against what happened.
  *
  * Kernel mode is non-strict (see mcp-golden-path.test.js for why).
@@ -145,11 +146,26 @@ before(async () => {
     items: [{ orderItemId: journey.order.items[0].id, quantity: 1 }],
   });
   journey.returnId = entity(ret, 'return')?.id ?? ret.id ?? ret.receipt?.aggregate_id;
+  const returnItemId =
+    entity(ret, 'return')?.items?.[0]?.id ??
+    (await call('get_return', { returnId: journey.returnId })).return.items[0].id;
   await call('approve_return', { returnId: journey.returnId });
   await call('add_return_tracking', { returnId: journey.returnId, trackingNumber: 'RET-1Z' });
   await call('mark_return_received', { returnId: journey.returnId });
-  await call('complete_return', { returnId: journey.returnId });
-  await call('create_refund', { paymentId: journey.paymentId, amount: '10.00', reason: 'return' });
+  await call('set_return_item_disposition', {
+    returnId: journey.returnId,
+    returnItemId,
+    disposition: 'restock',
+  });
+  // Completing the return settles its refund against the captured payment;
+  // a manual create_refund would stack a second refund on top of it.
+  journey.completedReturn = entity(
+    await call('complete_return', { returnId: journey.returnId }),
+    'return',
+  );
+  journey.returnRefund = String(
+    journey.completedReturn.refund_amount ?? journey.completedReturn.refundAmount,
+  );
 
   journey.explained = await call('explain_order', { orderId: journey.orderId });
   journey.explainedByNumber = await call('explain_order', {
@@ -220,11 +236,19 @@ describe('explain_order through the MCP server', () => {
     );
   });
 
-  it('counts the 10.00 refund in money.refunded', () => {
-    assert.equal(journey.explained.money.refunded, '10.00');
+  it("counts the return's settled refund in money.refunded", () => {
+    assert.equal(compareDecimals(journey.returnRefund, '0'), 1, journey.returnRefund);
     assert.equal(
-      journey.explained.money.net,
-      subtractDecimals(journey.explained.money.charged, '10.00'),
+      compareDecimals(journey.explained.money.refunded, journey.returnRefund),
+      0,
+      `${journey.explained.money.refunded} vs ${journey.returnRefund}`,
+    );
+    assert.equal(
+      compareDecimals(
+        journey.explained.money.net,
+        subtractDecimals(journey.explained.money.charged, journey.returnRefund),
+      ),
+      0,
     );
   });
 

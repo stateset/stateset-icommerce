@@ -135,6 +135,7 @@ pub mod errors;
 pub mod events;
 pub mod kernel;
 pub mod models;
+pub mod state_machine;
 pub mod traits;
 pub mod validation;
 
@@ -149,6 +150,7 @@ pub use errors::*;
 pub use events::*;
 pub use kernel::*;
 pub use models::*;
+pub use state_machine::{StateDescriptor, StateMachine, StateMachineDescriptor, TransitionRefused};
 pub use traits::*;
 pub use validation::*;
 
@@ -180,6 +182,9 @@ pub mod prelude {
     pub use crate::events::*;
     pub use crate::kernel::*;
     pub use crate::models::*;
+    pub use crate::state_machine::{
+        StateDescriptor, StateMachine, StateMachineDescriptor, TransitionRefused,
+    };
     pub use crate::traits::*;
     pub use crate::validation::*;
 

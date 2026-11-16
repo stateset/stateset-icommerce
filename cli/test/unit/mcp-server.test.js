@@ -12,6 +12,7 @@ import os from 'node:os';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createStatesetMcpServer, TOOL_NAMES } from '../../src/mcp-server.js';
+import { createMcpEventStreamer } from '../../src/mcp-event-streamer.js';
 import { createPaymentCredential } from '../../src/mpp/index.js';
 import { loadTreasuryContext, recordDeposit } from '../../src/treasury/index.js';
 
@@ -697,6 +698,7 @@ describe('mcp-server', () => {
       };
       const server = createStatesetMcpServer({
         commerce: mockCommerce,
+        allowApply: true,
         mcpEventStream: customStream,
       });
       const tool = server.instance._registeredTools.agentic_unsubscribe_events;
@@ -705,6 +707,41 @@ describe('mcp-server', () => {
 
       assert.equal(payload.success, false);
       assert.equal(payload.error, 'Subscription not found');
+    });
+
+    it('agentic_unsubscribe_events is a write: previews without --apply, unsubscribes with it', async () => {
+      // One real registry shared by both servers, as one events gateway
+      // shares it between every MCP session it serves.
+      const stream = createMcpEventStreamer();
+      const created = await stream.subscribe({ sessionId: 'unsub-session', eventTypes: ['*'] });
+      const subscriptionId = created.subscription.id;
+      const listed = async () =>
+        (await stream.listSubscriptions({ sessionId: 'unsub-session' })).map((sub) => sub.id);
+
+      const preview = createStatesetMcpServer({ commerce: mockCommerce, mcpEventStream: stream });
+      const previewRes = await preview.instance._registeredTools.agentic_unsubscribe_events.handler(
+        { subscriptionId },
+      );
+      const previewPayload = JSON.parse(previewRes.content[0].text);
+      assert.equal(previewPayload.preview, true);
+      assert.deepEqual(previewPayload.wouldDo, {
+        tool: 'agentic_unsubscribe_events',
+        params: { subscriptionId },
+      });
+      assert.deepEqual(await listed(), [subscriptionId], 'a preview must not unsubscribe');
+
+      const applied = createStatesetMcpServer({
+        commerce: mockCommerce,
+        allowApply: true,
+        mcpEventStream: stream,
+      });
+      const appliedRes = await applied.instance._registeredTools.agentic_unsubscribe_events.handler(
+        { subscriptionId },
+      );
+      const appliedPayload = JSON.parse(appliedRes.content[0].text);
+      assert.equal(appliedPayload.success, true);
+      assert.equal(appliedPayload.subscription.id, subscriptionId);
+      assert.deepEqual(await listed(), []);
     });
 
     it('agentic_list_event_subscriptions forwards to stream service', async () => {

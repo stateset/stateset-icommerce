@@ -6,6 +6,17 @@ const { Commerce } = require('../index.js');
 test('exact purchasing costs survive PO approval and bounded partial receipts', async () => {
   const commerce = new Commerce(':memory:');
   try {
+    const warehouse = await commerce.warehouse.createWarehouse({
+      code: 'SIM',
+      name: 'Simulation warehouse',
+    });
+    const location = await commerce.warehouse.createLocation({
+      warehouseId: warehouse.id,
+      code: 'RECEIVING',
+      locationType: 'receiving',
+      isReceivable: true,
+    });
+    await commerce.currency.setRate({ baseCurrency: 'EUR', quoteCurrency: 'USD', rate: 1.1 });
     const supplier = await commerce.purchaseOrders.createSupplier({ name: 'Planning supplier' });
     let po = await commerce.purchaseOrders.create({
       supplierId: supplier.id,
@@ -21,22 +32,38 @@ test('exact purchasing costs survive PO approval and bounded partial receipts', 
     assert.equal(line.lineTotalExact, '0.300003');
     assert.equal(line.quantityOrderedExact, '3');
     await assert.rejects(
-      commerce.purchaseOrders.receive(po.id, [{ itemId: line.id, quantityReceivedExact: '1' }]),
+      commerce.purchaseOrders.receive(
+        po.id,
+        [{ itemId: line.id, quantityReceivedExact: '1' }],
+        warehouse.id,
+        location.id,
+      ),
     );
     await commerce.purchaseOrders.submit(po.id);
     await commerce.purchaseOrders.approve(po.id, 'test-planner');
     await commerce.purchaseOrders.send(po.id);
-    po = await commerce.purchaseOrders.receive(po.id, [
-      { itemId: line.id, quantityReceivedExact: '1' },
-    ]);
+    po = await commerce.purchaseOrders.receive(
+      po.id,
+      [{ itemId: line.id, quantityReceivedExact: '1' }],
+      warehouse.id,
+      location.id,
+    );
     assert.equal(po.status, 'partially_received');
     await assert.rejects(
-      commerce.purchaseOrders.receive(po.id, [{ itemId: line.id, quantityReceivedExact: '3' }]),
+      commerce.purchaseOrders.receive(
+        po.id,
+        [{ itemId: line.id, quantityReceivedExact: '3' }],
+        warehouse.id,
+        location.id,
+      ),
     );
     assert.equal((await commerce.purchaseOrders.getItems(po.id))[0].quantityReceivedExact, '1');
-    po = await commerce.purchaseOrders.receive(po.id, [
-      { itemId: line.id, quantityReceivedExact: '2' },
-    ]);
+    po = await commerce.purchaseOrders.receive(
+      po.id,
+      [{ itemId: line.id, quantityReceivedExact: '2' }],
+      warehouse.id,
+      location.id,
+    );
     assert.equal(po.status, 'received');
     assert.equal((await commerce.purchaseOrders.getItems(po.id))[0].quantityReceivedExact, '3');
   } finally {

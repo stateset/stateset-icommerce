@@ -143,8 +143,67 @@ describe('createExecuteAgenticPlan', () => {
     assert.equal(executed.length, 0);
     assert.equal(out.steps[0].status, 'invalid');
     assert.match(out.steps[0].error, /Unresolved plan parameter reference/);
-    assert.equal(out.finalStatus, 'success'); // 'invalid' is not in the failure set
+    assert.equal(out.finalStatus, 'failed');
     assert.equal(out.failedSteps, 1);
+  });
+
+  it('fails the plan, stops, and asks for rollback when a later step is invalid', async () => {
+    const rollback = { attempted: 1, steps: [], fullyReverted: true };
+    const { executeAgenticPlan, executed, rollbackCalls } = makeExecutor({ rollback });
+    const out = await executeAgenticPlan({
+      steps: [
+        { tool: 'create_order' },
+        { tool: 'ship_order', params: { orderId: '{{ steps.9.result.id }}' } },
+        { tool: 'list_orders' },
+      ],
+      dryRun: false,
+      rollbackOnFailure: true,
+    });
+    assert.deepEqual(
+      executed.map((e) => e.toolName),
+      ['create_order'],
+      'the loop stops at the invalid step',
+    );
+    assert.deepEqual(
+      out.steps.map((s) => s.status),
+      ['success', 'invalid'],
+    );
+    assert.equal(out.finalStatus, 'failed');
+    assert.equal(rollbackCalls[0].finalStatus, 'failed', 'rollback sees the failure');
+    assert.equal(rollbackCalls[0].executedForRollback.length, 1);
+    assert.equal(out.rollback, rollback);
+  });
+
+  for (const status of ['payment_required', 'some_future_status']) {
+    it(`fails the plan on a '${status}' step`, async () => {
+      const { executeAgenticPlan } = makeExecutor({
+        stepResult: (input) =>
+          input.toolName === 'ship_order'
+            ? { index: input.stepIndex, tool: input.toolName, status, charge: null, result: null }
+            : undefined,
+      });
+      const out = await executeAgenticPlan({
+        steps: [{ tool: 'create_order' }, { tool: 'ship_order' }],
+        dryRun: false,
+      });
+      assert.equal(out.finalStatus, 'failed');
+    });
+  }
+
+  it('fails a dry run whose step is invalid instead of reporting dry_run', async () => {
+    const { executeAgenticPlan } = makeExecutor();
+    const out = await executeAgenticPlan({
+      steps: [
+        { tool: 'create_order' },
+        { tool: 'ship_order', params: { orderId: '{{ steps.9.result.id }}' } },
+      ],
+      dryRun: true,
+    });
+    assert.deepEqual(
+      out.steps.map((s) => s.status),
+      ['dry_run_success', 'invalid'],
+    );
+    assert.equal(out.finalStatus, 'failed');
   });
 
   it('blocks a step on the cost budget before execution', async () => {

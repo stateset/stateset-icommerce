@@ -5,6 +5,7 @@
  */
 
 import { z } from 'zod';
+import { positiveDecimalString, nonnegativeDecimalString } from '../utils/decimal-schema.js';
 import { applyRequired } from '../utils/apply-guard.js';
 
 const withPolicyDomain = (policyDomain, tools) => tools.map((tool) => ({ policyDomain, ...tool }));
@@ -41,12 +42,12 @@ export const costAccountingTools = withPolicyDomain('cost_accounting', [
     inputSchema: {
       sku: z.string().min(1).describe('SKU'),
       costMethod: z.string().min(1).optional().describe('Costing method'),
-      standardCost: z.number().positive().optional().describe('Standard cost'),
-      materialCost: z.number().nonnegative().optional().describe('Material cost'),
-      laborCost: z.number().nonnegative().optional().describe('Labor cost'),
-      overheadCost: z.number().nonnegative().optional().describe('Overhead cost'),
+      standardCost: positiveDecimalString.optional().describe('Standard cost'),
+      materialCost: nonnegativeDecimalString.optional().describe('Material cost'),
+      laborCost: nonnegativeDecimalString.optional().describe('Labor cost'),
+      overheadCost: nonnegativeDecimalString.optional().describe('Overhead cost'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Set item cost', params);
@@ -68,10 +69,10 @@ export const costAccountingTools = withPolicyDomain('cost_accounting', [
     description: 'Update average cost for a SKU from a quantity and unit cost.',
     inputSchema: {
       sku: z.string().min(1).describe('SKU'),
-      quantity: z.number().positive().describe('Quantity'),
-      unitCost: z.number().positive().describe('Unit cost'),
+      quantity: positiveDecimalString.describe('Quantity'),
+      unitCost: positiveDecimalString.describe('Unit cost'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Update average item cost', params);

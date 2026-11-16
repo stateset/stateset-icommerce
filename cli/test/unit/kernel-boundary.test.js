@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 
 import {
   classifyKernelToolBoundary,
+  isKernelGovernedComposite,
   isMutationPermission,
   KERNEL_GOVERNED_COMPOSITE_TOOLS,
   selectStrictKernelToolDefinitions,
+  selectStrictKernelWithheldToolNames,
 } from '../../src/kernel-boundary.js';
 import { KERNEL_CAPABILITY_BY_TOOL } from '../../src/kernel-tool-execution.js';
 import { AGENTIC_RUNTIME_TOOLS } from '../../src/mcp/agentic-runtime-tools.js';
@@ -55,13 +57,49 @@ describe('kernel mutation boundary', () => {
     assert.equal(exposedNames.has('delete_customer'), false);
     assert.equal(exposedNames.has('backup_database'), false);
     assert.equal(exposedNames.has('set_exchange_rate'), false);
+    // Removes an entry from the shared, in-memory event subscription registry.
+    assert.equal(exposedNames.has('agentic_unsubscribe_events'), false);
+    // Look like lookups, but write rows: a get-or-create credit account and a
+    // payment link view counter. Their pure reads stay exposed.
+    assert.equal(exposedNames.has('x402_credit_balance'), false);
+    assert.equal(exposedNames.has('resolve_payment_link'), false);
+    assert.equal(exposedNames.has('x402_get_credit_account'), true);
+    assert.equal(exposedNames.has('get_payment_link_status'), true);
     assert.equal(exposedNames.has('create_payment'), true);
-    assert.equal(exposedNames.has('agentic_execute_plan'), true);
-    const composite = classifyKernelToolBoundary(ALL_TOOLS).entries.find(
-      (entry) => entry.name === 'agentic_execute_plan',
+    const entries = classifyKernelToolBoundary(ALL_TOOLS).entries;
+    for (const name of ['agentic_execute_plan', 'agentic_replay_mutation']) {
+      assert.equal(exposedNames.has(name), true, name);
+      const composite = entries.find((entry) => entry.name === name);
+      assert.equal(composite.permission, 'write', name);
+      assert.equal(composite.disposition, 'governed_composite', name);
+    }
+    assert.deepEqual(
+      [...KERNEL_GOVERNED_COMPOSITE_TOOLS].sort(),
+      ['agentic_execute_plan', 'agentic_replay_mutation'],
+      'the governed composite allow-list stays small and explicit',
     );
-    assert.equal(composite.permission, 'write');
-    assert.equal(composite.disposition, 'governed_composite');
+  });
+
+  it('withholds exactly the blocked mutations, the complement of strict exposure', () => {
+    const withheld = selectStrictKernelWithheldToolNames(ALL_TOOLS);
+    const exposed = new Set(selectStrictKernelToolDefinitions(ALL_TOOLS).map((tool) => tool.name));
+    const blocked = classifyKernelToolBoundary(ALL_TOOLS)
+      .entries.filter((entry) => entry.disposition === 'blocked')
+      .map((entry) => entry.name);
+
+    assert.deepEqual([...withheld].sort(), blocked.sort());
+    for (const tool of ALL_TOOLS) {
+      assert.notEqual(withheld.has(tool.name), exposed.has(tool.name), tool.name);
+    }
+    assert.equal(withheld.has('create_payment_link'), true);
+    assert.equal(withheld.has('create_customer'), false);
+    assert.equal(withheld.has('list_customers'), false);
+    for (const name of KERNEL_GOVERNED_COMPOSITE_TOOLS) {
+      assert.equal(withheld.has(name), false, name);
+      assert.equal(isKernelGovernedComposite(name), true, name);
+    }
+    assert.equal(isKernelGovernedComposite('agentic_plan'), false);
+    assert.equal(isKernelGovernedComposite('create_customer'), false);
   });
 
   it('treats missing and future permission classes as mutations', () => {

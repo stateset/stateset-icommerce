@@ -398,20 +398,68 @@ export class UnifiedSequencerClient extends EventEmitter {
   }
 
   /**
+   * The REST client, for VES commitment and proof routes the gRPC client
+   * does not wrap.
+   * @private
+   * @param {string} method
+   * @returns {SequencerClient}
+   */
+  _restOnly(method) {
+    if (this._transport !== 'rest') {
+      throw new Error(`${method} uses the VES REST routes; connect with an https:// sequencer URL`);
+    }
+    return this._client;
+  }
+
+  /** See SequencerClient#listCommitments. REST only. */
+  async listCommitments() {
+    return this._restOnly('listCommitments').listCommitments();
+  }
+
+  /** See SequencerClient#createCommitment. REST only. */
+  async createCommitment(sequenceStart, sequenceEnd) {
+    return this._restOnly('createCommitment').createCommitment(sequenceStart, sequenceEnd);
+  }
+
+  /** See SequencerClient#getInclusionProof. REST only. */
+  async getInclusionProof(sequenceNumber, batchId) {
+    return this._restOnly('getInclusionProof').getInclusionProof(sequenceNumber, batchId);
+  }
+
+  /** See SequencerClient#verifyEventInclusion. REST only. */
+  async verifyEventInclusion(event, commitment) {
+    return this._restOnly('verifyEventInclusion').verifyEventInclusion(event, commitment);
+  }
+
+  /**
    * Verify inclusion proof
    * @param {Object} envelope
    * @param {Object} proof
    * @param {string} expectedRoot
+   * @param {{ sequenceNumber?: number|bigint, leafCount?: number|string }} [options]
    * @returns {boolean}
    */
-  verifyInclusion(envelope, proof, expectedRoot) {
+  verifyInclusion(envelope, proof, expectedRoot, options) {
+    return this.verifyInclusionDetailed(envelope, proof, expectedRoot, options).valid;
+  }
+
+  /**
+   * Verify inclusion proof, saying also what held the path to the tree.
+   * See SequencerClient#verifyInclusionDetailed.
+   * @param {Object} envelope
+   * @param {Object} proof
+   * @param {string} expectedRoot
+   * @param {{ sequenceNumber?: number|bigint, leafCount?: number|string }} [options]
+   * @returns {{ valid: boolean, pathBound: boolean, leafCountSource: 'caller'|'proof'|null, reason?: string }}
+   */
+  verifyInclusionDetailed(envelope, proof, expectedRoot, options) {
     // Verification is client-side only, works for both transports
     if (this._transport === 'rest') {
-      return this._client.verifyInclusion(envelope, proof, expectedRoot);
+      return this._client.verifyInclusionDetailed(envelope, proof, expectedRoot, options);
     }
     // For gRPC, use the REST client's verification logic
     const restClient = new SequencerClient(this.config);
-    return restClient.verifyInclusion(envelope, proof, expectedRoot);
+    return restClient.verifyInclusionDetailed(envelope, proof, expectedRoot, options);
   }
 
   /**

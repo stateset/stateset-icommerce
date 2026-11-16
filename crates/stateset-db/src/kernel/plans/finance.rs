@@ -2,6 +2,7 @@
 //! `subscriptions.charge`, `checkout.commit`, `ledger.post`, `x402.settle`.
 
 use crate::kernel::envelope::GuardRejection;
+use chrono::{DateTime, Utc};
 use stateset_core::{ChargeSubscription, CommitCheckout, PostJournalEntry, SettleX402Intent};
 
 /// Message used with [`crate::kernel::EnvelopeGuard::unversioned`] for billing cycles.
@@ -54,4 +55,29 @@ pub fn settle_x402_guard(input: &SettleX402Intent) -> Option<GuardRejection> {
             "intent_id and tx_hash are required",
         )
     })
+}
+
+/// Validity-window check for `x402.settle`, the same rule as the
+/// repository's `mark_settled`: an intent whose `valid_until` (unix seconds)
+/// has passed can no longer be settled.
+#[must_use]
+pub fn settle_x402_expiry_guard(valid_until: u64, now: DateTime<Utc>) -> Option<GuardRejection> {
+    let now_unix = u64::try_from(now.timestamp()).unwrap_or(0);
+    (now_unix > valid_until).then(|| {
+        GuardRejection::never(
+            "commerce.x402.intent_expired",
+            format!("Payment intent has expired (valid_until {valid_until}); cannot settle"),
+        )
+    })
+}
+
+/// `x402.settle` refusal when the on-chain transaction already settled a
+/// different intent: one transaction settles at most one intent, exactly as
+/// the repository's `mark_settled` enforces.
+#[must_use]
+pub fn x402_tx_hash_already_settled(tx_hash: &str, other_intent: &str) -> GuardRejection {
+    GuardRejection::never(
+        "commerce.x402.tx_hash_already_settled",
+        format!("tx_hash {tx_hash} already settled intent {other_intent}"),
+    )
 }

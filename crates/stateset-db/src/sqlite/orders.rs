@@ -727,6 +727,8 @@ impl SqliteOrderRepository {
             });
         }
 
+        super::credit_control::check_order(tx, id.into())?;
+
         // Catalogue guard for every line, in the order-creating transaction.
         // Deliberately AFTER the idempotent-checkout early return above: a
         // replayed checkout must still resolve to the order it already minted,
@@ -838,14 +840,21 @@ impl SqliteOrderRepository {
                 Err(e) => return Err(e),
             };
 
-        let available = sum_decimal_query(
-            tx,
-            "SELECT quantity_available FROM inventory_balances WHERE item_id = ?",
-            &[&item_id],
-            "inventory_balance",
-            "quantity_available",
-        )
-        .map_err(to_sql_err)?;
+        let locations: Vec<(i32, Decimal)> = {
+            let mut stmt = tx.prepare("SELECT location_id, quantity_available FROM inventory_balances WHERE item_id = ?1 ORDER BY location_id")?;
+            let rows = stmt.query_map([item_id], |row| {
+                Ok((
+                    row.get(0)?,
+                    super::parse_decimal_row(
+                        &row.get::<_, String>(1)?,
+                        "inventory_balance",
+                        "quantity_available",
+                    )?,
+                ))
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let available: Decimal = locations.iter().map(|row| row.1.max(Decimal::ZERO)).sum();
 
         let requested = Decimal::from(item.quantity);
         if !stock_policy.allows_backorder() && available < requested {
@@ -857,36 +866,32 @@ impl SqliteOrderRepository {
                 available: available.to_string(),
             }));
         }
-        let reserve_qty =
-            if available > Decimal::ZERO { requested.min(available) } else { Decimal::ZERO };
-
         let mut reserved = Decimal::ZERO;
-        if reserve_qty > Decimal::ZERO {
+        for (warehouse, available) in locations {
+            let reserve_qty = (requested - reserved).min(available.max(Decimal::ZERO));
+            if reserve_qty <= Decimal::ZERO {
+                continue;
+            }
             let reserve_input = ReserveInventory {
                 sku: item.sku.clone(),
-                location_id: None,
+                location_id: Some(warehouse),
                 quantity: reserve_qty,
-                reference_type: "order".to_string(),
-                reference_id,
+                reference_type: "order".into(),
+                reference_id: reference_id.clone(),
                 expires_in_seconds: None,
             };
-
             match SqliteInventoryRepository::reserve_for_line_in_tx(
                 tx,
                 &reserve_input,
                 Some(item.id.into_uuid()),
             ) {
-                Ok(_reservation) => {
-                    reserved = reserve_qty;
-                }
-                Err(err) => {
-                    let commerce_err = map_db_error(err);
-                    if stock_policy.allows_backorder()
-                        && matches!(commerce_err, CommerceError::InsufficientStock { .. })
+                Ok(_) => reserved += reserve_qty,
+                Err(error) => {
+                    let error = map_db_error(error);
+                    if !stock_policy.allows_backorder()
+                        || !matches!(error, CommerceError::InsufficientStock { .. })
                     {
-                        reserved = Decimal::ZERO;
-                    } else {
-                        return Err(to_sql_err(commerce_err));
+                        return Err(to_sql_err(error));
                     }
                 }
             }
@@ -1414,6 +1419,14 @@ impl SqliteOrderRepository {
                 if input.void_payments {
                     cancel_money.voided_payment_ids =
                         void_in_flight_payments_for_order_conn(tx, &id.to_string(), now)?;
+                    for payment_id in &cancel_money.voided_payment_ids {
+                        super::ledger_reversal::reverse_source(
+                            tx,
+                            "payment",
+                            *payment_id,
+                            now.date_naive(),
+                        )?;
+                    }
                     let voided = &cancel_money.voided_payment_ids;
                     let outstanding: Vec<_> =
                         open.iter().filter(|p| !voided.contains(&p.id.into_uuid())).collect();
@@ -2214,6 +2227,7 @@ impl SqliteOrderRepository {
             });
         }
 
+        super::credit_control::check_order(conn, order_id.into()).map_err(map_db_error)?;
         Ok(())
     }
 }

@@ -61,7 +61,7 @@ describe('Supply chain parity domain registry', () => {
     assert.equal(TOOL_POLICY_DOMAIN_BY_NAME.list_gl_periods, 'general_ledger');
   });
 
-  it('marks read tools read and write tools write', () => {
+  it('separates reads, ordinary stock writes and elevated finance writes', () => {
     for (const [moduleName, tools] of NEW_MODULES) {
       for (const tool of tools) {
         const expected =
@@ -70,7 +70,9 @@ describe('Supply chain parity domain registry', () => {
           tool.name.startsWith('check_') ||
           tool.name.startsWith('resolve_')
             ? 'read'
-            : 'write';
+            : ['prepayments', 'vendor-credits', 'payment-obligations'].includes(moduleName)
+              ? 'admin'
+              : 'write';
         assert.equal(tool.permission, expected, `${moduleName}:${tool.name}`);
       }
     }
@@ -508,13 +510,17 @@ describe('Transfer Order Tools', () => {
       params: {
         sourceWarehouseId: 'wh_001',
         destinationWarehouseId: 'wh_002',
-        items: [{ productId: 'prod_001', quantity: '5' }],
+        sourceLocationId: 7,
+        destinationLocationId: 9,
+        items: [{ productId: 'prod_001', sku: 'STOCK', quantity: '5' }],
       },
       allowApply: true,
     });
     assert.equal(result.success, true);
     assert.equal(received.items[0].quantity, '5');
     assert.equal(received.destinationWarehouseId, 'wh_002');
+    assert.equal(received.sourceLocationId, 7);
+    assert.equal(received.destinationLocationId, 9);
   });
 
   it('receive_transfer_order_line forwards id, item, and quantity', async () => {

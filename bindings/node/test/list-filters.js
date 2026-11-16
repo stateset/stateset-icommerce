@@ -35,16 +35,10 @@ test('purchaseOrders.list honors supplier, status and total filters', async () =
   assert.ok(bySupplier.every((p) => p.supplierId === s1.id));
 
   const expensive = await commerce.purchaseOrders.list({ supplierId: s1.id, minTotal: '100' });
-  assert.deepEqual(
-    expensive.map((p) => p.id).sort(),
-    [pricey.id].sort(),
-  );
+  assert.deepEqual(expensive.map((p) => p.id).sort(), [pricey.id].sort());
 
   const budget = await commerce.purchaseOrders.list({ supplierId: s1.id, maxTotal: '100' });
-  assert.deepEqual(
-    budget.map((p) => p.id).sort(),
-    [cheap.id].sort(),
-  );
+  assert.deepEqual(budget.map((p) => p.id).sort(), [cheap.id].sort());
 
   const limited = await commerce.purchaseOrders.list({ limit: 1 });
   assert.equal(limited.length, 1);
@@ -53,16 +47,13 @@ test('purchaseOrders.list honors supplier, status and total filters', async () =
 test('workOrders.list honors status and pagination filters', async () => {
   const commerce = new Commerce(':memory:');
   const product = await commerce.products.create({ name: 'WO Product' });
-  const bom = await commerce.bom.create({ name: 'BOM', productId: product.id });
 
   const wo1 = await commerce.workOrders.create({
     productId: product.id,
-    bomId: bom.id,
     quantityToBuild: 5,
   });
   await commerce.workOrders.create({
     productId: product.id,
-    bomId: bom.id,
     quantityToBuild: 3,
   });
 
@@ -99,10 +90,7 @@ test('quality.listInspections and listNcrs honor filters', async () => {
   assert.equal(allInsp.length, 2);
 
   const finals = await commerce.quality.listInspections({ inspectionType: 'final' });
-  assert.deepEqual(
-    finals.map((i) => i.id).sort(),
-    [shipInsp.id].sort(),
-  );
+  assert.deepEqual(finals.map((i) => i.id).sort(), [shipInsp.id].sort());
 
   const byRef = await commerce.quality.listInspections({
     referenceId: '11111111-1111-1111-1111-111111111111',
@@ -132,10 +120,7 @@ test('quality.listInspections and listNcrs honor filters', async () => {
   assert.equal(allNcrs.length, 2);
 
   const bySku = await commerce.quality.listNcrs({ sku: 'WIDGET' });
-  assert.deepEqual(
-    bySku.map((n) => n.id).sort(),
-    [widget.id].sort(),
-  );
+  assert.deepEqual(bySku.map((n) => n.id).sort(), [widget.id].sort());
 
   const majors = await commerce.quality.listNcrs({ severity: 'major' });
   assert.equal(majors.length, 1, 'severity filter must reach the store');

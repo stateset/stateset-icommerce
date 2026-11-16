@@ -114,6 +114,9 @@ export type ReturnReason =
   | 'damaged'
   | 'other'
 
+/** What the warehouse did with a received return item (`ReturnItemOutput.disposition`, `SetReturnItemDispositionInput.disposition`). */
+export type ReturnDisposition = 'restock' | 'refurbish' | 'scrap' | 'return_to_vendor' | 'quarantine'
+
 // ---- payments --------------------------------------------------------------
 
 /** Payment processing status (`PaymentOutput.status`, `PaymentFilterInput.status`). */

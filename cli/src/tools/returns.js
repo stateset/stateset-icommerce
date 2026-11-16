@@ -6,9 +6,21 @@
  */
 
 import { z } from 'zod';
+import { acceptedFrom, allowedNextField } from '../state-machine-catalog.js';
 import { applyRequired } from '../utils/apply-guard.js';
 
 const withPolicyDomain = (policyDomain, tools) => tools.map((tool) => ({ policyDomain, ...tool }));
+
+/** "requested", "received or inspecting": where the engine accepts a move into `to`. */
+const from = (to) => {
+  const states = acceptedFrom('return', to);
+  return states.length <= 1
+    ? states.join('')
+    : `${states.slice(0, -1).join(', ')} or ${states.at(-1)}`;
+};
+
+/** The `return_items.disposition` vocabulary (`ReturnDisposition`). */
+const RETURN_DISPOSITIONS = ['restock', 'refurbish', 'scrap', 'return_to_vendor', 'quarantine'];
 
 function returnSummary(ret) {
   return {
@@ -66,7 +78,9 @@ export const returnTools = withPolicyDomain('returns', [
 
   {
     name: 'get_return',
-    description: 'Get a specific return by ID.',
+    description:
+      'Get a specific return by ID, with its items and their dispositions, and `allowedNext`: ' +
+      'the statuses the return can move to from its current one.',
     inputSchema: {
       returnId: z.string().min(1).describe('Return ID (UUID)'),
     },
@@ -79,7 +93,7 @@ export const returnTools = withPolicyDomain('returns', [
         return { success: false, error: 'Return not found' };
       }
 
-      return { success: true, return: ret };
+      return { success: true, return: ret, ...allowedNextField('return', ret.status) };
     },
   },
 
@@ -180,7 +194,7 @@ export const returnTools = withPolicyDomain('returns', [
 
   {
     name: 'approve_return',
-    description: 'Approve a return request.',
+    description: `Approve a return request (the engine accepts this from ${from('approved')}).`,
     inputSchema: {
       returnId: z.string().min(1).describe('Return ID (UUID)'),
     },
@@ -208,7 +222,7 @@ export const returnTools = withPolicyDomain('returns', [
 
   {
     name: 'reject_return',
-    description: 'Reject a return request with a reason.',
+    description: `Reject a return with a reason (the engine accepts this from ${from('rejected')}).`,
     inputSchema: {
       returnId: z.string().min(1).describe('Return ID (UUID)'),
       reason: z.string().min(1).max(500).describe('Reason for rejection'),
@@ -237,7 +251,10 @@ export const returnTools = withPolicyDomain('returns', [
 
   {
     name: 'mark_return_received',
-    description: 'Mark a return as physically received at the warehouse.',
+    description:
+      'Mark a return as physically received at the warehouse. The engine accepts this only ' +
+      `from ${from('received')}, which add_return_tracking sets on an approved return; an ` +
+      'approved return without tracking is refused.',
     inputSchema: {
       returnId: z.string().min(1).describe('Return ID (UUID)'),
     },
@@ -258,7 +275,10 @@ export const returnTools = withPolicyDomain('returns', [
 
   {
     name: 'complete_return',
-    description: 'Complete a return and process the refund.',
+    description:
+      `Complete a return (the engine accepts this from ${from('completed')}). Every item needs ` +
+      'a disposition first (set_return_item_disposition). Completing creates the pending ' +
+      "payment refund for the return's refund amount: do not also call create_refund for it.",
     inputSchema: {
       returnId: z.string().min(1).describe('Return ID (UUID)'),
     },
@@ -279,7 +299,7 @@ export const returnTools = withPolicyDomain('returns', [
 
   {
     name: 'cancel_return',
-    description: 'Cancel a return request.',
+    description: `Cancel a return (the engine accepts this from ${from('cancelled')}).`,
     inputSchema: {
       returnId: z.string().min(1).describe('Return ID (UUID)'),
     },
@@ -300,7 +320,9 @@ export const returnTools = withPolicyDomain('returns', [
 
   {
     name: 'add_return_tracking',
-    description: 'Add a return-shipping tracking number and mark the return in transit.',
+    description:
+      'Add a return-shipping tracking number and mark the return in transit (the engine ' +
+      `accepts this from ${from('in_transit')}). This is the step before mark_return_received.`,
     inputSchema: {
       returnId: z.string().min(1).describe('Return ID (UUID)'),
       trackingNumber: z.string().min(1).max(200).describe('Return shipment tracking number'),
@@ -316,6 +338,44 @@ export const returnTools = withPolicyDomain('returns', [
         success: true,
         message: 'Tracking added',
         return: { id: ret.id, status: ret.status },
+      };
+    },
+  },
+
+  {
+    name: 'set_return_item_disposition',
+    description:
+      'Record what the warehouse did with a received return item: restock or quarantine ' +
+      '(back into stock; the SKU needs an inventory item), refurbish, scrap or return_to_vendor. ' +
+      'The return must be received or inspecting, and each item is dispositioned once. ' +
+      'complete_return needs every item dispositioned. Item ids are in get_return.',
+    inputSchema: {
+      returnId: z.string().min(1).describe('Return ID (UUID)'),
+      returnItemId: z.string().min(1).describe('Return item ID (UUID) from the return items'),
+      disposition: z
+        .enum(RETURN_DISPOSITIONS)
+        .describe(
+          'What happened to the units: restock, refurbish, scrap, return_to_vendor, quarantine',
+        ),
+      note: z
+        .string()
+        .max(1000)
+        .optional()
+        .describe('Inspection note (recorded on the governed outbox fact)'),
+    },
+    permission: 'write',
+    handler: async ({ commerce, params, allowApply }) => {
+      if (!allowApply) {
+        return applyRequired('Set return item disposition', params);
+      }
+
+      const item = await commerce.returns.setItemDisposition(params.returnId, params.returnItemId, {
+        disposition: params.disposition,
+      });
+      return {
+        success: true,
+        message: `Return item ${item.disposition}`,
+        returnItem: item,
       };
     },
   },

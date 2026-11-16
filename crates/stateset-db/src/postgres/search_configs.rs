@@ -11,6 +11,10 @@ use stateset_core::{
 };
 use uuid::Uuid;
 
+/// Transaction-scoped advisory lock serializing `set_active_async`; next in
+/// this crate's fixed `4242_00xx` advisory keys.
+const SET_ACTIVE_LOCK_KEY: i64 = 42_420_021;
+
 /// PostgreSQL search configuration repository
 #[derive(Debug, Clone)]
 pub struct PgSearchConfigRepository {
@@ -295,6 +299,28 @@ impl PgSearchConfigRepository {
         let now = Utc::now();
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+
+        // Activations take turns. Each rewrites every row, so two that each
+        // locked their own target and then reached the other's row in the
+        // bulk update deadlocked, and Postgres aborted one valid activation.
+        // The lock is released at commit or rollback.
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(SET_ACTIVE_LOCK_KEY)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+        // A missing id must change nothing (as on SQLite, whose transaction
+        // rolls back): check it first, before deactivating everything else.
+        let exists: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM search_configs WHERE id = $1 FOR UPDATE")
+                .bind(id.into_uuid())
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if exists.is_none() {
+            return Err(CommerceError::NotFound);
+        }
 
         // Deactivate all configs
         sqlx::query("UPDATE search_configs SET is_active = false, updated_at = $1")

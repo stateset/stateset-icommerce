@@ -259,18 +259,58 @@ fn test_bom_operations() {
 #[cfg(feature = "sqlite")]
 fn test_work_order_operations() {
     use rust_decimal_macros::dec;
-    use stateset_core::{CreateWorkOrder, WorkOrderStatus};
+    use stateset_core::{
+        CreateLocation, CreateProduct, CreateProductVariant, CreateWarehouse, CreateWorkOrder,
+        WorkOrderStatus, WorkOrderStock,
+    };
 
     let commerce = Commerce::new(":memory:").unwrap();
-    let product_id = stateset_core::ProductId::new();
+    // A work order builds a real product and routes it to a real location.
+    let product = commerce
+        .products()
+        .create(CreateProduct {
+            name: "Assembled widget".into(),
+            variants: Some(vec![CreateProductVariant {
+                sku: "WO-OUT-1".into(),
+                price: dec!(1),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        })
+        .unwrap();
+    let warehouse = commerce
+        .warehouse()
+        .create_warehouse(CreateWarehouse {
+            code: "WO".into(),
+            name: "Work orders".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let source = commerce
+        .warehouse()
+        .create_location(CreateLocation { warehouse_id: warehouse.id, ..Default::default() })
+        .unwrap();
+    let output = commerce
+        .warehouse()
+        .create_location(CreateLocation {
+            warehouse_id: warehouse.id,
+            code: Some("OUTPUT".into()),
+            ..Default::default()
+        })
+        .unwrap();
 
     // Create work order
     let wo = commerce
         .work_orders()
         .create(CreateWorkOrder {
-            product_id,
+            product_id: product.id,
             quantity_to_build: dec!(100),
             notes: Some("Test work order".into()),
+            stock: Some(WorkOrderStock {
+                source_location_id: source.id,
+                output_location_id: output.id,
+                output_sku: "WO-OUT-1".into(),
+            }),
             ..Default::default()
         })
         .unwrap();

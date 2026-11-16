@@ -31,10 +31,7 @@
 //! - **Traceability**: dispositions transition the received serials and
 //!   restore lot on-hand in the same transaction as the stock effect.
 
-use super::bins::{
-    apply_bin_delta_tx, apply_warehouse_delta_tx, find_disposition_bin_tx, insert_bin_movement_tx,
-    smuggle,
-};
+use super::bins::{find_disposition_bin_tx, smuggle};
 use super::kernel_outbox::append_kernel_event_tx;
 use super::parse_helpers::{parse_decimal, parse_enum, parse_uuid};
 use super::payments::{
@@ -53,10 +50,10 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use stateset_core::{
-    BatchResult, BinMovementType, BinType, CommerceError, CreateReturn, CustomerId,
-    LotTransactionType, OrderId, OrderItemId, OrderStatus, Result, Return, ReturnDisposition,
-    ReturnFilter, ReturnId, ReturnItem, ReturnRepository, ReturnStatus, SerialEventType,
-    SerialStatus, SetReturnDisposition, UpdateReturn, validate_batch_size,
+    BatchResult, BinType, CommerceError, CreateReturn, CustomerId, LotTransactionType, OrderId,
+    OrderItemId, OrderStatus, Result, Return, ReturnDisposition, ReturnFilter, ReturnId,
+    ReturnItem, ReturnRepository, ReturnStatus, SerialEventType, SerialStatus,
+    SetReturnDisposition, UpdateReturn, validate_batch_size,
 };
 use uuid::Uuid;
 
@@ -499,6 +496,21 @@ pub(crate) fn apply_update_tx(
     input: &UpdateReturn,
     now: DateTime<Utc>,
 ) -> rusqlite::Result<Return> {
+    apply_update_published_tx(tx, id, input, now, None, |_| {}).map(|(ret, _)| ret)
+}
+
+/// [`apply_update_tx`] for a caller that owns the published fact: the
+/// `returns.updated.v1` event carries `idempotency_key` and whatever
+/// `decorate` adds (the kernel attaches its command context), and its id is
+/// returned with the stored return so a receipt can reference it.
+pub(crate) fn apply_update_published_tx(
+    tx: &rusqlite::Transaction<'_>,
+    id: ReturnId,
+    input: &UpdateReturn,
+    now: DateTime<Utc>,
+    idempotency_key: Option<String>,
+    decorate: impl FnOnce(&mut KernelOutboxEvent),
+) -> rusqlite::Result<(Return, Uuid)> {
     let before = load_return_conn(tx, &id.to_string())?
         .ok_or_else(|| smuggle(CommerceError::ReturnNotFound(id.into())))?;
     let status_before = before.status;
@@ -583,11 +595,181 @@ pub(crate) fn apply_update_tx(
         payload["undispositioned_units"] = serde_json::json!(written_off);
     }
 
-    append_kernel_event_tx(
+    let mut event = KernelOutboxEvent::domain(
+        "returns.updated.v1",
+        "return",
+        id.to_string(),
+        payload,
+        idempotency_key,
+    );
+    decorate(&mut event);
+    append_kernel_event_tx(tx, &event)?;
+    Ok((ret, event.id))
+}
+
+/// Record a return item's disposition and apply its stock, serial and lot
+/// effects on the caller's transaction (the operator `set_item_disposition`
+/// and the kernel's `returns.item.disposition.set` share it). Refuses a return
+/// that is not `received`/`inspecting`, an item that is not on the return and
+/// an item that already carries a disposition.
+pub(crate) fn set_item_disposition_tx(
+    tx: &rusqlite::Transaction<'_>,
+    return_id: ReturnId,
+    item_id: Uuid,
+    input: &SetReturnDisposition,
+) -> rusqlite::Result<ReturnItem> {
+    let warehouse_id = input.warehouse_id.unwrap_or(1);
+    let now = Utc::now().to_rfc3339();
+    let status_raw: Option<String> = tx
+        .query_row("SELECT status FROM returns WHERE id = ?1", [return_id.to_string()], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    let status: ReturnStatus = match status_raw {
+        Some(raw) => parse_enum_row(&raw, "return", "status")?,
+        None => return Err(smuggle(CommerceError::ReturnNotFound(return_id.into()))),
+    };
+    if !matches!(status, ReturnStatus::Received | ReturnStatus::Inspecting) {
+        return Err(smuggle(CommerceError::NotPermitted(format!(
+            "Return items can only be dispositioned once received (status: {status})"
+        ))));
+    }
+    let item = tx
+        .query_row(
+            &format!(
+                "SELECT {RETURN_ITEM_COLUMNS} FROM return_items WHERE id = ?1 AND return_id = ?2"
+            ),
+            [item_id.to_string(), return_id.to_string()],
+            row_to_return_item,
+        )
+        .optional()?
+        .ok_or_else(|| {
+            smuggle(CommerceError::ValidationError(format!(
+                "Return item {item_id} not found on return {return_id}"
+            )))
+        })?;
+    if let Some(existing) = item.disposition {
+        return Err(smuggle(CommerceError::Conflict(format!(
+            "Return item {item_id} already dispositioned as {existing}"
+        ))));
+    }
+
+    let qty = Decimal::from(item.quantity);
+    let reference_id = item_id.to_string();
+    let reason = format!("return {return_id} {}", input.disposition);
+    let mut stock_location = None;
+    match input.disposition {
+        ReturnDisposition::Restock | ReturnDisposition::Quarantine => {
+            let held = input.disposition == ReturnDisposition::Quarantine;
+            let known: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM inventory_items WHERE sku = ?1)",
+                [&item.sku],
+                |r| r.get(0),
+            )?;
+            if !known {
+                return Err(smuggle(CommerceError::ValidationError(
+                    "Create the inventory item before restocking a return".into(),
+                )));
+            }
+            let preferred = if held { &[BinType::Quarantine][..] } else { &[BinType::Returns][..] };
+            super::stock_placement::ensure_warehouse(tx, warehouse_id, &now)?;
+            let bin = find_disposition_bin_tx(tx, warehouse_id, input.bin_id, preferred)?;
+            let destination = if let Some(bin) = bin {
+                super::stock_move::location_for_bin(tx, bin.id, &now)?
+            } else {
+                super::stock_move::role_location(tx, warehouse_id, "unassigned", &now)?
+            };
+            stock_location = Some(destination);
+            if held {
+                if let Some(lot) = input.lot_id {
+                    super::stock_lot::record_hold(tx, lot, lot, destination, qty, &now)?;
+                }
+            }
+            super::stock_move::post(
+                tx,
+                &crate::stock_move::StockMove {
+                    id: Uuid::new_v4(),
+                    sku: &item.sku,
+                    lot_id: input.lot_id,
+                    from: None,
+                    to: Some(destination),
+                    quantity: qty,
+                    release_reserved: Decimal::ZERO,
+                    reserve_received: if held { qty } else { Decimal::ZERO },
+                    movement_type: stateset_core::MovementType::Return,
+                    lot_effect: crate::stock_move::LotEffect::AlreadyRecorded,
+                    check_sellable: false,
+                    reference_type: Some("return_item"),
+                    reference_id: Some(item_id),
+                    reference_label: Some(&reference_id),
+                    reason: Some(&reason),
+                    performed_by: input.disposition_by.as_deref(),
+                },
+                &now,
+            )?;
+        }
+        ReturnDisposition::Refurbish
+        | ReturnDisposition::Scrap
+        | ReturnDisposition::ReturnToVendor => {
+            // No stock effect: the units do not re-enter sellable or held
+            // inventory.
+        }
+        // `ReturnDisposition` is `#[non_exhaustive]`: a variant this
+        // backend does not know how to apply must fail closed rather
+        // than be recorded with no stock effect.
+        other => {
+            return Err(smuggle(CommerceError::ValidationError(format!(
+                "Unsupported return disposition {other}"
+            ))));
+        }
+    }
+
+    apply_serial_dispositions_tx(
         tx,
-        &KernelOutboxEvent::domain("returns.updated.v1", "return", id.to_string(), payload, None),
+        &item,
+        input.disposition,
+        stock_location.unwrap_or(warehouse_id),
+        &input.serial_ids,
+        input.disposition_by.as_deref(),
+        &now,
     )?;
-    Ok(ret)
+    if let Some(lot_id) = input.lot_id {
+        apply_lot_restore_tx(
+            tx,
+            &item,
+            lot_id,
+            input.disposition,
+            warehouse_id,
+            input.disposition_by.as_deref(),
+            &now,
+        )?;
+    }
+
+    let serial_ids_json = if input.serial_ids.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(&input.serial_ids).map_err(|e| {
+            smuggle(CommerceError::DatabaseError(format!("Cannot encode serial_ids: {e}")))
+        })?)
+    };
+    tx.execute(
+        "UPDATE return_items SET disposition = ?1, disposition_at = ?2, disposition_by = ?3,
+                lot_id = ?4, serial_ids = ?5
+         WHERE id = ?6",
+        rusqlite::params![
+            input.disposition.to_string(),
+            now,
+            input.disposition_by.as_deref(),
+            input.lot_id.map(|id| id.to_string()),
+            serial_ids_json,
+            item_id.to_string()
+        ],
+    )?;
+    tx.query_row(
+        &format!("SELECT {RETURN_ITEM_COLUMNS} FROM return_items WHERE id = ?1"),
+        [item_id.to_string()],
+        row_to_return_item,
+    )
 }
 
 /// Delete a return and its items on the caller's transaction, refusing any
@@ -821,7 +1003,7 @@ fn apply_lot_restore_tx(
         quarantined += qty;
     }
     tx.execute(
-        "UPDATE lots SET quantity_remaining = ?1, quantity_quarantined = ?2, updated_at = ?3 WHERE id = ?4",
+        "UPDATE lots SET quantity_remaining = ?1, quantity_quarantined = ?2, status = CASE WHEN status = 'consumed' THEN 'active' ELSE status END, updated_at = ?3 WHERE id = ?4",
         rusqlite::params![remaining.to_string(), quarantined.to_string(), now, lot_id.to_string()],
     )?;
     let placed: Option<String> = tx
@@ -1123,184 +1305,8 @@ impl ReturnRepository for SqliteReturnRepository {
         item_id: Uuid,
         input: SetReturnDisposition,
     ) -> Result<ReturnItem> {
-        let warehouse_id = input.warehouse_id.unwrap_or(1);
         with_immediate_transaction(&self.pool, |tx| {
-            let now = Utc::now().to_rfc3339();
-            let status_raw: Option<String> = tx
-                .query_row(
-                    "SELECT status FROM returns WHERE id = ?1",
-                    [return_id.to_string()],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            let status: ReturnStatus = match status_raw {
-                Some(raw) => parse_enum_row(&raw, "return", "status")?,
-                None => return Err(smuggle(CommerceError::ReturnNotFound(return_id.into()))),
-            };
-            if !matches!(status, ReturnStatus::Received | ReturnStatus::Inspecting) {
-                return Err(smuggle(CommerceError::NotPermitted(format!(
-                    "Return items can only be dispositioned once received (status: {status})"
-                ))));
-            }
-            let item = tx
-                .query_row(
-                    &format!(
-                        "SELECT {RETURN_ITEM_COLUMNS} FROM return_items WHERE id = ?1 AND return_id = ?2"
-                    ),
-                    [item_id.to_string(), return_id.to_string()],
-                    row_to_return_item,
-                )
-                .optional()?
-                .ok_or_else(|| {
-                    smuggle(CommerceError::ValidationError(format!(
-                        "Return item {item_id} not found on return {return_id}"
-                    )))
-                })?;
-            if let Some(existing) = item.disposition {
-                return Err(smuggle(CommerceError::Conflict(format!(
-                    "Return item {item_id} already dispositioned as {existing}"
-                ))));
-            }
-
-            let qty = Decimal::from(item.quantity);
-            let reference_id = item_id.to_string();
-            let reason = format!("return {return_id} {}", input.disposition);
-            match input.disposition {
-                ReturnDisposition::Restock => {
-                    let bin = find_disposition_bin_tx(
-                        tx,
-                        warehouse_id,
-                        input.bin_id,
-                        &[BinType::Returns, BinType::Quarantine],
-                    )?;
-                    if let Some(bin) = &bin {
-                        apply_bin_delta_tx(tx, bin, &item.sku, qty, Decimal::ZERO, &now)?;
-                        insert_bin_movement_tx(
-                            tx,
-                            BinMovementType::ReturnDisposition,
-                            None,
-                            Some(bin.id),
-                            &item.sku,
-                            qty,
-                            Some(&reason),
-                            Some("return_item"),
-                            Some(&reference_id),
-                            input.disposition_by.as_deref(),
-                            &now,
-                        )?;
-                    }
-                    apply_warehouse_delta_tx(
-                        tx,
-                        warehouse_id,
-                        &item.sku,
-                        qty,
-                        Decimal::ZERO,
-                        &reason,
-                        Some("return_item"),
-                        Some(&reference_id),
-                        &now,
-                    )?;
-                }
-                ReturnDisposition::Quarantine => {
-                    // The hold is always recorded at warehouse level (on hand and
-                    // allocated, so the units are tracked but not sellable); the
-                    // quarantine bin mirrors it when the warehouse has one.
-                    let bin = find_disposition_bin_tx(
-                        tx,
-                        warehouse_id,
-                        input.bin_id,
-                        &[BinType::Quarantine],
-                    )?;
-                    if let Some(bin) = &bin {
-                        apply_bin_delta_tx(tx, bin, &item.sku, qty, qty, &now)?;
-                        insert_bin_movement_tx(
-                            tx,
-                            BinMovementType::ReturnDisposition,
-                            None,
-                            Some(bin.id),
-                            &item.sku,
-                            qty,
-                            Some(&reason),
-                            Some("return_item"),
-                            Some(&reference_id),
-                            input.disposition_by.as_deref(),
-                            &now,
-                        )?;
-                    }
-                    apply_warehouse_delta_tx(
-                        tx,
-                        warehouse_id,
-                        &item.sku,
-                        qty,
-                        qty,
-                        &reason,
-                        Some("return_item"),
-                        Some(&reference_id),
-                        &now,
-                    )?;
-                }
-                ReturnDisposition::Refurbish
-                | ReturnDisposition::Scrap
-                | ReturnDisposition::ReturnToVendor => {
-                    // No stock effect: the units do not re-enter sellable or held
-                    // inventory.
-                }
-                // `ReturnDisposition` is `#[non_exhaustive]`: a variant this
-                // backend does not know how to apply must fail closed rather
-                // than be recorded with no stock effect.
-                other => {
-                    return Err(smuggle(CommerceError::ValidationError(format!(
-                        "Unsupported return disposition {other}"
-                    ))));
-                }
-            }
-
-            apply_serial_dispositions_tx(
-                tx,
-                &item,
-                input.disposition,
-                warehouse_id,
-                &input.serial_ids,
-                input.disposition_by.as_deref(),
-                &now,
-            )?;
-            if let Some(lot_id) = input.lot_id {
-                apply_lot_restore_tx(
-                    tx,
-                    &item,
-                    lot_id,
-                    input.disposition,
-                    warehouse_id,
-                    input.disposition_by.as_deref(),
-                    &now,
-                )?;
-            }
-
-            let serial_ids_json = if input.serial_ids.is_empty() {
-                None
-            } else {
-                Some(serde_json::to_string(&input.serial_ids).map_err(|e| {
-                    smuggle(CommerceError::DatabaseError(format!("Cannot encode serial_ids: {e}")))
-                })?)
-            };
-            tx.execute(
-                "UPDATE return_items SET disposition = ?1, disposition_at = ?2, disposition_by = ?3,
-                        lot_id = ?4, serial_ids = ?5
-                 WHERE id = ?6",
-                rusqlite::params![
-                    input.disposition.to_string(),
-                    now,
-                    input.disposition_by,
-                    input.lot_id.map(|id| id.to_string()),
-                    serial_ids_json,
-                    item_id.to_string()
-                ],
-            )?;
-            tx.query_row(
-                &format!("SELECT {RETURN_ITEM_COLUMNS} FROM return_items WHERE id = ?1"),
-                [item_id.to_string()],
-                row_to_return_item,
-            )
+            set_item_disposition_tx(tx, return_id, item_id, &input)
         })
     }
 

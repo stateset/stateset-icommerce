@@ -16,14 +16,14 @@ import assert from 'node:assert/strict';
 import { createRunPlanRollback } from '../../src/mcp/plan-rollback.js';
 import { createCostSummary } from '../../src/mcp/cost-budget.js';
 
-function makeRollback({ stepResult } = {}) {
+function makeRollback({ stepResult, toolNames, describeUnavailableTool } = {}) {
   const executed = [];
   const events = [];
   const runPlanRollback = createRunPlanRollback({
-    toolDefsByName: new Map([
-      ['cancel_order', {}],
-      ['release_reservation', {}],
-    ]),
+    toolDefsByName: new Map(
+      (toolNames ?? ['cancel_order', 'release_reservation']).map((name) => [name, {}]),
+    ),
+    describeUnavailableTool,
     inferPolicyDomain: () => 'orders',
     executeToolStepInPlan: async (input) => {
       executed.push(input);
@@ -139,6 +139,50 @@ describe('createRunPlanRollback', () => {
     assert.equal(out.steps[0].status, 'rollback_failed');
     assert.equal(out.steps[0].reason, 'No compensation parameters');
     assert.equal(events[0].notes.compensated, false);
+  });
+
+  it('never runs a compensation the capability scope excludes, and says so', async () => {
+    const refusal = (name) => ({
+      reason: 'outside_capability_scope',
+      message: `Tool '${name}' is outside this toolkit's capability scope.`,
+    });
+    const { runPlanRollback, executed, events } = makeRollback({
+      toolNames: ['release_reservation'],
+      describeUnavailableTool: (name) => (name === 'cancel_order' ? refusal(name) : null),
+    });
+    const out = await runPlanRollback({ ...baseInput, executedForRollback: completedSteps });
+
+    // release_reservation is exposed and runs; cancel_order is refused unrun.
+    assert.deepEqual(
+      executed.map((e) => e.toolName),
+      ['release_reservation'],
+    );
+    assert.equal(out.attempted, 2);
+    assert.equal(out.fullyReverted, false);
+    const refused = out.steps[1];
+    assert.equal(refused.source, 'create_order');
+    assert.equal(refused.status, 'rollback_failed');
+    assert.equal(refused.tool, 'cancel_order');
+    assert.match(refused.error, /outside this toolkit's capability scope/);
+    assert.deepEqual(refused.compensationTools, []);
+    assert.deepEqual(refused.refusedCompensationTools, [
+      { tool: 'cancel_order', reason: refusal('cancel_order').message },
+    ]);
+    assert.equal(events[1].status, 'rollback_failed');
+    assert.match(events[1].error, /outside this toolkit's capability scope/);
+    // An exposed compensation's step carries no refusal list.
+    assert.equal('refusedCompensationTools' in out.steps[0], false);
+  });
+
+  it('keeps reporting missing candidates when a tool is simply not exposed', async () => {
+    const { runPlanRollback, executed } = makeRollback({
+      toolNames: [],
+      describeUnavailableTool: () => null,
+    });
+    const out = await runPlanRollback({ ...baseInput, executedForRollback: [completedSteps[0]] });
+    assert.equal(executed.length, 0);
+    assert.equal(out.steps[0].reason, 'No compensation tool candidates');
+    assert.equal('refusedCompensationTools' in out.steps[0], false);
   });
 
   it('records failed compensations in the cost summary and marks fullyReverted false', async () => {

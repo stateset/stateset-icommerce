@@ -80,6 +80,44 @@ pub enum ClaimStatus {
     Cancelled,
 }
 
+impl ClaimStatus {
+    /// Whether a claim may move from `self` to `next`.
+    ///
+    /// This is the one rule both repositories enforce. A move to the current
+    /// status is always accepted, including on a closed claim, so its other
+    /// fields can still be edited.
+    #[must_use]
+    pub const fn can_transition_to(self, next: Self) -> bool {
+        if self as u8 == next as u8 {
+            return true;
+        }
+        match self {
+            Self::Submitted => matches!(
+                next,
+                Self::UnderReview
+                    | Self::InfoRequested
+                    | Self::Approved
+                    | Self::Denied
+                    | Self::Cancelled
+            ),
+            Self::UnderReview => matches!(
+                next,
+                Self::InfoRequested
+                    | Self::Approved
+                    | Self::Denied
+                    | Self::InProgress
+                    | Self::Cancelled
+            ),
+            Self::InfoRequested => {
+                matches!(next, Self::UnderReview | Self::Approved | Self::Denied | Self::Cancelled)
+            }
+            Self::Approved => matches!(next, Self::InProgress | Self::Completed | Self::Cancelled),
+            Self::InProgress => matches!(next, Self::Completed | Self::Cancelled),
+            Self::Denied | Self::Completed | Self::Cancelled => false,
+        }
+    }
+}
+
 /// Claim resolution type
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Display, EnumString,

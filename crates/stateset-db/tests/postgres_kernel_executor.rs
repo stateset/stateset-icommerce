@@ -89,6 +89,10 @@ fn policy() -> KernelPolicy {
         .allow("shipments.create", KernelCommandPolicy::requiring(["shipments.create"]))
         .allow("returns.create", KernelCommandPolicy::requiring(["returns.create"]))
         .allow("returns.tracking.add", KernelCommandPolicy::requiring(["returns.tracking.add"]))
+        .allow(
+            "returns.item.disposition.set",
+            KernelCommandPolicy::requiring(["returns.item.disposition.set"]),
+        )
 }
 
 #[tokio::test]
@@ -1630,6 +1634,7 @@ async fn postgres_kernel_journal_post_rejects_closed_period_durably() {
             source_document_type: Some("kernel_command".into()),
             source_document_id: None,
             auto_post: Some(false),
+            fx: None,
         })
         .await
         .expect("create journal");
@@ -1726,6 +1731,7 @@ async fn postgres_kernel_ledger_and_x402_commands_preserve_exact_fact_parity() {
             source_document_type: Some("kernel_command".into()),
             source_document_id: None,
             auto_post: Some(false),
+            fx: None,
         })
         .await
         .expect("create journal");
@@ -1811,8 +1817,8 @@ fn pg_assert_sealed_success<T>(receipt: &stateset_core::ExecutionReceipt<T>, wha
 async fn postgres_kernel_storefront_commands_run_a_complete_checkout_on_the_governed_surface() {
     use stateset_core::{
         AddCartItemCommand, AddReturnTracking, ApplyCartCoupon, CalculateCartTax, CompletePayment,
-        CreateCouponCode, CreatePromotion, PromotionTrigger, PromotionType, SetCartPaymentMethod,
-        SetCartShippingAddress,
+        CreateCouponCode, CreatePromotion, PromotionTrigger, PromotionType, ReturnDisposition,
+        SetCartPaymentMethod, SetCartShippingAddress, SetReturnItemDisposition,
     };
     let Some(url) = postgres_url() else {
         eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping storefront proof");
@@ -2240,6 +2246,174 @@ async fn postgres_kernel_storefront_commands_run_a_complete_checkout_on_the_gove
     let tracked = tracked.result.expect("tracked return");
     assert_eq!(tracked.status, ReturnStatus::InTransit);
     assert_eq!(tracked.tracking_number.as_deref(), Some("RET-1Z"));
+    let item_id = tracked.items[0].id;
+    let disposition = |step: &str, payload: SetReturnItemDisposition| {
+        pg_applied(&kernel_command(
+            "returns.item.disposition.set",
+            key(step),
+            "returns.item.disposition.set",
+            payload,
+        ))
+    };
+    let scrap = SetReturnItemDisposition {
+        note: Some("cracked housing".into()),
+        ..SetReturnItemDisposition::new(return_id, item_id, ReturnDisposition::Scrap)
+    };
+    // returns.item.disposition.set refuses goods that have not arrived.
+    let in_transit = kernel
+        .execute_set_return_item_disposition_async(&disposition(
+            "disposition-in-transit",
+            scrap.clone(),
+        ))
+        .await
+        .expect("in-transit disposition");
+    assert_eq!(in_transit.status, ExecutionStatus::Rejected);
+    assert_eq!(in_transit.error_code.as_deref(), Some("commerce.return_not_dispositionable"));
+    assert!(in_transit.audit_hash.is_some(), "the refusal is sealed");
+
+    // A governed completion runs the repository's status write (twin of the
+    // SQLite storefront proof): it needs every item dispositioned, and it
+    // settles the refund against the captured payment in the same transaction.
+    let transition = |step: &str, status| {
+        pg_applied(&kernel_command(
+            "returns.transition",
+            key(step),
+            "returns.transition",
+            TransitionReturn { return_id, status },
+        ))
+    };
+    let received = kernel
+        .execute_transition_return_async(&transition("return-received", ReturnStatus::Received))
+        .await
+        .expect("receive");
+    pg_assert_sealed_success(&received, "returns.transition received");
+    let refused = kernel
+        .execute_transition_return_async(&transition(
+            "return-complete-early",
+            ReturnStatus::Completed,
+        ))
+        .await
+        .expect("refusal receipt");
+    assert_eq!(refused.status, ExecutionStatus::Rejected);
+    assert_eq!(refused.error_code.as_deref(), Some("commerce.return_items_undispositioned"));
+    assert!(refused.audit_hash.is_some(), "the refusal is sealed");
+    let pending =
+        db.returns().get_async(return_id.into_uuid()).await.expect("return").expect("return");
+    assert_eq!(pending.status, ReturnStatus::Received);
+    assert!(
+        db.payments().get_refunds_async(payment_id.into_uuid()).await.expect("refunds").is_empty()
+    );
+
+    // returns.item.disposition.set: typed refusals, all sealed, none writing.
+    let refusals = [
+        (
+            "disposition-unknown-value",
+            SetReturnItemDisposition { disposition: "donate".into(), ..scrap.clone() },
+            "commerce.return_disposition_invalid",
+        ),
+        (
+            "disposition-unknown-item",
+            SetReturnItemDisposition { return_item_id: Uuid::new_v4(), ..scrap.clone() },
+            "commerce.return_item_not_found",
+        ),
+        (
+            "disposition-unknown-return",
+            SetReturnItemDisposition { return_id: stateset_core::ReturnId::new(), ..scrap.clone() },
+            "commerce.return_not_found",
+        ),
+        // Restock runs the repository's stock effect, which needs an
+        // inventory item for the SKU; the refusal rolls the step back.
+        (
+            "disposition-restock-unknown-sku",
+            SetReturnItemDisposition::new(return_id, item_id, ReturnDisposition::Restock),
+            "commerce.validation_failed",
+        ),
+    ];
+    for (step, payload, code) in refusals {
+        let refused = kernel
+            .execute_set_return_item_disposition_async(&disposition(step, payload))
+            .await
+            .expect(step);
+        assert_eq!(refused.status, ExecutionStatus::Rejected, "{step}");
+        assert_eq!(
+            refused.error_code.as_deref(),
+            Some(code),
+            "{step}: {:?}",
+            refused.error_message
+        );
+        assert!(refused.audit_hash.is_some(), "{step}: the refusal is sealed");
+    }
+    let mut preview = disposition("disposition", scrap.clone());
+    preview.mode = ExecutionMode::Preview;
+    assert_eq!(
+        kernel.execute_set_return_item_disposition_async(&preview).await.expect("preview").status,
+        ExecutionStatus::Previewed
+    );
+    let untouched =
+        db.returns().get_async(return_id.into_uuid()).await.expect("return").expect("return");
+    assert_eq!(untouched.items[0].disposition, None, "preview and refusals write nothing");
+    let dispositioned = kernel
+        .execute_set_return_item_disposition_async(&disposition("disposition", scrap.clone()))
+        .await
+        .expect("disposition");
+    pg_assert_sealed_success(&dispositioned, "returns.item.disposition.set");
+    let item = dispositioned.result.clone().expect("dispositioned item");
+    assert_eq!(item.disposition, Some(ReturnDisposition::Scrap));
+    assert_eq!(
+        item.disposition_by.as_deref(),
+        Some("agent:postgres-parity"),
+        "the principal, not the payload, is recorded"
+    );
+    let (event_type, command_id, recorded, note): (
+        String,
+        Option<Uuid>,
+        Option<String>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT event_type, command_id, payload->>'disposition', payload->>'note'
+             FROM kernel_outbox WHERE id = $1",
+    )
+    .bind(dispositioned.event_ids[0])
+    .fetch_one(db.pool())
+    .await
+    .expect("disposition fact");
+    assert_eq!(event_type, "returns.item_dispositioned.v1");
+    assert_eq!(command_id, Some(dispositioned.command_id));
+    assert_eq!(recorded.as_deref(), Some("scrap"));
+    assert_eq!(note.as_deref(), Some("cracked housing"));
+    let replayed = kernel
+        .execute_set_return_item_disposition_async(&disposition("disposition", scrap.clone()))
+        .await
+        .expect("replay disposition");
+    assert_eq!(replayed.receipt_id, dispositioned.receipt_id);
+    let twice = kernel
+        .execute_set_return_item_disposition_async(&disposition("disposition-again", scrap))
+        .await
+        .expect("second disposition");
+    assert_eq!(twice.status, ExecutionStatus::Rejected);
+    assert_eq!(twice.error_code.as_deref(), Some("commerce.return_item_already_dispositioned"));
+    let completed = kernel
+        .execute_transition_return_async(&transition("return-complete", ReturnStatus::Completed))
+        .await
+        .expect("complete");
+    pg_assert_sealed_success(&completed, "returns.transition completed");
+    let completed_return = completed.result.clone().expect("completed return");
+    assert_eq!(completed_return.status, ReturnStatus::Completed);
+    let refunds = db.payments().get_refunds_async(payment_id.into_uuid()).await.expect("refunds");
+    assert_eq!(refunds.len(), 1, "completion settles the refund against the captured payment");
+    assert_eq!(Some(refunds[0].amount), completed_return.refund_amount);
+    let (event_type, command_id, refund_id): (String, Option<Uuid>, Option<String>) =
+        sqlx::query_as(
+            "SELECT event_type, command_id, payload->'payment_refund_ids'->>0
+             FROM kernel_outbox WHERE id = $1",
+        )
+        .bind(completed.event_ids[0])
+        .fetch_one(db.pool())
+        .await
+        .expect("completion fact");
+    assert_eq!(event_type, "returns.updated.v1");
+    assert_eq!(command_id, Some(completed.command_id), "the fact carries the command");
+    assert_eq!(refund_id, Some(refunds[0].id.to_string()));
 
     assert!(db.kernel_outbox().verify_audit_chain_async().await.expect("verify chain").valid);
 }
@@ -2449,4 +2623,115 @@ async fn postgres_reserved_partial_shipping_serializes_competing_dispatches() {
     let movements: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM inventory_transactions WHERE reference_type='order' AND reference_id=$1 AND transaction_type='shipment'")
         .bind(order.id.to_string()).fetch_one(db.pool()).await.unwrap();
     assert_eq!(movements, 3);
+}
+
+async fn pg_sequenced_x402_intent(
+    db: &PostgresDatabase,
+    payer: String,
+) -> stateset_core::X402PaymentIntent {
+    let intent = db
+        .x402_payment_intents()
+        .create_async(CreateX402PaymentIntent {
+            payer_address: payer,
+            payee_address: "0xpayee-unique".into(),
+            amount: 1_000_000,
+            asset: X402Asset::Usdc,
+            network: X402Network::SetChain,
+            ..Default::default()
+        })
+        .await
+        .expect("create x402 intent");
+    sqlx::query("UPDATE x402_payment_intents SET status = 'sequenced' WHERE id = $1")
+        .bind(intent.id)
+        .execute(db.pool())
+        .await
+        .expect("sequence intent");
+    intent
+}
+
+/// Twin of the SQLite `kernel_x402_settle_enforces_tx_hash_uniqueness_and_validity_window`:
+/// `x402.settle` writes `tx_hash_key` (so the migration-089 unique index covers
+/// kernel settles), refuses a hash that already settled another intent, and
+/// refuses an intent past its `valid_until` — the repository's `mark_settled`
+/// rules.
+#[tokio::test]
+async fn postgres_kernel_x402_settle_enforces_tx_hash_uniqueness_and_validity_window() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping x402 settle proof");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect and migrate");
+    let suffix = Uuid::new_v4().simple().to_string();
+    let tx_hash = format!("0xpg-unique-{suffix}");
+    let settle = |key: String, intent_id: Uuid, tx_hash: String| {
+        let mut command = kernel_command(
+            "x402.settle",
+            key,
+            "x402.settle",
+            SettleX402Intent { intent_id, tx_hash, block_number: 7 },
+        );
+        command.mode = ExecutionMode::Apply;
+        command
+    };
+
+    let first = pg_sequenced_x402_intent(&db, format!("0xpayer-a-{suffix}")).await;
+    let settled = db
+        .kernel_executor(policy())
+        .execute_settle_x402_intent_async(&settle(
+            format!("pg-x402-unique-1-{suffix}"),
+            first.id,
+            tx_hash.clone(),
+        ))
+        .await
+        .expect("settle first intent");
+    assert_eq!(settled.status, ExecutionStatus::Succeeded);
+
+    // The same on-chain transaction cannot settle a second intent.
+    let second = pg_sequenced_x402_intent(&db, format!("0xpayer-b-{suffix}")).await;
+    let rejected = db
+        .kernel_executor(policy())
+        .execute_settle_x402_intent_async(&settle(
+            format!("pg-x402-unique-2-{suffix}"),
+            second.id,
+            tx_hash.clone(),
+        ))
+        .await
+        .expect("durable rejection");
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
+    assert_eq!(rejected.error_code.as_deref(), Some("commerce.x402.tx_hash_already_settled"));
+    assert!(rejected.audit_hash.is_some(), "the rejection is sealed into the audit chain");
+    let second_now =
+        db.x402_payment_intents().get_async(second.id).await.expect("get").expect("intent");
+    assert_eq!(second_now.status, X402IntentStatus::Sequenced);
+    assert_eq!(second_now.tx_hash, None);
+    // The kernel settle writes `tx_hash_key`, so the unique index backs it.
+    let tx_hash_key: Option<String> =
+        sqlx::query_scalar("SELECT tx_hash_key FROM x402_payment_intents WHERE id = $1")
+            .bind(first.id)
+            .fetch_one(db.pool())
+            .await
+            .expect("read tx_hash_key");
+    assert_eq!(tx_hash_key.as_deref(), Some(tx_hash.as_str()));
+
+    // A lapsed validity window cannot settle, even with a fresh hash.
+    let expired = pg_sequenced_x402_intent(&db, format!("0xpayer-c-{suffix}")).await;
+    sqlx::query("UPDATE x402_payment_intents SET valid_until = 1 WHERE id = $1")
+        .bind(expired.id)
+        .execute(db.pool())
+        .await
+        .expect("expire intent fixture");
+    let rejected = db
+        .kernel_executor(policy())
+        .execute_settle_x402_intent_async(&settle(
+            format!("pg-x402-unique-3-{suffix}"),
+            expired.id,
+            format!("0xpg-other-{suffix}"),
+        ))
+        .await
+        .expect("durable rejection");
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
+    assert_eq!(rejected.error_code.as_deref(), Some("commerce.x402.intent_expired"));
+    let expired_now =
+        db.x402_payment_intents().get_async(expired.id).await.expect("get").expect("intent");
+    assert_eq!(expired_now.status, X402IntentStatus::Sequenced);
 }

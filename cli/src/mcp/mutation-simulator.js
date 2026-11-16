@@ -16,9 +16,22 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { ToolErrorCode } from './tool-result-contract.js';
 import { compactReplayValue } from './replay-sanitizer.js';
 import { replayEventHash } from './audit-envelope.js';
 import { normalizeToolName } from './policy-helpers.js';
+
+/**
+ * Error code for a replay refused because the logged call's tool is not a
+ * `write` tool (see `createReplayMutationToolCall`).
+ */
+export const REPLAY_PERMISSION_DENIED = 'REPLAY_PERMISSION_DENIED';
+
+/**
+ * Error code for a replay refused in kernel strict mode because the logged
+ * call's tool has no typed kernel command (see `createReplayMutationToolCall`).
+ */
+export const REPLAY_NOT_GOVERNED = 'REPLAY_NOT_GOVERNED';
 
 /**
  * @typedef {Object} MutationSimulatorDeps
@@ -27,6 +40,10 @@ import { normalizeToolName } from './policy-helpers.js';
  * @property {(args: Object) => Promise<Object>} executeToolStepInPlan
  * @property {(event: Object) => Promise<void>} addAgenticReplayEvent
  * @property {(options?: Object) => Promise<{ events: Array<Object> }>} listAgenticReplayEvents
+ * @property {{ isWithheld: (toolName: string) => boolean,
+ *   isGovernedCommand: (toolName: string) => boolean } | null} [strictKernel]
+ *   Set only in kernel strict mode: `isWithheld` names the writes the strict
+ *   boundary does not expose, `isGovernedCommand` the typed kernel commands.
  */
 
 /**
@@ -59,7 +76,10 @@ export function createSimulateMutationToolCall({
     if (runtime.permission === 'unknown') {
       return {
         success: false,
-        error: `Unknown tool '${targetTool}'`,
+        error: runtime.unavailable?.message || `Unknown tool '${targetTool}'`,
+        ...(runtime.unavailable
+          ? { errorCode: ToolErrorCode.PERMISSION_DENIED, refusal: runtime.unavailable.reason }
+          : {}),
       };
     }
     if (runtime.sideEffect !== 'write') {
@@ -147,6 +167,21 @@ export function createSimulateMutationToolCall({
  * Build `replayMutationToolCall` — re-execute a recorded mutation event for
  * determinism verification. Defaults to dry-run so it's safe by default.
  *
+ * Only `write` tools are replayed. `agentic_replay_mutation` is itself a
+ * `write` tool, so replaying an `admin` or `delete` tool through it would let a
+ * caller holding write permission (e.g. a toolkit scoped to
+ * `permission:write`) run admin and delete tools it was never granted. The
+ * permission is the tool's CURRENT one, read from the tool definitions at
+ * replay time, never anything recorded in the log. The newest matching
+ * mutation is refused outright rather than skipped, so a replay never
+ * silently re-runs an older call than the one the caller asked for.
+ *
+ * In kernel strict mode the replay re-executes governed commands only. A
+ * logged call to a write the strict boundary withholds (one logged before the
+ * server went strict, say) is still the newest matching mutation, so it too is
+ * refused rather than skipped. The replay itself runs as a nested step, which
+ * the step executor governs like any plan step.
+ *
  * @param {MutationSimulatorDeps} deps
  */
 export function createReplayMutationToolCall({
@@ -155,6 +190,7 @@ export function createReplayMutationToolCall({
   executeToolStepInPlan,
   addAgenticReplayEvent,
   listAgenticReplayEvents,
+  strictKernel = null,
 }) {
   return async function replayMutationToolCall({
     eventId = null,
@@ -172,15 +208,83 @@ export function createReplayMutationToolCall({
     });
     const sourceEvent = (replayEvents.events || []).find((event) => {
       if (!event?.tool || event.tool.startsWith('agentic_')) return false;
+      // Withheld writes are unknown to a strict server, but stay candidates.
+      const withheld = Boolean(strictKernel?.isWithheld(event.tool));
       const runtime = getToolRuntimeMeta(event.tool);
-      if (runtime.permission === 'unknown' || runtime.sideEffect !== 'write') return false;
+      // A mutation by a tool outside this server's capability scope is still
+      // selected, so the refusal below names it instead of replaying another.
+      if (runtime.unavailable) {
+        if (runtime.unavailable.sideEffect !== 'write') return false;
+      } else if (
+        !withheld &&
+        (runtime.permission === 'unknown' || runtime.sideEffect !== 'write')
+      ) {
+        return false;
+      }
       return event.params && typeof event.params === 'object';
     });
+
+    const sourceRefusal = sourceEvent ? getToolRuntimeMeta(sourceEvent.tool).unavailable : null;
+    if (sourceRefusal) {
+      return {
+        success: false,
+        errorCode: ToolErrorCode.PERMISSION_DENIED,
+        error: sourceRefusal.message,
+        refusal: sourceRefusal.reason,
+        sourceEvent: {
+          eventId: sourceEvent.eventId || null,
+          requestId: sourceEvent.requestId || null,
+          tool: sourceEvent.tool,
+          occurredAt: sourceEvent.occurredAt || null,
+          status: sourceEvent.status || null,
+        },
+      };
+    }
 
     if (!sourceEvent) {
       return {
         success: false,
         error: 'No replayable mutation event found for the provided filters.',
+        filters: {
+          eventId,
+          requestId,
+          tool: tool || null,
+        },
+      };
+    }
+
+    if (strictKernel && !strictKernel.isGovernedCommand(sourceEvent.tool)) {
+      return {
+        success: false,
+        errorCode: REPLAY_NOT_GOVERNED,
+        error:
+          `Refusing to replay '${sourceEvent.tool}': kernel strict mode replays only ` +
+          'governed commands, and it has no typed kernel command.',
+        sourceEvent: {
+          eventId: sourceEvent.eventId || null,
+          tool: sourceEvent.tool,
+        },
+        filters: {
+          eventId,
+          requestId,
+          tool: tool || null,
+        },
+      };
+    }
+
+    const sourcePermission = getToolRuntimeMeta(sourceEvent.tool).permission;
+    if (sourcePermission !== 'write') {
+      return {
+        success: false,
+        errorCode: REPLAY_PERMISSION_DENIED,
+        error:
+          `Refusing to replay '${sourceEvent.tool}': it is a '${sourcePermission}' tool, ` +
+          "and agentic_replay_mutation replays only 'write' tools. Call the tool directly.",
+        sourceEvent: {
+          eventId: sourceEvent.eventId || null,
+          tool: sourceEvent.tool,
+          permission: sourcePermission,
+        },
         filters: {
           eventId,
           requestId,

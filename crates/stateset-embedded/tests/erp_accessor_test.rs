@@ -499,6 +499,8 @@ fn ar_create_write_off_and_list() {
             ..Default::default()
         })
         .expect("Failed to create invoice for write-off");
+    // Only an issued invoice can be written off.
+    let invoice = commerce.invoices().send(invoice.id.into()).expect("Failed to issue invoice");
 
     let write_off = commerce
         .accounts_receivable()
@@ -868,6 +870,7 @@ fn gl_create_journal_entry_requires_open_period() {
         source_document_type: None,
         source_document_id: None,
         auto_post: None,
+        fx: None,
     });
 
     assert!(result.is_err(), "Expected journal entry creation to fail without an open period");

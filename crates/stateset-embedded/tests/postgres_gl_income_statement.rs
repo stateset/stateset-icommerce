@@ -73,6 +73,7 @@ async fn postgres_income_statement_sums_revenue_exactly() {
                 source_document_type: None,
                 source_document_id: None,
                 auto_post: Some(false),
+                fx: None,
             })
             .await
             .expect("create journal entry");

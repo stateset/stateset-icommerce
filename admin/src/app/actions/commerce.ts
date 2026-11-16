@@ -38,12 +38,23 @@ import {
 import type {
   AgentPerformanceData,
   CustomerHealthData,
+  DemandForecastingData,
+  EngineFeatureUnavailable,
+  InventoryAnalyticsData,
   FinancialReconciliationData,
   SystemHealthData,
   SystemEvent,
 } from '@/lib/types/dashboard-data';
+import {
+  ORDER_STATUSES,
+  RETURN_LIFECYCLE,
+  isTerminal,
+  type OrderStatusUpdate,
+  type ReturnStatus,
+} from '@/lib/engine-lifecycles';
 import { requireAdminSession } from '@/lib/shared/auth-session';
 import {
+  addReturnTrackingArgsSchema,
   adjustInventoryArgsSchema,
   cancelOrderArgsSchema,
   cancelSubscriptionArgsSchema,
@@ -53,9 +64,7 @@ import {
   createReturnArgsSchema,
   createSubscriptionArgsSchema,
   inventoryMovementArgsSchema,
-  processRefundArgsSchema,
   productIdArgsSchema,
-  receiveReturnArgsSchema,
   rejectReturnArgsSchema,
   returnIdArgsSchema,
   subscriptionIdArgsSchema,
@@ -118,6 +127,29 @@ function formatRelativeTime(iso: string | undefined): string {
 
   const diffDays = Math.round(diffHours / 24);
   return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+}
+
+/**
+ * `EngineCapabilityError` (lib/embedded) marks a feature the connected engine
+ * build has no equivalent for. Matched by its code so a mocked engine module
+ * in tests needs no class export.
+ */
+function isEngineCapabilityError(error: unknown): error is Error {
+  return (
+    error instanceof Error && (error as { code?: unknown }).code === 'ENGINE_CAPABILITY_UNAVAILABLE'
+  );
+}
+
+/** Run a dashboard loader, turning a missing engine capability into an explanation. */
+async function orUnavailable<T>(load: () => Promise<T>): Promise<T | EngineFeatureUnavailable> {
+  try {
+    return await load();
+  } catch (error) {
+    if (isEngineCapabilityError(error)) {
+      return { unavailable: error.message };
+    }
+    throw error;
+  }
 }
 
 // ============================================================================
@@ -251,7 +283,10 @@ export async function createOrder(params: {
   return ordersApi.create(args);
 }
 
-export async function updateOrderStatus(orderId: string, status: Order['status']): Promise<Order> {
+export async function updateOrderStatus(
+  orderId: string,
+  status: OrderStatusUpdate,
+): Promise<Order> {
   await requireAdminSession();
   const args = validateArgs({ orderId, status }, updateOrderStatusArgsSchema);
   return ordersApi.updateStatus(args.orderId, args.status);
@@ -279,11 +314,10 @@ export async function getOrderPipelineData() {
     ordersApi.getAnalytics(),
   ]);
 
-  // Group orders by status
-  const statusGroups = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
-  const groupedOrders = statusGroups.map((status) => ({
+  // Group orders by every engine order status, in lifecycle order.
+  const groupedOrders = ORDER_STATUSES.map((status) => ({
     key: status,
-    label: status.charAt(0).toUpperCase() + status.slice(1),
+    label: (status.charAt(0).toUpperCase() + status.slice(1)).replaceAll('_', ' '),
     count: analytics.ordersByStatus[status] || 0,
     totalValue: orders
       .filter((o) => o.status === status)
@@ -299,7 +333,9 @@ export async function getOrderPipelineData() {
       deliveredRate:
         ((analytics.ordersByStatus['delivered'] || 0) / Math.max(analytics.totalOrders, 1)) * 100,
       inProgressCount:
-        (analytics.ordersByStatus['processing'] || 0) + (analytics.ordersByStatus['shipped'] || 0),
+        (analytics.ordersByStatus['processing'] || 0) +
+        (analytics.ordersByStatus['partially_shipped'] || 0) +
+        (analytics.ordersByStatus['shipped'] || 0),
       exceptionsCount: analytics.ordersByStatus['cancelled'] || 0,
     },
     statusGroups: groupedOrders,
@@ -317,6 +353,24 @@ export async function getInventory(params?: {
 }): Promise<InventoryItem[]> {
   await requireAdminSession();
   return inventoryApi.list(params);
+}
+
+/**
+ * Whether the connected engine can list inventory. The native binding looks
+ * stock up by SKU only, so pages offering a full listing (the CSV export)
+ * disable it with this explanation instead of failing on click.
+ */
+export async function getInventoryListingSupport(): Promise<{
+  supported: boolean;
+  reason?: string;
+}> {
+  await requireAdminSession();
+  return (await inventoryApi.supportsListing())
+    ? { supported: true }
+    : {
+        supported: false,
+        reason: 'This engine has no inventory listing; look stock up by SKU instead.',
+      };
 }
 
 export async function getInventoryItem(sku: string): Promise<InventoryItem | null> {
@@ -360,6 +414,10 @@ export async function getDemandForecast(sku: string, days: number) {
 // Inventory Analytics data for generative UI
 export async function getInventoryAnalyticsData() {
   await requireAdminSession();
+  return orUnavailable(loadInventoryAnalyticsData);
+}
+
+async function loadInventoryAnalyticsData(): Promise<InventoryAnalyticsData> {
   const [inventory, analytics, lowStock] = await Promise.all([
     inventoryApi.list(),
     inventoryApi.getAnalytics(),
@@ -436,22 +494,37 @@ export async function rejectReturn(returnId: string, reason: string): Promise<Re
   return returnsApi.reject(args.returnId, args.reason);
 }
 
-export async function receiveReturn(
-  returnId: string,
-  items: { productId: string; condition: string }[],
-): Promise<Return> {
+// The return actions below map one-to-one onto the binding's `Returns`
+// methods; each is legal only from the states `RETURN_LIFECYCLE` allows, and
+// the engine refuses the rest. (There is no separate "refund" step: `complete`
+// settles the refund.)
+
+/** requested | approved → cancelled */
+export async function cancelReturn(returnId: string): Promise<Return> {
   await requireAdminSession();
-  const args = validateArgs({ returnId, items }, receiveReturnArgsSchema);
-  return returnsApi.receive(args.returnId, args.items);
+  const args = validateArgs({ returnId }, returnIdArgsSchema);
+  return returnsApi.cancel(args.returnId);
 }
 
-export async function processRefund(
-  returnId: string,
-  method: Return['refundMethod'],
-): Promise<Return> {
+/** approved → in_transit, recording the carrier tracking number. */
+export async function addReturnTracking(returnId: string, trackingNumber: string): Promise<Return> {
   await requireAdminSession();
-  const args = validateArgs({ returnId, method }, processRefundArgsSchema);
-  return returnsApi.processRefund(args.returnId, args.method);
+  const args = validateArgs({ returnId, trackingNumber }, addReturnTrackingArgsSchema);
+  return returnsApi.addTracking(args.returnId, args.trackingNumber);
+}
+
+/** in_transit → received */
+export async function markReturnReceived(returnId: string): Promise<Return> {
+  await requireAdminSession();
+  const args = validateArgs({ returnId }, returnIdArgsSchema);
+  return returnsApi.markReceived(args.returnId);
+}
+
+/** received | inspecting → completed; the engine settles the refund. */
+export async function completeReturn(returnId: string): Promise<Return> {
+  await requireAdminSession();
+  const args = validateArgs({ returnId }, returnIdArgsSchema);
+  return returnsApi.complete(args.returnId);
 }
 
 export async function getReturnAnalytics(params?: {
@@ -461,6 +534,15 @@ export async function getReturnAnalytics(params?: {
   await requireAdminSession();
   return returnsApi.getAnalytics(params);
 }
+
+const RETURN_PIPELINE_STAGES: { status: ReturnStatus; stage: string }[] = [
+  { status: 'requested', stage: 'Requested' },
+  { status: 'approved', stage: 'Approved' },
+  { status: 'in_transit', stage: 'In transit' },
+  { status: 'received', stage: 'Received' },
+  { status: 'inspecting', stage: 'Inspecting' },
+  { status: 'completed', stage: 'Completed' },
+];
 
 // Returns Management data for generative UI
 export async function getReturnsManagementData() {
@@ -473,18 +555,18 @@ export async function getReturnsManagementData() {
       totalReturns: analytics.totalReturns,
       returnRate: analytics.returnRate,
       refundTotal: analytics.refundTotal,
+      refundTotalExact: analytics.refundTotalExact,
       averageProcessingTime: analytics.averageProcessingTime,
       returnsByReason: analytics.returnsByReason,
       returnsByStatus: analytics.returnsByStatus,
       topReturnedProducts: analytics.topReturnedProducts || [],
     },
-    pipeline: [
-      { stage: 'Requested', count: analytics.returnsByStatus['requested'] || 0 },
-      { stage: 'Approved', count: analytics.returnsByStatus['approved'] || 0 },
-      { stage: 'Received', count: analytics.returnsByStatus['received'] || 0 },
-      { stage: 'Inspected', count: analytics.returnsByStatus['inspected'] || 0 },
-      { stage: 'Refunded', count: analytics.returnsByStatus['refunded'] || 0 },
-    ],
+    // The engine's happy path through the return lifecycle; rejected and
+    // cancelled returns leave the pipeline and show in the status breakdown.
+    pipeline: RETURN_PIPELINE_STAGES.map(({ status, stage }) => ({
+      stage,
+      count: analytics.returnsByStatus[status] || 0,
+    })),
   };
 }
 
@@ -547,8 +629,14 @@ export async function getCustomerAnalytics(): Promise<CustomerAnalytics> {
 }
 
 // Customer Health data for generative UI
-export async function getCustomerHealthData(): Promise<CustomerHealthData> {
+export async function getCustomerHealthData(): Promise<
+  CustomerHealthData | EngineFeatureUnavailable
+> {
   await requireAdminSession();
+  return orUnavailable(loadCustomerHealthData);
+}
+
+async function loadCustomerHealthData(): Promise<CustomerHealthData> {
   const [customers, analytics] = await Promise.all([
     customersApi.list({ limit: 100 }),
     customersApi.getAnalytics(),
@@ -792,6 +880,10 @@ export async function getConversionFunnel() {
 // Demand Forecasting data for generative UI
 export async function getDemandForecastingData() {
   await requireAdminSession();
+  return orUnavailable(loadDemandForecastingData);
+}
+
+async function loadDemandForecastingData(): Promise<DemandForecastingData> {
   const [inventory, analytics] = await Promise.all([
     inventoryApi.list(),
     inventoryApi.getAnalytics(),
@@ -1067,7 +1159,12 @@ export async function getAgentPerformanceData(): Promise<AgentPerformanceData> {
   await requireAdminSession();
   const [orders, inventory, returns, customers, subscriptions] = await Promise.all([
     ordersApi.list({ limit: 100 }),
-    inventoryApi.list(),
+    // The native engine cannot list inventory; this widget is simulated
+    // anyway, so the inventory agent just reports no volume there.
+    inventoryApi.list().catch((error: unknown) => {
+      if (isEngineCapabilityError(error)) return [];
+      throw error;
+    }),
     returnsApi.list(),
     customersApi.list({ limit: 100 }),
     subscriptionsApi.list(),
@@ -1134,8 +1231,12 @@ export async function getAgentPerformanceData(): Promise<AgentPerformanceData> {
     {
       id: '6',
       name: 'Fulfillment Agent',
-      volume: orders.filter((order) => order.status === 'processing' || order.status === 'shipped')
-        .length,
+      volume: orders.filter(
+        (order) =>
+          order.status === 'processing' ||
+          order.status === 'partially_shipped' ||
+          order.status === 'shipped',
+      ).length,
       target: 24,
       baseMs: 940,
       successBase: 0.985,
@@ -1325,7 +1426,9 @@ export async function getFinancialReconciliationData(): Promise<FinancialReconci
       totalReconciled: Math.round(reconciledAmount),
       reconciledRate: 0.96,
       pendingAmount: Math.round(pendingAmount),
-      pendingCount: returns.filter((entry) => entry.status !== 'refunded').length,
+      // Still open in the return lifecycle: the refund settles on `completed`,
+      // and rejected/cancelled returns never refund.
+      pendingCount: returns.filter((entry) => !isTerminal(RETURN_LIFECYCLE, entry.status)).length,
       discrepancyAmount: Math.round(discrepancyAmount),
       discrepancyCount: discrepancyItems.length,
       netCash: Math.round(totalRevenue - totalRefunds),

@@ -9,8 +9,15 @@ export interface ToolExecutionOptions {
 export interface CreateEmbeddedAgentToolkitOptions {
   dbPath?: string
   allowApply?: boolean
-  /** Required when allowApply is true. Supports exact tool names, read:*, domain.*, and kernel capabilities. */
-  capabilities?: Array<string>
+  /**
+   * Required when allowApply is true. Supports exact tool names, read:*, domain.*, and kernel
+   * capabilities. The scope also binds nested plan steps, simulations, replay and rollback
+   * compensations. `delegate_to_agent` is granted only by name or `*`. Any other value than an
+   * array or a Set throws.
+   */
+  capabilities?: Array<string> | ReadonlySet<string>
+  /** The server option's name for the same scope; used when `capabilities` is absent. Passing both throws. */
+  toolCapabilities?: Array<string> | ReadonlySet<string>
   /** Trusted host configuration for governed high-risk mutations. */
   kernel?: {
     policy: Record<string, unknown>

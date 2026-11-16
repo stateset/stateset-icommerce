@@ -40,6 +40,9 @@ export const KERNEL_CAPABILITY_BY_TOOL = Object.freeze({
   create_shipment: 'shipments.create',
   create_return: 'returns.create',
   add_return_tracking: 'returns.tracking.add',
+  // Completing a return needs every item dispositioned, so a strict endpoint
+  // records dispositions too (owner-approved).
+  set_return_item_disposition: 'returns.item.disposition.set',
 });
 
 /**
@@ -66,6 +69,7 @@ export const KERNEL_OPTIONAL_TOOLS = Object.freeze(
     'create_shipment',
     'create_return',
     'add_return_tracking',
+    'set_return_item_disposition',
   ]),
 );
 
@@ -83,6 +87,7 @@ const LEGACY_ENTITY_KEY_BY_TOOL = Object.freeze({
   create_shipment: 'shipment',
   create_return: 'return',
   add_return_tracking: 'return',
+  set_return_item_disposition: 'returnItem',
 });
 
 /** serde spellings of the carriers whose strum aliases differ. */
@@ -225,7 +230,15 @@ function payloadFor(toolName, params, issuedAt = new Date(), actorAddress = null
       return {
         order_id: params.orderId,
         tracking_number: params.trackingNumber || null,
-        lines: params.lines || null,
+        // The tool takes `{ orderItemId, quantity }` lines; the command takes
+        // `ShipmentLineInput` (`order_item_id`). Omitted -> ship everything left.
+        lines:
+          Array.isArray(params.lines) && params.lines.length > 0
+            ? params.lines.map((line) => ({
+                order_item_id: line.orderItemId ?? line.order_item_id,
+                quantity: line.quantity,
+              }))
+            : null,
       };
     case 'approve_return':
     case 'reject_return':
@@ -234,7 +247,7 @@ function payloadFor(toolName, params, issuedAt = new Date(), actorAddress = null
     case 'cancel_return':
       return { return_id: params.returnId, status: RETURN_STATUS_BY_TOOL[toolName] };
     case 'post_journal_entry':
-      return { journal_entry_id: params.journalEntryId, posted_by: params.postedBy };
+      return { journal_entry_id: params.journalEntryId, posted_by: actorAddress };
     case 'x402_mark_settled':
       return {
         intent_id: params.intentId,
@@ -421,6 +434,14 @@ function payloadFor(toolName, params, issuedAt = new Date(), actorAddress = null
       };
     case 'add_return_tracking':
       return { return_id: params.returnId, tracking_number: params.trackingNumber };
+    case 'set_return_item_disposition':
+      // `disposition_by` is the kernel principal, never a tool argument.
+      return {
+        return_id: params.returnId,
+        return_item_id: params.returnItemId,
+        disposition: params.disposition,
+        note: params.note ?? null,
+      };
     case 'a2a_refund_escrow':
       return { escrow_id: params.escrowId, reason: params.reason || null };
     default:
@@ -473,7 +494,12 @@ export function createKernelToolExecutor({ commerce, kernel, allowApply, agentCo
       kernelConfig.actor_address ||
       kernelConfig.principal?.id ||
       null;
-    const payload = payloadFor(toolName, params, issuedAt, actorAddress);
+    const payload = payloadFor(
+      toolName,
+      params,
+      issuedAt,
+      toolName === 'post_journal_entry' ? kernelConfig.principal?.id : actorAddress,
+    );
     if (!payload) {
       throw new Error(`Governed tool '${toolName}' does not define a typed command payload.`);
     }

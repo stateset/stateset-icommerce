@@ -29,6 +29,7 @@ import {
   validateToolInput,
 } from '../tool-schema.js';
 import { normalizeToolName } from './policy-helpers.js';
+import { ToolErrorCode } from './tool-result-contract.js';
 
 /**
  * Attach payment metadata to an MCP tool response whose first content block
@@ -162,6 +163,7 @@ export function createResolveMppPaymentContext({
  *   toolDefsByName: Map<string, object>,
  *   getAgenticToolPricing: (toolName: string) => Promise<object | null>,
  *   serviceInfo: { id: string, name: string },
+ *   describeUnavailableTool?: (toolName: string) => ({ reason: string, message: string } | null),
  * }} deps
  * @returns {(input?: {
  *   tool: string,
@@ -175,6 +177,7 @@ export function createPreparePaymentForTool({
   toolDefsByName: TOOL_DEFS_BY_NAME,
   getAgenticToolPricing,
   serviceInfo: MPP_SERVICE_INFO,
+  describeUnavailableTool = null,
 }) {
   const preparePaymentForTool = async ({
     tool,
@@ -194,11 +197,14 @@ export function createPreparePaymentForTool({
 
     const toolDef = TOOL_DEFS_BY_NAME.get(resolvedToolName);
     if (!toolDef) {
+      // A tool a toolkit capability scope excludes is refused with that reason.
+      const refusal = describeUnavailableTool?.(resolvedToolName) || null;
       return {
         success: false,
         tool: resolvedToolName,
         payable: false,
-        error: `Unknown tool '${resolvedToolName}'`,
+        error: refusal?.message || `Unknown tool '${resolvedToolName}'`,
+        ...(refusal ? { errorCode: ToolErrorCode.PERMISSION_DENIED, refusal: refusal.reason } : {}),
       };
     }
 

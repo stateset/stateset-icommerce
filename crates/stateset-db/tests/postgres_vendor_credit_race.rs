@@ -4,7 +4,10 @@
 #![cfg(feature = "postgres")]
 
 use rust_decimal_macros::dec;
-use stateset_core::{ApplyVendorCredit, CreateVendorCredit, VendorCreditTargetType};
+use stateset_core::{
+    ApplyVendorCredit, CreateBill, CreateBillItem, CreateSupplier, CreateVendorCredit,
+    VendorCreditTargetType,
+};
 use stateset_db::PostgresDatabase;
 use std::sync::Arc;
 use tokio::sync::Barrier;
@@ -21,10 +24,35 @@ async fn postgres_competing_applications_cannot_exceed_vendor_credit() {
         return;
     };
     let db = Arc::new(PostgresDatabase::connect(&url).await.expect("connect + migrate"));
+    // Credits settle a real, approved bill from the same supplier.
+    let supplier = db
+        .purchase_orders()
+        .create_supplier_async(CreateSupplier {
+            name: format!("Credit race supplier {}", Uuid::new_v4()),
+            ..Default::default()
+        })
+        .await
+        .expect("create supplier");
+    let bill = db
+        .accounts_payable()
+        .create_bill_async(CreateBill {
+            supplier_id: supplier.id,
+            due_date: chrono::Utc::now(),
+            items: vec![CreateBillItem {
+                description: "Credit race".into(),
+                quantity: dec!(1),
+                unit_price: dec!(10),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .await
+        .expect("create bill");
+    db.accounts_payable().approve_bill_async(bill.id).await.expect("approve bill");
     let credit = db
         .vendor_credits()
         .create_async(CreateVendorCredit {
-            supplier_id: Uuid::new_v4(),
+            supplier_id: supplier.id,
             vendor_return_id: None,
             amount: dec!(3),
             currency: None,
@@ -38,6 +66,7 @@ async fn postgres_competing_applications_cannot_exceed_vendor_credit() {
         let db = Arc::clone(&db);
         let barrier = Arc::clone(&barrier);
         let id = credit.id;
+        let bill = bill.id;
         handles.push(tokio::spawn(async move {
             barrier.wait().await;
             db.vendor_credits()
@@ -45,7 +74,7 @@ async fn postgres_competing_applications_cannot_exceed_vendor_credit() {
                     id,
                     ApplyVendorCredit {
                         target_type: VendorCreditTargetType::Bill,
-                        target_id: Uuid::new_v4(),
+                        target_id: bill,
                         amount: dec!(2),
                     },
                 )

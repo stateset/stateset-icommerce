@@ -156,6 +156,10 @@ impl Sim {
             unearned_revenue_account_id: Some(unearned_id),
             sales_revenue_account_id: by_number("4010"),
             shipping_revenue_account_id: None,
+            sales_tax_payable_account_id: None,
+            goods_received_not_invoiced_account_id: None,
+            inventory_adjustment_account_id: None,
+            work_in_progress_account_id: None,
             cogs_account_id: by_number("5010"),
             bad_debt_expense_account_id: None,
             fx_gain_loss_account_id: Some(fx_id),
@@ -192,7 +196,7 @@ impl Sim {
             })
             .expect("set rate");
         gl.create_journal_entry(CreateJournalEntry {
-            entry_date: POSTING_DATE,
+            entry_date: chrono::Utc::now().date_naive(),
             entry_type: Some(JournalEntryType::Standard),
             description: "Seed EUR balance".into(),
             lines: vec![
@@ -216,6 +220,7 @@ impl Sim {
             source_document_type: None,
             source_document_id: None,
             auto_post: Some(true),
+            fx: None,
         })
         .expect("seed EUR entry");
 
@@ -273,23 +278,46 @@ impl Sim {
                 name: "Sim asset".into(),
                 description: None,
                 category: FixedAssetCategory::Machinery,
-                acquisition_date: date(2026, 1, 1),
+                acquisition_date: date(2020, 1, 1),
                 acquisition_cost: cost,
                 salvage_value: Decimal::ZERO,
                 useful_life_months: 12,
                 depreciation_method: DepreciationMethod::StraightLine,
                 in_service_date: None,
                 location_id: None,
-                asset_account_id: None,
-                accumulated_depreciation_account_id: None,
-                depreciation_expense_account_id: None,
+                asset_account_id: Some(
+                    self.commerce
+                        .general_ledger()
+                        .get_account_by_number("1200")
+                        .unwrap()
+                        .unwrap()
+                        .id,
+                ),
+                accumulated_depreciation_account_id: Some(
+                    self.commerce
+                        .general_ledger()
+                        .get_account_by_number("1510")
+                        .unwrap()
+                        .unwrap()
+                        .id,
+                ),
+                acquisition_offset_account_id: None,
+                disposal_gain_loss_account_id: None,
+                depreciation_expense_account_id: Some(
+                    self.commerce
+                        .general_ledger()
+                        .get_account_by_number("5300")
+                        .unwrap()
+                        .unwrap()
+                        .id,
+                ),
                 currency: None,
             })
             .expect("create asset");
         let asset = self
             .commerce
             .fixed_assets()
-            .place_in_service(asset.id, date(2026, 1, 1))
+            .place_in_service(asset.id, date(2020, 1, 1))
             .expect("place in service");
         self.commerce.fixed_assets().generate_schedule(asset.id).expect("generate schedule");
         (asset.id, 12)
@@ -352,6 +380,8 @@ impl Sim {
             .invoices()
             .create(CreateInvoice { customer_id: self.customer_id, items, ..Default::default() })
             .expect("create invoice");
+        // Only issued invoices post to the ledger.
+        let invoice = self.commerce.invoices().send(invoice.id.into()).expect("issue invoice");
         let entry = self
             .commerce
             .general_ledger()
@@ -395,6 +425,7 @@ impl Sim {
                 source_document_type: None,
                 source_document_id: None,
                 auto_post: Some(true),
+                fx: None,
             })
             .expect("manual journal entry");
         assert!(entry.is_balanced, "manual entry must balance");
@@ -442,7 +473,7 @@ impl Sim {
         let result = self
             .commerce
             .general_ledger()
-            .revalue(date(2026, 6, 30), None)
+            .revalue(chrono::Utc::now().date_naive(), None)
             .expect("fx revaluation");
         if let Some(entry) = result.journal_entry {
             assert!(entry.is_balanced, "revaluation entry must balance");

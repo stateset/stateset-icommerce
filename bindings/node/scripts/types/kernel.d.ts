@@ -340,6 +340,20 @@ export interface KernelTransitionReturnPayload {
   status: 'requested' | 'approved' | 'rejected' | 'in_transit' | 'received' | 'inspecting' | 'completed' | 'cancelled'
 }
 
+/**
+ * `returns.item.disposition.set` (`SetReturnItemDisposition`). The return
+ * must be `received` or `inspecting`; `disposition_by` is the command's
+ * principal. An unknown disposition is a sealed
+ * `commerce.return_disposition_invalid` rejection.
+ */
+export interface KernelSetReturnItemDispositionPayload {
+  return_id: string
+  return_item_id: string
+  disposition: ReturnDisposition
+  /** Recorded on the `returns.item_dispositioned.v1` fact; at most 1000 characters. */
+  note?: string | null
+}
+
 /** `ledger.post` (`PostJournalEntry`). */
 export interface KernelPostJournalEntryPayload {
   journal_entry_id: string
@@ -460,6 +474,7 @@ export type KernelCommand =
   | KernelCommandEnvelope<'orders.transition', KernelTransitionOrderPayload>
   | KernelCommandEnvelope<'orders.ship', KernelShipOrderPayload>
   | KernelCommandEnvelope<'returns.transition', KernelTransitionReturnPayload>
+  | KernelCommandEnvelope<'returns.item.disposition.set', KernelSetReturnItemDispositionPayload>
   | KernelCommandEnvelope<'ledger.post', KernelPostJournalEntryPayload>
   | KernelCommandEnvelope<'x402.settle', KernelSettleX402IntentPayload>
   | KernelCommandEnvelope<'checkout.commit', KernelCommitCheckoutPayload>

@@ -453,25 +453,27 @@ impl PgAnalyticsRepository {
         let total_skus: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM inventory_items")
             .fetch_one(&self.pool)
             .await
-            .unwrap_or(0);
+            .map_err(map_db_error)?;
 
         let (in_stock, low_stock, out_of_stock): (i64, i64, i64) = sqlx::query_as(
             r#"
             SELECT
-                COALESCE(SUM(CASE WHEN ib.on_hand > COALESCE(ii.reorder_point, 10) THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN ib.on_hand <= COALESCE(ii.reorder_point, 10) AND ib.on_hand > 0 THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN ib.on_hand <= 0 THEN 1 ELSE 0 END), 0)
-            FROM inventory_items ii
-            LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
+                COALESCE(SUM(CASE WHEN stock.on_hand > COALESCE(stock.reorder_point, 10) THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN stock.on_hand <= COALESCE(stock.reorder_point, 10) AND stock.on_hand > 0 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN stock.on_hand <= 0 THEN 1 ELSE 0 END), 0)
+            FROM (SELECT ii.id, COALESCE(SUM(ib.quantity_on_hand), 0) AS on_hand,
+                         MAX(ib.reorder_point) AS reorder_point
+                  FROM inventory_items ii LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
+                  GROUP BY ii.id) stock
             "#,
         )
         .fetch_one(&self.pool)
         .await
-        .unwrap_or((0, 0, 0));
+        .map_err(map_db_error)?;
 
         let total_value: Decimal = sqlx::query_scalar(
             r#"
-            SELECT COALESCE(SUM(ib.on_hand * COALESCE(pv.cost_price, pv.price, 0)), 0)
+            SELECT COALESCE(SUM(ib.quantity_on_hand * COALESCE(pv.cost, pv.price, 0)), 0)
             FROM inventory_items ii
             LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
             LEFT JOIN product_variants pv ON ii.sku = pv.sku
@@ -479,7 +481,7 @@ impl PgAnalyticsRepository {
         )
         .fetch_one(&self.pool)
         .await
-        .unwrap_or(Decimal::ZERO);
+        .map_err(map_db_error)?;
 
         Ok(InventoryHealth {
             total_skus: total_skus as u64,
@@ -503,13 +505,14 @@ impl PgAnalyticsRepository {
                 SELECT
                     ii.sku,
                     ii.name,
-                    COALESCE(ib.on_hand, 0) as on_hand,
-                    COALESCE(ib.allocated, 0) as allocated,
-                    COALESCE(ib.on_hand, 0) - COALESCE(ib.allocated, 0) as available,
-                    ii.reorder_point
+                    COALESCE(SUM(ib.quantity_on_hand), 0) as on_hand,
+                    COALESCE(SUM(ib.quantity_allocated), 0) as allocated,
+                    COALESCE(SUM(ib.quantity_on_hand - ib.quantity_allocated), 0) as available,
+                    MAX(ib.reorder_point)
                 FROM inventory_items ii
                 LEFT JOIN inventory_balances ib ON ii.id = ib.item_id
-                WHERE COALESCE(ib.on_hand, 0) - COALESCE(ib.allocated, 0) <= $1
+                GROUP BY ii.id, ii.sku, ii.name
+                HAVING COALESCE(SUM(ib.quantity_on_hand - ib.quantity_allocated), 0) <= $1
                 ORDER BY available ASC
                 "#,
             )

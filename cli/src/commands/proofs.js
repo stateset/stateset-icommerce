@@ -2,6 +2,10 @@
  * Proofs Commands Module
  */
 
+import { takeOption } from '../utils/cli-options.js';
+
+const LEAF_COUNT_HINT = 'pass --leaf-count <n> (the batch event count) to bind it';
+
 function parseJsonArg(value, label) {
   try {
     return JSON.parse(value);
@@ -16,21 +20,76 @@ async function getProofGenerator() {
   return createProofGenerator(cryptoMod);
 }
 
+/**
+ * Take `--leaf-count <n>` out of the arguments: the batch size as the caller
+ * knows it, independently of the proof or bundle. Only it binds the path
+ * (pathBound).
+ *
+ * @param {string[]} args
+ * @param {string} usage
+ * @returns {Promise<{ leafCount: number|undefined, rest: string[] }>}
+ */
+async function takeLeafCount(args, usage) {
+  const { merklePathDepth, parseTreeInteger } = await import('../sync/merkle-shape.js');
+  const { value, rest } = takeOption(args, '--leaf-count', usage);
+  if (value !== undefined && merklePathDepth(value) === null) {
+    throw new Error(`${usage}\n--leaf-count must be an integer from 1 to 4294967295`);
+  }
+  return { leafCount: value === undefined ? undefined : parseTreeInteger(value), rest };
+}
+
+/**
+ * Take `--leaf-count <n>` and `--leaf-index <i>` out of the arguments.
+ * --leaf-index is the position the caller expects; the proof's positions
+ * must spell it.
+ *
+ * @param {string[]} args
+ * @param {string} usage
+ * @returns {Promise<{ leafCount: number|undefined, leafIndex: number|undefined, rest: string[] }>}
+ */
+async function takeTreeOptions(args, usage) {
+  const { parseTreeInteger } = await import('../sync/merkle-shape.js');
+  const count = await takeLeafCount(args, usage);
+  const { value, rest } = takeOption(count.rest, '--leaf-index', usage);
+  if (value !== undefined && parseTreeInteger(value) === null) {
+    throw new Error(`${usage}\n--leaf-index must be a nonnegative integer`);
+  }
+  return {
+    leafCount: count.leafCount,
+    leafIndex: value === undefined ? undefined : parseTreeInteger(value),
+    rest,
+  };
+}
+
 export async function execute(action, args, { jsonOutput }) {
   const pg = await getProofGenerator();
 
   switch (action) {
     case 'verify-receipt': {
-      const [receiptBundleJson, publicKeyHex] = args;
-      if (!receiptBundleJson)
-        throw new Error('Usage: proofs verify-receipt <receiptBundleJson> [publicKeyHex]');
-      const result = pg.verifyReceiptBundle(
+      const usage =
+        'Usage: proofs verify-receipt <receiptBundleJson> [publicKeyHex] [--leaf-count <n>]';
+      const { leafCount, rest } = await takeLeafCount(args, usage);
+      const [receiptBundleJson, publicKeyHex] = rest;
+      if (!receiptBundleJson) throw new Error(usage);
+      const { verifyReceipt } = await import('../sync/raw-leaf-inclusion.js');
+      const result = verifyReceipt(
+        pg,
         parseJsonArg(receiptBundleJson, 'receiptBundle'),
         publicKeyHex || undefined,
+        { leafCount, leafCountHint: LEAF_COUNT_HINT },
       );
-      return jsonOutput
-        ? result
-        : { result, formatted: `Receipt verification: ${result.valid ? 'valid' : 'invalid'}` };
+      // A leaf taken on trust (legacy-v0) is valid only for a bound path; a
+      // bundle that failed nothing else says why it is not valid.
+      const failed = result.checks.filter((c) => !c.passed);
+      const unbound = failed.length === 1 && failed[0].check === 'path_bound';
+      let formatted = `Receipt verification: ${result.valid ? 'valid' : 'invalid'}`;
+      if (unbound) {
+        formatted =
+          `Receipt verification: unbound (the ${result.format} leaf hash is taken as given and ` +
+          'no --leaf-count bound the path to a tree size, so it does not show the event was ' +
+          'included)';
+      }
+      return jsonOutput ? result : { result, formatted };
     }
 
     case 'generate-proof': {
@@ -49,21 +108,39 @@ export async function execute(action, args, { jsonOutput }) {
     }
 
     case 'verify-proof': {
-      const [leafHash, proofJson, expectedRoot, eventId] = args;
+      const usage =
+        'Usage: proofs verify-proof <leafHash> <proofJson> <expectedRoot> [eventId] ' +
+        '[--leaf-count <n>] [--leaf-index <i>]';
+      const { leafCount, leafIndex, rest } = await takeTreeOptions(args, usage);
+      const [leafHash, proofJson, expectedRoot, eventId] = rest;
       if (!leafHash || !proofJson || !expectedRoot) {
-        throw new Error(
-          'Usage: proofs verify-proof <leafHash> <proofJson> <expectedRoot> [eventId]',
-        );
+        throw new Error(usage);
       }
-      const result = pg.verifyInclusionProof({
-        leafHash,
-        proof: parseJsonArg(proofJson, 'proof'),
-        expectedRoot,
-        eventId: eventId || undefined,
-      });
-      return jsonOutput
-        ? result
-        : { result, formatted: `Inclusion proof: ${result.valid ? 'valid' : 'invalid'}` };
+      const { UNBOUND_REASON, verifyRawLeafInclusion } =
+        await import('../sync/raw-leaf-inclusion.js');
+      const result = verifyRawLeafInclusion(
+        pg,
+        {
+          leafHash,
+          proof: parseJsonArg(proofJson, 'proof'),
+          expectedRoot,
+          eventId: eventId || undefined,
+          leafIndex,
+          leafCount,
+        },
+        { leafCountHint: LEAF_COUNT_HINT },
+      );
+      // valid means bound inclusion; a chain that reaches the root without a
+      // --leaf-count is reported as unbound, never as valid.
+      let formatted = 'Inclusion proof: invalid';
+      if (result.valid) {
+        formatted = 'Inclusion proof: valid';
+      } else if (result.reason === UNBOUND_REASON) {
+        formatted =
+          'Inclusion proof: unbound (the hash chain reaches the root, but no --leaf-count bound ' +
+          'the path to a tree size, so it does not show a leaf was included)';
+      }
+      return jsonOutput ? result : { result, formatted };
     }
 
     case 'bundle': {
@@ -108,38 +185,51 @@ export async function execute(action, args, { jsonOutput }) {
     }
 
     case 'verify-anchor': {
-      const [leafHash, proofJson, expectedRoot, anchorTxHash] = args;
+      const usage =
+        'Usage: proofs verify-anchor <leafHash> <proofJson> <expectedRoot> <anchorTxHash> ' +
+        '[--leaf-count <n>] [--leaf-index <i>]';
+      const { leafCount, leafIndex, rest } = await takeTreeOptions(args, usage);
+      const [leafHash, proofJson, expectedRoot, anchorTxHash] = rest;
       if (!leafHash || !proofJson || !expectedRoot || !anchorTxHash) {
-        throw new Error(
-          'Usage: proofs verify-anchor <leafHash> <proofJson> <expectedRoot> <anchorTxHash>',
-        );
+        throw new Error(usage);
       }
-      const result = pg.verifyInclusionProof({
-        leafHash,
-        proof: parseJsonArg(proofJson, 'proof'),
-        expectedRoot,
-      });
-      const output = {
-        ...result,
-        anchorTxHash,
-        anchored: result.valid,
-      };
-      return jsonOutput
-        ? output
-        : { output, formatted: `Chain anchor: ${output.anchored ? 'verified' : 'invalid'}` };
+      const { UNBOUND_REASON, verifyRawLeafAnchor } = await import('../sync/raw-leaf-inclusion.js');
+      const output = verifyRawLeafAnchor(
+        pg,
+        {
+          leafHash,
+          proof: parseJsonArg(proofJson, 'proof'),
+          expectedRoot,
+          anchorTxHash,
+          leafIndex,
+          leafCount,
+        },
+        { leafCountHint: LEAF_COUNT_HINT },
+      );
+      // anchored means bound inclusion; a chain that reaches the root without
+      // a --leaf-count is reported as unbound, never as verified.
+      let formatted = 'Chain anchor: invalid';
+      if (output.anchored) {
+        formatted = 'Chain anchor: verified';
+      } else if (output.reason === UNBOUND_REASON) {
+        formatted =
+          'Chain anchor: unbound (the proof reaches the on-chain root, but no --leaf-count ' +
+          'bound the path to a tree size, so it does not show the event was committed)';
+      }
+      return jsonOutput ? output : { output, formatted };
     }
 
     default:
       throw new Error(
         `Unknown action: proofs ${action}\n\n` +
           'Available actions:\n' +
-          '  verify-receipt <receiptBundleJson> [publicKeyHex]     Verify receipt bundle\n' +
+          '  verify-receipt <receiptBundleJson> [publicKeyHex] [--leaf-count <n>]  Verify receipt bundle\n' +
           '  generate-proof <eventId> <eventsJson> [batchId] [anchorTxHash]  Generate inclusion proof\n' +
-          '  verify-proof <leafHash> <proofJson> <expectedRoot> [eventId]    Verify inclusion proof\n' +
+          '  verify-proof <leafHash> <proofJson> <expectedRoot> [eventId] [--leaf-count <n>] [--leaf-index <i>]  Verify inclusion proof\n' +
           '  bundle <eventJson> <batchEventsJson> [batchId] [anchorTxHash]   Generate receipt bundle\n' +
           '  inspect-batch <batchId> <eventsJson> [anchorTxHash]             Inspect batch\n' +
           '  compliance-package <eventsJson> [batchId] [anchorTxHash]        Export compliance package\n' +
-          '  verify-anchor <leafHash> <proofJson> <expectedRoot> <anchorTxHash>  Verify chain anchor',
+          '  verify-anchor <leafHash> <proofJson> <expectedRoot> <anchorTxHash> [--leaf-count <n>] [--leaf-index <i>]  Verify chain anchor',
       );
   }
 }
@@ -151,7 +241,7 @@ export const metadata = {
   actions: {
     'verify-receipt': {
       description: 'Verify receipt bundle',
-      args: ['<receiptBundleJson>', '[publicKeyHex]'],
+      args: ['<receiptBundleJson>', '[publicKeyHex]', '[--leaf-count <n>]'],
     },
     'generate-proof': {
       description: 'Generate inclusion proof',
@@ -159,7 +249,14 @@ export const metadata = {
     },
     'verify-proof': {
       description: 'Verify inclusion proof',
-      args: ['<leafHash>', '<proofJson>', '<expectedRoot>', '[eventId]'],
+      args: [
+        '<leafHash>',
+        '<proofJson>',
+        '<expectedRoot>',
+        '[eventId]',
+        '[--leaf-count <n>]',
+        '[--leaf-index <i>]',
+      ],
     },
     bundle: {
       description: 'Generate receipt bundle',
@@ -175,7 +272,14 @@ export const metadata = {
     },
     'verify-anchor': {
       description: 'Verify chain anchor',
-      args: ['<leafHash>', '<proofJson>', '<expectedRoot>', '<anchorTxHash>'],
+      args: [
+        '<leafHash>',
+        '<proofJson>',
+        '<expectedRoot>',
+        '<anchorTxHash>',
+        '[--leaf-count <n>]',
+        '[--leaf-index <i>]',
+      ],
     },
   },
 };

@@ -390,6 +390,46 @@ pub struct AddReturnTracking {
     pub tracking_number: String,
 }
 
+/// Kernel command payload recording a received return item's disposition
+/// (`returns.item.disposition.set`), through the same repository write as
+/// [`crate::ReturnRepository::set_item_disposition`]: the return must be `received`
+/// or `inspecting`, the item must belong to it and must not already carry a
+/// disposition, and `restock` / `quarantine` put the units back into the
+/// default warehouse.
+///
+/// `disposition_by` is not part of the payload: the kernel records the
+/// command's principal, so the audit trail names the governed actor rather
+/// than whatever a model typed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetReturnItemDisposition {
+    pub return_id: ReturnId,
+    pub return_item_id: Uuid,
+    /// A [`ReturnDisposition`] in its `return_items.disposition` spelling
+    /// (`restock`, `refurbish`, `scrap`, `return_to_vendor`, `quarantine`).
+    /// Carried as text so an unknown value is a sealed
+    /// `commerce.return_disposition_invalid` rejection rather than an
+    /// envelope that cannot be decoded.
+    pub disposition: String,
+    /// Free-text note recorded on the command's outbox fact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+impl SetReturnItemDisposition {
+    /// A payload for `disposition` with no note.
+    #[must_use]
+    pub fn new(return_id: ReturnId, return_item_id: Uuid, disposition: ReturnDisposition) -> Self {
+        Self { return_id, return_item_id, disposition: disposition.to_string(), note: None }
+    }
+
+    /// The requested disposition, or `None` when `disposition` is not in the
+    /// vocabulary.
+    #[must_use]
+    pub fn parsed_disposition(&self) -> Option<ReturnDisposition> {
+        self.disposition.trim().parse().ok()
+    }
+}
+
 /// Return filter for querying
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReturnFilter {
@@ -581,6 +621,22 @@ mod tests {
             ReturnReason::from_str("no_longer_needed").unwrap(),
             ReturnReason::NoLongerNeeded
         );
+    }
+
+    #[test]
+    fn disposition_command_payload_parses_the_column_vocabulary() {
+        let id = ReturnId::new();
+        let item = Uuid::new_v4();
+        let typed = SetReturnItemDisposition::new(id, item, ReturnDisposition::ReturnToVendor);
+        assert_eq!(typed.disposition, "return_to_vendor");
+        assert_eq!(typed.parsed_disposition(), Some(ReturnDisposition::ReturnToVendor));
+        let wire = serde_json::to_value(&typed).unwrap();
+        assert!(wire.get("note").is_none(), "an absent note is not serialized");
+        let mut raw = typed;
+        raw.disposition = " Restock ".into();
+        assert_eq!(raw.parsed_disposition(), Some(ReturnDisposition::Restock));
+        raw.disposition = "donate".into();
+        assert_eq!(raw.parsed_disposition(), None);
     }
 
     #[test]

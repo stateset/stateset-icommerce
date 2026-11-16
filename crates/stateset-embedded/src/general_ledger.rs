@@ -32,16 +32,16 @@
 //! # Ok::<(), stateset_embedded::CommerceError>(())
 //! ```
 
-use chrono::{Months, NaiveDate};
+use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use stateset_core::{
-    AccountStatus, AccountSubType, AutoPostingConfig, BalanceSheet, BatchResult, CloseMonthOptions,
-    CloseMonthReport, CloseMonthStepReport, CloseMonthStepStatus, CommerceError,
-    CreateAutoPostingConfig, CreateGlAccount, CreateGlPeriod, CreateJournalEntry, Currency,
-    CurrencyCode, DepreciationEntryStatus, FixedAssetFilter, FixedAssetStatus, GlAccount,
-    GlAccountFilter, GlPeriod, GlPeriodFilter, IncomeStatement, JournalEntry, JournalEntryFilter,
-    JournalEntryLine, Result, RevaluationResult, RevenueContractFilter, RevenueContractStatus,
-    RevenueEntryStatus, TrialBalance, UpdateGlAccount,
+    AutoPostingConfig, BalanceSheet, BatchResult, CloseMonthOptions, CloseMonthReport,
+    CloseMonthStepReport, CloseMonthStepStatus, CommerceError, CreateAutoPostingConfig,
+    CreateGlAccount, CreateGlPeriod, CreateJournalEntry, Currency, DepreciationEntryStatus,
+    FixedAssetFilter, FixedAssetStatus, GlAccount, GlAccountFilter, GlPeriod, GlPeriodFilter,
+    IncomeStatement, JournalEntry, JournalEntryFilter, JournalEntryLine, Result, RevaluationResult,
+    RevenueContractFilter, RevenueContractStatus, RevenueEntryStatus, TrialBalance,
+    UpdateGlAccount,
 };
 use stateset_db::{Database, DatabaseCapability};
 use std::sync::Arc;
@@ -260,9 +260,19 @@ impl GeneralLedger {
     ///     entry_type: None,
     ///     source_document_type: None,
     ///     source_document_id: None,
+    ///     fx: None, // amounts in the store's base currency
     /// })?;
     /// # Ok::<(), stateset_embedded::CommerceError>(())
     /// ```
+    /// Record the authenticated host identity when posting on creation.
+    pub fn create_journal_entry_as(
+        &self,
+        input: CreateJournalEntry,
+        actor: &str,
+    ) -> Result<JournalEntry> {
+        self.db.general_ledger().create_journal_entry_as(input, actor)
+    }
+
     pub fn create_journal_entry(&self, input: CreateJournalEntry) -> Result<JournalEntry> {
         self.db.general_ledger().create_journal_entry(input)
     }
@@ -342,6 +352,10 @@ impl GeneralLedger {
     ///     cogs_account_id: cogs_id,
     ///     unearned_revenue_account_id: None,
     ///     shipping_revenue_account_id: None,
+    ///     sales_tax_payable_account_id: None,
+    ///     goods_received_not_invoiced_account_id: None,
+    ///     inventory_adjustment_account_id: None,
+    ///     work_in_progress_account_id: None,
     ///     bad_debt_expense_account_id: None,
     ///     fx_gain_loss_account_id: None,
     ///     auto_post_depreciation: false,
@@ -381,11 +395,19 @@ impl GeneralLedger {
     }
 
     /// Auto-post inventory cost (COGS on sale).
-    pub fn auto_post_inventory_cost(&self, cost_transaction_id: Uuid) -> Result<JournalEntry> {
+    pub fn auto_post_inventory_cost(
+        &self,
+        cost_transaction_id: Uuid,
+    ) -> Result<Option<JournalEntry>> {
         self.db.general_ledger().auto_post_inventory_cost(cost_transaction_id)
     }
 
     /// Auto-post a write-off (debit Bad Debt Expense, credit AR).
+    /// Post a customer credit memo at its source document rate.
+    pub fn auto_post_credit_memo(&self, credit_memo_id: Uuid) -> Result<JournalEntry> {
+        self.db.general_ledger().auto_post_credit_memo(credit_memo_id)
+    }
+
     pub fn auto_post_write_off(&self, write_off_id: Uuid) -> Result<JournalEntry> {
         self.db.general_ledger().auto_post_write_off(write_off_id)
     }
@@ -582,6 +604,21 @@ impl GeneralLedger {
         period_id: Uuid,
         options: CloseMonthOptions,
     ) -> Result<CloseMonthReport> {
+        let period = self.get_period(period_id)?.ok_or(CommerceError::NotFound)?;
+        let config = self.get_auto_posting_config()?.ok_or_else(|| {
+            CommerceError::ValidationError(
+                "Configure automatic ledger posting before running month-end close".into(),
+            )
+        })?;
+        if !options.skip_depreciation && !config.auto_post_depreciation {
+            return Err(CommerceError::ValidationError(
+                "Enable depreciation posting or explicitly skip depreciation in close options"
+                    .into(),
+            ));
+        }
+        if !options.skip_revenue_recognition && !config.auto_post_revenue_recognition {
+            return Err(CommerceError::ValidationError("Enable revenue-recognition posting or explicitly skip recognition in close options".into()));
+        }
         if options.fail_on_warnings && !options.dry_run {
             let preview = CloseMonthOptions {
                 dry_run: true,
@@ -612,7 +649,6 @@ impl GeneralLedger {
                 )));
             }
         }
-        let period = self.get_period(period_id)?.ok_or(CommerceError::NotFound)?;
         let closed_by = options.closed_by.clone().unwrap_or_else(|| "system".to_string());
 
         let depreciation = if options.skip_depreciation {
@@ -713,7 +749,7 @@ impl GeneralLedger {
     /// Step 1: post scheduled depreciation due through period end.
     ///
     /// A schedule entry `n` (1-based) is due once `period.end_date` reaches
-    /// `in_service_date + (n - 1) months` — i.e. closing the month the asset
+    /// the end of the asset’s nth in-service month — i.e. closing the month the asset
     /// went into service posts its first depreciation period.
     fn close_month_depreciation(
         &self,
@@ -734,7 +770,9 @@ impl GeneralLedger {
         let mut warnings = Vec::new();
         let mut failed_item_count = 0u64;
         for asset in assets {
-            let Some(in_service) = asset.in_service_date else { continue };
+            if asset.in_service_date.is_none() {
+                continue;
+            }
             let Some(schedule) = self.db.fixed_assets().get_schedule(asset.id)? else {
                 warnings.push(format!(
                     "asset {}: no depreciation schedule generated",
@@ -749,8 +787,8 @@ impl GeneralLedger {
                 .filter(|e| {
                     e.status == DepreciationEntryStatus::Scheduled
                         && e.period >= 1
-                        && in_service
-                            .checked_add_months(Months::new(e.period - 1))
+                        && asset
+                            .depreciation_period_end(e.period)
                             .is_some_and(|d| d <= period.end_date)
                 })
                 .collect();
@@ -864,65 +902,26 @@ impl GeneralLedger {
         })
     }
 
-    /// Step 3: FX revaluation as of period end.
-    ///
-    /// Skipped silently when no active posting account is held in a foreign
-    /// currency. Validation failures inside the revaluation (no FX gain/loss
-    /// account configured, missing exchange rate) also downgrade to a skipped
-    /// step with a warning so the close never fails here.
+    /// Step 3: revalue actual foreign positions, including those in base-currency control accounts.
     fn close_month_fx_revaluation(
         &self,
         period: &GlPeriod,
         dry_run: bool,
     ) -> Result<CloseMonthStepReport> {
-        let base: CurrencyCode = {
-            let settings = self.db.currency().get_settings()?;
-            match settings.base_currency.code().parse() {
-                Ok(code) => code,
-                Err(_) => {
-                    return Ok(CloseMonthStepReport::skipped(Some(format!(
-                        "store base currency {} is not a valid ISO code",
-                        settings.base_currency.code()
-                    ))));
-                }
-            }
+        let result = if dry_run {
+            self.db.general_ledger().preview_revaluation(period.end_date, None)
+        } else {
+            self.revalue(period.end_date, None)
         };
-        let foreign_accounts: Vec<GlAccount> = self
-            .list_accounts(GlAccountFilter {
-                status: Some(AccountStatus::Active),
-                is_posting: Some(true),
-                ..Default::default()
-            })?
-            .into_iter()
-            .filter(|a| a.currency != base)
-            .collect();
-        if foreign_accounts.is_empty() {
-            return Ok(CloseMonthStepReport::skipped(None));
-        }
-        if dry_run {
-            // Mirror the wet run's skip conditions so a strict close can
-            // refuse before depreciation and revenue recognition post: the
-            // revaluation needs a rate for every foreign account carrying a
-            // balance, and an FX gain/loss account to post the adjustment to.
-            let warnings = self.fx_revaluation_blockers(&foreign_accounts)?;
-            if !warnings.is_empty() {
-                return Ok(CloseMonthStepReport::skipped(Some(format!(
-                    "fx revaluation skipped: {}",
-                    warnings.join("; ")
-                ))));
-            }
-            return Ok(CloseMonthStepReport {
-                status: CloseMonthStepStatus::DryRun,
-                entry_count: foreign_accounts.len() as u64,
-                total_amount: Decimal::ZERO,
-                warnings: Vec::new(),
-                failed_item_count: 0,
-            });
-        }
-        match self.revalue(period.end_date, None) {
+        match result {
+            Ok(result) if result.lines.is_empty() => Ok(CloseMonthStepReport::skipped(None)),
             Ok(result) => Ok(CloseMonthStepReport {
-                status: CloseMonthStepStatus::Executed,
-                entry_count: u64::from(result.journal_entry.is_some()),
+                status: if dry_run {
+                    CloseMonthStepStatus::DryRun
+                } else {
+                    CloseMonthStepStatus::Executed
+                },
+                entry_count: u64::from(result.lines.iter().any(|line| !line.adjustment.is_zero())),
                 total_amount: result.total_unrealized_gain_loss,
                 warnings: Vec::new(),
                 failed_item_count: 0,
@@ -930,58 +929,8 @@ impl GeneralLedger {
             Err(CommerceError::ValidationError(message)) => Ok(CloseMonthStepReport::skipped(
                 Some(format!("fx revaluation skipped: {message}")),
             )),
-            Err(e) => Err(e),
+            Err(error) => Err(error),
         }
-    }
-
-    /// Read-only precondition check for [`revalue`](Self::revalue): the
-    /// reasons it would refuse, without posting anything.
-    fn fx_revaluation_blockers(&self, foreign_accounts: &[GlAccount]) -> Result<Vec<String>> {
-        let settings = self.db.currency().get_settings()?;
-        let base = settings.base_currency;
-        let mut blockers = Vec::new();
-        let mut needs_fx_account = false;
-        for account in foreign_accounts.iter().filter(|a| !a.current_balance.is_zero()) {
-            needs_fx_account = true;
-            let Ok(foreign) = account.currency.as_str().parse::<Currency>() else {
-                blockers.push(format!("account currency {} is not supported", account.currency));
-                continue;
-            };
-            let has_rate = self.db.currency().get_rate(foreign, base)?.is_some()
-                || self.db.currency().get_rate(base, foreign)?.is_some_and(|r| !r.rate.is_zero());
-            if !has_rate {
-                blockers.push(format!(
-                    "No exchange rate available for {} -> {}",
-                    account.currency,
-                    base.code()
-                ));
-            }
-        }
-        if needs_fx_account && !self.has_fx_gain_loss_account()? {
-            blockers.push("No FX gain/loss account configured for revaluation".to_string());
-        }
-        Ok(blockers)
-    }
-
-    /// Same resolution order as the backends: the auto-posting config's
-    /// account, else the first active posting other-expense / other-revenue.
-    fn has_fx_gain_loss_account(&self) -> Result<bool> {
-        if self.get_auto_posting_config()?.and_then(|c| c.fx_gain_loss_account_id).is_some() {
-            return Ok(true);
-        }
-        for sub_type in [AccountSubType::OtherExpense, AccountSubType::OtherRevenue] {
-            let found = self.list_accounts(GlAccountFilter {
-                account_sub_type: Some(sub_type),
-                status: Some(AccountStatus::Active),
-                is_posting: Some(true),
-                limit: Some(1),
-                ..Default::default()
-            })?;
-            if !found.is_empty() {
-                return Ok(true);
-            }
-        }
-        Ok(false)
     }
 
     // ========================================================================

@@ -111,6 +111,8 @@ pub(crate) struct ReceivePurchaseOrderItemRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub(crate) struct ReceivePurchaseOrderRequest {
+    pub warehouse_id: i32,
+    pub receiving_location_id: i32,
     pub items: Vec<ReceivePurchaseOrderItemRequest>,
     pub notes: Option<String>,
 }
@@ -677,7 +679,12 @@ pub(crate) async fn receive(
                     notes: i.notes,
                 });
             }
-            let input = stateset_core::ReceivePurchaseOrderItems { items, notes: req.notes };
+            let input = stateset_core::ReceivePurchaseOrderItems {
+                items,
+                notes: req.notes,
+                warehouse_id: req.warehouse_id,
+                receiving_location_id: req.receiving_location_id,
+            };
             Ok(Json(to_resp(&c.purchase_orders().receive(id, input)?)))
         })
         .await
@@ -1111,5 +1118,80 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+    #[tokio::test]
+    async fn receive_requires_destination_and_posts_stock() {
+        use stateset_core::{
+            CreateLocation, CreatePurchaseOrder, CreatePurchaseOrderItem, CreateSupplier,
+            CreateWarehouse,
+        };
+        let commerce = Commerce::new(":memory:").unwrap();
+        let warehouse = commerce
+            .warehouse()
+            .create_warehouse(CreateWarehouse {
+                code: "HTTP".into(),
+                name: "HTTP".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let location = commerce
+            .warehouse()
+            .create_location(CreateLocation { warehouse_id: warehouse.id, ..Default::default() })
+            .unwrap();
+        let supplier = commerce
+            .purchase_orders()
+            .create_supplier(CreateSupplier { name: "HTTP".into(), ..Default::default() })
+            .unwrap();
+        let po = commerce
+            .purchase_orders()
+            .create(CreatePurchaseOrder {
+                supplier_id: supplier.id,
+                items: vec![CreatePurchaseOrderItem {
+                    sku: "HTTP-RECEIPT".into(),
+                    name: "HTTP stock".into(),
+                    quantity: rust_decimal::Decimal::ONE,
+                    unit_cost: rust_decimal::Decimal::ONE,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+        commerce.purchase_orders().submit(po.id.into()).unwrap();
+        commerce.purchase_orders().approve(po.id.into(), "approver").unwrap();
+        commerce.purchase_orders().send(po.id.into()).unwrap();
+        let state = AppState::new(commerce);
+        let commerce = state.commerce_for_tenant(None).unwrap();
+        let app = router().with_state(state.clone());
+        let url = format!("/purchase-orders/{}/receive", po.id);
+        let mut body =
+            serde_json::json!({"items": [{"item_id": po.items[0].id, "quantity_received": "1"}]});
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post(&url)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        body["warehouse_id"] = serde_json::json!(warehouse.id);
+        body["receiving_location_id"] = serde_json::json!(location.id);
+        let response = app
+            .oneshot(
+                Request::post(url)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_json(response).await["status"], "received");
+        assert_eq!(
+            commerce.inventory().get_stock("HTTP-RECEIPT").unwrap().unwrap().total_on_hand,
+            rust_decimal::Decimal::ONE
+        );
     }
 }

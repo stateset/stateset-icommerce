@@ -56,6 +56,16 @@ describe('CustomerHealthScore', () => {
     expect(screen.getByText('Failed to load customer health data')).toBeInTheDocument();
   });
 
+  it('explains a capability the engine lacks instead of failing', () => {
+    useEmbeddedDataMock.mockReturnValue({
+      data: { unavailable: 'The embedded engine has no customer health and retention analytics' },
+      isLoading: false,
+      error: null,
+    });
+    render(<CustomerHealthScore />);
+    expect(screen.getByText('Customer health unavailable')).toBeInTheDocument();
+  });
+
   it('renders demo at-risk customers when the payload omits them', () => {
     useEmbeddedDataMock.mockReturnValue({
       data: {

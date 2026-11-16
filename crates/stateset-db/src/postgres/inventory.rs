@@ -341,6 +341,13 @@ impl PgInventoryRepository {
         now: DateTime<Utc>,
     ) -> Result<()> {
         validate_quantity(quantity)?;
+        let sku: String = sqlx::query_scalar("SELECT sku FROM inventory_items WHERE id = $1")
+            .bind(item_id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        super::stock_guard::ensure_sellable(tx.as_mut(), &sku, None, None, None).await?;
+
         let balance: Option<(Decimal, Decimal, i32)> = sqlx::query_as(
             "SELECT quantity_on_hand, quantity_allocated, version FROM inventory_balances
              WHERE item_id = $1 AND location_id = $2 FOR UPDATE",
@@ -364,6 +371,19 @@ impl PgInventoryRepository {
                 available: available.to_string(),
             });
         }
+        super::stock_placement::adjust(
+            tx,
+            &sku,
+            location_id,
+            -quantity,
+            stateset_core::MovementType::Shipment,
+            Some(reference_type),
+            Some(reference_id),
+            reason,
+            true,
+            now,
+        )
+        .await?;
         let new_on_hand = on_hand - quantity;
         let result = sqlx::query(
             "UPDATE inventory_balances
@@ -444,6 +464,7 @@ impl PgInventoryRepository {
             });
         }
 
+        super::stock_reservation::consume(tx, reservation_id, quantity, reason, now).await?;
         let (on_hand, allocated, current_version): (Decimal, Decimal, i32) = sqlx::query_as(
             "SELECT quantity_on_hand, quantity_allocated, version FROM inventory_balances
              WHERE item_id = $1 AND location_id = $2 FOR UPDATE",
@@ -461,7 +482,12 @@ impl PgInventoryRepository {
                 available: on_hand.to_string(),
             });
         }
-        let new_allocated = (allocated - quantity).max(Decimal::ZERO);
+        let new_allocated = allocated - quantity;
+        if new_allocated < Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Reservation exceeds the warehouse allocation; reconcile before consumption".into(),
+            ));
+        }
         let result = sqlx::query(
             "UPDATE inventory_balances
              SET quantity_on_hand = $1, quantity_allocated = $2, quantity_available = $3,
@@ -622,6 +648,7 @@ impl PgInventoryRepository {
             .ok_or_else(|| CommerceError::InventoryItemNotFound(input.sku.clone()))?;
         let item_id = item.0;
 
+        super::stock_placement::ensure_warehouse(tx, location_id, now).await?;
         sqlx::query(
             "INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, quantity_allocated, quantity_available, updated_at)
              VALUES ($1, $2, 0, 0, 0, $3)
@@ -663,6 +690,23 @@ impl PgInventoryRepository {
             });
         }
 
+        super::stock_placement::adjust(
+            tx,
+            &input.sku,
+            location_id,
+            input.quantity,
+            if input.quantity > Decimal::ZERO {
+                stateset_core::MovementType::Receipt
+            } else {
+                stateset_core::MovementType::Adjustment
+            },
+            input.reference_type.as_deref(),
+            input.reference_id.as_deref(),
+            &input.reason,
+            true,
+            now,
+        )
+        .await?;
         let result = sqlx::query(
             r#"
             UPDATE inventory_balances
@@ -740,6 +784,7 @@ impl PgInventoryRepository {
         quantity: Decimal,
         now: DateTime<Utc>,
     ) -> Result<()> {
+        super::stock_reservation::release(tx, reservation_id, now).await?;
         let new_version = Self::release_allocated_units_in_tx(
             tx,
             item_id,
@@ -834,6 +879,7 @@ impl PgInventoryRepository {
     ) -> Result<(InventoryReservation, Uuid)> {
         validate_quantity(input.quantity)?;
 
+        super::stock_guard::ensure_sellable(tx.as_mut(), &input.sku, None, None, None).await?;
         let now = Utc::now();
         let location_id = input.location_id.unwrap_or(1);
 
@@ -894,6 +940,9 @@ impl PgInventoryRepository {
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        super::stock_reservation::allocate(tx, id, &input.sku, location_id, input.quantity, now)
+            .await?;
 
         // Guard the UPDATE with both the optimistic version check and an atomic
         // stock guard (`quantity_available >= $qty`). Defence-in-depth alongside the
@@ -1033,6 +1082,7 @@ impl PgInventoryRepository {
             }
         }
 
+        super::stock_reservation::release(tx, reservation_id, now).await?;
         let new_version = Self::release_allocated_units_in_tx(
             tx,
             res.item_id,
@@ -1296,6 +1346,7 @@ impl PgInventoryRepository {
         .await
         .map_err(map_db_error)?;
 
+        super::stock_reservation::split(tx, reservation_id, confirmed_id, quantity, now).await?;
         append_kernel_event_tx(
             tx.as_mut(),
             &KernelOutboxEvent::domain(
@@ -1417,6 +1468,12 @@ impl PgInventoryRepository {
 
         // Create initial balance
         let initial_qty = input.initial_quantity.unwrap_or(Decimal::ZERO);
+        if initial_qty < Decimal::ZERO {
+            return Err(CommerceError::ValidationError(
+                "Initial inventory cannot be negative".into(),
+            ));
+        }
+        super::stock_placement::ensure_warehouse(&mut tx, location_id, now).await?;
         sqlx::query(
             r#"
             INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, quantity_allocated,
@@ -1435,6 +1492,19 @@ impl PgInventoryRepository {
         .await
         .map_err(map_db_error)?;
 
+        super::stock_placement::adjust(
+            &mut tx,
+            &input.sku,
+            location_id,
+            initial_qty,
+            stateset_core::MovementType::Receipt,
+            None,
+            None,
+            "Initial stock",
+            false,
+            now,
+        )
+        .await?;
         // Initial stock is a receipt in the ledger (SQLite parity): every
         // unit on hand traces back to an `inventory_transactions` row.
         if initial_qty > Decimal::ZERO {
@@ -1852,6 +1922,12 @@ impl PgInventoryRepository {
 
             // Create initial balance
             let initial_qty = input.initial_quantity.unwrap_or(Decimal::ZERO);
+            if initial_qty < Decimal::ZERO {
+                return Err(CommerceError::ValidationError(
+                    "Initial inventory cannot be negative".into(),
+                ));
+            }
+            super::stock_placement::ensure_warehouse(&mut tx, location_id, now).await?;
             sqlx::query(
                 r#"
                 INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, quantity_allocated,
@@ -1869,6 +1945,23 @@ impl PgInventoryRepository {
             .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
+
+            super::stock_placement::adjust(
+                &mut tx,
+                &input.sku,
+                location_id,
+                initial_qty,
+                stateset_core::MovementType::Receipt,
+                None,
+                None,
+                "Initial stock",
+                false,
+                now,
+            )
+            .await?;
+            if initial_qty > Decimal::ZERO {
+                sqlx::query("INSERT INTO inventory_transactions (item_id, location_id, transaction_type, quantity, reason, created_at) VALUES ($1, $2, 'receipt', $3, 'Initial stock', $4)").bind(id).bind(location_id).bind(initial_qty).bind(now).execute(tx.as_mut()).await.map_err(map_db_error)?;
+            }
 
             items.push(InventoryItem {
                 id,

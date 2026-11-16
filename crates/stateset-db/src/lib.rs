@@ -41,14 +41,24 @@
 //! in the `error_helpers` module for converting backend-specific errors.
 
 pub(crate) mod a2a_participants;
+mod ar_statement;
+mod asset_accounting;
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
+mod bom_cost;
+mod bom_integrity;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod cart_rules;
+mod credit_exposure;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod customer_facts;
 pub mod error_helpers;
 pub mod http_idempotency;
 pub mod kernel;
 pub mod kernel_outbox;
+mod ledger_fx;
+mod ledger_posting;
+mod ledger_reports;
+mod po_receipt;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod refund_replay;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
@@ -57,6 +67,9 @@ mod rules;
 mod shipment_allocations;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod shipment_updates;
+mod stock_move;
+mod stock_reports;
+mod stock_valuation;
 pub(crate) mod x402_claim;
 pub use http_idempotency::{HttpIdempotencyRecord, HttpIdempotencyRepository, PendingHttpReceipt};
 pub use kernel_outbox::{KernelOutboxEvent, KernelReceiptRecord};
@@ -85,6 +98,10 @@ pub use sqlite::{SQLITE_SYNCHRONOUS_ENV, SqliteDatabase, SqliteDurability, Sqlit
 
 #[cfg(feature = "postgres")]
 pub use postgres::PostgresDatabase;
+
+// Declared only to cap r2d2's thread pool below a release that breaks the MSRV.
+#[cfg(feature = "sqlite")]
+use scheduled_thread_pool as _;
 
 use stateset_core::{
     A2ACommerceRepository, A2ACreditTermsRepository, A2AMessagingRepository,
@@ -119,7 +136,7 @@ use stateset_core::{
 /// This trait provides access to repositories within a transaction scope.
 /// All operations performed through the context are part of the same transaction.
 #[deprecated(
-    since = "1.40.0",
+    since = "1.41.0",
     note = "no backend implements this trait; repositories run their own transactions. \
             Scheduled for removal in 2.0"
 )]

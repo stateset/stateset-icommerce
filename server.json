@@ -7,13 +7,13 @@
     "url": "https://github.com/stateset/stateset-icommerce",
     "source": "github"
   },
-  "version": "1.40.0",
+  "version": "1.41.0",
   "websiteUrl": "https://stateset.com",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@stateset/cli",
-      "version": "1.40.0",
+      "version": "1.41.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
@@ -30,7 +30,7 @@
         {
           "type": "named",
           "name": "--profile",
-          "description": "Tool catalog profile: core (focused commerce catalog) or full (all tools)",
+          "description": "Tool catalog profile: core (default; the stable commerce catalog), all (every tool), finance, operations or agents (curated workloads)",
           "format": "string",
           "isRequired": false,
           "default": "core"

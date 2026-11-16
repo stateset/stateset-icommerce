@@ -21,6 +21,10 @@ import { MAX_PLAN_STEPS, normalizeSlaLevel, resolveAgenticPlanValue } from './pl
 import { normalizeToolName } from './policy-helpers.js';
 import { compactReplayValue, stableStringify } from './replay-sanitizer.js';
 
+// Step statuses that count as a step having worked. Every other status fails
+// the plan, including any status added later.
+const PLAN_STEP_OK_STATUSES = new Set(['success', 'dry_run_success']);
+
 /**
  * Build `executeAgenticPlan` for one server instance.
  *
@@ -393,11 +397,8 @@ export function createExecuteAgenticPlan({
         });
       }
 
-      const failed = !(
-        outcome.status === 'success' ||
-        outcome.status === 'dry_run_success' ||
-        outcome.status === 'rollback_success'
-      );
+      // Forward steps never carry 'rollback_success' (only compensations do).
+      const failed = !PLAN_STEP_OK_STATUSES.has(outcome.status);
       if (failed && stopOnFailure) {
         break;
       }
@@ -420,19 +421,17 @@ export function createExecuteAgenticPlan({
     );
     const executionSignature = replayEventHash(stableStringify(stepResults));
 
-    const finalStatus =
-      stepResults.some((entry) => entry.status === 'error') ||
-      stepResults.some((entry) => entry.status === 'dry_run_blocked') ||
-      stepResults.some((entry) => entry.status === 'preview') ||
-      stepResults.some((entry) => entry.status === 'treasury_block') ||
-      stepResults.some((entry) => entry.status === 'permission_block') ||
-      stepResults.some((entry) => entry.status === 'policy_block') ||
-      stepResults.some((entry) => entry.status === 'blocked') ||
-      stepResults.some((entry) => entry.status === 'rollback_failed')
-        ? 'failed'
-        : stepResults.some((entry) => entry.status === 'dry_run_success')
-          ? 'dry_run'
-          : 'success';
+    // A plan succeeds only if every step it ran succeeded (or dry-ran cleanly).
+    // This used to list the failing statuses instead, so a status missing from
+    // the list -- 'invalid' (unknown tool, unresolved reference, bad params) and
+    // 'payment_required' -- reported the plan as a success even though the loop
+    // above had already treated that step as a failure and stopped there, and
+    // rollbackOnFailure never ran for the steps before it.
+    const finalStatus = stepResults.some((entry) => !PLAN_STEP_OK_STATUSES.has(entry.status))
+      ? 'failed'
+      : stepResults.some((entry) => entry.status === 'dry_run_success')
+        ? 'dry_run'
+        : 'success';
 
     const rollback = await runPlanRollback({
       dryRun,

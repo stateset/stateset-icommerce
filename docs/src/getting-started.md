@@ -15,21 +15,21 @@ crate without the facade re-exports.
 ### Node.js
 
 ```bash
-npm install @stateset/embedded@1.40.0
+npm install @stateset/embedded@1.41.0
 ```
 
 ### Python
 
 ```bash
-pip install stateset-embedded==1.40.0
+pip install stateset-embedded==1.41.0
 # or install optional framework adapters as well
-pip install "stateset-embedded[agents]==1.40.0"
+pip install "stateset-embedded[agents]==1.41.0"
 ```
 
 ### CLI (global)
 
 ```bash
-npm install -g @stateset/cli@1.40.0
+npm install -g @stateset/cli@1.41.0
 stateset-init --quickstart
 ```
 
@@ -120,7 +120,7 @@ stateset "find products similar to wireless earbuds"
 ### Embedded Toolkit (OpenAI, Vercel AI SDK, LangChain, Python runtimes)
 
 ```bash
-npm install @stateset/cli@1.40.0 @stateset/embedded@1.40.0
+npm install @stateset/cli@1.41.0 @stateset/embedded@1.41.0
 ```
 
 ```javascript
@@ -177,7 +177,7 @@ If your runtime needs agent-to-agent delegation, pass `autonomousEngine` and tur
 ### MCP (Claude Desktop, Cursor, Windsurf)
 
 ```bash
-npx -y @stateset/cli@latest stateset-setup --yes --quickstart --db ./store.db
+npx -y -p @stateset/cli@latest stateset-setup --yes --quickstart --db ./store.db
 ```
 
 This registers the MCP server with your client. The full registry-generated tool inventory appears automatically.

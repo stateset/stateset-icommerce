@@ -5,24 +5,24 @@
 
 Source of truth: `cli/src/tools/domain-registry.js` (tools) and `cli/src/tools/tool-tiers.js` (tiers).
 
-**951 tools** across **89 domains**, plus 15 agentic runtime tools.
+**990 tools** across **89 domains**, plus 15 agentic runtime tools.
 
 ## Stability tiers
 
 | Tier | Tools | Meaning |
 | --- | ---: | --- |
-| core | 209 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
-| extended | 493 | Real, specialised domains (finance, manufacturing, WMS, B2B, engagement). Opt in with `--profile` or `--domains`. |
+| core | 211 | The default MCP surface (no `--profile`). Smoke-gated: every tool works or refuses cleanly on a fresh store, with no backlog. |
+| extended | 530 | Real, specialised domains (finance, manufacturing, WMS, B2B, engagement). Opt in with `--profile` or `--domains`. |
 | experimental | 264 | Demo, external-stack-dependent (wallet, chain, API key, demo stack) or known-incomplete. Only `--profile all`, a curated profile naming the domain, or `--domains`. |
 
 ## Profiles
 
 | Profile | Tools | Domains |
 | --- | ---: | --- |
-| all | 966 | every domain |
-| core (default) | 209 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain, simulations |
-| operations | 204 | inventory, simulations, manufacturing, shipments, suppliers, warranties, warehouse, receiving, fulfillment, quality, lots, serials, cycle-counts, transfer-orders, production-batches, supplier-skus, inbound-shipments, backorders, vendor-returns |
-| finance | 134 | payments, invoices, treasury, accounts-payable, accounts-receivable, cost-accounting, credit, general-ledger, fixed-assets, revenue-recognition, prepayments, vendor-credits, payment-obligations |
+| all | 1005 | every domain |
+| core (default) | 211 | customers, orders, products, inventory, returns, carts, analytics, tax, promotions, payments, shipments, gift-cards, store-credits, explain, simulations |
+| operations | 214 | inventory, simulations, manufacturing, shipments, suppliers, warranties, warehouse, receiving, fulfillment, quality, lots, serials, cycle-counts, transfer-orders, production-batches, supplier-skus, inbound-shipments, backorders, vendor-returns |
+| finance | 161 | payments, invoices, treasury, accounts-payable, accounts-receivable, cost-accounting, credit, general-ledger, fixed-assets, revenue-recognition, prepayments, vendor-credits, payment-obligations |
 | agents | 257 | simulations, agent-runtime, agent-cards, agent-receipt, a2a, a2a-platform, a2a-automation, a2a-observability, a2a-intelligence, x402, stablecoin, erc8004, treasury, payment-obligations, proofs, audit, policies |
 
 `core` is exactly the core tier, agentic runtime tools included. The curated profiles
@@ -37,7 +37,7 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | [products](#products) | core | 14 |
 | [inventory](#inventory) | core | 7 |
 | [custom-objects](#custom-objects) | extended | 12 |
-| [returns](#returns) | core | 12 |
+| [returns](#returns) | core | 13 |
 | [carts](#carts) | core | 30 |
 | [analytics](#analytics) | core | 14 |
 | [currency](#currency) | extended | 13 |
@@ -45,7 +45,7 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | [promotions](#promotions) | core | 17 |
 | [subscriptions](#subscriptions) | extended | 17 |
 | [sync](#sync) | experimental | 20 |
-| [manufacturing](#manufacturing) | extended | 11 |
+| [manufacturing](#manufacturing) | extended | 12 |
 | [payments](#payments) | core | 19 |
 | [stablecoin](#stablecoin) | experimental | 4 |
 | [treasury](#treasury) | experimental | 6 |
@@ -94,14 +94,14 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | [search-config](#search-config) | extended | 7 |
 | [serials](#serials) | extended | 8 |
 | [warehouse](#warehouse) | extended | 9 |
-| [receiving](#receiving) | extended | 8 |
+| [receiving](#receiving) | extended | 16 |
 | [fulfillment](#fulfillment) | extended | 14 |
-| [accounts-payable](#accounts-payable) | extended | 11 |
-| [accounts-receivable](#accounts-receivable) | extended | 8 |
+| [accounts-payable](#accounts-payable) | extended | 22 |
+| [accounts-receivable](#accounts-receivable) | extended | 15 |
 | [cost-accounting](#cost-accounting) | extended | 5 |
 | [credit](#credit) | extended | 8 |
 | [backorders](#backorders) | extended | 20 |
-| [general-ledger](#general-ledger) | extended | 17 |
+| [general-ledger](#general-ledger) | extended | 26 |
 | [agent-receipt](#agent-receipt) | experimental | 11 |
 | [fixed-assets](#fixed-assets) | extended | 9 |
 | [maintenance](#maintenance) | extended | 5 |
@@ -115,11 +115,11 @@ expose every tool in their domains, whatever its tier, plus the agentic runtime 
 | [vendor-credits](#vendor-credits) | extended | 8 |
 | [price-schedules](#price-schedules) | extended | 10 |
 | [price-levels](#price-levels) | extended | 9 |
-| [transfer-orders](#transfer-orders) | extended | 7 |
+| [transfer-orders](#transfer-orders) | extended | 8 |
 | [production-batches](#production-batches) | extended | 8 |
 | [supplier-skus](#supplier-skus) | extended | 7 |
 | [inbound-shipments](#inbound-shipments) | extended | 8 |
-| [explain](#explain) | core | 2 |
+| [explain](#explain) | core | 3 |
 | [simulations](#simulations) | core | 6 |
 
 ## customers
@@ -129,10 +129,10 @@ Tier: **core**
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
 | `list_customers` | core | read | List all customers in the database. Returns customer details including email, name, and status. |
-| `get_customer` | core | read | Get a specific customer by ID or email address. |
+| `get_customer` | core | read | Get a specific customer by ID or email address, with `allowedNext`: the statuses the customer can move to from its current one. |
 | `create_customer` | core | write | Create a new customer. Requires email, first name, and last name. |
-| `update_customer` | core | write | Update an existing customer. Only the fields provided are changed (email, name, phone, status, marketing opt-in). |
-| `delete_customer` | core | write | Delete a customer (soft delete). |
+| `update_customer` | core | write | Update an existing customer. Only the fields provided are changed (email, name, phone, status, marketing opt-in). Status moves between active, inactive and suspended; deleting a customer is its own operation: delete_customer. |
+| `delete_customer` | core | write | Delete a customer (soft delete). This is the only way a customer reaches the deleted status, which is final. |
 | `find_or_create_customer` | core | write | Find a customer by email, or create one if none exists. Returns the existing or newly created customer. |
 | `list_customer_addresses` | core | read | List all addresses in a customer address book. |
 | `add_customer_address` | core | write | Add an address to a customer address book. |
@@ -147,11 +147,11 @@ Tier: **core**
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
 | `list_orders` | core | read | List all orders. Shows order number, status, customer, total amount, and item count. |
-| `get_order` | core | read | Get a specific order by ID or order number. Returns full order details including line items. |
+| `get_order` | core | read | Get a specific order by ID or order number. Returns full order details including line items, and `allowedNext`: the statuses the order can move to from its current one. |
 | `create_order` | core | write | Create a new order for a customer with line items. |
-| `update_order_status` | core | write | Update the status of an order. Valid statuses: pending, confirmed, processing, shipped, delivered, cancelled, refunded. |
-| `ship_order` | core | write | Mark an order as shipped with optional tracking number. |
-| `cancel_order` | core | delete | Cancel an order. Only pending or confirmed orders can be cancelled. |
+| `update_order_status` | core | write | Move an order to a new status: confirmed (from pending), processing (from confirmed), delivered (from shipped), cancelled (from pending, confirmed or processing), refunded (from delivered). The engine refuses any other move; get_order returns `allowedNext` for an order. Shipping is not a status update: call ship_order (pass `lines` to ship part of the order). cancel_order also cancels. Cancelling is refused while captured payments still hold money (refund first). |
+| `ship_order` | core | write | Ship an order (the engine accepts this from processing or partially_shipped), with an optional tracking number. Omit `lines` to ship every remaining unit (-> shipped); pass `lines` to ship part of the order (-> partially_shipped until every unit has shipped). This is the only way an order reaches shipped or partially_shipped. |
+| `cancel_order` | core | delete | Cancel an order. The engine accepts this from pending, confirmed or processing; once an order has shipped, use a return instead. Refused while captured payments still hold money: refund them first. |
 
 ## products
 
@@ -160,7 +160,7 @@ Tier: **core**
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
 | `list_products` | core | read | List all products in the catalog. |
-| `get_product` | core | read | Get a specific product by ID. |
+| `get_product` | core | read | Get a specific product by ID, with `allowedNext`: the statuses the product can move to from its current one. |
 | `get_product_by_slug` | core | read | Get a specific product by its URL slug. |
 | `search_products` | core | read | Search active products by name or description. |
 | `get_product_variant` | core | read | Get a product variant by SKU. |
@@ -214,17 +214,18 @@ Tier: **core**
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
 | `list_returns` | core | read | List all returns. Shows return status, order, and reason. |
-| `get_return` | core | read | Get a specific return by ID. |
+| `get_return` | core | read | Get a specific return by ID, with its items and their dispositions, and `allowedNext`: the statuses the return can move to from its current one. |
 | `list_returns_for_order` | core | read | List all returns filed against a specific order. |
 | `list_returns_for_customer` | core | read | List all returns filed by a specific customer. |
 | `list_pending_returns` | core | read | List returns awaiting approval (status requested). |
 | `create_return` | core | write | Create a return request for an order. |
-| `approve_return` | core | write | Approve a return request. |
-| `reject_return` | core | write | Reject a return request with a reason. |
-| `mark_return_received` | core | write | Mark a return as physically received at the warehouse. |
-| `complete_return` | core | write | Complete a return and process the refund. |
-| `cancel_return` | core | write | Cancel a return request. |
-| `add_return_tracking` | core | write | Add a return-shipping tracking number and mark the return in transit. |
+| `approve_return` | core | write | Approve a return request (the engine accepts this from requested). |
+| `reject_return` | core | write | Reject a return with a reason (the engine accepts this from requested or inspecting). |
+| `mark_return_received` | core | write | Mark a return as physically received at the warehouse. The engine accepts this only from in_transit, which add_return_tracking sets on an approved return; an approved return without tracking is refused. |
+| `complete_return` | core | write | Complete a return (the engine accepts this from received or inspecting). Every item needs a disposition first (set_return_item_disposition). Completing creates the pending payment refund for the return's refund amount: do not also call create_refund for it. |
+| `cancel_return` | core | write | Cancel a return (the engine accepts this from requested or approved). |
+| `add_return_tracking` | core | write | Add a return-shipping tracking number and mark the return in transit (the engine accepts this from approved). This is the step before mark_return_received. |
+| `set_return_item_disposition` | core | write | Record what the warehouse did with a received return item: restock or quarantine (back into stock; the SKU needs an inventory item), refurbish, scrap or return_to_vendor. The return must be received or inspecting, and each item is dispositioned once. complete_return needs every item dispositioned. Item ids are in get_return. |
 
 ## carts
 
@@ -233,7 +234,7 @@ Tier: **core**
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
 | `list_carts` | core | read | List all shopping carts. Shows cart status, customer, totals, and item count. |
-| `get_cart` | core | read | Get a specific cart by ID or cart number. Returns full cart details including items. |
+| `get_cart` | core | read | Get a specific cart by ID or cart number. Returns full cart details including items, and `allowedNext`: the statuses the cart can move to from its current one. |
 | `create_cart` | core | write | Create a new shopping cart. Can be for a guest or authenticated customer. |
 | `update_cart` | core | write | Update cart customer details, shipping method, coupon code, or notes. |
 | `list_customer_carts` | core | read | List carts for a specific customer. |
@@ -429,6 +430,7 @@ Tier: **extended**
 | `list_work_orders` | extended | read | List manufacturing work orders (production runs), optionally filtered by product, BOM, status, priority, assignee or work center. |
 | `get_work_order` | extended | read | Get a work order by ID with full details. |
 | `create_work_order` | extended | write | Create a manufacturing work order to produce a quantity of product. |
+| `configure_work_order_stock` | extended | write | Set the component source and finished-goods destination of a planned work order, such as one created before stock routing was required. |
 | `start_work_order` | extended | write | Start a work order (begin production). |
 | `complete_work_order` | extended | write | Complete a work order with the quantity produced. |
 | `cancel_work_order` | extended | delete | Cancel a work order. |
@@ -440,7 +442,7 @@ Tier: **core**
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
 | `list_payments` | core | read | List all payments in the system. |
-| `get_payment` | core | read | Get a payment by ID. |
+| `get_payment` | core | read | Get a payment by ID, with its refunds and `allowedNext`: the statuses the payment can move to from its current one. |
 | `create_payment` | core | write | Create a payment for an order. |
 | `complete_payment` | core | write | Mark a payment as completed. |
 | `mark_failed_payment` | core | write | Mark a payment as failed with a required reason and optional failure code. |
@@ -510,7 +512,7 @@ Tier: **experimental + extended**
 | `x402_record_incoming_settlement` | extended | write | Record a settled x402 intent as an incoming treasury deposit for a local payee agent. |
 | `x402_mark_settled` | extended | write | Mark an x402 payment intent as settled on-chain. Called after blockchain confirmation. |
 | `x402_get_next_nonce` | extended | read | Get the next nonce for a payer address. Used for replay protection. |
-| `x402_credit_balance` | extended | read | Get x402 credit balance for a payer (prepaid meter for streaming usage). |
+| `x402_credit_balance` | extended | write | Get x402 credit balance for a payer (prepaid meter for streaming usage). Opens a zero-balance credit account on first use; x402_get_credit_account reads without creating one. |
 | `x402_get_credit_account` | extended | read | Get the x402 credit account record for a payer address. |
 | `x402_credit_deposit` | extended | write | Credit (deposit) x402 balance for metered usage. Requires --apply. |
 | `x402_credit_debit` | extended | write | Debit x402 balance for metered usage. Requires --apply. |
@@ -620,7 +622,7 @@ Tier: **experimental** — autonomous agent loops over wallets, escrow and on-ch
 | `agent_enable_settlement` | experimental | write | Enable on-chain payment settlement for an agent runtime. The agent will settle payments on the specified blockchain using derived wallets. |
 | `agent_get_chain_balance` | experimental | read | Get the on-chain payment-token balance for an agent runtime with settlement enabled. |
 | `agent_broadcast_rfq` | experimental | write | Broadcast a Request for Quotation (RFQ) to multiple sellers in the marketplace. Sellers matching the filter will receive quote requests. |
-| `agent_collect_rfq_responses` | experimental | read | Collect and score all responses for an RFQ broadcast. |
+| `agent_collect_rfq_responses` | experimental | write | Collect and score all responses for an RFQ broadcast. |
 | `agent_award_rfq` | experimental | write | Award an RFQ to the best-scored (or specified) seller. Accepts the winner's quote and declines all others. |
 | `agent_get_marketplace_metrics` | experimental | read | Get marketplace performance metrics for a registered service (success rate, response time, etc.). |
 | `agent_attach_sla` | experimental | write | Attach a Service Level Agreement to a registered service. Defines performance thresholds and penalties. |
@@ -638,7 +640,7 @@ Tier: **core**
 | --- | --- | --- | --- |
 | `plan_partial_shipment` | core | read | Read remaining order-line quantities and validate a partial-shipment recovery plan. Does not reserve stock or create a shipment; operator reconciliation is required. |
 | `list_shipments` | core | read | List all shipments. |
-| `get_shipment` | core | read | Get a shipment by ID. |
+| `get_shipment` | core | read | Get a shipment by ID, with `allowedNext`: the statuses the shipment can move to from its current one. |
 | `create_shipment` | core | write | Create a shipment for an order. |
 | `update_shipment` | core | write | Update shipment fields or move through the native lifecycle. Preserves omitted fields and rejects invalid transitions or stale expectedVersion. Cancellation requires cancel_shipment. |
 | `add_shipment_item` | core | write | Add an order line to a shipment. Rejects a quantity beyond what the order line has left to allocate across non-cancelled shipments, an order not in a shippable status, and a stale expectedVersion. |
@@ -672,7 +674,7 @@ Tier: **extended**
 | `send_purchase_order` | extended | write | Send a PO to the supplier. |
 | `cancel_purchase_order` | extended | write | Cancel a purchase order. |
 | `get_purchase_order_items` | extended | read | Read persisted purchase-order lines with exact costs and ordered/received quantities. |
-| `receive_purchase_order` | extended | write | Record exact received quantities against sent PO lines. This updates the purchase order only; inventory stock must be posted separately through the inventory or warehouse workflow. |
+| `receive_purchase_order` | extended | write | Receive exact quantities against sent PO lines into an explicit warehouse location. PO quantities, receipt documents, and inventory stock are posted atomically. |
 
 ## invoices
 
@@ -684,8 +686,8 @@ Tier: **extended**
 | `get_invoice` | extended | read | Get an invoice by ID. |
 | `create_invoice` | extended | write | Create an invoice for a customer. |
 | `send_invoice` | extended | write | Send an invoice to the customer. |
-| `void_invoice` | extended | delete | Void an invoice so it can no longer be paid or collected. |
-| `record_invoice_payment` | extended | write | Record payment on an invoice. |
+| `void_invoice` | extended | admin | Void an invoice so it can no longer be paid or collected. |
+| `record_invoice_payment` | extended | admin | Record payment on an invoice. |
 | `get_overdue_invoices` | extended | read | Get all overdue invoices. |
 
 ## warranties
@@ -832,7 +834,7 @@ Tier: **extended**
 | `list_stock_snapshots` | extended | read | List stock snapshots (header level). |
 | `get_stock_snapshot` | extended | read | Get a stock snapshot by ID. |
 | `get_latest_stock_snapshot` | extended | read | Get the most recent stock snapshot. |
-| `capture_stock_snapshot` | extended | write | Capture a stock snapshot; totals are computed from the supplied lines. |
+| `capture_stock_snapshot` | extended | write | Capture on-hand and available quantities from the stored stock ledger. |
 | `delete_stock_snapshot` | extended | write | Delete a stock snapshot. |
 
 ## print-stations
@@ -888,10 +890,10 @@ Tier: **extended**
 | `list_payment_obligations` | extended | read | List payment obligations. |
 | `get_payment_obligation` | extended | read | Get a payment obligation by ID. |
 | `get_payment_obligation_dashboard` | extended | read | Aggregate payment obligation dashboard as of a date. |
-| `create_payment_obligation` | extended | write | Create a payment obligation. |
-| `record_payment_obligation_payment` | extended | write | Record a payment against an obligation. |
-| `set_payment_obligation_status` | extended | write | Set the status of a payment obligation. |
-| `link_payment_obligation_bill` | extended | write | Link an accounts-payable bill to a payment obligation. |
+| `create_payment_obligation` | extended | admin | Create a payment obligation. |
+| `record_payment_obligation_payment` | extended | admin | Record a payment against an obligation. |
+| `set_payment_obligation_status` | extended | admin | Set the status of a payment obligation. |
+| `link_payment_obligation_bill` | extended | admin | Link an accounts-payable bill to a payment obligation. |
 
 ## purgatory
 
@@ -928,7 +930,7 @@ Tier: **extended**
 | `get_vendor_return` | extended | read | Get a vendor return by ID. |
 | `create_vendor_return` | extended | write | Create a draft vendor return. |
 | `submit_vendor_return` | extended | write | Submit a draft vendor return to the supplier. |
-| `process_vendor_return` | extended | write | Process a vendor return, optionally generating a vendor credit. |
+| `process_vendor_return` | extended | write | Remove returned stock and create one linked vendor credit atomically. |
 | `cancel_vendor_return` | extended | write | Cancel a vendor return. |
 
 ## reviews
@@ -1021,13 +1023,13 @@ Tier: **extended**
 
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
-| `verify_receipt` | extended | read | Verify a VES commerce receipt — checks signature, hash, and Merkle inclusion proof. |
+| `verify_receipt` | extended | read | Verify a VES commerce receipt bundle: its leaf, its Merkle inclusion proof against the bundle's own merkleRoot (compare that with the anchored root yourself), its payload hash, and its signature when publicKeyHex is given. valid is true only when every check passes. A ves-v1 leaf is recomputed from the event in its own hash domain (leafBound: true), so it cannot be an interior node; leafCount is optional there and also holds the path to the batch size (pathBound: true). A legacy-v0 leaf hash is taken as given (leafBound: false), so a legacy-v0 bundle is valid only with leafCount (the batch event count, known independently of the bundle): without it a path_bound check fails, because the inclusion proof then only shows that some node of the tree hashes to the root. rootReached reports the plain hash chain; the bundle's own leafCount is only a sanity bound. |
 | `generate_inclusion_proof` | extended | read | Generate a Merkle inclusion proof for an event within a batch. Events carrying tenantId, storeId, sequenceNumber, eventSigningHash and agentSignature get a ves-v1 proof that the SDK spec verifier accepts; events with only id and eventSigningHash get a legacy-v0 proof and a warning saying which fields are missing. |
-| `verify_inclusion_proof` | extended | read | Verify a Merkle inclusion proof — confirms that a leaf hash is included in a Merkle root. |
+| `verify_inclusion_proof` | extended | read | Verify a Merkle inclusion proof for a raw leaf hash, which is taken on trust. valid is true only when leafCount (the batch event count, known independently of the proof) is given and the path leads from a leaf position of a tree of that size to expectedRoot (pathBound: true); it says nothing about which event the hash belongs to. Without leafCount valid is false: rootReached then reports whether the hash chain reaches the root, which only proves that some node of the tree, possibly an interior node rather than a leaf, hashes to it. |
 | `generate_receipt_bundle` | extended | read | Generate a full verifiable receipt bundle for an event — includes event data, leaf hash, Merkle inclusion proof, and anchor metadata. |
 | `inspect_batch` | extended | read | Inspect a batch of events — computes Merkle root, event count, and time range. |
 | `export_compliance_package` | extended | read | Generate a compliance package — a complete set of verifiable receipts for all events in a batch, suitable for regulatory export or third-party audit. |
-| `verify_chain_anchor` | extended | read | Verify that an event proof matches an expected on-chain anchor transaction hash and Merkle root. Confirms the event was committed to the chain. |
+| `verify_chain_anchor` | extended | read | Verify that a raw leaf hash, taken on trust, is committed under the Merkle root of an on-chain anchor transaction. anchored (and valid) are true only when leafCount (the anchored batch event count, known independently of the proof) is given and the path leads from a leaf position of a tree of that size to the root (pathBound: true). Without leafCount anchored is false: rootReached then reports whether the hash chain reaches the root, which only proves that some node of the anchored tree hashes to it, not that an event was committed. |
 
 ## circuit-breaker
 
@@ -1051,11 +1053,11 @@ Tier: **experimental** — converting a payment link mints order, payment and es
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
 | `create_payment_link` | experimental | write | Create a shareable payment link for instant checkout. Returns a short URL that buyers or agents can use. |
-| `resolve_payment_link` | experimental | read | Resolve a payment link by ID or short code. Returns the link details, items, total, and expiry status. |
+| `resolve_payment_link` | experimental | write | Resolve a payment link by ID or short code, as a buyer opening it: counts a view. Returns the link details, items, total, and expiry status. get_payment_link_status reads a link without counting a view. |
 | `express_checkout` | experimental | write | One-call checkout from a payment link. Converts the link into an order and payment. |
 | `agent_instant_checkout` | experimental | write | Agent-to-agent instant checkout. Creates a payment link and converts it in one step. Returns order and escrow IDs for A2A settlement. |
 | `get_payment_link_status` | experimental | read | Get the status and metrics (views, conversions) for a payment link. |
-| `list_payment_links` | experimental | read | List payment links with optional filters by status and customer. |
+| `list_payment_links` | experimental | read | List payment links with optional filters by status and customer. Each link carries `expired`: true when it is still active but its expiry has passed. |
 | `revoke_payment_link` | experimental | write | Revoke (cancel) an active payment link. Prevents further checkouts from it. |
 | `checkout_with_crypto` | experimental | write | Express checkout with a crypto wallet. Similar to express_checkout but takes a wallet address and network for on-chain payment. |
 
@@ -1292,6 +1294,14 @@ Tier: **extended**
 | `complete_receiving` | extended | write | Complete receiving against a receipt. |
 | `cancel_receipt` | extended | write | Cancel a receipt. |
 | `count_receipts` | extended | read | Count receipts. |
+| `receive_receipt_items` | extended | write | Receive accepted goods into an explicit receiving location and record rejected quantities, lots and serials. |
+| `create_put_away` | extended | write | Create a put-away task from a received line into its destination location. |
+| `list_put_aways` | extended | read | List put-away tasks by receipt, warehouse, status or assignee. |
+| `get_put_away` | extended | read | Get one put-away task. |
+| `assign_put_away` | extended | write | Assign a put-away task to a warehouse worker. |
+| `complete_put_away` | extended | write | Complete a put-away task and move its received stock to the destination. |
+| `start_put_away` | extended | write | Start a put-away task. |
+| `cancel_put_away` | extended | write | Cancel a put-away task. |
 
 ## fulfillment
 
@@ -1323,14 +1333,25 @@ Tier: **extended**
 | `list_bills` | extended | read | List accounts payable bills. |
 | `get_bill` | extended | read | Get a bill by ID or bill number. |
 | `create_bill` | extended | write | Create an accounts payable bill. |
-| `approve_bill` | extended | write | Approve a bill. |
-| `cancel_bill` | extended | write | Cancel a bill. |
+| `approve_bill` | extended | admin | Approve a bill after three-way matching; a variance requires an explicit override reason. |
+| `dispute_bill` | extended | admin | Dispute bill; resolution restores its prior approval state and current payment balance. |
+| `resolve_bill_dispute` | extended | admin | Resolve bill dispute; resolution restores its prior approval state and current payment balance. |
+| `cancel_bill` | extended | admin | Cancel a bill. |
 | `list_overdue_bills` | extended | read | List overdue bills. |
 | `list_bills_due_soon` | extended | read | List bills due soon. |
 | `get_accounts_payable_aging_summary` | extended | read | Get the accounts payable aging summary. |
 | `get_accounts_payable_total_outstanding` | extended | read | Get the total accounts payable outstanding balance. |
 | `three_way_match_bill` | extended | read | Run a three-way match (bill vs purchase order vs receipt) for a bill. |
 | `count_accounts_payable_bills` | extended | read | Count accounts payable bills. |
+| `create_bill_payment` | extended | admin | Pay approved supplier bills with explicit allocations |
+| `get_bill_payment` | extended | read | Get a supplier bill payment |
+| `void_bill_payment` | extended | admin | Void a supplier cash payment and reverse its allocations |
+| `create_bill_payment_run` | extended | admin | Prepare a single-currency supplier payment run |
+| `get_bill_payment_run` | extended | read | Get a supplier payment run |
+| `list_bill_payment_runs` | extended | read | List supplier payment runs |
+| `approve_bill_payment_run` | extended | admin | Approve a supplier payment run |
+| `process_bill_payment_run` | extended | admin | Process a supplier payment run |
+| `cancel_bill_payment_run` | extended | admin | Cancel a supplier payment run |
 
 ## accounts-receivable
 
@@ -1343,9 +1364,16 @@ Tier: **extended**
 | `get_days_sales_outstanding` | extended | read | Get days sales outstanding over a rolling window. |
 | `list_credit_memos` | extended | read | List credit memos. |
 | `get_credit_memo` | extended | read | Get a credit memo by ID. |
-| `create_credit_memo` | extended | write | Create a credit memo. |
-| `void_credit_memo` | extended | write | Void a credit memo. |
+| `create_credit_memo` | extended | admin | Create a credit memo. |
+| `void_credit_memo` | extended | admin | Void a credit memo. |
 | `list_unapplied_credits` | extended | read | List unapplied credits for a customer. |
+| `apply_payment_to_invoices` | extended | admin | Apply a completed customer payment to issued invoices |
+| `list_invoice_payment_applications` | extended | read | List allocations for a customer payment |
+| `unapply_invoice_payment` | extended | admin | Reverse a customer payment allocation |
+| `apply_credit_memo` | extended | admin | Apply customer credit to an issued invoice |
+| `create_write_off` | extended | admin | Record a partial or full bad-debt write-off |
+| `reverse_write_off` | extended | admin | Reverse a bad-debt write-off |
+| `list_write_offs` | extended | read | List bad-debt write-offs and their reversals |
 
 ## cost-accounting
 
@@ -1355,8 +1383,8 @@ Tier: **extended**
 | --- | --- | --- | --- |
 | `list_item_costs` | extended | read | List item costs. |
 | `get_item_cost` | extended | read | Get item cost for a SKU. |
-| `set_item_cost` | extended | write | Set item cost inputs for a SKU. |
-| `update_average_item_cost` | extended | write | Update average cost for a SKU from a quantity and unit cost. |
+| `set_item_cost` | extended | admin | Set item cost inputs for a SKU. |
+| `update_average_item_cost` | extended | admin | Update average cost for a SKU from a quantity and unit cost. |
 | `get_total_inventory_value` | extended | read | Get total inventory value. |
 
 ## credit
@@ -1367,11 +1395,11 @@ Tier: **extended**
 | --- | --- | --- | --- |
 | `list_credit_accounts` | extended | read | List credit accounts. |
 | `get_credit_account` | extended | read | Get a credit account by account ID or customer ID. |
-| `create_credit_account` | extended | write | Create a customer credit account. |
+| `create_credit_account` | extended | admin | Create a customer credit account. |
 | `check_customer_credit` | extended | read | Check customer credit availability for an order amount. |
-| `adjust_credit_limit` | extended | write | Adjust a customer credit limit. |
-| `suspend_credit_account` | extended | write | Suspend a customer credit account. |
-| `reactivate_credit_account` | extended | write | Reactivate a customer credit account. |
+| `adjust_credit_limit` | extended | admin | Adjust a customer credit limit. |
+| `suspend_credit_account` | extended | admin | Suspend a customer credit account. |
+| `reactivate_credit_account` | extended | admin | Reactivate a customer credit account. |
 | `list_over_limit_credit_accounts` | extended | read | List over-limit credit accounts. |
 
 ## backorders
@@ -1407,23 +1435,32 @@ Tier: **extended**
 
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
+| `get_gl_posting_config` | extended | read | Read the active automatic ledger posting settings. |
+| `set_gl_posting_config` | extended | admin | Configure accounts for automatic ledger postings. Replaces the active settings atomically. |
 | `list_gl_accounts` | extended | read | List general ledger accounts. |
 | `get_gl_account` | extended | read | Get a general ledger account by ID or account number. |
 | `create_gl_account` | extended | write | Create a general ledger account. |
-| `initialize_chart_of_accounts` | extended | write | Initialize the standard chart of accounts. |
+| `initialize_chart_of_accounts` | extended | admin | Initialize the standard chart of accounts. |
 | `list_journal_entries` | extended | read | List journal entries. |
 | `get_journal_entry` | extended | read | Get a journal entry by ID. |
-| `post_journal_entry` | extended | write | Post a journal entry. |
-| `void_journal_entry` | extended | write | Void a journal entry. |
+| `post_journal_entry` | extended | admin | Post a journal entry. |
+| `void_journal_entry` | extended | admin | Void a journal entry. |
 | `get_trial_balance` | extended | read | Get the trial balance as of a date. |
 | `get_balance_sheet` | extended | read | Get the balance sheet as of a date. |
 | `get_income_statement` | extended | read | Get the income statement for a date range. |
-| `revalue_gl` | extended | write | Revalue foreign-currency general ledger balances as of a date. |
-| `close_month` | extended | write | Close the month: post scheduled depreciation, recognize revenue through period end, revalue foreign-currency balances, then run the period close. Use dryRun to preview per-step counts and amounts without writing. |
+| `revalue_gl` | extended | admin | Revalue foreign-currency general ledger balances as of a date. |
+| `close_month` | extended | admin | Close the month: post scheduled depreciation, recognize revenue through period end, revalue foreign-currency balances, then run the period close. Use dryRun to preview per-step counts and amounts without writing. |
 | `create_gl_period` | extended | write | Create an accounting period. |
 | `list_gl_periods` | extended | read | List accounting periods with optional filtering. |
-| `open_gl_period` | extended | write | Open an accounting period so journal entries can be posted to it. |
+| `open_gl_period` | extended | admin | Open an accounting period so journal entries can be posted to it. |
 | `get_gl_account_balance` | extended | read | Get the balance of a general ledger account. |
+| `create_journal_entry` | extended | admin | Create a balanced journal draft or post it atomically with exact decimal lines. |
+| `reverse_journal_entry` | extended | admin | Reverse a posted entry on an open accounting date. |
+| `get_gl_period` | extended | read | Get an accounting period. |
+| `close_gl_period` | extended | admin | Close an accounting period. |
+| `lock_gl_period` | extended | admin | Lock an accounting period. |
+| `reopen_gl_period` | extended | admin | Reopen an accounting period. |
+| `reclose_gl_period` | extended | admin | Reclose an accounting period. |
 
 ## agent-receipt
 
@@ -1452,12 +1489,12 @@ Tier: **extended**
 | `list_fixed_assets` | extended | read | List fixed assets. |
 | `get_fixed_asset` | extended | read | Get a fixed asset by ID. |
 | `create_fixed_asset` | extended | write | Create a fixed asset. |
-| `place_asset_in_service` | extended | write | Place a fixed asset in service. |
-| `dispose_fixed_asset` | extended | write | Dispose of a fixed asset. |
-| `write_off_fixed_asset` | extended | write | Write off a fixed asset. |
+| `place_asset_in_service` | extended | admin | Place a fixed asset in service. |
+| `dispose_fixed_asset` | extended | admin | Dispose of a fixed asset. |
+| `write_off_fixed_asset` | extended | admin | Write off a fixed asset. |
 | `generate_depreciation_schedule` | extended | write | Generate the depreciation schedule for a fixed asset. |
 | `get_depreciation_schedule` | extended | read | Get the depreciation schedule for a fixed asset. |
-| `post_depreciation` | extended | write | Post the next scheduled depreciation entries for a fixed asset (generate the schedule first). |
+| `post_depreciation` | extended | admin | Post the next scheduled depreciation entries for a fixed asset (generate the schedule first). |
 
 ## maintenance
 
@@ -1467,7 +1504,7 @@ Tier: **extended**
 | --- | --- | --- | --- |
 | `backup_database` | extended | write | Create a consistent, checksum-verified backup of the database plus a sidecar manifest. Safe to run while the store is being written to. |
 | `restore_database` | extended | write | Restore a backup to a target path. Verifies the manifest checksum, refuses backups from a newer engine, and refuses to overwrite an existing database unless overwrite is set. |
-| `export_full_data` | extended | read | Export the full store to a versioned JSON file (distinct from export_data, which dumps a single entity type for parity testing). Covers the core commerce and finance domains; see the maintenance module docs for exactly what is and is not included. |
+| `export_full_data` | extended | admin | Export the full store to a versioned JSON file (distinct from export_data, which dumps a single entity type for parity testing). Covers the core commerce and finance domains; see the maintenance module docs for exactly what is and is not included. |
 | `import_full_data` | extended | write | Import a JSON export into this store. Records are replayed through the normal create paths, so IDs are re-minted and foreign keys remapped. |
 | `list_portable_domains` | extended | read | List the domains that data export and import can cover. |
 
@@ -1482,7 +1519,7 @@ Tier: **extended**
 | `create_revenue_contract` | extended | write | Create a revenue recognition (ASC 606) contract with its performance obligations. The obligations' allocated amounts must sum to the transaction price. |
 | `generate_revenue_schedule` | extended | write | Generate the revenue recognition schedule for a performance obligation (ids are on the contract's obligations). |
 | `get_revenue_schedule` | extended | read | Get the revenue recognition schedule for a performance obligation. |
-| `recognize_revenue` | extended | write | Recognize deferred revenue for a performance obligation: every scheduled entry whose period starts on or before `through`. |
+| `recognize_revenue` | extended | admin | Recognize deferred revenue for a performance obligation: every scheduled entry whose period starts on or before `through`. |
 
 ## cycle-counts
 
@@ -1492,7 +1529,7 @@ Tier: **extended**
 | --- | --- | --- | --- |
 | `list_cycle_counts` | extended | read | List cycle counts. |
 | `get_cycle_count` | extended | read | Get a cycle count by ID. |
-| `create_cycle_count` | extended | write | Create a draft cycle count for a warehouse with the SKUs to count and the quantity the system expects for each. |
+| `create_cycle_count` | extended | write | Create a draft cycle count for a warehouse. Expected quantities are read from stored inventory. |
 | `start_cycle_count` | extended | write | Start a cycle count. |
 | `record_cycle_counts` | extended | write | Record counted quantities for a cycle count. |
 | `complete_cycle_count` | extended | write | Complete a cycle count. |
@@ -1519,11 +1556,11 @@ Tier: **extended**
 | `check_prepayments_supported` | extended | read | Check whether the prepayments backend is available on this engine build. |
 | `list_prepayments` | extended | read | List supplier prepayments with optional filtering. |
 | `get_prepayment` | extended | read | Get a prepayment by ID. |
-| `create_prepayment` | extended | write | Create a supplier prepayment. |
-| `apply_prepayment` | extended | write | Apply a prepayment against a bill or payment obligation. |
+| `create_prepayment` | extended | admin | Create a supplier prepayment. |
+| `apply_prepayment` | extended | admin | Apply a prepayment against a bill or payment obligation. |
 | `list_prepayment_applications` | extended | read | List applications for a prepayment. |
-| `reverse_prepayment_application` | extended | write | Reverse a previously-recorded prepayment application. |
-| `refund_prepayment` | extended | write | Refund the remaining balance of a prepayment, closing it. |
+| `reverse_prepayment_application` | extended | admin | Reverse a previously-recorded prepayment application. |
+| `refund_prepayment` | extended | admin | Refund the remaining balance of a prepayment, closing it. |
 
 ## activity-logs
 
@@ -1577,11 +1614,11 @@ Tier: **extended**
 | `check_vendor_credits_supported` | extended | read | Check whether the vendor-credits backend is available on this engine build. |
 | `list_vendor_credits` | extended | read | List vendor credits with optional filtering. |
 | `get_vendor_credit` | extended | read | Get a vendor credit by ID. |
-| `create_vendor_credit` | extended | write | Create a vendor credit. |
-| `apply_vendor_credit` | extended | write | Apply a vendor credit against a bill or payment obligation. |
+| `create_vendor_credit` | extended | admin | Create a vendor credit. |
+| `apply_vendor_credit` | extended | admin | Apply a vendor credit against a bill or payment obligation. |
 | `list_vendor_credit_applications` | extended | read | List applications for a vendor credit. |
-| `reverse_vendor_credit_application` | extended | write | Reverse a previously-recorded vendor credit application. |
-| `cancel_vendor_credit` | extended | write | Cancel a vendor credit. |
+| `reverse_vendor_credit_application` | extended | admin | Reverse a previously-recorded vendor credit application. |
+| `cancel_vendor_credit` | extended | admin | Cancel a vendor credit. |
 
 ## price-schedules
 
@@ -1629,6 +1666,7 @@ Tier: **extended**
 | `ship_transfer_order` | extended | write | Mark a transfer order as shipped from the source warehouse. |
 | `receive_transfer_order_line` | extended | write | Receive a quantity against a transfer order line at the destination. |
 | `cancel_transfer_order` | extended | write | Cancel a transfer order. |
+| `complete_transfer_order_receiving` | extended | write | Close transfer receiving and record outstanding in-transit stock as a shortage. This finalizes the transfer. |
 
 ## production-batches
 
@@ -1680,8 +1718,9 @@ Tier: **core**
 
 | Tool | Tier | Permission | Description |
 | --- | --- | --- | --- |
-| `explain_order` | core | read | Explain an order to a customer or merchant: one chronological timeline (checkout, payments, shipments, returns, refunds, fraud, activity), the money charged/refunded/net as exact strings, tax recomputed from the address, and flags for inconsistencies (e.g. paid but paymentStatus pending, refunded more than charged). Read-only; lists what it cannot see. |
+| `explain_order` | core | read | Explain an order to a customer or merchant: one chronological timeline (checkout, payments, shipments, returns, refunds, fraud, activity), the money charged/refunded/net as exact strings, tax recomputed from the address, flags for inconsistencies (e.g. paid but paymentStatus pending, refunded more than charged), and `allowedNext`: the statuses the order can move to next. Read-only; lists what it cannot see. |
 | `explain_cart_pricing` | core | read | Explain why a cart costs what it costs: lines, subtotal, promotions applied and REFUSED with reason codes, tax by jurisdiction, shipping, and a check that the explained total equals the stored grand total. Pass couponCodes to ask why a code does or does not apply. Read-only: nothing is written to the cart. |
+| `explain_state_machine` | core | read | Ask what a record can do next BEFORE trying to change its status. With no arguments, lists the catalogued status lifecycles (order, payment, refund, return, shipment, cart, customer, product, subscription, purchase_order, ...) and the known lifecycles not catalogued yet. With `machine`, returns its full transition graph and the tool that makes each move. With `machine` + `from`, the statuses reachable next and the tool for each. With `machine` + `from` + `to`, whether that move is allowed and, if not, the shortest route. Generated from the engine rules; read-only and touches no data. Some moves only one operation can make (`onlyVia`, e.g. processing -> shipped via ship_order); a plain status update is refused for them. For a known lifecycle that is not catalogued yet (order_payment, order_fulfillment, gift_card, coupon, invoice, x402_intent, gl_period, ...) it says so and lists its states without guessing its moves. |
 
 ## simulations
 
@@ -1708,10 +1747,10 @@ Server-level tools that belong to no domain (planning, simulation, replay, event
 | `agentic_prepare_payment` | extended | read | Prepare a Machine Payments Protocol challenge and retry template for a priced MCP tool call. |
 | `agentic_plan` | core | read | Evaluate a proposed tool sequence for deterministic simulation: policy, permission, and replayability checks. |
 | `agentic_simulate_mutation` | core | read | Run deterministic dry-run simulation for a mutating tool with policy, permission, rollback, and replay metadata. |
-| `agentic_replay_mutation` | core | read | Replay a previously logged mutating tool call from the deterministic replay log, with dry-run by default. |
+| `agentic_replay_mutation` | core | write | Replay a previously logged mutating tool call from the deterministic replay log, with dry-run by default. |
 | `agentic_replay` | core | read | Read recent deterministic execution events for auditability and replay tooling. |
 | `agentic_subscribe_events` | core | read | Subscribe to MCP execution events for a session or global stream. |
-| `agentic_unsubscribe_events` | core | read | Unsubscribe from a previously-created MCP event subscription. |
+| `agentic_unsubscribe_events` | core | write | Unsubscribe from a previously-created MCP event subscription. |
 | `agentic_list_event_subscriptions` | core | read | List active MCP event subscriptions. |
 | `agentic_get_event_history` | core | read | Fetch recent MCP event history for debugging and replay. |
 | `agentic_execute_plan` | core | write | Execute a tool sequence deterministically with optional dry-run and best-effort rollback. |

@@ -4,8 +4,9 @@
 //! for warehouse `N` lives in `inventory_balances` at `location_id = N`
 //! (the `inventory_locations` bridge row is created on demand). Every bin
 //! adjustment applies the same delta to that balance inside the same
-//! IMMEDIATE transaction, so `Σ bin on_hand == warehouse on_hand` holds for
-//! every `(warehouse, sku)`; bin-to-bin moves are stock-neutral.
+//! IMMEDIATE transaction. Warehouse totals also include physical stock outside
+//! bins; mapped bin stock is a subdivision, not a second copy. Bin-to-bin
+//! moves are stock-neutral.
 
 use crate::sqlite::{
     map_db_error, parse_datetime_row, parse_decimal_opt_row, parse_decimal_row,
@@ -19,9 +20,9 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use stateset_core::{
-    AdjustBinLevel, BinLevel, BinMovement, BinMovementType, BinReconciliation, BinRepository,
-    BinType, CommerceError, CreateWarehouseBin, MoveBetweenBins, Result, UpdateWarehouseBin,
-    WarehouseBin, WarehouseBinFilter,
+    AdjustBinLevel, BinLevel, BinMovement, BinReconciliation, BinRepository, BinType,
+    CommerceError, CreateWarehouseBin, MoveBetweenBins, Result, UpdateWarehouseBin, WarehouseBin,
+    WarehouseBinFilter,
 };
 
 const BIN_COLUMNS: &str = "id, warehouse_id, code, zone, aisle, rack, shelf, position, bin_type, \
@@ -150,235 +151,6 @@ pub(crate) fn find_disposition_bin_tx(
         }
     }
     Ok(None)
-}
-
-/// Apply a signed `(on_hand, allocated)` delta to one bin level, enforcing
-/// non-negative on-hand / available and the bin capacity. Returns the new level.
-pub(crate) fn apply_bin_delta_tx(
-    tx: &rusqlite::Transaction<'_>,
-    bin: &WarehouseBin,
-    sku: &str,
-    delta_on_hand: Decimal,
-    delta_allocated: Decimal,
-    now: &str,
-) -> rusqlite::Result<BinLevel> {
-    let current: Option<(String, String)> = tx
-        .query_row(
-            "SELECT quantity_on_hand, quantity_allocated FROM inventory_bin_levels
-             WHERE bin_id = ?1 AND sku = ?2",
-            params![bin.id, sku],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?;
-    let (on_hand, allocated) = match &current {
-        Some((oh, al)) => (
-            parse_decimal_strict(oh, "inventory_bin_level", "quantity_on_hand").map_err(smuggle)?,
-            parse_decimal_strict(al, "inventory_bin_level", "quantity_allocated")
-                .map_err(smuggle)?,
-        ),
-        None => (Decimal::ZERO, Decimal::ZERO),
-    };
-    let new_on_hand = on_hand + delta_on_hand;
-    let new_allocated = allocated + delta_allocated;
-    if new_on_hand < Decimal::ZERO || new_allocated < Decimal::ZERO {
-        return Err(smuggle(CommerceError::InsufficientStock {
-            sku: sku.to_string(),
-            requested: delta_on_hand.abs().to_string(),
-            available: on_hand.to_string(),
-        }));
-    }
-    if new_on_hand - new_allocated < Decimal::ZERO {
-        return Err(smuggle(CommerceError::InsufficientStock {
-            sku: sku.to_string(),
-            requested: delta_on_hand.abs().to_string(),
-            available: (on_hand - allocated).to_string(),
-        }));
-    }
-    if let Some(capacity) = bin.capacity {
-        if new_on_hand > capacity {
-            return Err(smuggle(CommerceError::ValidationError(format!(
-                "Bin {} capacity {} exceeded: {} on hand after adjustment",
-                bin.code, capacity, new_on_hand
-            ))));
-        }
-    }
-    if current.is_some() {
-        tx.execute(
-            "UPDATE inventory_bin_levels SET quantity_on_hand = ?1, quantity_allocated = ?2,
-             updated_at = ?3 WHERE bin_id = ?4 AND sku = ?5",
-            params![new_on_hand.to_string(), new_allocated.to_string(), now, bin.id, sku],
-        )?;
-    } else {
-        tx.execute(
-            "INSERT INTO inventory_bin_levels (bin_id, sku, quantity_on_hand, quantity_allocated, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![bin.id, sku, new_on_hand.to_string(), new_allocated.to_string(), now],
-        )?;
-    }
-    Ok(BinLevel {
-        bin_id: bin.id,
-        warehouse_id: bin.warehouse_id,
-        sku: sku.to_string(),
-        quantity_on_hand: new_on_hand,
-        quantity_allocated: new_allocated,
-        quantity_available: new_on_hand - new_allocated,
-        updated_at: chrono::DateTime::parse_from_rfc3339(now)
-            .map(|d| d.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
-    })
-}
-
-/// Apply a signed `(on_hand, allocated)` delta to the warehouse-level balance
-/// (`inventory_balances` at `location_id = warehouse_id`). The SKU must exist
-/// as an inventory item; the `inventory_locations` bridge row is created on
-/// demand from the warehouse's code/name.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn apply_warehouse_delta_tx(
-    tx: &rusqlite::Transaction<'_>,
-    warehouse_id: i32,
-    sku: &str,
-    delta_on_hand: Decimal,
-    delta_allocated: Decimal,
-    reason: &str,
-    reference_type: Option<&str>,
-    reference_id: Option<&str>,
-    now: &str,
-) -> rusqlite::Result<()> {
-    let item_id: i64 = tx
-        .query_row("SELECT id FROM inventory_items WHERE sku = ?1", [sku], |row| row.get(0))
-        .optional()?
-        .ok_or_else(|| {
-            smuggle(CommerceError::ValidationError(format!(
-                "Inventory item {sku} not found; create it before stocking bins"
-            )))
-        })?;
-
-    // Bridge row so the inventory_balances FK is satisfied.
-    let wh: Option<(String, String)> = tx
-        .query_row("SELECT code, name FROM warehouses WHERE id = ?1", [warehouse_id], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
-        .optional()?;
-    let (code, name) =
-        wh.unwrap_or_else(|| (format!("WH-{warehouse_id}"), format!("Warehouse {warehouse_id}")));
-    tx.execute(
-        "INSERT OR IGNORE INTO inventory_locations (id, name, code) VALUES (?1, ?2, ?3)",
-        params![warehouse_id, name, code],
-    )?;
-
-    let current: Option<(String, String, i32)> = tx
-        .query_row(
-            "SELECT quantity_on_hand, quantity_allocated, version FROM inventory_balances
-             WHERE item_id = ?1 AND location_id = ?2",
-            params![item_id, warehouse_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .optional()?;
-    let (on_hand, allocated) = match &current {
-        Some((oh, al, _)) => (
-            parse_decimal_strict(oh, "inventory_balance", "quantity_on_hand").map_err(smuggle)?,
-            parse_decimal_strict(al, "inventory_balance", "quantity_allocated").map_err(smuggle)?,
-        ),
-        None => (Decimal::ZERO, Decimal::ZERO),
-    };
-    let new_on_hand = on_hand + delta_on_hand;
-    let new_allocated = allocated + delta_allocated;
-    let new_available = new_on_hand - new_allocated;
-    if new_on_hand < Decimal::ZERO || new_allocated < Decimal::ZERO || new_available < Decimal::ZERO
-    {
-        return Err(smuggle(CommerceError::InsufficientStock {
-            sku: sku.to_string(),
-            requested: delta_on_hand.abs().to_string(),
-            available: (on_hand - allocated).to_string(),
-        }));
-    }
-    match current {
-        Some((_, _, version)) => {
-            tx.execute(
-                "UPDATE inventory_balances SET quantity_on_hand = ?1, quantity_allocated = ?2,
-                 quantity_available = ?3, version = version + 1, updated_at = ?4
-                 WHERE item_id = ?5 AND location_id = ?6 AND version = ?7",
-                params![
-                    new_on_hand.to_string(),
-                    new_allocated.to_string(),
-                    new_available.to_string(),
-                    now,
-                    item_id,
-                    warehouse_id,
-                    version
-                ],
-            )?;
-        }
-        None => {
-            tx.execute(
-                "INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand,
-                 quantity_allocated, quantity_available, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![
-                    item_id,
-                    warehouse_id,
-                    new_on_hand.to_string(),
-                    new_allocated.to_string(),
-                    new_available.to_string(),
-                    now
-                ],
-            )?;
-        }
-    }
-    if !delta_on_hand.is_zero() {
-        tx.execute(
-            "INSERT INTO inventory_transactions (item_id, location_id, transaction_type, quantity,
-             reference_type, reference_id, reason, created_at)
-             VALUES (?1, ?2, 'adjustment', ?3, ?4, ?5, ?6, ?7)",
-            params![
-                item_id,
-                warehouse_id,
-                delta_on_hand.to_string(),
-                reference_type,
-                reference_id,
-                reason,
-                now
-            ],
-        )?;
-    }
-    Ok(())
-}
-
-/// Insert a bin movement audit row.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn insert_bin_movement_tx(
-    tx: &rusqlite::Transaction<'_>,
-    movement_type: BinMovementType,
-    from_bin_id: Option<i32>,
-    to_bin_id: Option<i32>,
-    sku: &str,
-    quantity: Decimal,
-    reason: Option<&str>,
-    reference_type: Option<&str>,
-    reference_id: Option<&str>,
-    performed_by: Option<&str>,
-    now: &str,
-) -> rusqlite::Result<Uuid> {
-    let id = Uuid::new_v4();
-    tx.execute(
-        "INSERT INTO inventory_bin_movements (id, movement_type, from_bin_id, to_bin_id, sku,
-         quantity, reason, reference_type, reference_id, performed_by, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-        params![
-            id.to_string(),
-            movement_type.to_string(),
-            from_bin_id,
-            to_bin_id,
-            sku,
-            quantity.to_string(),
-            reason,
-            reference_type,
-            reference_id,
-            performed_by,
-            now
-        ],
-    )?;
-    Ok(id)
 }
 
 impl SqliteBinRepository {
@@ -565,7 +337,7 @@ impl BinRepository for SqliteBinRepository {
         with_immediate_transaction(&self.pool, |tx| {
             load_bin_tx(tx, id)?;
             let mut stmt = tx.prepare(
-                "SELECT quantity_on_hand, quantity_allocated FROM inventory_bin_levels WHERE bin_id = ?1",
+                "SELECT quantity_on_hand, quantity_allocated FROM inventory_bin_levels WHERE bin_id = ?1 UNION ALL SELECT li.quantity_on_hand, li.quantity_reserved FROM location_inventory li JOIN stock_location_bins m ON m.location_id = li.location_id WHERE m.bin_id = ?1",
             )?;
             let levels = stmt
                 .query_map([id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
@@ -582,6 +354,7 @@ impl BinRepository for SqliteBinRepository {
                     ))));
                 }
             }
+            tx.execute("DELETE FROM stock_location_bins WHERE bin_id = ?1", [id])?;
             tx.execute("DELETE FROM inventory_bin_levels WHERE bin_id = ?1", [id])?;
             tx.execute("DELETE FROM warehouse_bins WHERE id = ?1", [id])?;
             Ok(())
@@ -616,119 +389,87 @@ impl BinRepository for SqliteBinRepository {
     }
 
     fn adjust_bin_level(&self, input: AdjustBinLevel) -> Result<BinLevel> {
-        if input.quantity.is_zero() {
-            return Err(CommerceError::ValidationError(
-                "Adjustment quantity cannot be zero".into(),
-            ));
-        }
         with_immediate_transaction(&self.pool, |tx| {
-            let now = Utc::now().to_rfc3339();
-            let bin = load_bin_tx(tx, input.bin_id)?;
-            if !bin.is_active {
-                return Err(smuggle(CommerceError::ValidationError(format!(
-                    "Bin {} is inactive",
-                    bin.code
-                ))));
+            let known: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM inventory_items WHERE sku = ?1)",
+                [&input.sku],
+                |r| r.get(0),
+            )?;
+            if !known {
+                return Err(smuggle(CommerceError::ValidationError(
+                    "Create the inventory item before adjusting bins".into(),
+                )));
             }
-            let level =
-                apply_bin_delta_tx(tx, &bin, &input.sku, input.quantity, Decimal::ZERO, &now)?;
-            apply_warehouse_delta_tx(
+            let now = Utc::now().to_rfc3339();
+            let movement_id = Uuid::new_v4();
+            let location = super::stock_move::location_for_bin(tx, input.bin_id, &now)?;
+            super::stock_move::post_from_slices(
                 tx,
-                bin.warehouse_id,
-                &input.sku,
-                input.quantity,
-                Decimal::ZERO,
-                &input.reason,
-                input.reference_type.as_deref(),
-                input.reference_id.as_deref(),
+                &crate::stock_move::StockMove {
+                    id: movement_id,
+                    sku: &input.sku,
+                    lot_id: None,
+                    from: (input.quantity < Decimal::ZERO).then_some(location),
+                    to: (input.quantity > Decimal::ZERO).then_some(location),
+                    quantity: input.quantity.abs(),
+                    release_reserved: Decimal::ZERO,
+                    reserve_received: Decimal::ZERO,
+                    movement_type: stateset_core::MovementType::Adjustment,
+                    lot_effect: crate::stock_move::LotEffect::Track,
+                    check_sellable: false,
+                    reference_type: input.reference_type.as_deref(),
+                    reference_id: None,
+                    reference_label: input.reference_id.as_deref(),
+                    reason: Some(&input.reason),
+                    performed_by: input.performed_by.as_deref(),
+                },
                 &now,
             )?;
-            let (from, to) = if input.quantity.is_sign_negative() {
-                (Some(bin.id), None)
-            } else {
-                (None, Some(bin.id))
-            };
-            insert_bin_movement_tx(
-                tx,
-                BinMovementType::Adjustment,
-                from,
-                to,
-                &input.sku,
-                input.quantity.abs(),
-                Some(&input.reason),
-                input.reference_type.as_deref(),
-                input.reference_id.as_deref(),
-                input.performed_by.as_deref(),
-                &now,
-            )?;
-            Ok(level)
+            tx.query_row("SELECT l.*, b.warehouse_id FROM inventory_bin_levels l JOIN warehouse_bins b ON b.id = l.bin_id WHERE l.bin_id = ?1 AND l.sku = ?2", params![input.bin_id, input.sku], row_to_level)
         })
     }
-
     fn move_between_bins(&self, input: MoveBetweenBins) -> Result<BinMovement> {
-        if input.quantity <= Decimal::ZERO {
-            return Err(CommerceError::ValidationError("Move quantity must be positive".into()));
-        }
-        if input.from_bin_id == input.to_bin_id {
-            return Err(CommerceError::ValidationError(
-                "Source and destination bins must differ".into(),
-            ));
-        }
         with_immediate_transaction(&self.pool, |tx| {
             let now = Utc::now().to_rfc3339();
-            let from = load_bin_tx(tx, input.from_bin_id)?;
-            let to = load_bin_tx(tx, input.to_bin_id)?;
-            if from.warehouse_id != to.warehouse_id {
+            let movement_id = Uuid::new_v4();
+            let source = super::stock_move::location_for_bin(tx, input.from_bin_id, &now)?;
+            let destination = super::stock_move::location_for_bin(tx, input.to_bin_id, &now)?;
+            if super::stock_move::warehouse_of(tx, source)?
+                != super::stock_move::warehouse_of(tx, destination)?
+            {
                 return Err(smuggle(CommerceError::ValidationError(
                     "Bins belong to different warehouses; use a transfer order".into(),
                 )));
             }
-            if !to.is_active {
-                return Err(smuggle(CommerceError::ValidationError(format!(
-                    "Destination bin {} is inactive",
-                    to.code
-                ))));
-            }
-            // Source decrement first: rejects when available < quantity.
-            let src_exists: Option<i32> = tx
-                .query_row(
-                    "SELECT 1 FROM inventory_bin_levels WHERE bin_id = ?1 AND sku = ?2",
-                    params![from.id, input.sku],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            if src_exists.is_none() {
-                return Err(smuggle(CommerceError::InsufficientStock {
-                    sku: input.sku.clone(),
-                    requested: input.quantity.to_string(),
-                    available: "0".into(),
-                }));
-            }
-            apply_bin_delta_tx(tx, &from, &input.sku, -input.quantity, Decimal::ZERO, &now)?;
-            apply_bin_delta_tx(tx, &to, &input.sku, input.quantity, Decimal::ZERO, &now)?;
-            let id = insert_bin_movement_tx(
+            super::stock_move::post_from_slices(
                 tx,
-                BinMovementType::Transfer,
-                Some(from.id),
-                Some(to.id),
-                &input.sku,
-                input.quantity,
-                input.reason.as_deref(),
-                None,
-                None,
-                input.performed_by.as_deref(),
+                &crate::stock_move::StockMove {
+                    id: movement_id,
+                    sku: &input.sku,
+                    lot_id: None,
+                    from: Some(source),
+                    to: Some(destination),
+                    quantity: input.quantity,
+                    release_reserved: Decimal::ZERO,
+                    reserve_received: Decimal::ZERO,
+                    movement_type: stateset_core::MovementType::Transfer,
+                    lot_effect: crate::stock_move::LotEffect::Track,
+                    check_sellable: true,
+                    reference_type: None,
+                    reference_id: None,
+                    reference_label: None,
+                    reason: input.reason.as_deref(),
+                    performed_by: input.performed_by.as_deref(),
+                },
                 &now,
             )?;
             tx.query_row(
-                "SELECT id, movement_type, from_bin_id, to_bin_id, sku, quantity, reason,
-                 reference_type, reference_id, performed_by, created_at
-                 FROM inventory_bin_movements WHERE id = ?1",
-                [id.to_string()],
+                "SELECT * FROM inventory_bin_movements WHERE id = ?1",
+                [movement_id.to_string()],
                 row_to_movement,
             )
         })
     }
-
     fn reconcile(&self, warehouse_id: i32, sku: &str) -> Result<BinReconciliation> {
         let conn = self.conn()?;
         let mut stmt = conn

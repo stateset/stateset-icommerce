@@ -5,7 +5,7 @@
     "adminPackage": "admin/package.json"
   },
   "workspace": {
-    "version": "1.40.0",
+    "version": "1.41.0",
     "memberCount": 31,
     "defaultMemberCount": 19,
     "rustCrateCount": 23,
@@ -572,8 +572,8 @@
     }
   ],
   "cli": {
-    "binaryCount": 56,
-    "dependencyCount": 15,
+    "binaryCount": 57,
+    "dependencyCount": 14,
     "optionalDependencyCount": 12,
     "topLevelSourceCounts": [
       {
@@ -590,7 +590,7 @@
       },
       {
         "name": "mcp",
-        "count": 35
+        "count": 42
       },
       {
         "name": "channels",
@@ -598,19 +598,19 @@
       },
       {
         "name": "sync",
-        "count": 26
+        "count": 29
+      },
+      {
+        "name": "simulation",
+        "count": 21
       },
       {
         "name": "adapters",
         "count": 20
       },
       {
-        "name": "simulation",
-        "count": 20
-      },
-      {
         "name": "utils",
-        "count": 16
+        "count": 19
       },
       {
         "name": "harness",
@@ -654,6 +654,10 @@
       },
       {
         "name": "compliance",
+        "count": 3
+      },
+      {
+        "name": "erc8004",
         "count": 3
       },
       {
@@ -817,11 +821,11 @@
         "count": 1
       },
       {
-        "name": "erc8004",
+        "name": "errors.js",
         "count": 1
       },
       {
-        "name": "errors.js",
+        "name": "generated",
         "count": 1
       },
       {
@@ -974,6 +978,14 @@
       },
       {
         "name": "standalone.js",
+        "count": 1
+      },
+      {
+        "name": "state-machine-catalog.js",
+        "count": 1
+      },
+      {
+        "name": "state-machine-operations.js",
         "count": 1
       },
       {

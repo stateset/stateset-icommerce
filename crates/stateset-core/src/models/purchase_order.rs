@@ -542,6 +542,10 @@ pub struct UpdatePurchaseOrder {
 /// Input for receiving items on a purchase order
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReceivePurchaseOrderItems {
+    /// Warehouse receiving the goods. Must be supplied explicitly.
+    pub warehouse_id: i32,
+    /// Active, receivable location in the specified warehouse.
+    pub receiving_location_id: i32,
     /// Items being received
     pub items: Vec<ReceivePurchaseOrderItem>,
     /// Notes about the receipt

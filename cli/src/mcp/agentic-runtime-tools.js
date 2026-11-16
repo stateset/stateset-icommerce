@@ -211,7 +211,9 @@ export const AGENTIC_RUNTIME_TOOLS = [
         .describe('Include before/after hook execution during replay'),
       sessionId: z.string().optional().describe('Optional correlation session id'),
     },
-    permission: 'read',
+    // A write: with dryRun:false it re-executes the logged mutation, so it must
+    // not be declared read (kernel strict mode exposes read tools ungoverned).
+    permission: 'write',
     policyDomain: 'agentic',
     handler: async ({ params, replayMutationToolCall }) => {
       return replayMutationToolCall({
@@ -301,7 +303,13 @@ export const AGENTIC_RUNTIME_TOOLS = [
     inputSchema: {
       subscriptionId: z.string().describe('Subscription id returned by agentic_subscribe_events'),
     },
-    permission: 'read',
+    // A write: it deletes the subscription from the server's shared registry,
+    // and any caller holding an id can delete any subscription, including the
+    // one behind another client's live `/events?session=` stream, whose id
+    // agentic_list_event_subscriptions lists (that stream stays open but gets
+    // only heartbeats). The registry is in-memory, so the read-tool mutation
+    // sweep cannot see this; the declaration has to.
+    permission: 'write',
     policyDomain: 'agentic',
     handler: async ({ params, mcpEventStream }) => {
       if (!mcpEventStream || typeof mcpEventStream.unsubscribe !== 'function') {

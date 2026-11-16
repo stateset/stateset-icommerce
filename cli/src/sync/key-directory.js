@@ -61,7 +61,7 @@ export class PeerKeyDirectory {
    * @param {string} agentId
    * @param {number} keyId
    * @param {string} atTime - the event's createdAt, ISO 8601
-   * @returns {Promise<{publicKey: string, publicKeyBundle: Object|null}|{error: string, detail?: string}>}
+   * @returns {Promise<{publicKey: string, publicKeyBundle: Object|null}|{error: string, detail?: string, code?: string}>}
    */
   async resolve(agentId, keyId, atTime) {
     let keys = this.outbox.getPeerKeys(agentId);
@@ -78,7 +78,15 @@ export class PeerKeyDirectory {
         // (misconfigured, forged, misdirected, stale, unattested) is not an
         // outage and gets no cache fallback at all.
         if (reason !== 'key_unresolved' || !keys.length || ageSeconds >= this.maxStaleSeconds) {
-          return { error: reason, detail: error?.message };
+          // `code` keeps the client's finer diagnosis (e.g.
+          // `key_directory_unsupported` under a `key_unresolved` reason) for
+          // callers that want to act on it; only `error` is durable.
+          const code = /** @type {{code?: unknown}} */ (error)?.code;
+          return {
+            error: reason,
+            detail: error?.message,
+            ...(typeof code === 'string' && { code }),
+          };
         }
       }
     }

@@ -2,9 +2,9 @@
 
 use rust_decimal_macros::dec;
 use stateset_core::{
-    AddCartItem, CartAddress, CartRepository, CreateCart, CreateCustomer, CreateOrder,
-    CreateOrderItem, CustomerRepository, OrderRepository, OrderStatus, PaymentStatus, ProductId,
-    SetCartPayment,
+    AddCartItem, CartAddress, CartRepository, CommerceError, CreateCart, CreateCustomer,
+    CreateOrder, CreateOrderItem, CustomerRepository, OrderRepository, OrderStatus, PaymentStatus,
+    ProductId, SetCartPayment, UpdateOrder,
 };
 use stateset_db::SqliteDatabase;
 
@@ -126,6 +126,93 @@ fn sqlite_cart_checkout_reuses_existing_order_by_cart_id() {
     let updated_order = orders.get(order.id).expect("get order").expect("order exists");
     assert_eq!(updated_order.status, OrderStatus::Confirmed);
     assert_eq!(updated_order.payment_status, PaymentStatus::Pending);
+}
+
+/// An order minted for a cart (via `create_from_cart`) and then cancelled must
+/// not be moved back to `confirmed` when the cart is checked out: checkout
+/// reuses the order by `cart_id`, and promoting it is a status transition that
+/// `Cancelled` does not allow. Twin of the Postgres
+/// `postgres_cart_checkout_refuses_to_revive_a_cancelled_order_minted_for_the_cart`.
+#[test]
+fn sqlite_cart_checkout_refuses_to_revive_a_cancelled_order_minted_for_the_cart() {
+    let db = SqliteDatabase::in_memory().expect("create in-memory sqlite db");
+    let carts = db.carts();
+    let orders = db.orders();
+    let customer = db
+        .customers()
+        .create(CreateCustomer {
+            email: "checkout-revive@example.com".into(),
+            first_name: "Checkout".into(),
+            last_name: "Revive".into(),
+            ..Default::default()
+        })
+        .expect("create customer");
+    let cart = carts
+        .create(CreateCart {
+            customer_id: Some(customer.id),
+            customer_email: Some("checkout-revive@example.com".into()),
+            customer_name: Some("Checkout Revive".into()),
+            ..Default::default()
+        })
+        .expect("create cart");
+    carts
+        .add_item(
+            cart.id,
+            AddCartItem {
+                product_id: Some(ProductId::new()),
+                sku: "SKU-REVIVE-001".into(),
+                name: "Revive Widget".into(),
+                quantity: 1,
+                unit_price: dec!(19.99),
+                ..Default::default()
+            },
+        )
+        .expect("add cart item");
+    carts.set_shipping_address(cart.id, test_address()).expect("set shipping address");
+    let cart = carts.get(cart.id).expect("get cart").expect("cart exists");
+
+    let order = orders
+        .create_from_cart(
+            cart.id.into(),
+            CreateOrder {
+                customer_id: customer.id,
+                items: cart
+                    .items
+                    .iter()
+                    .map(|item| CreateOrderItem {
+                        product_id: item.product_id.expect("product_id"),
+                        variant_id: item.variant_id,
+                        sku: item.sku.clone(),
+                        name: item.name.clone(),
+                        quantity: item.quantity,
+                        unit_price: item.unit_price,
+                        discount: Some(item.discount_amount),
+                        tax_amount: Some(item.tax_amount),
+                    })
+                    .collect(),
+                currency: Some(cart.currency),
+                ..Default::default()
+            },
+        )
+        .expect("create order for cart");
+    let cancelled = orders
+        .update(
+            order.id,
+            UpdateOrder { status: Some(OrderStatus::Cancelled), ..Default::default() },
+        )
+        .expect("cancel order");
+    assert_eq!(cancelled.status, OrderStatus::Cancelled);
+
+    let err = carts.complete(cart.id).expect_err("checkout must not revive a cancelled order");
+    assert!(
+        matches!(err, CommerceError::InvalidOrderStatusTransition { .. }),
+        "unexpected error: {err:?}"
+    );
+    let stored = orders.get(order.id).expect("get order").expect("order exists");
+    assert_eq!(stored.status, OrderStatus::Cancelled);
+    assert_eq!(stored.version, cancelled.version, "the refused checkout wrote nothing");
+    let reloaded = carts.get(cart.id).expect("reload cart").expect("cart exists");
+    assert_ne!(reloaded.status, stateset_core::CartStatus::Completed);
 }
 
 #[test]

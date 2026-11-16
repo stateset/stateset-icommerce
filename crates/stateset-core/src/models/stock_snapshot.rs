@@ -18,7 +18,7 @@ pub struct StockSnapshotLine {
     /// Owning snapshot.
     pub stock_snapshot_id: StockSnapshotId,
     /// Product.
-    pub product_id: ProductId,
+    pub product_id: Option<ProductId>,
     /// SKU snapshot.
     pub sku: String,
     /// On-hand quantity at capture time.
@@ -74,7 +74,8 @@ pub struct CaptureStockLine {
 pub struct CaptureStockSnapshot {
     /// Optional label.
     pub label: Option<String>,
-    /// Lines (at least one required).
+    /// Legacy imported lines. Must be empty; snapshots read the stored ledger.
+    #[serde(default)]
     pub lines: Vec<CaptureStockLine>,
 }
 
@@ -149,7 +150,7 @@ mod tests {
                 .map(|l| StockSnapshotLine {
                     id: StockSnapshotLineId::new(),
                     stock_snapshot_id: StockSnapshotId::new(),
-                    product_id: l.product_id,
+                    product_id: Some(l.product_id),
                     sku: l.sku.clone(),
                     quantity_on_hand: l.quantity_on_hand,
                     quantity_available: l.quantity_available,

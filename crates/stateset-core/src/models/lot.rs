@@ -9,15 +9,12 @@
 //! `quantity_quarantined` what a quality event has blocked. The sellable
 //! remainder is [`Lot::quantity_available`].
 //!
-//! Lots are **linked to `inventory_balances`** (the per-SKU, per-location
-//! on-hand / allocated / available triple) whenever two things are true:
-//!
-//! 1. the lot has a placement in `lot_locations` (created with
-//!    `initial_location_id`, or moved there by a transfer), and
-//! 2. an `inventory_items` row exists for the lot's SKU.
-//!
-//! When both hold, every lot mutation adjusts the balance for
-//! `(sku, location)` **in the same database transaction**:
+//! A placed lot has physical location stock, a bin projection, and an aggregate
+//! warehouse balance. `initial_location_id` and `lot_locations.location_id`
+//! identify the warehouse; `location_inventory` identifies its physical shelves.
+//! Creating a placed lot receives stock into an explicit unassigned location,
+//! creating its inventory item if needed. Every stock mutation updates these
+//! records **in the same database transaction**:
 //!
 //! | lot operation              | inventory effect at the lot's location        |
 //! |----------------------------|-----------------------------------------------|
@@ -33,18 +30,18 @@
 //! lot **holds** its blocked units via `quantity_allocated`: the stock stays
 //! on hand, but `quantity_available` — which the order path checks — drops.
 //! Each on-hand change also writes an `inventory_transactions` row referencing
-//! the lot. The invariant maintained is, per `(sku, location)`:
+//! the lot. The invariant maintained is, per `(sku, warehouse)`:
 //!
 //! ```text
-//! Σ active lots (remaining − reserved − quarantined) == inventory available
+//! Σ physical on-hand == Σ bin on-hand == warehouse on-hand
+//! Σ physical reserved == Σ bin allocated == warehouse allocated
 //! ```
 //!
-//! Lots without a location, or SKUs without an inventory item, float free
-//! (the pre-existing behaviour). `split` / `merge` move units *between lots*
-//! and leave inventory untouched; the derived lots carry no placement.
-//! Balances are floored at zero when a legacy lot was never received into
-//! inventory, so the linkage can be adopted on live data without failing
-//! consumption.
+//! A lot registered without a location describes expected stock ahead of
+//! receiving. It cannot be consumed or reserved until received. `split` and
+//! `merge` relabel unreserved physical stock and its placement while preserving
+//! the warehouse total. Reservations own exact physical slices. Inconsistent
+//! legacy balances require reconciliation; mutations never floor them at zero.
 //!
 //! Quarantining a lot also quarantines its `Available` / `Reserved` serials
 //! (closing their reservations) and releasing it returns them to `Available`;

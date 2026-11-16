@@ -135,14 +135,24 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`AnalyticsPeriod`](#analyticsperiod)
   - [`AnalyticsQueryInput`](#analyticsqueryinput)
   - [`ApAgingSummaryOutput`](#apagingsummaryoutput)
+  - [`ApPaymentRunFilterInput`](#appaymentrunfilterinput)
+  - [`ApPaymentRunOutput`](#appaymentrunoutput)
   - [`AppliedPromotionOutput`](#appliedpromotionoutput)
+  - [`ApplyArPaymentInput`](#applyarpaymentinput)
+  - [`ApplyCreditMemoInput`](#applycreditmemoinput)
   - [`ApplyPrepaymentInput`](#applyprepaymentinput)
   - [`ApplyPromotionsInput`](#applypromotionsinput)
   - [`ApplyPromotionsOutput`](#applypromotionsoutput)
   - [`ApplyVendorCreditInput`](#applyvendorcreditinput)
   - [`ArAgingSummaryOutput`](#aragingsummaryoutput)
+  - [`ArPaymentApplicationOutput`](#arpaymentapplicationoutput)
+  - [`ArPaymentLineInput`](#arpaymentlineinput)
+  - [`ArWriteOffFilterInput`](#arwriteofffilterinput)
+  - [`ArWriteOffOutput`](#arwriteoffoutput)
   - [`AssetAmountWire`](#assetamountwire)
   - [`AssetDisposalOutput`](#assetdisposaloutput)
+  - [`AutoPostingConfigInput`](#autopostingconfiginput)
+  - [`AutoPostingConfigOutput`](#autopostingconfigoutput)
   - [`BackorderAllocationOutput`](#backorderallocationoutput)
   - [`BackorderAllocationStatus`](#backorderallocationstatus)
   - [`BackorderFilterInput`](#backorderfilterinput)
@@ -162,6 +172,8 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`BillFilterInput`](#billfilterinput)
   - [`BillItemOutput`](#billitemoutput)
   - [`BillOutput`](#billoutput)
+  - [`BillPaymentAllocationInput`](#billpaymentallocationinput)
+  - [`BillPaymentOutput`](#billpaymentoutput)
   - [`BillStatus`](#billstatus)
   - [`BillStatusInput`](#billstatusinput)
   - [`BillingCycleFilterInput`](#billingcyclefilterinput)
@@ -208,6 +220,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`CompanyPriceOverrideOutput`](#companypriceoverrideoutput)
   - [`CompanyShippingAddressOutput`](#companyshippingaddressoutput)
   - [`CompanyStatus`](#companystatus)
+  - [`CompletePutAwayInput`](#completeputawayinput)
   - [`ContactOutput`](#contactoutput)
   - [`ConversionResultOutput`](#conversionresultoutput)
   - [`ConversionRuleType`](#conversionruletype)
@@ -222,9 +235,11 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`CreateAgentIdentityInput`](#createagentidentityinput)
   - [`CreateAgentValidationRequestInput`](#createagentvalidationrequestinput)
   - [`CreateAgentValidationResponseInput`](#createagentvalidationresponseinput)
+  - [`CreateApPaymentRunInput`](#createappaymentruninput)
   - [`CreateBackorderInput`](#createbackorderinput)
   - [`CreateBillInput`](#createbillinput)
   - [`CreateBillItemInput`](#createbilliteminput)
+  - [`CreateBillPaymentInput`](#createbillpaymentinput)
   - [`CreateBomComponentInput`](#createbomcomponentinput)
   - [`CreateBomInput`](#createbominput)
   - [`CreateCartInput`](#createcartinput)
@@ -258,6 +273,8 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`CreateInventoryItemInput`](#createinventoryiteminput)
   - [`CreateInvoiceInput`](#createinvoiceinput)
   - [`CreateInvoiceItemInput`](#createinvoiceiteminput)
+  - [`CreateJournalEntryInput`](#createjournalentryinput)
+  - [`CreateJournalEntryLineInput`](#createjournalentrylineinput)
   - [`CreateJurisdictionInput`](#createjurisdictioninput)
   - [`CreateLocationInput`](#createlocationinput)
   - [`CreateLotInput`](#createlotinput)
@@ -281,6 +298,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`CreatePromotionInput`](#createpromotioninput)
   - [`CreatePurchaseOrderInput`](#createpurchaseorderinput)
   - [`CreatePurchaseOrderItemInput`](#createpurchaseorderiteminput)
+  - [`CreatePutAwayInput`](#createputawayinput)
   - [`CreateQualityHoldInput`](#createqualityholdinput)
   - [`CreateReceiptInput`](#createreceiptinput)
   - [`CreateReceiptItemInput`](#createreceiptiteminput)
@@ -318,6 +336,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`CreateWebhookInput`](#createwebhookinput)
   - [`CreateWishlistInput`](#createwishlistinput)
   - [`CreateWorkOrderInput`](#createworkorderinput)
+  - [`CreateWriteOffInput`](#createwriteoffinput)
   - [`CreateZoneShippingMethodInput`](#createzoneshippingmethodinput)
   - [`CreditAccountFilterInput`](#creditaccountfilterinput)
   - [`CreditAccountOutput`](#creditaccountoutput)
@@ -445,6 +464,8 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`IntegrationMappingOutput`](#integrationmappingoutput)
   - [`InventoryHealthOutput`](#inventoryhealthoutput)
   - [`InventoryItemOutput`](#inventoryitemoutput)
+  - [`InventoryListFilter`](#inventorylistfilter)
+  - [`InventoryListItemOutput`](#inventorylistitemoutput)
   - [`InventoryMovementOutput`](#inventorymovementoutput)
   - [`InventorySearchResultOutput`](#inventorysearchresultoutput)
   - [`InvoiceFilterInput`](#invoicefilterinput)
@@ -453,6 +474,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`ItemCostFilterInput`](#itemcostfilterinput)
   - [`ItemCostOutput`](#itemcostoutput)
   - [`JournalEntryFilterInput`](#journalentryfilterinput)
+  - [`JournalEntryLineOutput`](#journalentrylineoutput)
   - [`JournalEntryOutput`](#journalentryoutput)
   - [`JurisdictionFilterInput`](#jurisdictionfilterinput)
   - [`JurisdictionSummaryOutput`](#jurisdictionsummaryoutput)
@@ -492,6 +514,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`KernelReserveInventoryPayload`](#kernelreserveinventorypayload)
   - [`KernelResolveA2ADisputePayload`](#kernelresolvea2adisputepayload)
   - [`KernelRetryDisposition`](#kernelretrydisposition)
+  - [`KernelSetReturnItemDispositionPayload`](#kernelsetreturnitemdispositionpayload)
   - [`KernelSettleX402IntentPayload`](#kernelsettlex402intentpayload)
   - [`KernelShipOrderPayload`](#kernelshiporderpayload)
   - [`KernelShipmentLine`](#kernelshipmentline)
@@ -610,6 +633,8 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`PurgatoryFilterInput`](#purgatoryfilterinput)
   - [`PurgatoryLineItemOutput`](#purgatorylineitemoutput)
   - [`PurgatoryOrderOutput`](#purgatoryorderoutput)
+  - [`PutAwayFilterInput`](#putawayfilterinput)
+  - [`PutAwayOutput`](#putawayoutput)
   - [`QualityHoldFilterInput`](#qualityholdfilterinput)
   - [`QualityHoldOutput`](#qualityholdoutput)
   - [`QualityHoldStatus`](#qualityholdstatus)
@@ -624,6 +649,8 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`ReceiptType`](#receipttype)
   - [`ReceiptTypeFilter`](#receipttypefilter)
   - [`ReceiptTypeInput`](#receipttypeinput)
+  - [`ReceiveItemLineInput`](#receiveitemlineinput)
+  - [`ReceiveItemsInput`](#receiveitemsinput)
   - [`ReceivePurchaseOrderItemInput`](#receivepurchaseorderiteminput)
   - [`RecognitionMethod`](#recognitionmethod)
   - [`RecognitionMethodOutput`](#recognitionmethodoutput)
@@ -637,7 +664,9 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`ReservationStatus`](#reservationstatus)
   - [`RestoreOptionsInput`](#restoreoptionsinput)
   - [`RestoreReportOutput`](#restorereportoutput)
+  - [`ReturnDisposition`](#returndisposition)
   - [`ReturnFilterInput`](#returnfilterinput)
+  - [`ReturnItemOutput`](#returnitemoutput)
   - [`ReturnMetricsOutput`](#returnmetricsoutput)
   - [`ReturnOutput`](#returnoutput)
   - [`ReturnReason`](#returnreason)
@@ -680,6 +709,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`SetCartShippingInput`](#setcartshippinginput)
   - [`SetExchangeRateInput`](#setexchangerateinput)
   - [`SetItemCostInput`](#setitemcostinput)
+  - [`SetReturnItemDispositionInput`](#setreturnitemdispositioninput)
   - [`ShipmentFilterInput`](#shipmentfilterinput)
   - [`ShipmentItemOutput`](#shipmentitemoutput)
   - [`ShipmentMethod`](#shipmentmethod)
@@ -841,6 +871,7 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`WorkOrderOutput`](#workorderoutput)
   - [`WorkOrderPriority`](#workorderpriority)
   - [`WorkOrderStatus`](#workorderstatus)
+  - [`WorkOrderStockInput`](#workorderstockinput)
   - [`X402A2ASkill`](#x402a2askill)
   - [`X402A2ASkillInput`](#x402a2askillinput)
   - [`X402AgentCardFilterInput`](#x402agentcardfilterinput)
@@ -917,8 +948,12 @@ JavaScript-friendly Commerce instance
 
 - **`close(): Promise<void>`**
 
-  Release the engine. Calls already in flight complete; every later call
-  rejects with `PRECONDITION_FAILED`. Idempotent.
+  Release the engine. Every later call rejects with `PRECONDITION_FAILED`;
+  calls already in flight complete first. Resolves only once the engine
+  has dropped and the database files are released (the connection pool
+  is closed, so a WAL database has been checkpointed), so the same file
+  can be reopened or copied straight away. Idempotent: every call
+  resolves after that release.
 
 - **`executeKernelCommand(command: KernelCommand, policy: KernelPolicy): Promise<KernelReceipt>`**
 
@@ -1263,6 +1298,18 @@ Class `Inventory`.
 
   Types: [`CreateInventoryItemInput`](#createinventoryiteminput), [`InventoryItemOutput`](#inventoryitemoutput)
 
+- **`list(filter?: InventoryListFilter | undefined | null): Promise<Array<InventoryListItemOutput>>`**
+
+  List inventory items in SKU order, each with its stock summed over
+  every location, so items created with `createItem` are listed even
+  when no product variant carries their SKU.
+
+  `lowStock` uses the engine's reorder rule (below reorder point plus
+  safety stock at some location, as `get_reorder_needed` reports it).
+  Pages hold at most 1000 items (default 100).
+
+  Types: [`InventoryListFilter`](#inventorylistfilter), [`InventoryListItemOutput`](#inventorylistitemoutput)
+
 - **`getStock(sku: string): Promise<StockLevelOutput | null>`**
 
   Types: [`StockLevelOutput`](#stockleveloutput)
@@ -1335,6 +1382,15 @@ Class `Returns`.
 - **`cancel(id: string): Promise<ReturnOutput>`**
 
   Types: [`ReturnOutput`](#returnoutput)
+
+- **`setItemDisposition(returnId: string, itemId: string, input: SetReturnItemDispositionInput): Promise<ReturnItemOutput>`**
+
+  Record a received item's disposition (operator path) and apply its
+  stock, serial and lot effects atomically. The return must be
+  `received` or `inspecting`; an item is dispositioned once. A governed
+  agent uses the `returns.item.disposition.set` kernel command instead.
+
+  Types: [`SetReturnItemDispositionInput`](#setreturnitemdispositioninput), [`ReturnItemOutput`](#returnitemoutput)
 
 - **`addTracking(id: string, trackingNumber: string): Promise<ReturnOutput>`**
 
@@ -1589,6 +1645,14 @@ Class `Segments`.
 ### commerce.payments
 
 Class `Payments`.
+
+- **`supportsPaymentIdempotency(): boolean`**
+
+  Atomic request-key deduplication and guarded completion for payment write-back.
+
+- **`supportsRefundIdempotency(): boolean`**
+
+  Immutable-key refund replay and atomic, idempotent refund completion.
 
 - **`create(input: CreatePaymentInput): Promise<PaymentOutput>`**
 
@@ -1888,10 +1952,9 @@ Class `PurchaseOrders`.
 
   Types: [`PurchaseOrderItemOutput`](#purchaseorderitemoutput)
 
-- **`receive(id: string, items: Array<ReceivePurchaseOrderItemInput>): Promise<PurchaseOrderOutput>`**
+- **`receive(id: string, items: Array<ReceivePurchaseOrderItemInput>, warehouseId: number, receivingLocationId: number): Promise<PurchaseOrderOutput>`**
 
-  Record received quantities on a sent purchase order. This updates the PO;
-  warehouse stock must be posted separately through inventory/receiving.
+  Receive sent PO lines into an explicit warehouse location, atomically posting stock.
 
   Types: [`ReceivePurchaseOrderItemInput`](#receivepurchaseorderiteminput), [`PurchaseOrderOutput`](#purchaseorderoutput)
 
@@ -1900,6 +1963,10 @@ Class `PurchaseOrders`.
 ### commerce.invoices
 
 Class `Invoices`.
+
+- **`supportsPaymentIdempotency(): boolean`**
+
+  This binding consumes paymentId atomically and rejects amount conflicts.
 
 - **`create(input: CreateInvoiceInput): Promise<InvoiceOutput>`**
 
@@ -1976,6 +2043,18 @@ Class `WorkOrders`.
 - **`create(input: CreateWorkOrderInput): Promise<WorkOrderOutput>`**
 
   Types: [`CreateWorkOrderInput`](#createworkorderinput), [`WorkOrderOutput`](#workorderoutput)
+
+- **`configureStock(id: string, stock: WorkOrderStockInput): Promise<WorkOrderOutput>`**
+
+  Configure explicit stock routing for a planned work order.
+
+  Types: [`WorkOrderStockInput`](#workorderstockinput), [`WorkOrderOutput`](#workorderoutput)
+
+- **`completeExact(id: string, quantityCompleted: string): Promise<WorkOrderOutput>`**
+
+  Complete an exact decimal quantity without a floating-point conversion.
+
+  Types: [`WorkOrderOutput`](#workorderoutput)
 
 - **`get(id: string): Promise<WorkOrderOutput | null>`**
 
@@ -3123,6 +3202,40 @@ Class `Receiving`.
 
   Types: [`ReceiptOutput`](#receiptoutput)
 
+- **`receiveItems(input: ReceiveItemsInput): Promise<ReceiptOutput>`**
+
+  Receive stock into the explicitly selected warehouse location.
+
+  Types: [`ReceiveItemsInput`](#receiveitemsinput), [`ReceiptOutput`](#receiptoutput)
+
+- **`createPutAway(i: CreatePutAwayInput): Promise<PutAwayOutput>`**
+
+  Types: [`CreatePutAwayInput`](#createputawayinput), [`PutAwayOutput`](#putawayoutput)
+
+- **`listPutAways(filter?: PutAwayFilterInput | undefined | null): Promise<Array<PutAwayOutput>>`**
+
+  Types: [`PutAwayFilterInput`](#putawayfilterinput), [`PutAwayOutput`](#putawayoutput)
+
+- **`getPutAway(id: string): Promise<PutAwayOutput | null>`**
+
+  Types: [`PutAwayOutput`](#putawayoutput)
+
+- **`assignPutAway(id: string, assignedTo: string): Promise<PutAwayOutput>`**
+
+  Types: [`PutAwayOutput`](#putawayoutput)
+
+- **`completePutAway(i: CompletePutAwayInput): Promise<PutAwayOutput>`**
+
+  Types: [`CompletePutAwayInput`](#completeputawayinput), [`PutAwayOutput`](#putawayoutput)
+
+- **`startPutAway(id: string): Promise<PutAwayOutput>`**
+
+  Types: [`PutAwayOutput`](#putawayoutput)
+
+- **`cancelPutAway(id: string): Promise<PutAwayOutput>`**
+
+  Types: [`PutAwayOutput`](#putawayoutput)
+
 - **`countReceipts(): Promise<number>`**
 
   Count receipts
@@ -3213,6 +3326,42 @@ Class `Fulfillment`.
 
 Class `AccountsPayable`.
 
+- **`createPayment(input: CreateBillPaymentInput): Promise<BillPaymentOutput>`**
+
+  Types: [`CreateBillPaymentInput`](#createbillpaymentinput), [`BillPaymentOutput`](#billpaymentoutput)
+
+- **`getPayment(id: string): Promise<BillPaymentOutput | null>`**
+
+  Types: [`BillPaymentOutput`](#billpaymentoutput)
+
+- **`voidPayment(id: string): Promise<BillPaymentOutput>`**
+
+  Types: [`BillPaymentOutput`](#billpaymentoutput)
+
+- **`createPaymentRun(input: CreateApPaymentRunInput, actor: string): Promise<ApPaymentRunOutput>`**
+
+  Types: [`CreateApPaymentRunInput`](#createappaymentruninput), [`ApPaymentRunOutput`](#appaymentrunoutput)
+
+- **`getPaymentRun(id: string): Promise<ApPaymentRunOutput | null>`**
+
+  Types: [`ApPaymentRunOutput`](#appaymentrunoutput)
+
+- **`listPaymentRuns(filter?: ApPaymentRunFilterInput | undefined | null): Promise<Array<ApPaymentRunOutput>>`**
+
+  Types: [`ApPaymentRunFilterInput`](#appaymentrunfilterinput), [`ApPaymentRunOutput`](#appaymentrunoutput)
+
+- **`approvePaymentRun(id: string, actor: string): Promise<ApPaymentRunOutput>`**
+
+  Types: [`ApPaymentRunOutput`](#appaymentrunoutput)
+
+- **`processPaymentRun(id: string): Promise<ApPaymentRunOutput>`**
+
+  Types: [`ApPaymentRunOutput`](#appaymentrunoutput)
+
+- **`cancelPaymentRun(id: string): Promise<ApPaymentRunOutput>`**
+
+  Types: [`ApPaymentRunOutput`](#appaymentrunoutput)
+
 - **`createBill(input: CreateBillInput): Promise<BillOutput>`**
 
   Create a bill
@@ -3243,9 +3392,21 @@ Class `AccountsPayable`.
 
   Types: [`BillFilterInput`](#billfilterinput), [`BillOutput`](#billoutput)
 
-- **`approveBill(id: string): Promise<BillOutput>`**
+- **`approveBill(id: string, overrideReason?: string | undefined | null, actor?: string | undefined | null): Promise<BillOutput>`**
 
   Approve a bill
+
+  Types: [`BillOutput`](#billoutput)
+
+- **`disputeBill(id: string): Promise<BillOutput>`**
+
+  Dispute a bill.
+
+  Types: [`BillOutput`](#billoutput)
+
+- **`resolveBillDispute(id: string): Promise<BillOutput>`**
+
+  Resolve a bill dispute.
 
   Types: [`BillOutput`](#billoutput)
 
@@ -3273,7 +3434,7 @@ Class `AccountsPayable`.
 
   Types: [`ApAgingSummaryOutput`](#apagingsummaryoutput)
 
-- **`getTotalOutstanding(): Promise<number>`**
+- **`getTotalOutstanding(): Promise<string>`**
 
   Get total outstanding
 
@@ -3294,17 +3455,43 @@ Class `AccountsPayable`.
 
 Class `AccountsReceivable`.
 
+- **`applyPaymentToInvoices(input: ApplyArPaymentInput): Promise<Array<ArPaymentApplicationOutput>>`**
+
+  Types: [`ApplyArPaymentInput`](#applyarpaymentinput), [`ArPaymentApplicationOutput`](#arpaymentapplicationoutput)
+
+- **`getPaymentApplications(paymentId: string): Promise<Array<ArPaymentApplicationOutput>>`**
+
+  Types: [`ArPaymentApplicationOutput`](#arpaymentapplicationoutput)
+
+- **`unapplyPayment(id: string): Promise<void>`**
+
+- **`applyCreditMemo(input: ApplyCreditMemoInput): Promise<CreditMemoOutput>`**
+
+  Types: [`ApplyCreditMemoInput`](#applycreditmemoinput), [`CreditMemoOutput`](#creditmemooutput)
+
+- **`createWriteOff(input: CreateWriteOffInput, actor: string): Promise<ArWriteOffOutput>`**
+
+  Types: [`CreateWriteOffInput`](#createwriteoffinput), [`ArWriteOffOutput`](#arwriteoffoutput)
+
+- **`reverseWriteOff(id: string): Promise<ArWriteOffOutput>`**
+
+  Types: [`ArWriteOffOutput`](#arwriteoffoutput)
+
+- **`listWriteOffs(filter?: ArWriteOffFilterInput | undefined | null): Promise<Array<ArWriteOffOutput>>`**
+
+  Types: [`ArWriteOffFilterInput`](#arwriteofffilterinput), [`ArWriteOffOutput`](#arwriteoffoutput)
+
 - **`getAgingSummary(): Promise<ArAgingSummaryOutput>`**
 
   Get AR aging summary
 
   Types: [`ArAgingSummaryOutput`](#aragingsummaryoutput)
 
-- **`getTotalOutstanding(): Promise<number>`**
+- **`getTotalOutstanding(): Promise<string>`**
 
   Get total outstanding
 
-- **`getDso(days: number): Promise<number>`**
+- **`getDso(days: number): Promise<string>`**
 
   Get Days Sales Outstanding (DSO)
 
@@ -3360,13 +3547,13 @@ Class `CostAccounting`.
 
   Types: [`ItemCostFilterInput`](#itemcostfilterinput), [`ItemCostOutput`](#itemcostoutput)
 
-- **`updateAverageCost(sku: string, quantity: number, unitCost: number): Promise<ItemCostOutput>`**
+- **`updateAverageCost(sku: string, quantity: string, unitCost: string): Promise<ItemCostOutput>`**
 
   Update average cost
 
   Types: [`ItemCostOutput`](#itemcostoutput)
 
-- **`getTotalInventoryValue(): Promise<number>`**
+- **`getTotalInventoryValue(): Promise<string>`**
 
   Get total inventory value
 
@@ -3398,13 +3585,13 @@ Class `Credit`.
 
   Types: [`CreditAccountFilterInput`](#creditaccountfilterinput), [`CreditAccountOutput`](#creditaccountoutput)
 
-- **`checkCredit(customerId: string, orderAmount: number): Promise<CreditCheckOutput>`**
+- **`checkCredit(customerId: string, orderAmount: string): Promise<CreditCheckOutput>`**
 
   Check credit
 
   Types: [`CreditCheckOutput`](#creditcheckoutput)
 
-- **`adjustCreditLimit(customerId: string, newLimit: number, reason: string): Promise<CreditAccountOutput>`**
+- **`adjustCreditLimit(customerId: string, newLimit: string, reason: string): Promise<CreditAccountOutput>`**
 
   Adjust credit limit
 
@@ -3566,6 +3753,18 @@ Class `Backorders`. Also available as `commerce.backorders`.
 
 Class `GeneralLedger`.
 
+- **`getAutoPostingConfig(): Promise<AutoPostingConfigOutput | null>`**
+
+  Read the active automatic ledger posting settings.
+
+  Types: [`AutoPostingConfigOutput`](#autopostingconfigoutput)
+
+- **`setAutoPostingConfig(input: AutoPostingConfigInput): Promise<AutoPostingConfigOutput>`**
+
+  Replace automatic posting settings atomically.
+
+  Types: [`AutoPostingConfigInput`](#autopostingconfiginput), [`AutoPostingConfigOutput`](#autopostingconfigoutput)
+
 - **`createAccount(input: CreateGlAccountInput): Promise<GlAccountOutput>`**
 
   Create a GL account
@@ -3595,6 +3794,36 @@ Class `GeneralLedger`.
   Initialize standard chart of accounts
 
   Types: [`GlAccountOutput`](#glaccountoutput)
+
+- **`createJournalEntry(i: CreateJournalEntryInput, actor?: string | undefined | null): Promise<JournalEntryOutput>`**
+
+  Create a balanced draft or post it atomically using a trusted host identity.
+
+  Types: [`CreateJournalEntryInput`](#createjournalentryinput), [`JournalEntryOutput`](#journalentryoutput)
+
+- **`reverseJournalEntry(id: string, reversalDate: string): Promise<JournalEntryOutput>`**
+
+  Types: [`JournalEntryOutput`](#journalentryoutput)
+
+- **`getPeriod(id: string): Promise<GlPeriodOutput | null>`**
+
+  Types: [`GlPeriodOutput`](#glperiodoutput)
+
+- **`closePeriod(id: string, actor: string): Promise<GlPeriodOutput>`**
+
+  Types: [`GlPeriodOutput`](#glperiodoutput)
+
+- **`lockPeriod(id: string, actor: string): Promise<GlPeriodOutput>`**
+
+  Types: [`GlPeriodOutput`](#glperiodoutput)
+
+- **`reopenPeriod(id: string): Promise<GlPeriodOutput>`**
+
+  Types: [`GlPeriodOutput`](#glperiodoutput)
+
+- **`reclosePeriod(id: string, actor: string): Promise<JournalEntryOutput>`**
+
+  Types: [`JournalEntryOutput`](#journalentryoutput)
 
 - **`getJournalEntry(id: string): Promise<JournalEntryOutput | null>`**
 
@@ -3638,7 +3867,7 @@ Class `GeneralLedger`.
 
   Types: [`IncomeStatementOutput`](#incomestatementoutput)
 
-- **`getAccountBalance(accountId: string, asOfDate?: string | undefined | null): Promise<number>`**
+- **`getAccountBalance(accountId: string, asOfDate?: string | undefined | null): Promise<string>`**
 
   Get account balance
 
@@ -4113,7 +4342,7 @@ Class `StockSnapshots`.
 
 - **`capture(input: CaptureStockSnapshotInput): Promise<StockSnapshotOutput>`**
 
-  Capture a new snapshot; totals are computed from the supplied lines.
+  Capture a new snapshot from stored inventory balances.
 
   Types: [`CaptureStockSnapshotInput`](#capturestocksnapshotinput), [`StockSnapshotOutput`](#stocksnapshotoutput)
 
@@ -4652,9 +4881,9 @@ Class `VendorReturns`.
 
   Types: [`VendorReturnOutput`](#vendorreturnoutput)
 
-- **`process(id: string, generateCredit: boolean): Promise<VendorReturnOutput>`**
+- **`process(id: string, generateCredit?: boolean | undefined | null): Promise<VendorReturnOutput>`**
 
-  Process a vendor return, optionally generating a vendor credit.
+  Process stock and its linked vendor credit atomically. Disabling the credit is refused.
 
   Types: [`VendorReturnOutput`](#vendorreturnoutput)
 
@@ -4876,6 +5105,12 @@ Class `TransferOrders`.
 
   Receive a quantity (exact decimal string) against a single line at the
   destination.
+
+  Types: [`TransferOrderOutput`](#transferorderoutput)
+
+- **`completeReceiving(id: string): Promise<TransferOrderOutput>`**
+
+  Close receiving, recording outstanding in-transit units as shortage.
 
   Types: [`TransferOrderOutput`](#transferorderoutput)
 
@@ -5711,18 +5946,48 @@ One of: `'today'`, `'yesterday'`, `'last7days'`, `'last_7_days'`, `'last30days'`
 
 | Field | Type | Description |
 |---|---|---|
-| `current` | `number` | **Deprecated.** Use the `currentExact` twin; float money will be removed in 2.0. |
+| `current` | `string` | Exact decimal string. |
 | `currentExact` | `string` | Exact base-10 current, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `days130` | `number` | **Deprecated.** Use the `days130Exact` twin; float money will be removed in 2.0. |
+| `days130` | `string` | Exact decimal string. |
 | `days130Exact` | `string` | Exact base-10 days 1 30, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `days3160` | `number` | **Deprecated.** Use the `days3160Exact` twin; float money will be removed in 2.0. |
+| `days3160` | `string` | Exact decimal string. |
 | `days3160Exact` | `string` | Exact base-10 days 31 60, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `days6190` | `number` | **Deprecated.** Use the `days6190Exact` twin; float money will be removed in 2.0. |
+| `days6190` | `string` | Exact decimal string. |
 | `days6190Exact` | `string` | Exact base-10 days 61 90, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `daysOver90` | `number` | **Deprecated.** Use the `daysOver90Exact` twin; float money will be removed in 2.0. |
+| `daysOver90` | `string` | Exact decimal string. |
 | `daysOver90Exact` | `string` | Exact base-10 days over 90, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `total` | `number` | **Deprecated.** Use the `totalExact` twin; float money will be removed in 2.0. |
+| `total` | `string` | Exact decimal string. |
 | `totalExact` | `string` | Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+
+### ApPaymentRunFilterInput
+
+| Field | Type | Description |
+|---|---|---|
+| `status?` | `string` |  |
+| `fromDate?` | `string` |  |
+| `toDate?` | `string` |  |
+| `limit?` | `number` |  |
+| `offset?` | `number` |  |
+
+### ApPaymentRunOutput
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `status` | `string` |  |
+| `paymentMethod` | `string` |  |
+| `totalAmount` | `string` |  |
+| `currency?` | `string` |  |
+| `runNumber` | `string` |  |
+| `paymentCount` | `number` |  |
+| `notes?` | `string` |  |
+| `createdBy?` | `string` |  |
+| `approvedBy?` | `string` |  |
+| `approvedAt?` | `string` |  |
+| `processedAt?` | `string` |  |
+| `paymentDate` | `string` |  |
+| `createdAt` | `string` |  |
+| `updatedAt` | `string` |  |
 
 ### AppliedPromotionOutput
 
@@ -5736,6 +6001,21 @@ An applied promotion
 | `discountAmount` | `number` | **Deprecated.** Use the `discountAmountExact` twin; float money will be removed in 2.0. |
 | `discountAmountExact` | `string` | Exact base-10 discount amount, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `discountType` | `PromotionType` | Types: [`PromotionType`](#promotiontype) |
+
+### ApplyArPaymentInput
+
+| Field | Type | Description |
+|---|---|---|
+| `paymentId` | `string` |  |
+| `applications` | `Array<ArPaymentLineInput>` | Types: [`ArPaymentLineInput`](#arpaymentlineinput) |
+
+### ApplyCreditMemoInput
+
+| Field | Type | Description |
+|---|---|---|
+| `creditMemoId` | `string` |  |
+| `invoiceId` | `string` |  |
+| `amount` | `string` |  |
 
 ### ApplyPrepaymentInput
 
@@ -5796,18 +6076,67 @@ Result of applying promotions
 
 | Field | Type | Description |
 |---|---|---|
-| `current` | `number` | **Deprecated.** Use the `currentExact` twin; float money will be removed in 2.0. |
+| `current` | `string` | Exact decimal string. |
 | `currentExact` | `string` | Exact base-10 current, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `days130` | `number` | **Deprecated.** Use the `days130Exact` twin; float money will be removed in 2.0. |
+| `days130` | `string` | Exact decimal string. |
 | `days130Exact` | `string` | Exact base-10 days 1 30, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `days3160` | `number` | **Deprecated.** Use the `days3160Exact` twin; float money will be removed in 2.0. |
+| `days3160` | `string` | Exact decimal string. |
 | `days3160Exact` | `string` | Exact base-10 days 31 60, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `days6190` | `number` | **Deprecated.** Use the `days6190Exact` twin; float money will be removed in 2.0. |
+| `days6190` | `string` | Exact decimal string. |
 | `days6190Exact` | `string` | Exact base-10 days 61 90, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `daysOver90` | `number` | **Deprecated.** Use the `daysOver90Exact` twin; float money will be removed in 2.0. |
+| `daysOver90` | `string` | Exact decimal string. |
 | `daysOver90Exact` | `string` | Exact base-10 days over 90, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `total` | `number` | **Deprecated.** Use the `totalExact` twin; float money will be removed in 2.0. |
+| `total` | `string` | Exact decimal string. |
 | `totalExact` | `string` | Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+
+### ArPaymentApplicationOutput
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `paymentId` | `string` |  |
+| `invoiceId` | `string` |  |
+| `appliedAmount` | `string` |  |
+| `appliedDate` | `string` |  |
+| `createdAt` | `string` |  |
+
+### ArPaymentLineInput
+
+| Field | Type | Description |
+|---|---|---|
+| `invoiceId` | `string` |  |
+| `amount` | `string` |  |
+
+### ArWriteOffFilterInput
+
+| Field | Type | Description |
+|---|---|---|
+| `customerId?` | `string` |  |
+| `invoiceId?` | `string` |  |
+| `reason?` | `string` |  |
+| `includeReversed?` | `boolean` |  |
+| `fromDate?` | `string` |  |
+| `toDate?` | `string` |  |
+| `limit?` | `number` |  |
+| `offset?` | `number` |  |
+
+### ArWriteOffOutput
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `invoiceId` | `string` |  |
+| `customerId` | `string` |  |
+| `amount` | `string` |  |
+| `reason` | `string` |  |
+| `writeOffNumber` | `string` |  |
+| `notes?` | `string` |  |
+| `approvedBy?` | `string` |  |
+| `approvedAt?` | `string` |  |
+| `reversedAt?` | `string` |  |
+| `glJournalEntryId?` | `string` |  |
+| `writeOffDate` | `string` |  |
+| `createdAt` | `string` |  |
 
 ### AssetAmountWire
 
@@ -5828,6 +6157,54 @@ token id (`AssetAmountWire`). The asset id is case-sensitive.
 | `bookValueAtDisposal` | `string` | Exact decimal string |
 | `gainLoss` | `string` | Exact decimal string: proceeds - book value |
 | `notes?` | `string` |  |
+
+### AutoPostingConfigInput
+
+| Field | Type | Description |
+|---|---|---|
+| `configName` | `string` |  |
+| `cashAccountId` | `string` |  |
+| `accountsReceivableAccountId` | `string` |  |
+| `inventoryAccountId` | `string` |  |
+| `accountsPayableAccountId` | `string` |  |
+| `unearnedRevenueAccountId?` | `string` |  |
+| `salesRevenueAccountId` | `string` |  |
+| `shippingRevenueAccountId?` | `string` |  |
+| `salesTaxPayableAccountId?` | `string` |  |
+| `goodsReceivedNotInvoicedAccountId?` | `string` |  |
+| `inventoryAdjustmentAccountId?` | `string` |  |
+| `workInProgressAccountId?` | `string` |  |
+| `cogsAccountId` | `string` |  |
+| `badDebtExpenseAccountId?` | `string` |  |
+| `fxGainLossAccountId?` | `string` |  |
+| `autoPostDepreciation?` | `boolean` |  |
+| `autoPostRevenueRecognition?` | `boolean` |  |
+
+### AutoPostingConfigOutput
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `configName` | `string` |  |
+| `cashAccountId` | `string` |  |
+| `accountsReceivableAccountId` | `string` |  |
+| `inventoryAccountId` | `string` |  |
+| `accountsPayableAccountId` | `string` |  |
+| `unearnedRevenueAccountId?` | `string` |  |
+| `salesRevenueAccountId` | `string` |  |
+| `shippingRevenueAccountId?` | `string` |  |
+| `salesTaxPayableAccountId?` | `string` |  |
+| `goodsReceivedNotInvoicedAccountId?` | `string` |  |
+| `inventoryAdjustmentAccountId?` | `string` |  |
+| `workInProgressAccountId?` | `string` |  |
+| `cogsAccountId` | `string` |  |
+| `badDebtExpenseAccountId?` | `string` |  |
+| `fxGainLossAccountId?` | `string` |  |
+| `autoPostDepreciation` | `boolean` |  |
+| `autoPostRevenueRecognition` | `boolean` |  |
+| `isActive` | `boolean` |  |
+| `createdAt` | `string` |  |
+| `updatedAt` | `string` |  |
 
 ### BackorderAllocationOutput
 
@@ -6009,11 +6386,11 @@ Result of a database backup.
 | Field | Type | Description |
 |---|---|---|
 | `asOfDate` | `string` |  |
-| `totalAssets` | `number` | **Deprecated.** Use the `totalAssetsExact` twin; float money will be removed in 2.0. |
+| `totalAssets` | `string` | Exact decimal string. |
 | `totalAssetsExact` | `string` | Exact base-10 total assets, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `totalLiabilities` | `number` | **Deprecated.** Use the `totalLiabilitiesExact` twin; float money will be removed in 2.0. |
+| `totalLiabilities` | `string` | Exact decimal string. |
 | `totalLiabilitiesExact` | `string` | Exact base-10 total liabilities, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `totalEquity` | `number` | **Deprecated.** Use the `totalEquityExact` twin; float money will be removed in 2.0. |
+| `totalEquity` | `string` | Exact decimal string. |
 | `totalEquityExact` | `string` | Exact base-10 total equity, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 
 ### BillFilterInput
@@ -6043,12 +6420,12 @@ A bill line as stored, with engine-derived `amount` and `taxAmount`.
 | `description` | `string` |  |
 | `accountCode?` | `string` |  |
 | `quantityExact` | `string` | Exact base-10 quantity. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `unitPrice` | `number` | **Deprecated.** Use the `unitPriceExact` twin; float money will be removed in 2.0. |
+| `unitPrice` | `string` | Exact decimal string. |
 | `unitPriceExact` | `string` | Exact base-10 unit price. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `amount` | `number` | **Deprecated.** Use the `amountExact` twin; float money will be removed in 2.0. |
+| `amount` | `string` | Exact decimal string. |
 | `amountExact` | `string` | Exact base-10 line amount (quantity x unit price). _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `taxRateExact?` | `string` | Exact base-10 tax rate (a fraction), when set. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `taxAmount` | `number` | **Deprecated.** Use the `taxAmountExact` twin; float money will be removed in 2.0. |
+| `taxAmount` | `string` | Exact decimal string. |
 | `taxAmountExact` | `string` | Exact base-10 line tax. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `poLineId?` | `string` |  |
 | `createdAt` | `string` |  |
@@ -6057,18 +6434,48 @@ A bill line as stored, with engine-derived `amount` and `taxAmount`.
 
 | Field | Type | Description |
 |---|---|---|
+| `currency` | `string` |  |
+| `createdBy?` | `string` |  |
+| `approvedBy?` | `string` |  |
+| `matchOverrideReason?` | `string` |  |
 | `id` | `string` |  |
 | `billNumber` | `string` |  |
 | `supplierId` | `string` |  |
 | `status` | `BillStatus` | Types: [`BillStatus`](#billstatus) |
-| `totalAmount` | `number` | **Deprecated.** Use the `totalAmountExact` twin; float money will be removed in 2.0. |
+| `totalAmount` | `string` | Exact decimal string. |
 | `totalAmountExact` | `string` | Exact base-10 total amount, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `amountPaid` | `number` | **Deprecated.** Use the `amountPaidExact` twin; float money will be removed in 2.0. |
+| `amountPaid` | `string` | Exact decimal string. |
 | `amountPaidExact` | `string` | Exact base-10 amount paid, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `amountDue` | `number` | **Deprecated.** Use the `amountDueExact` twin; float money will be removed in 2.0. |
+| `amountDue` | `string` | Exact decimal string. |
 | `amountDueExact` | `string` | Exact base-10 amount due, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `dueDate` | `string` |  |
 | `createdAt` | `string` |  |
+
+### BillPaymentAllocationInput
+
+| Field | Type | Description |
+|---|---|---|
+| `billId` | `string` |  |
+| `amount` | `string` |  |
+
+### BillPaymentOutput
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `supplierId` | `string` |  |
+| `paymentMethod` | `string` |  |
+| `amount` | `string` |  |
+| `currency` | `string` |  |
+| `status` | `string` |  |
+| `paymentNumber` | `string` |  |
+| `referenceNumber?` | `string` |  |
+| `bankAccount?` | `string` |  |
+| `checkNumber?` | `string` |  |
+| `memo?` | `string` |  |
+| `paymentDate` | `string` |  |
+| `createdAt` | `string` |  |
+| `updatedAt` | `string` |  |
 
 ### BillStatus
 
@@ -6242,7 +6649,7 @@ One of: `'draft'`, `'active'`, `'obsolete'`.
 | Field | Type | Description |
 |---|---|---|
 | `label?` | `string` |  |
-| `lines` | `Array<CaptureStockLineInput>` | Types: [`CaptureStockLineInput`](#capturestocklineinput) |
+| `lines?` | `Array<CaptureStockLineInput>` | Types: [`CaptureStockLineInput`](#capturestocklineinput) |
 
 ### CaptureTopologySnapshotInput
 
@@ -6703,6 +7110,15 @@ type CompanyStatus = 'active' | 'inactive'
 
 One of: `'active'`, `'inactive'`.
 
+### CompletePutAwayInput
+
+| Field | Type | Description |
+|---|---|---|
+| `putAwayId` | `string` |  |
+| `actualLocationId?` | `number` |  |
+| `completedBy?` | `string` |  |
+| `notes?` | `string` |  |
+
 ### ContactOutput
 
 | Field | Type | Description |
@@ -6874,6 +7290,15 @@ One of: `'active'`, `'disabled'`, `'exhausted'`, `'expired'`.
 | `responseHash?` | `string` |  |
 | `tag?` | `string` |  |
 
+### CreateApPaymentRunInput
+
+| Field | Type | Description |
+|---|---|---|
+| `paymentDate` | `string` |  |
+| `paymentMethod` | `string` |  |
+| `billIds` | `Array<string>` |  |
+| `notes?` | `string` |  |
+
 ### CreateBackorderInput
 
 | Field | Type | Description |
@@ -6889,6 +7314,9 @@ One of: `'active'`, `'disabled'`, `'exhausted'`, `'expired'`.
 
 | Field | Type | Description |
 |---|---|---|
+| `createdBy?` | `string` | Trusted host identity. Remote adapters must supply this from authentication. |
+| `currency?` | `string` |  |
+| `purchaseOrderId?` | `string` |  |
 | `supplierId` | `string` |  |
 | `dueDate` | `string` |  |
 | `paymentTerms?` | `string` |  |
@@ -6899,19 +7327,34 @@ One of: `'active'`, `'disabled'`, `'exhausted'`, `'expired'`.
 ### CreateBillItemInput
 
 A bill line. Money follows the binding convention: send the `...Exact`
-base-10 string (preferred) or the float.
+base-10 string or its legacy Exact alias.
 
 | Field | Type | Description |
 |---|---|---|
 | `description` | `string` |  |
 | `accountCode?` | `string` |  |
-| `quantity?` | `number` | Float quantity. Optional: send `quantity_exact` instead. |
+| `quantity?` | `string` | Exact decimal quantity; `quantity_exact` remains an alias. |
 | `quantityExact?` | `string` | Exact base-10 quantity. Takes precedence over `quantity` when present. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `unitPrice?` | `number` | Float unit price. Optional: send `unit_price_exact` instead for exact money. |
+| `unitPrice?` | `string` | Exact decimal unit price; `unit_price_exact` remains an alias. |
 | `unitPriceExact?` | `string` | Exact base-10 unit price. Takes precedence over `unit_price` when present. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `taxRate?` | `number` | Tax rate as a fraction (`0.08` = 8%). |
+| `taxRate?` | `string` | Tax rate as a percentage (`"8"` = 8%). |
 | `taxRateExact?` | `string` | Exact base-10 tax rate. Takes precedence over `tax_rate` when present. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `poLineId?` | `string` |  |
+
+### CreateBillPaymentInput
+
+| Field | Type | Description |
+|---|---|---|
+| `supplierId` | `string` |  |
+| `paymentDate?` | `string` |  |
+| `paymentMethod` | `string` |  |
+| `amount` | `string` |  |
+| `currency?` | `string` |  |
+| `referenceNumber?` | `string` |  |
+| `bankAccount?` | `string` |  |
+| `checkNumber?` | `string` |  |
+| `memo?` | `string` |  |
+| `allocations` | `Array<BillPaymentAllocationInput>` | Types: [`BillPaymentAllocationInput`](#billpaymentallocationinput) |
 
 ### CreateBomComponentInput
 
@@ -6998,7 +7441,7 @@ Input for creating a coupon code
 | Field | Type | Description |
 |---|---|---|
 | `customerId` | `string` |  |
-| `creditLimit` | `number` |  |
+| `creditLimit` | `string` |  |
 | `paymentTerms?` | `string` |  |
 | `notes?` | `string` |  |
 
@@ -7009,7 +7452,7 @@ Input for creating a coupon code
 | `customerId` | `string` |  |
 | `originalInvoiceId?` | `string` |  |
 | `reason` | `CreditMemoReasonInput` | Types: [`CreditMemoReasonInput`](#creditmemoreasoninput) |
-| `amount` | `number` |  |
+| `amount` | `string` |  |
 | `notes?` | `string` |  |
 
 ### CreateCustomObjectInput
@@ -7077,7 +7520,7 @@ Input for creating a coupon code
 |---|---|---|
 | `sku` | `string` |  |
 | `lotId?` | `string` |  |
-| `expectedQuantity` | `string` | Exact decimal string |
+| `expectedQuantity?` | `string` | Deprecated and ignored; expected stock is read from the ledger. |
 
 ### CreateEdiDocumentInput
 
@@ -7121,6 +7564,8 @@ Input for creating a coupon code
 | `locationId?` | `string` |  |
 | `assetAccountId?` | `string` |  |
 | `accumulatedDepreciationAccountId?` | `string` |  |
+| `acquisitionOffsetAccountId?` | `string` |  |
+| `disposalGainLossAccountId?` | `string` |  |
 | `depreciationExpenseAccountId?` | `string` |  |
 | `currency?` | `string` | Currency code, e.g. "USD" |
 
@@ -7262,6 +7707,8 @@ A line to inspect.
 
 | Field | Type | Description |
 |---|---|---|
+| `currency?` | `string` |  |
+| `dueDate?` | `string` |  |
 | `customerId` | `string` |  |
 | `orderId?` | `string` |  |
 | `items` | `Array<CreateInvoiceItemInput>` | Types: [`CreateInvoiceItemInput`](#createinvoiceiteminput) |
@@ -7274,10 +7721,31 @@ A line to inspect.
 | Field | Type | Description |
 |---|---|---|
 | `description` | `string` |  |
-| `quantity` | `number` |  |
-| `unitPrice?` | `number` | Float unit price. Optional: send `unit_price_exact` instead for exact money. |
+| `quantity` | `string` |  |
+| `unitPrice?` | `string` | Exact decimal unit price; `unit_price_exact` remains an alias. |
 | `unitPriceExact?` | `string` | Exact base-10 unit price. Takes precedence over `unit_price` when present. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `sku?` | `string` |  |
+
+### CreateJournalEntryInput
+
+| Field | Type | Description |
+|---|---|---|
+| `entryDate` | `string` |  |
+| `entryType?` | `string` |  |
+| `description` | `string` |  |
+| `lines` | `Array<CreateJournalEntryLineInput>` | Types: [`CreateJournalEntryLineInput`](#createjournalentrylineinput) |
+| `autoPost?` | `boolean` |  |
+| `currency?` | `string` |  |
+| `exchangeRate?` | `string` |  |
+
+### CreateJournalEntryLineInput
+
+| Field | Type | Description |
+|---|---|---|
+| `accountId` | `string` |  |
+| `description?` | `string` |  |
+| `debitAmount?` | `string` |  |
+| `creditAmount?` | `string` |  |
 
 ### CreateJurisdictionInput
 
@@ -7316,6 +7784,7 @@ A line to inspect.
 | `productionDate?` | `string` |  |
 | `expirationDate?` | `string` |  |
 | `supplierLotNumber?` | `string` |  |
+| `initialLocationId?` | `number` | Warehouse receiving the initial stock into its unassigned location. |
 
 ### CreateLoyaltyProgramInput
 
@@ -7574,6 +8043,20 @@ Input for creating a promotion
 | `unitCost?` | `number` | Legacy float input. Prefer `unitCostExact` for money. |
 | `unitCostExact?` | `string` | Exact base-10 unit cost; takes precedence over `unitCost`. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 
+### CreatePutAwayInput
+
+| Field | Type | Description |
+|---|---|---|
+| `receiptId` | `string` |  |
+| `receiptItemId` | `string` |  |
+| `sku` | `string` |  |
+| `fromLocationId?` | `number` |  |
+| `toLocationId` | `number` |  |
+| `quantity` | `string` |  |
+| `lotId?` | `string` |  |
+| `assignedTo?` | `string` |  |
+| `notes?` | `string` |  |
+
 ### CreateQualityHoldInput
 
 | Field | Type | Description |
@@ -7593,23 +8076,24 @@ Input for creating a promotion
 | `receiptType` | `ReceiptTypeInput` | Types: [`ReceiptTypeInput`](#receipttypeinput) |
 | `warehouseId` | `number` |  |
 | `purchaseOrderId?` | `string` |  |
+| `supplierId?` | `string` |  |
 | `carrier?` | `string` |  |
 | `trackingNumber?` | `string` |  |
 | `items?` | `Array<CreateReceiptItemInput>` | Expected lines. Optional: omitted (or empty) creates a receipt with no lines, as before. Types: [`CreateReceiptItemInput`](#createreceiptiteminput) |
 
 ### CreateReceiptItemInput
 
-An expected receipt line. Money follows the binding convention: send the
-`...Exact` base-10 string (preferred) or the float.
+An expected receipt line. Money follows the binding convention: send a decimal string
+through the canonical field or its `...Exact` alias.
 
 | Field | Type | Description |
 |---|---|---|
 | `sku` | `string` |  |
 | `description?` | `string` |  |
 | `poLineId?` | `string` |  |
-| `expectedQuantity?` | `number` | Float quantity. Optional: send `expected_quantity_exact` instead. |
+| `expectedQuantity?` | `string` | Decimal string quantity. Optional: send `expected_quantity_exact` instead. |
 | `expectedQuantityExact?` | `string` | Exact base-10 quantity. Takes precedence over `expected_quantity`. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `unitCost?` | `number` | Float unit cost. Optional: send `unit_cost_exact` instead for exact money. |
+| `unitCost?` | `string` | Decimal string unit cost. Optional: send `unit_cost_exact` instead for exact money. |
 | `unitCostExact?` | `string` | Exact base-10 unit cost. Takes precedence over `unit_cost` when present. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `lotNumber?` | `string` |  |
 | `expirationDate?` | `string` | RFC 3339 timestamp. |
@@ -7837,6 +8321,8 @@ Exact-money refund input for agent and financial integrations.
 
 | Field | Type | Description |
 |---|---|---|
+| `sourceLocationId` | `number` |  |
+| `destinationLocationId` | `number` |  |
 | `sourceWarehouseId` | `string` |  |
 | `destinationWarehouseId` | `string` |  |
 | `items` | `Array<CreateTransferOrderItemInput>` | Types: [`CreateTransferOrderItemInput`](#createtransferorderiteminput) |
@@ -7847,6 +8333,8 @@ Exact-money refund input for agent and financial integrations.
 
 | Field | Type | Description |
 |---|---|---|
+| `sku` | `string` |  |
+| `lotId?` | `string` |  |
 | `productId` | `string` |  |
 | `quantity` | `string` | Exact decimal string |
 
@@ -7891,6 +8379,7 @@ Exact-money refund input for agent and financial integrations.
 | Field | Type | Description |
 |---|---|---|
 | `supplierId` | `string` |  |
+| `warehouseId` | `number` |  |
 | `purchaseOrderId?` | `string` |  |
 | `currency?` | `string` |  |
 | `items` | `Array<CreateVendorReturnItemInput>` | Types: [`CreateVendorReturnItemInput`](#createvendorreturniteminput) |
@@ -7901,6 +8390,9 @@ Exact-money refund input for agent and financial integrations.
 | Field | Type | Description |
 |---|---|---|
 | `productId` | `string` |  |
+| `sku` | `string` |  |
+| `sourceLocationId` | `number` |  |
+| `lotId?` | `string` |  |
 | `quantity` | `string` | Exact decimal string |
 | `unitCost` | `string` | Exact decimal string |
 | `reason?` | `VendorReturnReason` | Snake-case reason: `defective`, `overage`, `wrong_item`, `other` Types: [`VendorReturnReason`](#vendorreturnreason) |
@@ -7964,10 +8456,21 @@ Exact-money refund input for agent and financial integrations.
 
 | Field | Type | Description |
 |---|---|---|
+| `stock?` | `WorkOrderStockInput` | Types: [`WorkOrderStockInput`](#workorderstockinput) |
+| `quantityToBuildExact?` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `productId` | `string` |  |
 | `bomId?` | `string` |  |
-| `quantityToBuild` | `number` |  |
+| `quantityToBuild?` | `number` |  |
 | `priority?` | `WorkOrderPriority` | Anything other than a recognised priority uses the engine default (`normal`). Types: [`WorkOrderPriority`](#workorderpriority) |
+| `notes?` | `string` |  |
+
+### CreateWriteOffInput
+
+| Field | Type | Description |
+|---|---|---|
+| `invoiceId` | `string` |  |
+| `amount` | `string` |  |
+| `reason` | `string` |  |
 | `notes?` | `string` |  |
 
 ### CreateZoneShippingMethodInput
@@ -8002,11 +8505,11 @@ Optional filters for `Credit.listCreditAccounts`. No argument lists all.
 |---|---|---|
 | `id` | `string` |  |
 | `customerId` | `string` |  |
-| `creditLimit` | `number` | **Deprecated.** Use the `creditLimitExact` twin; float money will be removed in 2.0. |
+| `creditLimit` | `string` | Exact decimal string. |
 | `creditLimitExact` | `string` | Exact base-10 credit limit, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `creditUsed` | `number` | **Deprecated.** Use the `creditUsedExact` twin; float money will be removed in 2.0. |
+| `creditUsed` | `string` | Exact decimal string. |
 | `creditUsedExact` | `string` | Exact base-10 credit used, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `creditAvailable` | `number` | **Deprecated.** Use the `creditAvailableExact` twin; float money will be removed in 2.0. |
+| `creditAvailable` | `string` | Exact decimal string. |
 | `creditAvailableExact` | `string` | Exact base-10 credit available, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `status` | `CreditAccountStatus` | Types: [`CreditAccountStatus`](#creditaccountstatus) |
 | `paymentTerms?` | `string` |  |
@@ -8037,7 +8540,7 @@ Types: [`CreditAccountStatus`](#creditaccountstatus)
 |---|---|---|
 | `approved` | `boolean` |  |
 | `reason?` | `string` |  |
-| `availableCredit` | `number` | **Deprecated.** Use the `availableCreditExact` twin; float money will be removed in 2.0. |
+| `availableCredit` | `string` | Exact decimal string. |
 | `availableCreditExact` | `string` | Exact base-10 available credit, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `requiresApproval` | `boolean` |  |
 
@@ -8063,7 +8566,7 @@ Optional filters for `AccountsReceivable.listCreditMemos`. No argument lists all
 | `id` | `string` |  |
 | `creditMemoNumber` | `string` |  |
 | `customerId` | `string` |  |
-| `amount` | `number` | **Deprecated.** Use the `amountExact` twin; float money will be removed in 2.0. |
+| `amount` | `string` | Exact decimal string. |
 | `amountExact` | `string` | Exact base-10 amount, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `status` | `CreditMemoStatus` | Types: [`CreditMemoStatus`](#creditmemostatus) |
 | `reason` | `CreditMemoReason` | Types: [`CreditMemoReason`](#creditmemoreason) |
@@ -8315,7 +8818,7 @@ One of: `'active'`, `'inactive'`, `'suspended'`, `'deleted'`.
 | `lotId?` | `string` |  |
 | `expectedQuantity` | `string` | Exact decimal string |
 | `countedQuantity?` | `string` | Exact decimal string |
-| `variance?` | `string` | Exact decimal string: counted_quantity - expected_quantity |
+| `variance?` | `string` | Exact decimal string: provisional snapshot variance, or actual stock adjustment after completion |
 
 ### CycleCountOutput
 
@@ -8720,6 +9223,8 @@ One of: `'land'`, `'building'`, `'machinery'`, `'equipment'`, `'vehicle'`, `'fur
 | `locationId?` | `string` |  |
 | `assetAccountId?` | `string` |  |
 | `accumulatedDepreciationAccountId?` | `string` |  |
+| `acquisitionOffsetAccountId?` | `string` |  |
+| `disposalGainLossAccountId?` | `string` |  |
 | `depreciationExpenseAccountId?` | `string` |  |
 | `accumulatedDepreciation` | `string` | Exact decimal string |
 | `bookValue` | `string` | Exact decimal string: acquisition_cost - accumulated_depreciation |
@@ -8939,10 +9444,13 @@ Optional filters for `GeneralLedger.listAccounts`. No argument lists all.
 | `accountNumber` | `string` |  |
 | `name` | `string` |  |
 | `accountType` | `GlAccountType` | Types: [`GlAccountType`](#glaccounttype) |
-| `balance` | `number` | **Deprecated.** Use the `balanceExact` twin; float money will be removed in 2.0. |
+| `balance` | `string` | Exact decimal string. |
 | `balanceExact` | `string` | Exact base-10 balance, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `status` | `GlAccountStatus` | Types: [`GlAccountStatus`](#glaccountstatus) |
 | `description?` | `string` |  |
+| `isHeader` | `boolean` |  |
+| `isPosting` | `boolean` |  |
+| `currency` | `string` |  |
 
 ### GlAccountStatus
 
@@ -9219,11 +9727,11 @@ One of: `'pending'`, `'in_transit'`, `'arrived'`, `'partially_received'`, `'rece
 |---|---|---|
 | `periodStart` | `string` |  |
 | `periodEnd` | `string` |  |
-| `totalRevenue` | `number` | **Deprecated.** Use the `totalRevenueExact` twin; float money will be removed in 2.0. |
+| `totalRevenue` | `string` | Exact decimal string. |
 | `totalRevenueExact` | `string` | Exact base-10 total revenue, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `totalExpenses` | `number` | **Deprecated.** Use the `totalExpensesExact` twin; float money will be removed in 2.0. |
+| `totalExpenses` | `string` | Exact decimal string. |
 | `totalExpensesExact` | `string` | Exact base-10 total expenses, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `netIncome` | `number` | **Deprecated.** Use the `netIncomeExact` twin; float money will be removed in 2.0. |
+| `netIncome` | `string` | Exact decimal string. |
 | `netIncomeExact` | `string` | Exact base-10 net income, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 
 ### IngestLineItemInput
@@ -9399,6 +9907,35 @@ One of: `'incoming'`, `'receiving'`, `'in_process'`, `'inprocess'`, `'final'`, `
 | `unitOfMeasure` | `string` |  |
 | `isActive` | `boolean` |  |
 
+### InventoryListFilter
+
+Filter for `Inventory.list`. Every field is optional.
+
+| Field | Type | Description |
+|---|---|---|
+| `sku?` | `string` | Lists SKUs containing this text (ASCII case-insensitive). |
+| `isActive?` | `boolean` | `true` lists only active items, `false` only inactive ones; omit for both. |
+| `lowStock?` | `boolean` | `true` lists only items below their reorder threshold (reorder point plus safety stock) at some location, the rule the engine's reorder report applies; `false` lists only items that are not. |
+| `limit?` | `number` | Page size: default 100, capped at 1000. |
+| `offset?` | `number` | Items to skip, in SKU order. |
+
+### InventoryListItemOutput
+
+One inventory item with its stock summed over every location.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `number` |  |
+| `sku` | `string` |  |
+| `name` | `string` |  |
+| `description?` | `string` |  |
+| `unitOfMeasure` | `string` |  |
+| `isActive` | `boolean` |  |
+| `onHand` | `string` | Exact decimal string summed over locations (`"0"` with no balance). |
+| `allocated` | `string` | Exact decimal string: reserved or held units. |
+| `available` | `string` | Exact decimal string: on hand minus allocated. |
+| `lowStock` | `boolean` | Below its reorder threshold at some location. |
+
 ### InventoryMovementOutput
 
 | Field | Type | Description |
@@ -9444,18 +9981,20 @@ Filter for `invoices.list()`
 
 | Field | Type | Description |
 |---|---|---|
+| `currency` | `string` |  |
+| `balanceDue` | `string` |  |
 | `id` | `string` |  |
 | `invoiceNumber` | `string` |  |
 | `customerId` | `string` |  |
 | `orderId?` | `string` |  |
 | `status` | `InvoiceStatus` | Types: [`InvoiceStatus`](#invoicestatus) |
-| `subtotal` | `number` | **Deprecated.** Use the `subtotalExact` twin; float money will be removed in 2.0. |
+| `subtotal` | `string` | Exact decimal string. |
 | `subtotalExact` | `string` | Exact base-10 subtotal, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `taxAmount` | `number` | **Deprecated.** Use the `taxAmountExact` twin; float money will be removed in 2.0. |
+| `taxAmount` | `string` | Exact decimal string. |
 | `taxAmountExact` | `string` | Exact base-10 tax amount, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `total` | `number` | **Deprecated.** Use the `totalExact` twin; float money will be removed in 2.0. |
+| `total` | `string` | Exact decimal string. |
 | `totalExact` | `string` | Exact base-10 total, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `amountPaid` | `number` | **Deprecated.** Use the `amountPaidExact` twin; float money will be removed in 2.0. |
+| `amountPaid` | `string` | Exact decimal string. |
 | `amountPaidExact` | `string` | Exact base-10 amount paid, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `dueDate` | `string` |  |
 | `createdAt` | `string` |  |
@@ -9489,17 +10028,17 @@ Optional filters for `CostAccounting.listItemCosts`. No argument lists all.
 | `id` | `string` |  |
 | `sku` | `string` |  |
 | `costMethod` | `CostMethod` | Types: [`CostMethod`](#costmethod) |
-| `standardCost` | `number` | **Deprecated.** Use the `standardCostExact` twin; float money will be removed in 2.0. |
+| `standardCost` | `string` | Exact decimal string. |
 | `standardCostExact` | `string` | Exact base-10 standard cost, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `averageCost` | `number` | **Deprecated.** Use the `averageCostExact` twin; float money will be removed in 2.0. |
+| `averageCost` | `string` | Exact decimal string. |
 | `averageCostExact` | `string` | Exact base-10 average cost, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `lastCost` | `number` | **Deprecated.** Use the `lastCostExact` twin; float money will be removed in 2.0. |
+| `lastCost` | `string` | Exact decimal string. |
 | `lastCostExact` | `string` | Exact base-10 last cost, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `materialCost` | `number` | **Deprecated.** Use the `materialCostExact` twin; float money will be removed in 2.0. |
+| `materialCost` | `string` | Exact decimal string. |
 | `materialCostExact` | `string` | Exact base-10 material cost, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `laborCost` | `number` | **Deprecated.** Use the `laborCostExact` twin; float money will be removed in 2.0. |
+| `laborCost` | `string` | Exact decimal string. |
 | `laborCostExact` | `string` | Exact base-10 labor cost, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `overheadCost` | `number` | **Deprecated.** Use the `overheadCostExact` twin; float money will be removed in 2.0. |
+| `overheadCost` | `string` | Exact decimal string. |
 | `overheadCostExact` | `string` | Exact base-10 overhead cost, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 
 ### JournalEntryFilterInput
@@ -9519,16 +10058,34 @@ Optional filters for `GeneralLedger.listJournalEntries`. No argument lists all.
 | `limit?` | `number` |  |
 | `offset?` | `number` |  |
 
+### JournalEntryLineOutput
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `accountId` | `string` |  |
+| `debitAmount` | `string` |  |
+| `creditAmount` | `string` |  |
+| `currency` | `string` |  |
+| `transactionCurrency?` | `string` |  |
+| `transactionDebitAmount?` | `string` |  |
+| `transactionCreditAmount?` | `string` |  |
+| `exchangeRate?` | `string` |  |
+
 ### JournalEntryOutput
 
 | Field | Type | Description |
 |---|---|---|
+| `postedBy?` | `string` |  |
 | `id` | `string` |  |
 | `entryNumber` | `string` |  |
 | `entryDate` | `string` |  |
 | `description` | `string` |  |
 | `status` | `GlJournalEntryStatus` | Types: [`GlJournalEntryStatus`](#gljournalentrystatus) |
 | `createdAt` | `string` |  |
+| `lines` | `Array<JournalEntryLineOutput>` | Types: [`JournalEntryLineOutput`](#journalentrylineoutput) |
+| `totalDebits` | `string` |  |
+| `totalCredits` | `string` |  |
 
 ### JurisdictionFilterInput
 
@@ -9605,10 +10162,10 @@ A governed command: the envelope discriminated by `command_type`, each
 variant carrying its own payload shape.
 
 ```ts
-type KernelCommand = KernelCommandEnvelope<'inventory.item.create', KernelCreateInventoryItemPayload> | KernelCommandEnvelope<'products.create', KernelCreateProductPayload> | KernelCommandEnvelope<'payments.create', KernelCreatePaymentPayload> | KernelCommandEnvelope<'payments.create_refund', KernelCreateRefundPayload> | KernelCommandEnvelope<'inventory.reserve', KernelReserveInventoryPayload> | KernelCommandEnvelope<'inventory.reservation.confirm', KernelConfirmInventoryReservationPayload> | KernelCommandEnvelope<'inventory.reservation.release', KernelReleaseInventoryReservationPayload> | KernelCommandEnvelope<'orders.transition', KernelTransitionOrderPayload> | KernelCommandEnvelope<'orders.ship', KernelShipOrderPayload> | KernelCommandEnvelope<'returns.transition', KernelTransitionReturnPayload> | KernelCommandEnvelope<'ledger.post', KernelPostJournalEntryPayload> | KernelCommandEnvelope<'x402.settle', KernelSettleX402IntentPayload> | KernelCommandEnvelope<'checkout.commit', KernelCommitCheckoutPayload> | KernelCommandEnvelope<'subscriptions.charge', KernelChargeSubscriptionPayload> | KernelCommandEnvelope<'a2a.escrow.create', KernelCreateA2AEscrowPayload> | KernelCommandEnvelope<'a2a.escrow.dispute', KernelDisputeA2AEscrowPayload> | KernelCommandEnvelope<'a2a.escrow.fund', KernelA2AEscrowRefPayload> | KernelCommandEnvelope<'a2a.escrow.release', KernelA2AEscrowRefPayload> | KernelCommandEnvelope<'a2a.escrow.refund', KernelRefundA2AEscrowPayload> | KernelCommandEnvelope<'a2a.dispute.file', KernelFileA2ADisputePayload> | KernelCommandEnvelope<'a2a.dispute.evidence.submit', KernelSubmitA2ADisputeEvidencePayload> | KernelCommandEnvelope<'a2a.dispute.resolve', KernelResolveA2ADisputePayload>
+type KernelCommand = KernelCommandEnvelope<'inventory.item.create', KernelCreateInventoryItemPayload> | KernelCommandEnvelope<'products.create', KernelCreateProductPayload> | KernelCommandEnvelope<'payments.create', KernelCreatePaymentPayload> | KernelCommandEnvelope<'payments.create_refund', KernelCreateRefundPayload> | KernelCommandEnvelope<'inventory.reserve', KernelReserveInventoryPayload> | KernelCommandEnvelope<'inventory.reservation.confirm', KernelConfirmInventoryReservationPayload> | KernelCommandEnvelope<'inventory.reservation.release', KernelReleaseInventoryReservationPayload> | KernelCommandEnvelope<'orders.transition', KernelTransitionOrderPayload> | KernelCommandEnvelope<'orders.ship', KernelShipOrderPayload> | KernelCommandEnvelope<'returns.transition', KernelTransitionReturnPayload> | KernelCommandEnvelope<'returns.item.disposition.set', KernelSetReturnItemDispositionPayload> | KernelCommandEnvelope<'ledger.post', KernelPostJournalEntryPayload> | KernelCommandEnvelope<'x402.settle', KernelSettleX402IntentPayload> | KernelCommandEnvelope<'checkout.commit', KernelCommitCheckoutPayload> | KernelCommandEnvelope<'subscriptions.charge', KernelChargeSubscriptionPayload> | KernelCommandEnvelope<'a2a.escrow.create', KernelCreateA2AEscrowPayload> | KernelCommandEnvelope<'a2a.escrow.dispute', KernelDisputeA2AEscrowPayload> | KernelCommandEnvelope<'a2a.escrow.fund', KernelA2AEscrowRefPayload> | KernelCommandEnvelope<'a2a.escrow.release', KernelA2AEscrowRefPayload> | KernelCommandEnvelope<'a2a.escrow.refund', KernelRefundA2AEscrowPayload> | KernelCommandEnvelope<'a2a.dispute.file', KernelFileA2ADisputePayload> | KernelCommandEnvelope<'a2a.dispute.evidence.submit', KernelSubmitA2ADisputeEvidencePayload> | KernelCommandEnvelope<'a2a.dispute.resolve', KernelResolveA2ADisputePayload>
 ```
 
-Types: [`KernelCommandEnvelope`](#kernelcommandenvelope), [`KernelCreateInventoryItemPayload`](#kernelcreateinventoryitempayload), [`KernelCreateProductPayload`](#kernelcreateproductpayload), [`KernelCreatePaymentPayload`](#kernelcreatepaymentpayload), [`KernelCreateRefundPayload`](#kernelcreaterefundpayload), [`KernelReserveInventoryPayload`](#kernelreserveinventorypayload), [`KernelConfirmInventoryReservationPayload`](#kernelconfirminventoryreservationpayload), [`KernelReleaseInventoryReservationPayload`](#kernelreleaseinventoryreservationpayload), [`KernelTransitionOrderPayload`](#kerneltransitionorderpayload), [`KernelShipOrderPayload`](#kernelshiporderpayload), [`KernelTransitionReturnPayload`](#kerneltransitionreturnpayload), [`KernelPostJournalEntryPayload`](#kernelpostjournalentrypayload), [`KernelSettleX402IntentPayload`](#kernelsettlex402intentpayload), [`KernelCommitCheckoutPayload`](#kernelcommitcheckoutpayload), [`KernelChargeSubscriptionPayload`](#kernelchargesubscriptionpayload), [`KernelCreateA2AEscrowPayload`](#kernelcreatea2aescrowpayload), [`KernelDisputeA2AEscrowPayload`](#kerneldisputea2aescrowpayload), [`KernelA2AEscrowRefPayload`](#kernela2aescrowrefpayload), [`KernelRefundA2AEscrowPayload`](#kernelrefunda2aescrowpayload), [`KernelFileA2ADisputePayload`](#kernelfilea2adisputepayload), [`KernelSubmitA2ADisputeEvidencePayload`](#kernelsubmita2adisputeevidencepayload), [`KernelResolveA2ADisputePayload`](#kernelresolvea2adisputepayload)
+Types: [`KernelCommandEnvelope`](#kernelcommandenvelope), [`KernelCreateInventoryItemPayload`](#kernelcreateinventoryitempayload), [`KernelCreateProductPayload`](#kernelcreateproductpayload), [`KernelCreatePaymentPayload`](#kernelcreatepaymentpayload), [`KernelCreateRefundPayload`](#kernelcreaterefundpayload), [`KernelReserveInventoryPayload`](#kernelreserveinventorypayload), [`KernelConfirmInventoryReservationPayload`](#kernelconfirminventoryreservationpayload), [`KernelReleaseInventoryReservationPayload`](#kernelreleaseinventoryreservationpayload), [`KernelTransitionOrderPayload`](#kerneltransitionorderpayload), [`KernelShipOrderPayload`](#kernelshiporderpayload), [`KernelTransitionReturnPayload`](#kerneltransitionreturnpayload), [`KernelSetReturnItemDispositionPayload`](#kernelsetreturnitemdispositionpayload), [`KernelPostJournalEntryPayload`](#kernelpostjournalentrypayload), [`KernelSettleX402IntentPayload`](#kernelsettlex402intentpayload), [`KernelCommitCheckoutPayload`](#kernelcommitcheckoutpayload), [`KernelChargeSubscriptionPayload`](#kernelchargesubscriptionpayload), [`KernelCreateA2AEscrowPayload`](#kernelcreatea2aescrowpayload), [`KernelDisputeA2AEscrowPayload`](#kerneldisputea2aescrowpayload), [`KernelA2AEscrowRefPayload`](#kernela2aescrowrefpayload), [`KernelRefundA2AEscrowPayload`](#kernelrefunda2aescrowpayload), [`KernelFileA2ADisputePayload`](#kernelfilea2adisputepayload), [`KernelSubmitA2ADisputeEvidencePayload`](#kernelsubmita2adisputeevidencepayload), [`KernelResolveA2ADisputePayload`](#kernelresolvea2adisputepayload)
 
 ### KernelCommandEnvelope
 
@@ -10044,6 +10601,20 @@ type KernelRetryDisposition = 'never' | 'same_key' | 'after_conflict' | 'after_d
 ```
 
 One of: `'never'`, `'same_key'`, `'after_conflict'`, `'after_delay'`.
+
+### KernelSetReturnItemDispositionPayload
+
+`returns.item.disposition.set` (`SetReturnItemDisposition`). The return
+must be `received` or `inspecting`; `disposition_by` is the command's
+principal. An unknown disposition is a sealed
+`commerce.return_disposition_invalid` rejection.
+
+| Field | Type | Description |
+|---|---|---|
+| `return_id` | `string` |  |
+| `return_item_id` | `string` |  |
+| `disposition` | `ReturnDisposition` | Types: [`ReturnDisposition`](#returndisposition) |
+| `note?` | `string \| null` | Recorded on the `returns.item_dispositioned.v1` fact; at most 1000 characters. |
 
 ### KernelSettleX402IntentPayload
 
@@ -10829,6 +11400,8 @@ Domains that structured export/import can cover.
 | `supplierId` | `string` |  |
 | `amount` | `string` | Exact decimal string |
 | `remaining` | `string` | Exact decimal string |
+| `refundedAmount` | `string` |  |
+| `refundedAt?` | `string` |  |
 | `currency` | `string` |  |
 | `status` | `PrepaymentStatus` | open, applied, refunded, cancelled Types: [`PrepaymentStatus`](#prepaymentstatus) |
 | `method?` | `string` |  |
@@ -11451,6 +12024,36 @@ One of: `'draft'`, `'pending_approval'`, `'approved'`, `'sent'`, `'acknowledged'
 | `createdAt` | `string` |  |
 | `updatedAt` | `string` |  |
 
+### PutAwayFilterInput
+
+| Field | Type | Description |
+|---|---|---|
+| `receiptId?` | `string` |  |
+| `warehouseId?` | `number` |  |
+| `status?` | `string` |  |
+| `assignedTo?` | `string` |  |
+| `limit?` | `number` |  |
+| `offset?` | `number` |  |
+
+### PutAwayOutput
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `receiptId` | `string` |  |
+| `receiptItemId` | `string` |  |
+| `sku` | `string` |  |
+| `fromLocationId?` | `number` |  |
+| `toLocationId` | `number` |  |
+| `quantity` | `string` |  |
+| `lotId?` | `string` |  |
+| `status` | `string` |  |
+| `assignedTo?` | `string` |  |
+| `startedAt?` | `string` |  |
+| `completedAt?` | `string` |  |
+| `notes?` | `string` |  |
+| `createdAt` | `string` |  |
+
 ### QualityHoldFilterInput
 
 Optional filters for `Quality.listHolds`. No argument lists every hold.
@@ -11549,7 +12152,7 @@ A receipt line as stored. Quantities are exact base-10 strings.
 | `expectedQuantityExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `receivedQuantityExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `rejectedQuantityExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `unitCost?` | `number` | **Deprecated.** Use the `unitCostExact` twin; float money will be removed in 2.0. |
+| `unitCost?` | `string` | Exact decimal unit cost. |
 | `unitCostExact?` | `string` | Exact base-10 unit cost, when set. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `lotNumber?` | `string` |  |
 | `expirationDate?` | `string` |  |
@@ -11620,6 +12223,28 @@ type ReceiptTypeInput = 'purchase_order' | 'purchaseorder' | 'po' | 'return' | '
 
 One of: `'purchase_order'`, `'purchaseorder'`, `'po'`, `'return'`, `'customer_return'`, `'transfer'`, `'adjustment'`.
 
+### ReceiveItemLineInput
+
+| Field | Type | Description |
+|---|---|---|
+| `receiptItemId` | `string` |  |
+| `quantityReceived` | `string` |  |
+| `quantityRejected?` | `string` |  |
+| `rejectionReason?` | `string` |  |
+| `lotNumber?` | `string` |  |
+| `serialNumbers?` | `Array<string>` |  |
+| `expirationDate?` | `string` |  |
+| `notes?` | `string` |  |
+
+### ReceiveItemsInput
+
+| Field | Type | Description |
+|---|---|---|
+| `receiptId` | `string` |  |
+| `receivingLocationId` | `number` |  |
+| `receivedBy?` | `string` |  |
+| `items` | `Array<ReceiveItemLineInput>` | Types: [`ReceiveItemLineInput`](#receiveitemlineinput) |
+
 ### ReceivePurchaseOrderItemInput
 
 | Field | Type | Description |
@@ -11671,8 +12296,9 @@ Types: [`RecognitionMethod`](#recognitionmethod)
 
 | Field | Type | Description |
 |---|---|---|
-| `amount?` | `number` | Float amount. Optional: send `amount_exact` instead for exact money. |
+| `amount?` | `string` | Exact decimal amount; `amount_exact` remains an alias. |
 | `amountExact?` | `string` | Exact base-10 amount. Takes precedence over `amount` when present. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `paymentId?` | `string` | Stable nonzero UUID for retry-safe recording of this invoice payment. |
 | `paymentMethod?` | `string` |  |
 | `reference?` | `string` |  |
 
@@ -11757,6 +12383,16 @@ Result of a database restore.
 | `checksumVerified` | `boolean` |  |
 | `replacedExisting` | `boolean` |  |
 
+### ReturnDisposition
+
+What the warehouse did with a received return item (`ReturnItemOutput.disposition`, `SetReturnItemDispositionInput.disposition`).
+
+```ts
+type ReturnDisposition = 'restock' | 'refurbish' | 'scrap' | 'return_to_vendor' | 'quarantine'
+```
+
+One of: `'restock'`, `'refurbish'`, `'scrap'`, `'return_to_vendor'`, `'quarantine'`.
+
 ### ReturnFilterInput
 
 Filter for `returns.list()`
@@ -11772,6 +12408,26 @@ Filter for `returns.list()`
 | `limit?` | `number` | Page size |
 | `offset?` | `number` |  |
 | `afterCursor?` | `Array<string>` | Keyset cursor: `[createdAt, id]` |
+
+### ReturnItemOutput
+
+One line of a return. `id` is what `setItemDisposition` addresses.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `returnId` | `string` |  |
+| `orderItemId` | `string` |  |
+| `sku` | `string` |  |
+| `name` | `string` |  |
+| `quantity` | `number` |  |
+| `condition` | `string` |  |
+| `refundAmount` | `string` | Exact decimal string. |
+| `disposition?` | `ReturnDisposition \| null` | Absent until the received item is dispositioned. Types: [`ReturnDisposition`](#returndisposition) |
+| `dispositionAt?` | `string` |  |
+| `dispositionBy?` | `string` |  |
+| `lotId?` | `string` |  |
+| `serialIds` | `Array<string>` |  |
 
 ### ReturnMetricsOutput
 
@@ -11793,6 +12449,7 @@ Filter for `returns.list()`
 | `version` | `number` |  |
 | `createdAt` | `string` |  |
 | `idempotencyKey?` | `string` |  |
+| `items` | `Array<ReturnItemOutput>` | The return's lines, with their dispositions. Types: [`ReturnItemOutput`](#returnitemoutput) |
 
 ### ReturnReason
 
@@ -12240,10 +12897,23 @@ Types: [`SerialStatus`](#serialstatus)
 |---|---|---|
 | `sku` | `string` |  |
 | `costMethod?` | `CostMethodInput` | Types: [`CostMethodInput`](#costmethodinput) |
-| `standardCost?` | `number` |  |
-| `materialCost?` | `number` |  |
-| `laborCost?` | `number` |  |
-| `overheadCost?` | `number` |  |
+| `standardCost?` | `string` |  |
+| `materialCost?` | `string` |  |
+| `laborCost?` | `string` |  |
+| `overheadCost?` | `string` |  |
+
+### SetReturnItemDispositionInput
+
+What the warehouse did with a received return item (`setItemDisposition`).
+
+| Field | Type | Description |
+|---|---|---|
+| `disposition` | `ReturnDisposition` | An unrecognised disposition is refused with `VALIDATION`. Types: [`ReturnDisposition`](#returndisposition) |
+| `warehouseId?` | `number` | Warehouse receiving `restock` / `quarantine` stock (default 1). |
+| `binId?` | `number` | Explicit target bin; defaults to the warehouse's returns or quarantine bin. |
+| `dispositionBy?` | `string` |  |
+| `lotId?` | `string` | Lot the units belong to (UUID); restored on `restock` / `quarantine`. |
+| `serialIds?` | `Array<string>` | Serials physically received (UUIDs); the count must equal the item quantity. |
 
 ### ShipmentFilterInput
 
@@ -12467,7 +13137,7 @@ One of: `'allow_backorder'`, `'allow-backorder'`, `'reject_if_insufficient'`, `'
 |---|---|---|
 | `id` | `string` |  |
 | `stockSnapshotId` | `string` |  |
-| `productId` | `string` |  |
+| `productId?` | `string` |  |
 | `sku` | `string` |  |
 | `quantityOnHand` | `string` | Exact decimal string |
 | `quantityAvailable` | `string` | Exact decimal string |
@@ -13165,6 +13835,8 @@ One of: `'not_required'`, `'pending'`, `'matched'`, `'variance'`, `'unknown'`.
 
 | Field | Type | Description |
 |---|---|---|
+| `lotId?` | `string` |  |
+| `quantityVariance` | `string` |  |
 | `id` | `string` |  |
 | `transferOrderId` | `string` |  |
 | `productId` | `string` |  |
@@ -13177,6 +13849,8 @@ One of: `'not_required'`, `'pending'`, `'matched'`, `'variance'`, `'unknown'`.
 
 | Field | Type | Description |
 |---|---|---|
+| `sourceLocationId?` | `number` |  |
+| `destinationLocationId?` | `number` |  |
 | `id` | `string` |  |
 | `number` | `string` |  |
 | `sourceWarehouseId` | `string` |  |
@@ -13205,9 +13879,9 @@ One of: `'draft'`, `'pending'`, `'in_transit'`, `'partially_received'`, `'receiv
 | Field | Type | Description |
 |---|---|---|
 | `asOfDate` | `string` |  |
-| `totalDebits` | `number` | **Deprecated.** Use the `totalDebitsExact` twin; float money will be removed in 2.0. |
+| `totalDebits` | `string` | Exact decimal string. |
 | `totalDebitsExact` | `string` | Exact base-10 total debits, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
-| `totalCredits` | `number` | **Deprecated.** Use the `totalCreditsExact` twin; float money will be removed in 2.0. |
+| `totalCredits` | `string` | Exact decimal string. |
 | `totalCreditsExact` | `string` | Exact base-10 total credits, straight from the engine's `Decimal`. Prefer this field for money. _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `isBalanced` | `boolean` |  |
 
@@ -13389,6 +14063,8 @@ Filter for `listRules()`; omit for every rule.
 | `locationId?` | `string` |  |
 | `assetAccountId?` | `string` |  |
 | `accumulatedDepreciationAccountId?` | `string` |  |
+| `acquisitionOffsetAccountId?` | `string` |  |
+| `disposalGainLossAccountId?` | `string` |  |
 | `depreciationExpenseAccountId?` | `string` |  |
 
 ### UpdateFraudRuleInput
@@ -13743,6 +14419,8 @@ One of: `'bill'`, `'payment_obligation'`.
 | `vendorReturnId` | `string` |  |
 | `productId` | `string` |  |
 | `sku` | `string` |  |
+| `sourceLocationId?` | `number` |  |
+| `lotId?` | `string` |  |
 | `quantity` | `string` | Exact decimal string |
 | `unitCost` | `string` | Exact decimal string |
 | `lineTotal` | `string` | Exact decimal string |
@@ -13755,6 +14433,7 @@ One of: `'bill'`, `'payment_obligation'`.
 | `id` | `string` |  |
 | `number` | `string` |  |
 | `supplierId` | `string` |  |
+| `warehouseId?` | `number` |  |
 | `purchaseOrderId?` | `string` |  |
 | `status` | `VendorReturnStatus` | Snake-case status Types: [`VendorReturnStatus`](#vendorreturnstatus) |
 | `currency` | `string` |  |
@@ -14087,6 +14766,9 @@ Filter for `workOrders.list()`
 
 | Field | Type | Description |
 |---|---|---|
+| `stock?` | `WorkOrderStockInput` | Types: [`WorkOrderStockInput`](#workorderstockinput) |
+| `quantityToBuildExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
+| `quantityCompletedExact` | `string` | _Exact money: a base-10 decimal string; prefer it over any float twin._ |
 | `id` | `string` |  |
 | `workOrderNumber` | `string` |  |
 | `productId` | `string` |  |
@@ -14118,6 +14800,14 @@ type WorkOrderStatus = 'planned' | 'in_progress' | 'completed' | 'partially_comp
 ```
 
 One of: `'planned'`, `'in_progress'`, `'completed'`, `'partially_completed'`, `'cancelled'`, `'on_hold'`.
+
+### WorkOrderStockInput
+
+| Field | Type | Description |
+|---|---|---|
+| `sourceLocationId` | `number` |  |
+| `outputLocationId` | `number` |  |
+| `outputSku` | `string` |  |
 
 ### X402A2ASkill
 

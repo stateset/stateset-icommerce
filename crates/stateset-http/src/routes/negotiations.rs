@@ -70,6 +70,21 @@ fn make_room_for_tenant(
     }
 }
 
+/// A copy of the stored negotiation for a transition. The engine consumes
+/// the value it transitions, so handing it the stored one (by removing it)
+/// lost the negotiation whenever the transition was refused; the store is
+/// only written once the transition succeeds.
+fn current_negotiation(
+    store: &HashMap<StoreKey, stateset_a2a::negotiation::Negotiation>,
+    key: &StoreKey,
+    id: Uuid,
+) -> Result<stateset_a2a::negotiation::Negotiation, HttpError> {
+    store
+        .get(key)
+        .cloned()
+        .ok_or_else(|| HttpError::NotFound(format!("Negotiation {id} not found")))
+}
+
 /// Build the negotiations sub-router.
 pub fn router() -> Router<AppState> {
     let store: NegotiationStore = Arc::new(RwLock::new(HashMap::new()));
@@ -246,9 +261,7 @@ pub(crate) async fn counter_offer(
 
     let mut guard = store.write().map_err(|_| HttpError::InternalError("Lock poisoned".into()))?;
     let key = (tenant_id, id);
-    let neg = guard
-        .remove(&key)
-        .ok_or_else(|| HttpError::NotFound(format!("Negotiation {id} not found")))?;
+    let neg = current_negotiation(&guard, &key, id)?;
 
     let neg = NegotiationEngine::counter_offer(neg, req.from_agent_id, req.amount, req.message)
         .map_err(|e| HttpError::BadRequest(format!("Counter-offer failed: {e}")))?;
@@ -273,9 +286,7 @@ pub(crate) async fn accept_negotiation(
     let tenant_id = tenant_id_from_headers(&headers);
     let mut guard = store.write().map_err(|_| HttpError::InternalError("Lock poisoned".into()))?;
     let key = (tenant_id, id);
-    let neg = guard
-        .remove(&key)
-        .ok_or_else(|| HttpError::NotFound(format!("Negotiation {id} not found")))?;
+    let neg = current_negotiation(&guard, &key, id)?;
 
     let neg = NegotiationEngine::accept(neg)
         .map_err(|e| HttpError::BadRequest(format!("Accept failed: {e}")))?;
@@ -300,9 +311,7 @@ pub(crate) async fn reject_negotiation(
     let tenant_id = tenant_id_from_headers(&headers);
     let mut guard = store.write().map_err(|_| HttpError::InternalError("Lock poisoned".into()))?;
     let key = (tenant_id, id);
-    let neg = guard
-        .remove(&key)
-        .ok_or_else(|| HttpError::NotFound(format!("Negotiation {id} not found")))?;
+    let neg = current_negotiation(&guard, &key, id)?;
 
     let neg = NegotiationEngine::reject(neg, None)
         .map_err(|e| HttpError::BadRequest(format!("Reject failed: {e}")))?;
@@ -561,6 +570,38 @@ mod tests {
 
         let json = json_body(resp).await;
         assert_eq!(json["status"], "rejected");
+    }
+
+    /// A refused transition leaves the negotiation in the store exactly as it
+    /// was: the handlers used to remove it before the engine ran and drop it
+    /// on the error path, so a bad request deleted the negotiation (404).
+    #[tokio::test]
+    async fn refused_transitions_keep_the_negotiation() {
+        let app = app();
+        let id = create_negotiation(&app, None, "100.00").await;
+        let accepted = app
+            .clone()
+            .oneshot(post_json(&format!("/negotiations/{id}/accept"), None, &serde_json::json!({})))
+            .await
+            .unwrap();
+        assert_eq!(accepted.status(), StatusCode::OK);
+
+        let counter = serde_json::json!({ "from_agent_id": "agent-seller", "amount": "95.00" });
+        for uri in [
+            format!("/negotiations/{id}/counter-offer"),
+            format!("/negotiations/{id}/accept"),
+            format!("/negotiations/{id}/reject"),
+        ] {
+            let resp = app.clone().oneshot(post_json(&uri, None, &counter)).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{uri} is refused once accepted");
+            let resp = app.clone().oneshot(get_request(&format!("/negotiations/{id}"), None)).await;
+            let resp = resp.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "{uri} must not delete the negotiation");
+            let json = json_body(resp).await;
+            assert_eq!(json["status"], "accepted");
+            assert_eq!(json["current_offer"], "100.00");
+            assert_eq!(json["offer_count"], 1);
+        }
     }
 
     #[tokio::test]

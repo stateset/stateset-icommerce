@@ -38,6 +38,7 @@ import {
   type SerialNumber,
   type Receipt,
 } from '@/lib/embedded';
+import { normalizeEngineStatus } from '@/lib/engine-lifecycles';
 import { requireAdminSession } from '@/lib/shared/auth-session';
 
 function assertNonEmpty(value: string, label: string): void {
@@ -176,7 +177,10 @@ export async function getFulfillmentWaves(status?: string): Promise<Wave[]> {
     assertNonEmpty(status, 'status');
   }
   const waves = await fulfillmentApi.listWaves();
-  return status === undefined ? waves : waves.filter((wave) => wave.status === status);
+  if (status === undefined) return waves;
+  // Records carry the engine's snake_case; accept the binding's Debug spelling too.
+  const wanted = normalizeEngineStatus(status.trim());
+  return waves.filter((wave) => wave.status === wanted);
 }
 
 export async function getPickTasks(): Promise<PickTask[]> {
@@ -208,7 +212,9 @@ export async function getLots(status?: string): Promise<Lot[]> {
     assertNonEmpty(status, 'status');
   }
   const lots = await lotsApi.list();
-  return status === undefined ? lots : lots.filter((lot) => lot.status === status);
+  if (status === undefined) return lots;
+  const wanted = normalizeEngineStatus(status.trim());
+  return lots.filter((lot) => lot.status === wanted);
 }
 
 export async function getSerials(): Promise<SerialNumber[]> {

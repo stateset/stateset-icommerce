@@ -104,6 +104,11 @@ export const fixedAssetTools = withPolicyDomain('fixed_assets', [
         .regex(ISO_DATE, 'must be YYYY-MM-DD')
         .optional()
         .describe('When supplied, the asset is created in service on this date (YYYY-MM-DD)'),
+      assetAccountId: z.string().uuid().optional(),
+      accumulatedDepreciationAccountId: z.string().uuid().optional(),
+      depreciationExpenseAccountId: z.string().uuid().optional(),
+      acquisitionOffsetAccountId: z.string().uuid().optional(),
+      disposalGainLossAccountId: z.string().uuid().optional(),
       currency: z.string().length(3).optional().describe('Currency code, e.g. USD'),
       description: z.string().max(2000).optional().describe('Optional description'),
     },
@@ -123,6 +128,11 @@ export const fixedAssetTools = withPolicyDomain('fixed_assets', [
         decliningBalanceRate: params.decliningBalanceRate,
         inServiceDate: params.inServiceDate,
         currency: params.currency,
+        assetAccountId: params.assetAccountId,
+        accumulatedDepreciationAccountId: params.accumulatedDepreciationAccountId,
+        depreciationExpenseAccountId: params.depreciationExpenseAccountId,
+        acquisitionOffsetAccountId: params.acquisitionOffsetAccountId,
+        disposalGainLossAccountId: params.disposalGainLossAccountId,
       });
       if (!allowApply) {
         return applyRequired('Create fixed asset', input);
@@ -143,7 +153,7 @@ export const fixedAssetTools = withPolicyDomain('fixed_assets', [
         .optional()
         .describe('In-service date (YYYY-MM-DD). Defaults to today (UTC).'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       // The binding requires the date; like its own dispose/writeOff, an
       // unstated date means today.
@@ -174,7 +184,7 @@ export const fixedAssetTools = withPolicyDomain('fixed_assets', [
         .describe('Disposal date (YYYY-MM-DD). Defaults to today.'),
       notes: z.string().max(2000).optional().describe('Optional notes'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Dispose fixed asset', params);
@@ -197,7 +207,7 @@ export const fixedAssetTools = withPolicyDomain('fixed_assets', [
       assetId: z.string().min(1).describe('Fixed asset ID'),
       reason: z.string().min(1).max(2000).describe('Write-off reason'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Write off fixed asset', params);
@@ -254,7 +264,7 @@ export const fixedAssetTools = withPolicyDomain('fixed_assets', [
         .default(1)
         .describe('How many of the next scheduled periods to post (default 1)'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       const periods = params.periods ?? 1;
       if (!allowApply) {

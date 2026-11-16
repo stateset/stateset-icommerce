@@ -16,27 +16,27 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | OpenAPI version | `3.1.0` |
 | API title | StateSet Commerce API |
 | API version | `1.0.4` |
-| Paths | 355 |
-| Operations | 475 |
-| Schemas | 459 |
-| Tags | 64 |
+| Paths | 404 |
+| Operations | 535 |
+| Schemas | 489 |
+| Tags | 67 |
 
 ## Method Counts
 
 | Method | Operations |
 | --- | --- |
 | DELETE | 26 |
-| GET | 188 |
+| GET | 208 |
 | PATCH | 14 |
-| POST | 234 |
-| PUT | 13 |
+| POST | 272 |
+| PUT | 15 |
 
 ## Tag Counts
 
 | Tag | Operations | Description |
 | --- | --- | --- |
 | `a2a` | 11 | Agent-to-agent messaging and credit terms |
-| `accounts_payable` | 14 | Supplier bills, AP payments and allocations, payment runs, and AP aging |
+| `accounts_payable` | 15 | Supplier bills, AP payments and allocations, payment runs, and AP aging |
 | `accounts_receivable` | 15 | AR aging, payment application, credit memos, write-offs, dunning, and customer statements |
 | `activity_logs` | 4 | Record-level activity history |
 | `backorders` | 5 | Backorder creation, fulfillment, and cancellation |
@@ -44,13 +44,16 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `carts` | 10 | Cart and checkout sessions: items, shipping, payment, completion |
 | `channels` | 6 | Sales channel management |
 | `companies` | 6 | B2B company account management |
+| `cost_accounting` | 27 | Item costs, cost layers, adjustments, variances and inventory valuation |
+| `credit` | 12 | Customer credit accounts, checks, holds and settlements |
 | `currency` | 3 | Exchange rates and currency conversion |
 | `customers` | 5 | Customer management |
 | `edi_documents` | 5 | EDI document exchange |
+| `erp_operations` | 16 | Receipts from purchase orders, put-away tasks, backorder allocations, lot moves, work-order materials and period reclose |
 | `events` | 1 | Real-time event streaming |
 | `fixed_assets` | 10 | Fixed-asset register: acquisition, depreciation schedules, disposal, and write-off |
 | `fulfillment` | 13 | Outbound fulfillment: waves, pick tasks, pack tasks and cartons, ship tasks |
-| `general_ledger` | 20 | Chart of accounts, journal entries, accounting periods, and financial reports (trial balance, balance sheet, income statement) |
+| `general_ledger` | 22 | Chart of accounts, journal entries, accounting periods, and financial reports (trial balance, balance sheet, income statement) |
 | `gift_cards` | 6 | Gift card management |
 | `health` | 5 | Health check endpoints |
 | `inbound_shipments` | 7 | Inbound shipment receiving |
@@ -87,10 +90,10 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `stock_snapshots` | 5 | Point-in-time inventory snapshots |
 | `store_credits` | 5 | Store credit management |
 | `subscriptions` | 6 | Recurring subscription management |
-| `supplier_skus` | 4 | Supplier SKU catalog |
+| `supplier_skus` | 5 | Supplier SKU catalog |
 | `tax` | 4 | Tax exemption certificates: create, list, and verify (only verified certificates reduce tax) |
 | `topology_snapshots` | 5 | Network topology snapshots |
-| `transfer_orders` | 6 | Inter-warehouse transfer orders |
+| `transfer_orders` | 7 | Inter-warehouse transfer orders |
 | `units_of_measure` | 6 | Unit of measure definitions |
 | `vendor_credits` | 5 | Vendor credit management |
 | `vendor_returns` | 6 | Return-to-vendor processing |
@@ -126,6 +129,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `POST` | `/api/v1/ap/bills/{id}/approve` | `accounts_payable` | `ap_approve_bill` | — |
 | `POST` | `/api/v1/ap/bills/{id}/cancel` | `accounts_payable` | `ap_cancel_bill` | — |
 | `POST` | `/api/v1/ap/bills/{id}/dispute` | `accounts_payable` | `ap_dispute_bill` | — |
+| `POST` | `/api/v1/ap/bills/{id}/resolve-dispute` | `accounts_payable` | `ap_resolve_bill_dispute` | — |
 | `GET` | `/api/v1/ap/bills/{id}/three-way-match` | `accounts_payable` | `ap_three_way_match_bill` | — |
 | `POST` | `/api/v1/ap/payment-runs` | `accounts_payable` | `ap_create_payment_run` | — |
 | `POST` | `/api/v1/ap/payment-runs/{id}/approve` | `accounts_payable` | `ap_approve_payment_run` | — |
@@ -151,8 +155,12 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `GET` | `/api/v1/backorders` | `backorders` | `backorders_list` | — |
 | `POST` | `/api/v1/backorders` | `backorders` | `backorders_create` | — |
 | `GET` | `/api/v1/backorders/{id}` | `backorders` | `backorders_get_one` | — |
+| `GET` | `/api/v1/backorders/{id}/allocations` | `erp_operations` | `erp_backorder_allocations` | — |
+| `POST` | `/api/v1/backorders/{id}/allocations` | `erp_operations` | `erp_allocate_backorder` | — |
 | `POST` | `/api/v1/backorders/{id}/cancel` | `backorders` | `backorders_cancel` | — |
 | `POST` | `/api/v1/backorders/{id}/fulfill` | `backorders` | `backorders_fulfill` | — |
+| `POST` | `/api/v1/backorders/allocations/{id}/confirm` | `erp_operations` | `erp_confirm_allocation` | — |
+| `POST` | `/api/v1/backorders/allocations/{id}/release` | `erp_operations` | `erp_release_allocation` | — |
 | `GET` | `/api/v1/boms` | `bom` | `bom_list` | — |
 | `POST` | `/api/v1/boms` | `bom` | `bom_create` | — |
 | `DELETE` | `/api/v1/boms/{id}` | `bom` | `bom_delete` | — |
@@ -183,6 +191,45 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `GET` | `/api/v1/companies/{id}` | `companies` | `companies_get_one` | — |
 | `GET` | `/api/v1/companies/{id}/contacts` | `companies` | `companies_list_contacts` | — |
 | `POST` | `/api/v1/companies/{id}/contacts` | `companies` | `companies_create_contact` | — |
+| `GET` | `/api/v1/cost-accounting/adjustments` | `cost_accounting` | `cost_list_adjustments` | — |
+| `POST` | `/api/v1/cost-accounting/adjustments` | `cost_accounting` | `cost_create_adjustment` | — |
+| `GET` | `/api/v1/cost-accounting/adjustments/{id}` | `cost_accounting` | `cost_get_adjustment` | — |
+| `POST` | `/api/v1/cost-accounting/adjustments/{id}/apply` | `cost_accounting` | `cost_apply_adjustment` | — |
+| `POST` | `/api/v1/cost-accounting/adjustments/{id}/approve` | `cost_accounting` | `cost_approve_adjustment` | — |
+| `POST` | `/api/v1/cost-accounting/adjustments/{id}/reject` | `cost_accounting` | `cost_reject_adjustment` | — |
+| `GET` | `/api/v1/cost-accounting/close-check` | `cost_accounting` | `cost_close_check` | — |
+| `GET` | `/api/v1/cost-accounting/items` | `cost_accounting` | `cost_list_items` | — |
+| `POST` | `/api/v1/cost-accounting/items` | `cost_accounting` | `cost_set_cost` | — |
+| `GET` | `/api/v1/cost-accounting/items/{sku}` | `cost_accounting` | `cost_get_cost` | — |
+| `POST` | `/api/v1/cost-accounting/items/{sku}/average` | `cost_accounting` | `cost_average_cost` | — |
+| `POST` | `/api/v1/cost-accounting/items/{sku}/last` | `cost_accounting` | `cost_last_cost` | — |
+| `GET` | `/api/v1/cost-accounting/items/{sku}/remaining` | `cost_accounting` | `cost_layers_remaining` | — |
+| `GET` | `/api/v1/cost-accounting/items/{sku}/rollup` | `cost_accounting` | `cost_get_rollup` | — |
+| `POST` | `/api/v1/cost-accounting/items/{sku}/rollup` | `cost_accounting` | `cost_calculate_rollup` | — |
+| `GET` | `/api/v1/cost-accounting/items/{sku}/summary` | `cost_accounting` | `cost_cost_summary` | — |
+| `GET` | `/api/v1/cost-accounting/layers` | `cost_accounting` | `cost_list_layers` | — |
+| `POST` | `/api/v1/cost-accounting/layers` | `cost_accounting` | `cost_create_layer` | — |
+| `GET` | `/api/v1/cost-accounting/layers/{id}` | `cost_accounting` | `cost_get_layer` | — |
+| `POST` | `/api/v1/cost-accounting/layers/issue-fifo` | `cost_accounting` | `cost_issue_fifo` | — |
+| `POST` | `/api/v1/cost-accounting/layers/issue-lifo` | `cost_accounting` | `cost_issue_lifo` | — |
+| `GET` | `/api/v1/cost-accounting/total-value` | `cost_accounting` | `cost_total_value` | — |
+| `GET` | `/api/v1/cost-accounting/transactions` | `cost_accounting` | `cost_list_transactions` | — |
+| `POST` | `/api/v1/cost-accounting/transactions` | `cost_accounting` | `cost_record_transaction` | — |
+| `GET` | `/api/v1/cost-accounting/valuation` | `cost_accounting` | `cost_valuation` | — |
+| `GET` | `/api/v1/cost-accounting/variances` | `cost_accounting` | `cost_list_variances` | — |
+| `POST` | `/api/v1/cost-accounting/variances` | `cost_accounting` | `cost_record_variance` | — |
+| `POST` | `/api/v1/credit/accounts` | `credit` | `customer_credit_create` | — |
+| `GET` | `/api/v1/credit/customers/{customer_id}` | `credit` | `customer_credit_get_account` | — |
+| `POST` | `/api/v1/credit/customers/{customer_id}/charge` | `credit` | `customer_credit_charge` | — |
+| `POST` | `/api/v1/credit/customers/{customer_id}/check` | `credit` | `customer_credit_check` | — |
+| `GET` | `/api/v1/credit/customers/{customer_id}/holds` | `credit` | `customer_credit_holds` | — |
+| `POST` | `/api/v1/credit/customers/{customer_id}/holds` | `credit` | `customer_credit_place_hold` | — |
+| `POST` | `/api/v1/credit/customers/{customer_id}/payments` | `credit` | `customer_credit_payment` | — |
+| `POST` | `/api/v1/credit/customers/{customer_id}/reactivate` | `credit` | `customer_credit_reactivate` | — |
+| `POST` | `/api/v1/credit/customers/{customer_id}/release-reservation` | `credit` | `customer_credit_release_reservation` | — |
+| `POST` | `/api/v1/credit/customers/{customer_id}/reserve` | `credit` | `customer_credit_reserve` | — |
+| `POST` | `/api/v1/credit/customers/{customer_id}/suspend` | `credit` | `customer_credit_suspend` | — |
+| `POST` | `/api/v1/credit/holds/{id}/release` | `credit` | `customer_credit_release_hold` | — |
 | `POST` | `/api/v1/currencies/convert` | `currency` | `convert_currency` | — |
 | `GET` | `/api/v1/currencies/rates` | `currency` | `list_rates` | — |
 | `POST` | `/api/v1/currencies/rates` | `currency` | `set_rate` | — |
@@ -236,6 +283,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `GET` | `/api/v1/gl/accounts` | `general_ledger` | `general_ledger_list_accounts` | — |
 | `POST` | `/api/v1/gl/accounts` | `general_ledger` | `general_ledger_create_account` | — |
 | `GET` | `/api/v1/gl/accounts/{id}` | `general_ledger` | `general_ledger_get_account` | — |
+| `GET` | `/api/v1/gl/accounts/{id}/balance` | `erp_operations` | `erp_account_balance` | — |
 | `GET` | `/api/v1/gl/balance-sheet` | `general_ledger` | `general_ledger_balance_sheet` | — |
 | `POST` | `/api/v1/gl/close-month` | `general_ledger` | `general_ledger_close_month` | — |
 | `GET` | `/api/v1/gl/income-statement` | `general_ledger` | `general_ledger_income_statement` | — |
@@ -250,7 +298,10 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `POST` | `/api/v1/gl/periods/{id}/close` | `general_ledger` | `general_ledger_close_period` | — |
 | `POST` | `/api/v1/gl/periods/{id}/lock` | `general_ledger` | `general_ledger_lock_period` | — |
 | `POST` | `/api/v1/gl/periods/{id}/open` | `general_ledger` | `general_ledger_open_period` | — |
+| `POST` | `/api/v1/gl/periods/{id}/reclose` | `erp_operations` | `erp_reclose_period` | — |
 | `POST` | `/api/v1/gl/periods/{id}/reopen` | `general_ledger` | `general_ledger_reopen_period` | — |
+| `GET` | `/api/v1/gl/posting-config` | `general_ledger` | `gl_get_posting_config` | — |
+| `PUT` | `/api/v1/gl/posting-config` | `general_ledger` | `gl_set_posting_config` | — |
 | `POST` | `/api/v1/gl/revalue` | `general_ledger` | `general_ledger_revalue` | — |
 | `GET` | `/api/v1/gl/trial-balance` | `general_ledger` | `general_ledger_trial_balance` | — |
 | `GET` | `/api/v1/inbound-shipments` | `inbound_shipments` | `inbound_shipments_list` | — |
@@ -295,11 +346,14 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `GET` | `/api/v1/lots` | `lots` | `lots_list` | — |
 | `POST` | `/api/v1/lots` | `lots` | `lots_create` | — |
 | `GET` | `/api/v1/lots/{id}` | `lots` | `lots_get_one` | — |
+| `POST` | `/api/v1/lots/{id}/adjust` | `erp_operations` | `erp_adjust_lot` | — |
 | `POST` | `/api/v1/lots/{id}/consume` | `lots` | `lots_consume` | — |
 | `GET` | `/api/v1/lots/{id}/genealogy` | `lots` | `lots_genealogy` | — |
 | `POST` | `/api/v1/lots/{id}/quarantine` | `lots` | `lots_quarantine` | — |
 | `POST` | `/api/v1/lots/{id}/release-quarantine` | `lots` | `lots_release_quarantine` | — |
 | `POST` | `/api/v1/lots/{id}/reserve` | `lots` | `lots_reserve` | — |
+| `POST` | `/api/v1/lots/{id}/split` | `erp_operations` | `erp_split_lot` | — |
+| `POST` | `/api/v1/lots/{id}/transfer` | `erp_operations` | `erp_transfer_lot` | — |
 | `GET` | `/api/v1/lots/expiring` | `lots` | `lots_expiring` | — |
 | `POST` | `/api/v1/lots/reservations/{reservation_id}/release` | `lots` | `lots_release_reservation` | — |
 | `GET` | `/api/v1/loyalty/accounts/{id}` | `loyalty` | `get_account` | `GET /api/v1/loyalty/accounts/{id}` |
@@ -391,7 +445,10 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `GET` | `/api/v1/put-aways` | `receiving` | `receiving_put_away_list` | — |
 | `POST` | `/api/v1/put-aways` | `receiving` | `receiving_put_away_create` | — |
 | `GET` | `/api/v1/put-aways/{id}` | `receiving` | `receiving_put_away_get_one` | — |
+| `POST` | `/api/v1/put-aways/{id}/assign` | `erp_operations` | `erp_assign_put_away` | — |
+| `POST` | `/api/v1/put-aways/{id}/cancel` | `erp_operations` | `erp_cancel_put_away` | — |
 | `POST` | `/api/v1/put-aways/{id}/complete` | `receiving` | `receiving_put_away_complete` | — |
+| `POST` | `/api/v1/put-aways/{id}/start` | `erp_operations` | `erp_start_put_away` | — |
 | `GET` | `/api/v1/quality/holds` | `quality` | `quality_list_holds` | — |
 | `POST` | `/api/v1/quality/holds` | `quality` | `quality_create_hold` | — |
 | `GET` | `/api/v1/quality/holds/{id}` | `quality` | `quality_get_hold` | — |
@@ -415,6 +472,7 @@ Machine-readable output lives at `artifacts/compatibility/rust-openapi-inventory
 | `GET` | `/api/v1/receipts/{id}/items` | `receiving` | `receiving_receipt_items` | — |
 | `POST` | `/api/v1/receipts/{id}/receive` | `receiving` | `receiving_receipt_receive_items` | — |
 | `POST` | `/api/v1/receipts/{id}/start` | `receiving` | `receiving_receipt_start` | — |
+| `POST` | `/api/v1/receipts/from-po` | `erp_operations` | `erp_receipt_from_po` | — |
 | `POST` | `/api/v1/reports/close-the-books` | `reports` | `reports_close_the_books` | — |
 | `POST` | `/api/v1/reports/consumption` | `reports` | `reports_consumption` | — |
 | `POST` | `/api/v1/reports/inventory-aging` | `reports` | `reports_inventory_aging` | — |
@@ -488,6 +546,7 @@ expired credits, and insufficient balance. |
 | `POST` | `/api/v1/supplier-skus` | `supplier_skus` | `supplier_skus_create` | — |
 | `DELETE` | `/api/v1/supplier-skus/{id}` | `supplier_skus` | `supplier_skus_delete_one` | — |
 | `GET` | `/api/v1/supplier-skus/{id}` | `supplier_skus` | `supplier_skus_get_one` | — |
+| `PUT` | `/api/v1/supplier-skus/{id}` | `supplier_skus` | `supplier_skus_update` | — |
 | `GET` | `/api/v1/suppliers` | `purchase_orders` | `purchase_orders_list_suppliers` | — |
 | `POST` | `/api/v1/suppliers` | `purchase_orders` | `purchase_orders_create_supplier` | — |
 | `DELETE` | `/api/v1/suppliers/{id}` | `purchase_orders` | `purchase_orders_delete_supplier` | — |
@@ -506,6 +565,7 @@ expired credits, and insufficient balance. |
 | `POST` | `/api/v1/transfer-orders` | `transfer_orders` | `transfer_orders_create` | — |
 | `GET` | `/api/v1/transfer-orders/{id}` | `transfer_orders` | `transfer_orders_get_one` | — |
 | `POST` | `/api/v1/transfer-orders/{id}/cancel` | `transfer_orders` | `transfer_orders_cancel` | — |
+| `POST` | `/api/v1/transfer-orders/{id}/complete-receiving` | `transfer_orders` | `transfer_orders_complete_receiving` | — |
 | `POST` | `/api/v1/transfer-orders/{id}/receive` | `transfer_orders` | `transfer_orders_receive` | — |
 | `POST` | `/api/v1/transfer-orders/{id}/ship` | `transfer_orders` | `transfer_orders_ship` | — |
 | `GET` | `/api/v1/unit-classes` | `units_of_measure` | `units_of_measure_list_classes` | — |
@@ -561,10 +621,13 @@ expired credits, and insufficient balance. |
 | `POST` | `/api/v1/work-orders/{id}/cancel` | `work_orders` | `work_orders_cancel` | — |
 | `POST` | `/api/v1/work-orders/{id}/complete` | `work_orders` | `work_orders_complete` | — |
 | `POST` | `/api/v1/work-orders/{id}/hold` | `work_orders` | `work_orders_hold` | — |
+| `GET` | `/api/v1/work-orders/{id}/materials` | `erp_operations` | `erp_list_materials` | — |
+| `POST` | `/api/v1/work-orders/{id}/materials` | `erp_operations` | `erp_add_material` | — |
 | `POST` | `/api/v1/work-orders/{id}/resume` | `work_orders` | `work_orders_resume` | — |
 | `POST` | `/api/v1/work-orders/{id}/start` | `work_orders` | `work_orders_start` | — |
 | `GET` | `/api/v1/work-orders/{id}/tasks` | `work_orders` | `work_orders_list_tasks` | — |
 | `POST` | `/api/v1/work-orders/{id}/tasks` | `work_orders` | `work_orders_add_task` | — |
+| `POST` | `/api/v1/work-orders/materials/{id}/consume` | `erp_operations` | `erp_consume_material` | — |
 | `POST` | `/api/v1/work-orders/tasks/{task_id}/complete` | `work_orders` | `work_orders_complete_task` | — |
 | `POST` | `/api/v1/work-orders/tasks/{task_id}/start` | `work_orders` | `work_orders_start_task` | — |
 | `GET` | `/api/v1/x402/carts/{cart_id}/intents` | `x402` | `x402_intents_for_cart` | `GET /api/v1/x402/carts/{cart_id}/intents` — every intent for one cart. |

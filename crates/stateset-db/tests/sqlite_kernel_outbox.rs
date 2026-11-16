@@ -85,6 +85,10 @@ fn payment_policy() -> KernelPolicy {
         .allow("shipments.create", KernelCommandPolicy::requiring(["shipments.create"]))
         .allow("returns.create", KernelCommandPolicy::requiring(["returns.create"]))
         .allow("returns.tracking.add", KernelCommandPolicy::requiring(["returns.tracking.add"]))
+        .allow(
+            "returns.item.disposition.set",
+            KernelCommandPolicy::requiring(["returns.item.disposition.set"]),
+        )
 }
 
 fn inventory_item_command(key: &str, sku: &str) -> CommandEnvelope<CreateInventoryItem> {
@@ -1789,6 +1793,7 @@ fn create_kernel_journal(
             source_document_type: Some("kernel_command".into()),
             source_document_id: None,
             auto_post: Some(false),
+            fx: None,
         })
         .expect("create journal entry");
     (entry, cash.id, revenue.id)
@@ -2176,6 +2181,96 @@ fn kernel_x402_settlement_previews_applies_and_replays_exactly_once() {
         .filter(|event| event.command_id == Some(apply.command_id))
         .count();
     assert_eq!(events, 1);
+}
+
+fn sequenced_x402_intent(db: &SqliteDatabase, payer: &str) -> stateset_core::X402PaymentIntent {
+    let intent = db
+        .x402_payment_intents()
+        .create(CreateX402PaymentIntent {
+            payer_address: payer.into(),
+            payee_address: "0xpayee-kernel".into(),
+            amount: 1_000_000,
+            asset: X402Asset::Usdc,
+            network: X402Network::SetChain,
+            ..Default::default()
+        })
+        .expect("create intent");
+    db.pool()
+        .get()
+        .expect("connection")
+        .execute(
+            "UPDATE x402_payment_intents SET status = 'sequenced' WHERE id = ?",
+            [intent.id.to_string()],
+        )
+        .expect("sequence intent fixture");
+    intent
+}
+
+/// `x402.settle` applies the repository's `mark_settled` rules: it writes
+/// `tx_hash_key` (so the migration-082 unique index covers kernel settles),
+/// refuses a transaction hash that already settled another intent, and refuses
+/// an intent whose validity window has lapsed.
+#[test]
+fn kernel_x402_settle_enforces_tx_hash_uniqueness_and_validity_window() {
+    let db = SqliteDatabase::in_memory().expect("create database");
+    let first = sequenced_x402_intent(&db, "0xpayer-unique-1");
+    let mut settle_first = settle_x402_command("x402-unique-settle-1", first.id);
+    settle_first.mode = ExecutionMode::Apply;
+    let settled = db
+        .kernel_executor(payment_policy())
+        .execute_settle_x402_intent(&settle_first)
+        .expect("settle first intent");
+    assert_eq!(settled.status, ExecutionStatus::Succeeded);
+
+    // The same on-chain transaction cannot settle a second intent.
+    let second = sequenced_x402_intent(&db, "0xpayer-unique-2");
+    let mut settle_second = settle_x402_command("x402-unique-settle-2", second.id);
+    settle_second.mode = ExecutionMode::Apply;
+    let rejected = db
+        .kernel_executor(payment_policy())
+        .execute_settle_x402_intent(&settle_second)
+        .expect("durable rejection");
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
+    assert_eq!(rejected.error_code.as_deref(), Some("commerce.x402.tx_hash_already_settled"));
+    assert!(rejected.audit_hash.is_some(), "the rejection is sealed into the audit chain");
+    let second_now = db.x402_payment_intents().get(second.id).expect("get").expect("intent");
+    assert_eq!(second_now.status, X402IntentStatus::Sequenced);
+    assert_eq!(second_now.tx_hash, None);
+    // The kernel settle writes `tx_hash_key`, so the unique index backs it.
+    let tx_hash_key: Option<String> = db
+        .pool()
+        .get()
+        .expect("connection")
+        .query_row(
+            "SELECT tx_hash_key FROM x402_payment_intents WHERE id = ?",
+            [first.id.to_string()],
+            |row| row.get(0),
+        )
+        .expect("read tx_hash_key");
+    assert_eq!(tx_hash_key.as_deref(), Some("0xconfirmed-settlement"));
+
+    // A lapsed validity window cannot settle, even with a fresh hash.
+    let expired = sequenced_x402_intent(&db, "0xpayer-unique-3");
+    db.pool()
+        .get()
+        .expect("connection")
+        .execute(
+            "UPDATE x402_payment_intents SET valid_until = 1 WHERE id = ?",
+            [expired.id.to_string()],
+        )
+        .expect("expire intent fixture");
+    let mut settle_expired = settle_x402_command("x402-unique-settle-3", expired.id);
+    settle_expired.payload.tx_hash = "0xanother-settlement".into();
+    settle_expired.mode = ExecutionMode::Apply;
+    let rejected = db
+        .kernel_executor(payment_policy())
+        .execute_settle_x402_intent(&settle_expired)
+        .expect("durable rejection");
+    assert_eq!(rejected.status, ExecutionStatus::Rejected);
+    assert_eq!(rejected.error_code.as_deref(), Some("commerce.x402.intent_expired"));
+    let expired_now = db.x402_payment_intents().get(expired.id).expect("get").expect("intent");
+    assert_eq!(expired_now.status, X402IntentStatus::Sequenced);
+    assert!(db.kernel_outbox().verify_audit_chain().expect("verify chain").valid);
 }
 
 fn checkout_command(key: &str, cart_id: stateset_core::CartId) -> CommandEnvelope<CommitCheckout> {
@@ -3452,7 +3547,7 @@ fn kernel_storefront_commands_run_a_complete_checkout_on_the_governed_surface() 
     use stateset_core::{
         AddCartItemCommand, AddReturnTracking, ApplyCartCoupon, CalculateCartTax, CompletePayment,
         CreateCouponCode, CreatePromotion, CreateShipment, PromotionTrigger, PromotionType,
-        SetCartPaymentMethod, SetCartShippingAddress,
+        ReturnDisposition, SetCartPaymentMethod, SetCartShippingAddress, SetReturnItemDisposition,
     };
     let db = SqliteDatabase::in_memory().expect("create database");
     let kernel = db.kernel_executor(payment_policy());
@@ -3786,6 +3881,144 @@ fn kernel_storefront_commands_run_a_complete_checkout_on_the_governed_surface() 
     let tracked = tracked.result.expect("tracked return");
     assert_eq!(tracked.status, ReturnStatus::InTransit);
     assert_eq!(tracked.tracking_number.as_deref(), Some("RET-1Z"));
+    let item_id = tracked.items[0].id;
+    let disposition = |key: &str, payload: SetReturnItemDisposition| {
+        applied(&storefront("returns.item.disposition.set", key, payload))
+    };
+    let scrap = SetReturnItemDisposition {
+        note: Some("cracked housing".into()),
+        ..SetReturnItemDisposition::new(return_id, item_id, ReturnDisposition::Scrap)
+    };
+    // returns.item.disposition.set refuses goods that have not arrived.
+    let in_transit = kernel
+        .execute_set_return_item_disposition(&disposition(
+            "storefront-disposition-in-transit",
+            scrap.clone(),
+        ))
+        .expect("in-transit disposition");
+    assert_eq!(in_transit.status, ExecutionStatus::Rejected);
+    assert_eq!(in_transit.error_code.as_deref(), Some("commerce.return_not_dispositionable"));
+    assert!(in_transit.audit_hash.is_some(), "the refusal is sealed");
+
+    // A governed completion runs the repository's status write: it needs
+    // every item dispositioned, and it settles the refund against the
+    // captured payment in the same transaction as the receipt.
+    let transition = |key: &str, status| {
+        applied(&storefront("returns.transition", key, TransitionReturn { return_id, status }))
+    };
+    let received = kernel
+        .execute_transition_return(&transition(
+            "storefront-return-received",
+            ReturnStatus::Received,
+        ))
+        .expect("receive");
+    assert_sealed_success(&received, "returns.transition received");
+    let refused = kernel
+        .execute_transition_return(&transition(
+            "storefront-return-complete-early",
+            ReturnStatus::Completed,
+        ))
+        .expect("refusal receipt");
+    assert_eq!(refused.status, ExecutionStatus::Rejected);
+    assert_eq!(refused.error_code.as_deref(), Some("commerce.return_items_undispositioned"));
+    assert!(refused.audit_hash.is_some(), "the refusal is sealed");
+    let pending = db.returns().get(return_id).expect("return").expect("return");
+    assert_eq!(pending.status, ReturnStatus::Received);
+    assert!(db.payments().get_refunds(payment_id).expect("refunds").is_empty());
+
+    // returns.item.disposition.set: typed refusals, all sealed, none writing.
+    let refusals = [
+        (
+            "storefront-disposition-unknown-value",
+            SetReturnItemDisposition { disposition: "donate".into(), ..scrap.clone() },
+            "commerce.return_disposition_invalid",
+        ),
+        (
+            "storefront-disposition-unknown-item",
+            SetReturnItemDisposition { return_item_id: Uuid::new_v4(), ..scrap.clone() },
+            "commerce.return_item_not_found",
+        ),
+        (
+            "storefront-disposition-unknown-return",
+            SetReturnItemDisposition { return_id: stateset_core::ReturnId::new(), ..scrap.clone() },
+            "commerce.return_not_found",
+        ),
+        // Restock runs the repository's stock effect, which needs an
+        // inventory item for the SKU; the refusal rolls the step back.
+        (
+            "storefront-disposition-restock-unknown-sku",
+            SetReturnItemDisposition::new(return_id, item_id, ReturnDisposition::Restock),
+            "commerce.validation_failed",
+        ),
+    ];
+    for (key, payload, code) in refusals {
+        let refused =
+            kernel.execute_set_return_item_disposition(&disposition(key, payload)).expect(key);
+        assert_eq!(refused.status, ExecutionStatus::Rejected, "{key}");
+        assert_eq!(refused.error_code.as_deref(), Some(code), "{key}: {:?}", refused.error_message);
+        assert!(refused.audit_hash.is_some(), "{key}: the refusal is sealed");
+    }
+    let mut preview = disposition("storefront-disposition", scrap.clone());
+    preview.mode = ExecutionMode::Preview;
+    assert_eq!(
+        kernel.execute_set_return_item_disposition(&preview).expect("preview").status,
+        ExecutionStatus::Previewed
+    );
+    let untouched = db.returns().get(return_id).expect("return").expect("return");
+    assert_eq!(untouched.items[0].disposition, None, "preview and refusals write nothing");
+    let dispositioned = kernel
+        .execute_set_return_item_disposition(&disposition("storefront-disposition", scrap.clone()))
+        .expect("disposition");
+    assert_sealed_success(&dispositioned, "returns.item.disposition.set");
+    let item = dispositioned.result.clone().expect("dispositioned item");
+    assert_eq!(item.disposition, Some(ReturnDisposition::Scrap));
+    assert_eq!(
+        item.disposition_by.as_deref(),
+        Some("agent:storefront-1"),
+        "the principal, not the payload, is recorded"
+    );
+    let fact = db
+        .kernel_outbox()
+        .pending(10_000)
+        .expect("events")
+        .into_iter()
+        .find(|event| event.id == dispositioned.event_ids[0])
+        .expect("disposition fact");
+    assert_eq!(fact.event_type, "returns.item_dispositioned.v1");
+    assert_eq!(fact.command_id, Some(dispositioned.command_id));
+    assert_eq!(fact.payload["disposition"], "scrap");
+    assert_eq!(fact.payload["note"], "cracked housing");
+    let replayed = kernel
+        .execute_set_return_item_disposition(&disposition("storefront-disposition", scrap.clone()))
+        .expect("replay disposition");
+    assert_eq!(replayed.receipt_id, dispositioned.receipt_id);
+    let twice = kernel
+        .execute_set_return_item_disposition(&disposition("storefront-disposition-again", scrap))
+        .expect("second disposition");
+    assert_eq!(twice.status, ExecutionStatus::Rejected);
+    assert_eq!(twice.error_code.as_deref(), Some("commerce.return_item_already_dispositioned"));
+    let completed = kernel
+        .execute_transition_return(&transition(
+            "storefront-return-complete",
+            ReturnStatus::Completed,
+        ))
+        .expect("complete");
+    assert_sealed_success(&completed, "returns.transition completed");
+    let completed_return = completed.result.clone().expect("completed return");
+    assert_eq!(completed_return.status, ReturnStatus::Completed);
+    let refunds = db.payments().get_refunds(payment_id).expect("refunds");
+    assert_eq!(refunds.len(), 1, "completion settles the refund against the captured payment");
+    assert_eq!(Some(refunds[0].amount), completed_return.refund_amount);
+    let fact = db
+        .kernel_outbox()
+        .pending(10_000)
+        .expect("events")
+        .into_iter()
+        .find(|event| event.id == completed.event_ids[0])
+        .expect("completion fact");
+    assert_eq!(fact.event_type, "returns.updated.v1");
+    assert_eq!(fact.command_id, Some(completed.command_id), "the fact carries the command");
+    assert_eq!(fact.payload["payment_refund_ids"][0], refunds[0].id.to_string());
 
     let chain = db.kernel_outbox().verify_audit_chain().expect("verify chain");
     assert!(chain.valid, "{chain:?}");
@@ -4259,11 +4492,20 @@ fn kernel_reserved_shipping_consumes_only_needed_parts_of_split_line_holds() {
     let conn = db.pool().get().unwrap();
     // Two separately allocated holds back the same line; balances still back
     // four units. Shipping three must leave precisely one unit reserved.
+    let second = Uuid::new_v4().to_string();
     conn.execute("UPDATE inventory_reservations SET quantity='2'", []).unwrap();
     conn.execute("INSERT INTO inventory_reservations
         (id,item_id,location_id,quantity,status,reference_type,reference_id,expires_at,created_at,order_item_id)
         SELECT ?,item_id,location_id,quantity,status,reference_type,reference_id,expires_at,created_at,order_item_id
-        FROM inventory_reservations", [Uuid::new_v4().to_string()]).unwrap();
+        FROM inventory_reservations", [&second]).unwrap();
+    // Each hold owns its own physical slice.
+    conn.execute("UPDATE inventory_reservation_stock SET quantity='2'", []).unwrap();
+    conn.execute(
+        "INSERT INTO inventory_reservation_stock (reservation_id,location_id,lot_id,quantity)
+        SELECT ?,location_id,lot_id,quantity FROM inventory_reservation_stock",
+        [&second],
+    )
+    .unwrap();
     let mut command = applied(&reserved_shipping_command(&order));
     command.payload.lines =
         Some(vec![ShipmentLineInput { order_item_id: order.items[0].id, quantity: 3 }]);

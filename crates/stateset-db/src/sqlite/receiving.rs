@@ -3,9 +3,9 @@
 //! Provides goods receipt, receiving, and put-away functionality.
 
 use crate::sqlite::{
-    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt,
-    parse_decimal_opt_row, parse_decimal_row, parse_decimal_strict, parse_enum_row, parse_uuid_opt,
-    parse_uuid_opt_row, parse_uuid_row, sum_decimal_query, with_immediate_transaction,
+    map_db_error, parse_datetime_opt_row, parse_datetime_row, parse_decimal_opt_row,
+    parse_decimal_row, parse_enum_row, parse_uuid_opt_row, parse_uuid_row, sum_decimal_query,
+    with_immediate_transaction,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -27,6 +27,640 @@ pub struct SqliteReceivingRepository {
 }
 
 impl SqliteReceivingRepository {
+    fn validate_destination_tx(
+        tx: &rusqlite::Transaction<'_>,
+        receipt: Uuid,
+        location: i32,
+    ) -> rusqlite::Result<()> {
+        let valid: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM locations l JOIN warehouses w ON w.id = l.warehouse_id JOIN receipts r ON r.warehouse_id = w.id WHERE r.id = ?1 AND l.id = ?2 AND l.is_active = 1 AND l.is_receivable = 1 AND w.is_active = 1)", params![receipt.to_string(), location], |r| r.get(0))?;
+        if !valid {
+            return Err(Self::smuggle(CommerceError::ValidationError(
+                "Put-away destination must be active, receivable, and in the receipt warehouse"
+                    .into(),
+            )));
+        }
+        Ok(())
+    }
+
+    fn po_receipt_tx(
+        tx: &rusqlite::Transaction<'_>,
+        po_id: Uuid,
+        warehouse_id: i32,
+    ) -> rusqlite::Result<CreateReceipt> {
+        let (supplier, status): (Option<String>, String) = tx.query_row(
+            "SELECT supplier_id, status FROM purchase_orders WHERE id = ?1",
+            [po_id.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        if !matches!(status.as_str(), "sent" | "acknowledged" | "partially_received") {
+            return Err(Self::smuggle(CommerceError::Conflict(format!(
+                "Cannot receive purchase order in status '{status}'"
+            ))));
+        }
+        let mut stmt = tx.prepare("SELECT id, sku, name, quantity_ordered, quantity_received, unit_cost FROM purchase_order_items WHERE purchase_order_id = ?1 ORDER BY id")?;
+        let rows = stmt.query_map([po_id.to_string()], |r| {
+            Ok(CreateReceiptItem {
+                po_line_id: Some(parse_uuid_row(
+                    &r.get::<_, String>(0)?,
+                    "purchase_order_item",
+                    "id",
+                )?),
+                sku: r.get(1)?,
+                description: r.get(2)?,
+                expected_quantity: parse_decimal_row(
+                    &r.get::<_, String>(3)?,
+                    "purchase_order_item",
+                    "quantity_ordered",
+                )? - parse_decimal_row(
+                    &r.get::<_, String>(4)?,
+                    "purchase_order_item",
+                    "quantity_received",
+                )?,
+                unit_cost: Some(parse_decimal_row(
+                    &r.get::<_, String>(5)?,
+                    "purchase_order_item",
+                    "unit_cost",
+                )?),
+                ..Default::default()
+            })
+        })?;
+        let mut items = Vec::new();
+        for row in rows {
+            let item = row?;
+            if item.expected_quantity > Decimal::ZERO {
+                items.push(item);
+            }
+        }
+        if items.is_empty() {
+            return Err(Self::smuggle(CommerceError::Conflict(
+                "Purchase order has no outstanding quantities".into(),
+            )));
+        }
+        Ok(CreateReceipt {
+            receipt_type: ReceiptType::PurchaseOrder,
+            reference_type: Some("purchase_order".into()),
+            reference_id: Some(po_id),
+            supplier_id: parse_uuid_opt_row(supplier, "purchase_order", "supplier_id")?,
+            warehouse_id,
+            items,
+            ..Default::default()
+        })
+    }
+
+    pub(super) fn receive_po_tx(
+        tx: &rusqlite::Transaction<'_>,
+        po_id: Uuid,
+        input: stateset_core::ReceivePurchaseOrderItems,
+    ) -> rusqlite::Result<()> {
+        let outstanding = Self::po_receipt_tx(tx, po_id, input.warehouse_id)?;
+        let selected = crate::po_receipt::select(outstanding, &input).map_err(Self::smuggle)?;
+        let valid: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM locations l JOIN warehouses w ON w.id = l.warehouse_id WHERE l.id = ?1 AND l.warehouse_id = ?2 AND l.is_active = 1 AND l.is_receivable = 1 AND w.is_active = 1)", params![input.receiving_location_id, input.warehouse_id], |r| r.get(0))?;
+        if !valid {
+            return Err(Self::smuggle(CommerceError::ValidationError("Receiving location must be active, receivable, and belong to the specified active warehouse".into())));
+        }
+        let receipt = Self::create_receipt_tx(tx, selected)?;
+        let lines = {
+            let mut stmt = tx.prepare(
+                "SELECT * FROM receipt_items WHERE receipt_id = ?1 ORDER BY line_number",
+            )?;
+            stmt.query_map([receipt.id.to_string()], Self::row_to_receipt_item)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        Self::receive_items_tx(
+            tx,
+            ReceiveItems {
+                receipt_id: receipt.id,
+                receiving_location_id: Some(input.receiving_location_id),
+                received_by: None,
+                items: lines
+                    .iter()
+                    .map(|line| stateset_core::ReceiveItemLine {
+                        receipt_item_id: line.id,
+                        quantity_received: line.expected_quantity,
+                        quantity_rejected: None,
+                        rejection_reason: None,
+                        lot_number: None,
+                        serial_numbers: None,
+                        expiration_date: None,
+                        notes: None,
+                    })
+                    .collect(),
+            },
+        )?;
+        Self::complete_receiving_tx(tx, receipt.id)?;
+        for line in lines {
+            let task = Self::create_put_away_tx(
+                tx,
+                CreatePutAway {
+                    receipt_id: receipt.id,
+                    receipt_item_id: line.id,
+                    sku: line.sku,
+                    from_location_id: None,
+                    to_location_id: input.receiving_location_id,
+                    quantity: line.expected_quantity,
+                    lot_id: None,
+                    assigned_to: None,
+                    notes: None,
+                },
+            )?;
+            Self::complete_put_away_tx(
+                tx,
+                CompletePutAway {
+                    put_away_id: task.id,
+                    actual_location_id: None,
+                    completed_by: None,
+                    notes: None,
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn create_receipt_tx(
+        tx: &rusqlite::Transaction<'_>,
+        input: CreateReceipt,
+    ) -> rusqlite::Result<Receipt> {
+        if input.reference_type.as_deref() == Some("purchase_order") {
+            let po = input.reference_id.ok_or_else(|| {
+                Self::smuggle(CommerceError::ValidationError(
+                    "PO receipt requires a purchase order ID".into(),
+                ))
+            })?;
+            let outstanding = Self::po_receipt_tx(tx, po, input.warehouse_id)?;
+            crate::po_receipt::validate(&input, &outstanding).map_err(Self::smuggle)?;
+        } else if input.items.iter().any(|line| line.po_line_id.is_some()) {
+            return Err(Self::smuggle(CommerceError::ValidationError(
+                "PO lines require a purchase_order receipt reference".into(),
+            )));
+        }
+
+        let now = Utc::now().to_rfc3339();
+        let id = Uuid::new_v4();
+        let id_str = id.to_string();
+        let receipt_number = input.receipt_number.unwrap_or_else(generate_receipt_number);
+
+        // Calculate expected quantity from items
+        let expected_total: Decimal = input.items.iter().map(|i| i.expected_quantity).sum();
+
+        tx.execute(
+            "INSERT INTO receipts (id, receipt_number, receipt_type, status, reference_type, reference_id,
+             supplier_id, warehouse_id, carrier, tracking_number, expected_date, expected_quantity,
+             notes, created_by, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)",
+            params![
+                id_str,
+                receipt_number,
+                input.receipt_type.to_string(),
+                ReceiptStatus::Expected.to_string(),
+                input.reference_type,
+                input.reference_id.map(|id| id.to_string()),
+                input.supplier_id.map(|id| id.to_string()),
+                input.warehouse_id,
+                input.carrier,
+                input.tracking_number,
+                input.expected_date.map(|d| d.to_rfc3339()),
+                expected_total.to_string(),
+                input.notes,
+                input.created_by,
+                now,
+            ],
+        )?;
+
+        // Create receipt items
+        for (idx, item) in input.items.iter().enumerate() {
+            let item_id = Uuid::new_v4();
+            tx.execute(
+                "INSERT INTO receipt_items (id, receipt_id, line_number, sku, description, po_line_id,
+                 expected_quantity, unit_cost, lot_number, expiration_date, notes, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+                params![
+                    item_id.to_string(),
+                    id_str,
+                    (idx + 1) as i32,
+                    item.sku,
+                    item.description,
+                    item.po_line_id.map(|id| id.to_string()),
+                    item.expected_quantity.to_string(),
+                    item.unit_cost.map(|d| d.to_string()),
+                    item.lot_number,
+                    item.expiration_date.map(|d| d.to_rfc3339()),
+                    item.notes,
+                    now,
+                ],
+            )?;
+        }
+
+        Self::read_receipt_by_id_tx(tx, &id_str)
+    }
+
+    pub(super) fn receive_items_tx(
+        tx: &rusqlite::Transaction<'_>,
+        input: ReceiveItems,
+    ) -> rusqlite::Result<Receipt> {
+        let now = Utc::now().to_rfc3339();
+        let receipt_id = input.receipt_id.to_string();
+
+        // Verify receipt exists and is in correct status
+        let status_str: String = tx
+            .query_row("SELECT status FROM receipts WHERE id = ?1", params![receipt_id], |row| {
+                row.get(0)
+            })
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Self::smuggle(CommerceError::NotFound),
+                other => other,
+            })?;
+        let status: ReceiptStatus = parse_enum_row(&status_str, "receipt", "status")?;
+
+        if status != ReceiptStatus::InProgress && status != ReceiptStatus::Expected {
+            return Err(Self::smuggle(CommerceError::ValidationError(
+                "Receipt must be 'expected' or 'in_progress' to receive items".into(),
+            )));
+        }
+
+        // Update receipt to in_progress if expected
+        if status == ReceiptStatus::Expected {
+            tx.execute(
+                "UPDATE receipts SET status = ?1, received_date = ?2 WHERE id = ?3",
+                params![ReceiptStatus::InProgress.to_string(), now, receipt_id],
+            )?;
+        }
+
+        // Process each item
+        for line in &input.items {
+            let reject_qty = line.quantity_rejected.unwrap_or(Decimal::ZERO);
+            let line_id = line.receipt_item_id.to_string();
+
+            if line.quantity_received <= Decimal::ZERO {
+                return Err(Self::smuggle(CommerceError::ValidationError(
+                    "Received quantity must be greater than zero".into(),
+                )));
+            }
+            if reject_qty < Decimal::ZERO {
+                return Err(Self::smuggle(CommerceError::ValidationError(
+                    "Rejected quantity cannot be negative".into(),
+                )));
+            }
+
+            // received_quantity, rejected_quantity and expected_quantity are TEXT
+            // columns (migration 017), so accumulating in SQL via
+            // 'CAST(received_quantity AS REAL) + ?1' would coerce both operands to
+            // IEEE-754 floats ('0.1' + '0.2' = 0.30000000000000004) — corrupting
+            // the stored quantity and misclassifying the status at the
+            // received/expected boundary. Read the current row, add with
+            // `rust_decimal::Decimal`, and write exact precomputed strings back.
+            //
+            // The read is scoped by `receipt_id` too: a line id belonging to
+            // another receipt must not be receivable through this one.
+            let (cur_received, cur_rejected, expected, cur_status): (
+                String,
+                String,
+                String,
+                String,
+            ) = tx
+                .query_row(
+                    "SELECT received_quantity, rejected_quantity, expected_quantity, status
+                     FROM receipt_items WHERE id = ?1 AND receipt_id = ?2",
+                    params![line_id, receipt_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => Self::smuggle(CommerceError::NotFound),
+                    other => other,
+                })?;
+
+            let new_received =
+                parse_decimal_row(&cur_received, "receipt_item", "received_quantity")?
+                    + line.quantity_received;
+            let new_rejected =
+                parse_decimal_row(&cur_rejected, "receipt_item", "rejected_quantity")? + reject_qty;
+            let expected = parse_decimal_row(&expected, "receipt_item", "expected_quantity")?;
+
+            // A line with `expected_quantity = 0` is a blind receipt (no
+            // ASN/PO quantity to check against): any positive quantity is
+            // accepted and the line is `received` in full. Otherwise the
+            // cumulative received quantity is capped at expected.
+            let blind = expected == Decimal::ZERO;
+            if !blind && new_received > expected {
+                return Err(Self::smuggle(CommerceError::ValidationError(format!(
+                    "Receiving {new_received} would exceed expected quantity {expected} for receipt item {line_id}"
+                ))));
+            }
+
+            let serial_str =
+                super::receipt_serials::register(tx, line, input.received_by.as_deref(), &now)?;
+
+            let new_status = if new_received >= expected {
+                "received"
+            } else if new_received > Decimal::ZERO {
+                "partially_received"
+            } else {
+                cur_status.as_str()
+            };
+
+            // Update receipt item
+            tx.execute(
+                "UPDATE receipt_items SET
+                 received_quantity = ?1,
+                 rejected_quantity = ?2,
+                 lot_number = COALESCE(?3, lot_number),
+                 serial_numbers = COALESCE(?4, serial_numbers),
+                 expiration_date = COALESCE(?5, expiration_date),
+                 notes = COALESCE(?6, notes),
+                 status = ?8
+                 WHERE id = ?7",
+                params![
+                    new_received.to_string(),
+                    new_rejected.to_string(),
+                    line.lot_number,
+                    serial_str,
+                    line.expiration_date.map(|d| d.to_rfc3339()),
+                    line.notes,
+                    line_id,
+                    new_status,
+                ],
+            )?;
+        }
+
+        let header = Self::read_receipt_by_id_tx(tx, &receipt_id)?;
+        if header.reference_type.as_deref() == Some("purchase_order") {
+            let mut items = Vec::new();
+            for line in &input.items {
+                let po_line: Option<String> = tx.query_row(
+                    "SELECT po_line_id FROM receipt_items WHERE id = ?1 AND receipt_id = ?2",
+                    params![line.receipt_item_id.to_string(), receipt_id],
+                    |r| r.get(0),
+                )?;
+                let po_line = po_line.ok_or_else(|| {
+                    Self::smuggle(CommerceError::ValidationError(
+                        "PO receipt line is missing its PO line reference".into(),
+                    ))
+                })?;
+                items.push(stateset_core::ReceivePurchaseOrderItem {
+                    item_id: parse_uuid_row(&po_line, "receipt_item", "po_line_id")?,
+                    quantity_received: line.quantity_received,
+                    notes: line.notes.clone(),
+                });
+            }
+            let po = header.reference_id.ok_or_else(|| {
+                Self::smuggle(CommerceError::ValidationError(
+                    "PO receipt is missing its PO reference".into(),
+                ))
+            })?;
+            super::purchase_orders::SqlitePurchaseOrderRepository::receive_quantities_tx(
+                tx,
+                po.into(),
+                &items,
+            )?;
+        }
+
+        // Update receipt totals
+        Self::update_receipt_totals_tx(tx, &receipt_id)?;
+
+        Self::read_receipt_by_id_tx(tx, &receipt_id)
+    }
+
+    pub(super) fn complete_receiving_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id: Uuid,
+    ) -> rusqlite::Result<Receipt> {
+        let now = Utc::now().to_rfc3339();
+        let id_str = id.to_string();
+
+        let changed = tx.execute(
+            "UPDATE receipts SET status = ?1, completed_date = ?2
+             WHERE id = ?3 AND status = 'in_progress'",
+            params![ReceiptStatus::Received.to_string(), now, id_str],
+        )?;
+        if changed == 0 {
+            return Err(Self::receipt_guard_error(tx, &id_str, |_| {
+                "Can only complete 'in_progress' receipts".into()
+            }));
+        }
+
+        // Line statuses remain derived from the quantities actually received.
+
+        Self::read_receipt_by_id_tx(tx, &id_str)
+    }
+
+    pub(super) fn create_put_away_tx(
+        tx: &rusqlite::Transaction<'_>,
+        input: CreatePutAway,
+    ) -> rusqlite::Result<PutAway> {
+        if input.quantity <= Decimal::ZERO {
+            return Err(Self::smuggle(CommerceError::ValidationError(
+                "Put-away quantity must be greater than zero".into(),
+            )));
+        }
+        Self::validate_destination_tx(tx, input.receipt_id, input.to_location_id)?;
+        let now = Utc::now().to_rfc3339();
+        let id = Uuid::new_v4();
+        let id_str = id.to_string();
+        let receipt_id = input.receipt_id.to_string();
+        let item_id = input.receipt_item_id.to_string();
+
+        let (owner, received_str): (String, String) = tx
+            .query_row(
+                "SELECT receipt_id, received_quantity FROM receipt_items WHERE id = ?1",
+                params![item_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Self::smuggle(CommerceError::NotFound),
+                other => other,
+            })?;
+        if owner != receipt_id {
+            return Err(Self::smuggle(CommerceError::ValidationError(format!(
+                "Receipt item {item_id} does not belong to receipt {receipt_id}"
+            ))));
+        }
+        let lot_id = Self::receipt_lot_tx(
+            tx,
+            input.receipt_id,
+            input.receipt_item_id,
+            &input.sku,
+            input.lot_id,
+        )?;
+        let received = parse_decimal_row(&received_str, "receipt_item", "received_quantity")?;
+
+        let planned_params: [&dyn rusqlite::ToSql; 1] = [&item_id];
+        let planned = sum_decimal_query(
+            tx,
+            "SELECT quantity FROM put_aways WHERE receipt_item_id = ?1 AND status != 'cancelled'",
+            &planned_params,
+            "put_aways",
+            "quantity",
+        )
+        .map_err(Self::smuggle)?;
+
+        if planned + input.quantity > received {
+            return Err(Self::smuggle(CommerceError::ValidationError(format!(
+                "Cannot put away {} of receipt item {item_id}: {received} received, {planned} already planned, {} available",
+                input.quantity,
+                received - planned
+            ))));
+        }
+
+        tx.execute(
+            "INSERT INTO put_aways (id, receipt_id, receipt_item_id, sku, from_location_id, to_location_id,
+             quantity, lot_id, assigned_to, notes, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                id_str,
+                receipt_id,
+                item_id,
+                input.sku,
+                input.from_location_id,
+                input.to_location_id,
+                input.quantity.to_string(),
+                lot_id.map(|id| id.to_string()),
+                input.assigned_to,
+                input.notes,
+                now,
+            ],
+        )?;
+
+        Self::read_put_away_by_id_tx(tx, &id_str)
+    }
+
+    pub(super) fn complete_put_away_tx(
+        tx: &rusqlite::Transaction<'_>,
+        input: CompletePutAway,
+    ) -> rusqlite::Result<PutAway> {
+        let now = Utc::now().to_rfc3339();
+        let id_str = input.put_away_id.to_string();
+
+        let existing = Self::read_put_away_by_id_tx(tx, &id_str)?;
+        let lot = Self::receipt_lot_tx(
+            tx,
+            existing.receipt_id,
+            existing.receipt_item_id,
+            &existing.sku,
+            existing.lot_id,
+        )?;
+        if lot != existing.lot_id {
+            return Err(Self::smuggle(CommerceError::Conflict(
+                "Receipt lot changed after put-away was planned".into(),
+            )));
+        }
+        let to_location = input.actual_location_id.unwrap_or(existing.to_location_id);
+        Self::validate_destination_tx(tx, existing.receipt_id, to_location)?;
+
+        let changed = tx.execute(
+            "UPDATE put_aways SET status = ?1, to_location_id = ?2, completed_at = ?3, notes = COALESCE(?4, notes)
+             WHERE id = ?5 AND status IN ('pending', 'assigned', 'in_progress')",
+            params![
+                PutAwayStatus::Completed.to_string(),
+                to_location,
+                now,
+                input.notes,
+                id_str,
+            ],
+        )?;
+        if changed == 0 {
+            return Err(Self::put_away_conflict(tx, &id_str, "complete"));
+        }
+
+        // Update receipt put_away_quantity
+        let receipt_id_param = existing.receipt_id.to_string();
+        let put_away_params: [&dyn rusqlite::ToSql; 1] = [&receipt_id_param];
+        let put_away_total = sum_decimal_query(
+            tx,
+            "SELECT quantity FROM put_aways WHERE receipt_id = ?1 AND status = 'completed'",
+            &put_away_params,
+            "put_aways",
+            "quantity",
+        )
+        .map_err(Self::smuggle)?;
+
+        tx.execute(
+            "UPDATE receipts SET put_away_quantity = ?1 WHERE id = ?2",
+            params![put_away_total.to_string(), receipt_id_param],
+        )?;
+
+        super::stock_move::post(
+            tx,
+            &crate::stock_move::StockMove {
+                id: uuid::Uuid::new_v4(),
+                sku: &existing.sku,
+                lot_id: existing.lot_id,
+                from: None,
+                to: Some(to_location),
+                quantity: existing.quantity,
+                release_reserved: Decimal::ZERO,
+                reserve_received: Decimal::ZERO,
+                movement_type: stateset_core::MovementType::Receipt,
+                lot_effect: crate::stock_move::LotEffect::Track,
+                check_sellable: false,
+                reference_type: Some("put_away"),
+                reference_id: Some(existing.id),
+                reference_label: None,
+                reason: Some("put-away completed"),
+                performed_by: existing.assigned_to.as_deref(),
+            },
+            &now,
+        )?;
+
+        super::receipt_serials::place(
+            tx,
+            existing.receipt_item_id,
+            existing.id,
+            existing.quantity,
+            to_location,
+            &now,
+        )?;
+
+        Self::read_put_away_by_id_tx(tx, &id_str)
+    }
+
+    fn receipt_lot_tx(
+        tx: &rusqlite::Transaction<'_>,
+        receipt: Uuid,
+        item: Uuid,
+        sku: &str,
+        requested_lot: Option<Uuid>,
+    ) -> rusqlite::Result<Option<Uuid>> {
+        let (line_sku, lot_number, status): (String, Option<String>, String) = tx.query_row(
+            "SELECT i.sku, i.lot_number, r.status FROM receipt_items i JOIN receipts r ON r.id = i.receipt_id
+             WHERE i.id = ?1 AND r.id = ?2", params![item.to_string(), receipt.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        if status == "cancelled" {
+            return Err(Self::smuggle(CommerceError::Conflict(
+                "Cannot put away a cancelled receipt".into(),
+            )));
+        }
+        if line_sku != sku {
+            return Err(Self::smuggle(CommerceError::ValidationError(
+                "Put-away SKU must match the receipt line".into(),
+            )));
+        }
+        let lot = if let Some(number) = lot_number {
+            let lot: Option<String> = tx
+                .query_row(
+                    "SELECT id FROM lots WHERE lot_number = ?1 AND sku = ?2",
+                    params![number, sku],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            Some(parse_uuid_row(
+                &lot.ok_or_else(|| {
+                    Self::smuggle(CommerceError::ValidationError(
+                        "Receipt lot must be registered for this SKU before put-away".into(),
+                    ))
+                })?,
+                "lots",
+                "id",
+            )?)
+        } else {
+            None
+        };
+        if requested_lot.is_some() && requested_lot != lot {
+            return Err(Self::smuggle(CommerceError::ValidationError(
+                "Put-away lot must match the receipt line".into(),
+            )));
+        }
+        Ok(lot)
+    }
+
     #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
@@ -328,65 +962,7 @@ impl ReceivingRepository for SqliteReceivingRepository {
     /// failure part-way through the line loop left a receipt whose
     /// `expected_quantity` header total counted lines that were never inserted.
     fn create_receipt(&self, input: CreateReceipt) -> Result<Receipt> {
-        let now = Utc::now().to_rfc3339();
-        let id = Uuid::new_v4();
-        let id_str = id.to_string();
-        let receipt_number = input.receipt_number.unwrap_or_else(generate_receipt_number);
-
-        // Calculate expected quantity from items
-        let expected_total: Decimal = input.items.iter().map(|i| i.expected_quantity).sum();
-
-        with_immediate_transaction(&self.pool, |tx| {
-            tx.execute(
-                "INSERT INTO receipts (id, receipt_number, receipt_type, status, reference_type, reference_id,
-                 supplier_id, warehouse_id, carrier, tracking_number, expected_date, expected_quantity,
-                 notes, created_by, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)",
-                params![
-                    id_str,
-                    receipt_number,
-                    input.receipt_type.to_string(),
-                    ReceiptStatus::Expected.to_string(),
-                    input.reference_type,
-                    input.reference_id.map(|id| id.to_string()),
-                    input.supplier_id.map(|id| id.to_string()),
-                    input.warehouse_id,
-                    input.carrier,
-                    input.tracking_number,
-                    input.expected_date.map(|d| d.to_rfc3339()),
-                    expected_total.to_string(),
-                    input.notes,
-                    input.created_by,
-                    now,
-                ],
-            )?;
-
-            // Create receipt items
-            for (idx, item) in input.items.iter().enumerate() {
-                let item_id = Uuid::new_v4();
-                tx.execute(
-                    "INSERT INTO receipt_items (id, receipt_id, line_number, sku, description, po_line_id,
-                     expected_quantity, unit_cost, lot_number, expiration_date, notes, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
-                    params![
-                        item_id.to_string(),
-                        id_str,
-                        (idx + 1) as i32,
-                        item.sku,
-                        item.description,
-                        item.po_line_id.map(|id| id.to_string()),
-                        item.expected_quantity.to_string(),
-                        item.unit_cost.map(|d| d.to_string()),
-                        item.lot_number,
-                        item.expiration_date.map(|d| d.to_rfc3339()),
-                        item.notes,
-                        now,
-                    ],
-                )?;
-            }
-
-            Self::read_receipt_by_id_tx(tx, &id_str)
-        })
+        with_immediate_transaction(&self.pool, |tx| Self::create_receipt_tx(tx, input.clone()))
     }
 
     fn get_receipt(&self, id: Uuid) -> Result<Option<Receipt>> {
@@ -564,139 +1140,7 @@ impl ReceivingRepository for SqliteReceivingRepository {
     ///    be received against a 10-unit line, corrupting inventory and the
     ///    downstream three-way match.
     fn receive_items(&self, input: ReceiveItems) -> Result<Receipt> {
-        let now = Utc::now().to_rfc3339();
-        let receipt_id = input.receipt_id.to_string();
-
-        with_immediate_transaction(&self.pool, |tx| {
-            // Verify receipt exists and is in correct status
-            let status_str: String = tx
-                .query_row(
-                    "SELECT status FROM receipts WHERE id = ?1",
-                    params![receipt_id],
-                    |row| row.get(0),
-                )
-                .map_err(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => Self::smuggle(CommerceError::NotFound),
-                    other => other,
-                })?;
-            let status: ReceiptStatus = parse_enum_row(&status_str, "receipt", "status")?;
-
-            if status != ReceiptStatus::InProgress && status != ReceiptStatus::Expected {
-                return Err(Self::smuggle(CommerceError::ValidationError(
-                    "Receipt must be 'expected' or 'in_progress' to receive items".into(),
-                )));
-            }
-
-            // Update receipt to in_progress if expected
-            if status == ReceiptStatus::Expected {
-                tx.execute(
-                    "UPDATE receipts SET status = ?1, received_date = ?2 WHERE id = ?3",
-                    params![ReceiptStatus::InProgress.to_string(), now, receipt_id],
-                )?;
-            }
-
-            // Process each item
-            for line in &input.items {
-                let reject_qty = line.quantity_rejected.unwrap_or(Decimal::ZERO);
-                let serial_str = line.serial_numbers.as_ref().map(|v| v.join(","));
-                let line_id = line.receipt_item_id.to_string();
-
-                if line.quantity_received <= Decimal::ZERO {
-                    return Err(Self::smuggle(CommerceError::ValidationError(
-                        "Received quantity must be greater than zero".into(),
-                    )));
-                }
-                if reject_qty < Decimal::ZERO {
-                    return Err(Self::smuggle(CommerceError::ValidationError(
-                        "Rejected quantity cannot be negative".into(),
-                    )));
-                }
-
-                // received_quantity, rejected_quantity and expected_quantity are TEXT
-                // columns (migration 017), so accumulating in SQL via
-                // 'CAST(received_quantity AS REAL) + ?1' would coerce both operands to
-                // IEEE-754 floats ('0.1' + '0.2' = 0.30000000000000004) — corrupting
-                // the stored quantity and misclassifying the status at the
-                // received/expected boundary. Read the current row, add with
-                // `rust_decimal::Decimal`, and write exact precomputed strings back.
-                //
-                // The read is scoped by `receipt_id` too: a line id belonging to
-                // another receipt must not be receivable through this one.
-                let (cur_received, cur_rejected, expected, cur_status): (
-                    String,
-                    String,
-                    String,
-                    String,
-                ) = tx
-                    .query_row(
-                        "SELECT received_quantity, rejected_quantity, expected_quantity, status
-                         FROM receipt_items WHERE id = ?1 AND receipt_id = ?2",
-                        params![line_id, receipt_id],
-                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                    )
-                    .map_err(|e| match e {
-                        rusqlite::Error::QueryReturnedNoRows => {
-                            Self::smuggle(CommerceError::NotFound)
-                        }
-                        other => other,
-                    })?;
-
-                let new_received =
-                    parse_decimal_row(&cur_received, "receipt_item", "received_quantity")?
-                        + line.quantity_received;
-                let new_rejected =
-                    parse_decimal_row(&cur_rejected, "receipt_item", "rejected_quantity")?
-                        + reject_qty;
-                let expected = parse_decimal_row(&expected, "receipt_item", "expected_quantity")?;
-
-                // A line with `expected_quantity = 0` is a blind receipt (no
-                // ASN/PO quantity to check against): any positive quantity is
-                // accepted and the line is `received` in full. Otherwise the
-                // cumulative received quantity is capped at expected.
-                let blind = expected == Decimal::ZERO;
-                if !blind && new_received > expected {
-                    return Err(Self::smuggle(CommerceError::ValidationError(format!(
-                        "Receiving {new_received} would exceed expected quantity {expected} for receipt item {line_id}"
-                    ))));
-                }
-
-                let new_status = if new_received >= expected {
-                    "received"
-                } else if new_received > Decimal::ZERO {
-                    "partially_received"
-                } else {
-                    cur_status.as_str()
-                };
-
-                // Update receipt item
-                tx.execute(
-                    "UPDATE receipt_items SET
-                     received_quantity = ?1,
-                     rejected_quantity = ?2,
-                     lot_number = COALESCE(?3, lot_number),
-                     serial_numbers = COALESCE(?4, serial_numbers),
-                     expiration_date = COALESCE(?5, expiration_date),
-                     notes = COALESCE(?6, notes),
-                     status = ?8
-                     WHERE id = ?7",
-                    params![
-                        new_received.to_string(),
-                        new_rejected.to_string(),
-                        line.lot_number,
-                        serial_str,
-                        line.expiration_date.map(|d| d.to_rfc3339()),
-                        line.notes,
-                        line_id,
-                        new_status,
-                    ],
-                )?;
-            }
-
-            // Update receipt totals
-            Self::update_receipt_totals_tx(tx, &receipt_id)?;
-
-            Self::read_receipt_by_id_tx(tx, &receipt_id)
-        })
+        with_immediate_transaction(&self.pool, |tx| Self::receive_items_tx(tx, input.clone()))
     }
 
     /// Complete receiving ([`ReceiptStatus::InProgress`] only).
@@ -705,29 +1149,7 @@ impl ReceivingRepository for SqliteReceivingRepository {
     /// connection a failure between them left a `Received` receipt whose lines
     /// still claimed to be pending (or vice versa).
     fn complete_receiving(&self, id: Uuid) -> Result<Receipt> {
-        let now = Utc::now().to_rfc3339();
-        let id_str = id.to_string();
-
-        with_immediate_transaction(&self.pool, |tx| {
-            let changed = tx.execute(
-                "UPDATE receipts SET status = ?1, completed_date = ?2
-                 WHERE id = ?3 AND status = 'in_progress'",
-                params![ReceiptStatus::Received.to_string(), now, id_str],
-            )?;
-            if changed == 0 {
-                return Err(Self::receipt_guard_error(tx, &id_str, |_| {
-                    "Can only complete 'in_progress' receipts".into()
-                }));
-            }
-
-            // Mark all items as received
-            tx.execute(
-                "UPDATE receipt_items SET status = 'received' WHERE receipt_id = ?1 AND status != 'rejected'",
-                params![id_str],
-            )?;
-
-            Self::read_receipt_by_id_tx(tx, &id_str)
-        })
+        with_immediate_transaction(&self.pool, |tx| Self::complete_receiving_tx(tx, id))
     }
 
     /// Cancel a receipt.
@@ -741,6 +1163,15 @@ impl ReceivingRepository for SqliteReceivingRepository {
         let id_str = id.to_string();
 
         with_immediate_transaction(&self.pool, |tx| {
+            let receipt = Self::read_receipt_by_id_tx(tx, &id_str)?;
+            if receipt.reference_type.as_deref() == Some("purchase_order")
+                && receipt.received_quantity > Decimal::ZERO
+            {
+                return Err(Self::smuggle(CommerceError::Conflict(
+                    "Cannot cancel a PO receipt after quantities have been received".into(),
+                )));
+            }
+
             let changed = tx.execute(
                 "UPDATE receipts SET status = ?1
                  WHERE id = ?2 AND status IN ('expected', 'in_progress')",
@@ -841,74 +1272,7 @@ impl ReceivingRepository for SqliteReceivingRepository {
     ///    completed, report `put_away_quantity = 20` for stock that never
     ///    arrived.
     fn create_put_away(&self, input: CreatePutAway) -> Result<PutAway> {
-        if input.quantity <= Decimal::ZERO {
-            return Err(CommerceError::ValidationError(
-                "Put-away quantity must be greater than zero".into(),
-            ));
-        }
-        let now = Utc::now().to_rfc3339();
-        let id = Uuid::new_v4();
-        let id_str = id.to_string();
-        let receipt_id = input.receipt_id.to_string();
-        let item_id = input.receipt_item_id.to_string();
-
-        with_immediate_transaction(&self.pool, |tx| {
-            let (owner, received_str): (String, String) = tx
-                .query_row(
-                    "SELECT receipt_id, received_quantity FROM receipt_items WHERE id = ?1",
-                    params![item_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .map_err(|e| match e {
-                    rusqlite::Error::QueryReturnedNoRows => Self::smuggle(CommerceError::NotFound),
-                    other => other,
-                })?;
-            if owner != receipt_id {
-                return Err(Self::smuggle(CommerceError::ValidationError(format!(
-                    "Receipt item {item_id} does not belong to receipt {receipt_id}"
-                ))));
-            }
-            let received = parse_decimal_row(&received_str, "receipt_item", "received_quantity")?;
-
-            let planned_params: [&dyn rusqlite::ToSql; 1] = [&item_id];
-            let planned = sum_decimal_query(
-                tx,
-                "SELECT quantity FROM put_aways WHERE receipt_item_id = ?1 AND status != 'cancelled'",
-                &planned_params,
-                "put_aways",
-                "quantity",
-            )
-            .map_err(Self::smuggle)?;
-
-            if planned + input.quantity > received {
-                return Err(Self::smuggle(CommerceError::ValidationError(format!(
-                    "Cannot put away {} of receipt item {item_id}: {received} received, {planned} already planned, {} available",
-                    input.quantity,
-                    received - planned
-                ))));
-            }
-
-            tx.execute(
-                "INSERT INTO put_aways (id, receipt_id, receipt_item_id, sku, from_location_id, to_location_id,
-                 quantity, lot_id, assigned_to, notes, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                params![
-                    id_str,
-                    receipt_id,
-                    item_id,
-                    input.sku,
-                    input.from_location_id,
-                    input.to_location_id,
-                    input.quantity.to_string(),
-                    input.lot_id.map(|id| id.to_string()),
-                    input.assigned_to,
-                    input.notes,
-                    now,
-                ],
-            )?;
-
-            Self::read_put_away_by_id_tx(tx, &id_str)
-        })
+        with_immediate_transaction(&self.pool, |tx| Self::create_put_away_tx(tx, input.clone()))
     }
 
     fn get_put_away(&self, id: Uuid) -> Result<Option<PutAway>> {
@@ -1023,84 +1387,7 @@ impl ReceivingRepository for SqliteReceivingRepository {
     /// second time and raises a conflict before any stock moves — so the
     /// movement can never be double counted.
     fn complete_put_away(&self, input: CompletePutAway) -> Result<PutAway> {
-        let now = Utc::now().to_rfc3339();
-        let id_str = input.put_away_id.to_string();
-
-        with_immediate_transaction(&self.pool, |tx| {
-            let existing = Self::read_put_away_by_id_tx(tx, &id_str)?;
-            let to_location = input.actual_location_id.unwrap_or(existing.to_location_id);
-
-            let changed = tx.execute(
-                "UPDATE put_aways SET status = ?1, to_location_id = ?2, completed_at = ?3, notes = COALESCE(?4, notes)
-                 WHERE id = ?5 AND status IN ('pending', 'assigned', 'in_progress')",
-                params![
-                    PutAwayStatus::Completed.to_string(),
-                    to_location,
-                    now,
-                    input.notes,
-                    id_str,
-                ],
-            )?;
-            if changed == 0 {
-                return Err(Self::put_away_conflict(tx, &id_str, "complete"));
-            }
-
-            // Update receipt put_away_quantity
-            let receipt_id_param = existing.receipt_id.to_string();
-            let put_away_params: [&dyn rusqlite::ToSql; 1] = [&receipt_id_param];
-            let put_away_total = sum_decimal_query(
-                tx,
-                "SELECT quantity FROM put_aways WHERE receipt_id = ?1 AND status = 'completed'",
-                &put_away_params,
-                "put_aways",
-                "quantity",
-            )
-            .map_err(Self::smuggle)?;
-
-            tx.execute(
-                "UPDATE receipts SET put_away_quantity = ?1 WHERE id = ?2",
-                params![put_away_total.to_string(), receipt_id_param],
-            )?;
-
-            // Stock effect: the units land in the destination bin and in the
-            // warehouse balance.
-            let warehouse_id = super::warehouse::warehouse_of_location_tx(tx, to_location)?;
-            super::warehouse::ensure_inventory_item_tx(tx, &existing.sku)?;
-            super::warehouse::apply_location_delta_tx(
-                tx,
-                to_location,
-                &existing.sku,
-                existing.lot_id,
-                existing.quantity,
-                &now,
-            )?;
-            super::bins::apply_warehouse_delta_tx(
-                tx,
-                warehouse_id,
-                &existing.sku,
-                existing.quantity,
-                Decimal::ZERO,
-                "put-away completed",
-                Some("put_away"),
-                Some(&id_str),
-                &now,
-            )?;
-            super::warehouse::insert_wms_movement_tx(
-                tx,
-                stateset_core::MovementType::Receipt,
-                existing.from_location_id,
-                Some(to_location),
-                &existing.sku,
-                existing.lot_id,
-                existing.quantity,
-                "put_away",
-                &id_str,
-                existing.assigned_to.as_deref(),
-                &now,
-            )?;
-
-            Self::read_put_away_by_id_tx(tx, &id_str)
-        })
+        with_immediate_transaction(&self.pool, |tx| Self::complete_put_away_tx(tx, input.clone()))
     }
 
     /// Cancel a put-away task.
@@ -1164,63 +1451,8 @@ impl ReceivingRepository for SqliteReceivingRepository {
     }
 
     fn create_receipt_from_po(&self, po_id: Uuid, warehouse_id: i32) -> Result<Receipt> {
-        let conn = self.conn()?;
-
-        // The PO must exist: an unknown id is `NotFound`, not an empty receipt.
-        let supplier_id_raw: Option<String> = conn
-            .query_row(
-                "SELECT supplier_id FROM purchase_orders WHERE id = ?1",
-                params![po_id.to_string()],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(map_db_error)?
-            .ok_or(CommerceError::NotFound)?;
-        let supplier_id = parse_uuid_opt(supplier_id_raw, "purchase_order", "supplier_id")?;
-
-        // Get PO items
-        let mut stmt = conn
-            .prepare("SELECT sku, name, quantity_ordered, unit_cost FROM purchase_order_items WHERE purchase_order_id = ?1")
-            .map_err(map_db_error)?;
-
-        let mut rows = stmt.query(params![po_id.to_string()]).map_err(map_db_error)?;
-
-        let mut items: Vec<CreateReceiptItem> = Vec::new();
-        while let Some(row) = rows.next().map_err(map_db_error)? {
-            let sku: String = row.get(0).map_err(map_db_error)?;
-            let description: Option<String> = row.get(1).map_err(map_db_error)?;
-            let qty_str: String = row.get(2).map_err(map_db_error)?;
-            let cost_str: Option<String> = row.get(3).map_err(map_db_error)?;
-
-            let expected_quantity =
-                parse_decimal_strict(&qty_str, "purchase_order_item", "quantity")?;
-            let unit_cost = parse_decimal_opt(cost_str, "purchase_order_item", "unit_cost")?;
-
-            items.push(CreateReceiptItem {
-                sku,
-                description,
-                po_line_id: None,
-                expected_quantity,
-                unit_cost,
-                lot_number: None,
-                expiration_date: None,
-                notes: None,
-            });
-        }
-
-        self.create_receipt(CreateReceipt {
-            receipt_number: None,
-            receipt_type: ReceiptType::PurchaseOrder,
-            reference_type: Some("purchase_order".into()),
-            reference_id: Some(po_id),
-            supplier_id,
-            warehouse_id,
-            carrier: None,
-            tracking_number: None,
-            expected_date: None,
-            notes: Some(format!("Created from PO {po_id}")),
-            created_by: None,
-            items,
+        with_immediate_transaction(&self.pool, |tx| {
+            Self::create_receipt_tx(tx, Self::po_receipt_tx(tx, po_id, warehouse_id)?)
         })
     }
 
@@ -1448,12 +1680,18 @@ mod tests {
             })
             .expect("create PO");
 
+        assert!(db.receiving().create_receipt_from_po(po.id.into(), 1).is_err());
+        db.purchase_orders().submit_for_approval(po.id).unwrap();
+        db.purchase_orders().approve(po.id, "approver").unwrap();
+        db.purchase_orders().send(po.id).unwrap();
+
         let receipt =
             db.receiving().create_receipt_from_po(po.id.into(), 1).expect("receipt from PO");
         let items = db.receiving().get_receipt_items(receipt.id).expect("items");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].sku, "SKU-PO");
         assert_eq!(items[0].expected_quantity, dec!(7));
+        assert_eq!(items[0].po_line_id, Some(po.items[0].id));
     }
 
     #[test]

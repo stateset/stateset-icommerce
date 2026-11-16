@@ -4,6 +4,10 @@ Orders are the central aggregate in iCommerce, linking customers, products, inve
 
 ## Order Lifecycle
 
+> Simplified sketch. The exact transitions (including `confirmed`, `partially_shipped` and
+> `refunded`) are generated from the engine in
+> [State Machines (generated)](../appendix/state-machines.md#order).
+
 ```
 ┌─────────┐    ┌────────────┐    ┌─────────┐    ┌───────────┐
 │ Pending  │───►│ Processing │───►│ Shipped │───►│ Delivered │

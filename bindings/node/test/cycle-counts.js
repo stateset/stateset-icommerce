@@ -32,18 +32,15 @@ test('CycleCounts: full lifecycle', async (t) => {
       warehouseId: warehouse.id,
       locationId: location.id,
       countedBy: 'counter@example.com',
-      lines: [
-        { sku: 'CC-SKU-1', expectedQuantity: '100' },
-        { sku: 'CC-SKU-2', expectedQuantity: '25.5' },
-      ],
+      lines: [{ sku: 'CC-SKU-1', expectedQuantity: '100' }, { sku: 'CC-SKU-2' }],
     });
     assert.ok(count.id);
     assert.equal(count.status, 'draft');
     assert.equal(count.warehouseId, warehouse.id);
     assert.equal(count.countedBy, 'counter@example.com');
     assert.equal(count.lines.length, 2);
-    assert.equal(count.lines[0].expectedQuantity, '100');
-    assert.equal(count.lines[1].expectedQuantity, '25.5');
+    assert.equal(count.lines[0].expectedQuantity, '0', 'caller expected quantity is ignored');
+    assert.equal(count.lines[1].expectedQuantity, '0');
     assert.ok(count.lines[0].countedQuantity == null);
   });
 
@@ -71,8 +68,8 @@ test('CycleCounts: full lifecycle', async (t) => {
     const line1 = recorded.lines.find((l) => l.sku === 'CC-SKU-1');
     const line2 = recorded.lines.find((l) => l.sku === 'CC-SKU-2');
     assert.equal(line1.countedQuantity, '103');
-    assert.equal(line1.variance, '3');
-    assert.equal(line2.variance, '0.0');
+    assert.equal(line1.variance, '103');
+    assert.equal(line2.variance, '25.5');
   });
 
   await t.test('complete applies variances and finishes the count', async () => {
@@ -84,7 +81,7 @@ test('CycleCounts: full lifecycle', async (t) => {
   await t.test('cancel abandons a draft count', async () => {
     const other = await commerce.cycleCounts.create({
       warehouseId: warehouse.id,
-      lines: [{ sku: 'CC-SKU-3', expectedQuantity: '10' }],
+      lines: [{ sku: 'CC-SKU-3' }],
     });
     const cancelled = await commerce.cycleCounts.cancel(other.id);
     assert.equal(cancelled.status, 'cancelled');

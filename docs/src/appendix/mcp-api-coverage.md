@@ -9,31 +9,34 @@ node ./scripts/ci/generate_mcp_api_coverage.mjs
 ```
 
 Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`.
+"Fully covered" means every audited binding method is either called by a tool or
+listed, with its reason, as deliberately unexposed.
 
 ## Summary
 
 | Metric | Value |
 | --- | --- |
 | Domain tool modules | 89 |
-| Domain tools | 951 |
+| Domain tools | 990 |
 | Commerce getters | 68 |
 | Mapped getters | 68 |
 | Audited classes | 32 |
-| Audited methods | 421 |
-| Mapped audited methods | 421 |
+| Audited methods | 463 |
+| Mapped audited methods | 460 |
+| Deliberately unexposed audited methods | 3 |
 | Fully covered | yes |
 
 ## Commerce Getter Coverage
 
 | Getter | Mapped module | Tools |
 | --- | --- | --- |
-| `accountsPayable` | `accounts-payable` | 11 |
-| `accountsReceivable` | `accounts-receivable` | 8 |
+| `accountsPayable` | `accounts-payable` | 22 |
+| `accountsReceivable` | `accounts-receivable` | 15 |
 | `activityLogs` | `activity-logs` | 5 |
 | `analytics` | `analytics` | 14 |
 | `backorder` | `backorders` | 20 |
 | `backorders` | `backorders` | 20 |
-| `bom` | `manufacturing` | 11 |
+| `bom` | `manufacturing` | 12 |
 | `carts` | `carts` | 30 |
 | `channels` | `channels` | 8 |
 | `companies` | `companies` | 9 |
@@ -48,7 +51,7 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `fixedAssets` | `fixed-assets` | 9 |
 | `fraud` | `fraud` | 6 |
 | `fulfillment` | `fulfillment` | 14 |
-| `generalLedger` | `general-ledger` | 17 |
+| `generalLedger` | `general-ledger` | 26 |
 | `giftCards` | `gift-cards` | 7 |
 | `inboundShipments` | `inbound-shipments` | 8 |
 | `integrationFieldMappings` | `integration-field-mappings` | 8 |
@@ -71,8 +74,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `purchaseOrders` | `suppliers` | 12 |
 | `purgatory` | `purgatory` | 6 |
 | `quality` | `quality` | 15 |
-| `receiving` | `receiving` | 8 |
-| `returns` | `returns` | 12 |
+| `receiving` | `receiving` | 16 |
+| `returns` | `returns` | 13 |
 | `revenueRecognition` | `revenue-recognition` | 6 |
 | `reviews` | `reviews` | 7 |
 | `searchConfig` | `search-config` | 7 |
@@ -86,52 +89,52 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | `supplierSkus` | `supplier-skus` | 7 |
 | `tax` | `tax` | 29 |
 | `topologySnapshots` | `topology-snapshots` | 5 |
-| `transferOrders` | `transfer-orders` | 7 |
+| `transferOrders` | `transfer-orders` | 8 |
 | `unitsOfMeasure` | `units-of-measure` | 10 |
 | `vendorCredits` | `vendor-credits` | 8 |
 | `vendorReturns` | `vendor-returns` | 6 |
 | `warehouse` | `warehouse` | 9 |
 | `warranties` | `warranties` | 7 |
 | `wishlists` | `wishlists` | 6 |
-| `workOrders` | `manufacturing` | 11 |
+| `workOrders` | `manufacturing` | 12 |
 | `x402` | `x402` | 14 |
 
 ## Audited Class Coverage
 
-| Class | Methods | Mapped | Uncovered | Stale mappings | Invalid tool refs |
-| --- | --- | --- | --- | --- | --- |
-| `AccountsPayable` | 13 | 13 | 0 | 0 | 0 |
-| `AccountsReceivable` | 8 | 8 | 0 | 0 | 0 |
-| `Analytics` | 14 | 14 | 0 | 0 | 0 |
-| `Backorders` | 21 | 21 | 0 | 0 | 0 |
-| `Bom` | 7 | 7 | 0 | 0 | 0 |
-| `Carts` | 33 | 33 | 0 | 0 | 0 |
-| `CostAccounting` | 5 | 5 | 0 | 0 | 0 |
-| `Credit` | 9 | 9 | 0 | 0 | 0 |
-| `CurrencyOperations` | 16 | 16 | 0 | 0 | 0 |
-| `Customers` | 13 | 13 | 0 | 0 | 0 |
-| `CustomObjects` | 12 | 12 | 0 | 0 | 0 |
-| `Fulfillment` | 14 | 14 | 0 | 0 | 0 |
-| `GeneralLedger` | 18 | 18 | 0 | 0 | 0 |
-| `Inventory` | 7 | 7 | 0 | 0 | 0 |
-| `Invoices` | 8 | 8 | 0 | 0 | 0 |
-| `Lots` | 12 | 12 | 0 | 0 | 0 |
-| `Orders` | 10 | 10 | 0 | 0 | 0 |
-| `Payments` | 14 | 14 | 0 | 0 | 0 |
-| `Products` | 16 | 16 | 0 | 0 | 0 |
-| `Promotions` | 20 | 20 | 0 | 0 | 0 |
-| `PurchaseOrders` | 13 | 13 | 0 | 0 | 0 |
-| `Quality` | 17 | 17 | 0 | 0 | 0 |
-| `Receiving` | 10 | 10 | 0 | 0 | 0 |
-| `Returns` | 13 | 13 | 0 | 0 | 0 |
-| `Serials` | 9 | 9 | 0 | 0 | 0 |
-| `Shipments` | 10 | 10 | 0 | 0 | 0 |
-| `Subscriptions` | 19 | 19 | 0 | 0 | 0 |
-| `Tax` | 18 | 18 | 0 | 0 | 0 |
-| `Warehouse` | 10 | 10 | 0 | 0 | 0 |
-| `Warranties` | 8 | 8 | 0 | 0 | 0 |
-| `WorkOrders` | 7 | 7 | 0 | 0 | 0 |
-| `X402` | 17 | 17 | 0 | 0 | 0 |
+| Class | Methods | Mapped | Unexposed | Uncovered | Stale mappings | Invalid tool refs |
+| --- | --- | --- | --- | --- | --- | --- |
+| `AccountsPayable` | 24 | 24 | 0 | 0 | 0 | 0 |
+| `AccountsReceivable` | 15 | 15 | 0 | 0 | 0 | 0 |
+| `Analytics` | 14 | 14 | 0 | 0 | 0 | 0 |
+| `Backorders` | 21 | 21 | 0 | 0 | 0 | 0 |
+| `Bom` | 7 | 7 | 0 | 0 | 0 | 0 |
+| `Carts` | 33 | 33 | 0 | 0 | 0 | 0 |
+| `CostAccounting` | 5 | 5 | 0 | 0 | 0 | 0 |
+| `Credit` | 9 | 9 | 0 | 0 | 0 | 0 |
+| `CurrencyOperations` | 16 | 16 | 0 | 0 | 0 | 0 |
+| `Customers` | 13 | 13 | 0 | 0 | 0 | 0 |
+| `CustomObjects` | 12 | 12 | 0 | 0 | 0 | 0 |
+| `Fulfillment` | 14 | 14 | 0 | 0 | 0 | 0 |
+| `GeneralLedger` | 27 | 27 | 0 | 0 | 0 | 0 |
+| `Inventory` | 8 | 7 | 1 | 0 | 0 | 0 |
+| `Invoices` | 9 | 9 | 0 | 0 | 0 | 0 |
+| `Lots` | 12 | 12 | 0 | 0 | 0 | 0 |
+| `Orders` | 10 | 10 | 0 | 0 | 0 | 0 |
+| `Payments` | 16 | 14 | 2 | 0 | 0 | 0 |
+| `Products` | 16 | 16 | 0 | 0 | 0 | 0 |
+| `Promotions` | 20 | 20 | 0 | 0 | 0 | 0 |
+| `PurchaseOrders` | 13 | 13 | 0 | 0 | 0 | 0 |
+| `Quality` | 17 | 17 | 0 | 0 | 0 | 0 |
+| `Receiving` | 18 | 18 | 0 | 0 | 0 | 0 |
+| `Returns` | 14 | 14 | 0 | 0 | 0 | 0 |
+| `Serials` | 9 | 9 | 0 | 0 | 0 | 0 |
+| `Shipments` | 10 | 10 | 0 | 0 | 0 | 0 |
+| `Subscriptions` | 19 | 19 | 0 | 0 | 0 | 0 |
+| `Tax` | 18 | 18 | 0 | 0 | 0 | 0 |
+| `Warehouse` | 10 | 10 | 0 | 0 | 0 | 0 |
+| `Warranties` | 8 | 8 | 0 | 0 | 0 | 0 |
+| `WorkOrders` | 9 | 9 | 0 | 0 | 0 | 0 |
+| `X402` | 17 | 17 | 0 | 0 | 0 | 0 |
 
 ## Uncovered Commerce Getters
 
@@ -144,6 +147,12 @@ None.
 ## Uncovered Audited Methods
 
 None.
+
+## Deliberately Unexposed Audited Methods
+
+- `Inventory.list`: No MCP tool lists inventory items yet: hosts (stateset-direct inventory list, the admin) call the binding directly, and agents look stock up by SKU with get_stock.
+- `Payments.completeRefund`: No MCP tool completes a refund: create_refund records it as pending and settlement happens outside the tool surface.
+- `Payments.failRefund`: No MCP tool fails a refund: create_refund records it as pending and settlement happens outside the tool surface.
 
 ## Stale Audited Method Mappings
 

@@ -58,6 +58,26 @@ function conflictId(type, localEvent, entityType, entityId) {
   return `${type}:${localEvent.localSeq}:${entityType}:${entityId}`;
 }
 
+/** Strategies `resolve()` can apply without a human. */
+const AUTOMATIC_STRATEGIES = new Set(['remote-wins', 'local-wins', 'merge']);
+
+/**
+ * Outbox states a resolution may supersede: neither is on the sequencer's log.
+ * A `synced` event is (it cannot be taken back locally) and a `rejected` one is
+ * already superseded.
+ */
+const UNSETTLED_SYNC_STATUSES = new Set(['pending', 'failed']);
+
+/**
+ * Outbox state of a local event that is already discarded — rejected by the
+ * sequencer on a push that ran after the conflict was recorded, or superseded
+ * by an earlier resolution of another conflict over the same event. Such a
+ * conflict can still be settled by a resolution that only discards the local
+ * event (remote-wins, or a merge that falls back to it), but not by one that
+ * appends a replacement: that would re-append a superseded event a second time.
+ */
+const DISCARDED_SYNC_STATUS = 'rejected';
+
 /**
  * Conflict Resolver for VES sync
  */
@@ -337,7 +357,25 @@ export class ConflictResolver {
   }
 
   /**
-   * Resolve a conflict with a specific strategy
+   * Resolve a conflict with a specific strategy.
+   *
+   * Only an `unresolved` conflict whose local event is still unsettled
+   * (`pending`, or parked `failed` — neither is on the sequencer's log) can be
+   * resolved. Resolving supersedes that local event, so the writes it makes —
+   * rejecting the local event, appending the rebased/merged replacement (or
+   * advancing the entity version for remote-wins) and marking the conflict
+   * resolved — commit in one transaction, after the state is re-checked under
+   * the write lock. Signing the replacement is asynchronous, so it happens
+   * first, outside the transaction.
+   *
+   * A local event that is already `rejected` (the sequencer refused it on a
+   * push after the conflict was recorded, or another conflict's resolution
+   * superseded it) is already discarded: a resolution that only discards it —
+   * remote-wins, or a merge that falls back to remote-wins — settles the
+   * conflict without touching the event. A resolution that would append a
+   * replacement (local-wins, a combining merge) is refused, since that would
+   * re-append a superseded event a second time.
+   *
    * @param {ConflictInfo|string} conflictOrId - Conflict or conflict ID
    * @param {ResolutionStrategy} [strategy] - Resolution strategy (uses suggested if not provided)
    * @returns {Promise<Resolution>}
@@ -358,30 +396,34 @@ export class ConflictResolver {
     const resolveStrategy = strategy || conflict.suggestedStrategy;
 
     try {
-      let result;
-      switch (resolveStrategy) {
-        case 'remote-wins':
-          result = await this._resolveRemoteWins(conflict);
-          break;
-        case 'local-wins':
-          result = await this._resolveLocalWins(conflict);
-          break;
-        case 'merge':
-          result = await this._resolveMerge(conflict);
-          break;
-        case 'manual':
-          return {
-            conflictId: conflict.id,
-            strategy: 'manual',
-            success: false,
-            error: 'Manual resolution required - use resolve with explicit strategy',
-          };
-        default:
-          throw new Error(`Unknown resolution strategy: ${resolveStrategy}`);
+      if (resolveStrategy === 'manual') {
+        return {
+          conflictId: conflict.id,
+          strategy: 'manual',
+          success: false,
+          error: 'Manual resolution required - use resolve with explicit strategy',
+        };
+      }
+      if (!AUTOMATIC_STRATEGIES.has(resolveStrategy)) {
+        throw new Error(`Unknown resolution strategy: ${resolveStrategy}`);
       }
 
-      // Mark conflict as resolved
-      this._markResolved(conflict.id, resolveStrategy, result);
+      // Refuse before doing any signing work when the stored state already
+      // says no; the transaction re-checks it under the write lock.
+      const appendsReplacement = this._appendsReplacement(conflict, resolveStrategy);
+      this._assertResolvable(conflict.id, { appendsReplacement });
+      const plan = await this._planResolution(conflict, resolveStrategy);
+
+      const result = this.outbox.db
+        .transaction(() => {
+          const localStatus = this._assertResolvable(conflict.id, {
+            appendsReplacement: plan.appendsReplacement,
+          });
+          const applied = plan.apply({ localStatus });
+          this._markResolved(conflict.id, resolveStrategy, applied);
+          return applied;
+        })
+        .immediate();
 
       return {
         conflictId: conflict.id,
@@ -400,56 +442,173 @@ export class ConflictResolver {
   }
 
   /**
-   * Resolve using remote-wins strategy
-   * Accept remote state, discard local event
+   * Whether resolving with `strategy` appends a replacement event (rather than
+   * only discarding the local one). Pure — the merge decision depends only on
+   * the two payloads — so the pre-check can refuse before any signing work.
    * @private
+   * @param {ConflictInfo} conflict
+   * @param {'remote-wins'|'local-wins'|'merge'} strategy
+   * @returns {boolean}
    */
-  async _resolveRemoteWins(conflict) {
-    // Mark local event as rejected
-    this.outbox.markRejected(
-      conflict.localEvent.localSeq,
-      `Conflict resolved: remote-wins (${conflict.description})`,
-    );
-
-    // If we have the remote event, update local entity version
-    if (conflict.remoteEvent) {
-      const remoteVersion = conflict.remoteEvent.base_version || conflict.remoteEvent.baseVersion;
-      if (remoteVersion !== undefined) {
-        this.outbox.updateEntityVersion(
-          conflict.localEvent.tenantId,
-          conflict.localEvent.storeId,
-          conflict.entityType,
-          conflict.entityId,
-          remoteVersion + 1,
-        );
-      }
+  _appendsReplacement(conflict, strategy) {
+    switch (strategy) {
+      case 'remote-wins':
+        return false;
+      case 'local-wins':
+        return true;
+      case 'merge':
+        return this._mergeChanges(conflict).canMerge === true;
+      default:
+        throw new Error(`Unknown resolution strategy: ${strategy}`);
     }
-
-    return {
-      action: 'local_event_rejected',
-      localSeq: conflict.localEvent.localSeq,
-      eventId: conflict.localEvent.eventId,
-    };
   }
 
   /**
-   * Resolve using local-wins strategy
-   * Re-push local event with updated base version
+   * Throw unless the stored conflict is unresolved and its local event can be
+   * superseded: still unsettled, or — for a resolution that appends nothing —
+   * already discarded (`rejected`).
+   * @private
+   * @param {string} conflictId
+   * @param {{ appendsReplacement: boolean }} options
+   * @returns {string} The local event's sync status
+   */
+  _assertResolvable(conflictId, { appendsReplacement }) {
+    const row = this.outbox.db
+      .prepare(
+        `
+      SELECT c.status AS conflict_status, o.local_seq, o.event_id, o.sync_status
+      FROM _ves_conflicts c
+      LEFT JOIN _ves_outbox o ON c.local_event_seq = o.local_seq
+      WHERE c.id = ?
+    `,
+      )
+      .get(conflictId);
+
+    if (!row) {
+      throw new Error('Conflict not found');
+    }
+    if (row.conflict_status !== 'unresolved') {
+      throw new Error(
+        `Conflict ${conflictId} is already ${row.conflict_status}; only an unresolved conflict can be resolved`,
+      );
+    }
+    if (row.local_seq === null || row.local_seq === undefined) {
+      throw new Error(`Conflict ${conflictId} has no local event left in the outbox to supersede`);
+    }
+    if (UNSETTLED_SYNC_STATUSES.has(row.sync_status)) {
+      return row.sync_status;
+    }
+    if (row.sync_status === DISCARDED_SYNC_STATUS) {
+      if (!appendsReplacement) {
+        return row.sync_status;
+      }
+      throw new Error(
+        `Local event ${row.event_id} is already rejected; resolving with a strategy that appends a replacement would re-append a superseded event — settle this conflict with remote-wins`,
+      );
+    }
+    throw new Error(
+      `Local event ${row.event_id} is already ${row.sync_status}; only a pending (or failed) local event can be superseded by a conflict resolution`,
+    );
+  }
+
+  /**
+   * Prepare a resolution: do the asynchronous work (signing a replacement
+   * event) now and return an `apply()` that makes every write synchronously,
+   * for the caller to run inside its transaction, with the local event's sync
+   * status as re-read there. `appendsReplacement` says whether `apply()`
+   * appends a replacement event.
+   * @private
+   * @param {ConflictInfo} conflict
+   * @param {'remote-wins'|'local-wins'|'merge'} strategy
+   * @returns {Promise<{ appendsReplacement: boolean, apply: (state: { localStatus: string }) => Object }>}
+   */
+  async _planResolution(conflict, strategy) {
+    switch (strategy) {
+      case 'remote-wins':
+        return this._planRemoteWins(conflict);
+      case 'local-wins':
+        return this._planLocalWins(conflict);
+      case 'merge':
+        return this._planMerge(conflict);
+      default:
+        throw new Error(`Unknown resolution strategy: ${strategy}`);
+    }
+  }
+
+  /**
+   * Reject the superseded local event, or throw so the transaction rolls back.
    * @private
    */
-  async _resolveLocalWins(conflict) {
-    // Get current entity version
-    const currentVersion =
+  _rejectLocalEvent(conflict, reason) {
+    const { localSeq, eventId } = conflict.localEvent;
+    if (!this.outbox.markRejected(localSeq, reason)) {
+      throw new Error(
+        `Local event ${eventId} is no longer pending; refusing to supersede a settled event`,
+      );
+    }
+  }
+
+  /** @private */
+  _currentEntityVersion(conflict) {
+    return (
       this.outbox.getEntityVersion(
         conflict.localEvent.tenantId,
         conflict.localEvent.storeId,
         conflict.entityType,
         conflict.entityId,
-      ) || 0;
+      ) || 0
+    );
+  }
 
-    // Create a new event with updated base version
+  /**
+   * Remote-wins: accept remote state, discard the local event. A local event
+   * that is already rejected is left as it is (with its first reason).
+   * @private
+   */
+  _planRemoteWins(conflict) {
+    return {
+      appendsReplacement: false,
+      apply: ({ localStatus }) => {
+        const alreadyRejected = localStatus === DISCARDED_SYNC_STATUS;
+        if (!alreadyRejected) {
+          this._rejectLocalEvent(
+            conflict,
+            `Conflict resolved: remote-wins (${conflict.description})`,
+          );
+        }
+
+        // If we have the remote event, update local entity version
+        if (conflict.remoteEvent) {
+          const remoteVersion =
+            conflict.remoteEvent.base_version || conflict.remoteEvent.baseVersion;
+          if (remoteVersion !== undefined) {
+            this.outbox.updateEntityVersion(
+              conflict.localEvent.tenantId,
+              conflict.localEvent.storeId,
+              conflict.entityType,
+              conflict.entityId,
+              remoteVersion + 1,
+            );
+          }
+        }
+
+        return {
+          action: 'local_event_rejected',
+          localSeq: conflict.localEvent.localSeq,
+          eventId: conflict.localEvent.eventId,
+          alreadyRejected,
+        };
+      },
+    };
+  }
+
+  /**
+   * Local-wins: re-push the local event rebased on the current version.
+   * @private
+   */
+  async _planLocalWins(conflict) {
     const newEventId = crypto.randomUUID();
-    const newSeq = this.outbox.append({
+    const prepared = await this.outbox.prepareAppend({
       eventId: newEventId,
       commandId: conflict.localEvent.commandId, // Keep same command ID for idempotency
       tenantId: conflict.localEvent.tenantId,
@@ -459,49 +618,42 @@ export class ConflictResolver {
       eventType: conflict.localEvent.eventType,
       payload: conflict.localEvent.payload,
       sourceAgent: conflict.localEvent.sourceAgent,
-      baseVersion: currentVersion, // Updated base version
     });
 
-    // Mark original event as rejected
-    this.outbox.markRejected(
-      conflict.localEvent.localSeq,
-      `Conflict resolved: local-wins, rebased as event ${newEventId}`,
-    );
-
     return {
-      action: 'event_rebased',
-      originalSeq: conflict.localEvent.localSeq,
-      newSeq,
-      newEventId,
-      newBaseVersion: currentVersion,
+      appendsReplacement: true,
+      apply: () => {
+        const currentVersion = this._currentEntityVersion(conflict);
+        this._rejectLocalEvent(
+          conflict,
+          `Conflict resolved: local-wins, rebased as event ${newEventId}`,
+        );
+        const newSeq = prepared.insert({ baseVersion: currentVersion });
+        return {
+          action: 'event_rebased',
+          originalSeq: conflict.localEvent.localSeq,
+          newSeq,
+          newEventId,
+          newBaseVersion: currentVersion,
+        };
+      },
     };
   }
 
   /**
-   * Resolve using merge strategy
-   * Combine changes from both local and remote
+   * Merge: combine local and remote changes, or fall back to remote-wins.
    * @private
    */
-  async _resolveMerge(conflict) {
-    // Entity-specific merge logic
+  async _planMerge(conflict) {
     const mergeResult = this._mergeChanges(conflict);
 
     if (!mergeResult.canMerge) {
       // Fall back to remote-wins if merge not possible
-      return this._resolveRemoteWins(conflict);
+      return this._planRemoteWins(conflict);
     }
 
-    // Create merged event
     const mergedEventId = crypto.randomUUID();
-    const currentVersion =
-      this.outbox.getEntityVersion(
-        conflict.localEvent.tenantId,
-        conflict.localEvent.storeId,
-        conflict.entityType,
-        conflict.entityId,
-      ) || 0;
-
-    const newSeq = this.outbox.append({
+    const prepared = await this.outbox.prepareAppend({
       eventId: mergedEventId,
       commandId: conflict.localEvent.commandId,
       tenantId: conflict.localEvent.tenantId,
@@ -511,21 +663,25 @@ export class ConflictResolver {
       eventType: conflict.localEvent.eventType,
       payload: mergeResult.mergedPayload,
       sourceAgent: conflict.localEvent.sourceAgent,
-      baseVersion: currentVersion,
     });
 
-    // Mark original as rejected
-    this.outbox.markRejected(
-      conflict.localEvent.localSeq,
-      `Conflict resolved: merge, combined as event ${mergedEventId}`,
-    );
-
     return {
-      action: 'events_merged',
-      originalSeq: conflict.localEvent.localSeq,
-      newSeq,
-      newEventId: mergedEventId,
-      mergedPayload: mergeResult.mergedPayload,
+      appendsReplacement: true,
+      apply: () => {
+        const currentVersion = this._currentEntityVersion(conflict);
+        this._rejectLocalEvent(
+          conflict,
+          `Conflict resolved: merge, combined as event ${mergedEventId}`,
+        );
+        const newSeq = prepared.insert({ baseVersion: currentVersion });
+        return {
+          action: 'events_merged',
+          originalSeq: conflict.localEvent.localSeq,
+          newSeq,
+          newEventId: mergedEventId,
+          mergedPayload: mergeResult.mergedPayload,
+        };
+      },
     };
   }
 
@@ -657,16 +813,24 @@ export class ConflictResolver {
           resolved_at = datetime('now'),
           resolution_strategy = ?,
           resolution_data = ?
-      WHERE id = ?
+      WHERE id = ? AND status = 'unresolved'
     `);
 
-    stmt.run(strategy, JSON.stringify(result), conflictId);
+    const { changes } = stmt.run(strategy, JSON.stringify(result), conflictId);
+    if (changes === 0) {
+      throw new Error(`Conflict ${conflictId} is no longer unresolved`);
+    }
   }
 
   /**
-   * Skip a conflict (mark as skipped without resolving)
+   * Skip a conflict (mark as skipped without resolving).
+   *
+   * Only an `unresolved` conflict can be skipped; a resolved or already
+   * skipped one is left as it is.
+   *
    * @param {string} conflictId
    * @param {string} [reason]
+   * @returns {boolean} Whether the conflict was skipped
    */
   skipConflict(conflictId, reason) {
     const stmt = this.outbox.db.prepare(`
@@ -674,10 +838,11 @@ export class ConflictResolver {
       SET status = 'skipped',
           resolved_at = datetime('now'),
           resolution_data = ?
-      WHERE id = ?
+      WHERE id = ? AND status = 'unresolved'
     `);
 
-    stmt.run(JSON.stringify({ skipped: true, reason }), conflictId);
+    const result = stmt.run(JSON.stringify({ skipped: true, reason }), conflictId);
+    return (result?.changes ?? 0) > 0;
   }
 
   /**

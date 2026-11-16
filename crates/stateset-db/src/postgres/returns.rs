@@ -6,9 +6,7 @@
 //! lock, and the `idx_returns_idempotency_key` unique index (migration 030)
 //! is the backstop for concurrent creates with the same idempotency key.
 
-use super::bins::{
-    apply_bin_delta_pg, apply_warehouse_delta_pg, find_disposition_bin_pg, insert_bin_movement_pg,
-};
+use super::bins::find_disposition_bin_pg;
 use super::kernel_outbox::append_kernel_event_tx;
 use super::payments::{create_refund_pg_tx, open_captures_for_order_pg, refundable_remaining_pg};
 use super::{block_on, map_db_error};
@@ -17,9 +15,9 @@ use crate::rules::returns::same_return_request;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPool;
-use sqlx::{FromRow, PgConnection, QueryBuilder};
+use sqlx::{FromRow, PgConnection, Postgres, QueryBuilder, Transaction};
 use stateset_core::{
-    BatchResult, BinMovementType, BinType, CommerceError, CreateReturn, CustomerId, ItemCondition,
+    BatchResult, BinType, CommerceError, CreateReturn, CustomerId, ItemCondition,
     LotTransactionType, OrderId, OrderItemId, OrderStatus, Result, Return, ReturnDisposition,
     ReturnFilter, ReturnId, ReturnItem, ReturnReason, ReturnRepository, ReturnStatus,
     SerialEventType, SerialStatus, SetReturnDisposition, UpdateReturn, validate_batch_size,
@@ -463,6 +461,21 @@ pub(crate) async fn apply_update_pg(
     input: &UpdateReturn,
     now: DateTime<Utc>,
 ) -> Result<Return> {
+    apply_update_published_pg(conn, id, input, now, None, |_| {}).await.map(|(ret, _)| ret)
+}
+
+/// [`apply_update_pg`] for a caller that owns the published fact (twin of the
+/// SQLite `apply_update_published_tx`): the `returns.updated.v1` event carries
+/// `idempotency_key` and whatever `decorate` adds (the kernel attaches its
+/// command context), and its id is returned with the stored return.
+pub(crate) async fn apply_update_published_pg(
+    conn: &mut PgConnection,
+    id: Uuid,
+    input: &UpdateReturn,
+    now: DateTime<Utc>,
+    idempotency_key: Option<String>,
+    decorate: impl FnOnce(&mut KernelOutboxEvent),
+) -> Result<(Return, Uuid)> {
     let before = load_return_pg(conn, id, true).await?.ok_or(CommerceError::ReturnNotFound(id))?;
     let status_before = before.status;
     if status_before.is_terminal() {
@@ -542,12 +555,16 @@ pub(crate) async fn apply_update_pg(
         payload["undispositioned_units"] = serde_json::json!(written_off);
     }
 
-    append_kernel_event_tx(
-        conn,
-        &KernelOutboxEvent::domain("returns.updated.v1", "return", id.to_string(), payload, None),
-    )
-    .await?;
-    Ok(ret)
+    let mut event = KernelOutboxEvent::domain(
+        "returns.updated.v1",
+        "return",
+        id.to_string(),
+        payload,
+        idempotency_key,
+    );
+    decorate(&mut event);
+    append_kernel_event_tx(conn, &event).await?;
+    Ok((ret, event.id))
 }
 
 /// One guarded serial status hop plus its history row (local SQL: the serial
@@ -640,6 +657,171 @@ async fn serial_hop_pg(
     .await
     .map_err(map_db_error)?;
     Ok(())
+}
+
+/// Record a return item's disposition and apply its stock, serial and lot
+/// effects on the caller's transaction (the operator `set_item_disposition`
+/// and the kernel's `returns.item.disposition.set` share it). Refuses a return
+/// that is not `received`/`inspecting`, an item that is not on the return and
+/// an item that already carries a disposition.
+pub(crate) async fn set_item_disposition_pg(
+    tx: &mut Transaction<'_, Postgres>,
+    return_id: ReturnId,
+    item_id: Uuid,
+    input: &SetReturnDisposition,
+) -> Result<ReturnItem> {
+    let warehouse_id = input.warehouse_id.unwrap_or(1);
+    let now = Utc::now();
+    let status_raw: Option<String> =
+        sqlx::query_scalar("SELECT status FROM returns WHERE id = $1 FOR UPDATE")
+            .bind(return_id.into_uuid())
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+    let status: ReturnStatus = match status_raw {
+        Some(raw) => raw.parse().map_err(|e| {
+            CommerceError::DatabaseError(format!("Invalid return.status '{raw}': {e}"))
+        })?,
+        None => return Err(CommerceError::ReturnNotFound(return_id.into())),
+    };
+    if !matches!(status, ReturnStatus::Received | ReturnStatus::Inspecting) {
+        return Err(CommerceError::NotPermitted(format!(
+            "Return items can only be dispositioned once received (status: {status})"
+        )));
+    }
+    let item = sqlx::query_as::<_, ReturnItemRow>(
+        "SELECT * FROM return_items WHERE id = $1 AND return_id = $2 FOR UPDATE",
+    )
+    .bind(item_id)
+    .bind(return_id.into_uuid())
+    .fetch_optional(tx.as_mut())
+    .await
+    .map_err(map_db_error)?
+    .ok_or_else(|| {
+        CommerceError::ValidationError(format!(
+            "Return item {item_id} not found on return {return_id}"
+        ))
+    })?;
+    let item = PgReturnRepository::row_to_item(item)?;
+    if let Some(existing) = item.disposition {
+        return Err(CommerceError::Conflict(format!(
+            "Return item {item_id} already dispositioned as {existing}"
+        )));
+    }
+
+    let qty = Decimal::from(item.quantity);
+    let reference_id = item_id.to_string();
+    let reason = format!("return {return_id} {}", input.disposition);
+    let mut stock_location = None;
+    match input.disposition {
+        ReturnDisposition::Restock | ReturnDisposition::Quarantine => {
+            let held = input.disposition == ReturnDisposition::Quarantine;
+            let known: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM inventory_items WHERE sku = $1)")
+                    .bind(&item.sku)
+                    .fetch_one(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+            if !known {
+                return Err(CommerceError::ValidationError(
+                    "Create the inventory item before restocking a return".into(),
+                ));
+            }
+            let preferred = if held { &[BinType::Quarantine][..] } else { &[BinType::Returns][..] };
+            super::stock_placement::ensure_warehouse(tx, warehouse_id, now).await?;
+            let bin =
+                find_disposition_bin_pg(tx.as_mut(), warehouse_id, input.bin_id, preferred).await?;
+            let destination = if let Some(bin) = bin {
+                super::stock_move::location_for_bin(tx.as_mut(), bin.id, now).await?
+            } else {
+                super::stock_move::role_location(tx.as_mut(), warehouse_id, "unassigned", now)
+                    .await?
+            };
+            stock_location = Some(destination);
+            if held {
+                if let Some(lot) = input.lot_id {
+                    super::stock_lot::record_hold(tx, lot, lot, destination, qty, now).await?;
+                }
+            }
+            super::stock_move::post(
+                tx,
+                &crate::stock_move::StockMove {
+                    id: Uuid::new_v4(),
+                    sku: &item.sku,
+                    lot_id: input.lot_id,
+                    from: None,
+                    to: Some(destination),
+                    quantity: qty,
+                    release_reserved: Decimal::ZERO,
+                    reserve_received: if held { qty } else { Decimal::ZERO },
+                    movement_type: stateset_core::MovementType::Return,
+                    lot_effect: crate::stock_move::LotEffect::AlreadyRecorded,
+                    check_sellable: false,
+                    reference_type: Some("return_item"),
+                    reference_id: Some(item_id),
+                    reference_label: Some(&reference_id),
+                    reason: Some(&reason),
+                    performed_by: input.disposition_by.as_deref(),
+                },
+                now,
+            )
+            .await?;
+        }
+        ReturnDisposition::Refurbish
+        | ReturnDisposition::Scrap
+        | ReturnDisposition::ReturnToVendor => {
+            // No stock effect: the units do not re-enter sellable or held
+            // inventory.
+        }
+        // `ReturnDisposition` is `#[non_exhaustive]`: an unknown variant
+        // must fail closed rather than be recorded with no stock effect.
+        other => {
+            return Err(CommerceError::ValidationError(format!(
+                "Unsupported return disposition {other}"
+            )));
+        }
+    }
+
+    apply_serial_dispositions_pg(
+        tx.as_mut(),
+        &item,
+        input.disposition,
+        stock_location.unwrap_or(warehouse_id),
+        &input.serial_ids,
+        input.disposition_by.as_deref(),
+        now,
+    )
+    .await?;
+    if let Some(lot_id) = input.lot_id {
+        apply_lot_restore_pg(
+            tx.as_mut(),
+            &item,
+            lot_id,
+            input.disposition,
+            warehouse_id,
+            input.disposition_by.as_deref(),
+            now,
+        )
+        .await?;
+    }
+
+    let serial_ids_json =
+        if input.serial_ids.is_empty() { None } else { Some(serde_json::json!(input.serial_ids)) };
+    let updated = sqlx::query_as::<_, ReturnItemRow>(
+        "UPDATE return_items SET disposition = $1, disposition_at = $2, disposition_by = $3,
+                lot_id = $4, serial_ids = $5
+         WHERE id = $6 RETURNING *",
+    )
+    .bind(input.disposition.to_string())
+    .bind(now)
+    .bind(input.disposition_by.as_deref())
+    .bind(input.lot_id)
+    .bind(serial_ids_json)
+    .bind(item_id)
+    .fetch_one(tx.as_mut())
+    .await
+    .map_err(map_db_error)?;
+    PgReturnRepository::row_to_item(updated)
 }
 
 /// Transition every received serial for a return line: `returned` first
@@ -931,189 +1113,10 @@ impl PgReturnRepository {
         item_id: Uuid,
         input: SetReturnDisposition,
     ) -> Result<ReturnItem> {
-        let warehouse_id = input.warehouse_id.unwrap_or(1);
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
-        let now = Utc::now();
-        let status_raw: Option<String> =
-            sqlx::query_scalar("SELECT status FROM returns WHERE id = $1 FOR UPDATE")
-                .bind(return_id.into_uuid())
-                .fetch_optional(tx.as_mut())
-                .await
-                .map_err(map_db_error)?;
-        let status: ReturnStatus = match status_raw {
-            Some(raw) => raw.parse().map_err(|e| {
-                CommerceError::DatabaseError(format!("Invalid return.status '{raw}': {e}"))
-            })?,
-            None => return Err(CommerceError::ReturnNotFound(return_id.into())),
-        };
-        if !matches!(status, ReturnStatus::Received | ReturnStatus::Inspecting) {
-            return Err(CommerceError::NotPermitted(format!(
-                "Return items can only be dispositioned once received (status: {status})"
-            )));
-        }
-        let item = sqlx::query_as::<_, ReturnItemRow>(
-            "SELECT * FROM return_items WHERE id = $1 AND return_id = $2 FOR UPDATE",
-        )
-        .bind(item_id)
-        .bind(return_id.into_uuid())
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(map_db_error)?
-        .ok_or_else(|| {
-            CommerceError::ValidationError(format!(
-                "Return item {item_id} not found on return {return_id}"
-            ))
-        })?;
-        let item = Self::row_to_item(item)?;
-        if let Some(existing) = item.disposition {
-            return Err(CommerceError::Conflict(format!(
-                "Return item {item_id} already dispositioned as {existing}"
-            )));
-        }
-
-        let qty = Decimal::from(item.quantity);
-        let reference_id = item_id.to_string();
-        let reason = format!("return {return_id} {}", input.disposition);
-        match input.disposition {
-            ReturnDisposition::Restock => {
-                let bin = find_disposition_bin_pg(
-                    tx.as_mut(),
-                    warehouse_id,
-                    input.bin_id,
-                    &[BinType::Returns, BinType::Quarantine],
-                )
-                .await?;
-                if let Some(bin) = &bin {
-                    apply_bin_delta_pg(tx.as_mut(), bin, &item.sku, qty, Decimal::ZERO, now)
-                        .await?;
-                    insert_bin_movement_pg(
-                        tx.as_mut(),
-                        BinMovementType::ReturnDisposition,
-                        None,
-                        Some(bin.id),
-                        &item.sku,
-                        qty,
-                        Some(&reason),
-                        Some("return_item"),
-                        Some(&reference_id),
-                        input.disposition_by.as_deref(),
-                        now,
-                    )
-                    .await?;
-                }
-                apply_warehouse_delta_pg(
-                    tx.as_mut(),
-                    warehouse_id,
-                    &item.sku,
-                    qty,
-                    Decimal::ZERO,
-                    &reason,
-                    Some("return_item"),
-                    Some(&reference_id),
-                    now,
-                )
-                .await?;
-            }
-            ReturnDisposition::Quarantine => {
-                // The hold is always recorded at warehouse level (on hand and
-                // allocated, so the units are tracked but not sellable); the
-                // quarantine bin mirrors it when the warehouse has one.
-                let bin = find_disposition_bin_pg(
-                    tx.as_mut(),
-                    warehouse_id,
-                    input.bin_id,
-                    &[BinType::Quarantine],
-                )
-                .await?;
-                if let Some(bin) = &bin {
-                    apply_bin_delta_pg(tx.as_mut(), bin, &item.sku, qty, qty, now).await?;
-                    insert_bin_movement_pg(
-                        tx.as_mut(),
-                        BinMovementType::ReturnDisposition,
-                        None,
-                        Some(bin.id),
-                        &item.sku,
-                        qty,
-                        Some(&reason),
-                        Some("return_item"),
-                        Some(&reference_id),
-                        input.disposition_by.as_deref(),
-                        now,
-                    )
-                    .await?;
-                }
-                apply_warehouse_delta_pg(
-                    tx.as_mut(),
-                    warehouse_id,
-                    &item.sku,
-                    qty,
-                    qty,
-                    &reason,
-                    Some("return_item"),
-                    Some(&reference_id),
-                    now,
-                )
-                .await?;
-            }
-            ReturnDisposition::Refurbish
-            | ReturnDisposition::Scrap
-            | ReturnDisposition::ReturnToVendor => {
-                // No stock effect: the units do not re-enter sellable or held
-                // inventory.
-            }
-            // `ReturnDisposition` is `#[non_exhaustive]`: an unknown variant
-            // must fail closed rather than be recorded with no stock effect.
-            other => {
-                return Err(CommerceError::ValidationError(format!(
-                    "Unsupported return disposition {other}"
-                )));
-            }
-        }
-
-        apply_serial_dispositions_pg(
-            tx.as_mut(),
-            &item,
-            input.disposition,
-            warehouse_id,
-            &input.serial_ids,
-            input.disposition_by.as_deref(),
-            now,
-        )
-        .await?;
-        if let Some(lot_id) = input.lot_id {
-            apply_lot_restore_pg(
-                tx.as_mut(),
-                &item,
-                lot_id,
-                input.disposition,
-                warehouse_id,
-                input.disposition_by.as_deref(),
-                now,
-            )
-            .await?;
-        }
-
-        let serial_ids_json = if input.serial_ids.is_empty() {
-            None
-        } else {
-            Some(serde_json::json!(input.serial_ids))
-        };
-        let updated = sqlx::query_as::<_, ReturnItemRow>(
-            "UPDATE return_items SET disposition = $1, disposition_at = $2, disposition_by = $3,
-                    lot_id = $4, serial_ids = $5
-             WHERE id = $6 RETURNING *",
-        )
-        .bind(input.disposition.to_string())
-        .bind(now)
-        .bind(input.disposition_by)
-        .bind(input.lot_id)
-        .bind(serial_ids_json)
-        .bind(item_id)
-        .fetch_one(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
+        let item = set_item_disposition_pg(&mut tx, return_id, item_id, &input).await?;
         tx.commit().await.map_err(map_db_error)?;
-        Self::row_to_item(updated)
+        Ok(item)
     }
 
     /// Create a return (async)

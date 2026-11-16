@@ -275,28 +275,13 @@ impl PgPaymentObligationRepository {
 
     /// Aggregate dashboard summary as of the given date (async)
     pub async fn dashboard_async(&self, today: NaiveDate) -> Result<PaymentObligationDashboard> {
-        // Open (non-terminal) obligations only.
-        let mut all = Vec::new();
-        for status in [
-            PaymentObligationStatus::Pending,
-            PaymentObligationStatus::Scheduled,
-            PaymentObligationStatus::PartiallyPaid,
-        ] {
-            let batch = self
-                .list_async(PaymentObligationFilter { status: Some(status), ..Default::default() })
-                .await?;
-            all.extend(batch);
-        }
-        let mut dash = PaymentObligationDashboard::default();
-        for o in &all {
-            dash.open_count += 1;
-            dash.total_outstanding += o.outstanding();
-            if o.is_overdue(today) {
-                dash.overdue_count += 1;
-                dash.overdue_amount += o.outstanding();
-            }
-        }
-        Ok(dash)
+        let (count,total,paid,overdue,overdue_total,overdue_paid):(i64,Decimal,Decimal,i64,Decimal,Decimal)=sqlx::query_as("SELECT COUNT(*),COALESCE(SUM(amount),0),COALESCE(SUM(amount_paid),0),COUNT(CASE WHEN due_date<$1 THEN 1 END),COALESCE(SUM(CASE WHEN due_date<$1 THEN amount END),0),COALESCE(SUM(CASE WHEN due_date<$1 THEN amount_paid END),0) FROM payment_obligations WHERE status IN ('pending','scheduled','partially_paid')").bind(today).fetch_one(&self.pool).await.map_err(map_db_error)?;
+        Ok(PaymentObligationDashboard {
+            open_count: count as u64,
+            total_outstanding: total - paid,
+            overdue_count: overdue as u64,
+            overdue_amount: overdue_total - overdue_paid,
+        })
     }
 }
 

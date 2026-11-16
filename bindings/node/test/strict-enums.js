@@ -47,14 +47,26 @@ test('accountsReceivable.createCreditMemo refuses an unknown reason instead of f
   const commerce = new Commerce(':memory:');
   const cust = await customer(commerce);
   await assert.rejects(
-    commerce.accountsReceivable.createCreditMemo({ customerId: cust.id, reason: 'because', amount: 1 }),
+    commerce.accountsReceivable.createCreditMemo({
+      customerId: cust.id,
+      reason: 'because',
+      amount: '1',
+    }),
     invalid('credit memo reason', 'because'),
   );
   assert.equal((await commerce.accountsReceivable.listCreditMemos()).length, 0);
 
-  const goodwill = await commerce.accountsReceivable.createCreditMemo({ customerId: cust.id, reason: 'GOODWILL', amount: 1 });
+  const goodwill = await commerce.accountsReceivable.createCreditMemo({
+    customerId: cust.id,
+    reason: 'GOODWILL',
+    amount: '1',
+  });
   assert.equal(goodwill.reason, 'GoodwillAdjustment');
-  const other = await commerce.accountsReceivable.createCreditMemo({ customerId: cust.id, reason: 'Other', amount: 1 });
+  const other = await commerce.accountsReceivable.createCreditMemo({
+    customerId: cust.id,
+    reason: 'Other',
+    amount: '1',
+  });
   assert.equal(other.reason, 'Other');
 });
 
@@ -67,30 +79,44 @@ test('workOrders.create refuses an unknown priority instead of dropping it', asy
   );
   assert.equal((await commerce.workOrders.list()).length, 0);
 
-  const wo = await commerce.workOrders.create({ productId: product.id, quantityToBuild: 1, priority: 'URGENT' });
+  const wo = await commerce.workOrders.create({
+    productId: product.id,
+    quantityToBuild: 1,
+    priority: 'URGENT',
+  });
   assert.match(String(wo.priority), /urgent/i);
 });
 
 test('costAccounting.setItemCost refuses an unknown cost method instead of averaging', async () => {
   const commerce = new Commerce(':memory:');
   await assert.rejects(
-    commerce.costAccounting.setItemCost({ sku: 'CM-1', costMethod: 'made_up', standardCost: 1 }),
+    commerce.costAccounting.setItemCost({ sku: 'CM-1', costMethod: 'made_up', standardCost: '1' }),
     invalid('cost method', 'made_up'),
   );
   assert.equal(await commerce.costAccounting.getItemCost('CM-1'), null);
 
-  const cost = await commerce.costAccounting.setItemCost({ sku: 'CM-1', costMethod: 'LIFO', standardCost: 1 });
+  const cost = await commerce.costAccounting.setItemCost({
+    sku: 'CM-1',
+    costMethod: 'LIFO',
+    standardCost: '1',
+  });
   assert.equal(cost.costMethod, 'Lifo');
 });
 
 test('analytics refuses an unknown period or granularity instead of reporting the default window', async () => {
   const commerce = new Commerce(':memory:');
-  await assert.rejects(commerce.analytics.salesSummary({ period: 'fortnight' }), invalid('analytics period', 'fortnight'));
+  await assert.rejects(
+    commerce.analytics.salesSummary({ period: 'fortnight' }),
+    invalid('analytics period', 'fortnight'),
+  );
   await assert.rejects(
     commerce.analytics.salesSummary({ granularity: 'decade' }),
     invalid('analytics granularity', 'decade'),
   );
-  await assert.rejects(commerce.analytics.revenueForecast(2, 'decade'), invalid('analytics granularity', 'decade'));
+  await assert.rejects(
+    commerce.analytics.revenueForecast(2, 'decade'),
+    invalid('analytics granularity', 'decade'),
+  );
 
   await commerce.analytics.salesSummary({ period: 'LAST_7_DAYS', granularity: 'Weekly' });
   await commerce.analytics.revenueForecast(1, 'QUARTERLY');
@@ -120,10 +146,16 @@ test('warranties refuse an unknown type and an unknown claim resolution', async 
   );
   assert.equal(await commerce.warranties.count(), 0);
 
-  const warranty = await commerce.warranties.create({ customerId: cust.id, warrantyType: 'LIFETIME' });
+  const warranty = await commerce.warranties.create({
+    customerId: cust.id,
+    warrantyType: 'LIFETIME',
+  });
   assert.equal(warranty.warrantyType, 'lifetime');
 
-  const claim = await commerce.warranties.createClaim({ warrantyId: warranty.id, issueDescription: 'cracked' });
+  const claim = await commerce.warranties.createClaim({
+    warrantyId: warranty.id,
+    issueDescription: 'cracked',
+  });
   await assert.rejects(
     commerce.warranties.completeClaim(claim.id, 'shrug'),
     invalid('warranty claim resolution', 'shrug'),
@@ -137,10 +169,18 @@ test('warranties refuse an unknown type and an unknown claim resolution', async 
 test('generalLedger.createAccount refuses an unknown account type instead of booking an asset', async () => {
   const commerce = new Commerce(':memory:');
   await assert.rejects(
-    commerce.generalLedger.createAccount({ accountNumber: '9100', name: 'Mystery', accountType: 'liabilities' }),
+    commerce.generalLedger.createAccount({
+      accountNumber: '9100',
+      name: 'Mystery',
+      accountType: 'liabilities',
+    }),
     invalid('account type', 'liabilities'),
   );
-  const account = await commerce.generalLedger.createAccount({ accountNumber: '9100', name: 'Rent', accountType: 'EXPENSE' });
+  const account = await commerce.generalLedger.createAccount({
+    accountNumber: '9100',
+    name: 'Rent',
+    accountType: 'EXPENSE',
+  });
   assert.equal(account.accountType, 'Expense');
 });
 
@@ -158,10 +198,22 @@ test('currency.updateSettings refuses an unknown rounding mode instead of roundi
 test('promotions refuse unknown type, trigger, target, stacking, and status values', async () => {
   const commerce = new Commerce(':memory:');
   const p = commerce.promotions;
-  await assert.rejects(p.create({ name: 'x', promotionType: 'percent' }), invalid('promotion type', 'percent'));
-  await assert.rejects(p.create({ name: 'x', trigger: 'manual' }), invalid('promotion trigger', 'manual'));
-  await assert.rejects(p.create({ name: 'x', target: 'cart' }), invalid('promotion target', 'cart'));
-  await assert.rejects(p.create({ name: 'x', stacking: 'maybe' }), invalid('promotion stacking behavior', 'maybe'));
+  await assert.rejects(
+    p.create({ name: 'x', promotionType: 'percent' }),
+    invalid('promotion type', 'percent'),
+  );
+  await assert.rejects(
+    p.create({ name: 'x', trigger: 'manual' }),
+    invalid('promotion trigger', 'manual'),
+  );
+  await assert.rejects(
+    p.create({ name: 'x', target: 'cart' }),
+    invalid('promotion target', 'cart'),
+  );
+  await assert.rejects(
+    p.create({ name: 'x', stacking: 'maybe' }),
+    invalid('promotion stacking behavior', 'maybe'),
+  );
   assert.equal((await p.list()).length, 0);
 
   // A status filter that matches nothing used to list everything.
@@ -200,7 +252,10 @@ test('quality refuses unknown inspection type, NCR source, severity, and hold ty
     q.createNcr({ ...ncr, source: 'moon', severity: 'major' }),
     invalid('non-conformance source', 'moon'),
   );
-  await assert.rejects(q.createNcr({ ...ncr, source: 'supplier', severity: 'meh' }), invalid('severity', 'meh'));
+  await assert.rejects(
+    q.createNcr({ ...ncr, source: 'supplier', severity: 'meh' }),
+    invalid('severity', 'meh'),
+  );
   await assert.rejects(
     q.createHold({ sku: 'Q-1', quantityHeld: 1, reason: 'r', holdType: 'vibes' }),
     invalid('hold type', 'vibes'),
@@ -221,14 +276,21 @@ test('shipments.create refuses an unknown carrier or method instead of storing o
   const cust = await customer(commerce);
   const order = await orderFor(commerce, cust);
   const base = { orderId: order.id, recipientName: 'R', shippingAddress: '1 Main St' };
-  await assert.rejects(commerce.shipments.create({ ...base, carrier: 'pigeon' }), invalid('shipping carrier', 'pigeon'));
+  await assert.rejects(
+    commerce.shipments.create({ ...base, carrier: 'pigeon' }),
+    invalid('shipping carrier', 'pigeon'),
+  );
   await assert.rejects(
     commerce.shipments.create({ ...base, shippingMethod: 'teleport' }),
     invalid('shipping method', 'teleport'),
   );
   assert.equal((await commerce.shipments.list()).length, 0);
 
-  const shipment = await commerce.shipments.create({ ...base, carrier: 'FedEx', shippingMethod: 'Two_Day' });
+  const shipment = await commerce.shipments.create({
+    ...base,
+    carrier: 'FedEx',
+    shippingMethod: 'Two_Day',
+  });
   assert.equal(shipment.carrier, 'fed_ex');
   assert.equal(shipment.shippingMethod, 'two_day');
   const explicit = await commerce.shipments.create({ ...base, carrier: 'OTHER' });
@@ -269,7 +331,11 @@ test('warehouse refuses an unknown warehouse type or location type', async () =>
     commerce.warehouse.createWarehouse({ code: 'WH-1', name: 'x', warehouseType: 'garage' }),
     invalid('warehouse type', 'garage'),
   );
-  const wh = await commerce.warehouse.createWarehouse({ code: 'WH-1', name: 'x', warehouseType: 'THIRD_PARTY' });
+  const wh = await commerce.warehouse.createWarehouse({
+    code: 'WH-1',
+    name: 'x',
+    warehouseType: 'THIRD_PARTY',
+  });
   // Outputs render the engine's Debug form (see `WarehouseType` in index.d.ts).
   assert.equal(wh.warehouseType, 'ThirdParty');
 
@@ -278,7 +344,10 @@ test('warehouse refuses an unknown warehouse type or location type', async () =>
     commerce.warehouse.createLocation({ warehouseId: wh.id, locationType: 'bin' }),
     invalid('location type', 'bin'),
   );
-  const location = await commerce.warehouse.createLocation({ warehouseId: wh.id, locationType: 'PICK' });
+  const location = await commerce.warehouse.createLocation({
+    warehouseId: wh.id,
+    locationType: 'PICK',
+  });
   assert.match(String(location.locationType), /pick/i);
 });
 
@@ -291,16 +360,34 @@ test('tax refuses unknown tax type, category, jurisdiction level, exemption type
     tax.createJurisdiction({ name: 'Mars', code: 'MARS', countryCode: 'US', level: 'planet' }),
     invalid('jurisdiction level', 'planet'),
   );
-  await assert.rejects(tax.listJurisdictions({ level: 'planet' }), invalid('jurisdiction level', 'planet'));
+  await assert.rejects(
+    tax.listJurisdictions({ level: 'planet' }),
+    invalid('jurisdiction level', 'planet'),
+  );
   // A fresh store is demo-seeded with the real US states, so use a code it lacks.
-  const state = await tax.createJurisdiction({ name: 'Strictland', code: 'ZZ-STRICT', countryCode: 'US', stateCode: 'ZZ', level: 'STATE' });
+  const state = await tax.createJurisdiction({
+    name: 'Strictland',
+    code: 'ZZ-STRICT',
+    countryCode: 'US',
+    stateCode: 'ZZ',
+    level: 'STATE',
+  });
   assert.equal(state.level, 'state');
 
   const rate = { jurisdictionId: state.id, name: 'r', rate: 0.1, effectiveFrom: '2026-01-01' };
-  await assert.rejects(tax.createRate({ ...rate, taxType: 'tariff' }), invalid('tax type', 'tariff'));
-  await assert.rejects(tax.createRate({ ...rate, productCategory: 'toys' }), invalid('product tax category', 'toys'));
+  await assert.rejects(
+    tax.createRate({ ...rate, taxType: 'tariff' }),
+    invalid('tax type', 'tariff'),
+  );
+  await assert.rejects(
+    tax.createRate({ ...rate, productCategory: 'toys' }),
+    invalid('product tax category', 'toys'),
+  );
   await assert.rejects(tax.listRates({ taxType: 'tariff' }), invalid('tax type', 'tariff'));
-  await assert.rejects(tax.listRates({ productCategory: 'toys' }), invalid('product tax category', 'toys'));
+  await assert.rejects(
+    tax.listRates({ productCategory: 'toys' }),
+    invalid('product tax category', 'toys'),
+  );
   // The demo-seeded store ships rates of its own; scope the emptiness check to the new jurisdiction.
   assert.equal((await tax.listRates({ jurisdictionId: state.id })).length, 0);
   const created = await tax.createRate({ ...rate, taxType: 'VAT', productCategory: 'Food' });
@@ -319,9 +406,18 @@ test('tax refuses unknown tax type, category, jurisdiction level, exemption type
   const nonProfit = await tax.createExemption({ ...exemption, exemptionType: 'NON_PROFIT' });
   assert.equal(nonProfit.exemptionType, 'nonprofit');
 
-  await assert.rejects(tax.updateSettings({ calculationMethod: 'sideways' }), invalid('tax calculation method', 'sideways'));
-  await assert.rejects(tax.updateSettings({ compoundMethod: 'stacked' }), invalid('tax compound method', 'stacked'));
-  await assert.rejects(tax.updateSettings({ defaultProductCategory: 'toys' }), invalid('product tax category', 'toys'));
+  await assert.rejects(
+    tax.updateSettings({ calculationMethod: 'sideways' }),
+    invalid('tax calculation method', 'sideways'),
+  );
+  await assert.rejects(
+    tax.updateSettings({ compoundMethod: 'stacked' }),
+    invalid('tax compound method', 'stacked'),
+  );
+  await assert.rejects(
+    tax.updateSettings({ defaultProductCategory: 'toys' }),
+    invalid('product tax category', 'toys'),
+  );
   const settings = await tax.updateSettings({
     calculationMethod: 'INCLUSIVE',
     compoundMethod: 'Separate',
@@ -332,14 +428,21 @@ test('tax refuses unknown tax type, category, jurisdiction level, exemption type
   assert.equal(settings.defaultProductCategory, 'food');
 
   const address = { country: 'US', state: 'CA' };
-  await assert.rejects(tax.calculateForItem(1, 1, 'toys', address), invalid('product tax category', 'toys'));
-  await assert.rejects(tax.getEffectiveRate(address, 'toys'), invalid('product tax category', 'toys'));
+  await assert.rejects(
+    tax.calculateForItem(1, 1, 'toys', address),
+    invalid('product tax category', 'toys'),
+  );
+  await assert.rejects(
+    tax.getEffectiveRate(address, 'toys'),
+    invalid('product tax category', 'toys'),
+  );
   await tax.calculateForItem(1, 1, 'Standard', address);
 });
 
 test('lots and serials refuse a malformed timestamp instead of writing the record without it', async () => {
   const commerce = new Commerce(':memory:');
-  const isDate = (field) => (err) => err.code === 'VALIDATION' && err.message.includes(`Invalid ${field}`);
+  const isDate = (field) => (err) =>
+    err.code === 'VALIDATION' && err.message.includes(`Invalid ${field}`);
   await assert.rejects(
     commerce.lots.create({ sku: 'L-1', quantityProduced: 1, productionDate: 'garbage' }),
     isDate('production date'),
@@ -348,14 +451,24 @@ test('lots and serials refuse a malformed timestamp instead of writing the recor
     commerce.lots.create({ sku: 'L-1', quantityProduced: 1, expirationDate: 'next-week' }),
     isDate('expiration date'),
   );
-  await assert.rejects(commerce.serials.create({ sku: 'S-1', manufacturedAt: 'yesterday' }), isDate('manufactured at'));
+  await assert.rejects(
+    commerce.serials.create({ sku: 'S-1', manufacturedAt: 'yesterday' }),
+    isDate('manufactured at'),
+  );
   assert.equal(await commerce.lots.count(), 0);
   assert.equal((await commerce.serials.list()).length, 0);
 
-  const lot = await commerce.lots.create({ sku: 'L-1', quantityProduced: 1, expirationDate: '2030-01-01T00:00:00Z' });
+  const lot = await commerce.lots.create({
+    sku: 'L-1',
+    quantityProduced: 1,
+    expirationDate: '2030-01-01T00:00:00Z',
+  });
   assert.ok(lot.expirationDate);
   // `SerialOutput` does not carry the timestamp; prove it was stored through the filter.
-  const serial = await commerce.serials.create({ sku: 'S-1', manufacturedAt: '2026-05-01T00:00:00Z' });
+  const serial = await commerce.serials.create({
+    sku: 'S-1',
+    manufacturedAt: '2026-05-01T00:00:00Z',
+  });
   const stamped = await commerce.serials.list({ manufacturedAfter: '2026-04-30T00:00:00Z' });
   assert.deepEqual(
     stamped.map((s) => s.id),

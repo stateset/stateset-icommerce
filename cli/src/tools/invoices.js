@@ -6,7 +6,21 @@
  */
 
 import { z } from 'zod';
+import { positiveDecimalString, nonnegativeDecimalString } from '../utils/decimal-schema.js';
 import { applyRequired } from '../utils/apply-guard.js';
+
+const invoiceItemSchema = z
+  .object({
+    description: z.string().min(1),
+    quantity: positiveDecimalString,
+    unitPrice: nonnegativeDecimalString.optional(),
+    unitPriceExact: nonnegativeDecimalString.optional(),
+    sku: z.string().optional(),
+  })
+  .refine(
+    (item) => item.unitPrice !== undefined || item.unitPriceExact !== undefined,
+    'A decimal unit price is required',
+  );
 
 /**
  * Invoice tool definitions
@@ -49,7 +63,8 @@ export const invoiceTools = [
       items: z
         .string()
         .min(1)
-        .describe('JSON array: [{"description":"X","quantity":1,"unitPrice":10.00}]'),
+        .describe('JSON array: [{"description":"X","quantity":"1","unitPrice":"10.00"}]'),
+      currency: z.string().length(3).optional().describe('Invoice currency'),
       dueDate: z.string().max(30).optional().describe('Due date ISO'),
       notes: z.string().max(1000).optional().describe('Notes'),
     },
@@ -65,13 +80,17 @@ export const invoiceTools = [
       } catch (err) {
         return {
           success: false,
-          error: `Invalid items JSON: ${err.message}. Expected format: [{"description":"X","quantity":1,"unitPrice":10.00}]`,
+          error: `Invalid items JSON: ${err.message}. Expected format: [{"description":"X","quantity":"1","unitPrice":"10.00"}]`,
         };
       }
+      const parsed = z.array(invoiceItemSchema).safeParse(items);
+      if (!parsed.success)
+        return { success: false, error: `Invalid invoice items: ${parsed.error.message}` };
       const invoice = await commerce.invoices.create({
         customerId: params.customerId,
         orderId: params.orderId,
-        items,
+        items: parsed.data,
+        currency: params.currency,
         dueDate: params.dueDate,
         notes: params.notes,
       });
@@ -103,7 +122,7 @@ export const invoiceTools = [
     inputSchema: {
       invoiceId: z.string().min(1).describe('Invoice ID'),
     },
-    permission: 'delete',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Void invoice', params);
@@ -119,11 +138,12 @@ export const invoiceTools = [
     description: 'Record payment on an invoice.',
     inputSchema: {
       invoiceId: z.string().min(1).describe('Invoice ID'),
-      amount: z.number().positive().describe('Amount paid'),
+      paymentId: z.string().uuid().optional().describe('Stable UUID for safe payment retries'),
+      amount: positiveDecimalString.describe('Amount paid'),
       paymentMethod: z.string().max(50).optional().describe('Payment method'),
       reference: z.string().max(100).optional().describe('Check/reference number'),
     },
-    permission: 'write',
+    permission: 'admin',
     handler: async ({ commerce, params, allowApply }) => {
       if (!allowApply) {
         return applyRequired('Record payment', params);
@@ -131,6 +151,7 @@ export const invoiceTools = [
 
       const invoice = await commerce.invoices.recordPayment(params.invoiceId, {
         amount: params.amount,
+        paymentId: params.paymentId,
         paymentMethod: params.paymentMethod,
         reference: params.reference,
       });

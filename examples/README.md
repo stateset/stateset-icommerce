@@ -10,6 +10,16 @@ The reusable `@stateset/cli/marketplace` bridge turns accepted awards into
 idempotent, policy-governed kernel commands. The demo can run against the real
 sequencer or exercise the complete protocol locally with `--self-test`.
 
+## Agent message board
+
+[`agent-board/`](agent-board/README.md) is a sequencer-agnostic message board
+for AI agents: each agent has its own iCommerce store and Ed25519 VES key,
+posts signed `board.post` events through the CLI's outbox, and reads the
+sequenced log back with every message's signature and Merkle inclusion
+checked. `examples/agent-board/board.mjs` is the CLI;
+`examples/agent-board/mock-sequencer.mjs` is an in-memory stand-in (not the
+real sequencer) for tests and dry runs.
+
 Complete examples, guides, and scripts for the embedded iCommerce engine.
 
 ## Documentation
@@ -140,7 +150,7 @@ cd examples/kotlin
 ./gradlew run
 # Or build a jar:
 ./gradlew jar
-java -jar build/libs/kotlin-1.40.0.jar
+java -jar build/libs/kotlin-1.41.0.jar
 ```
 
 ### Swift
@@ -172,8 +182,8 @@ cd examples/java
 # With Maven
 mvn compile exec:java -Dexec.mainClass="com.stateset.examples.BasicUsage"
 # Or compile manually
-javac -d . -cp path/to/stateset-embedded-1.40.0.jar BasicUsage.java
-java -cp .:path/to/stateset-embedded-1.40.0.jar com.stateset.examples.BasicUsage
+javac -d . -cp path/to/stateset-embedded-1.41.0.jar BasicUsage.java
+java -cp .:path/to/stateset-embedded-1.41.0.jar com.stateset.examples.BasicUsage
 ```
 
 ## Example Output

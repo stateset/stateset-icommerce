@@ -17,6 +17,9 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub(crate) struct CreateVendorReturnItemRequest {
     pub product_id: String,
+    pub sku: String,
+    pub source_location_id: i32,
+    pub lot_id: Option<String>,
     /// Decimal quantity as a string.
     pub quantity: String,
     /// Decimal unit cost as a string.
@@ -28,6 +31,8 @@ pub(crate) struct CreateVendorReturnItemRequest {
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub(crate) struct CreateVendorReturnRequest {
     pub supplier_id: String,
+    pub warehouse_id: i32,
+    pub currency: Option<String>,
     pub purchase_order_id: Option<String>,
     pub items: Vec<CreateVendorReturnItemRequest>,
     pub notes: Option<String>,
@@ -35,9 +40,13 @@ pub(crate) struct CreateVendorReturnRequest {
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub(crate) struct ProcessVendorReturnRequest {
-    /// Whether to generate a vendor credit on processing.
-    #[serde(default)]
+    /// Required for processing; false is refused.
+    #[serde(default = "credit_required")]
     pub generate_credit: bool,
+}
+
+const fn credit_required() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize, Default, IntoParams)]
@@ -52,6 +61,9 @@ pub(crate) struct VendorReturnFilterParams {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub(crate) struct VendorReturnResponse {
     pub id: String,
+    pub warehouse_id: Option<i32>,
+    pub currency: String,
+    pub items: Vec<VendorReturnItemResponse>,
     pub number: String,
     pub supplier_id: String,
     pub status: String,
@@ -69,6 +81,22 @@ pub(crate) struct VendorReturnListResponse {
 fn to_resp(r: &stateset_core::VendorReturn) -> VendorReturnResponse {
     VendorReturnResponse {
         id: r.id.to_string(),
+        warehouse_id: r.warehouse_id,
+        currency: r.currency.to_string(),
+        items: r
+            .items
+            .iter()
+            .map(|item| VendorReturnItemResponse {
+                id: item.id.to_string(),
+                product_id: item.product_id.to_string(),
+                sku: item.sku.clone(),
+                source_location_id: item.source_location_id,
+                lot_id: item.lot_id,
+                quantity: item.quantity.to_string(),
+                unit_cost: item.unit_cost.to_string(),
+                reason: item.reason.to_string(),
+            })
+            .collect(),
         number: r.number.clone(),
         supplier_id: r.supplier_id.to_string(),
         status: r.status.to_string(),
@@ -111,6 +139,13 @@ pub(crate) async fn create(
                 };
                 items.push(stateset_core::CreateVendorReturnItem {
                     product_id: parse_id::<ProductId>(&i.product_id, "product_id")?,
+                    sku: i.sku,
+                    source_location_id: i.source_location_id,
+                    lot_id: i
+                        .lot_id
+                        .as_deref()
+                        .map(|id| parse_id::<Uuid>(id, "lot_id"))
+                        .transpose()?,
                     quantity: parse_decimal(&i.quantity, "quantity")?,
                     unit_cost: parse_decimal(&i.unit_cost, "unit_cost")?,
                     reason,
@@ -118,8 +153,13 @@ pub(crate) async fn create(
             }
             let input = stateset_core::CreateVendorReturn {
                 supplier_id: parse_id::<Uuid>(&req.supplier_id, "supplier_id")?,
+                warehouse_id: req.warehouse_id,
                 purchase_order_id,
-                currency: None,
+                currency: req
+                    .currency
+                    .as_deref()
+                    .map(|value| parse_id(value, "currency"))
+                    .transpose()?,
                 items,
                 notes: req.notes,
             };
@@ -247,17 +287,68 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
+    use rust_decimal::Decimal;
     use stateset_embedded::Commerce;
     use tower::ServiceExt;
 
     #[tokio::test]
     async fn create_submit_process_flow() {
         let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
+        let c = state.commerce_for_tenant(None).unwrap();
+        let supplier = c
+            .purchase_orders()
+            .create_supplier(stateset_core::CreateSupplier {
+                name: "Returns".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let product = c
+            .products()
+            .create(stateset_core::CreateProduct {
+                name: "Returned item".into(),
+                variants: Some(vec![stateset_core::CreateProductVariant {
+                    sku: "RETURNED".into(),
+                    price: Decimal::TEN,
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .unwrap();
+        let warehouse = c
+            .warehouse()
+            .create_warehouse(stateset_core::CreateWarehouse {
+                code: "VR".into(),
+                name: "Returns".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let location = c
+            .warehouse()
+            .create_location(stateset_core::CreateLocation {
+                warehouse_id: warehouse.id,
+                ..Default::default()
+            })
+            .unwrap();
+        c.warehouse()
+            .adjust_inventory(stateset_core::AdjustLocationInventory {
+                location_id: location.id,
+                sku: "RETURNED".into(),
+                lot_id: None,
+                quantity: Decimal::TEN,
+                reason: "receipt".into(),
+                reference_type: None,
+                reference_id: None,
+                performed_by: None,
+            })
+            .unwrap();
         let app = router().with_state(state);
         let body = serde_json::json!({
-            "supplier_id": uuid::Uuid::new_v4().to_string(),
+            "supplier_id": supplier.id.to_string(),
+            "warehouse_id": warehouse.id,
             "items": [{
-                "product_id": uuid::Uuid::new_v4().to_string(),
+                "product_id": product.id.to_string(),
+                "sku": "RETURNED",
+                "source_location_id": location.id,
                 "quantity": "3",
                 "unit_cost": "10",
                 "reason": "defective"
@@ -276,14 +367,25 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::CREATED);
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(json["total_credit"], "30");
+        assert_eq!(
+            json["total_credit"].as_str().unwrap().parse::<Decimal>().unwrap(),
+            Decimal::from(30)
+        );
         let id = json["id"].as_str().unwrap().to_string();
 
+        let submitted = app
+            .clone()
+            .oneshot(
+                Request::post(format!("/vendor-returns/{id}/submit")).body(Body::empty()).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(submitted.status(), StatusCode::OK);
         let resp = app
             .oneshot(
                 Request::post(format!("/vendor-returns/{id}/process"))
                     .header("content-type", "application/json")
-                    .body(Body::from(serde_json::json!({"generate_credit": true}).to_string()))
+                    .body(Body::from(serde_json::json!({}).to_string()))
                     .unwrap(),
             )
             .await
@@ -293,5 +395,30 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json["status"], "processed");
         assert_eq!(json["credit_generated"], true);
+        assert_eq!(
+            c.inventory().get_stock("RETURNED").unwrap().unwrap().total_on_hand,
+            Decimal::from(7)
+        );
+        let credits = c
+            .vendor_credits()
+            .list(stateset_core::VendorCreditFilter {
+                supplier_id: Some(supplier.id),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(credits.len(), 1);
+        assert_eq!(credits[0].amount, Decimal::from(30));
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub(crate) struct VendorReturnItemResponse {
+    pub id: String,
+    pub product_id: String,
+    pub sku: String,
+    pub source_location_id: Option<i32>,
+    pub lot_id: Option<Uuid>,
+    pub quantity: String,
+    pub unit_cost: String,
+    pub reason: String,
 }

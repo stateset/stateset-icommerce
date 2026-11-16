@@ -352,13 +352,14 @@ impl PurchaseOrders {
             .collect())
     }
 
-    /// Record received quantities on a sent purchase order. This updates the PO;
-    /// warehouse stock must be posted separately through inventory/receiving.
+    /// Receive sent PO lines into an explicit warehouse location, atomically posting stock.
     #[napi]
     pub async fn receive(
         &self,
         id: String,
         items: Vec<ReceivePurchaseOrderItemInput>,
+        warehouse_id: i32,
+        receiving_location_id: i32,
     ) -> Result<PurchaseOrderOutput> {
         let commerce = self.commerce.get()?;
         let id: uuid::Uuid =
@@ -383,7 +384,15 @@ impl PurchaseOrders {
         convert_output(
             commerce
                 .purchase_orders()
-                .receive(id, stateset_core::ReceivePurchaseOrderItems { items, notes: None })
+                .receive(
+                    id,
+                    stateset_core::ReceivePurchaseOrderItems {
+                        items,
+                        notes: None,
+                        warehouse_id,
+                        receiving_location_id,
+                    },
+                )
                 .map_err(|e| wrap(ErrCode::Internal, "Failed to receive PO", e))?,
         )
     }

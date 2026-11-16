@@ -1,3 +1,4 @@
+vi.mock('@/components/finance/bill-actions', () => ({ default: () => null }));
 // Component test for the Finance > Bills page client: aging summary cards,
 // bills table, and the status filter.
 
@@ -25,7 +26,7 @@ const bill = (overrides: Partial<Record<string, unknown>>) => ({
   id: 'bill_1',
   billNumber: 'BILL-3000',
   supplierId: 'sup_100',
-  status: 'open',
+  status: 'pending',
   totalAmount: 1200.5,
   amountPaid: 0,
   amountDue: 1200.5,
@@ -36,7 +37,7 @@ const bill = (overrides: Partial<Record<string, unknown>>) => ({
 
 const data = {
   bills: [
-    bill({ id: 'bill_1', billNumber: 'BILL-3000', status: 'open' }),
+    bill({ id: 'bill_1', billNumber: 'BILL-3000', status: 'pending' }),
     bill({
       id: 'bill_2',
       billNumber: 'BILL-3001',

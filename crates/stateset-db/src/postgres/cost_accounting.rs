@@ -42,7 +42,7 @@ struct ItemCostRow {
 struct CostLayerRow {
     id: Uuid,
     sku: String,
-    layer_date: NaiveDate,
+    layer_date: DateTime<Utc>,
     quantity: Decimal,
     remaining_quantity: Decimal,
     unit_cost: Decimal,
@@ -74,7 +74,7 @@ struct CostVarianceRow {
     id: Uuid,
     sku: String,
     variance_type: String,
-    variance_date: NaiveDate,
+    variance_date: DateTime<Utc>,
     standard_cost: Decimal,
     actual_cost: Decimal,
     variance_amount: Decimal,
@@ -120,6 +120,31 @@ struct CostRollupRow {
 }
 
 impl PgCostAccountingRepository {
+    pub async fn transaction_cogs_async(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<stateset_core::TransactionCogsReport> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        let result = super::cost_reports::transaction_cogs(&mut tx, from, to).await?;
+        tx.rollback().await.map_err(map_db_error)?;
+        Ok(result)
+    }
+    pub async fn close_books_check_async(&self) -> Result<stateset_core::CloseBooksReport> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        let result = super::cost_reports::close_books_check(&mut tx).await?;
+        tx.rollback().await.map_err(map_db_error)?;
+        Ok(result)
+    }
+
     pub const fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -191,7 +216,7 @@ impl PgCostAccountingRepository {
         Ok(CostLayer {
             id,
             sku,
-            layer_date: from_date(layer_date),
+            layer_date,
             quantity,
             remaining_quantity,
             unit_cost,
@@ -270,7 +295,7 @@ impl PgCostAccountingRepository {
             id,
             sku,
             variance_type,
-            variance_date: from_date(variance_date),
+            variance_date,
             standard_cost,
             actual_cost,
             variance_amount,
@@ -536,6 +561,7 @@ impl PgCostAccountingRepository {
         // locked FOR UPDATE): on separate pool acquisitions two concurrent
         // callers both observed "absent" and raced on the UNIQUE sku INSERT.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::stock_cost::guard_master(&mut tx, &input, false).await?;
         Self::set_item_cost_tx(&mut tx, input, now).await?;
         tx.commit().await.map_err(map_db_error)?;
 
@@ -667,7 +693,7 @@ impl PgCostAccountingRepository {
         )
         .bind(id)
         .bind(&input.sku)
-        .bind(to_date(now))
+        .bind(now)
         .bind(input.quantity)
         .bind(input.quantity)
         .bind(input.unit_cost)
@@ -719,13 +745,13 @@ impl PgCostAccountingRepository {
             }
         }
         if let Some(from_date) = filter.from_date {
-            builder.push(" AND layer_date >= ").push_bind(to_date(from_date));
+            builder.push(" AND layer_date >= ").push_bind(from_date);
         }
         if let Some(to_date_val) = filter.to_date {
-            builder.push(" AND layer_date <= ").push_bind(to_date(to_date_val));
+            builder.push(" AND layer_date <= ").push_bind(to_date_val);
         }
 
-        builder.push(" ORDER BY layer_date ASC");
+        builder.push(" ORDER BY layer_date ASC, id ASC");
 
         builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
@@ -766,6 +792,18 @@ impl PgCostAccountingRepository {
                 break;
             }
 
+            let managed = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT base_currency FROM cost_layers WHERE id = $1",
+            )
+            .bind(layer.id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+            if managed.is_some() {
+                return Err(CommerceError::ValidationError(
+                    "Use a physical stock operation to consume managed cost layers".into(),
+                ));
+            }
             let consume_qty = remaining.min(layer.remaining_quantity);
             let new_remaining = layer.remaining_quantity - consume_qty;
 
@@ -829,6 +867,18 @@ impl PgCostAccountingRepository {
                 break;
             }
 
+            let managed = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT base_currency FROM cost_layers WHERE id = $1",
+            )
+            .bind(layer.id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+            if managed.is_some() {
+                return Err(CommerceError::ValidationError(
+                    "Use a physical stock operation to consume managed cost layers".into(),
+                ));
+            }
             let consume_qty = remaining.min(layer.remaining_quantity);
             let new_remaining = layer.remaining_quantity - consume_qty;
 
@@ -953,7 +1003,7 @@ impl PgCostAccountingRepository {
             builder.push(" AND created_at <= ").push_bind(to_date_val);
         }
 
-        builder.push(" ORDER BY created_at DESC");
+        builder.push(" ORDER BY created_at DESC, id DESC");
 
         builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
@@ -990,7 +1040,7 @@ impl PgCostAccountingRepository {
         .bind(id)
         .bind(&input.sku)
         .bind(input.variance_type.to_string())
-        .bind(to_date(now))
+        .bind(now)
         .bind(input.standard_cost)
         .bind(input.actual_cost)
         .bind(variance_amount)
@@ -1041,13 +1091,13 @@ impl PgCostAccountingRepository {
             builder.push(" AND variance_type = ").push_bind(var_type.to_string());
         }
         if let Some(from_date) = filter.from_date {
-            builder.push(" AND variance_date >= ").push_bind(to_date(from_date));
+            builder.push(" AND variance_date >= ").push_bind(from_date);
         }
         if let Some(to_date_val) = filter.to_date {
-            builder.push(" AND variance_date <= ").push_bind(to_date(to_date_val));
+            builder.push(" AND variance_date <= ").push_bind(to_date_val);
         }
 
-        builder.push(" ORDER BY variance_date DESC");
+        builder.push(" ORDER BY variance_date DESC, id DESC");
 
         builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
@@ -1072,8 +1122,8 @@ impl PgCostAccountingRepository {
             "SELECT COALESCE(SUM(total_variance), 0) FROM cost_variances
              WHERE variance_date BETWEEN $1 AND $2",
         )
-        .bind(to_date(from))
-        .bind(to_date(to))
+        .bind(from)
+        .bind(to)
         .fetch_one(&self.pool)
         .await
         .map_err(map_db_error)?;
@@ -1167,7 +1217,7 @@ impl PgCostAccountingRepository {
             builder.push(" AND created_at <= ").push_bind(to_date_val);
         }
 
-        builder.push(" ORDER BY created_at DESC");
+        builder.push(" ORDER BY created_at DESC, id DESC");
 
         builder.push(" LIMIT ").push_bind(super::effective_limit(filter.limit));
         if let Some(offset) = filter.offset {
@@ -1243,6 +1293,13 @@ impl PgCostAccountingRepository {
                 .await
                 .map_err(map_db_error)?;
 
+        super::stock_cost::guard_master(
+            &mut tx,
+            &SetItemCost { sku: sku.clone(), standard_cost: Some(new_cost), ..Default::default() },
+            true,
+        )
+        .await?;
+        super::stock_cost::revalue(&mut tx, id, &sku, new_cost, now).await?;
         Self::set_item_cost_tx(
             &mut tx,
             SetItemCost { sku, standard_cost: Some(new_cost), ..Default::default() },
@@ -1295,34 +1352,128 @@ impl PgCostAccountingRepository {
         sku: &str,
         bom_id: Option<Uuid>,
     ) -> Result<CostRollup> {
-        let id = Uuid::new_v4();
-        let now = Utc::now();
-
-        let previous_cost =
-            self.get_rollup_async(sku).await?.map(|r| r.total_cost).unwrap_or_default();
-
-        let (material_cost, labor_cost, overhead_cost) = if let Some(bom_id) = bom_id {
-            let material: Decimal = sqlx::query_scalar(
-                "SELECT COALESCE(SUM(bc.quantity * COALESCE(ic.standard_cost, 0)), 0)
-                 FROM manufacturing_bom_components bc
-                 LEFT JOIN item_costs ic ON bc.component_sku = ic.sku
-                 WHERE bc.bom_id = $1",
-            )
-            .bind(bom_id)
-            .fetch_one(&self.pool)
+        Self::validate_sku(sku)?;
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        // All levels of the BOM and their costs must describe one snapshot.
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            .execute(tx.as_mut())
             .await
             .map_err(map_db_error)?;
-            (material, Decimal::ZERO, Decimal::ZERO)
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(format!("stock_cost:{sku}"))
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        let root_cost: Option<(Decimal, Decimal, Decimal, Decimal)> = sqlx::query_as(
+            "SELECT standard_cost, material_cost, labor_cost, overhead_cost FROM item_costs WHERE sku = $1 FOR UPDATE"
+        ).bind(sku).fetch_optional(tx.as_mut()).await.map_err(map_db_error)?;
+        let previous_cost = root_cost.map(|c| c.0).unwrap_or_default();
+        let mut material_cost = Decimal::ZERO;
+        let mut labor_cost = Decimal::ZERO;
+        let mut overhead_cost = Decimal::ZERO;
+        let mut pending = Vec::new();
+        if let Some(bom) = bom_id {
+            pending.push((bom, sku.to_owned(), Decimal::ONE, Vec::<Uuid>::new()));
         } else {
-            match self.get_item_cost_async(sku).await? {
-                Some(cost) => (cost.material_cost, cost.labor_cost, cost.overhead_cost),
-                None => (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO),
+            let cost = root_cost.ok_or_else(|| {
+                CommerceError::ValidationError(format!("Missing item cost for {sku}"))
+            })?;
+            material_cost = cost.1;
+            labor_cost = cost.2;
+            overhead_cost = cost.3;
+        }
+        while let Some((current, assembly_sku, factor, mut ancestors)) = pending.pop() {
+            if ancestors.contains(&current) || ancestors.len() >= 64 {
+                return Err(CommerceError::ValidationError(
+                    "Cyclic BOM or BOM depth exceeds 64".into(),
+                ));
             }
-        };
+            ancestors.push(current);
+            let exists: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM manufacturing_boms WHERE id = $1)")
+                    .bind(current)
+                    .fetch_one(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+            if !exists {
+                return Err(CommerceError::NotFound);
+            }
+            let local_cost: Option<(Decimal, Decimal, Decimal, Decimal)> = sqlx::query_as(
+                "SELECT standard_cost, material_cost, labor_cost, overhead_cost FROM item_costs WHERE sku = $1"
+            ).bind(&assembly_sku).fetch_optional(tx.as_mut()).await.map_err(map_db_error)?;
 
-        let total_cost = material_cost + labor_cost + overhead_cost;
+            if let Some((_, _, labor, overhead)) = local_cost {
+                if Some(current) == bom_id {
+                    crate::bom_cost::add_cost(&mut labor_cost, factor, labor)?;
+                    crate::bom_cost::add_cost(&mut overhead_cost, factor, overhead)?;
+                } else {
+                    // Subassembly conversion costs are part of the component's
+                    // material cost to its parent. Preserve the parent's own
+                    // labor/overhead so repeated rollups do not compound them.
+                    crate::bom_cost::add_cost(&mut material_cost, factor, labor)?;
+                    crate::bom_cost::add_cost(&mut material_cost, factor, overhead)?;
+                }
+            }
+            type ComponentCostRow = (Uuid, Decimal, Option<String>, Option<Uuid>, Option<Decimal>);
+            let components: Vec<ComponentCostRow> = sqlx::query_as(
+                "SELECT bc.id, bc.quantity, bc.component_sku, b.id,
+       CASE ic.cost_method WHEN 'standard' THEN ic.standard_cost
+            WHEN 'specific' THEN ic.last_cost ELSE ic.average_cost END
+FROM manufacturing_bom_components bc
+LEFT JOIN manufacturing_boms b ON b.product_id = COALESCE(bc.component_product_id,
+    (SELECT product_id FROM product_variants WHERE sku = bc.component_sku)) AND b.status = 'active'
+LEFT JOIN item_costs ic ON ic.sku = bc.component_sku
+WHERE bc.bom_id = $1",
+            )
+            .bind(current)
+            .fetch_all(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+
+            if components.is_empty() {
+                return Err(CommerceError::ValidationError(format!(
+                    "BOM {current} has no components"
+                )));
+            }
+            let mut seen = std::collections::HashSet::new();
+            for (component_id, quantity, component_sku, child, unit_cost) in components {
+                if !seen.insert(component_id) {
+                    return Err(CommerceError::ValidationError(
+                        "Component has multiple active BOM revisions".into(),
+                    ));
+                }
+                if quantity <= Decimal::ZERO {
+                    return Err(CommerceError::ValidationError(
+                        "BOM component quantity must be positive".into(),
+                    ));
+                }
+                let quantity =
+                    factor.checked_mul(quantity).ok_or_else(crate::bom_cost::overflow)?;
+                if let Some(child) = child {
+                    pending.push((
+                        child,
+                        component_sku.unwrap_or_default(),
+                        quantity,
+                        ancestors.clone(),
+                    ));
+                } else {
+                    let unit_cost = unit_cost.ok_or_else(|| {
+                        CommerceError::ValidationError(format!(
+                            "Missing component cost for {}",
+                            component_sku.as_deref().unwrap_or("component without SKU")
+                        ))
+                    })?;
+                    crate::bom_cost::add_cost(&mut material_cost, quantity, unit_cost)?;
+                }
+            }
+        }
+        let total_cost = material_cost
+            .checked_add(labor_cost)
+            .and_then(|c| c.checked_add(overhead_cost))
+            .ok_or_else(crate::bom_cost::overflow)?;
         let cost_change = total_cost - previous_cost;
-
         sqlx::query(
             "INSERT INTO cost_rollups (id, sku, bom_id, rollup_date, material_cost, labor_cost,
                 overhead_cost, total_cost, previous_cost, cost_change, created_at)
@@ -1339,9 +1490,30 @@ impl PgCostAccountingRepository {
         .bind(previous_cost)
         .bind(cost_change)
         .bind(now)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
+
+        super::stock_cost::guard_master(
+            &mut tx,
+            &SetItemCost { sku: sku.into(), standard_cost: Some(total_cost), ..Default::default() },
+            false,
+        )
+        .await?;
+        Self::set_item_cost_tx(
+            &mut tx,
+            SetItemCost {
+                sku: sku.to_owned(),
+                standard_cost: Some(total_cost),
+                material_cost: Some(material_cost),
+                labor_cost: Some(labor_cost),
+                overhead_cost: Some(overhead_cost),
+                ..Default::default()
+            },
+            now,
+        )
+        .await?;
+        tx.commit().await.map_err(map_db_error)?;
 
         Ok(CostRollup {
             id,
@@ -1362,7 +1534,7 @@ impl PgCostAccountingRepository {
         let row = sqlx::query_as::<_, CostRollupRow>(
             "SELECT id, sku, bom_id, rollup_date, material_cost, labor_cost, overhead_cost,
                     total_cost, previous_cost, cost_change, created_at
-             FROM cost_rollups WHERE sku = $1 ORDER BY rollup_date DESC LIMIT 1",
+             FROM cost_rollups WHERE sku = $1 ORDER BY rollup_date DESC, created_at DESC, id DESC LIMIT 1",
         )
         .bind(sku)
         .fetch_optional(&self.pool)
@@ -1376,75 +1548,53 @@ impl PgCostAccountingRepository {
         &self,
         cost_method: CostMethod,
     ) -> Result<InventoryValuation> {
-        let now = Utc::now();
-        let cost_field = match cost_method {
-            CostMethod::Standard => "COALESCE(ic.standard_cost, 0)",
-            CostMethod::Average => "COALESCE(ic.average_cost, 0)",
-            CostMethod::Fifo | CostMethod::Lifo => "COALESCE(ic.average_cost, 0)",
-            CostMethod::Specific => "COALESCE(ic.last_cost, 0)",
-            _ => "COALESCE(ic.average_cost, 0)",
-        };
-
-        let sql = format!(
-            "SELECT
-                COALESCE(SUM(ii.quantity_on_hand), 0),
-                COALESCE(SUM(ii.quantity_on_hand * {}), 0)
-             FROM inventory_items ii
-             LEFT JOIN item_costs ic ON ii.sku = ic.sku",
-            cost_field
-        );
-
-        let (total_qty, total_val): (Decimal, Decimal) =
-            sqlx::query_as(&sql).fetch_one(&self.pool).await.map_err(map_db_error)?;
-
-        let average_unit_cost =
-            if total_qty > Decimal::ZERO { total_val / total_qty } else { Decimal::ZERO };
-
-        Ok(InventoryValuation {
-            total_quantity: total_qty,
-            total_value: total_val,
-            average_unit_cost,
-            valuation_method: cost_method,
-            as_of_date: now,
-        })
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        let rows = super::stock_valuation::summaries(&mut tx, None, cost_method).await?;
+        tx.rollback().await.map_err(map_db_error)?;
+        crate::stock_valuation::report(rows, cost_method)
     }
 
     pub async fn get_sku_cost_summary_async(&self, sku: &str) -> Result<Option<SkuCostSummary>> {
-        let row = sqlx::query_as(
-            "SELECT
-                ii.sku,
-                COALESCE(ii.quantity_on_hand, 0),
-                COALESCE(ic.standard_cost, 0),
-                COALESCE(ic.average_cost, 0),
-                COALESCE(ii.quantity_on_hand * COALESCE(ic.average_cost, 0), 0),
-                COALESCE((SELECT SUM(total_variance) FROM cost_variances
-                          WHERE sku = ii.sku AND EXTRACT(YEAR FROM variance_date) = EXTRACT(YEAR FROM CURRENT_DATE)), 0)
-             FROM inventory_items ii
-             LEFT JOIN item_costs ic ON ii.sku = ic.sku
-             WHERE ii.sku = $1",
-        )
-        .bind(sku)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-
-        Ok(row.map(|r: (String, Decimal, Decimal, Decimal, Decimal, Decimal)| SkuCostSummary {
-            sku: r.0,
-            quantity_on_hand: r.1,
-            standard_cost: r.2,
-            average_cost: r.3,
-            total_value: r.4,
-            variance_ytd: r.5,
-        }))
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        let rows =
+            super::stock_valuation::summaries(&mut tx, Some(sku), CostMethod::Average).await?;
+        tx.rollback().await.map_err(map_db_error)?;
+        Ok(rows.into_iter().next())
     }
 
     pub async fn get_total_inventory_value_async(&self) -> Result<Decimal> {
-        let valuation = self.get_inventory_valuation_async(CostMethod::Average).await?;
-        Ok(valuation.total_value)
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        let rows = super::stock_valuation::summaries(&mut tx, None, CostMethod::Average).await?;
+        tx.rollback().await.map_err(map_db_error)?;
+        Ok(crate::stock_valuation::report(rows, CostMethod::Average)?.total_value)
     }
 }
 
 impl CostAccountingRepository for PgCostAccountingRepository {
+    fn transaction_cogs(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<stateset_core::TransactionCogsReport> {
+        block_on(self.transaction_cogs_async(from, to))
+    }
+
+    fn close_books_check(&self) -> Result<stateset_core::CloseBooksReport> {
+        block_on(self.close_books_check_async())
+    }
+
     fn get_item_cost(&self, sku: &str) -> Result<Option<ItemCost>> {
         block_on(self.get_item_cost_async(sku))
     }

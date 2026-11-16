@@ -18,7 +18,8 @@ use super::payments::{
 };
 use super::resolve_currency_with_executor;
 use super::returns::{
-    PgReturnRepository, ReturnItemRow, ReturnRow, apply_update_pg, insert_return_pg,
+    PgReturnRepository, ReturnItemRow, ReturnRow, apply_update_pg, apply_update_published_pg,
+    insert_return_pg, set_item_disposition_pg,
 };
 use super::shipments::create_shipment_pg;
 use super::subscriptions::{BillingCycleRow, PgSubscriptionRepository};
@@ -34,7 +35,8 @@ use crate::kernel::plans::escrow::{
 use crate::kernel::plans::finance::{
     BILLING_CYCLE_UNVERSIONED, CART_UNVERSIONED, JOURNAL_ENTRY_UNVERSIONED,
     X402_INTENT_UNVERSIONED, charge_subscription_guard, commit_checkout_guard,
-    post_journal_entry_guard, settle_x402_guard,
+    post_journal_entry_guard, settle_x402_expiry_guard, settle_x402_guard,
+    x402_tx_hash_already_settled,
 };
 use crate::kernel::plans::inventory::{
     declares_quantity, economic_quantity_guard, reservation_changes_balance,
@@ -49,7 +51,11 @@ use crate::kernel::plans::payments::{
     RefundSnapshot, create_payment_guard, economic_counterparty_guard, economic_money_guard,
     plan_refund,
 };
-use crate::kernel::plans::returns::transition_return_guard;
+use crate::kernel::plans::returns::{
+    RETURN_DISPOSITION_UNVERSIONED, set_return_item_disposition_guard,
+    set_return_item_disposition_state_guard, transition_return_guard,
+    transition_return_state_guard,
+};
 use crate::kernel::plans::storefront::{
     DomainOutcome, PAYMENT_UNVERSIONED, RETURN_TRACKING_UNVERSIONED, SealDecision,
     StorefrontAggregate, add_cart_item_guard, add_return_tracking_guard, apply_cart_coupon_guard,
@@ -63,8 +69,8 @@ use crate::kernel::receipt::{
     receipt_record, rejected_receipt, succeeded_receipt,
 };
 use crate::kernel::{
-    BudgetSnapshot, CommandRun, EnvelopeGuard, Replay, budget_at_storage_precision, plan_budget,
-    resolve_replay,
+    BudgetSnapshot, CommandRun, EnvelopeGuard, GuardRejection, Replay, budget_at_storage_precision,
+    plan_budget, resolve_replay,
 };
 use crate::{KernelOutboxEvent, KernelReceiptRecord};
 use chrono::Utc;
@@ -89,7 +95,8 @@ use stateset_core::{
 use stateset_core::{
     AddCartItemCommand, AddReturnTracking, ApplyCartCoupon, CalculateCartTax, Cart,
     CartTaxCalculated, CompletePayment, CreateCart, CreateCustomer, CreateReturn, CreateShipment,
-    Customer, SetCartPaymentMethod, SetCartShippingAddress, Shipment, UpdateReturn,
+    Customer, ReturnItem, SetCartPaymentMethod, SetCartShippingAddress, SetReturnDisposition,
+    SetReturnItemDisposition, Shipment, UpdateReturn,
 };
 use uuid::Uuid;
 
@@ -126,6 +133,7 @@ const COMPLETE_PAYMENT_COMMAND: &str = "payments.complete";
 const CREATE_SHIPMENT_COMMAND: &str = "shipments.create";
 const CREATE_RETURN_COMMAND: &str = "returns.create";
 const ADD_RETURN_TRACKING_COMMAND: &str = "returns.tracking.add";
+const SET_RETURN_ITEM_DISPOSITION_COMMAND: &str = "returns.item.disposition.set";
 
 #[derive(Clone, Copy)]
 enum InventoryLifecycleAction {
@@ -2163,6 +2171,24 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
+        // The repository's rules on every return status write (twin of the
+        // SQLite executor): terminal returns are immutable, dispositioned
+        // items pin the return, and completion needs every item dispositioned.
+        if let Some(rejection) = transition_return_state_guard(&returned, command.payload.status) {
+            let mut receipt = rejected_receipt(
+                command,
+                Some(policy),
+                rejection.code,
+                &rejection.message,
+                rejection.retry,
+                "return",
+            );
+            receipt.aggregate_id = Some(returned.id.to_string());
+            receipt.version_before = Some(version_before);
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            return Ok(receipt);
+        }
         if command.mode == ExecutionMode::Preview {
             let mut receipt = preview_receipt(command, policy, "return");
             receipt.result = Some(returned);
@@ -2172,44 +2198,26 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
-        let row = sqlx::query_as::<_, ReturnRow>(
-            "UPDATE returns SET status = $1, updated_at = $2, version = version + 1
-             WHERE id = $3 AND version = $4 RETURNING *",
-        )
-        .bind(command.payload.status.to_string())
-        .bind(started_at)
-        .bind(command.payload.return_id.into_uuid())
-        .bind(version_before)
-        .fetch_optional(tx.as_mut())
-        .await
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?
-        .ok_or_else(|| CommerceError::VersionConflict {
-            entity: "return".into(),
-            id: command.payload.return_id.to_string(),
-            expected_version: version_before,
-        })?;
-        let mut event = KernelOutboxEvent::domain(
-            "returns.updated.v1",
-            "return",
-            command.payload.return_id.to_string(),
-            serde_json::json!({"return_id": command.payload.return_id.to_string(), "status_before": returned.status.to_string(),
-                "status_after": command.payload.status.to_string(), "version_before": version_before, "version_after": version_before + 1,
-                "refund_amount": returned.refund_amount.map(|amount| amount.to_string())}),
+        // The repository's own status write, in this transaction: the guards
+        // re-checked on the locked row, the version bump, and — on completion
+        // — the payment refunds `settle_refund_pg` creates. Its
+        // `returns.updated.v1` fact is this command's fact.
+        let (result, event_id) = apply_update_published_pg(
+            tx.as_mut(),
+            command.payload.return_id.into_uuid(),
+            &UpdateReturn { status: Some(command.payload.status), ..Default::default() },
+            started_at,
             Some(command.idempotency_key.clone()),
-        );
-        attach_command_context(&mut event, command);
-        append_kernel_event_tx(tx.as_mut(), &event).await?;
-        let items = sqlx::query_as::<_, ReturnItemRow>(
-            "SELECT * FROM return_items WHERE return_id = $1 ORDER BY id",
+            |event| attach_command_context(event, command),
         )
-        .bind(command.payload.return_id.into_uuid())
-        .fetch_all(tx.as_mut())
-        .await
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?
-        .into_iter()
-        .map(PgReturnRepository::row_to_item)
-        .collect::<Result<Vec<_>>>()?;
-        let result = PgReturnRepository::row_to_return(row, items)?;
+        .await?;
+        if result.version != version_before + 1 {
+            return Err(CommerceError::VersionConflict {
+                entity: "return".into(),
+                id: command.payload.return_id.to_string(),
+                expected_version: version_before,
+            });
+        }
         let mut receipt = ExecutionReceipt {
             contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
             receipt_id: Uuid::new_v4(),
@@ -2225,7 +2233,7 @@ impl PgKernelExecutor {
             aggregate_id: Some(result.id.to_string()),
             version_before: Some(version_before),
             version_after: Some(result.version),
-            event_ids: vec![event.id],
+            event_ids: vec![event_id],
             policy: Some(policy),
             economic_context: Some(stateset_core::EconomicReceiptContext::from_command(command)),
             audit_hash: None,
@@ -2929,9 +2937,22 @@ impl PgKernelExecutor {
         }
         let tenant_id = run.tenant_scope().0;
         let store_id = run.tenant_scope().1;
-        let Some(row) =
-            load_a2a_dispute_pg(tx.as_mut(), &input.dispute_id, tenant_id, store_id).await?
-        else {
+        // Lock the escrow before the dispute, the order `a2a.escrow.refund`
+        // (escrow, then its open disputes) and `a2a.dispute.file` use.
+        // Locking the dispute first deadlocked against a concurrent refund.
+        // A dispute never changes escrow, so its escrow id is read unlocked
+        // and rechecked once both rows are held.
+        let escrow_id =
+            load_a2a_dispute_escrow_id_pg(tx.as_mut(), &input.dispute_id, tenant_id, store_id)
+                .await?;
+        let mut escrow_row = None;
+        let mut dispute_row = None;
+        if let Some(escrow_id) = escrow_id.as_deref() {
+            escrow_row = load_a2a_escrow_pg(tx.as_mut(), escrow_id, tenant_id, store_id).await?;
+            dispute_row =
+                load_a2a_dispute_pg(tx.as_mut(), &input.dispute_id, tenant_id, store_id).await?;
+        }
+        let Some(row) = dispute_row else {
             let mut receipt = rejected_receipt(
                 command,
                 Some(policy.clone()),
@@ -2944,6 +2965,9 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         };
+        if escrow_id.as_deref() != Some(row.escrow_id.as_str()) {
+            return Err(CommerceError::Conflict("A2A dispute was modified concurrently".into()));
+        }
         let mut dispute = a2a_dispute_from_pg(row)?;
         if !matches!(
             dispute.status,
@@ -2965,9 +2989,7 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
-        let Some(escrow_row) =
-            load_a2a_escrow_pg(tx.as_mut(), &dispute.escrow_id, tenant_id, store_id).await?
-        else {
+        let Some(escrow_row) = escrow_row else {
             return Err(CommerceError::DatabaseError(
                 "scoped dispute references a missing escrow".into(),
             ));
@@ -3254,7 +3276,10 @@ impl PgKernelExecutor {
         );
         attach_command_context(&mut event, command);
         append_kernel_event_tx(tx.as_mut(), &event).await?;
+        let dispute_event_ids =
+            resolve_open_disputes_as_refunded_pg(tx.as_mut(), command, &escrow, started_at).await?;
         let mut receipt = succeeded_a2a_receipt_pg(command, policy, escrow, event.id, started_at);
+        receipt.event_ids.extend(dispute_event_ids);
         append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
         tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         Ok(receipt)
@@ -3978,6 +4003,20 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
+        let source: Option<(Uuid,Option<String>,Option<Uuid>)> = sqlx::query_as("SELECT period_id,source_document_type,source_document_id FROM gl_journal_entries WHERE id = $1").bind(command.payload.journal_entry_id).fetch_optional(tx.as_mut()).await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        // Validate (and lock) the source before the period and the entry: every
+        // posting path takes source, then period, then entry. The refusal is
+        // reported after the entry checks, in the same order as SQLite.
+        let mut source_error = None;
+        if let Some((period_id, kind, source_id)) = source {
+            source_error =
+                super::ledger_source::validate(&mut tx, kind.as_deref(), source_id).await.err();
+            sqlx::query("SELECT id FROM gl_periods WHERE id = $1 FOR SHARE")
+                .bind(period_id)
+                .execute(tx.as_mut())
+                .await
+                .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        }
         let row = sqlx::query_as::<_, JournalEntryRow>(
             "SELECT * FROM gl_journal_entries WHERE id = $1 FOR UPDATE",
         )
@@ -4010,12 +4049,29 @@ impl PgKernelExecutor {
         .collect();
         let mut entry = PgGeneralLedgerRepository::row_to_journal_entry(row)?;
         entry.lines = lines;
-        if let Err(error) = entry.ensure_postable() {
+        let base = super::ledger_fx::base_currency(&mut tx).await?;
+        if let Err(error) = entry
+            .ensure_postable()
+            .and_then(|_| crate::ledger_fx::validate_recorded_entry(&entry, base))
+        {
             let code = error.invariant_code().unwrap_or("commerce.ledger.entry_not_postable");
             let mut receipt = rejected_receipt(
                 command,
                 Some(policy),
                 code,
+                &error.to_string(),
+                RetryDisposition::Never,
+                "journal_entry",
+            );
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            return Ok(receipt);
+        }
+        if let Some(error) = source_error {
+            let mut receipt = rejected_receipt(
+                command,
+                Some(policy.clone()),
+                "commerce.ledger.source_not_postable",
                 &error.to_string(),
                 RetryDisposition::Never,
                 "journal_entry",
@@ -4038,6 +4094,24 @@ impl PgKernelExecutor {
                 Some(policy.clone()),
                 "commerce.ledger.period_not_open",
                 &format!("cannot post journal entry: its period is {period_status}, not open"),
+                RetryDisposition::Never,
+                "journal_entry",
+            );
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            return Ok(receipt);
+        }
+        if let Err(error) = PgGeneralLedgerRepository::validate_posting_accounts(
+            &mut tx,
+            entry.lines.iter().map(|line| line.account_id).collect(),
+        )
+        .await
+        {
+            let mut receipt = rejected_receipt(
+                command,
+                Some(policy.clone()),
+                "commerce.ledger.account_not_postable",
+                &error.to_string(),
                 RetryDisposition::Never,
                 "journal_entry",
             );
@@ -4073,6 +4147,13 @@ impl PgKernelExecutor {
                 )
                 .await?;
         }
+        super::ledger_source::link(
+            &mut tx,
+            entry.source_document_type.as_deref(),
+            entry.source_document_id,
+            entry.id,
+        )
+        .await?;
         let mut event = KernelOutboxEvent::domain(
             "ledger.journal_entry_posted.v1",
             "journal_entry",
@@ -4177,6 +4258,38 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
+        // The repository's `mark_settled` rules: a lapsed validity window
+        // cannot settle, and one on-chain transaction settles at most one
+        // intent (the `tx_hash_key` unique index is the backstop for
+        // concurrent settles of different intents with the same hash).
+        let already_settled: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM x402_payment_intents WHERE tx_hash = $1 AND id <> $2 LIMIT 1",
+        )
+        .bind(&command.payload.tx_hash)
+        .bind(intent.id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let stateful_rejection =
+            settle_x402_expiry_guard(intent.valid_until, started_at).or_else(|| {
+                already_settled.map(|other| {
+                    x402_tx_hash_already_settled(&command.payload.tx_hash, &other.to_string())
+                })
+            });
+        if let Some(rejection) = stateful_rejection {
+            let mut receipt = rejected_receipt(
+                command,
+                Some(policy),
+                rejection.code,
+                &rejection.message,
+                rejection.retry,
+                "x402_payment_intent",
+            );
+            receipt.aggregate_id = Some(intent.id.to_string());
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            return Ok(receipt);
+        }
         let settled_at = Utc::now();
         intent.status = X402IntentStatus::Settled;
         intent.tx_hash = Some(command.payload.tx_hash.clone());
@@ -4194,8 +4307,8 @@ impl PgKernelExecutor {
         let block_number = i64::try_from(command.payload.block_number)
             .map_err(|e| CommerceError::ValidationError(e.to_string()))?;
         let updated = sqlx::query(
-            "UPDATE x402_payment_intents SET status = $1, tx_hash = $2, block_number = $3,
-             settled_at = $4, updated_at = $4 WHERE id = $5 AND status = $6",
+            "UPDATE x402_payment_intents SET status = $1, tx_hash = $2, tx_hash_key = $2,
+             block_number = $3, settled_at = $4, updated_at = $4 WHERE id = $5 AND status = $6",
         )
         .bind(X402IntentStatus::Settled.to_string())
         .bind(&command.payload.tx_hash)
@@ -4205,7 +4318,7 @@ impl PgKernelExecutor {
         .bind(X402IntentStatus::Sequenced.to_string())
         .execute(tx.as_mut())
         .await
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        .map_err(super::map_db_error)?;
         if updated.rows_affected() == 0 {
             return Err(CommerceError::Conflict("x402 intent was modified concurrently".into()));
         }
@@ -4690,7 +4803,7 @@ impl PgKernelExecutor {
                     .map_err(pg_err)?
                     .ok_or(CommerceError::NotFound)?;
             refuse_recapture(&status)?;
-            mark_completed_pg(step.as_mut(), payment_id, Utc::now()).await?;
+            mark_completed_pg(&mut step, payment_id, Utc::now()).await?;
             let row = sqlx::query_as::<_, PaymentRow>(
                 "SELECT id, payment_number, order_id, invoice_id, customer_id, status, payment_method,
                         amount, currency, amount_refunded, external_id, idempotency_key, processor,
@@ -4900,6 +5013,108 @@ impl PgKernelExecutor {
         tx.commit().await.map_err(pg_err)?;
         Ok(receipt)
     }
+
+    /// Preview or atomically record a received return item's disposition
+    /// (`returns.item.disposition.set`) through the repository's own
+    /// disposition write (twin of the SQLite executor): the same stock, serial
+    /// and lot effects an operator's `set_item_disposition_async` applies,
+    /// with the command's principal recorded as `disposition_by`.
+    pub async fn execute_set_return_item_disposition_async(
+        &self,
+        command: &CommandEnvelope<SetReturnItemDisposition>,
+    ) -> Result<ExecutionReceipt<ReturnItem>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(
+                SET_RETURN_ITEM_DISPOSITION_COMMAND,
+                RETURN_DISPOSITION_UNVERSIONED,
+            ),
+            "return",
+        )?
+        .then_guard(|_| set_return_item_disposition_guard(input));
+        let request_hash = run.request_hash.clone();
+        let target = Some(input.return_id.to_string());
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        lock_kernel_idempotency_pg(tx.as_mut(), &command.idempotency_key).await?;
+        if let Some(receipt) =
+            settled_receipt_tx(tx.as_mut(), command, &run, &request_hash, "return").await?
+        {
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        // The repository's disposition rules on the locked return, sealed as
+        // typed rejections before preview or apply.
+        let row = sqlx::query_as::<_, ReturnRow>("SELECT * FROM returns WHERE id = $1 FOR UPDATE")
+            .bind(input.return_id.into_uuid())
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(pg_err)?;
+        let rejection = match row {
+            None => {
+                Some(GuardRejection::never("commerce.return_not_found", "return does not exist"))
+            }
+            Some(row) => {
+                let items = sqlx::query_as::<_, ReturnItemRow>(
+                    "SELECT * FROM return_items WHERE return_id = $1 ORDER BY id",
+                )
+                .bind(input.return_id.into_uuid())
+                .fetch_all(tx.as_mut())
+                .await
+                .map_err(pg_err)?
+                .into_iter()
+                .map(PgReturnRepository::row_to_item)
+                .collect::<Result<Vec<_>>>()?;
+                let returned = PgReturnRepository::row_to_return(row, items)?;
+                set_return_item_disposition_state_guard(&returned, input.return_item_id)
+            }
+        };
+        if let Some(rejection) = rejection {
+            let mut receipt = run.rejected_by(&rejection);
+            receipt.aggregate_id = target;
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(pg_err)?;
+            return Ok(receipt);
+        }
+        let disposition = SetReturnDisposition {
+            disposition: input.parsed_disposition().ok_or_else(|| {
+                CommerceError::Internal(
+                    "disposition passed the payload guard but does not parse".into(),
+                )
+            })?,
+            disposition_by: Some(command.principal.id.clone()),
+            ..Default::default()
+        };
+        let mut step = sqlx::Acquire::begin(&mut tx).await.map_err(pg_err)?;
+        let attempted = async {
+            let item = set_item_disposition_pg(
+                &mut step,
+                input.return_id,
+                input.return_item_id,
+                &disposition,
+            )
+            .await?;
+            let payload = serde_json::json!({
+                "return_id": input.return_id.to_string(),
+                "return_item_id": item.id.to_string(),
+                "sku": &item.sku,
+                "quantity": item.quantity,
+                "disposition": disposition.disposition.to_string(),
+                "disposition_by": &item.disposition_by,
+                "note": &input.note,
+            });
+            outcome(item, input.return_id.to_string(), "returns.item_dispositioned.v1", payload)
+        }
+        .await;
+        let mut receipt =
+            finish_storefront_step_pg(step, &run, StorefrontAggregate::Return, target, attempted)
+                .await?;
+        append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+        tx.commit().await.map_err(pg_err)?;
+        Ok(receipt)
+    }
 }
 
 /// Advisory-lock namespaces. Each key family hashes with its own seed so an
@@ -5068,6 +5283,67 @@ async fn lock_kernel_idempotency_pg(
     advisory_lock_pg(tx, LOCK_NS_IDEMPOTENCY, idempotency_key).await
 }
 
+/// Close every dispute still open against an escrow that `a2a.escrow.refund`
+/// just refunded, in the refund's transaction (twin of the SQLite
+/// `resolve_open_disputes_as_refunded_sqlite`). Returning the whole escrow to
+/// the buyer is the outcome `a2a.dispute.resolve` records as a `full_refund`
+/// resolution. Left open, the dispute would freeze the payment forever:
+/// `payments.create_refund` refuses while a dispute is open, and the dispute
+/// can no longer be resolved because its escrow is no longer `disputed`.
+/// The caller holds the escrow's row lock: every path that locks an escrow
+/// and its disputes takes the escrow first.
+/// Returns the ids of the `a2a.dispute_resolved.v1` facts it appended.
+async fn resolve_open_disputes_as_refunded_pg(
+    tx: &mut sqlx::PgConnection,
+    command: &CommandEnvelope<RefundA2AEscrow>,
+    escrow: &A2AEscrow,
+    resolved_at: chrono::DateTime<Utc>,
+) -> Result<Vec<Uuid>> {
+    let zero = rust_decimal::Decimal::ZERO;
+    let mut closed: Vec<(String, rust_decimal::Decimal)> = sqlx::query_as(
+        "UPDATE a2a_disputes SET status = $1, resolution_type = $2,
+                buyer_amount_decimal = amount_decimal, seller_amount_decimal = $3,
+                resolution_note = $4, resolved_by = $5, resolved_at = $6, updated_at = $6
+         WHERE escrow_id = $7
+           AND status IN ('filed', 'evidence_period', 'under_review', 'escalated')
+         RETURNING id, amount_decimal",
+    )
+    .bind(A2ADisputeStatus::Resolved.to_string())
+    .bind(A2ADisputeResolutionType::FullRefund.to_string())
+    .bind(zero)
+    .bind(&command.payload.reason)
+    .bind(&command.principal.id)
+    .bind(resolved_at)
+    .bind(&escrow.id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    // RETURNING order is unspecified; emit facts in the SQLite twin's order.
+    closed.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut event_ids = Vec::with_capacity(closed.len());
+    for (dispute_id, amount) in closed {
+        let mut event = KernelOutboxEvent::domain(
+            "a2a.dispute_resolved.v1",
+            "a2a_dispute",
+            dispute_id.clone(),
+            serde_json::json!({
+                "dispute_id": &dispute_id,
+                "escrow_id": &escrow.id,
+                "resolution_type": A2ADisputeResolutionType::FullRefund.to_string(),
+                "buyer_amount_decimal": amount.to_string(),
+                "seller_amount_decimal": zero.to_string(),
+                "resolved_by": &command.principal.id,
+                "status": A2ADisputeStatus::Resolved.to_string()
+            }),
+            Some(command.idempotency_key.clone()),
+        );
+        attach_command_context(&mut event, command);
+        append_kernel_event_tx(&mut *tx, &event).await?;
+        event_ids.push(event.id);
+    }
+    Ok(event_ids)
+}
+
 async fn load_a2a_escrow_pg(
     tx: &mut sqlx::PgConnection,
     escrow_id: &str,
@@ -5200,6 +5476,26 @@ fn a2a_dispute_from_pg(row: A2ADisputeRow) -> Result<A2ADispute> {
         updated_at: row.updated_at,
         resolved_at: row.resolved_at,
     })
+}
+
+/// The escrow a scoped dispute belongs to, read without a row lock so the
+/// caller can lock the escrow before the dispute. A dispute's `escrow_id` is
+/// set when it is filed and never updated.
+async fn load_a2a_dispute_escrow_id_pg(
+    tx: &mut sqlx::PgConnection,
+    dispute_id: &str,
+    tenant_id: &str,
+    store_id: &str,
+) -> Result<Option<String>> {
+    sqlx::query_scalar(
+        "SELECT escrow_id FROM a2a_disputes WHERE id = $1 AND tenant_id = $2 AND store_id = $3",
+    )
+    .bind(dispute_id)
+    .bind(tenant_id)
+    .bind(store_id)
+    .fetch_optional(tx)
+    .await
+    .map_err(|error| CommerceError::DatabaseError(error.to_string()))
 }
 
 async fn load_a2a_dispute_pg(

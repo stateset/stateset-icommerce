@@ -44,6 +44,8 @@ impl SqliteVendorReturnRepository {
             )?
             .into(),
             sku: row.get("sku")?,
+            source_location_id: row.get("source_location_id")?,
+            lot_id: parse_uuid_opt_row(row.get("lot_id")?, "vendor_return_item", "lot_id")?,
             quantity: parse_decimal_row(
                 &row.get::<_, String>("quantity")?,
                 "vendor_return_item",
@@ -76,6 +78,7 @@ impl SqliteVendorReturnRepository {
                 "vendor_return",
                 "purchase_order_id",
             )?,
+            warehouse_id: row.get("warehouse_id")?,
             status: parse_enum_row::<VendorReturnStatus>(
                 &row.get::<_, String>("status")?,
                 "vendor_return",
@@ -176,9 +179,10 @@ impl stateset_core::VendorReturnRepository for SqliteVendorReturnRepository {
         let number = format!("VR-{}", &id_str[..8]);
         with_immediate_transaction(&self.pool, |tx| {
             let currency = resolve_currency_in_tx(input.currency, tx)?;
+            super::vendor_return_stock::validate_create(tx, &input, currency, &now_str)?;
             tx.execute(
-                "INSERT INTO vendor_returns (id, number, supplier_id, purchase_order_id, status, currency, credit_generated, notes, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, 'draft', ?, 0, ?, ?, ?)",
+                "INSERT INTO vendor_returns (id, number, supplier_id, purchase_order_id, status, currency, credit_generated, notes, created_at, updated_at, warehouse_id)
+                 VALUES (?, ?, ?, ?, 'draft', ?, 0, ?, ?, ?, ?)",
                 rusqlite::params![
                     &id_str,
                     &number,
@@ -188,19 +192,23 @@ impl stateset_core::VendorReturnRepository for SqliteVendorReturnRepository {
                     &input.notes,
                     &now_str,
                     &now_str,
+                    input.warehouse_id,
                 ],
             )?;
             for item in &input.items {
                 tx.execute(
-                    "INSERT INTO vendor_return_items (id, vendor_return_id, product_id, sku, quantity, unit_cost, reason)
-                     VALUES (?, ?, ?, '', ?, ?, ?)",
+                    "INSERT INTO vendor_return_items (id, vendor_return_id, product_id, sku, quantity, unit_cost, reason, source_location_id, lot_id)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rusqlite::params![
                         VendorReturnItemId::new().to_string(),
                         &id_str,
                         item.product_id.to_string(),
+                        &item.sku,
                         item.quantity.to_string(),
                         item.unit_cost.to_string(),
                         item.reason.to_string(),
+                        item.source_location_id,
+                        item.lot_id.map(|id| id.to_string()),
                     ],
                 )?;
             }
@@ -268,14 +276,16 @@ impl stateset_core::VendorReturnRepository for SqliteVendorReturnRepository {
         let id_str = id.to_string();
         let now = Utc::now().to_rfc3339();
         with_immediate_transaction(&self.pool, |tx| {
-            let status = Self::current_status(tx, &id_str)?;
-            if status.is_terminal() {
-                return Err(Self::conflict("vendor return is already in a terminal state"));
+            if !generate_credit {
+                return Err(super::bins::smuggle(CommerceError::ValidationError(
+                    "Processing a vendor return requires its linked credit; enable generate_credit"
+                        .into(),
+                )));
             }
-            tx.execute(
-                "UPDATE vendor_returns SET status = 'processed', credit_generated = ?, processed_at = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![generate_credit as i32, &now, &now, &id_str],
-            )?;
+            if Self::current_status(tx, &id_str)? != VendorReturnStatus::Pending {
+                return Err(Self::conflict("Only submitted vendor returns can be processed"));
+            }
+            super::vendor_return_stock::process(tx, id.into(), &now)?;
             Self::load_full(tx, &id_str)
         })
     }
@@ -302,7 +312,7 @@ mod tests {
     use crate::DatabaseConfig;
     use crate::sqlite::SqliteDatabase;
     use rust_decimal_macros::dec;
-    use stateset_core::{CreateVendorReturnItem, ProductId, VendorReturnRepository};
+    use stateset_core::*;
     use uuid::Uuid;
 
     fn test_repo() -> SqliteVendorReturnRepository {
@@ -311,12 +321,55 @@ mod tests {
     }
 
     fn new_return(repo: &SqliteVendorReturnRepository) -> VendorReturn {
+        let sku = format!("VENDOR-RETURN-{}", Uuid::new_v4());
+        let supplier = super::super::SqlitePurchaseOrderRepository::new(repo.pool.clone())
+            .create_supplier(CreateSupplier { name: sku.clone(), ..Default::default() })
+            .unwrap();
+        let product = super::super::SqliteProductRepository::new(repo.pool.clone())
+            .create(CreateProduct {
+                name: sku.clone(),
+                variants: Some(vec![CreateProductVariant {
+                    sku: sku.clone(),
+                    price: dec!(10),
+                    is_default: Some(true),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            })
+            .unwrap();
+        let warehouse = super::super::SqliteWarehouseRepository::new(repo.pool.clone());
+        let wh = warehouse
+            .create_warehouse(CreateWarehouse {
+                code: sku.clone(),
+                name: sku.clone(),
+                ..Default::default()
+            })
+            .unwrap();
+        let location = warehouse
+            .create_location(CreateLocation { warehouse_id: wh.id, ..Default::default() })
+            .unwrap();
+        warehouse
+            .adjust_inventory(AdjustLocationInventory {
+                location_id: location.id,
+                sku: sku.clone(),
+                lot_id: None,
+                quantity: dec!(5),
+                reason: "received stock".into(),
+                reference_type: None,
+                reference_id: None,
+                performed_by: None,
+            })
+            .unwrap();
         repo.create(CreateVendorReturn {
-            supplier_id: Uuid::new_v4(),
+            supplier_id: supplier.id,
+            warehouse_id: wh.id,
             purchase_order_id: None,
             currency: Some(CurrencyCode::USD),
             items: vec![CreateVendorReturnItem {
-                product_id: ProductId::new(),
+                product_id: product.id,
+                sku,
+                source_location_id: location.id,
+                lot_id: None,
                 quantity: dec!(3),
                 unit_cost: dec!(10),
                 reason: VendorReturnReason::Defective,
@@ -341,6 +394,7 @@ mod tests {
         let repo = test_repo();
         let res = repo.create(CreateVendorReturn {
             supplier_id: Uuid::new_v4(),
+            warehouse_id: 1,
             purchase_order_id: None,
             currency: None,
             items: vec![],
@@ -373,7 +427,8 @@ mod tests {
     fn processed_cannot_be_cancelled() {
         let repo = test_repo();
         let r = new_return(&repo);
-        repo.process(r.id, false).expect("process");
+        repo.submit(r.id).expect("submit");
+        repo.process(r.id, true).expect("process");
         assert!(repo.cancel(r.id).is_err());
     }
 

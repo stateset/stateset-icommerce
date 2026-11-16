@@ -14,14 +14,14 @@ MCP-native clients.
 ## Install
 
 ```bash
-npm install @stateset/cli@1.40.0 @stateset/embedded@1.40.0
+npm install @stateset/cli@1.41.0 @stateset/embedded@1.41.0
 ```
 
 For Python runtimes:
 
 ```bash
-pip install stateset-embedded==1.40.0
-pip install "stateset-embedded[agents]==1.40.0"
+pip install stateset-embedded==1.41.0
+pip install "stateset-embedded[agents]==1.41.0"
 ```
 
 From the repo checkout, the examples under `examples/agents/` also run against
@@ -474,7 +474,7 @@ if (!shipped.ok) {
 For Claude Desktop, Cursor, Windsurf, or other MCP-native clients:
 
 ```bash
-npx -y @stateset/cli@latest stateset-setup --yes --quickstart --db ./store.db
+npx -y -p @stateset/cli@latest stateset-setup --yes --quickstart --db ./store.db
 ```
 
 This registers the iCommerce MCP server with your client. The core tool tier appears automatically in the tool palette (see [Tool tiers and profiles](#tool-tiers-and-profiles) to widen it).
@@ -488,7 +488,7 @@ The setup creates a configuration entry in your MCP client's config file:
   "mcpServers": {
     "stateset-commerce": {
       "command": "npx",
-      "args": ["-y", "-p", "@stateset/cli@1.40.0", "stateset-mcp", "--db", "./store.db"]
+      "args": ["-y", "-p", "@stateset/cli@1.41.0", "stateset-mcp", "--db", "./store.db"]
     }
   }
 }

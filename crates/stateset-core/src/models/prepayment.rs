@@ -59,6 +59,11 @@ pub struct Prepayment {
     pub amount: Decimal,
     /// Amount still available to apply.
     pub remaining: Decimal,
+    /// Unused balance returned by the supplier (separate from applied funds).
+    #[serde(default)]
+    pub refunded_amount: Decimal,
+    #[serde(default)]
+    pub refunded_at: Option<DateTime<Utc>>,
     /// Currency.
     pub currency: CurrencyCode,
     /// Lifecycle status.
@@ -85,7 +90,7 @@ impl Prepayment {
     /// Amount applied so far.
     #[must_use]
     pub fn applied_amount(&self) -> Decimal {
-        self.amount - self.remaining
+        self.amount - self.remaining - self.refunded_amount
     }
 }
 
@@ -161,6 +166,8 @@ mod tests {
             supplier_id: Uuid::nil(),
             amount,
             remaining,
+            refunded_amount: Decimal::ZERO,
+            refunded_at: None,
             currency: CurrencyCode::USD,
             status,
             method: Some("wire".into()),

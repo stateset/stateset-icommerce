@@ -17,7 +17,8 @@ use super::payments::{
     void_in_flight_payments_for_order_conn,
 };
 use super::returns::{
-    SqliteReturnRepository, apply_update_tx, insert_return_tx, row_to_return_item,
+    SqliteReturnRepository, apply_update_published_tx, apply_update_tx, insert_return_tx,
+    load_return_conn, row_to_return_item, set_item_disposition_tx,
 };
 use super::shipments::create_shipment_tx;
 use super::subscriptions::SqliteSubscriptionRepository;
@@ -37,7 +38,8 @@ use crate::kernel::plans::escrow::{
 use crate::kernel::plans::finance::{
     BILLING_CYCLE_UNVERSIONED, CART_UNVERSIONED, JOURNAL_ENTRY_UNVERSIONED,
     X402_INTENT_UNVERSIONED, charge_subscription_guard, commit_checkout_guard,
-    post_journal_entry_guard, settle_x402_guard,
+    post_journal_entry_guard, settle_x402_expiry_guard, settle_x402_guard,
+    x402_tx_hash_already_settled,
 };
 use crate::kernel::plans::inventory::{
     declares_quantity, economic_quantity_guard, reservation_changes_balance,
@@ -52,7 +54,11 @@ use crate::kernel::plans::payments::{
     RefundSnapshot, create_payment_guard, economic_counterparty_guard, economic_money_guard,
     plan_refund,
 };
-use crate::kernel::plans::returns::transition_return_guard;
+use crate::kernel::plans::returns::{
+    RETURN_DISPOSITION_UNVERSIONED, set_return_item_disposition_guard,
+    set_return_item_disposition_state_guard, transition_return_guard,
+    transition_return_state_guard,
+};
 use crate::kernel::plans::storefront::{
     DomainOutcome, PAYMENT_UNVERSIONED, RETURN_TRACKING_UNVERSIONED, SealDecision,
     StorefrontAggregate, add_cart_item_guard, add_return_tracking_guard, apply_cart_coupon_guard,
@@ -66,8 +72,8 @@ use crate::kernel::receipt::{
     receipt_record, rejected_receipt, succeeded_receipt,
 };
 use crate::kernel::{
-    BudgetSnapshot, CommandRun, EnvelopeGuard, Replay, budget_at_storage_precision, plan_budget,
-    resolve_replay,
+    BudgetSnapshot, CommandRun, EnvelopeGuard, GuardRejection, Replay, budget_at_storage_precision,
+    plan_budget, resolve_replay,
 };
 use crate::{KernelOutboxEvent, KernelReceiptRecord};
 use chrono::Utc;
@@ -95,7 +101,8 @@ use stateset_core::{
 use stateset_core::{
     AddCartItemCommand, AddReturnTracking, ApplyCartCoupon, CalculateCartTax, Cart, CartRepository,
     CartTaxCalculated, CompletePayment, CreateCart, CreateCustomer, CreateReturn, CreateShipment,
-    Customer, SetCartPaymentMethod, SetCartShippingAddress, Shipment, UpdateReturn,
+    Customer, ReturnItem, SetCartPaymentMethod, SetCartShippingAddress, SetReturnDisposition,
+    SetReturnItemDisposition, Shipment, UpdateReturn,
 };
 use uuid::Uuid;
 
@@ -132,6 +139,7 @@ const COMPLETE_PAYMENT_COMMAND: &str = "payments.complete";
 const CREATE_SHIPMENT_COMMAND: &str = "shipments.create";
 const CREATE_RETURN_COMMAND: &str = "returns.create";
 const ADD_RETURN_TRACKING_COMMAND: &str = "returns.tracking.add";
+const SET_RETURN_ITEM_DISPOSITION_COMMAND: &str = "returns.item.disposition.set";
 
 fn to_sql_err(error: CommerceError) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(error))
@@ -2085,6 +2093,25 @@ impl SqliteKernelExecutor {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
+            // The repository's rules on every return status write: terminal
+            // returns are immutable, dispositioned items pin the return, and
+            // completion needs every item dispositioned.
+            if let Some(rejection) =
+                transition_return_state_guard(&returned, command.payload.status)
+            {
+                let mut receipt = rejected_receipt(
+                    command,
+                    Some(policy.clone()),
+                    rejection.code,
+                    &rejection.message,
+                    rejection.retry,
+                    "return",
+                );
+                receipt.aggregate_id = Some(returned.id.to_string());
+                receipt.version_before = Some(version_before);
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
             if command.mode == ExecutionMode::Preview {
                 let mut receipt = preview_receipt(command, policy.clone(), "return");
                 receipt.result = Some(returned);
@@ -2093,17 +2120,19 @@ impl SqliteKernelExecutor {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
-            let changed = tx.execute(
-                "UPDATE returns SET status = ?, updated_at = ?, version = version + 1
-                 WHERE id = ? AND version = ?",
-                params![
-                    command.payload.status.to_string(),
-                    started_at.to_rfc3339(),
-                    command.payload.return_id.to_string(),
-                    version_before
-                ],
+            // The repository's own status write, in this transaction: the
+            // guards above re-checked on the locked row, the version bump,
+            // and — on completion — the payment refunds `settle_refund_tx`
+            // creates. Its `returns.updated.v1` fact is this command's fact.
+            let (applied, event_id) = apply_update_published_tx(
+                tx,
+                command.payload.return_id,
+                &UpdateReturn { status: Some(command.payload.status), ..Default::default() },
+                started_at,
+                Some(command.idempotency_key.clone()),
+                |event| attach_command_context(event, command),
             )?;
-            if changed == 0 {
+            if applied.version != version_before + 1 {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
                     CommerceError::VersionConflict {
                         entity: "return".into(),
@@ -2112,33 +2141,7 @@ impl SqliteKernelExecutor {
                     },
                 )));
             }
-            let mut event = KernelOutboxEvent::domain(
-                "returns.updated.v1",
-                "return",
-                command.payload.return_id.to_string(),
-                serde_json::json!({"return_id": command.payload.return_id.to_string(),
-                    "status_before": returned.status.to_string(), "status_after": command.payload.status.to_string(),
-                    "version_before": version_before, "version_after": version_before + 1,
-                    "refund_amount": returned.refund_amount.map(|amount| amount.to_string())}),
-                Some(command.idempotency_key.clone()),
-            );
-            attach_command_context(&mut event, command);
-            append_kernel_event_tx(tx, &event)?;
-            returned = tx.query_row(
-                "SELECT * FROM returns WHERE id = ?",
-                [command.payload.return_id.to_string()],
-                SqliteReturnRepository::row_to_return,
-            )?;
-            let mut stmt = tx.prepare(
-                "SELECT id, return_id, order_item_id, sku, name, quantity, condition,
-                        refund_amount, disposition, disposition_at, disposition_by,
-                        lot_id, serial_ids
-                 FROM return_items WHERE return_id = ? ORDER BY rowid",
-            )?;
-            returned.items = stmt
-                .query_map([command.payload.return_id.to_string()], row_to_return_item)?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            drop(stmt);
+            returned = applied;
             let mut receipt = ExecutionReceipt {
                 contract_version: stateset_core::KERNEL_CONTRACT_VERSION.into(),
                 receipt_id: Uuid::new_v4(),
@@ -2154,7 +2157,7 @@ impl SqliteKernelExecutor {
                 aggregate_id: Some(returned.id.to_string()),
                 version_before: Some(version_before),
                 version_after: Some(returned.version),
-                event_ids: vec![event.id],
+                event_ids: vec![event_id],
                 policy: Some(policy.clone()),
                 economic_context: Some(stateset_core::EconomicReceiptContext::from_command(
                     command,
@@ -3171,8 +3174,11 @@ impl SqliteKernelExecutor {
             );
             attach_command_context(&mut event, command);
             append_kernel_event_tx(tx, &event)?;
+            let dispute_event_ids =
+                resolve_open_disputes_as_refunded_sqlite(tx, command, &escrow, started_at)?;
             let mut receipt =
                 succeeded_a2a_receipt(command, policy.clone(), escrow, event.id, started_at);
+            receipt.event_ids.extend(dispute_event_ids);
             append_receipt(tx, &request_hash, &mut receipt)?;
             Ok(receipt)
         })
@@ -3861,12 +3867,32 @@ impl SqliteKernelExecutor {
                 }
                 Err(e) => return Err(e),
             };
-            if let Err(error) = entry.ensure_postable() {
+            let base = super::ledger_fx::base_currency(tx)?;
+            if let Err(error) = entry
+                .ensure_postable()
+                .and_then(|_| crate::ledger_fx::validate_recorded_entry(&entry, base))
+            {
                 let code = error.invariant_code().unwrap_or("commerce.ledger.entry_not_postable");
                 let mut receipt = rejected_receipt(
                     command,
                     Some(policy.clone()),
                     code,
+                    &error.to_string(),
+                    RetryDisposition::Never,
+                    "journal_entry",
+                );
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            if let Err(error) = super::ledger_source::validate(
+                tx,
+                entry.source_document_type.as_deref(),
+                entry.source_document_id,
+            ) {
+                let mut receipt = rejected_receipt(
+                    command,
+                    Some(policy.clone()),
+                    "commerce.ledger.source_not_postable",
                     &error.to_string(),
                     RetryDisposition::Never,
                     "journal_entry",
@@ -3887,6 +3913,21 @@ impl SqliteKernelExecutor {
                     Some(policy.clone()),
                     "commerce.ledger.period_not_open",
                     &format!("cannot post journal entry: its period is {period_status}, not open"),
+                    RetryDisposition::Never,
+                    "journal_entry",
+                );
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            if let Err(error) = SqliteGeneralLedgerRepository::validate_posting_accounts(
+                tx,
+                entry.lines.iter().map(|line| line.account_id).collect(),
+            ) {
+                let mut receipt = rejected_receipt(
+                    command,
+                    Some(policy.clone()),
+                    "commerce.ledger.account_not_postable",
+                    &error.to_string(),
                     RetryDisposition::Never,
                     "journal_entry",
                 );
@@ -3918,6 +3959,12 @@ impl SqliteKernelExecutor {
             )? == 0 {
                 return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(CommerceError::Conflict("Journal entry was modified concurrently".into()))));
             }
+            super::ledger_source::link(
+                tx,
+                entry.source_document_type.as_deref(),
+                entry.source_document_id,
+                entry.id,
+            )?;
             let mut event = KernelOutboxEvent::domain(
                 "ledger.journal_entry_posted.v1",
                 "journal_entry",
@@ -4016,6 +4063,35 @@ impl SqliteKernelExecutor {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
+            // The repository's `mark_settled` rules: a lapsed validity window
+            // cannot settle, and one on-chain transaction settles at most one
+            // intent (the `tx_hash_key` unique index is the backstop).
+            let already_settled: Option<String> = tx
+                .query_row(
+                    "SELECT id FROM x402_payment_intents WHERE tx_hash = ? AND id <> ? LIMIT 1",
+                    params![command.payload.tx_hash, intent.id.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let stateful_rejection = settle_x402_expiry_guard(intent.valid_until, started_at)
+                .or_else(|| {
+                    already_settled
+                        .as_deref()
+                        .map(|other| x402_tx_hash_already_settled(&command.payload.tx_hash, other))
+                });
+            if let Some(rejection) = stateful_rejection {
+                let mut receipt = rejected_receipt(
+                    command,
+                    Some(policy.clone()),
+                    rejection.code,
+                    &rejection.message,
+                    rejection.retry,
+                    "x402_payment_intent",
+                );
+                receipt.aggregate_id = Some(intent.id.to_string());
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
             let settled_at = Utc::now();
             intent.status = X402IntentStatus::Settled;
             intent.tx_hash = Some(command.payload.tx_hash.clone());
@@ -4030,8 +4106,8 @@ impl SqliteKernelExecutor {
                 return Ok(receipt);
             }
             if tx.execute(
-                "UPDATE x402_payment_intents SET status = ?, tx_hash = ?, block_number = ?, settled_at = ?, updated_at = ? WHERE id = ? AND status = ?",
-                params![X402IntentStatus::Settled.to_string(), command.payload.tx_hash,
+                "UPDATE x402_payment_intents SET status = ?, tx_hash = ?, tx_hash_key = ?, block_number = ?, settled_at = ?, updated_at = ? WHERE id = ? AND status = ?",
+                params![X402IntentStatus::Settled.to_string(), command.payload.tx_hash, command.payload.tx_hash,
                     i64::try_from(command.payload.block_number).map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?,
                     settled_at.to_rfc3339(), settled_at.to_rfc3339(), command.payload.intent_id.to_string(),
                     X402IntentStatus::Sequenced.to_string()],
@@ -4643,6 +4719,93 @@ impl SqliteKernelExecutor {
             )
         })
     }
+
+    /// Preview or atomically record a received return item's disposition
+    /// (`returns.item.disposition.set`) through the repository's own
+    /// disposition write: the same stock, serial and lot effects an operator's
+    /// `set_item_disposition` applies, with the command's principal recorded
+    /// as `disposition_by`.
+    pub fn execute_set_return_item_disposition(
+        &self,
+        command: &CommandEnvelope<SetReturnItemDisposition>,
+    ) -> Result<ExecutionReceipt<ReturnItem>> {
+        let input = &command.payload;
+        let run = CommandRun::prepare(
+            command,
+            input,
+            &self.policy,
+            EnvelopeGuard::unversioned(
+                SET_RETURN_ITEM_DISPOSITION_COMMAND,
+                RETURN_DISPOSITION_UNVERSIONED,
+            ),
+            "return",
+        )?
+        .then_guard(|_| set_return_item_disposition_guard(input));
+        let request_hash = run.request_hash.clone();
+        let target = Some(input.return_id.to_string());
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(receipt) = settled_receipt_tx(tx, command, &run, &request_hash, "return")? {
+                return Ok(receipt);
+            }
+            // The repository's disposition rules on the locked return, sealed
+            // as typed rejections before preview or apply.
+            let rejection = match load_return_conn(tx, &input.return_id.to_string())? {
+                None => Some(GuardRejection::never(
+                    "commerce.return_not_found",
+                    "return does not exist",
+                )),
+                Some(returned) => {
+                    set_return_item_disposition_state_guard(&returned, input.return_item_id)
+                }
+            };
+            if let Some(rejection) = rejection {
+                let mut receipt = run.rejected_by(&rejection);
+                receipt.aggregate_id = target.clone();
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
+            let disposition = SetReturnDisposition {
+                disposition: input.parsed_disposition().ok_or_else(|| {
+                    to_sql_err(CommerceError::Internal(
+                        "disposition passed the payload guard but does not parse".into(),
+                    ))
+                })?,
+                disposition_by: Some(command.principal.id.clone()),
+                ..Default::default()
+            };
+            seal_storefront_step(
+                tx,
+                &run,
+                &request_hash,
+                StorefrontAggregate::Return,
+                target.clone(),
+                |tx| {
+                    let item = set_item_disposition_tx(
+                        tx,
+                        input.return_id,
+                        input.return_item_id,
+                        &disposition,
+                    )
+                    .map_err(map_db_error)?;
+                    let payload = serde_json::json!({
+                        "return_id": input.return_id.to_string(),
+                        "return_item_id": item.id.to_string(),
+                        "sku": &item.sku,
+                        "quantity": item.quantity,
+                        "disposition": disposition.disposition.to_string(),
+                        "disposition_by": &item.disposition_by,
+                        "note": &input.note,
+                    });
+                    outcome(
+                        item,
+                        input.return_id.to_string(),
+                        "returns.item_dispositioned.v1",
+                        payload,
+                    )
+                },
+            )
+        })
+    }
 }
 
 fn load_inventory_reservation_tx(
@@ -5055,6 +5218,73 @@ fn sqlite_commerce_error(error: &rusqlite::Error) -> Option<&CommerceError> {
         rusqlite::Error::ToSqlConversionFailure(source) => source.downcast_ref::<CommerceError>(),
         _ => None,
     }
+}
+
+/// Close every dispute still open against an escrow that `a2a.escrow.refund`
+/// just refunded, in the refund's transaction. Returning the whole escrow to
+/// the buyer is the outcome `a2a.dispute.resolve` records as a `full_refund`
+/// resolution, so the dispute is resolved that way (buyer gets the disputed
+/// amount, seller nothing). Left open, it would freeze the payment forever:
+/// `payments.create_refund` refuses while a dispute is open, and the dispute
+/// can no longer be resolved because its escrow is no longer `disputed`.
+/// Returns the ids of the `a2a.dispute_resolved.v1` facts it appended.
+fn resolve_open_disputes_as_refunded_sqlite(
+    tx: &rusqlite::Transaction<'_>,
+    command: &CommandEnvelope<RefundA2AEscrow>,
+    escrow: &A2AEscrow,
+    resolved_at: chrono::DateTime<Utc>,
+) -> rusqlite::Result<Vec<Uuid>> {
+    let open: Vec<(String, String)> = {
+        let mut statement = tx.prepare(
+            "SELECT id, CAST(amount_decimal AS TEXT) FROM a2a_disputes
+             WHERE escrow_id = ?
+               AND status IN ('filed', 'evidence_period', 'under_review', 'escalated')
+             ORDER BY id",
+        )?;
+        statement
+            .query_map([&escrow.id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    let zero = rust_decimal::Decimal::ZERO.to_string();
+    let mut event_ids = Vec::with_capacity(open.len());
+    for (dispute_id, amount) in open {
+        tx.execute(
+            "UPDATE a2a_disputes SET status = ?, resolution_type = ?,
+                    buyer_amount_decimal = amount_decimal, seller_amount_decimal = ?,
+                    resolution_note = ?, resolved_by = ?, resolved_at = ?, updated_at = ?
+             WHERE id = ?
+               AND status IN ('filed', 'evidence_period', 'under_review', 'escalated')",
+            params![
+                A2ADisputeStatus::Resolved.to_string(),
+                A2ADisputeResolutionType::FullRefund.to_string(),
+                &zero,
+                &command.payload.reason,
+                &command.principal.id,
+                resolved_at.to_rfc3339(),
+                resolved_at.to_rfc3339(),
+                &dispute_id,
+            ],
+        )?;
+        let mut event = KernelOutboxEvent::domain(
+            "a2a.dispute_resolved.v1",
+            "a2a_dispute",
+            dispute_id.clone(),
+            serde_json::json!({
+                "dispute_id": &dispute_id,
+                "escrow_id": &escrow.id,
+                "resolution_type": A2ADisputeResolutionType::FullRefund.to_string(),
+                "buyer_amount_decimal": amount,
+                "seller_amount_decimal": &zero,
+                "resolved_by": &command.principal.id,
+                "status": A2ADisputeStatus::Resolved.to_string()
+            }),
+            Some(command.idempotency_key.clone()),
+        );
+        attach_command_context(&mut event, command);
+        append_kernel_event_tx(tx, &event)?;
+        event_ids.push(event.id);
+    }
+    Ok(event_ids)
 }
 
 /// Escrow (and its dispute id, if one was filed) that holds `payment_id` and

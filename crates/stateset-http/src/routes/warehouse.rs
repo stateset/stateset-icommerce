@@ -10,6 +10,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
@@ -327,8 +328,8 @@ pub(crate) struct BinReconciliationResponse {
 pub(crate) struct CreateCycleCountLineRequest {
     pub sku: String,
     pub lot_id: Option<String>,
-    /// Decimal expected quantity as a string.
-    pub expected_quantity: String,
+    /// Deprecated and ignored; expected stock is read from the ledger.
+    pub expected_quantity: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
@@ -891,10 +892,7 @@ pub(crate) async fn create_cycle_count(
                     Ok(stateset_core::CreateCycleCountLine {
                         sku: l.sku.clone(),
                         lot_id: parse_opt_uuid(l.lot_id.as_deref(), "lot_id")?,
-                        expected_quantity: parse_decimal(
-                            &l.expected_quantity,
-                            "expected_quantity",
-                        )?,
+                        expected_quantity: Decimal::ZERO,
                     })
                 })
                 .collect::<Result<Vec<_>, HttpError>>()?;
@@ -1526,13 +1524,14 @@ mod tests {
                 "warehouse_id": warehouse_id,
                 "location_id": location_id,
                 "counted_by": "counter",
-                "lines": [{"sku": "SKU-CC", "expected_quantity": "20"}]
+                "lines": [{"sku": "SKU-CC", "expected_quantity": "999"}]
             }),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::CREATED);
         let cc = json_of(resp).await;
         assert_eq!(cc["status"], "draft");
+        assert_eq!(cc["lines"][0]["expected_quantity"], "20");
         let id = cc["id"].as_str().unwrap().to_string();
 
         // Start
@@ -1709,7 +1708,7 @@ mod tests {
             let _ = i;
             let body = serde_json::json!({
                 "warehouse_id": warehouse_id,
-                "lines": [{"sku": "CUR-SKU", "expected_quantity": "1"}]
+                "lines": [{"sku": "CUR-SKU"}]
             });
             let resp = app
                 .clone()

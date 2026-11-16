@@ -16,9 +16,6 @@ use uuid::Uuid;
 use crate::errors::Result;
 use crate::validation::{Validate, ValidationBuilder};
 
-/// Monetary scale (2 decimal places) used for schedule rounding.
-const MONEY_SCALE: u32 = 2;
-
 // ============================================================================
 // Enums
 // ============================================================================
@@ -340,6 +337,19 @@ pub fn generate_revenue_schedule(
     amount: Decimal,
     recognition_date: NaiveDate,
 ) -> Vec<RevenueScheduleEntry> {
+    generate_revenue_schedule_for_currency(method, amount, recognition_date, CurrencyCode::USD)
+}
+
+/// Generate a schedule using the contract currency's minor-unit precision.
+/// The final period preserves the exact allocated amount, including any
+/// residual from allocation across performance obligations.
+#[must_use]
+pub fn generate_revenue_schedule_for_currency(
+    method: RecognitionMethod,
+    amount: Decimal,
+    recognition_date: NaiveDate,
+    currency: CurrencyCode,
+) -> Vec<RevenueScheduleEntry> {
     if amount <= Decimal::ZERO {
         return Vec::new();
     }
@@ -356,7 +366,8 @@ pub fn generate_revenue_schedule(
                 return Vec::new();
             }
             let months = months_inclusive(start, end);
-            let per_period = (amount / Decimal::from(months)).round_dp(MONEY_SCALE);
+            let per_period =
+                (amount / Decimal::from(months)).round_dp(u32::from(currency.decimal_places()));
             let mut entries = Vec::with_capacity(months as usize);
             let mut accumulated = Decimal::ZERO;
             for period in 1..=months {

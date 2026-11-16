@@ -30,6 +30,7 @@ import {
 } from '@/app/actions/commerce';
 import type { DashboardMetrics, OrderAnalytics, CustomerAnalytics } from '@/lib/types';
 import { formatCurrency, formatCompactNumber, formatPercentage } from '@/lib/utils';
+import { formatMoney } from '@/lib/finance/format';
 
 export default function AnalyticsDashboard() {
   const { data: metrics, isLoading: loadingMetrics } = useEmbeddedData<DashboardMetrics>(
@@ -104,7 +105,9 @@ export default function AnalyticsDashboard() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <MetricCard
             label="Total Revenue"
-            value={formatCurrency(orderAnalytics?.totalRevenue || 0)}
+            value={formatMoney(
+              orderAnalytics?.totalRevenueExact ?? orderAnalytics?.totalRevenue ?? 0,
+            )}
             tone="success"
             icon={CurrencyDollarIcon}
             subtitle={`${metrics?.gmvChange || 0}% vs last period`}
@@ -120,7 +123,9 @@ export default function AnalyticsDashboard() {
 
           <MetricCard
             label="Avg Order Value"
-            value={formatCurrency(orderAnalytics?.averageOrderValue || 0)}
+            value={formatMoney(
+              orderAnalytics?.averageOrderValueExact ?? orderAnalytics?.averageOrderValue ?? 0,
+            )}
             tone="primary"
             icon={ChartBarIcon}
             subtitle={`${metrics?.aovChange || 0}% vs last period`}

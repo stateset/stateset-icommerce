@@ -18,6 +18,7 @@ pub struct CreateReceiptInput {
     pub receipt_type: String,
     pub warehouse_id: i32,
     pub purchase_order_id: Option<String>,
+    pub supplier_id: Option<String>,
     pub carrier: Option<String>,
     pub tracking_number: Option<String>,
     /// Expected lines. Optional: omitted (or empty) creates a receipt with no
@@ -25,20 +26,20 @@ pub struct CreateReceiptInput {
     pub items: Option<Vec<CreateReceiptItemInput>>,
 }
 
-/// An expected receipt line. Money follows the binding convention: send the
-/// `...Exact` base-10 string (preferred) or the float.
+/// An expected receipt line. Money follows the binding convention: send a decimal string
+/// through the canonical field or its `...Exact` alias.
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreateReceiptItemInput {
     pub sku: String,
     pub description: Option<String>,
     pub po_line_id: Option<String>,
-    /// Float quantity. Optional: send `expected_quantity_exact` instead.
-    pub expected_quantity: Option<f64>,
+    /// Decimal string quantity. Optional: send `expected_quantity_exact` instead.
+    pub expected_quantity: Option<String>,
     /// Exact base-10 quantity. Takes precedence over `expected_quantity`.
     pub expected_quantity_exact: Option<String>,
-    /// Float unit cost. Optional: send `unit_cost_exact` instead for exact money.
-    pub unit_cost: Option<f64>,
+    /// Decimal string unit cost. Optional: send `unit_cost_exact` instead for exact money.
+    pub unit_cost: Option<String>,
     /// Exact base-10 unit cost. Takes precedence over `unit_cost` when present.
     pub unit_cost_exact: Option<String>,
     pub lot_number: Option<String>,
@@ -55,12 +56,12 @@ impl TryFrom<CreateReceiptItemInput> for stateset_core::CreateReceiptItem {
             sku: i.sku,
             description: i.description,
             po_line_id: parse_optional_id(i.po_line_id, "PO line")?,
-            expected_quantity: money_input(
+            expected_quantity: finance_money_input(
                 i.expected_quantity_exact.as_deref(),
                 i.expected_quantity,
                 "receipt item expected quantity",
             )?,
-            unit_cost: optional_money_input(
+            unit_cost: optional_finance_money_input(
                 i.unit_cost_exact.as_deref(),
                 i.unit_cost,
                 "receipt item unit cost",
@@ -85,8 +86,8 @@ pub struct ReceiptItemOutput {
     pub expected_quantity_exact: String,
     pub received_quantity_exact: String,
     pub rejected_quantity_exact: String,
-    /// @deprecated Use the `unitCostExact` twin; float money will be removed in 2.0.
-    pub unit_cost: Option<f64>,
+    /// Exact decimal unit cost.
+    pub unit_cost: Option<String>,
     /// Exact base-10 unit cost, when set.
     pub unit_cost_exact: Option<String>,
     pub lot_number: Option<String>,
@@ -101,8 +102,8 @@ impl TryFrom<stateset_core::ReceiptItem> for ReceiptItemOutput {
     type Error = Error;
 
     fn try_from(i: stateset_core::ReceiptItem) -> Result<Self> {
-        let (unit_cost, unit_cost_exact) =
-            optional_money_pair(i.unit_cost, "receipt item unit cost")?;
+        let unit_cost = i.unit_cost.map(|v| v.to_string());
+        let unit_cost_exact = unit_cost.clone();
         Ok(Self {
             id: i.id.to_string(),
             receipt_id: i.receipt_id.to_string(),
@@ -230,7 +231,7 @@ impl Receiving {
                     .as_ref()
                     .map(|_| "purchase_order".to_string()),
                 reference_id: parse_optional_id(input.purchase_order_id, "purchase order")?,
-                supplier_id: None,
+                supplier_id: parse_optional_id(input.supplier_id, "supplier")?,
                 warehouse_id: input.warehouse_id,
                 carrier: input.carrier,
                 tracking_number: input.tracking_number,
@@ -355,6 +356,132 @@ impl Receiving {
         Ok(receipt.into())
     }
 
+    /// Receive stock into the explicitly selected warehouse location.
+    #[napi]
+    pub async fn receive_items(&self, input: ReceiveItemsInput) -> Result<ReceiptOutput> {
+        let c = self.commerce.get()?;
+        let items = input
+            .items
+            .into_iter()
+            .map(|i| {
+                Ok(stateset_core::ReceiveItemLine {
+                    receipt_item_id: receiving_id(&i.receipt_item_id)?,
+                    quantity_received: finance_money_input(
+                        None,
+                        Some(i.quantity_received),
+                        "quantity received",
+                    )?,
+                    quantity_rejected: optional_decimal_string(
+                        i.quantity_rejected,
+                        "quantity rejected",
+                    )?,
+                    rejection_reason: i.rejection_reason,
+                    lot_number: i.lot_number,
+                    serial_numbers: i.serial_numbers,
+                    expiration_date: parse_optional_datetime(i.expiration_date, "expiration date")?,
+                    notes: i.notes,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        c.receiving()
+            .receive_items(stateset_core::ReceiveItems {
+                receipt_id: receiving_id(&input.receipt_id)?,
+                receiving_location_id: Some(input.receiving_location_id),
+                received_by: input.received_by,
+                items,
+            })
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to receive stock", e))
+    }
+    #[napi]
+    pub async fn create_put_away(&self, i: CreatePutAwayInput) -> Result<PutAwayOutput> {
+        let c = self.commerce.get()?;
+        c.receiving()
+            .create_put_away(stateset_core::CreatePutAway {
+                receipt_id: receiving_id(&i.receipt_id)?,
+                receipt_item_id: receiving_id(&i.receipt_item_id)?,
+                sku: i.sku,
+                from_location_id: i.from_location_id,
+                to_location_id: i.to_location_id,
+                quantity: finance_money_input(None, Some(i.quantity), "quantity")?,
+                lot_id: parse_optional_id(i.lot_id, "lot")?,
+                assigned_to: i.assigned_to,
+                notes: i.notes,
+            })
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to create put-away", e))
+    }
+    #[napi]
+    pub async fn list_put_aways(
+        &self,
+        filter: Option<PutAwayFilterInput>,
+    ) -> Result<Vec<PutAwayOutput>> {
+        let c = self.commerce.get()?;
+        let f = filter.unwrap_or_default();
+        let rows = c
+            .receiving()
+            .list_put_aways(stateset_core::PutAwayFilter {
+                receipt_id: parse_optional_id(f.receipt_id, "receipt")?,
+                warehouse_id: f.warehouse_id,
+                status: parse_optional_enum(f.status, "put-away status")?,
+                assigned_to: f.assigned_to,
+                limit: f.limit,
+                offset: f.offset,
+            })
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to list put-aways", e))?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+    #[napi]
+    pub async fn get_put_away(&self, id: String) -> Result<Option<PutAwayOutput>> {
+        self.commerce
+            .get()?
+            .receiving()
+            .get_put_away(receiving_id(&id)?)
+            .map(|v| v.map(Into::into))
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to get put-away", e))
+    }
+    #[napi]
+    pub async fn assign_put_away(&self, id: String, assigned_to: String) -> Result<PutAwayOutput> {
+        self.commerce
+            .get()?
+            .receiving()
+            .assign_put_away(receiving_id(&id)?, &assigned_to)
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to assign put-away", e))
+    }
+    #[napi]
+    pub async fn complete_put_away(&self, i: CompletePutAwayInput) -> Result<PutAwayOutput> {
+        self.commerce
+            .get()?
+            .receiving()
+            .complete_put_away(stateset_core::CompletePutAway {
+                put_away_id: receiving_id(&i.put_away_id)?,
+                actual_location_id: i.actual_location_id,
+                completed_by: i.completed_by,
+                notes: i.notes,
+            })
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to complete put-away", e))
+    }
+    #[napi]
+    pub async fn start_put_away(&self, id: String) -> Result<PutAwayOutput> {
+        self.commerce
+            .get()?
+            .receiving()
+            .start_put_away(receiving_id(&id)?)
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to start put-away", e))
+    }
+    #[napi]
+    pub async fn cancel_put_away(&self, id: String) -> Result<PutAwayOutput> {
+        self.commerce
+            .get()?
+            .receiving()
+            .cancel_put_away(receiving_id(&id)?)
+            .map(Into::into)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to cancel put-away", e))
+    }
+
     /// Count receipts
     #[napi]
     pub async fn count_receipts(&self) -> Result<u32> {
@@ -364,5 +491,99 @@ impl Receiving {
             .count_receipts(Default::default())
             .map_err(|e| wrap(ErrCode::Internal, "Failed to count receipts", e))?;
         Ok(count as u32)
+    }
+}
+
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ReceiveItemsInput {
+    pub receipt_id: String,
+    pub receiving_location_id: i32,
+    pub received_by: Option<String>,
+    pub items: Vec<ReceiveItemLineInput>,
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ReceiveItemLineInput {
+    pub receipt_item_id: String,
+    pub quantity_received: String,
+    pub quantity_rejected: Option<String>,
+    pub rejection_reason: Option<String>,
+    pub lot_number: Option<String>,
+    pub serial_numbers: Option<Vec<String>>,
+    pub expiration_date: Option<String>,
+    pub notes: Option<String>,
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CreatePutAwayInput {
+    pub receipt_id: String,
+    pub receipt_item_id: String,
+    pub sku: String,
+    pub from_location_id: Option<i32>,
+    pub to_location_id: i32,
+    pub quantity: String,
+    pub lot_id: Option<String>,
+    pub assigned_to: Option<String>,
+    pub notes: Option<String>,
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CompletePutAwayInput {
+    pub put_away_id: String,
+    pub actual_location_id: Option<i32>,
+    pub completed_by: Option<String>,
+    pub notes: Option<String>,
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct PutAwayFilterInput {
+    pub receipt_id: Option<String>,
+    pub warehouse_id: Option<i32>,
+    pub status: Option<String>,
+    pub assigned_to: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+#[napi(object)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PutAwayOutput {
+    pub id: String,
+    pub receipt_id: String,
+    pub receipt_item_id: String,
+    pub sku: String,
+    pub from_location_id: Option<i32>,
+    pub to_location_id: i32,
+    pub quantity: String,
+    pub lot_id: Option<String>,
+    pub status: String,
+    pub assigned_to: Option<String>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: String,
+}
+
+fn receiving_id(value: &str) -> Result<uuid::Uuid> {
+    value.parse().map_err(|_| coded(ErrCode::Validation, "Invalid receiving UUID"))
+}
+impl From<stateset_core::PutAway> for PutAwayOutput {
+    fn from(p: stateset_core::PutAway) -> Self {
+        Self {
+            id: p.id.to_string(),
+            receipt_id: p.receipt_id.to_string(),
+            receipt_item_id: p.receipt_item_id.to_string(),
+            sku: p.sku,
+            from_location_id: p.from_location_id,
+            to_location_id: p.to_location_id,
+            quantity: p.quantity.to_string(),
+            lot_id: p.lot_id.map(|id| id.to_string()),
+            status: p.status.to_string(),
+            assigned_to: p.assigned_to,
+            started_at: p.started_at.map(|v| v.to_rfc3339()),
+            completed_at: p.completed_at.map(|v| v.to_rfc3339()),
+            notes: p.notes,
+            created_at: p.created_at.to_rfc3339(),
+        }
     }
 }

@@ -13,7 +13,7 @@ use stateset_core::{
     UpdateBill, generate_ap_payment_number, generate_bill_number, generate_payment_run_number,
     validate_batch_size,
 };
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -44,6 +44,9 @@ struct BillRow {
     memo: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    match_override_reason: Option<String>,
+    created_by: Option<String>,
+    approved_by: Option<String>,
 }
 
 #[derive(FromRow)]
@@ -96,6 +99,7 @@ struct PaymentRunRow {
     status: String,
     payment_date: NaiveDate,
     payment_method: String,
+    currency: Option<CurrencyCode>,
     total_amount: Decimal,
     payment_count: i32,
     notes: Option<String>,
@@ -133,6 +137,9 @@ impl PgAccountsPayableRepository {
             currency,
             reference_number,
             memo,
+            match_override_reason,
+            created_by,
+            approved_by,
             created_at,
             updated_at,
         } = row;
@@ -161,6 +168,9 @@ impl PgAccountsPayableRepository {
             currency,
             reference_number,
             memo,
+            match_override_reason,
+            created_by,
+            approved_by,
             created_at,
             updated_at,
         })
@@ -246,6 +256,7 @@ impl PgAccountsPayableRepository {
             status,
             payment_date,
             payment_method,
+            currency,
             total_amount,
             payment_count,
             notes,
@@ -273,6 +284,7 @@ impl PgAccountsPayableRepository {
             status,
             payment_date: from_date(payment_date),
             payment_method,
+            currency,
             total_amount,
             payment_count,
             notes,
@@ -289,6 +301,11 @@ impl PgAccountsPayableRepository {
         tx: &mut sqlx::Transaction<'_, Postgres>,
         bill_id: Uuid,
     ) -> Result<()> {
+        sqlx::query("SELECT id FROM ap_bills WHERE id=$1 FOR UPDATE")
+            .bind(bill_id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
         let (subtotal, tax_amount): (Decimal, Decimal) = sqlx::query_as(
             "SELECT COALESCE(SUM(amount), 0), COALESCE(SUM(tax_amount), 0)
              FROM ap_bill_items
@@ -313,6 +330,10 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
+        let credits = super::ap_settlement::bill_credits(tx, bill_id).await?;
+        let amount_paid = amount_paid
+            .checked_add(credits)
+            .ok_or_else(|| CommerceError::ValidationError("Bill settlement overflow".into()))?;
         let amount_due = total - amount_paid;
 
         sqlx::query(
@@ -349,8 +370,8 @@ impl PgAccountsPayableRepository {
         sqlx::query(
             r#"
             INSERT INTO ap_bills (id, bill_number, supplier_id, purchase_order_id, status, bill_date, due_date,
-             payment_terms, currency, reference_number, memo, created_at, updated_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
+             payment_terms, currency, reference_number, memo, created_at, updated_at, created_by)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,$13)
             "#,
         )
         .bind(id)
@@ -365,6 +386,7 @@ impl PgAccountsPayableRepository {
         .bind(&input.reference_number)
         .bind(&input.memo)
         .bind(now)
+        .bind(&input.created_by)
         .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
@@ -503,29 +525,42 @@ impl PgAccountsPayableRepository {
     }
 
     pub async fn approve_bill_async(&self, id: Uuid) -> Result<Bill> {
-        // Status-guarded UPDATE: only a draft/pending bill can be approved, and
-        // 0 matched rows is an error (previously a silent success that returned
-        // the bill unchanged).
-        let updated = sqlx::query(
-            "UPDATE ap_bills SET status = $1 WHERE id = $2 AND status IN ('draft','pending')",
-        )
-        .bind(BillStatus::Approved.to_string())
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(map_db_error)?;
-        if updated.rows_affected() == 0 {
-            return Err(CommerceError::Conflict(
-                "Bill not found or not in an approvable status".into(),
-            ));
-        }
-
-        self.get_bill_async(id)
-            .await?
-            .ok_or_else(|| CommerceError::DatabaseError("Failed to approve bill".into()))
+        self.approve_bill_checked(id, None, None).await
+    }
+    pub async fn approve_bill_with_override_async(&self, id: Uuid, reason: &str) -> Result<Bill> {
+        self.approve_bill_checked(id, Some(reason), None).await
+    }
+    async fn approve_bill_checked(
+        &self,
+        id: Uuid,
+        reason: Option<&str>,
+        actor: Option<&str>,
+    ) -> Result<Bill> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        super::ap_match::approve(&mut tx, id, reason, actor).await?;
+        let row = sqlx::query_as::<_, BillRow>("SELECT * FROM ap_bills WHERE id=$1")
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        let bill = Self::row_to_bill(row)?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(bill)
     }
 
     pub async fn cancel_bill_async(&self, id: Uuid) -> Result<Bill> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::recalculate_bill_tx(&mut tx, id).await?;
+        let paid: Decimal = sqlx::query_scalar("SELECT amount_paid FROM ap_bills WHERE id=$1")
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        if !paid.is_zero() {
+            return Err(CommerceError::Conflict(
+                "Release all bill payments and credits before cancellation".into(),
+            ));
+        }
         // A bill with payments applied (paid/partially paid) or already
         // cancelled cannot be cancelled; void the payments first.
         let updated = sqlx::query(
@@ -534,7 +569,7 @@ impl PgAccountsPayableRepository {
         )
         .bind(BillStatus::Cancelled.to_string())
         .bind(id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await
         .map_err(map_db_error)?;
         if updated.rows_affected() == 0 {
@@ -543,6 +578,15 @@ impl PgAccountsPayableRepository {
             ));
         }
 
+        super::ledger_reversal::reverse_source(
+            &mut tx,
+            &super::general_ledger::PgGeneralLedgerRepository::new(self.pool.clone()),
+            "bill",
+            id,
+            chrono::Utc::now().date_naive(),
+        )
+        .await?;
+        tx.commit().await.map_err(map_db_error)?;
         self.get_bill_async(id)
             .await?
             .ok_or_else(|| CommerceError::DatabaseError("Failed to cancel bill".into()))
@@ -552,7 +596,7 @@ impl PgAccountsPayableRepository {
         // Only an open (unpaid or partially paid) bill can be disputed — never a
         // cancelled or fully paid one.
         let updated = sqlx::query(
-            "UPDATE ap_bills SET status = $1 WHERE id = $2
+            "UPDATE ap_bills SET disputed_from_status = status, updated_at=CURRENT_TIMESTAMP, status = $1 WHERE id = $2
              AND status IN ('draft','pending','approved','partially_paid','overdue')",
         )
         .bind(BillStatus::Disputed.to_string())
@@ -571,6 +615,19 @@ impl PgAccountsPayableRepository {
             .ok_or_else(|| CommerceError::DatabaseError("Failed to dispute bill".into()))
     }
 
+    pub async fn resolve_bill_dispute_async(&self, id: Uuid) -> Result<Bill> {
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        Self::recalculate_bill_tx(&mut tx, id).await?;
+        super::ap_settlement::resolve_dispute(&mut tx, id).await?;
+        let row = sqlx::query_as::<_, BillRow>("SELECT * FROM ap_bills WHERE id=$1")
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        let bill = Self::row_to_bill(row)?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(bill)
+    }
     pub async fn get_bill_items_async(&self, bill_id: Uuid) -> Result<Vec<BillItem>> {
         let rows = sqlx::query_as::<_, BillItemRow>(
             "SELECT * FROM ap_bill_items WHERE bill_id = $1 ORDER BY line_number",
@@ -817,7 +874,7 @@ impl PgAccountsPayableRepository {
         let payment_date = to_date(payment_date.unwrap_or(now));
 
         let mut allocation_total = Decimal::ZERO;
-        let mut allocations_by_bill: HashMap<Uuid, Decimal> = HashMap::new();
+        let mut allocations_by_bill: BTreeMap<Uuid, Decimal> = BTreeMap::new();
         for alloc in &allocations {
             if alloc.amount <= Decimal::ZERO {
                 return Err(CommerceError::ValidationError(
@@ -833,6 +890,7 @@ impl PgAccountsPayableRepository {
             ));
         }
 
+        let mut payment_currency = currency;
         for (bill_id, allocated_amount) in &allocations_by_bill {
             let bill =
                 sqlx::query_as::<_, BillRow>("SELECT * FROM ap_bills WHERE id = $1 FOR UPDATE")
@@ -842,6 +900,10 @@ impl PgAccountsPayableRepository {
                     .map_err(map_db_error)?
                     .ok_or(CommerceError::NotFound)?;
 
+            if payment_currency.is_some_and(|code| code != bill.currency) {
+                return Err(CommerceError::ValidationError("Payment allocations must use the bill currency; create separate payments for different currencies".into()));
+            }
+            payment_currency = Some(bill.currency);
             if bill.supplier_id != supplier_id {
                 return Err(CommerceError::ValidationError(
                     "Allocation bill supplier does not match payment supplier".to_string(),
@@ -869,7 +931,8 @@ impl PgAccountsPayableRepository {
             }
         }
 
-        let currency = resolve_currency_with_executor(currency, tx.as_mut()).await?;
+        let currency = payment_currency
+            .ok_or_else(|| CommerceError::ValidationError("Payment has no bill currency".into()))?;
         sqlx::query(
             r#"
             INSERT INTO ap_payments (
@@ -1049,15 +1112,18 @@ impl PgAccountsPayableRepository {
                     bill.status, e
                 ))
             })?;
-            let new_status = if bill.amount_due <= Decimal::ZERO {
-                BillStatus::Paid
-            } else if bill.amount_paid > Decimal::ZERO {
-                BillStatus::PartiallyPaid
-            } else if existing_status == BillStatus::Overdue {
-                BillStatus::Overdue
-            } else {
-                BillStatus::Approved
-            };
+            let new_status =
+                if matches!(existing_status, BillStatus::Cancelled | BillStatus::Disputed) {
+                    existing_status
+                } else if bill.amount_due <= Decimal::ZERO {
+                    BillStatus::Paid
+                } else if bill.amount_paid > Decimal::ZERO {
+                    BillStatus::PartiallyPaid
+                } else if existing_status == BillStatus::Overdue {
+                    BillStatus::Overdue
+                } else {
+                    BillStatus::Approved
+                };
 
             sqlx::query("UPDATE ap_bills SET status = $1 WHERE id = $2")
                 .bind(new_status.to_string())
@@ -1067,6 +1133,14 @@ impl PgAccountsPayableRepository {
                 .map_err(map_db_error)?;
         }
 
+        super::ledger_reversal::reverse_source(
+            &mut tx,
+            &super::general_ledger::PgGeneralLedgerRepository::new(self.pool.clone()),
+            "bill_payment",
+            id,
+            chrono::Utc::now().date_naive(),
+        )
+        .await?;
         tx.commit().await.map_err(map_db_error)?;
 
         self.get_payment_async(id)
@@ -1177,8 +1251,11 @@ impl PgAccountsPayableRepository {
         // already sit in another draft/pending/approved/processing run.
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
+        let mut bill_ids = input.bill_ids.clone();
+        bill_ids.sort_unstable();
+        let mut run_currency = None;
         let mut total = Decimal::ZERO;
-        for bill_id in &input.bill_ids {
+        for bill_id in &bill_ids {
             let bill =
                 sqlx::query_as::<_, BillRow>("SELECT * FROM ap_bills WHERE id = $1 FOR UPDATE")
                     .bind(*bill_id)
@@ -1221,6 +1298,12 @@ impl PgAccountsPayableRepository {
                 ));
             }
 
+            if run_currency.is_some_and(|currency| currency != bill.currency) {
+                return Err(CommerceError::ValidationError(
+                    "Payment runs must contain one currency; group bills into separate runs".into(),
+                ));
+            }
+            run_currency = Some(bill.currency);
             total += bill.amount_due;
         }
 
@@ -1244,6 +1327,12 @@ impl PgAccountsPayableRepository {
         .await
         .map_err(map_db_error)?;
 
+        sqlx::query("UPDATE ap_payment_runs SET currency=$1 WHERE id=$2")
+            .bind(run_currency.map(|code: CurrencyCode| code.to_string()))
+            .bind(id)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
         for bill_id in &input.bill_ids {
             sqlx::query("INSERT INTO ap_payment_run_bills (run_id, bill_id) VALUES ($1,$2)")
                 .bind(id)
@@ -1307,13 +1396,17 @@ impl PgAccountsPayableRepository {
         id: Uuid,
         approved_by: &str,
     ) -> Result<PaymentRun> {
+        let approved_by = approved_by.trim();
+        if approved_by.is_empty() {
+            return Err(CommerceError::ValidationError("Approver identity is required".into()));
+        }
         let now = Utc::now();
 
         // Status-guarded UPDATE (same pattern as `clear_payment_async`): only a
         // draft/pending run can be approved — a cancelled, completed, or
         // in-flight run cannot.
         let updated = sqlx::query(
-            "UPDATE ap_payment_runs SET status = $1, approved_by = $2, approved_at = $3 WHERE id = $4 AND status IN ('draft', 'pending')",
+            "UPDATE ap_payment_runs SET status = $1, approved_by = $2, approved_at = $3 WHERE id = $4 AND status IN ('draft', 'pending') AND (created_by IS NULL OR TRIM(created_by) <> $2)",
         )
         .bind(PaymentRunStatus::Approved.to_string())
         .bind(approved_by)
@@ -1366,8 +1459,13 @@ impl PgAccountsPayableRepository {
             .await
             .map_err(map_db_error)?;
 
+        let run_currency = run.currency.ok_or_else(|| {
+            CommerceError::Conflict(
+                "Reconcile the legacy payment run currency before processing".into(),
+            )
+        })?;
         let bill_rows = sqlx::query_as::<_, BillRow>(
-            "SELECT b.* FROM ap_bills b JOIN ap_payment_run_bills rb ON b.id = rb.bill_id WHERE rb.run_id = $1 FOR UPDATE OF b",
+            "SELECT b.* FROM ap_bills b JOIN ap_payment_run_bills rb ON b.id = rb.bill_id WHERE rb.run_id = $1 ORDER BY b.id FOR UPDATE OF b",
         )
         .bind(id)
         .fetch_all(tx.as_mut())
@@ -1379,6 +1477,12 @@ impl PgAccountsPayableRepository {
         let mut skipped: u32 = 0;
 
         for bill in bill_rows {
+            if bill.currency != run_currency {
+                return Err(CommerceError::ValidationError(
+                    "Payment run contains mixed currencies".into(),
+                ));
+            }
+
             let bill_status: BillStatus = bill.status.parse().map_err(|e| {
                 CommerceError::DatabaseError(format!(
                     "Invalid bill status '{}' while processing payment run: {}",
@@ -1660,6 +1764,10 @@ impl PgAccountsPayableRepository {
 }
 
 impl AccountsPayableRepository for PgAccountsPayableRepository {
+    fn resolve_bill_dispute(&self, id: Uuid) -> Result<Bill> {
+        block_on(self.resolve_bill_dispute_async(id))
+    }
+
     fn create_bill(&self, input: CreateBill) -> Result<Bill> {
         block_on(self.create_bill_async(input))
     }
@@ -1682,6 +1790,14 @@ impl AccountsPayableRepository for PgAccountsPayableRepository {
 
     fn delete_bill(&self, id: Uuid) -> Result<()> {
         block_on(self.delete_bill_async(id))
+    }
+
+    fn approve_bill_with_override(&self, id: Uuid, reason: &str) -> Result<Bill> {
+        block_on(self.approve_bill_with_override_async(id, reason))
+    }
+
+    fn approve_bill_as(&self, id: Uuid, actor: &str, reason: Option<&str>) -> Result<Bill> {
+        block_on(self.approve_bill_checked(id, reason, Some(actor)))
     }
 
     fn approve_bill(&self, id: Uuid) -> Result<Bill> {

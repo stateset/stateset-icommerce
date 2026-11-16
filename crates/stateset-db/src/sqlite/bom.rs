@@ -162,55 +162,7 @@ impl SqliteBomRepository {
 
 impl BomRepository for SqliteBomRepository {
     fn create(&self, input: CreateBom) -> Result<BillOfMaterials> {
-        let id = Uuid::new_v4();
-        let bom_number = BillOfMaterials::generate_bom_number();
-        let now = Utc::now();
-        let revision = input.revision.clone().unwrap_or_else(|| "A".to_string());
-
-        // Insert BOM in a scoped block to release the connection before adding components
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
-                "INSERT INTO manufacturing_boms (id, bom_number, product_id, name, description, revision, status, created_by, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)",
-                rusqlite::params![
-                    id.to_string(),
-                    bom_number,
-                    input.product_id.to_string(),
-                    input.name,
-                    input.description,
-                    revision,
-                    input.created_by.map(|u| u.to_string()),
-                    now.to_rfc3339(),
-                    now.to_rfc3339(),
-                ],
-            )
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        } // Connection released here
-
-        // Create components if provided (after releasing the main connection)
-        let mut components = Vec::new();
-        if let Some(comp_inputs) = input.components {
-            for comp_input in comp_inputs {
-                let comp = self.add_component(id, comp_input)?;
-                components.push(comp);
-            }
-        }
-
-        Ok(BillOfMaterials {
-            id,
-            bom_number,
-            product_id: input.product_id,
-            name: input.name,
-            description: input.description,
-            revision,
-            status: BomStatus::Draft,
-            components,
-            created_by: input.created_by,
-            updated_by: None,
-            created_at: now,
-            updated_at: now,
-        })
+        self.create_batch_atomic(vec![input])?.into_iter().next().ok_or(CommerceError::NotFound)
     }
 
     fn get(&self, id: Uuid) -> Result<Option<BillOfMaterials>> {
@@ -314,35 +266,10 @@ impl BomRepository for SqliteBomRepository {
     }
 
     fn update(&self, id: Uuid, input: UpdateBom) -> Result<BillOfMaterials> {
-        // Get existing BOM first (releases connection after)
-        let existing = self.get(id)?.ok_or(CommerceError::NotFound)?;
-        let now = Utc::now();
-
-        let new_name = input.name.unwrap_or(existing.name);
-        let new_description = input.description.or(existing.description);
-        let new_revision = input.revision.unwrap_or(existing.revision);
-        let new_status = input.status.unwrap_or(existing.status);
-
-        // Do the update in a scoped block
-        {
-            let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-            conn.execute(
-                "UPDATE manufacturing_boms SET name = ?, description = ?, revision = ?, status = ?, updated_by = ?, updated_at = ? WHERE id = ?",
-                rusqlite::params![
-                    new_name,
-                    new_description,
-                    new_revision,
-                    new_status.to_string(),
-                    input.updated_by.map(|u| u.to_string()),
-                    now.to_rfc3339(),
-                    id.to_string(),
-                ],
-            )
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        } // Connection released here
-
-        // Fetch and return the updated BOM
-        self.get(id)?.ok_or(CommerceError::NotFound)
+        self.update_batch_atomic(vec![(id, input)])?
+            .into_iter()
+            .next()
+            .ok_or(CommerceError::NotFound)
     }
 
     fn list(&self, filter: BomFilter) -> Result<Vec<BillOfMaterials>> {
@@ -446,21 +373,18 @@ impl BomRepository for SqliteBomRepository {
     }
 
     fn delete(&self, id: Uuid) -> Result<()> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-        // Mark as obsolete instead of hard delete
-        conn.execute(
-            "UPDATE manufacturing_boms SET status = 'obsolete', updated_at = ? WHERE id = ?",
-            rusqlite::params![Utc::now().to_rfc3339(), id.to_string()],
-        )
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
+        self.update(id, UpdateBom { status: Some(BomStatus::Obsolete), ..Default::default() })?;
         Ok(())
     }
 
     fn add_component(&self, bom_id: Uuid, component: CreateBomComponent) -> Result<BomComponent> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut connection = self.conn()?;
+        let tx = super::begin_immediate(&mut connection).map_err(super::map_db_error)?;
+        let conn = &tx;
 
+        super::bom_integrity::editable(&tx, bom_id, &Utc::now().to_rfc3339())
+            .map_err(super::map_db_error)?;
+        crate::bom_integrity::component(&component)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let uom = component.unit_of_measure.unwrap_or_else(|| "each".to_string());
@@ -484,6 +408,9 @@ impl BomRepository for SqliteBomRepository {
         )
         .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
+        super::bom_integrity::validate_graph(&tx, bom_id, &Utc::now().to_rfc3339())
+            .map_err(super::map_db_error)?;
+        tx.commit().map_err(super::map_db_error)?;
         Ok(BomComponent {
             id,
             bom_id,
@@ -504,8 +431,21 @@ impl BomRepository for SqliteBomRepository {
         component_id: Uuid,
         component: CreateBomComponent,
     ) -> Result<BomComponent> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut connection = self.conn()?;
+        let tx = super::begin_immediate(&mut connection).map_err(super::map_db_error)?;
+        let conn = &tx;
 
+        let bom_id: String = conn
+            .query_row(
+                "SELECT bom_id FROM manufacturing_bom_components WHERE id = ?1",
+                [component_id.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(super::map_db_error)?;
+        let bom_id = parse_uuid(&bom_id, "bom_component", "bom_id")?;
+        super::bom_integrity::editable(&tx, bom_id, &Utc::now().to_rfc3339())
+            .map_err(super::map_db_error)?;
+        crate::bom_integrity::component(&component)?;
         let now = Utc::now();
         let uom = component.unit_of_measure.unwrap_or_else(|| "each".to_string());
 
@@ -534,6 +474,9 @@ impl BomRepository for SqliteBomRepository {
             )
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
+        super::bom_integrity::validate_graph(&tx, bom_id, &Utc::now().to_rfc3339())
+            .map_err(super::map_db_error)?;
+        tx.commit().map_err(super::map_db_error)?;
         Ok(BomComponent {
             id: component_id,
             bom_id: parse_uuid(&row.0, "bom_component", "bom_id")?,
@@ -550,14 +493,27 @@ impl BomRepository for SqliteBomRepository {
     }
 
     fn remove_component(&self, component_id: Uuid) -> Result<()> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut connection = self.conn()?;
+        let tx = super::begin_immediate(&mut connection).map_err(super::map_db_error)?;
+        let conn = &tx;
 
+        let bom_id: String = conn
+            .query_row(
+                "SELECT bom_id FROM manufacturing_bom_components WHERE id = ?1",
+                [component_id.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(super::map_db_error)?;
+        let bom_id = parse_uuid(&bom_id, "bom_component", "bom_id")?;
+        super::bom_integrity::editable(&tx, bom_id, &Utc::now().to_rfc3339())
+            .map_err(super::map_db_error)?;
         conn.execute(
             "DELETE FROM manufacturing_bom_components WHERE id = ?",
             [component_id.to_string()],
         )
         .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
+        tx.commit().map_err(super::map_db_error)?;
         Ok(())
     }
 
@@ -652,10 +608,14 @@ impl BomRepository for SqliteBomRepository {
             )
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
+            super::bom_integrity::validate_revision(&tx, id, &now.to_rfc3339())
+                .map_err(super::map_db_error)?;
+
             // Insert components if provided
             let mut components = Vec::new();
             if let Some(comp_inputs) = input.components {
                 for comp_input in comp_inputs {
+                    crate::bom_integrity::component(&comp_input)?;
                     let comp_id = Uuid::new_v4();
                     let uom =
                         comp_input.unit_of_measure.clone().unwrap_or_else(|| "each".to_string());
@@ -711,6 +671,10 @@ impl BomRepository for SqliteBomRepository {
             });
         }
 
+        for bom in &results {
+            super::bom_integrity::validate_graph(&tx, bom.id, &Utc::now().to_rfc3339())
+                .map_err(super::map_db_error)?;
+        }
         tx.commit().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         Ok(results)
     }
@@ -745,6 +709,8 @@ impl BomRepository for SqliteBomRepository {
 
         for (id, input) in updates {
             let now = Utc::now();
+            super::bom_integrity::prepare_update(&tx, id, &input, &now.to_rfc3339())
+                .map_err(super::map_db_error)?;
 
             // Fetch existing BOM data within the transaction
             let existing_data: (String, Option<String>, String, String) = tx
@@ -784,6 +750,11 @@ impl BomRepository for SqliteBomRepository {
                 ],
             )
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+
+            super::bom_integrity::validate_revision(&tx, id, &now.to_rfc3339())
+                .map_err(super::map_db_error)?;
+            super::bom_integrity::validate_graph(&tx, id, &now.to_rfc3339())
+                .map_err(super::map_db_error)?;
 
             // Fetch updated BOM with full data for the result
             let bom_data: (String, String, Option<String>, Option<String>, String, String) = tx
@@ -826,6 +797,19 @@ impl BomRepository for SqliteBomRepository {
             });
         }
 
+        // Activating a later revision in this batch can retire an earlier result.
+        for bom in &mut results {
+            let (status, updated_at): (String, String) = tx
+                .query_row(
+                    "SELECT status, updated_at FROM manufacturing_boms WHERE id = ?",
+                    [bom.id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(super::map_db_error)?;
+            bom.status = Self::parse_bom_status(&status)?;
+            bom.updated_at = parse_datetime(&updated_at, "bom", "updated_at")?;
+        }
+
         tx.commit().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
         // Load components for each BOM after commit
@@ -851,33 +835,13 @@ impl BomRepository for SqliteBomRepository {
     }
 
     fn delete_batch_atomic(&self, ids: Vec<Uuid>) -> Result<()> {
-        validate_batch_size(&ids)?;
-        if ids.is_empty() {
-            return Ok(());
-        }
-
-        let mut conn = self.conn()?;
-        let tx = super::begin_immediate(&mut conn)
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-        let placeholders = build_in_clause(ids.len());
-
-        // Mark BOMs as obsolete (soft delete) using IN clause
-        let sql = format!(
-            "UPDATE manufacturing_boms SET status = 'obsolete', updated_at = ? WHERE id IN ({placeholders})"
-        );
-
-        // Build params with timestamp first, then IDs
-        let now = Utc::now().to_rfc3339();
-        let mut all_params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
-        all_params.extend(uuid_params(&ids));
-        let all_params_refs: Vec<&dyn rusqlite::ToSql> =
-            all_params.iter().map(std::convert::AsRef::as_ref).collect();
-
-        tx.execute(&sql, all_params_refs.as_slice())
-            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-
-        tx.commit().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        self.update_batch_atomic(
+            ids.into_iter()
+                .map(|id| {
+                    (id, UpdateBom { status: Some(BomStatus::Obsolete), ..Default::default() })
+                })
+                .collect(),
+        )?;
         Ok(())
     }
 
@@ -993,7 +957,7 @@ mod tests {
             product_id: product,
             name: name.into(),
             description: None,
-            revision: None,
+            revision: Some(name.into()),
             components: if components.is_empty() { None } else { Some(components) },
             created_by: None,
         })

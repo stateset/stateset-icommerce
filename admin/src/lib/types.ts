@@ -2,8 +2,22 @@
  * TypeScript Types for StateSet Commerce
  *
  * These types are shared between client and server components.
- * Import these types in client components instead of from embedded.ts
+ * Import these types in client components instead of from embedded.ts.
+ *
+ * This is the only declaration of the commerce record shapes: `embedded.ts`
+ * re-exports them rather than keeping a second copy, so the two can no
+ * longer drift apart.
+ *
+ * Status unions are not written out here: they come from the native binding
+ * through `./engine-lifecycles` (type-only import, safe in client bundles).
  */
+
+import type {
+  OrderStatus,
+  ReturnReason,
+  ReturnStatus,
+  SubscriptionStatus,
+} from './engine-lifecycles';
 
 // ============================================================================
 // Orders Types
@@ -12,9 +26,13 @@
 export interface Order {
   id: string;
   customerId: string;
-  status: 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
+  /** The engine's order lifecycle (`ORDER_LIFECYCLE` in `./engine-lifecycles`). */
+  status: OrderStatus;
   items: OrderItem[];
+  /** Display convenience; arithmetic uses `totalAmountExact` when the engine supplies it. */
   totalAmount: number;
+  /** Exact decimal string (the binding's `OrderOutput.totalAmountExact`). */
+  totalAmountExact?: string;
   currency: string;
   shippingAddress?: Address;
   billingAddress?: Address;
@@ -40,12 +58,41 @@ export interface Address {
   country: string;
 }
 
+/**
+ * How much of the store an aggregate the admin derives from records covers.
+ * The engine pages every list, so a derivation that stops early must say so
+ * rather than present a subset as the whole.
+ */
+export interface AnalyticsCoverage {
+  /** False when the figures stop short of every matching record. */
+  complete: boolean;
+  /** How many records the figures were computed from. */
+  records: number;
+  /** The requested reporting window (inclusive RFC 3339 bounds); absent for all time. */
+  window?: { start?: string; end?: string };
+  /**
+   * Figures the engine cannot report for this window. They read zero but
+   * were not measured; show them as unavailable, not as zero.
+   */
+  unavailable?: string[];
+}
+
+/*
+ * Money in the derived aggregates below: each `…Exact` field is the exact
+ * decimal string, computed without floats; the number beside it is the same
+ * value for display only (like the binding's deprecated float twins).
+ */
+
 export interface OrderAnalytics {
   totalOrders: number;
   totalRevenue: number;
+  totalRevenueExact?: string;
   averageOrderValue: number;
+  averageOrderValueExact?: string;
   ordersByStatus: Record<string, number>;
-  ordersByDay: { date: string; count: number; revenue: number }[];
+  ordersByDay: { date: string; count: number; revenue: number; revenueExact?: string }[];
+  /** Present when the admin derived the figures from order records. */
+  coverage?: AnalyticsCoverage;
 }
 
 // ============================================================================
@@ -72,6 +119,7 @@ export interface InventoryAnalytics {
   totalSKUs: number;
   totalUnits: number;
   totalValue: number;
+  totalValueExact?: string;
   lowStockItems: number;
   outOfStockItems: number;
   turnoverRate: number;
@@ -87,10 +135,12 @@ export interface Return {
   id: string;
   orderId: string;
   customerId: string;
-  status: 'requested' | 'approved' | 'received' | 'inspected' | 'refunded' | 'rejected' | 'closed';
+  /** The engine's return lifecycle (`RETURN_LIFECYCLE` in `./engine-lifecycles`). */
+  status: ReturnStatus;
   items: ReturnItem[];
+  /** Free-text detail; the engine's own reason code is `reasonCategory`. */
   reason: string;
-  reasonCategory: 'defective' | 'wrong_item' | 'not_as_described' | 'changed_mind' | 'other';
+  reasonCategory: ReturnReason;
   refundAmount?: number;
   refundMethod?: 'original' | 'store_credit' | 'exchange';
   trackingNumber?: string;
@@ -112,10 +162,13 @@ export interface ReturnAnalytics {
   totalReturns: number;
   returnRate: number;
   refundTotal: number;
+  refundTotalExact?: string;
   returnsByReason: Record<string, number>;
   returnsByStatus: Record<string, number>;
   averageProcessingTime: number;
   topReturnedProducts: { productId: string; name: string; count: number; rate: number }[];
+  /** Present when the admin derived the figures from return records. */
+  coverage?: AnalyticsCoverage;
 }
 
 // ============================================================================
@@ -201,7 +254,8 @@ export interface ProductAnalytics {
 export interface Subscription {
   id: string;
   customerId: string;
-  status: 'active' | 'paused' | 'cancelled' | 'expired';
+  /** The engine's subscription lifecycle (`SUBSCRIPTION_LIFECYCLE` in `./engine-lifecycles`). */
+  status: SubscriptionStatus;
   plan: string;
   planId?: string;
   frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'annually';
@@ -209,7 +263,10 @@ export interface Subscription {
   currentPeriodEnd?: string;
   items: { productId: string; quantity: number }[];
   quantity: number;
+  /** Display convenience; arithmetic uses `totalAmountExact` when the engine supplies it. */
   totalAmount: number;
+  /** Exact decimal string (the binding's `SubscriptionOutput.priceExact`). */
+  totalAmountExact?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -218,13 +275,18 @@ export interface SubscriptionAnalytics {
   totalSubscriptions: number;
   activeSubscriptions: number;
   mrr: number;
+  mrrExact?: string;
   mrrGrowth?: number;
   arr: number;
+  arrExact?: string;
   churnRate: number;
   arpu?: number;
+  arpuExact?: string;
   averageLifetime: number;
   subscriptionsByPlan: Record<string, number>;
   subscriptionsByFrequency: Record<string, number>;
+  /** Present when the admin derived the figures from subscription records. */
+  coverage?: AnalyticsCoverage;
 }
 
 // ============================================================================

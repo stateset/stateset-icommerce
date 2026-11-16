@@ -43,7 +43,7 @@ function camel(snake) {
 }
 
 /** `{ StructName: { fieldName: 'f64' | 'Option<f64>' } }` read out of the Rust source. */
-function rustFloatFields() {
+function rustFloatFields(decimal = false) {
   // The binding is one crate root plus one file per domain under src/domains/.
   const srcDir = path.join(ROOT, 'src');
   const files = [path.join(srcDir, 'lib.rs')].concat(
@@ -58,7 +58,9 @@ function rustFloatFields() {
   const structRe = /^pub struct (\w+) \{\n([\s\S]*?)\n\}$/gm;
   for (let m = structRe.exec(src); m !== null; m = structRe.exec(src)) {
     const fields = {};
-    const fieldRe = /^ {4}pub (\w+): (f64|Option<f64>),$/gm;
+    const fieldRe = decimal
+      ? /^ {4}pub (\w+): (String|Option<String>),$/gm
+      : /^ {4}pub (\w+): (f64|Option<f64>),$/gm;
     for (let f = fieldRe.exec(m[2]); f !== null; f = fieldRe.exec(m[2])) {
       fields[camel(f[1])] = f[2];
     }
@@ -91,7 +93,8 @@ function declaredInterfaces() {
 // parser has to clear. It is a floor, not an equality, so adding an output float
 // is not gated on editing this number; removing the parser's ability to see them
 // is.
-const MINIMUM_OUTPUT_FLOAT_FIELDS = 185;
+// Finance output floats moved to decimalMoney; 154 legacy float fields remain.
+const MINIMUM_OUTPUT_FLOAT_FIELDS = 150;
 
 test('money census: the source parser actually sees the float fields', () => {
   const rust = rustFloatFields();
@@ -104,7 +107,33 @@ test('money census: the source parser actually sees the float fields', () => {
       `${MINIMUM_OUTPUT_FLOAT_FIELDS} — rustFloatFields() has probably stopped matching, ` +
       'which would make every other census assertion below pass vacuously',
   );
-  assert.ok(Object.keys(declaredInterfaces()).length > 100, 'index.d.ts parser found no interfaces');
+  assert.ok(
+    Object.keys(declaredInterfaces()).length > 100,
+    'index.d.ts parser found no interfaces',
+  );
+});
+
+test('money census: migrated finance amounts stay decimal strings in Rust and TypeScript', () => {
+  const rust = rustFloatFields(true);
+  const dts = declaredInterfaces();
+  assert.ok(
+    Object.keys(fixture.decimalMoney).length >= 14,
+    'decimal census must cover migrated finance structs',
+  );
+  for (const [struct, fields] of Object.entries(fixture.decimalMoney)) {
+    for (const field of fields) {
+      assert.ok(
+        ['String', 'Option<String>'].includes(rust[struct]?.[field]),
+        `${struct}.${field} must remain a Rust decimal string`,
+      );
+      assert.equal(
+        dts[struct]?.[field]?.type,
+        'string',
+        `${struct}.${field} must remain a TypeScript decimal string`,
+      );
+      assert.equal(dts[struct][field].optional, rust[struct][field] === 'Option<String>');
+    }
+  }
 });
 
 test('money census: every float money output field has an exact twin', () => {
@@ -163,7 +192,9 @@ test('money census: the float halves are marked deprecated in index.d.ts', () =>
   const src = fs.readFileSync(path.join(ROOT, 'index.d.ts'), 'utf8');
   const missing = [];
   for (const [struct, fields] of Object.entries(fixture.money)) {
-    const iface = new RegExp(`^export interface ${struct} \\{\\n([\\s\\S]*?)\\n\\}$`, 'm').exec(src);
+    const iface = new RegExp(`^export interface ${struct} \\{\\n([\\s\\S]*?)\\n\\}$`, 'm').exec(
+      src,
+    );
     assert.ok(iface, `index.d.ts declares no interface ${struct}`);
     for (const field of fields) {
       const declaration = new RegExp(
@@ -205,9 +236,7 @@ test('order money survives the round trip exactly', async (t) => {
   await t.test('a price no f64 can hold is preserved by unitPriceExact', async () => {
     const order = await commerce.orders.create({
       customerId: customer.id,
-      items: [
-        { sku: 'CENTS', name: 'Cents', quantity: 3, unitPrice: 0, unitPriceExact: '19.99' },
-      ],
+      items: [{ sku: 'CENTS', name: 'Cents', quantity: 3, unitPrice: 0, unitPriceExact: '19.99' }],
     });
 
     assert.strictEqual(order.items[0].unitPriceExact, '19.99');
@@ -223,9 +252,7 @@ test('order money survives the round trip exactly', async (t) => {
   await t.test('the exact string wins over the float when both are sent', async () => {
     const order = await commerce.orders.create({
       customerId: customer.id,
-      items: [
-        { sku: 'BOTH', name: 'Both', quantity: 1, unitPrice: 5, unitPriceExact: '7.25' },
-      ],
+      items: [{ sku: 'BOTH', name: 'Both', quantity: 1, unitPrice: 5, unitPriceExact: '7.25' }],
     });
 
     assert.strictEqual(order.items[0].unitPriceExact, '7.25');
@@ -297,9 +324,7 @@ test('a malformed exact money string is rejected as VALIDATION', async (t) => {
       try {
         await commerce.orders.create({
           customerId: customer.id,
-          items: [
-            { sku: 'BAD', name: 'Bad', quantity: 1, unitPrice: 1, unitPriceExact: bad },
-          ],
+          items: [{ sku: 'BAD', name: 'Bad', quantity: 1, unitPrice: 1, unitPriceExact: bad }],
         });
       } catch (error) {
         thrown = error;

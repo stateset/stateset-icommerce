@@ -57,6 +57,8 @@ pub struct PrepaymentOutput {
     pub amount: String,
     /// Exact decimal string
     pub remaining: String,
+    pub refunded_amount: String,
+    pub refunded_at: Option<String>,
     pub currency: String,
     /// open, applied, refunded, cancelled
     #[napi(ts_type = "PrepaymentStatus")]
@@ -76,6 +78,8 @@ impl From<stateset_core::Prepayment> for PrepaymentOutput {
             supplier_id: p.supplier_id.to_string(),
             amount: p.amount.to_string(),
             remaining: p.remaining.to_string(),
+            refunded_amount: p.refunded_amount.to_string(),
+            refunded_at: p.refunded_at.map(|date| date.to_rfc3339()),
             currency: p.currency.to_string(),
             status: format!("{}", p.status),
             method: p.method,

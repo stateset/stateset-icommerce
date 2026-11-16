@@ -1201,8 +1201,13 @@ export const agentRuntimeTools = [
       name: z.string().min(1).describe('Buyer agent name or ID'),
       rfqId: z.string().min(1).describe('RFQ ID to collect responses for'),
     },
-    permission: 'read',
-    handler: async ({ params }) => {
+    // A write: scoring persists each response's score, status ('scored') and
+    // rank in the A2A store (src/a2a/marketplace.js collectRFQResponses).
+    permission: 'write',
+    handler: async ({ params, allowApply }) => {
+      if (!allowApply) {
+        return { success: false, error: 'Collecting RFQ responses requires --apply flag.' };
+      }
       const rt = getRuntime(params.name);
       if (!rt) {
         return { success: false, error: `Agent "${params.name}" not found.` };

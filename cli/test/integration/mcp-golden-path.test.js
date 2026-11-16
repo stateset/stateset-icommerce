@@ -2,8 +2,9 @@
  * The whole commerce journey, through the real MCP server, on a fresh store.
  *
  * Customer, governed stock, a first-order welcome coupon, cart, tax,
- * checkout committed through the trusted kernel, payment, shipment, return
- * and refund -- every step a real `executeTool` call, and the money checked
+ * checkout committed through the trusted kernel, payment, shipment, return,
+ * disposition and the refund the completion settles -- every step a real
+ * `executeTool` call, and the money checked
  * where it changes hands. Each piece has unit tests; this checks that they
  * compose, as an agent using the product composes them.
  *
@@ -197,15 +198,29 @@ function journeyFor(strict) {
       items: [{ orderItemId: journey.order.items[0].id, quantity: 1 }],
     });
     journey.returnId = ret.return?.id ?? ret.result?.id ?? ret.id;
+    const returnItemId =
+      ret.return?.items?.[0]?.id ??
+      (await call('get_return', { returnId: journey.returnId })).return.items[0].id;
     await call('approve_return', { returnId: journey.returnId });
     await call('add_return_tracking', { returnId: journey.returnId, trackingNumber: 'RET-1Z' });
     await call('mark_return_received', { returnId: journey.returnId });
-    await call('complete_return', { returnId: journey.returnId });
-    journey.refund = await call('create_refund', {
-      paymentId: journey.paymentId,
-      amount: '10.00',
-      reason: 'return',
-    });
+    // Completion needs every item dispositioned; the agent records it.
+    journey.disposition = entity(
+      await call('set_return_item_disposition', {
+        returnId: journey.returnId,
+        returnItemId,
+        disposition: 'restock',
+        note: 'sealed, resellable',
+      }),
+      'returnItem',
+    );
+    // Completing the return settles its refund against the captured payment,
+    // so no manual create_refund follows (one would stack on it).
+    journey.completedReturn = entity(
+      await call('complete_return', { returnId: journey.returnId }),
+      'return',
+    );
+    journey.refunds = (await call('get_payment', { paymentId: journey.paymentId })).refunds;
     journey.finalOrder = (await call('get_order', { identifier: journey.orderId })).order;
   });
 
@@ -250,14 +265,22 @@ for (const strict of [false, true]) {
     it('ships, accepts the return and refunds within the payment', () => {
       assert.equal(journey.finalOrder.status, 'shipped', JSON.stringify(journey.finalOrder));
       assert.ok(journey.shipment.id, 'a shipment was created for the order');
-      const refunded = money(
-        journey.refund.refund?.amountExact ??
-          journey.refund.refund?.amount ??
-          journey.refund.amount ??
-          journey.refund.receipt?.result?.amount,
+      assert.equal(journey.completedReturn.status, 'completed');
+      // The completion created exactly one refund, for the return's amount.
+      assert.equal(journey.refunds?.length, 1, JSON.stringify(journey.refunds).slice(0, 600));
+      const refunded = money(journey.refunds[0].amountExact);
+      const owed = money(
+        journey.completedReturn.refund_amount ?? journey.completedReturn.refundAmount,
       );
-      assert.equal(refunded, 10, JSON.stringify(journey.refund).slice(0, 600));
+      assert.ok(refunded > 0);
+      assert.equal(refunded, owed);
       assert.ok(refunded <= money(journey.payment.amount));
+    });
+
+    it('dispositions the received item under the operator principal', () => {
+      assert.equal(journey.disposition.disposition, 'restock');
+      const by = journey.disposition.disposition_by ?? journey.disposition.dispositionBy;
+      assert.equal(by, 'agent:golden', 'the kernel records its principal, not a tool argument');
     });
 
     it('runs every write through a governed command with a sealed, allowed receipt', () => {
@@ -280,8 +303,8 @@ for (const strict of [false, true]) {
         'approve_return',
         'add_return_tracking',
         'mark_return_received',
+        'set_return_item_disposition',
         'complete_return',
-        'create_refund',
       ];
       const governed = new Map(state.governed.map((entry) => [entry.tool, entry.receipt]));
       for (const tool of writes) {

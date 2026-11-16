@@ -103,4 +103,15 @@ pub trait HttpIdempotencyRepository: Send + Sync {
     /// Delete completed entries created at or before `expired_before`, returning
     /// the number of rows removed. Never deletes unresolved reservations.
     fn purge_expired(&self, expired_before: DateTime<Utc>) -> Result<u64>;
+
+    /// Drop an unresolved reservation for `(tenant, key)` whose fingerprint
+    /// matches, so the same key can be retried. For responses that prove the
+    /// handler made no change worth replaying (a transient client error such
+    /// as 403 or 429). Never deletes a completed response. Returns whether a
+    /// reservation was removed.
+    fn release(&self, _tenant: &str, _key: &str, _request_fingerprint: &str) -> Result<bool> {
+        Err(stateset_core::CommerceError::Internal(
+            "durable idempotency release is not supported by this backend".into(),
+        ))
+    }
 }

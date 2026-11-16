@@ -192,3 +192,47 @@ fn postgres_legacy_row_waits_for_unambiguous_expiry() {
             .is_none()
     );
 }
+
+/// Twin of the SQLite `release_drops_only_the_matching_unresolved_reservation`:
+/// `release` drops only this request's unresolved reservation and never a
+/// completed response, so a key refused with a transient client error (403,
+/// 429, ...) can be retried instead of answering 409 forever.
+#[test]
+fn postgres_release_drops_only_the_matching_unresolved_reservation() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let db = runtime.block_on(PostgresDatabase::connect(&url)).expect("connect + migrate");
+    let repo = db.http_idempotency();
+    let tenant = format!("release-test-{}", Uuid::new_v4());
+    let record = HttpIdempotencyRecord {
+        tenant: tenant.clone(),
+        idempotency_key: "transient".into(),
+        request_fingerprint: "fingerprint".into(),
+        response_status: 0,
+        content_type: None,
+        response_body: Vec::new(),
+        created_at: Utc::now(),
+    };
+    let cutoff = Utc::now() - chrono::Duration::days(365);
+    assert!(repo.put(&record).unwrap());
+    assert!(!repo.release(&tenant, "transient", "other-fingerprint").unwrap());
+    assert!(!repo.release(&format!("{tenant}-other"), "transient", "fingerprint").unwrap());
+    assert!(repo.get(&tenant, "transient", cutoff).unwrap().is_some());
+    assert!(repo.release(&tenant, "transient", "fingerprint").unwrap());
+    assert!(repo.get(&tenant, "transient", cutoff).unwrap().is_none());
+    assert!(repo.put(&record).unwrap(), "the released key can be reserved again");
+
+    let mut completed = record;
+    completed.idempotency_key = "completed".into();
+    assert!(repo.put(&completed).unwrap());
+    completed.response_status = 201;
+    completed.response_body = b"done".to_vec();
+    completed.created_at = Utc::now();
+    assert!(repo.complete(&completed).unwrap());
+    assert!(!repo.release(&tenant, "completed", "fingerprint").unwrap());
+    let stored = repo.get(&tenant, "completed", cutoff).unwrap().unwrap();
+    assert_eq!(stored.response_status, 201, "a completed response is never released");
+}

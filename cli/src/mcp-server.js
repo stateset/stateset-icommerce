@@ -5,7 +5,6 @@
  * with permission checks, telemetry, treasury charging, and error handling.
  */
 
-import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import path from 'path';
 // `z` (zod) is now only used inside `./mcp/agentic-runtime-tools.js` and
 // the per-domain tool modules; mcp-server.js no longer needs it directly.
@@ -29,6 +28,7 @@ import {
   createReplayLog,
 } from './mcp/replay-log.js';
 import { buildToolRuntimeMeta, createPricingCache } from './mcp/pricing.js';
+import { createAnnotatedSdkMcpServer } from './mcp/sdk-mcp-server.js';
 import {
   AGENTIC_TOOL_RESULT_SCHEMA_VERSION as RESULT_SCHEMA_VERSION,
   attachStructuredToolMetadataToResponse as attachStructuredToolMetadataToResponseImpl,
@@ -62,11 +62,15 @@ import { createExecuteToolStepInPlan } from './mcp/plan-step-executor.js';
 import { createRunPlanRollback } from './mcp/plan-rollback.js';
 import { createExecuteAgenticPlan } from './mcp/plan-executor.js';
 import { createToolDispatch } from './mcp/tool-dispatch.js';
+import { applyToolCapabilityScope } from './mcp/capability-scope.js';
 import { routeToAgentWithConfidence } from './agent-router.js';
 import { adaptCommerceApis } from './commerce.js';
 import { getCommerce } from './database.js';
 import { KERNEL_CAPABILITY_BY_TOOL, createKernelToolExecutor } from './kernel-tool-execution.js';
-import { selectStrictKernelToolDefinitions } from './kernel-boundary.js';
+import {
+  selectStrictKernelToolDefinitions,
+  selectStrictKernelWithheldToolNames,
+} from './kernel-boundary.js';
 // SUPPORTED_AGENT_NAMES* now consumed by `./mcp/agentic-runtime-tools.js`.
 import { buildMppServiceInfo } from './mpp/index.js';
 
@@ -100,6 +104,11 @@ const AGENTIC_REPLAY_LOG_FILE = DEFAULT_REPLAY_LOG_FILE;
 const AGENTIC_REPLAY_BUFFER_SIZE = DEFAULT_REPLAY_BUFFER_SIZE;
 
 const ALL_TOOL_DEFS = [...ALL_DOMAIN_TOOLS, ...AGENTIC_RUNTIME_TOOLS];
+
+// The registry writes kernel strict mode withholds (no typed command, not a
+// governed composite). A strict server refuses them by name wherever they turn
+// up, including as a plan or replay step, whatever the tool profile.
+const KERNEL_WITHHELD_TOOL_NAMES = selectStrictKernelWithheldToolNames(ALL_TOOL_DEFS);
 
 // AGENTIC_COMPENSATION_HINTS, AGENTIC_IDEMPOTENCY_HINTS, coerceReplayIdSource,
 // extractReplayIdFromSource, _extractFirstIdLikeValue, and
@@ -204,6 +213,7 @@ function autoIndexEntity(entityType, entity) {
  * @param {Object} options
  * @param {import('@stateset/embedded').Commerce} [options.commerce] - Optional Commerce instance. When omitted, a cached instance is created from dbPath.
  * @param {boolean} options.allowApply - Whether to execute write tools instead of returning preview metadata
+ * @param {string[]|Set<string>|null} [options.toolCapabilities] - Capability scope (see ./mcp/capability-scope.js); every path, nested plan steps included, resolves tools inside it. Omit to expose the whole profile.
  * @param {Object|null} options.autonomousEngine - Optional autonomous engine used by runtime tools such as delegate_to_agent
  * @param {import('./telemetry.js').AgentTelemetry} options.telemetry - Telemetry instance
  * @param {import('./permissions.js').PermissionGate} options.permissionGate - Permission gate instance
@@ -218,13 +228,16 @@ function autoIndexEntity(entityType, entity) {
  * @param {Object} options.agentConfig.signingKey - Ed25519 signing key { privateKey, publicKey }
  * @param {Object} options.mcpEventStream - Optional MCP event stream service
  * @param {boolean} options.structuredToolResults - Return MCP tool responses with machine-readable metadata
+ * @param {{a2aStore?: A2AStore}|null} [options.sharedStores] - Caller-owned side stores to use instead of opening (and closing) this server's own
  */
 export function createStatesetMcpServer({
   commerce,
   allowApply = false,
+  toolCapabilities = null,
   autonomousEngine = null,
   telemetry = null,
   permissionGate = null,
+  actorId = null,
   hookRunner = null,
   policyEngine = null,
   policyStorePath = null,
@@ -236,13 +249,26 @@ export function createStatesetMcpServer({
   kernel = null,
   toolProfile = 'all',
   toolDomains = [],
+  sharedStores = null,
 }) {
+  if (
+    actorId !== null &&
+    (typeof actorId !== 'string' || !/^[A-Za-z0-9_.:@+-]{1,128}$/.test(actorId))
+  ) {
+    throw new Error('actorId must be an operator-configured identity of 1–128 characters');
+  }
   const strictKernelBoundary = Boolean(kernel && kernel.strict !== false);
   const isToolInProfile = resolveMcpToolFilter({ profile: toolProfile, domains: toolDomains });
   const profileToolDefs = ALL_TOOL_DEFS.filter((tool) => isToolInProfile(tool.name));
-  const exposedToolDefs = strictKernelBoundary
-    ? selectStrictKernelToolDefinitions(profileToolDefs, KERNEL_CAPABILITY_BY_TOOL)
-    : profileToolDefs;
+  const capabilityScope = applyToolCapabilityScope({
+    toolDefs: strictKernelBoundary
+      ? selectStrictKernelToolDefinitions(profileToolDefs, KERNEL_CAPABILITY_BY_TOOL)
+      : profileToolDefs,
+    capabilities: toolCapabilities,
+    toolDomainByName: TOOL_DOMAIN_BY_TOOL_NAME,
+    inferPolicyDomain,
+  });
+  const exposedToolDefs = capabilityScope.toolDefs;
   const exposedToolDefsByName = new Map(
     exposedToolDefs.map((tool) => [tool?.name, tool]).filter(([name]) => Boolean(name)),
   );
@@ -253,6 +279,14 @@ export function createStatesetMcpServer({
     allowApply,
     agentConfig,
   });
+  // Strict mode only: lets the step executor and the replay keep every step a
+  // governed composite runs inside the governed catalog.
+  const strictKernel = strictKernelBoundary
+    ? {
+        isWithheld: (toolName) => KERNEL_WITHHELD_TOOL_NAMES.has(toolName),
+        isGovernedCommand: (toolName) => Boolean(KERNEL_CAPABILITY_BY_TOOL[toolName]),
+      }
+    : null;
 
   // ---------------------------------------------------------------------------
   // A2A Store initialization
@@ -261,7 +295,8 @@ export function createStatesetMcpServer({
   // names for its quote/card projections while `a2a_escrows` is deliberately
   // shared with the native kernel, so escrow release and its receipt/outbox
   // commit atomically against the record created by the public A2A tools.
-  const a2aStore = new A2AStore({ dbPath });
+  // An injected store (stateset-mcp-http) outlives this server, which never closes it.
+  const a2aStore = sharedStores?.a2aStore ?? new A2AStore({ dbPath });
 
   // The A2A accessor is late-bound: `./mcp/a2a-service.js` starts it as a
   // pass-through over the store and swaps in the integrated service once
@@ -311,7 +346,7 @@ export function createStatesetMcpServer({
       disposeA2AServices(commerceWithA2A);
       resourcesClosing = a2aServicesReady.then(() => {
         disposeA2AServices(commerceWithA2A);
-        a2aStore.close();
+        if (a2aStore !== sharedStores?.a2aStore) a2aStore.close();
       });
     }
     return resourcesClosing;
@@ -385,6 +420,7 @@ export function createStatesetMcpServer({
       toolDomainByName: TOOL_DOMAIN_BY_TOOL_NAME,
       compensationHints: AGENTIC_COMPENSATION_HINTS,
       idempotencyHints: AGENTIC_IDEMPOTENCY_HINTS,
+      describeUnavailableTool: capabilityScope.describeExcludedTool,
     });
 
   // MPP payment context + `prepare_payment` live in ./mcp/mpp-payment.js.
@@ -394,6 +430,7 @@ export function createStatesetMcpServer({
   });
   const preparePaymentForTool = createPreparePaymentForTool({
     toolDefsByName: exposedToolDefsByName,
+    describeUnavailableTool: capabilityScope.describeExcludedTool,
     getAgenticToolPricing,
     serviceInfo: MPP_SERVICE_INFO,
   });
@@ -526,6 +563,7 @@ export function createStatesetMcpServer({
     wrapWithTelemetry,
     getToolContext: () => toolContext,
     executeGovernedTool,
+    strictKernel,
   });
 
   // Mutation simulate/replay bodies live in ./mcp/mutation-simulator.js.
@@ -537,6 +575,7 @@ export function createStatesetMcpServer({
     executeToolStepInPlan,
     addAgenticReplayEvent,
     listAgenticReplayEvents,
+    strictKernel,
   };
   const simulateMutationToolCall = createSimulateMutationToolCall(mutationDeps);
   const replayMutationToolCall = createReplayMutationToolCall(mutationDeps);
@@ -552,6 +591,7 @@ export function createStatesetMcpServer({
 
   const runPlanRollback = createRunPlanRollback({
     toolDefsByName: exposedToolDefsByName,
+    describeUnavailableTool: capabilityScope.describeExcludedTool,
     inferPolicyDomain,
     executeToolStepInPlan,
     addAgenticReplayEvent,
@@ -593,6 +633,7 @@ export function createStatesetMcpServer({
 
   const toolContext = {
     commerce: commerceWithA2A,
+    actorId,
     a2aStore,
     dbPath,
     getAuditStore: getScopedAuditStore,
@@ -649,7 +690,9 @@ export function createStatesetMcpServer({
   // server, so the two can never drift apart.
   const adaptedTools = exposedToolDefs.map(adaptTool);
 
-  const server = createSdkMcpServer({
+  // Not createSdkMcpServer itself: the agent-sdk releases package.json allows
+  // drop each tool's `annotations` from tools/list (see ./mcp/sdk-mcp-server.js).
+  const server = createAnnotatedSdkMcpServer({
     name: 'stateset-commerce',
     version: '1.0.0',
     tools: adaptedTools,

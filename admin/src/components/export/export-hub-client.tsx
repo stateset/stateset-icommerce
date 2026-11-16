@@ -3,7 +3,13 @@
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { CsvExportButton } from '@/components/export/csv-export-button';
-import { getCustomers, getInventory, getOrders } from '@/app/actions/commerce';
+import {
+  getCustomers,
+  getInventory,
+  getInventoryListingSupport,
+  getOrders,
+} from '@/app/actions/commerce';
+import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { CUSTOMER_CSV_COLUMNS, INVENTORY_CSV_COLUMNS, ORDER_CSV_COLUMNS } from '@/lib/csv/specs';
 
 interface EntityCardProps {
@@ -31,6 +37,11 @@ function EntityCard({ title, description, columnCount, exportButton }: EntityCar
 }
 
 export function ExportHubClient() {
+  // The native engine cannot list inventory; say so instead of offering an
+  // export that fails on click. Until the answer arrives, offer the export.
+  const { data: inventorySupport } = useEmbeddedData(() => getInventoryListingSupport());
+  const inventoryUnsupported = inventorySupport?.supported === false;
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <EntityCard
@@ -64,12 +75,18 @@ export function ExportHubClient() {
         description="On-hand, reserved, available, reorder points by SKU + warehouse."
         columnCount={INVENTORY_CSV_COLUMNS.length}
         exportButton={
-          <CsvExportButton
-            fetchRows={() => getInventory()}
-            columns={INVENTORY_CSV_COLUMNS}
-            filenamePrefix="inventory"
-            label="Export inventory CSV"
-          />
+          inventoryUnsupported ? (
+            <p role="status" className="text-sm text-ds-muted-foreground">
+              {inventorySupport.reason}
+            </p>
+          ) : (
+            <CsvExportButton
+              fetchRows={() => getInventory()}
+              columns={INVENTORY_CSV_COLUMNS}
+              filenamePrefix="inventory"
+              label="Export inventory CSV"
+            />
+          )
         }
       />
     </div>

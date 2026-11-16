@@ -1,11 +1,13 @@
 'use client';
 
+import BillActions from './bill-actions';
 import { useMemo, useState } from 'react';
 import { Card, CardContent, Badge } from '@stateset/design';
 import { useEmbeddedData } from '@/hooks/use-embedded-data';
 import { getBillsPageData } from '@/app/actions/finance';
 import { formatMoney } from '@/lib/finance/format';
 import type { Bill } from '@/lib/embedded';
+import type { BillStatus } from '@/lib/engine-lifecycles';
 
 type DsBadgeVariant =
   | 'default'
@@ -16,11 +18,15 @@ type DsBadgeVariant =
   | 'danger'
   | 'outline';
 
-const statusBadgeVariants: Record<string, DsBadgeVariant> = {
-  open: 'primary',
+/** One badge per engine bill status (`BillStatus`, normalised from its `Debug` render). */
+const statusBadgeVariants: Record<BillStatus, DsBadgeVariant> = {
+  draft: 'outline',
+  pending: 'primary',
   approved: 'accent',
+  partially_paid: 'warning',
   paid: 'success',
   overdue: 'danger',
+  disputed: 'warning',
   cancelled: 'outline',
 };
 
@@ -34,8 +40,10 @@ const AGING_BUCKETS = [
 ] as const;
 
 export default function BillsClient() {
-  const { data, isLoading, error } = useEmbeddedData(() => getBillsPageData(), {
+  const [currency, setCurrency] = useState('USD');
+  const { data, isLoading, error, refetch } = useEmbeddedData(() => getBillsPageData(currency), {
     refreshInterval: 60000,
+    queryKey: currency,
   });
   const [statusFilter, setStatusFilter] = useState('all');
 
@@ -72,9 +80,25 @@ export default function BillsClient() {
 
   return (
     <div className="space-y-6">
+      <BillActions bills={data.bills} refresh={refetch} />
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Bills</h1>
+          <label className="text-sm">
+            Aging currency{' '}
+            <select
+              aria-label="Aging currency"
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value)}
+              className="rounded border border-ds-border bg-ds-background p-1"
+            >
+              {(data.currencies ?? ['USD']).map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </label>
           <p className="text-sm text-ds-muted-foreground">
             Accounts payable — supplier bills and aging
           </p>
@@ -107,7 +131,7 @@ export default function BillsClient() {
                 {bucket.label}
               </p>
               <p className="mt-1 font-mono text-lg font-semibold">
-                {formatMoney(data.aging[bucket.key])}
+                {formatMoney(data.aging[bucket.key], currency)}
               </p>
             </CardContent>
           </Card>
@@ -144,12 +168,14 @@ export default function BillsClient() {
                     </td>
                     <td className="py-2 pr-4">{bill.dueDate}</td>
                     <td className="py-2 pr-4 text-right font-mono">
-                      {formatMoney(bill.totalAmount)}
+                      {formatMoney(bill.totalAmount, bill.currency ?? 'USD')}
                     </td>
                     <td className="py-2 pr-4 text-right font-mono">
-                      {formatMoney(bill.amountPaid)}
+                      {formatMoney(bill.amountPaid, bill.currency ?? 'USD')}
                     </td>
-                    <td className="py-2 text-right font-mono">{formatMoney(bill.amountDue)}</td>
+                    <td className="py-2 text-right font-mono">
+                      {formatMoney(bill.amountDue, bill.currency ?? 'USD')}
+                    </td>
                   </tr>
                 ))}
                 {bills.length === 0 && (

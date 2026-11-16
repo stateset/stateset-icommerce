@@ -238,6 +238,7 @@ pub(crate) struct ArDunningInvoiceListResponse {
 #[derive(Debug, Clone, Deserialize, Default, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub(crate) struct ArStatementParams {
+    pub currency: Option<String>,
     /// RFC 3339 period start (defaults to 30 days ago).
     pub period_start: Option<String>,
     /// RFC 3339 period end (defaults to now).
@@ -258,6 +259,7 @@ pub(crate) struct ArStatementLineResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub(crate) struct ArCustomerStatementResponse {
+    pub currency: String,
     pub customer_id: String,
     pub customer_name: String,
     pub period_start: String,
@@ -629,6 +631,7 @@ pub(crate) async fn apply_credit_memo(
 pub(crate) async fn create_write_off(
     State(state): State<AppState>,
     headers: HeaderMap,
+    actor: crate::middleware::FinanceActor,
     Json(req): Json<CreateArWriteOffRequest>,
 ) -> Result<(StatusCode, Json<ArWriteOffResponse>), HttpError> {
     let tid = tenant_id_from_headers(&headers);
@@ -639,7 +642,7 @@ pub(crate) async fn create_write_off(
                 amount: parse_decimal(&req.amount, "amount")?,
                 reason: parse_id(&req.reason, "reason")?,
                 notes: req.notes,
-                approved_by: req.approved_by,
+                approved_by: Some(actor.0),
             };
             let write_off = c.accounts_receivable().create_write_off(input)?;
             Ok((StatusCode::CREATED, Json(write_off_resp(&write_off))))
@@ -826,6 +829,11 @@ pub(crate) async fn customer_statement(
                 None => None,
             };
             let request = stateset_core::GenerateStatementRequest {
+                currency: params
+                    .currency
+                    .as_deref()
+                    .map(|v| parse_id(v, "currency"))
+                    .transpose()?,
                 customer_id,
                 period_start,
                 period_end,
@@ -833,6 +841,7 @@ pub(crate) async fn customer_statement(
             };
             let s = c.accounts_receivable().generate_statement(request)?;
             Ok(Json(ArCustomerStatementResponse {
+                currency: s.currency.to_string(),
                 customer_id: s.customer_id.to_string(),
                 customer_name: s.customer_name,
                 period_start: s.period_start.to_rfc3339(),
@@ -870,7 +879,11 @@ mod tests {
 
     fn app() -> Router {
         let state = AppState::new(Commerce::new(":memory:").expect("in-memory Commerce"));
-        router().with_state(state)
+        router()
+            .layer(axum::Extension(crate::middleware::AuthenticatedActorIdentity(
+                "test-maker".into(),
+            )))
+            .with_state(state)
     }
 
     async fn json_body(resp: axum::response::Response) -> serde_json::Value {
@@ -903,7 +916,11 @@ mod tests {
                 ..Default::default()
             })
             .expect("customer created");
-        let app = router().with_state(AppState::new(commerce));
+        let app = router()
+            .layer(axum::Extension(crate::middleware::AuthenticatedActorIdentity(
+                "test-maker".into(),
+            )))
+            .with_state(AppState::new(commerce));
         let customer_id = customer.id.to_string();
         let body = serde_json::json!({
             "customer_id": customer_id,
@@ -951,7 +968,11 @@ mod tests {
                 ..Default::default()
             })
             .expect("invoice created");
-        let app = router().with_state(AppState::new(commerce));
+        let app = router()
+            .layer(axum::Extension(crate::middleware::AuthenticatedActorIdentity(
+                "test-maker".into(),
+            )))
+            .with_state(AppState::new(commerce));
         let invoice_id = invoice.id.to_string();
         let body = serde_json::json!({
             "invoice_id": invoice_id,

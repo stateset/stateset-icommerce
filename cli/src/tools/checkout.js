@@ -63,7 +63,7 @@ export const checkoutTools = [
         .min(1)
         .optional()
         .describe('Customer ID to pre-associate with the link'),
-      metadata: z.record(z.string()).optional().describe('Custom key-value metadata'),
+      metadata: z.record(z.string(), z.string()).optional().describe('Custom key-value metadata'),
     },
     permission: 'write',
     handler: async ({ params, ...ctx }) => {
@@ -83,11 +83,15 @@ export const checkoutTools = [
   {
     name: 'resolve_payment_link',
     description:
-      'Resolve a payment link by ID or short code. Returns the link details, items, total, and expiry status.',
+      'Resolve a payment link by ID or short code, as a buyer opening it: counts a view. Returns ' +
+      'the link details, items, total, and expiry status. get_payment_link_status reads a link ' +
+      'without counting a view.',
     inputSchema: {
       linkId: z.string().min(1).describe('Payment link ID (UUID) or short code'),
     },
-    permission: 'read',
+    // A write: every resolve increments payment_links.views and bumps
+    // updated_at (src/checkout/express.js resolvePaymentLink).
+    permission: 'write',
     handler: async ({ params, ...ctx }) => {
       try {
         const svc = await getCheckoutSvc(ctx);
@@ -181,12 +185,17 @@ export const checkoutTools = [
   // ========================================================================
   {
     name: 'list_payment_links',
-    description: 'List payment links with optional filters by status and customer.',
+    description:
+      'List payment links with optional filters by status and customer. Each link carries ' +
+      '`expired`: true when it is still active but its expiry has passed.',
     inputSchema: {
       status: z
         .enum(['active', 'converted', 'revoked', 'expired'])
         .optional()
-        .describe('Filter by status'),
+        .describe(
+          'Filter by status. `expired` is derived (an active link past its expiry); `active` ' +
+            'lists only links that can still be used.',
+        ),
       customerId: z.string().min(1).optional().describe('Filter by customer ID'),
       limit: z.number().int().min(1).max(500).optional().default(50).describe('Maximum results'),
       offset: z.number().int().min(0).optional().default(0).describe('Offset for pagination'),

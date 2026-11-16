@@ -299,7 +299,7 @@ describe('WebhookServer', () => {
   });
 
   describe('processEvent', () => {
-    it('completes with no matching handlers', async () => {
+    it('is unhandled (and recorded) with no matching handlers', async () => {
       const event = new WebhookEvent({
         sourceId: 'unknown',
         sourceName: 'Test',
@@ -307,8 +307,9 @@ describe('WebhookServer', () => {
         payload: {},
       });
       const result = await server.processEvent(event);
-      assert.equal(result.status, 'completed');
+      assert.equal(result.status, 'unhandled');
       assert.ok(result.results.some((r) => r.message === 'No matching handlers'));
+      assert.equal(server.eventHistory.length, 1);
     });
 
     it('executes matching handlers', async () => {

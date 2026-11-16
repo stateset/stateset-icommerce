@@ -15,12 +15,20 @@
 //       message: string,      // human sentence
 //       retryable: boolean,   // true only for transient classes
 //       hint?: string,
+//       allowedNext?: string[],                    // a refused status move: where the
+//       transition?: { machine, from?, to? },      // record CAN go, from the catalog
 //     },
 //     notice?: { code, message, hint? } }  // why a result is a preview
 //
 // The contract never rewrites the tool's payload: `result` is the value the
 // tool returned, by reference. In particular it never converts money strings
 // to numbers (or anything else) -- exact decimal strings stay strings.
+//
+// When the call's tool is known (`context.toolName`) and the failure is the
+// engine refusing a catalogued status move, `allowedNext`, `transition` and a
+// hint naming the tool for each allowed move are added (./transition-guidance.js).
+
+import { guidanceForRefusal } from './transition-guidance.js';
 
 /** Version of the outcome shape, carried in `_meta` of MCP responses. */
 export const TOOL_RESULT_CONTRACT_VERSION = '1.0.0';
@@ -182,6 +190,37 @@ const success = (result, { preview = false, notice = null } = {}) => {
   return outcome;
 };
 
+/**
+ * Add catalog guidance to a failure that is the engine refusing a status move
+ * (see ./transition-guidance.js). Anything else passes through unchanged.
+ *
+ * @param {{ ok: boolean, error?: object }} outcome
+ * @param {{ toolName?: string, params?: object }} [context]
+ */
+export function withTransitionGuidance(outcome, context = {}) {
+  if (!outcome || outcome.ok || !isPlainObject(outcome.error) || !context?.toolName) {
+    return outcome;
+  }
+  if (outcome.error.transition !== undefined) return outcome;
+  const guidance = guidanceForRefusal({
+    toolName: context.toolName,
+    params: isPlainObject(context.params) ? context.params : {},
+    message: outcome.error.message,
+    code: outcome.error.code,
+  });
+  if (!guidance) return outcome;
+  const { code, message, retryable, hint } = outcome.error;
+  const error = {
+    code,
+    message,
+    retryable,
+    hint: hint ? `${guidance.hint} ${hint}` : guidance.hint,
+  };
+  if (guidance.allowedNext) error.allowedNext = guidance.allowedNext;
+  error.transition = guidance.transition;
+  return { ...outcome, error };
+}
+
 /** Judge a kernel receipt on its own terms. */
 function fromKernelReceipt(receipt, result, fallbackMessage) {
   const status = receipt.status;
@@ -240,9 +279,14 @@ const messageOf = (result) =>
  * Normalize the value a tool handler returned.
  *
  * @param {unknown} result
+ * @param {{ toolName?: string, params?: object }} [context] - the call, for refusal guidance
  * @returns {{ ok: boolean, preview: boolean, result?: unknown, error?: object, notice?: object }}
  */
-export function normalizeToolResult(result) {
+export function normalizeToolResult(result, context = {}) {
+  return withTransitionGuidance(judgeToolResult(result), context);
+}
+
+function judgeToolResult(result) {
   if (!isPlainObject(result)) return success(result);
 
   if (isKernelReceipt(result.receipt)) {
@@ -316,8 +360,13 @@ function unwrapEnvelope(message) {
  * Normalize a thrown error (or an `{ message, code, details }` record of one).
  *
  * @param {unknown} error
+ * @param {{ toolName?: string, params?: object }} [context] - the call, for refusal guidance
  */
-export function normalizeToolError(error) {
+export function normalizeToolError(error, context = {}) {
+  return withTransitionGuidance(judgeToolError(error), context);
+}
+
+function judgeToolError(error) {
   const raw = isPlainObject(error) || error instanceof Error ? error : { message: String(error) };
   const envelope = unwrapEnvelope(raw.message);
   const message = envelope?.message ?? raw.message;
@@ -371,8 +420,17 @@ const GATE_HINTS = {
  *           result?: unknown, notes?: object, permission?: object, charge?: object,
  *           remediation?: string }} outcome
  * @param {unknown} [rawResult] - the uncompacted tool result, when available
+ * @param {{ toolName?: string, params?: object }} [context] - defaults to the outcome's own
+ *   `tool` and `params`
  */
-export function normalizeStepOutcome(outcome, rawResult) {
+export function normalizeStepOutcome(outcome, rawResult, context = undefined) {
+  return withTransitionGuidance(
+    judgeStepOutcome(outcome, rawResult),
+    context ?? { toolName: outcome?.tool, params: outcome?.params },
+  );
+}
+
+function judgeStepOutcome(outcome, rawResult) {
   const status = outcome?.status;
   const result = rawResult !== undefined ? rawResult : (outcome?.result ?? undefined);
   const message = nonEmptyString(outcome?.error);

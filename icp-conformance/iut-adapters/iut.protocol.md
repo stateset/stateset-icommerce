@@ -10,8 +10,11 @@ written in any language; the only contract is JSON over stdio.
 <adapter-command> <test-name>
 ```
 
-- `adapter-command` is the entry point declared in
-  `iut-adapters/registry.json` (e.g. `node iut-adapters/reference-demo.mjs`).
+- `adapter-command` is the entry point declared in the registry — the
+  shipped `iut-adapters/registry.json`, or your own file passed with
+  `--registry <path>` (e.g. `node iut-adapters/reference-demo.mjs`).
+- The adapter is started with the conformance suite's directory as its
+  working directory.
 - `test-name` is the vector directory name (e.g. `01-aid-derivation`).
 
 ## Input
@@ -79,8 +82,10 @@ Adapters declare themselves in `iut-adapters/registry.json`:
 
 Fields:
 
-- `command` — argv list to invoke the adapter.
-- `language` — informational, for the dashboard.
+- `command` — argv list to invoke the adapter. Relative paths resolve
+  against the suite directory (the adapter's working directory), so an
+  out-of-tree registry should use absolute paths.
+- `language` — informational; copied into the `--report` document.
 - `implementation` — what's actually being tested.
 - `version` — adapter version (independent of impl version).
 - `supports` — list of profiles this adapter implements. Vectors outside

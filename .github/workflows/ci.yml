@@ -54,6 +54,9 @@ jobs:
       - name: Install CLI dependencies
         working-directory: cli
         run: npm ci
+      - name: Gate finance and operations MCP profiles
+        working-directory: cli
+        run: node --test test/integration/mcp-erp-profiles.test.js test/integration/mcp-erp-workflows.test.js
       - name: Check integration contracts and performance
         run: npm run check:omarchy
       - name: Build standalone plugin artifact
@@ -518,7 +521,9 @@ jobs:
   rust:
     name: Rust
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 1.41.0 took 59 of 60 minutes and the ERP suites push the core-crate step
+    # alone past 56 (about 1.5x); raised until this job is split.
+    timeout-minutes: 120
     needs: [fmt, clippy]
 
     steps:
@@ -889,7 +894,9 @@ jobs:
 
   ruby-bindings:
     name: Ruby Bindings
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04 (LLVM 20-22), where bindgen mixes
+    # one LLVM's libclang with another's builtin headers and fails.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
@@ -1185,7 +1192,9 @@ jobs:
     runs-on: ubuntu-latest
     # The prior aggregate run already used 58 minutes; independent boundary
     # and live-PostgreSQL saga gates need room to finish as well.
-    timeout-minutes: 90
+    # 1.41.0 took 70 minutes; the ERP suites ran the coverage step past 61 of
+    # its own (about 1.5x) and hit 90. Raised until this job is split.
+    timeout-minutes: 150
     needs: [fmt, clippy]
 
     services:
@@ -1318,7 +1327,9 @@ jobs:
 
   php-bindings:
     name: PHP Bindings
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04 (LLVM 20-22), where bindgen mixes
+    # one LLVM's libclang with another's builtin headers and fails.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:

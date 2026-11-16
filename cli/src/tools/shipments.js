@@ -6,7 +6,9 @@
  */
 
 import { z } from 'zod';
+import { allowedNextField } from '../state-machine-catalog.js';
 import { applyRequired } from '../utils/apply-guard.js';
+import { resolveStatusAlias, statusFilter } from '../utils/status-schema.js';
 import {
   createShippingLabel,
   ingestShippingProviderWebhook,
@@ -19,6 +21,26 @@ import {
 import { cancelPaymentIntent, refundPaymentIntent } from './providers/payments.js';
 import { deterministicId } from './providers/runtime.js';
 import { partialShipmentPlanSchema, planPartialShipment } from './fulfillment-recovery.js';
+
+/**
+ * Shipping label statuses the provider runtime stores (./providers/shipping.js):
+ * a label is created `label_created`, tracking moves it through in_transit and
+ * out_for_delivery to delivered (or exception), and voiding sets `voided`.
+ * The filter's older values stay accepted as aliases of the stored ones.
+ */
+const LABEL_STATUSES = [
+  'label_created',
+  'in_transit',
+  'out_for_delivery',
+  'delivered',
+  'exception',
+  'voided',
+];
+const LABEL_STATUS_ALIASES = {
+  created: 'label_created',
+  purchased: 'label_created',
+  error: 'exception',
+};
 
 const shipmentPatchSchema = z
   .object({
@@ -155,7 +177,9 @@ export const shipmentTools = [
 
   {
     name: 'get_shipment',
-    description: 'Get a shipment by ID.',
+    description:
+      'Get a shipment by ID, with `allowedNext`: the statuses the shipment can move to from its ' +
+      'current one.',
     inputSchema: {
       shipmentId: z.string().min(1).describe('Shipment ID'),
     },
@@ -165,7 +189,7 @@ export const shipmentTools = [
       if (!shipment) {
         return { success: false, error: 'Shipment not found' };
       }
-      return { success: true, shipment };
+      return { success: true, shipment, ...allowedNextField('shipment', shipment.status) };
     },
   },
 
@@ -576,10 +600,7 @@ export const shipmentTools = [
     description: 'List provider-backed shipping labels with optional filtering.',
     inputSchema: {
       providerId: z.string().optional().describe('Filter by provider ID'),
-      status: z
-        .enum(['created', 'purchased', 'voided', 'error'])
-        .optional()
-        .describe('Filter by label status'),
+      status: statusFilter(LABEL_STATUSES, { subject: 'label', aliases: LABEL_STATUS_ALIASES }),
       orderId: z.string().optional().describe('Filter by order ID'),
       shipmentId: z.string().optional().describe('Filter by shipment ID'),
       trackingNumber: z.string().optional().describe('Filter by tracking number'),
@@ -589,7 +610,7 @@ export const shipmentTools = [
     handler: async ({ params }) => {
       const labels = listShippingLabels({
         providerId: params.providerId,
-        status: params.status,
+        status: resolveStatusAlias(params.status, LABEL_STATUS_ALIASES),
         orderId: params.orderId,
         shipmentId: params.shipmentId,
         trackingNumber: params.trackingNumber,

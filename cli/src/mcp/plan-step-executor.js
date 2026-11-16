@@ -8,12 +8,20 @@
 // Extracted from mcp-server.js (pure move — no behaviour change). The only
 // edit is that the shared tool context is read through `getToolContext()`
 // so the orchestrator can build the context after this factory runs.
+//
+// Kernel strict mode. Only a `topLevel` call (`server.executeTool`) may run a
+// governed composite (`agentic_execute_plan`, `agentic_replay_mutation`)
+// without a typed kernel command. Every step a composite runs comes back here
+// as a nested call, where a withheld write or a nested composite is refused
+// before its handler runs and every other live write must cross
+// `executeGovernedTool` with `requireGoverned`.
 
 import {
   MPP_JSONRPC_PAYMENT_REQUIRED_MESSAGE,
   attachPaymentMetadata,
   createPaymentReceipt,
 } from '../mpp/index.js';
+import { isKernelGovernedComposite } from '../kernel-boundary.js';
 import { formatValidationIssues, validateToolInput } from '../tool-schema.js';
 import { replayEventHash } from './audit-envelope.js';
 import { buildDeterministicMutationManifest } from './mutation-manifest.js';
@@ -37,7 +45,9 @@ import { RAW_TOOL_RESULT, normalizeToolResult } from './tool-result-contract.js'
  *   wrapWithTelemetry: (toolName: string, fn: Function) => Function,
  *   getToolContext: () => object,
  *   executeGovernedTool?: (toolName: string, params?: object, options?: object) => Promise<object | null>,
- * }} deps
+ *   strictKernel?: { isWithheld: (toolName: string) => boolean } | null,
+ * }} deps `strictKernel` is set only in kernel strict mode; `isWithheld` names
+ *   the writes the strict boundary does not expose.
  * @returns {(input: {
  *   toolName: string,
  *   params: unknown,
@@ -48,8 +58,10 @@ import { RAW_TOOL_RESULT, normalizeToolResult } from './tool-result-contract.js'
  *   stepIndex: number,
  *   includeHooks?: boolean,
  *   isRollback?: boolean,
+ *   topLevel?: boolean,
  *   extra?: object,
- * }) => Promise<object>}
+ * }) => Promise<object>} `topLevel` is true only for a direct call
+ *   (`server.executeTool`), never for a step a plan, replay, or rollback runs.
  */
 export function createExecuteToolStepInPlan({
   toolDefsByName: TOOL_DEFS_BY_NAME,
@@ -64,7 +76,30 @@ export function createExecuteToolStepInPlan({
   wrapWithTelemetry,
   getToolContext,
   executeGovernedTool,
+  strictKernel = null,
 }) {
+  /** Why kernel strict mode refuses this call before it runs, or null. */
+  const strictKernelRefusal = (toolName, topLevel) => {
+    if (!strictKernel) return null;
+    if (strictKernel.isWithheld(toolName)) {
+      return {
+        boundary: 'withheld',
+        error:
+          `Tool '${toolName}' is a write mutation outside the governed kernel catalog, ` +
+          'so kernel strict mode does not run it, directly or as a plan or replay step.',
+      };
+    }
+    if (!topLevel && isKernelGovernedComposite(toolName)) {
+      return {
+        boundary: 'nested_composite',
+        error:
+          `Tool '${toolName}' is a governed composite; kernel strict mode runs a composite ` +
+          'only as a top-level call, never as a step of another plan or replay.',
+      };
+    }
+    return null;
+  };
+
   const executeToolStepInPlan = async ({
     toolName,
     params,
@@ -75,12 +110,63 @@ export function createExecuteToolStepInPlan({
     stepIndex,
     includeHooks = true,
     isRollback = false,
+    topLevel = false,
     extra = {},
   }) => {
     const startedAt = Date.now();
     const resolvedToolName = normalizeToolName(toolName);
     const effectivePolicyDomain = policyDomain || inferPolicyDomain(resolvedToolName);
     const baseMeta = getToolRuntimeMeta(resolvedToolName);
+    if (baseMeta.unavailable) {
+      // The server knows the tool but does not expose it (a toolkit capability
+      // scope excludes it). It has no handler here; refuse with the reason.
+      const scopeRefusal = baseMeta.unavailable;
+      return {
+        index: stepIndex,
+        tool: resolvedToolName,
+        status: isRollback ? 'rollback_failed' : 'permission_block',
+        elapsedMs: Date.now() - startedAt,
+        policy: null,
+        permission: { allowed: false, preview: false, reason: scopeRefusal.message },
+        charge: null,
+        params: compactReplayValue(params || {}),
+        paramsHash: replayEventHash(params || {}),
+        result: null,
+        resultHash: null,
+        runtime: {
+          policyDomain: effectivePolicyDomain,
+          sideEffect: scopeRefusal.sideEffect,
+          compensations: [],
+          idempotent: false,
+        },
+        simulation: Boolean(dryRun),
+        error: scopeRefusal.message,
+        notes: { scope: { refused: true, reason: scopeRefusal.reason } },
+        ...(isRollback ? { isRollback: true } : {}),
+      };
+    }
+    const refusal = strictKernelRefusal(resolvedToolName, topLevel);
+    if (refusal) {
+      // A governance refusal, so a plan that reaches it reports failed. It is
+      // decided by name alone, before hooks, policy, or a dry run, so a dry run
+      // predicts the refusal an apply would meet.
+      return {
+        index: stepIndex,
+        tool: resolvedToolName,
+        status: 'permission_block',
+        elapsedMs: Date.now() - startedAt,
+        policy: null,
+        permission: null,
+        charge: null,
+        params: compactReplayValue(params || {}),
+        paramsHash: replayEventHash(params || {}),
+        result: null,
+        resultHash: null,
+        simulation: Boolean(dryRun),
+        error: refusal.error,
+        notes: { strictKernel: refusal.boundary },
+      };
+    }
     if (baseMeta.permission === 'unknown') {
       return {
         index: stepIndex,
@@ -448,12 +534,19 @@ export function createExecuteToolStepInPlan({
           ...extra,
         },
       };
+      // Every live write must be a typed kernel command (strict mode refuses
+      // the rest), except a top-level governed composite: it runs no write
+      // itself, and each step it runs comes back through here nested. Set after
+      // `extra` so no caller-supplied option can switch the requirement off.
       const governed = executeGovernedTool
         ? await executeGovernedTool(resolvedToolName, nextArgs, {
             requestId,
             sessionId,
-            requireGoverned: allowApply && baseMeta.sideEffect === 'write',
             ...extra,
+            requireGoverned:
+              allowApply &&
+              baseMeta.sideEffect === 'write' &&
+              !(topLevel && isKernelGovernedComposite(resolvedToolName)),
           })
         : null;
       const wrapped = wrapWithTelemetry(resolvedToolName, (payload) => toolDef.handler(payload));

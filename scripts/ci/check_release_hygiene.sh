@@ -20,8 +20,8 @@ Validates repo-wide version sync plus release metadata hygiene.
 
 Arguments:
   VERSION_OR_TAG   Optional semantic version or tag name such as:
-                   1.40.0, v1.40.0, cli-v1.40.0, py-v1.40.0, java-v1.40.0,
-                   php-v1.40.0, ruby-v1.40.0
+                   1.41.0, v1.41.0, cli-v1.41.0, py-v1.41.0, java-v1.41.0,
+                   php-v1.41.0, ruby-v1.41.0
 
 Options:
   --github-output PATH   Write version=<normalized-version> to the given file.

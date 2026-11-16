@@ -269,6 +269,8 @@ impl PurchaseOrders {
     ///
     /// // Receive items (can be partial)
     /// commerce.purchase_orders().receive(Uuid::new_v4(), ReceivePurchaseOrderItems {
+    ///     warehouse_id: 1,
+    ///     receiving_location_id: 1,
     ///     items: vec![],  // Add items here
     ///     notes: Some("Warehouse receiving".into()),
     /// })?;

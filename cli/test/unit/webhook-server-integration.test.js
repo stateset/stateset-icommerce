@@ -320,6 +320,27 @@ describe('WebhookServer — HTTP routing', () => {
     assert.ok(res.json.eventId, 'Should return an eventId');
   });
 
+  it(
+    'a received event no handler matches is recorded as unhandled',
+    { timeout: 5000 },
+    async () => {
+      const settled = new Promise((resolve) => server.once('event:unhandled', resolve));
+      const body = JSON.stringify({ type: 'test.event', value: 42 });
+      const sig = crypto.createHmac('sha256', TEST_SECRET).update(body).digest('hex');
+
+      const res = await request(port, {
+        path: '/webhooks/test',
+        headers: { 'content-type': 'application/json', 'x-signature': sig },
+        body,
+      });
+      await settled;
+
+      const [recorded] = server.getHistory();
+      assert.equal(recorded.id, res.json.eventId);
+      assert.equal(recorded.status, 'unhandled');
+    },
+  );
+
   it('POST to unregistered path returns 404', async () => {
     const body = JSON.stringify({ type: 'test.event' });
     const res = await request(port, {

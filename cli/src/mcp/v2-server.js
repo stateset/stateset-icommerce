@@ -26,7 +26,7 @@ import {
   isInputRequiredResult,
 } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
+import { zodToInputJsonSchema } from './zod-json-schema.js';
 import { CLI_VERSION } from '../config.js';
 import { attachContractToResponse, normalizeToolError } from './tool-result-contract.js';
 
@@ -45,9 +45,13 @@ const EMPTY_SCHEMA = Object.freeze({});
 /** A Zod schema instance (as opposed to a raw shape) carries `_def`. */
 const isZodType = (value) => Boolean(value && typeof value === 'object' && value._def);
 
-/** An already-converted JSON Schema object, as a handful of tools declare. */
+/**
+ * An already-converted JSON Schema object, as a handful of tools declare. A
+ * Zod 4 object schema also has `type === 'object'`, so Zod types are excluded
+ * explicitly: treating one as JSON Schema would skip its validation entirely.
+ */
 const isJsonSchema = (value) =>
-  Boolean(value && typeof value === 'object' && value.type === 'object');
+  Boolean(value && typeof value === 'object' && !isZodType(value) && value.type === 'object');
 
 /**
  * Normalize the three `inputSchema` conventions our tool modules use — a Zod
@@ -66,12 +70,10 @@ function standardSchemaFor(inputSchema) {
     : isZodType(inputSchema)
       ? inputSchema
       : z.object(inputSchema);
-  // `$refStrategy: 'none'` inlines definitions: MCP clients expect a
-  // self-contained schema per tool, not one with cross-references.
+  // Reused sub-schemas are inlined: MCP clients expect a self-contained
+  // schema per tool, not one with cross-references.
   const converted = {
-    ...(zodSchema
-      ? zodToJsonSchema(zodSchema, { $refStrategy: 'none', target: 'jsonSchema7' })
-      : inputSchema),
+    ...(zodSchema ? zodToInputJsonSchema(zodSchema) : inputSchema),
   };
   delete converted.$schema;
 
@@ -83,7 +85,7 @@ function standardSchemaFor(inputSchema) {
     standardSchema = {
       '~standard': {
         version: 1,
-        vendor: 'stateset-zod3',
+        vendor: 'stateset-zod',
         jsonSchema: {
           input: () => converted,
           output: () => converted,
@@ -107,18 +109,18 @@ function standardSchemaFor(inputSchema) {
  * Convert one agent-sdk tool object into a v2 `registerTool` call.
  *
  * @param {import('@modelcontextprotocol/server').McpServer} server
- * @param {{name: string, description: string, inputSchema: object, handler: Function}} toolDef
+ * @param {{name: string, description: string, inputSchema: object, handler: Function, annotations?: object}} toolDef
  * @param {Promise<void>|undefined} servicesReady
  */
 function registerAdaptedTool(server, toolDef, servicesReady) {
-  const { name, description, inputSchema, handler } = toolDef;
+  const { name, description, inputSchema, handler, annotations } = toolDef;
 
   // An empty object is a legitimate no-argument tool and becomes `z.object({})`.
   const schema = inputSchema && typeof inputSchema === 'object' ? inputSchema : EMPTY_SCHEMA;
 
   server.registerTool(
     name,
-    { description, inputSchema: standardSchemaFor(schema) },
+    { description, inputSchema: standardSchemaFor(schema), ...(annotations && { annotations }) },
     async (args, ctx) => {
       // Each HTTP request creates a fresh runtime whose optional services are
       // loaded asynchronously. Discovery can run immediately; execution must
@@ -168,7 +170,10 @@ function installToolCallContract(server, tools, servicesReady) {
     } catch (error) {
       if (error instanceof ProtocolError && error.code === ProtocolErrorCode.UrlElicitationRequired)
         throw error;
-      const outcome = normalizeToolError(error);
+      const outcome = normalizeToolError(error, {
+        toolName: tool.name,
+        params: request.params.arguments,
+      });
       return attachContractToResponse(
         {
           content: [

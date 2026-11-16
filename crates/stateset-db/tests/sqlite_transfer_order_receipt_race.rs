@@ -11,12 +11,12 @@
 
 #![cfg(feature = "sqlite")]
 
+#[path = "support/erp_transfer.rs"]
+mod setup;
+
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use stateset_core::{
-    CreateTransferOrder, CreateTransferOrderItem, ProductId, TransferOrder,
-    TransferOrderRepository, TransferOrderStatus, WarehouseId,
-};
+use stateset_core::{TransferOrder, TransferOrderRepository, TransferOrderStatus};
 use stateset_db::{DatabaseConfig, SqliteDatabase};
 use std::sync::{Arc, Barrier};
 
@@ -32,16 +32,7 @@ fn test_db() -> Arc<SqliteDatabase> {
 fn shipped_order(db: &SqliteDatabase, line_quantities: &[Decimal]) -> TransferOrder {
     let order = db
         .transfer_orders()
-        .create(CreateTransferOrder {
-            source_warehouse_id: WarehouseId::new(),
-            destination_warehouse_id: WarehouseId::new(),
-            items: line_quantities
-                .iter()
-                .map(|q| CreateTransferOrderItem { product_id: ProductId::new(), quantity: *q })
-                .collect(),
-            expected_at: None,
-            notes: Some("receipt race".into()),
-        })
+        .create(setup::input(db, line_quantities))
         .expect("create transfer order");
     db.transfer_orders().ship(order.id).expect("ship transfer order")
 }
@@ -197,7 +188,7 @@ fn sqlite_concurrent_receipts_on_distinct_lines_close_the_order() {
 #[test]
 fn sqlite_concurrent_cancels_accept_exactly_one() {
     let db = test_db();
-    let order = shipped_order(&db, &[dec!(5)]);
+    let order = db.transfer_orders().create(setup::input(db.as_ref(), &[dec!(5)])).unwrap();
 
     let contenders = 16usize;
     let barrier = Arc::new(Barrier::new(contenders));

@@ -3,6 +3,7 @@
  */
 
 import { z } from 'zod';
+import { resolveStatusAlias, statusFilter } from '../utils/status-schema.js';
 
 /**
  * Normalise an optional ISO-8601 date/datetime to the RFC 3339 string the
@@ -116,16 +117,27 @@ function summarizeEvaluation(result) {
   };
 }
 
+/** The engine's PromotionStatus and CouponStatus (bindings/node/index.d.ts). */
+const PROMOTION_STATUSES = [
+  'draft',
+  'scheduled',
+  'active',
+  'paused',
+  'expired',
+  'exhausted',
+  'archived',
+];
+const COUPON_STATUSES = ['active', 'disabled', 'exhausted', 'expired'];
+/** The filter used to offer `depleted`, which the engine refused; it means exhausted. */
+const COUPON_STATUS_ALIASES = { depleted: 'exhausted' };
+
 export const promotionTools = [
   {
     name: 'list_promotions',
     description:
       'List all promotions. Shows active, paused, and scheduled promotions with their discount details.',
     inputSchema: {
-      status: z
-        .enum(['active', 'paused', 'draft', 'expired', 'scheduled'])
-        .optional()
-        .describe('Filter by promotion status'),
+      status: statusFilter(PROMOTION_STATUSES, { subject: 'promotion' }),
       type: z
         .enum([
           'percentage_off',
@@ -521,16 +533,16 @@ export const promotionTools = [
     description: 'List coupon codes with optional filters.',
     inputSchema: {
       promotionId: z.string().optional().describe('Filter by promotion ID'),
-      status: z
-        .enum(['active', 'expired', 'depleted', 'disabled'])
-        .optional()
-        .describe('Filter by status'),
+      status: statusFilter(COUPON_STATUSES, {
+        subject: 'coupon',
+        aliases: COUPON_STATUS_ALIASES,
+      }),
     },
     permission: 'read',
     handler: async ({ commerce, params }) => {
       const filter = {};
       if (params.promotionId) filter.promotionId = params.promotionId;
-      if (params.status) filter.status = params.status;
+      if (params.status) filter.status = resolveStatusAlias(params.status, COUPON_STATUS_ALIASES);
       const coupons = await commerce.promotions().listCoupons(filter);
       return {
         success: true,

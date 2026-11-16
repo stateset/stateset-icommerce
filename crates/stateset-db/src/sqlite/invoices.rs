@@ -9,7 +9,7 @@ use super::{
 };
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{Row, params};
+use rusqlite::{OptionalExtension, Row, params};
 use rust_decimal::{Decimal, RoundingStrategy};
 use stateset_core::{
     BatchResult, CommerceError, CreateInvoice, CreateInvoiceItem, CustomerId, Invoice,
@@ -60,6 +60,18 @@ pub struct SqliteInvoiceRepository {
 }
 
 impl SqliteInvoiceRepository {
+    fn require_draft(conn: &rusqlite::Connection, id: InvoiceId) -> Result<()> {
+        let status: String = conn
+            .query_row("SELECT status FROM invoices WHERE id=?1", [id.to_string()], |r| r.get(0))
+            .map_err(map_db_error)?;
+        if status != "draft" {
+            return Err(CommerceError::Conflict(
+                "Only draft invoices can be edited; use a credit memo after issue".into(),
+            ));
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub const fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
@@ -113,8 +125,9 @@ impl SqliteInvoiceRepository {
                 )
             },
             |column| {
+                let value = if column == "sent_at" { "COALESCE(sent_at, ?2)" } else { "?2" };
                 format!(
-                    "UPDATE invoices SET status = ?1, {column} = ?2, updated_at = ?2
+                    "UPDATE invoices SET status = ?1, {column} = {value}, updated_at = ?2
                      WHERE id = ?3 AND {guard_sql}"
                 )
             },
@@ -132,6 +145,34 @@ impl SqliteInvoiceRepository {
                 ))));
             }
 
+            if new_status == InvoiceStatus::Sent {
+                super::credit_control::check_invoice(tx, id.into())?;
+            }
+            if new_status == InvoiceStatus::Voided {
+                let (total, balance) = tx.query_row(
+                    "SELECT total,balance_due FROM invoices WHERE id=?1",
+                    rusqlite::params![(id).to_string()],
+                    |r| {
+                        Ok((
+                            super::parse_decimal_row(&r.get::<_, String>(0)?, "stock", "quantity")?,
+                            super::parse_decimal_row(&r.get::<_, String>(1)?, "stock", "quantity")?,
+                        ))
+                    },
+                )?;
+                if total != balance {
+                    return Err(Self::to_rusqlite(CommerceError::Conflict(
+                        "Reverse settlements before voiding an invoice".into(),
+                    )));
+                }
+
+                let credits: i64 = tx.query_row("SELECT COUNT(*) FROM ar_credit_memos WHERE original_invoice_id = ?1 AND status != 'voided'", [&id_str], |r| r.get(0))?;
+                if credits > 0 {
+                    return Err(Self::to_rusqlite(CommerceError::Conflict(
+                        "Void the invoice's credit memos before voiding the invoice".into(),
+                    )));
+                }
+                super::ledger_reversal::reverse_source(tx, "invoice", id.into(), now.date_naive())?;
+            }
             Self::get_invoice_with_conn(tx, id)
                 .map_err(Self::to_rusqlite)?
                 .ok_or_else(|| Self::to_rusqlite(CommerceError::NotFound))
@@ -383,6 +424,7 @@ impl SqliteInvoiceRepository {
     }
 
     fn recalculate_with_conn(conn: &rusqlite::Connection, id: InvoiceId) -> Result<()> {
+        Self::require_draft(conn, id)?;
         // Calculate subtotal from items
         let invoice_id_param = id.to_string();
         let invoice_params: [&dyn rusqlite::ToSql; 1] = [&invoice_id_param];
@@ -562,6 +604,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
     fn update(&self, id: InvoiceId, input: UpdateInvoice) -> Result<Invoice> {
         let mut conn = self.conn()?;
         let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        Self::require_draft(&tx, id)?;
         let now = chrono::Utc::now();
         let invoice = tx
             .query_row(
@@ -602,9 +645,9 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         ).map_err(map_db_error)?;
 
         Self::recalculate_with_conn(&tx, id)?;
+        let invoice = Self::get_invoice_with_conn(&tx, id)?.ok_or(CommerceError::NotFound)?;
         tx.commit().map_err(map_db_error)?;
-
-        Self::get_invoice_with_conn(&conn, id)?.ok_or(CommerceError::NotFound)
+        Ok(invoice)
     }
 
     fn list(&self, filter: InvoiceFilter) -> Result<Vec<Invoice>> {
@@ -742,7 +785,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         self.guarded_status_change(
             id,
             InvoiceStatus::Sent,
-            &format!("status IN {OPEN_STATUS_SQL_LIST}"),
+            "status IN ('draft','sent','viewed')",
             Some("sent_at"),
             "send",
         )
@@ -763,6 +806,9 @@ impl InvoiceRepository for SqliteInvoiceRepository {
     }
 
     fn record_payment(&self, id: InvoiceId, payment: RecordInvoicePayment) -> Result<Invoice> {
+        if payment.payment_id.is_some_and(|id| id.is_nil()) {
+            return Err(CommerceError::ValidationError("Payment ID cannot be nil".to_string()));
+        }
         if payment.amount <= Decimal::ZERO {
             return Err(CommerceError::ValidationError(
                 "Invoice payment amount must be positive".to_string(),
@@ -790,15 +836,24 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             // amount twice. The check and the ledger write below share this
             // transaction — exactly how GL auto-posting dedupes source
             // documents — so a concurrent retry cannot slip between them.
-            // A NULL payment_id records nothing and keeps the old behavior.
+            // A missing key records a new receipt with an internally generated ID.
             if let Some(payment_id) = payment.payment_id {
-                let already: i64 = tx.query_row(
-                    "SELECT COUNT(*) FROM invoice_direct_payments
+                let already: Option<String> = tx
+                    .query_row(
+                        "SELECT amount FROM invoice_direct_payments
                      WHERE invoice_id = ?1 AND payment_id = ?2",
-                    params![&id_str, payment_id.to_string()],
-                    |row| row.get(0),
-                )?;
-                if already > 0 {
+                        params![&id_str, payment_id.to_string()],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if let Some(recorded) = already {
+                    let recorded =
+                        parse_decimal_row(&recorded, "invoice_direct_payment", "amount")?;
+                    if recorded != money(payment.amount) {
+                        return Err(Self::to_rusqlite(CommerceError::ValidationError(
+                            "Payment ID is already bound to a different amount".to_string(),
+                        )));
+                    }
                     // Return the invoice unchanged: the payment already landed.
                     return Self::get_invoice_with_conn(tx, id)
                         .map_err(Self::to_rusqlite)?
@@ -817,24 +872,23 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             // cancelled or written-off invoice would reopen a balance the
             // ledger has already disposed of. Same guard (and same terminal
             // set) as the AR payment/credit-memo applications.
-            if is_terminal(&status) {
+            if status == "draft" || is_terminal(&status) {
                 return Err(Self::to_rusqlite(CommerceError::ValidationError(format!(
                     "Cannot record a payment on invoice {id} with status {status}"
                 ))));
             }
 
-            let total_dec = parse_decimal_row(&total, "invoice", "total")?;
+            let _total_dec = parse_decimal_row(&total, "invoice", "total")?;
             let amount_paid_dec = parse_decimal_row(&amount_paid, "invoice", "amount_paid")?;
             let direct_dec =
                 parse_decimal_row(&direct_amount_paid, "invoice", "direct_amount_paid")?;
 
-            // Cap the payment at what is still owed. `balance_due` is derived
-            // (total - amount_paid) by both this path and the AR
-            // recalculation, so deriving it from the columns already read
-            // keeps the bound in step with credit memos and applications.
-            // Without this an overpayment drove `balance_due` negative, which
-            // corrupts AR aging, statements and the recalculation invariant.
-            let remaining = money(total_dec - amount_paid_dec);
+            let remaining: String = tx.query_row(
+                "SELECT balance_due FROM invoices WHERE id=?1",
+                [id.to_string()],
+                |r| r.get(0),
+            )?;
+            let remaining = parse_decimal_row(&remaining, "invoice", "balance_due")?;
             if payment.amount > remaining {
                 return Err(Self::to_rusqlite(CommerceError::ValidationError(format!(
                     "Invoice payment amount ({}) exceeds invoice {id} balance due ({remaining})",
@@ -848,7 +902,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             // as direct_amount_paid + application sums and would otherwise
             // erase this payment.
             let new_direct = money(direct_dec + payment.amount);
-            let new_balance = money(total_dec - new_amount_paid);
+            let new_balance = money(remaining - payment.amount);
 
             let new_status = if new_balance <= Decimal::ZERO {
                 InvoiceStatus::Paid
@@ -875,7 +929,8 @@ impl InvoiceRepository for SqliteInvoiceRepository {
             // Record the idempotency key only once the payment has actually
             // been applied: a rejected payment must not burn the key, so the
             // caller can retry with a corrected amount.
-            if let Some(payment_id) = payment.payment_id {
+            {
+                let payment_id = payment.payment_id.unwrap_or_else(Uuid::new_v4);
                 tx.execute(
                     "INSERT INTO invoice_direct_payments
                      (invoice_id, payment_id, amount, recorded_at)
@@ -889,6 +944,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
                 )?;
             }
 
+            super::accounts_receivable::SqliteAccountsReceivableRepository::recalculate_invoice_with_conn(tx, id).map_err(Self::to_rusqlite)?;
             Self::get_invoice_with_conn(tx, id)
                 .map_err(Self::to_rusqlite)?
                 .ok_or_else(|| Self::to_rusqlite(CommerceError::NotFound))
@@ -909,16 +965,27 @@ impl InvoiceRepository for SqliteInvoiceRepository {
     }
 
     fn write_off(&self, id: InvoiceId) -> Result<Invoice> {
-        // Same allowlist as `void`: a collected (paid) invoice is not
-        // uncollectible, and a voided/already-written-off one has already been
-        // disposed of. Mirrors the AR `create_write_off` guard.
-        self.guarded_status_change(
-            id,
-            InvoiceStatus::WrittenOff,
-            &format!("status IN {OPEN_STATUS_SQL_LIST}"),
-            None,
-            "write off",
-        )
+        let invoice = self.get(id)?.ok_or(CommerceError::NotFound)?;
+        // The direct write-off keeps its contract: a closed invoice is a conflict
+        // that names its status. The receivables write-off does the rest.
+        if !crate::rules::invoices::open_for_write_off(invoice.status) {
+            return Err(CommerceError::Conflict(format!(
+                "Cannot write off invoice {} with status {}",
+                invoice.id, invoice.status
+            )));
+        }
+        let input = stateset_core::CreateWriteOff {
+            invoice_id: invoice.id.into(),
+            amount: invoice.balance_due,
+            reason: stateset_core::WriteOffReason::Uncollectible,
+            notes: Some("Invoice write-off".into()),
+            approved_by: None,
+        };
+        stateset_core::AccountsReceivableRepository::create_write_off(
+            &super::accounts_receivable::SqliteAccountsReceivableRepository::new(self.pool.clone()),
+            input,
+        )?;
+        self.get(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn dispute(&self, id: InvoiceId) -> Result<Invoice> {
@@ -936,13 +1003,15 @@ impl InvoiceRepository for SqliteInvoiceRepository {
     }
 
     fn add_item(&self, invoice_id: InvoiceId, item: CreateInvoiceItem) -> Result<InvoiceItem> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        Self::require_draft(&tx, invoice_id)?;
         let id = Uuid::new_v4();
         let now = chrono::Utc::now();
         let line_total = item.quantity * item.unit_price - item.discount_amount.unwrap_or_default()
             + item.tax_amount.unwrap_or_default();
 
-        conn.execute(
+        tx.execute(
             "INSERT INTO invoice_items (id, invoice_id, order_item_id, product_id, sku, description,
              quantity, unit_of_measure, unit_price, discount_amount, tax_amount, line_total,
              sort_order, created_at, updated_at)
@@ -967,17 +1036,34 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         ).map_err(map_db_error)?;
 
         let mut stmt =
-            conn.prepare("SELECT * FROM invoice_items WHERE id = ?").map_err(map_db_error)?;
-        stmt.query_row([id.to_string()], Self::row_to_invoice_item).map_err(map_db_error)
+            tx.prepare("SELECT * FROM invoice_items WHERE id = ?").map_err(map_db_error)?;
+        let item =
+            stmt.query_row([id.to_string()], Self::row_to_invoice_item).map_err(map_db_error)?;
+        drop(stmt);
+        Self::recalculate_with_conn(&tx, invoice_id)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(item)
     }
 
     fn update_item(&self, item_id: Uuid, item: CreateInvoiceItem) -> Result<InvoiceItem> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let invoice_id: String = tx
+            .query_row(
+                "SELECT invoice_id FROM invoice_items WHERE id=?1",
+                [item_id.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(map_db_error)?;
+        let invoice_id = invoice_id
+            .parse::<InvoiceId>()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        Self::require_draft(&tx, invoice_id)?;
         let now = chrono::Utc::now();
         let line_total = item.quantity * item.unit_price - item.discount_amount.unwrap_or_default()
             + item.tax_amount.unwrap_or_default();
 
-        conn.execute(
+        tx.execute(
             "UPDATE invoice_items SET sku = ?, description = ?, quantity = ?, unit_of_measure = ?,
              unit_price = ?, discount_amount = ?, tax_amount = ?, line_total = ?, sort_order = ?,
              updated_at = ? WHERE id = ?",
@@ -998,14 +1084,34 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         .map_err(map_db_error)?;
 
         let mut stmt =
-            conn.prepare("SELECT * FROM invoice_items WHERE id = ?").map_err(map_db_error)?;
-        stmt.query_row([item_id.to_string()], Self::row_to_invoice_item).map_err(map_db_error)
+            tx.prepare("SELECT * FROM invoice_items WHERE id = ?").map_err(map_db_error)?;
+        let item = stmt
+            .query_row([item_id.to_string()], Self::row_to_invoice_item)
+            .map_err(map_db_error)?;
+        drop(stmt);
+        Self::recalculate_with_conn(&tx, invoice_id)?;
+        tx.commit().map_err(map_db_error)?;
+        Ok(item)
     }
 
     fn remove_item(&self, item_id: Uuid) -> Result<()> {
-        let conn = self.pool.get().map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
-        conn.execute("DELETE FROM invoice_items WHERE id = ?", [item_id.to_string()])
+        let mut conn = self.conn()?;
+        let tx = super::begin_immediate(&mut conn).map_err(map_db_error)?;
+        let invoice_id: String = tx
+            .query_row(
+                "SELECT invoice_id FROM invoice_items WHERE id=?1",
+                [item_id.to_string()],
+                |r| r.get(0),
+            )
             .map_err(map_db_error)?;
+        let invoice_id = invoice_id
+            .parse::<InvoiceId>()
+            .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        Self::require_draft(&tx, invoice_id)?;
+        tx.execute("DELETE FROM invoice_items WHERE id = ?", [item_id.to_string()])
+            .map_err(map_db_error)?;
+        Self::recalculate_with_conn(&tx, invoice_id)?;
+        tx.commit().map_err(map_db_error)?;
         Ok(())
     }
 
@@ -1276,6 +1382,7 @@ impl InvoiceRepository for SqliteInvoiceRepository {
         let mut results = Vec::with_capacity(updates.len());
 
         for (id, input) in updates {
+            Self::require_draft(&tx, id)?;
             let now = chrono::Utc::now();
             let invoice = tx
                 .query_row(
@@ -1500,6 +1607,7 @@ mod tests {
         let repo = SqliteInvoiceRepository::new(db.pool().clone());
         let invoice = make_invoice(&repo, CustomerId::new()); // total $100
         assert_eq!(invoice.balance_due, dec!(100.00));
+        repo.send(invoice.id).unwrap();
 
         let thread_count = 10;
         let barrier = Arc::new(Barrier::new(thread_count));

@@ -1167,7 +1167,7 @@ export const a2aObservabilityTools = [
           protocolVersion: z.string().optional(),
           supportedNetworks: z.array(z.string()).optional(),
           supportedAssets: z.array(z.string()).optional(),
-          features: z.record(z.boolean()).optional(),
+          features: z.record(z.string(), z.boolean()).optional(),
           maxTransactionAmount: z.number().optional(),
         })
         .describe('Target agent capabilities (from their agent card or handshake response)'),

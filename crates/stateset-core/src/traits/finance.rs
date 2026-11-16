@@ -1,6 +1,7 @@
 //! Finance repositories: AP, AR, GL, invoices, credit, cost accounting, vendor credits, fixed assets, and revenue recognition.
 
 use super::*;
+use crate::{CloseBooksReport, TransactionCogsReport};
 
 /// Invoice repository trait
 #[auto_impl::auto_impl(&, Box, Arc)]
@@ -127,11 +128,21 @@ pub trait AccountsPayableRepository: Send + Sync {
     /// Approve a bill
     fn approve_bill(&self, id: Uuid) -> Result<Bill>;
 
+    /// Approve with trusted identity and enforce separation from the maker.
+    fn approve_bill_as(&self, id: Uuid, actor: &str, override_reason: Option<&str>)
+    -> Result<Bill>;
+
+    /// Approve a purchase/receipt mismatch with a persisted, nonempty reason.
+    fn approve_bill_with_override(&self, id: Uuid, reason: &str) -> Result<Bill>;
+
     /// Cancel a bill
     fn cancel_bill(&self, id: Uuid) -> Result<Bill>;
 
     /// Mark bill as disputed
     fn dispute_bill(&self, id: Uuid) -> Result<Bill>;
+
+    /// Resolve a dispute, restoring the prior approval state and current settlement status.
+    fn resolve_bill_dispute(&self, id: Uuid) -> Result<Bill>;
 
     /// Get bill items
     fn get_bill_items(&self, bill_id: Uuid) -> Result<Vec<BillItem>>;
@@ -222,6 +233,17 @@ pub trait AccountsPayableRepository: Send + Sync {
 /// Cost Accounting repository trait
 #[auto_impl::auto_impl(&, Box, Arc)]
 pub trait CostAccountingRepository: Send + Sync {
+    /// Recognized GL revenue and recorded sales costs, in functional currency.
+    /// Revenue without a SKU is retained in `__unallocated__`; quantities reflect
+    /// physical issues/returns. Closing entries are excluded.
+    fn transaction_cogs(
+        &self,
+        from: chrono::NaiveDate,
+        to: chrono::NaiveDate,
+    ) -> Result<TransactionCogsReport>;
+    /// Check stored shipments and owned inventory for missing/zero costs.
+    fn close_books_check(&self) -> Result<CloseBooksReport>;
+
     // Item cost operations
     /// Get item cost by SKU
     fn get_item_cost(&self, sku: &str) -> Result<Option<ItemCost>>;
@@ -322,13 +344,15 @@ pub trait CostAccountingRepository: Send + Sync {
     fn get_rollup(&self, sku: &str) -> Result<Option<CostRollup>>;
 
     // Valuation operations
-    /// Get inventory valuation
+    /// Value owned inventory, including transit, using each SKU's stored method
+    /// and historical carrying layers. `cost_method` is a compatibility fallback
+    /// for legacy layers without an item cost master. Amounts use store currency.
     fn get_inventory_valuation(&self, cost_method: CostMethod) -> Result<InventoryValuation>;
 
     /// Get SKU cost summary
     fn get_sku_cost_summary(&self, sku: &str) -> Result<Option<SkuCostSummary>>;
 
-    /// Get total inventory value
+    /// Get total owned inventory carrying value using each SKU's stored cost method.
     fn get_total_inventory_value(&self) -> Result<rust_decimal::Decimal>;
 }
 
@@ -672,6 +696,13 @@ pub trait GeneralLedgerRepository: Send + Sync {
     /// Create a journal entry
     fn create_journal_entry(&self, input: CreateJournalEntry) -> Result<JournalEntry>;
 
+    /// Create and optionally post using the trusted host identity.
+    fn create_journal_entry_as(
+        &self,
+        input: CreateJournalEntry,
+        actor: &str,
+    ) -> Result<JournalEntry>;
+
     /// Get journal entry by ID
     fn get_journal_entry(&self, id: Uuid) -> Result<Option<JournalEntry>>;
 
@@ -713,9 +744,12 @@ pub trait GeneralLedgerRepository: Send + Sync {
     fn auto_post_bill_payment(&self, payment_id: Uuid) -> Result<JournalEntry>;
 
     /// Auto-post inventory cost transaction (DR/CR Inventory/COGS)
-    fn auto_post_inventory_cost(&self, cost_transaction_id: Uuid) -> Result<JournalEntry>;
+    fn auto_post_inventory_cost(&self, cost_transaction_id: Uuid) -> Result<Option<JournalEntry>>;
 
     /// Auto-post write-off (DR Bad Debt / CR AR)
+    /// Post a customer credit memo using the original invoice's exchange rate.
+    fn auto_post_credit_memo(&self, credit_memo_id: Uuid) -> Result<JournalEntry>;
+
     fn auto_post_write_off(&self, write_off_id: Uuid) -> Result<JournalEntry>;
 
     // Financial Reports
@@ -755,6 +789,13 @@ pub trait GeneralLedgerRepository: Send + Sync {
     /// posting the net unrealized gain/loss as a balanced adjusting entry.
     ///
     /// `base_currency` defaults to the store's configured base currency.
+    /// Compute and validate a historical FX revaluation without writing entries or a run record.
+    fn preview_revaluation(
+        &self,
+        as_of_date: NaiveDate,
+        base_currency: Option<Currency>,
+    ) -> Result<RevaluationResult>;
+
     fn revalue(
         &self,
         as_of_date: NaiveDate,

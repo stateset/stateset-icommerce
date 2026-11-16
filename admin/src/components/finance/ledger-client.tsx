@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Card, CardContent, Badge } from '@stateset/design';
 import { ScaleIcon } from '@heroicons/react/24/outline';
 import { getLedgerPageData } from '@/app/actions/finance';
+import PostingSettings from './posting-settings';
 import { formatMoney } from '@/lib/finance/format';
 import type { GlAccount, JournalEntry, TrialBalance } from '@/lib/embedded';
 
@@ -85,6 +86,8 @@ export default function LedgerClient() {
           />
         </label>
       </div>
+
+      <PostingSettings accounts={accounts} />
 
       <Card>
         <CardContent>
@@ -171,7 +174,17 @@ export default function LedgerClient() {
                     <td className="py-2 pr-4">{entry.entryDate}</td>
                     <td className="py-2 pr-4">{entry.description}</td>
                     <td className="py-2">
-                      <Badge variant={entry.status === 'posted' ? 'success' : 'outline'}>
+                      <Badge
+                        variant={
+                          entry.status === 'posted'
+                            ? 'success'
+                            : entry.status === 'voided'
+                              ? 'danger'
+                              : entry.status === 'reversed'
+                                ? 'warning'
+                                : 'outline'
+                        }
+                      >
                         {entry.status}
                       </Badge>
                     </td>

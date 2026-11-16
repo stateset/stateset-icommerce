@@ -1575,28 +1575,52 @@ impl PgCartRepository {
             )
             .await?;
 
-        // Promote the order inside the same transaction that creates it and
-        // completes the cart.
-        sqlx::query(
-            r#"UPDATE orders SET
-                status = $2,
-                payment_status = CASE WHEN $3 THEN $4 ELSE payment_status END,
-                updated_at = $5, version = version + 1
-            WHERE id = $1"#,
-        )
-        .bind(order.id)
-        .bind(OrderStatus::Confirmed.to_string())
-        .bind(mark_paid)
-        .bind(PaymentStatus::Paid.to_string())
-        .bind(Utc::now())
-        .execute(tx.as_mut())
-        .await
-        .map_err(map_db_error)?;
-        order.status = OrderStatus::Confirmed;
-        if mark_paid {
-            order.payment_status = PaymentStatus::Paid;
+        // `create_from_cart_in_tx` returns the order already minted for this
+        // cart when one exists, and that order may have moved on (cancelled,
+        // shipped, ...). Promoting it is a status transition like any other —
+        // the same guard as the SQLite twin — so a terminal order is never
+        // revived to `confirmed`.
+        if order.status != OrderStatus::Confirmed
+            && !order.status.can_transition_to(OrderStatus::Confirmed)
+        {
+            return Err(CommerceError::InvalidOrderStatusTransition {
+                from: order.status.to_string(),
+                to: OrderStatus::Confirmed.to_string(),
+            });
         }
-        order.version += 1;
+
+        // Promote the order inside the same transaction that creates it and
+        // completes the cart. The row is locked by the insert/upsert above;
+        // the version predicate still refuses a write over a stale read.
+        let target_payment_status =
+            if mark_paid { PaymentStatus::Paid } else { order.payment_status };
+        if order.status != OrderStatus::Confirmed || order.payment_status != target_payment_status {
+            let now = Utc::now();
+            let promoted = sqlx::query(
+                r#"UPDATE orders SET
+                    status = $2, payment_status = $3,
+                    updated_at = $4, version = version + 1
+                WHERE id = $1 AND version = $5"#,
+            )
+            .bind(order.id)
+            .bind(OrderStatus::Confirmed.to_string())
+            .bind(target_payment_status.to_string())
+            .bind(now)
+            .bind(order.version)
+            .execute(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+            if promoted.rows_affected() == 0 {
+                return Err(CommerceError::Conflict(format!(
+                    "order {} was modified concurrently during checkout",
+                    order.id
+                )));
+            }
+            order.status = OrderStatus::Confirmed;
+            order.payment_status = target_payment_status;
+            order.updated_at = now;
+            order.version += 1;
+        }
 
         // Consume the cart's coupon in the same transaction as the order:
         // usage counters advance under their limits, and a coupon exhausted

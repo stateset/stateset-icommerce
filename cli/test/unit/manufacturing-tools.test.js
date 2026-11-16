@@ -84,6 +84,11 @@ function makeManufacturingCommerce(overrides = {}) {
         status: 'planned',
         quantityToBuild: data.quantityToBuild,
       }),
+      configureStock: async (_id, _stock) => ({
+        id: _id,
+        workOrderNumber: mockWorkOrder.workOrderNumber,
+        status: 'planned',
+      }),
       start: async (_id) => ({
         id: _id,
         workOrderNumber: mockWorkOrder.workOrderNumber,
@@ -110,9 +115,9 @@ function makeManufacturingCommerce(overrides = {}) {
 // ============================================================================
 
 describe('manufacturingTools — module exports', () => {
-  it('exports an array of 11 tools', () => {
+  it('exports an array of 12 tools', () => {
     assert.ok(Array.isArray(manufacturingTools));
-    assert.equal(manufacturingTools.length, 11);
+    assert.equal(manufacturingTools.length, 12);
   });
 
   it('exports expected tool names', () => {
@@ -126,6 +131,7 @@ describe('manufacturingTools — module exports', () => {
       'list_work_orders',
       'get_work_order',
       'create_work_order',
+      'configure_work_order_stock',
       'start_work_order',
       'complete_work_order',
       'cancel_work_order',
@@ -174,6 +180,7 @@ describe('manufacturingTools — permission assignments', () => {
       'add_bom_component',
       'activate_bom',
       'create_work_order',
+      'configure_work_order_stock',
       'start_work_order',
       'complete_work_order',
     ];
@@ -536,6 +543,49 @@ describe('manufacturingTools — create_work_order handler', () => {
 // Handler: start_work_order (write, requires --apply)
 // ============================================================================
 
+describe('manufacturingTools — configure_work_order_stock handler', () => {
+  const stock = { sourceLocationId: 1, outputLocationId: 2, outputSku: 'FG-001' };
+
+  it('returns apply-guard error when allowApply is false', async () => {
+    const tool = findTool('configure_work_order_stock');
+    const result = await tool.handler({
+      commerce: makeManufacturingCommerce(),
+      params: { workOrderId: 'wo_001', stock },
+      allowApply: false,
+    });
+    assert.equal(result.success, false);
+    assert.ok(result.error.includes('--apply'));
+    assert.deepStrictEqual(result.wouldConfigure, { workOrderId: 'wo_001', stock });
+  });
+
+  it('passes the routing to the engine when allowApply is true', async () => {
+    const tool = findTool('configure_work_order_stock');
+    let received;
+    const result = await tool.handler({
+      commerce: makeManufacturingCommerce({
+        workOrders: {
+          configureStock: async (id, routing) => {
+            received = { id, routing };
+            return { id, workOrderNumber: 'WO-1001', status: 'planned' };
+          },
+        },
+      }),
+      params: { workOrderId: 'wo_001', stock },
+      allowApply: true,
+    });
+    assert.equal(result.success, true);
+    assert.deepStrictEqual(received, { id: 'wo_001', routing: stock });
+    assert.equal(result.workOrder.status, 'planned');
+  });
+
+  it('requires the full routing', () => {
+    const schema = findTool('configure_work_order_stock').inputSchema;
+    assert.ok(schema.workOrderId);
+    assert.equal(schema.stock.safeParse({ sourceLocationId: 1 }).success, false);
+    assert.equal(schema.stock.safeParse(stock).success, true);
+  });
+});
+
 describe('manufacturingTools — start_work_order handler', () => {
   it('returns apply-guard error when allowApply is false', async () => {
     const tool = findTool('start_work_order');
@@ -682,4 +732,43 @@ describe('manufacturingTools — error paths (empty commerce)', () => {
       }
     });
   }
+});
+
+describe('manufacturingTools — stock routing and exact quantities', () => {
+  it('forwards physical locations and exact build quantity', async () => {
+    const stock = { sourceLocationId: 2, outputLocationId: 3, outputSku: 'FINISHED' };
+    let received;
+    await findTool('create_work_order').handler({
+      commerce: {
+        workOrders: {
+          create: async (input) => {
+            received = input;
+            return mockWorkOrder;
+          },
+        },
+      },
+      params: { productId: 'prod_001', quantityToBuild: '1.234567890123456789', stock },
+      allowApply: true,
+    });
+    assert.deepEqual(received.stock, stock);
+    assert.equal(received.quantityToBuildExact, '1.234567890123456789');
+    assert.equal(received.quantityToBuild, undefined);
+  });
+
+  it('routes fractional string completions through the exact binding', async () => {
+    let received;
+    await findTool('complete_work_order').handler({
+      commerce: {
+        workOrders: {
+          completeExact: async (...args) => {
+            received = args;
+            return mockWorkOrder;
+          },
+        },
+      },
+      params: { workOrderId: 'wo_001', quantityCompleted: '0.125' },
+      allowApply: true,
+    });
+    assert.deepEqual(received, ['wo_001', '0.125']);
+  });
 });

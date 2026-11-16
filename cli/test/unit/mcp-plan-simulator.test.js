@@ -115,6 +115,37 @@ describe('createSimulateAgenticPlan', () => {
     });
   });
 
+  it('reports a step the capability scope excludes as refused, not unknown', async () => {
+    const message = "Tool 'delete_customer' is outside this toolkit's capability scope.";
+    const { simulate, calls } = makeSimulator({
+      getToolRuntimeMeta: (name) => ({
+        name,
+        permission: KNOWN.has(name) ? 'write' : 'unknown',
+        policyDomain: 'orders',
+        sideEffect: KNOWN.has(name) ? 'write' : 'unknown',
+        compensations: [],
+        idempotent: false,
+        ...(name === 'delete_customer'
+          ? { unavailable: { reason: 'outside_capability_scope', message, sideEffect: 'write' } }
+          : {}),
+      }),
+    });
+    const out = await simulate({
+      steps: [{ tool: 'delete_customer', params: { customerId: 'c1' } }, { tool: 'nope' }],
+    });
+    assert.equal(out.executable, false);
+    assert.equal(out.outcomes[0].status, 'permission_block');
+    assert.equal(out.outcomes[0].error, message);
+    assert.deepEqual(out.outcomes[0].permission, {
+      allowed: false,
+      preview: false,
+      reason: message,
+    });
+    assert.equal(out.outcomes[1].status, 'invalid');
+    assert.equal(out.outcomes[1].permission, null);
+    assert.equal(calls.policy.length, 0);
+  });
+
   it('maps policy and permission decisions to statuses', async () => {
     const { simulate } = makeSimulator({
       evaluatePolicy: async (tool, params) =>

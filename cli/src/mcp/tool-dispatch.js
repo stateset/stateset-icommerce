@@ -23,8 +23,13 @@ import { attachCommerceExecutionEvidence, replayEventHash } from './audit-envelo
 import { attachPaymentMetadataToResponse } from './mpp-payment.js';
 import { buildDeterministicMutationManifest } from './mutation-manifest.js';
 import { normalizeToolName } from './policy-helpers.js';
+import {
+  bindKernelToResultHash,
+  extractKernelReplayFields,
+  resolveKernelCorrelationId,
+} from './replay-kernel-fields.js';
 import { compactReplayValue } from './replay-sanitizer.js';
-import { isMutationPermission } from '../kernel-boundary.js';
+import { isKernelGovernedComposite, isMutationPermission } from '../kernel-boundary.js';
 import {
   RAW_TOOL_RESULT,
   attachContractToResponse,
@@ -32,6 +37,21 @@ import {
   normalizeToolError,
   normalizeToolResult,
 } from './tool-result-contract.js';
+import { deriveToolAnnotations } from './tool-annotations.js';
+
+/**
+ * The catalog guidance a refused status move carries (`allowedNext`,
+ * `transition`, and the hint naming the tool for each allowed move), for the
+ * text content of a response. Empty for any other failure.
+ */
+function transitionGuidanceFields(error) {
+  if (!error || error.transition === undefined) return {};
+  return {
+    ...(error.allowedNext ? { allowedNext: error.allowedNext } : {}),
+    transition: error.transition,
+    hint: error.hint,
+  };
+}
 
 /**
  * Build the dispatch helpers for one server instance.
@@ -142,6 +162,9 @@ export function createToolDispatch({
                 payload?.permission || permission,
                 status,
               );
+        // A governed call's kernel decision, lifted from the uncompacted
+        // result and bound into resultHash so the event signature covers it.
+        const kernel = payload?.kernel || null;
         const event = {
           eventId: randomUUID(),
           tool: name,
@@ -154,11 +177,12 @@ export function createToolDispatch({
           params: compactReplayValue(payload?.params || args || {}),
           paramsHash: replayEventHash(payload?.params || args || {}),
           result: payload?.result,
-          resultHash: replayEventHash(payload?.result || {}),
+          resultHash: bindKernelToResultHash(replayEventHash(payload?.result || {}), kernel),
           policy: compactReplayValue(payload?.policy || null),
           permission: compactReplayValue(payload?.permission || null),
           charge: compactReplayValue(payload?.charge || null),
           error: payload?.error || null,
+          ...(kernel ? { kernel } : {}),
           notes: compactReplayValue({
             ...(payload?.notes || {}),
             mutationManifest,
@@ -443,6 +467,7 @@ export function createToolDispatch({
           permission,
           charge,
           result: compactReplayValue(result),
+          kernel: extractKernelReplayFields(result),
           policy: {
             allowed: policy.allowed,
             domain: policy.domain,
@@ -518,10 +543,16 @@ export function createToolDispatch({
       stepIndex: 0,
       includeHooks: options.includeHooks ?? true,
       isRollback: options.isRollback || false,
+      // A direct call: in kernel strict mode only a top-level call may run a
+      // governed composite (see ./plan-step-executor.js).
+      topLevel: true,
       extra: {
         ...(options.extra || {}),
         idempotencyKey: options.idempotencyKey,
-        correlationId: options.correlationId,
+        // An explicit correlation id, else this call's request id; a value
+        // that is not a UUID (which the kernel would refuse) is replaced by a
+        // minted one.
+        correlationId: resolveKernelCorrelationId(options.correlationId ?? requestId),
         causationId: options.causationId,
         expectedVersion: options.expectedVersion,
         deadline: options.deadline,
@@ -534,6 +565,10 @@ export function createToolDispatch({
       },
     });
 
+    const rawResult = outcome[RAW_TOOL_RESULT];
+    // A preview outcome (no --apply) has no raw copy: its `result` is the
+    // kernel's uncompacted preview receipt, which carries a block too.
+    const kernel = extractKernelReplayFields(rawResult ?? outcome.result);
     await addAgenticReplayEvent({
       eventId: randomUUID(),
       tool: normalizedToolName,
@@ -547,11 +582,15 @@ export function createToolDispatch({
       params: compactReplayValue(outcome.params || params || {}),
       paramsHash: outcome.paramsHash || replayEventHash(outcome.params || params || {}),
       result: compactReplayValue(outcome.result || null),
-      resultHash: outcome.resultHash || replayEventHash(outcome.result || null),
+      resultHash: bindKernelToResultHash(
+        outcome.resultHash || replayEventHash(outcome.result || null),
+        kernel,
+      ),
       policy: compactReplayValue(outcome.policy || null),
       permission: compactReplayValue(outcome.permission || null),
       charge: compactReplayValue(outcome.charge || null),
       error: outcome.error || null,
+      ...(kernel ? { kernel } : {}),
       notes: compactReplayValue({
         directExecution: true,
         dryRun,
@@ -564,7 +603,6 @@ export function createToolDispatch({
     // The tool result contract (./tool-result-contract.js) decides `ok`; the
     // legacy `success` flag is kept and now also turns false when the tool's
     // own result says it failed (e.g. a rejected kernel receipt).
-    const rawResult = outcome[RAW_TOOL_RESULT];
     const contract = normalizeStepOutcome(outcome, rawResult);
     const { [RAW_TOOL_RESULT]: _raw, ...record } = outcome;
     const statusSucceeded =
@@ -607,14 +645,24 @@ export function createToolDispatch({
     const _policyDomain =
       toolDef?.policyDomain || TOOL_DOMAIN_BY_TOOL_NAME[name] || inferPolicyDomain(name);
 
-    return wrapTool(name, description, inputSchema, async (args, extra) => {
+    const adapted = wrapTool(name, description, inputSchema, async (args, extra) => {
       try {
+        // An MCP tool call is always top level. A governed composite runs no
+        // write itself, so it alone needs no typed command here; each step it
+        // runs goes through the step executor, which governs it as nested.
         const governed = executeGovernedTool
           ? await executeGovernedTool(name, args, {
               requestId: extra?.requestId,
               sessionId: extra?.sessionId,
               traceId: extra?.traceId,
-              requireGoverned: allowApply && isMutationPermission(toolDef.permission),
+              // Joins the kernel receipt (economic_context.correlation_id) to
+              // this call's replay event (kernel.correlationId). A transport's
+              // correlation id, else the request id; not a UUID -> minted.
+              correlationId: resolveKernelCorrelationId(extra?.correlationId ?? extra?.requestId),
+              requireGoverned:
+                allowApply &&
+                isMutationPermission(toolDef.permission) &&
+                !isKernelGovernedComposite(name),
             })
           : null;
         const result =
@@ -624,12 +672,19 @@ export function createToolDispatch({
             params: args,
             extra,
           }));
+        const outcome = normalizeToolResult(result, { toolName: name, params: args });
+        // A refused status move also carries its catalog guidance in the text,
+        // for clients that show the model only text content.
+        const text =
+          !outcome.ok && result && typeof result === 'object' && !Array.isArray(result)
+            ? { ...result, ...transitionGuidanceFields(outcome.error) }
+            : result;
         return attachContractToResponse(
-          { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] },
-          normalizeToolResult(result),
+          { content: [{ type: 'text', text: JSON.stringify(text, null, 2) }] },
+          outcome,
         );
       } catch (error) {
-        const outcome = normalizeToolError(error);
+        const outcome = normalizeToolError(error, { toolName: name, params: args });
         return attachContractToResponse(
           {
             content: [
@@ -639,6 +694,7 @@ export function createToolDispatch({
                   success: false,
                   error: outcome.error.message,
                   code: outcome.error.code,
+                  ...transitionGuidanceFields(outcome.error),
                 }),
               },
             ],
@@ -647,6 +703,10 @@ export function createToolDispatch({
         );
       }
     });
+    // Both transports read `annotations` off the adapted tool and pass it to
+    // `registerTool`: the agent-sdk server through createAnnotatedSdkMcpServer
+    // (./sdk-mcp-server.js), the v2 server through registerAdaptedTool.
+    return { ...adapted, annotations: deriveToolAnnotations(toolDef) };
   };
 
   return { wrapTool, executeTool, executeToolWithPayment, adaptTool };

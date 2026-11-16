@@ -76,4 +76,28 @@ describe('OrderPipeline', () => {
     render(<OrderPipeline />);
     expect(screen.getByText('Total Orders')).toBeInTheDocument();
   });
+
+  it('renders the engine-only partially shipped and refunded groups', () => {
+    useEmbeddedDataMock.mockReturnValue({
+      data: {
+        summary: {
+          totalOrders: 3,
+          totalValue: 300,
+          averageOrderValue: 100,
+          deliveredRate: 0,
+          inProgressCount: 2,
+          exceptionsCount: 0,
+        },
+        statusGroups: [
+          { key: 'partially_shipped', label: 'Partially shipped', count: 2, totalValue: 200 },
+          { key: 'refunded', label: 'Refunded', count: 1, totalValue: 100 },
+        ],
+      },
+      isLoading: false,
+      error: null,
+    });
+    render(<OrderPipeline />);
+    expect(screen.getAllByText('Partially shipped').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Refunded').length).toBeGreaterThan(0);
+  });
 });

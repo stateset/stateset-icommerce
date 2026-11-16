@@ -170,8 +170,22 @@ impl AccountsPayable {
     /// Approve a bill for payment.
     ///
     /// Transitions bill from draft/pending to approved status.
+    /// Approve with an identity established by the trusted host.
+    pub fn approve_bill_as(
+        &self,
+        id: Uuid,
+        actor: &str,
+        override_reason: Option<&str>,
+    ) -> Result<Bill> {
+        self.db.accounts_payable().approve_bill_as(id, actor, override_reason)
+    }
+
     pub fn approve_bill(&self, id: Uuid) -> Result<Bill> {
         self.db.accounts_payable().approve_bill(id)
+    }
+    /// Explicitly approve a three-way-match exception with a recorded reason.
+    pub fn approve_bill_with_override(&self, id: Uuid, reason: &str) -> Result<Bill> {
+        self.db.accounts_payable().approve_bill_with_override(id, reason)
     }
 
     /// Cancel a bill.
@@ -180,6 +194,11 @@ impl AccountsPayable {
     }
 
     /// Mark a bill as disputed.
+    /// Resolve a bill dispute without bypassing its prior approval state.
+    pub fn resolve_bill_dispute(&self, id: Uuid) -> Result<Bill> {
+        self.db.accounts_payable().resolve_bill_dispute(id)
+    }
+
     pub fn dispute_bill(&self, id: Uuid) -> Result<Bill> {
         self.db.accounts_payable().dispute_bill(id)
     }

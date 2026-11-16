@@ -138,6 +138,12 @@ export function createMcpEventStreamer(options = {}) {
       elapsedMs: payload.elapsedMs ?? null,
       raw: cloneValue(payload.raw || null),
     };
+    // A governed call's kernel decision (commandId, correlationId,
+    // receiptStatus, reasonCodes, ...; see ./mcp/replay-kernel-fields.js).
+    // Ungoverned events carry none, so the field is omitted for them.
+    if (payload.kernel && typeof payload.kernel === 'object') {
+      event.kernel = cloneValue(payload.kernel);
+    }
 
     return event;
   };

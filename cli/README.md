@@ -2,7 +2,7 @@
 
 AI-powered command-line interface for autonomous commerce operations.
 
-**Version:** 1.40.0
+**Version:** 1.41.0
 
 [![npm version](https://img.shields.io/npm/v/@stateset/cli.svg)](https://www.npmjs.com/package/@stateset/cli)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
@@ -531,6 +531,7 @@ stateset --apply --batch orders.txt --parallel 3
 | `stateset-doctor`          | Health check and diagnostics                                  |
 | `stateset-events`          | Event management and webhooks                                 |
 | `stateset-mcp-events`      | MCP event gateway (SSE + history + subscriptions)             |
+| `stateset-agent-report`    | Per-session report from the MCP replay log (read-only)        |
 | `stateset-sync`            | Verifiable Event Sync with sequencer                          |
 | `stateset-tutorial`        | Interactive tutorials and onboarding                          |
 | `stateset-completion`      | Shell completion scripts (bash/zsh/fish)                      |
@@ -1255,7 +1256,7 @@ Resources:
   vector          Hybrid vector search
 
 Note: direct mode covers only these 6 resources. The other engine domains
-(finance suite, WMS, EDI, supply chain, quality, etc. — 73 domains total) are
+(finance suite, WMS, EDI, supply chain, quality, etc. — 89 domains total) are
 available through the AI interface (`stateset "<request>"`) or any MCP client.
 See docs/TOOLS.md for the full catalog.
 ```
