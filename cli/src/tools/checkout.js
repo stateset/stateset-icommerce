@@ -185,12 +185,17 @@ export const checkoutTools = [
   // ========================================================================
   {
     name: 'list_payment_links',
-    description: 'List payment links with optional filters by status and customer.',
+    description:
+      'List payment links with optional filters by status and customer. Each link carries ' +
+      '`expired`: true when it is still active but its expiry has passed.',
     inputSchema: {
       status: z
         .enum(['active', 'converted', 'revoked', 'expired'])
         .optional()
-        .describe('Filter by status'),
+        .describe(
+          'Filter by status. `expired` is derived (an active link past its expiry); `active` ' +
+            'lists only links that can still be used.',
+        ),
       customerId: z.string().min(1).optional().describe('Filter by customer ID'),
       limit: z.number().int().min(1).max(500).optional().default(50).describe('Maximum results'),
       offset: z.number().int().min(0).optional().default(0).describe('Offset for pagination'),

@@ -225,7 +225,15 @@ function payloadFor(toolName, params, issuedAt = new Date(), actorAddress = null
       return {
         order_id: params.orderId,
         tracking_number: params.trackingNumber || null,
-        lines: params.lines || null,
+        // The tool takes `{ orderItemId, quantity }` lines; the command takes
+        // `ShipmentLineInput` (`order_item_id`). Omitted -> ship everything left.
+        lines:
+          Array.isArray(params.lines) && params.lines.length > 0
+            ? params.lines.map((line) => ({
+                order_item_id: line.orderItemId ?? line.order_item_id,
+                quantity: line.quantity,
+              }))
+            : null,
       };
     case 'approve_return':
     case 'reject_return':

@@ -9,6 +9,8 @@ node ./scripts/ci/generate_mcp_api_coverage.mjs
 ```
 
 Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`.
+"Fully covered" means every audited binding method is either called by a tool or
+listed, with its reason, as deliberately unexposed.
 
 ## Summary
 
@@ -20,7 +22,8 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 | Mapped getters | 68 |
 | Audited classes | 32 |
 | Audited methods | 461 |
-| Mapped audited methods | 461 |
+| Mapped audited methods | 459 |
+| Deliberately unexposed audited methods | 2 |
 | Fully covered | yes |
 
 ## Commerce Getter Coverage
@@ -98,40 +101,40 @@ Machine-readable output lives at `artifacts/compatibility/mcp-api-coverage.json`
 
 ## Audited Class Coverage
 
-| Class | Methods | Mapped | Uncovered | Stale mappings | Invalid tool refs |
-| --- | --- | --- | --- | --- | --- |
-| `AccountsPayable` | 24 | 24 | 0 | 0 | 0 |
-| `AccountsReceivable` | 15 | 15 | 0 | 0 | 0 |
-| `Analytics` | 14 | 14 | 0 | 0 | 0 |
-| `Backorders` | 21 | 21 | 0 | 0 | 0 |
-| `Bom` | 7 | 7 | 0 | 0 | 0 |
-| `Carts` | 33 | 33 | 0 | 0 | 0 |
-| `CostAccounting` | 5 | 5 | 0 | 0 | 0 |
-| `Credit` | 9 | 9 | 0 | 0 | 0 |
-| `CurrencyOperations` | 16 | 16 | 0 | 0 | 0 |
-| `Customers` | 13 | 13 | 0 | 0 | 0 |
-| `CustomObjects` | 12 | 12 | 0 | 0 | 0 |
-| `Fulfillment` | 14 | 14 | 0 | 0 | 0 |
-| `GeneralLedger` | 27 | 27 | 0 | 0 | 0 |
-| `Inventory` | 7 | 7 | 0 | 0 | 0 |
-| `Invoices` | 9 | 9 | 0 | 0 | 0 |
-| `Lots` | 12 | 12 | 0 | 0 | 0 |
-| `Orders` | 10 | 10 | 0 | 0 | 0 |
-| `Payments` | 16 | 16 | 0 | 0 | 0 |
-| `Products` | 16 | 16 | 0 | 0 | 0 |
-| `Promotions` | 20 | 20 | 0 | 0 | 0 |
-| `PurchaseOrders` | 13 | 13 | 0 | 0 | 0 |
-| `Quality` | 17 | 17 | 0 | 0 | 0 |
-| `Receiving` | 18 | 18 | 0 | 0 | 0 |
-| `Returns` | 13 | 13 | 0 | 0 | 0 |
-| `Serials` | 9 | 9 | 0 | 0 | 0 |
-| `Shipments` | 10 | 10 | 0 | 0 | 0 |
-| `Subscriptions` | 19 | 19 | 0 | 0 | 0 |
-| `Tax` | 18 | 18 | 0 | 0 | 0 |
-| `Warehouse` | 10 | 10 | 0 | 0 | 0 |
-| `Warranties` | 8 | 8 | 0 | 0 | 0 |
-| `WorkOrders` | 9 | 9 | 0 | 0 | 0 |
-| `X402` | 17 | 17 | 0 | 0 | 0 |
+| Class | Methods | Mapped | Unexposed | Uncovered | Stale mappings | Invalid tool refs |
+| --- | --- | --- | --- | --- | --- | --- |
+| `AccountsPayable` | 24 | 24 | 0 | 0 | 0 | 0 |
+| `AccountsReceivable` | 15 | 15 | 0 | 0 | 0 | 0 |
+| `Analytics` | 14 | 14 | 0 | 0 | 0 | 0 |
+| `Backorders` | 21 | 21 | 0 | 0 | 0 | 0 |
+| `Bom` | 7 | 7 | 0 | 0 | 0 | 0 |
+| `Carts` | 33 | 33 | 0 | 0 | 0 | 0 |
+| `CostAccounting` | 5 | 5 | 0 | 0 | 0 | 0 |
+| `Credit` | 9 | 9 | 0 | 0 | 0 | 0 |
+| `CurrencyOperations` | 16 | 16 | 0 | 0 | 0 | 0 |
+| `Customers` | 13 | 13 | 0 | 0 | 0 | 0 |
+| `CustomObjects` | 12 | 12 | 0 | 0 | 0 | 0 |
+| `Fulfillment` | 14 | 14 | 0 | 0 | 0 | 0 |
+| `GeneralLedger` | 27 | 27 | 0 | 0 | 0 | 0 |
+| `Inventory` | 7 | 7 | 0 | 0 | 0 | 0 |
+| `Invoices` | 9 | 9 | 0 | 0 | 0 | 0 |
+| `Lots` | 12 | 12 | 0 | 0 | 0 | 0 |
+| `Orders` | 10 | 10 | 0 | 0 | 0 | 0 |
+| `Payments` | 16 | 14 | 2 | 0 | 0 | 0 |
+| `Products` | 16 | 16 | 0 | 0 | 0 | 0 |
+| `Promotions` | 20 | 20 | 0 | 0 | 0 | 0 |
+| `PurchaseOrders` | 13 | 13 | 0 | 0 | 0 | 0 |
+| `Quality` | 17 | 17 | 0 | 0 | 0 | 0 |
+| `Receiving` | 18 | 18 | 0 | 0 | 0 | 0 |
+| `Returns` | 13 | 13 | 0 | 0 | 0 | 0 |
+| `Serials` | 9 | 9 | 0 | 0 | 0 | 0 |
+| `Shipments` | 10 | 10 | 0 | 0 | 0 | 0 |
+| `Subscriptions` | 19 | 19 | 0 | 0 | 0 | 0 |
+| `Tax` | 18 | 18 | 0 | 0 | 0 | 0 |
+| `Warehouse` | 10 | 10 | 0 | 0 | 0 | 0 |
+| `Warranties` | 8 | 8 | 0 | 0 | 0 | 0 |
+| `WorkOrders` | 9 | 9 | 0 | 0 | 0 | 0 |
+| `X402` | 17 | 17 | 0 | 0 | 0 | 0 |
 
 ## Uncovered Commerce Getters
 
@@ -144,6 +147,11 @@ None.
 ## Uncovered Audited Methods
 
 None.
+
+## Deliberately Unexposed Audited Methods
+
+- `Payments.completeRefund`: No MCP tool completes a refund: create_refund records it as pending and settlement happens outside the tool surface.
+- `Payments.failRefund`: No MCP tool fails a refund: create_refund records it as pending and settlement happens outside the tool surface.
 
 ## Stale Audited Method Mappings
 

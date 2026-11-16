@@ -7,6 +7,26 @@
 
 import { z } from 'zod';
 
+import { acceptedFrom, allowedNextField } from '../state-machine-catalog.js';
+import { statusEnum } from '../utils/status-schema.js';
+
+/** "a", "a or b", "a, b or c". */
+const listOr = (items) =>
+  items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} or ${items.at(-1)}`;
+
+/**
+ * The statuses update_order_status offers: every catalogued order move a plain
+ * status update can make. shipped/partially_shipped belong to ship_order (the
+ * kernel refuses them here with commerce.shipment_command_required), and no
+ * state moves back to pending.
+ */
+const ORDER_STATUS_UPDATES = ['confirmed', 'processing', 'delivered', 'cancelled', 'refunded'];
+/** "confirmed (from pending), processing (from confirmed), ..." -- from the catalog. */
+const movesInto = (targets) =>
+  targets.map((to) => `${to} (from ${listOr(acceptedFrom('order', to))})`).join(', ');
+const SHIPPABLE_FROM = acceptedFrom('order', 'shipped');
+const CANCELLABLE_FROM = acceptedFrom('order', 'cancelled');
+
 /**
  * Order tool definitions
  */
@@ -56,7 +76,8 @@ export const orderTools = [
   {
     name: 'get_order',
     description:
-      'Get a specific order by ID or order number. Returns full order details including line items.',
+      'Get a specific order by ID or order number. Returns full order details including line ' +
+      'items, and `allowedNext`: the statuses the order can move to from its current one.',
     inputSchema: {
       identifier: z.string().min(1).describe('Order ID (UUID) or order number'),
     },
@@ -102,6 +123,7 @@ export const orderTools = [
           createdAt: order.createdAt,
           updatedAt: order.updatedAt,
         },
+        ...allowedNextField('order', order.status),
       };
     },
   },
@@ -161,20 +183,18 @@ export const orderTools = [
   {
     name: 'update_order_status',
     description:
-      'Update the status of an order. Valid statuses: pending, confirmed, processing, shipped, delivered, cancelled, refunded.',
+      `Move an order to a new status: ${movesInto(ORDER_STATUS_UPDATES)}. The engine refuses ` +
+      'any other move; get_order returns `allowedNext` for an order. Shipping is not a status ' +
+      'update: call ship_order (pass `lines` to ship part of the order). cancel_order also ' +
+      'cancels. Cancelling is refused while captured payments still hold money (refund first).',
     inputSchema: {
       orderId: z.string().min(1).describe('Order ID (UUID)'),
-      status: z
-        .enum([
-          'pending',
-          'confirmed',
-          'processing',
-          'shipped',
-          'delivered',
-          'cancelled',
-          'refunded',
-        ])
-        .describe('New order status'),
+      status: statusEnum(ORDER_STATUS_UPDATES, {
+        shipped: 'shipping is its own operation; call ship_order.',
+        partially_shipped:
+          'shipping is its own operation; call ship_order with `lines` for the units shipped now.',
+        pending: 'an order is pending only until it is confirmed; nothing moves back to pending.',
+      }).describe('New order status'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
@@ -205,21 +225,52 @@ export const orderTools = [
 
   {
     name: 'ship_order',
-    description: 'Mark an order as shipped with optional tracking number.',
+    description:
+      `Ship an order (the engine accepts this from ${listOr(SHIPPABLE_FROM)}), with an optional ` +
+      'tracking number. Omit `lines` to ship every remaining unit (-> shipped); pass `lines` to ' +
+      'ship part of the order (-> partially_shipped until every unit has shipped). This is the ' +
+      'only way an order reaches shipped or partially_shipped.',
     inputSchema: {
       orderId: z.string().min(1).describe('Order ID (UUID)'),
       trackingNumber: z.string().optional().describe('Shipping tracking number'),
+      lines: z
+        .array(
+          z.object({
+            orderItemId: z.string().min(1).describe('Order line (item) ID being shipped'),
+            quantity: z
+              .number()
+              .int()
+              .positive()
+              .describe('Units of that line shipped now (at most what is left to ship)'),
+          }),
+        )
+        .min(1)
+        .max(500)
+        .optional()
+        .describe('Ship only these units (a partial shipment). Omit to ship everything remaining'),
     },
     permission: 'write',
     handler: async ({ commerce, params, allowApply }) => {
-      const { orderId, trackingNumber } = params;
+      const { orderId, trackingNumber, lines } = params;
 
       if (!allowApply) {
         return {
           success: false,
           error: 'Ship operation not allowed. The --apply flag must be set.',
           hint: 'Run with --apply to enable write operations.',
-          wouldShip: { orderId, trackingNumber },
+          wouldShip: { orderId, trackingNumber, ...(lines ? { lines } : {}) },
+        };
+      }
+
+      // The binding's direct `ship` ships every remaining unit; per-line
+      // shipment runs only as the governed `orders.ship` kernel command.
+      if (Array.isArray(lines) && lines.length > 0) {
+        return {
+          success: false,
+          error:
+            'A partial shipment (`lines`) runs only through the governed kernel command ' +
+            'orders.ship; this direct path can ship every remaining unit only.',
+          hint: 'Configure the kernel, or omit `lines` to ship the whole order.',
         };
       }
 
@@ -240,7 +291,10 @@ export const orderTools = [
 
   {
     name: 'cancel_order',
-    description: 'Cancel an order. Only pending or confirmed orders can be cancelled.',
+    description:
+      `Cancel an order. The engine accepts this from ${listOr(CANCELLABLE_FROM)}; once an ` +
+      'order has shipped, use a return instead. Refused while captured payments still hold ' +
+      'money: refund them first.',
     inputSchema: {
       orderId: z.string().min(1).describe('Order ID (UUID)'),
     },

@@ -6,7 +6,9 @@
  */
 
 import { z } from 'zod';
+import { allowedNextField } from '../state-machine-catalog.js';
 import { applyRequired } from '../utils/apply-guard.js';
+import { statusEnum } from '../utils/status-schema.js';
 
 const withPolicyDomain = (policyDomain, tools) => tools.map((tool) => ({ policyDomain, ...tool }));
 
@@ -73,7 +75,9 @@ export const customerTools = withPolicyDomain('customers', [
 
   {
     name: 'get_customer',
-    description: 'Get a specific customer by ID or email address.',
+    description:
+      'Get a specific customer by ID or email address, with `allowedNext`: the statuses the ' +
+      'customer can move to from its current one.',
     inputSchema: {
       identifier: z.string().min(1).describe('Customer ID (UUID) or email address'),
     },
@@ -92,7 +96,11 @@ export const customerTools = withPolicyDomain('customers', [
         return { success: false, error: 'Customer not found' };
       }
 
-      return { success: true, customer: customerSummary(customer) };
+      return {
+        success: true,
+        customer: customerSummary(customer),
+        ...allowedNextField('customer', customer.status),
+      };
     },
   },
 
@@ -139,17 +147,20 @@ export const customerTools = withPolicyDomain('customers', [
   {
     name: 'update_customer',
     description:
-      'Update an existing customer. Only the fields provided are changed (email, name, phone, status, marketing opt-in).',
+      'Update an existing customer. Only the fields provided are changed (email, name, phone, ' +
+      'status, marketing opt-in). Status moves between active, inactive and suspended; deleting ' +
+      'a customer is its own operation: delete_customer.',
     inputSchema: {
       customerId: z.string().min(1).describe('Customer ID (UUID)'),
       email: z.string().email().optional().describe('New email address'),
       firstName: z.string().min(1).max(100).optional().describe('New first name'),
       lastName: z.string().min(1).max(100).optional().describe('New last name'),
       phone: z.string().max(30).optional().describe('New phone number'),
-      status: z
-        .enum(['active', 'inactive', 'suspended', 'deleted'])
+      status: statusEnum(['active', 'inactive', 'suspended'], {
+        deleted: 'deleting a customer is its own operation; call delete_customer.',
+      })
         .optional()
-        .describe('New customer status'),
+        .describe('New customer status (to delete a customer, call delete_customer)'),
       acceptsMarketing: z.boolean().optional().describe('Whether customer accepts marketing'),
     },
     permission: 'write',
@@ -172,7 +183,9 @@ export const customerTools = withPolicyDomain('customers', [
 
   {
     name: 'delete_customer',
-    description: 'Delete a customer (soft delete).',
+    description:
+      'Delete a customer (soft delete). This is the only way a customer reaches the deleted ' +
+      'status, which is final.',
     inputSchema: {
       customerId: z.string().min(1).describe('Customer ID (UUID)'),
     },

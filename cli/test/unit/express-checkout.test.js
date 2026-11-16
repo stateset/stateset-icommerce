@@ -570,6 +570,39 @@ describe('listPaymentLinks', () => {
     assert.equal(result.length, 0);
   });
 
+  it('derives expired: an active link past its expiry, never stored', () => {
+    const store = makeStore();
+    const links = createExpressCheckout(store);
+    const lapsed = links.createPaymentLink({ items: sampleItems() });
+    const live = links.createPaymentLink({ items: sampleItems() });
+    const forever = links.createPaymentLink({ items: sampleItems(), expiresIn: null });
+    const revoked = links.createPaymentLink({ items: sampleItems() });
+    links.revokePaymentLink(revoked.linkId);
+    store.db
+      .prepare('UPDATE payment_links SET expires_at = ? WHERE id IN (?, ?)')
+      .run('2000-01-01T00:00:00.000Z', lapsed.linkId, revoked.linkId);
+
+    const expired = links.listPaymentLinks({ status: 'expired' });
+    assert.deepEqual(
+      expired.map((link) => link.id),
+      [lapsed.linkId],
+    );
+    assert.equal(expired[0].status, 'active', 'the stored status is unchanged');
+    assert.equal(expired[0].expired, true);
+
+    const active = links.listPaymentLinks({ status: 'active' });
+    assert.deepEqual(
+      new Set(active.map((link) => link.id)),
+      new Set([live.linkId, forever.linkId]),
+    );
+    assert.ok(active.every((link) => link.expired === false));
+    // A revoked link is revoked, not expired, whatever its expiry.
+    assert.deepEqual(
+      links.listPaymentLinks({ status: 'revoked' }).map((link) => [link.id, link.expired]),
+      [[revoked.linkId, false]],
+    );
+  });
+
   it('orders by created_at descending', () => {
     const l1 = svc.createPaymentLink({ items: sampleItems() });
     const l2 = svc.createPaymentLink({ items: sampleItems() });

@@ -93,8 +93,27 @@ describe('MCP tool coverage', () => {
       for (const [className, coverage] of Object.entries(AUDITED_CLASS_METHOD_TOOL_COVERAGE)) {
         const bindingMethods = getBindingClassMethodNames(source, className);
         const exportedToolNames = new Set(coverage.tools.map((tool) => tool.name));
+        // A method deliberately behind no tool is declared, with its reason,
+        // instead of being credited to a tool that never calls it.
+        const unexposed = coverage.unexposedMethods ?? {};
+        for (const [methodName, reason] of Object.entries(unexposed)) {
+          assert.ok(
+            typeof reason === 'string' && reason.length > 0,
+            `${className}.${methodName}() is declared unexposed without a reason`,
+          );
+          assert.ok(
+            bindingMethods.has(methodName),
+            `Stale unexposed method "${className}.${methodName}()"`,
+          );
+          assert.equal(
+            coverage.methodToTools[methodName],
+            undefined,
+            `${className}.${methodName}() is both mapped and declared unexposed`,
+          );
+        }
 
         for (const methodName of bindingMethods) {
+          if (unexposed[methodName]) continue;
           assert.ok(
             coverage.methodToTools[methodName],
             `Missing audited method coverage mapping for ${className}.${methodName}()`,

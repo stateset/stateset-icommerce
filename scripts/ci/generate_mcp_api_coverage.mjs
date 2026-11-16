@@ -40,6 +40,7 @@ function renderMarkdownCoverage(coverage) {
     ['Audited classes', String(coverage.totalAuditedClasses)],
     ['Audited methods', String(coverage.totalAuditedMethods)],
     ['Mapped audited methods', String(coverage.mappedAuditedMethods)],
+    ['Deliberately unexposed audited methods', String(coverage.unexposedAuditedMethods.length)],
     ['Fully covered', coverage.fullyCovered ? 'yes' : 'no'],
   ];
 
@@ -53,6 +54,7 @@ function renderMarkdownCoverage(coverage) {
     `\`${entry.className}\``,
     String(entry.methodCount),
     String(entry.mappedMethodCount),
+    String(entry.unexposedMethods.length),
     String(entry.uncoveredMethods.length),
     String(entry.staleMappedMethods.length),
     String(entry.invalidToolReferences.length),
@@ -69,6 +71,8 @@ node ./scripts/ci/generate_mcp_api_coverage.mjs
 \`\`\`
 
 Machine-readable output lives at \`artifacts/compatibility/mcp-api-coverage.json\`.
+"Fully covered" means every audited binding method is either called by a tool or
+listed, with its reason, as deliberately unexposed.
 
 ## Summary
 
@@ -81,13 +85,18 @@ ${renderMarkdownTable(['Getter', 'Mapped module', 'Tools'], getterRows)}
 ## Audited Class Coverage
 
 ${renderMarkdownTable(
-  ['Class', 'Methods', 'Mapped', 'Uncovered', 'Stale mappings', 'Invalid tool refs'],
+  ['Class', 'Methods', 'Mapped', 'Unexposed', 'Uncovered', 'Stale mappings', 'Invalid tool refs'],
   auditedRows,
 )}
 
 ${renderListSection('Uncovered Commerce Getters', coverage.uncoveredCommerceGetters)}
 ${renderListSection('Stale Getter Mappings', coverage.staleGetterMappings)}
 ${renderListSection('Uncovered Audited Methods', coverage.uncoveredAuditedMethods)}
+${renderListSection(
+  'Deliberately Unexposed Audited Methods',
+  coverage.unexposedAuditedMethods,
+  ({ method, reason }) => `- \`${method}\`: ${reason}`,
+)}
 ${renderListSection('Stale Audited Method Mappings', coverage.staleAuditedMethodMappings)}
 ${renderListSection('Invalid Audited Tool References', coverage.invalidAuditedToolReferences)}
 `;

@@ -6,7 +6,9 @@
  */
 
 import { z } from 'zod';
+import { allowedNextField } from '../state-machine-catalog.js';
 import { applyRequired } from '../utils/apply-guard.js';
+import { resolveStatusAlias, statusFilter } from '../utils/status-schema.js';
 import {
   capturePaymentIntent,
   cancelPaymentIntent,
@@ -34,6 +36,43 @@ const agentMoneyAmount = z
 /**
  * Payment tool definitions
  */
+/**
+ * Status filters over what the provider runtime stores (./providers/payments.js).
+ * Intents follow Stripe's vocabulary: they are created `requires_capture` (manual
+ * capture) or `succeeded` (automatic), a failed payment returns to
+ * `requires_payment_method`, and cancellation is spelled `canceled`.
+ * Settlements and batches are recorded `paid` and turn `failed` on a failed
+ * payout. Older filter values with a stored equivalent stay accepted as aliases.
+ */
+const INTENT_STATUSES = [
+  'requires_payment_method',
+  'requires_capture',
+  'partially_captured',
+  'succeeded',
+  'partially_refunded',
+  'refunded',
+  'canceled',
+];
+const INTENT_STATUS_ALIASES = { cancelled: 'canceled', failed: 'requires_payment_method' };
+const INTENT_STATUS_REDIRECTS = {
+  pending:
+    'intents are never stored as pending; a new intent is requires_capture (manual capture) or succeeded (automatic).',
+  requires_action:
+    'intents are never stored as requires_action; a new intent is requires_capture (manual capture) or succeeded (automatic).',
+};
+const intentStatusFilter = () =>
+  statusFilter(INTENT_STATUSES, {
+    subject: 'payment intent',
+    aliases: INTENT_STATUS_ALIASES,
+    redirects: INTENT_STATUS_REDIRECTS,
+  });
+const SETTLEMENT_STATUSES = ['paid', 'failed'];
+const SETTLEMENT_STATUS_ALIASES = { completed: 'paid' };
+const SETTLEMENT_STATUS_REDIRECTS = {
+  pending: 'settlements are recorded as paid when their batch settles; none is ever pending.',
+  processing: 'settlements are recorded as paid when their batch settles; none is ever processing.',
+};
+
 export const paymentTools = [
   {
     name: 'list_payments',
@@ -49,7 +88,9 @@ export const paymentTools = [
 
   {
     name: 'get_payment',
-    description: 'Get a payment by ID.',
+    description:
+      'Get a payment by ID, with its refunds and `allowedNext`: the statuses the payment can ' +
+      'move to from its current one.',
     inputSchema: {
       paymentId: z.string().min(1).describe('Payment ID'),
     },
@@ -63,9 +104,10 @@ export const paymentTools = [
         payment && typeof commerce.payments.getRefunds === 'function'
           ? await commerce.payments.getRefunds(paymentId)
           : undefined;
+      const allowedNext = payment ? allowedNextField('payment', payment.status) : {};
       return refunds === undefined
-        ? { success: true, payment }
-        : { success: true, payment, refunds };
+        ? { success: true, payment, ...allowedNext }
+        : { success: true, payment, refunds, ...allowedNext };
     },
   },
 
@@ -284,10 +326,7 @@ export const paymentTools = [
     description: 'List provider-backed payment intents with optional filtering.',
     inputSchema: {
       providerId: z.string().optional().describe('Filter by provider ID'),
-      status: z
-        .enum(['pending', 'requires_action', 'succeeded', 'failed', 'cancelled'])
-        .optional()
-        .describe('Filter by intent status'),
+      status: intentStatusFilter(),
       orderId: z.string().optional().describe('Filter by order ID'),
       customerId: z.string().optional().describe('Filter by customer ID'),
       limit: z.number().int().min(1).max(500).optional().describe('Maximum intents to return'),
@@ -296,7 +335,7 @@ export const paymentTools = [
     handler: async ({ params }) => {
       const intents = listPaymentIntents({
         providerId: params.providerId,
-        status: params.status,
+        status: resolveStatusAlias(params.status, INTENT_STATUS_ALIASES),
         orderId: params.orderId,
         customerId: params.customerId,
         limit: params.limit,
@@ -314,10 +353,11 @@ export const paymentTools = [
     description: 'List settlement records produced by provider payout reconciliation.',
     inputSchema: {
       providerId: z.string().optional().describe('Filter by provider ID'),
-      status: z
-        .enum(['pending', 'completed', 'failed'])
-        .optional()
-        .describe('Filter by settlement status'),
+      status: statusFilter(SETTLEMENT_STATUSES, {
+        subject: 'settlement',
+        aliases: SETTLEMENT_STATUS_ALIASES,
+        redirects: SETTLEMENT_STATUS_REDIRECTS,
+      }),
       batchId: z.string().optional().describe('Filter by settlement batch ID'),
       payoutReference: z.string().optional().describe('Filter by payout reference ID'),
       intentId: z.string().optional().describe('Filter by payment intent ID'),
@@ -329,7 +369,7 @@ export const paymentTools = [
     handler: async ({ params }) => {
       const settlements = listPaymentSettlements({
         providerId: params.providerId,
-        status: params.status,
+        status: resolveStatusAlias(params.status, SETTLEMENT_STATUS_ALIASES),
         batchId: params.batchId,
         payoutReference: params.payoutReference,
         intentId: params.intentId,
@@ -350,10 +390,11 @@ export const paymentTools = [
     description: 'List provider payout batches generated from settlement runs.',
     inputSchema: {
       providerId: z.string().optional().describe('Filter by provider ID'),
-      status: z
-        .enum(['pending', 'processing', 'completed', 'failed'])
-        .optional()
-        .describe('Filter by batch status'),
+      status: statusFilter(SETTLEMENT_STATUSES, {
+        subject: 'settlement batch',
+        aliases: SETTLEMENT_STATUS_ALIASES,
+        redirects: SETTLEMENT_STATUS_REDIRECTS,
+      }),
       payoutReference: z.string().optional().describe('Filter by payout reference ID'),
       limit: z.number().int().min(1).max(500).optional().describe('Maximum batches to return'),
     },
@@ -361,7 +402,7 @@ export const paymentTools = [
     handler: async ({ params }) => {
       const batches = listPaymentSettlementBatches({
         providerId: params.providerId,
-        status: params.status,
+        status: resolveStatusAlias(params.status, SETTLEMENT_STATUS_ALIASES),
         payoutReference: params.payoutReference,
         limit: params.limit,
       });
@@ -429,10 +470,7 @@ export const paymentTools = [
       'Reconcile payment intents against settlement records to find pending settlement or over-settlement drift.',
     inputSchema: {
       providerId: z.string().optional().describe('Filter by provider ID'),
-      status: z
-        .enum(['pending', 'requires_action', 'succeeded', 'failed', 'cancelled'])
-        .optional()
-        .describe('Filter by payment intent status'),
+      status: intentStatusFilter(),
       orderId: z.string().optional().describe('Filter by order ID'),
       customerId: z.string().optional().describe('Filter by customer ID'),
       intentId: z.string().optional().describe('Filter by intent ID'),
@@ -446,7 +484,7 @@ export const paymentTools = [
     handler: async ({ params }) => {
       const reconciliation = reconcilePaymentProvider({
         providerId: params.providerId,
-        status: params.status,
+        status: resolveStatusAlias(params.status, INTENT_STATUS_ALIASES),
         orderId: params.orderId,
         customerId: params.customerId,
         intentId: params.intentId,

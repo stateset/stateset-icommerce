@@ -429,8 +429,19 @@ export function createExpressCheckout(store) {
 
     const conditions = [];
     const params = [];
+    const now = new Date().toISOString();
 
-    if (status) {
+    // `expired` is derived, never stored: an active link whose expiry has
+    // passed (as resolvePaymentLink reports it). `active` therefore means a
+    // link that can still be used. Expiries are ISO-8601 UTC strings, which
+    // compare in time order.
+    if (status === 'expired') {
+      conditions.push("status = 'active' AND expires_at IS NOT NULL AND expires_at < ?");
+      params.push(now);
+    } else if (status === 'active') {
+      conditions.push("status = 'active' AND (expires_at IS NULL OR expires_at >= ?)");
+      params.push(now);
+    } else if (status) {
       conditions.push('status = ?');
       params.push(status);
     }
@@ -444,7 +455,10 @@ export function createExpressCheckout(store) {
     params.push(limit, offset);
 
     const rows = db.prepare(sql).all(...params);
-    return rows.map(_parseRow);
+    return rows.map((row) => ({
+      ..._parseRow(row),
+      expired: row.status === 'active' && row.expires_at !== null && row.expires_at < now,
+    }));
   }
 
   /**

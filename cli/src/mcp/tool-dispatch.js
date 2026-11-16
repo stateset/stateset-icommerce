@@ -40,6 +40,20 @@ import {
 import { deriveToolAnnotations } from './tool-annotations.js';
 
 /**
+ * The catalog guidance a refused status move carries (`allowedNext`,
+ * `transition`, and the hint naming the tool for each allowed move), for the
+ * text content of a response. Empty for any other failure.
+ */
+function transitionGuidanceFields(error) {
+  if (!error || error.transition === undefined) return {};
+  return {
+    ...(error.allowedNext ? { allowedNext: error.allowedNext } : {}),
+    transition: error.transition,
+    hint: error.hint,
+  };
+}
+
+/**
  * Build the dispatch helpers for one server instance.
  *
  * @param {{
@@ -658,12 +672,19 @@ export function createToolDispatch({
             params: args,
             extra,
           }));
+        const outcome = normalizeToolResult(result, { toolName: name, params: args });
+        // A refused status move also carries its catalog guidance in the text,
+        // for clients that show the model only text content.
+        const text =
+          !outcome.ok && result && typeof result === 'object' && !Array.isArray(result)
+            ? { ...result, ...transitionGuidanceFields(outcome.error) }
+            : result;
         return attachContractToResponse(
-          { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] },
-          normalizeToolResult(result),
+          { content: [{ type: 'text', text: JSON.stringify(text, null, 2) }] },
+          outcome,
         );
       } catch (error) {
-        const outcome = normalizeToolError(error);
+        const outcome = normalizeToolError(error, { toolName: name, params: args });
         return attachContractToResponse(
           {
             content: [
@@ -673,6 +694,7 @@ export function createToolDispatch({
                   success: false,
                   error: outcome.error.message,
                   code: outcome.error.code,
+                  ...transitionGuidanceFields(outcome.error),
                 }),
               },
             ],

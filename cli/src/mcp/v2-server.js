@@ -170,7 +170,10 @@ function installToolCallContract(server, tools, servicesReady) {
     } catch (error) {
       if (error instanceof ProtocolError && error.code === ProtocolErrorCode.UrlElicitationRequired)
         throw error;
-      const outcome = normalizeToolError(error);
+      const outcome = normalizeToolError(error, {
+        toolName: tool.name,
+        params: request.params.arguments,
+      });
       return attachContractToResponse(
         {
           content: [

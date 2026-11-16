@@ -1754,7 +1754,7 @@
     },
     {
       "name": "add_return_tracking",
-      "description": "Add a return-shipping tracking number and mark the return in transit.",
+      "description": "Add a return-shipping tracking number and mark the return in transit (the engine accepts this from approved). This is the step before mark_return_received.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__add_return_tracking",
@@ -2510,7 +2510,7 @@
     },
     {
       "name": "approve_return",
-      "description": "Approve a return request.",
+      "description": "Approve a return request (the engine accepts this from requested).",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__approve_return",
@@ -2807,7 +2807,7 @@
     },
     {
       "name": "cancel_order",
-      "description": "Cancel an order. Only pending or confirmed orders can be cancelled.",
+      "description": "Cancel an order. The engine accepts this from pending, confirmed or processing; once an order has shipped, use a return instead. Refused while captured payments still hold money: refund them first.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__cancel_order",
@@ -2870,7 +2870,7 @@
     },
     {
       "name": "cancel_return",
-      "description": "Cancel a return request.",
+      "description": "Cancel a return (the engine accepts this from requested or approved).",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__cancel_return",
@@ -3302,7 +3302,7 @@
     },
     {
       "name": "complete_return",
-      "description": "Complete a return and process the refund.",
+      "description": "Complete a return (the engine accepts this from received or inspecting). It closes the return only: no refund is created. Refund the payment separately with create_refund.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__complete_return",
@@ -4301,7 +4301,7 @@
     },
     {
       "name": "delete_customer",
-      "description": "Delete a customer (soft delete).",
+      "description": "Delete a customer (soft delete). This is the only way a customer reaches the deleted status, which is final.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__delete_customer",
@@ -4697,7 +4697,7 @@
     },
     {
       "name": "explain_order",
-      "description": "Explain an order to a customer or merchant: one chronological timeline (checkout, payments, shipments, returns, refunds, fraud, activity), the money charged/refunded/net as exact strings, tax recomputed from the address, and flags for inconsistencies (e.g. paid but paymentStatus pending, refunded more than charged). Read-only; lists what it cannot see.",
+      "description": "Explain an order to a customer or merchant: one chronological timeline (checkout, payments, shipments, returns, refunds, fraud, activity), the money charged/refunded/net as exact strings, tax recomputed from the address, flags for inconsistencies (e.g. paid but paymentStatus pending, refunded more than charged), and `allowedNext`: the statuses the order can move to next. Read-only; lists what it cannot see.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__explain_order",
@@ -4715,7 +4715,7 @@
     },
     {
       "name": "explain_state_machine",
-      "description": "Ask what a record can do next BEFORE trying to change its status. With no arguments, lists every status lifecycle the engine enforces (order, payment, refund, return, shipment, cart, subscription, purchase_order, ...). With `machine`, returns its full transition graph. With `machine` + `from`, the statuses reachable next. With `machine` + `from` + `to`, whether that move is allowed and, if not, the shortest route. Generated from the engine rules; read-only and touches no data. A status reached only by an operation (e.g. shipping an order) still needs that operation, not a plain status update.",
+      "description": "Ask what a record can do next BEFORE trying to change its status. With no arguments, lists the catalogued status lifecycles (order, payment, refund, return, shipment, cart, customer, product, subscription, purchase_order, ...) and the known lifecycles not catalogued yet. With `machine`, returns its full transition graph and the tool that makes each move. With `machine` + `from`, the statuses reachable next and the tool for each. With `machine` + `from` + `to`, whether that move is allowed and, if not, the shortest route. Generated from the engine rules; read-only and touches no data. Some moves only one operation can make (`onlyVia`, e.g. processing -> shipped via ship_order); a plain status update is refused for them. For a known lifecycle that is not catalogued yet (order_payment, order_fulfillment, gift_card, coupon, invoice, x402_intent, gl_period, ...) it says so and lists its states without guessing its moves.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__explain_state_machine",
@@ -5066,7 +5066,7 @@
     },
     {
       "name": "get_cart",
-      "description": "Get a specific cart by ID or cart number. Returns full cart details including items.",
+      "description": "Get a specific cart by ID or cart number. Returns full cart details including items, and `allowedNext`: the statuses the cart can move to from its current one.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_cart",
@@ -5174,7 +5174,7 @@
     },
     {
       "name": "get_customer",
-      "description": "Get a specific customer by ID or email address.",
+      "description": "Get a specific customer by ID or email address, with `allowedNext`: the statuses the customer can move to from its current one.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_customer",
@@ -5525,7 +5525,7 @@
     },
     {
       "name": "get_order",
-      "description": "Get a specific order by ID or order number. Returns full order details including line items.",
+      "description": "Get a specific order by ID or order number. Returns full order details including line items, and `allowedNext`: the statuses the order can move to from its current one.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_order",
@@ -5552,7 +5552,7 @@
     },
     {
       "name": "get_payment",
-      "description": "Get a payment by ID.",
+      "description": "Get a payment by ID, with its refunds and `allowedNext`: the statuses the payment can move to from its current one.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_payment",
@@ -5642,7 +5642,7 @@
     },
     {
       "name": "get_product",
-      "description": "Get a specific product by ID.",
+      "description": "Get a specific product by ID, with `allowedNext`: the statuses the product can move to from its current one.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_product",
@@ -5759,7 +5759,7 @@
     },
     {
       "name": "get_return",
-      "description": "Get a specific return by ID.",
+      "description": "Get a specific return by ID, with `allowedNext`: the statuses the return can move to from its current one.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_return",
@@ -5867,7 +5867,7 @@
     },
     {
       "name": "get_shipment",
-      "description": "Get a shipment by ID.",
+      "description": "Get a shipment by ID, with `allowedNext`: the statuses the shipment can move to from its current one.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__get_shipment",
@@ -6875,7 +6875,7 @@
     },
     {
       "name": "list_payment_links",
-      "description": "List payment links with optional filters by status and customer.",
+      "description": "List payment links with optional filters by status and customer. Each link carries `expired`: true when it is still active but its expiry has passed.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__list_payment_links",
@@ -7550,7 +7550,7 @@
     },
     {
       "name": "mark_return_received",
-      "description": "Mark a return as physically received at the warehouse.",
+      "description": "Mark a return as physically received at the warehouse. The engine accepts this only from in_transit, which add_return_tracking sets on an approved return; an approved return without tracking is refused.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__mark_return_received",
@@ -7928,7 +7928,7 @@
     },
     {
       "name": "reject_return",
-      "description": "Reject a return request with a reason.",
+      "description": "Reject a return with a reason (the engine accepts this from requested or inspecting).",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__reject_return",
@@ -8396,7 +8396,7 @@
     },
     {
       "name": "ship_order",
-      "description": "Mark an order as shipped with optional tracking number.",
+      "description": "Ship an order (the engine accepts this from processing or partially_shipped), with an optional tracking number. Omit `lines` to ship every remaining unit (-> shipped); pass `lines` to ship part of the order (-> partially_shipped until every unit has shipped). This is the only way an order reaches shipped or partially_shipped.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__ship_order",
@@ -8864,7 +8864,7 @@
     },
     {
       "name": "update_customer",
-      "description": "Update an existing customer. Only the fields provided are changed (email, name, phone, status, marketing opt-in).",
+      "description": "Update an existing customer. Only the fields provided are changed (email, name, phone, status, marketing opt-in). Status moves between active, inactive and suspended; deleting a customer is its own operation: delete_customer.",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__update_customer",
@@ -8909,7 +8909,7 @@
     },
     {
       "name": "update_order_status",
-      "description": "Update the status of an order. Valid statuses: pending, confirmed, processing, shipped, delivered, cancelled, refunded.",
+      "description": "Move an order to a new status: confirmed (from pending), processing (from confirmed), delivered (from shipped), cancelled (from pending, confirmed or processing), refunded (from delivered). The engine refuses any other move; get_order returns `allowedNext` for an order. Shipping is not a status update: call ship_order (pass `lines` to ship part of the order). cancel_order also cancels. Cancelling is refused while captured payments still hold money (refund first).",
       "serverName": "stateset-commerce",
       "source": "cli/src/mcp-server.js",
       "qualifiedName": "mcp__stateset-commerce__update_order_status",

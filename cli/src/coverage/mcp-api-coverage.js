@@ -345,12 +345,21 @@ export const AUDITED_CLASS_METHOD_TOOL_COVERAGE = Object.freeze({
       createRefundExact: ['create_refund'],
       getRefund: ['get_payment'],
       getRefunds: ['get_payment'],
-      completeRefund: ['create_refund'],
-      failRefund: ['create_refund'],
       count: ['list_payments'],
       // Capability probes for the idempotent write paths these tools use.
       supportsPaymentIdempotency: ['create_payment', 'complete_payment'],
       supportsRefundIdempotency: ['create_refund'],
+    },
+    // create_refund creates a refund in `pending` (the governed
+    // payments.create_refund command); it does not settle it. These were
+    // credited to create_refund, which never calls them.
+    unexposedMethods: {
+      completeRefund:
+        'No MCP tool completes a refund: create_refund records it as pending and settlement ' +
+        'happens outside the tool surface.',
+      failRefund:
+        'No MCP tool fails a refund: create_refund records it as pending and settlement ' +
+        'happens outside the tool surface.',
     },
   },
   Shipments: {
@@ -793,9 +802,21 @@ export function buildMcpApiCoverage() {
     .map(([className, coverage]) => {
       const bindingMethods = [...getBindingClassMethodNames(source, className)].sort();
       const mappedMethods = Object.keys(coverage.methodToTools).sort();
+      // Methods deliberately not behind any tool, each with the reason. They
+      // are neither mapped nor uncovered; naming one that is also mapped, or
+      // that the binding no longer has, is a stale mapping.
+      const unexposed = coverage.unexposedMethods ?? {};
+      const unexposedMethods = Object.keys(unexposed).sort();
       const exportedToolNames = new Set(coverage.tools.map((tool) => tool.name));
-      const uncoveredMethods = bindingMethods.filter((method) => !coverage.methodToTools[method]);
-      const staleMappedMethods = mappedMethods.filter((method) => !bindingMethods.includes(method));
+      const uncoveredMethods = bindingMethods.filter(
+        (method) => !coverage.methodToTools[method] && !unexposed[method],
+      );
+      const staleMappedMethods = [
+        ...mappedMethods.filter((method) => !bindingMethods.includes(method)),
+        ...unexposedMethods.filter(
+          (method) => !bindingMethods.includes(method) || coverage.methodToTools[method],
+        ),
+      ];
       const invalidToolReferences = mappedMethods.flatMap((method) =>
         (coverage.methodToTools[method] ?? [])
           .filter((toolName) => !exportedToolNames.has(toolName))
@@ -805,8 +826,12 @@ export function buildMcpApiCoverage() {
       return {
         className,
         methodCount: bindingMethods.length,
-        mappedMethodCount: bindingMethods.length - uncoveredMethods.length,
+        mappedMethodCount: bindingMethods.filter((method) => coverage.methodToTools[method]).length,
         uncoveredMethods,
+        unexposedMethods: unexposedMethods.map((method) => ({
+          method,
+          reason: unexposed[method],
+        })),
         staleMappedMethods,
         invalidToolReferences,
       };
@@ -814,6 +839,12 @@ export function buildMcpApiCoverage() {
 
   const uncoveredAuditedMethods = auditedClasses.flatMap((entry) =>
     entry.uncoveredMethods.map((method) => `${entry.className}.${method}`),
+  );
+  const unexposedAuditedMethods = auditedClasses.flatMap((entry) =>
+    entry.unexposedMethods.map(({ method, reason }) => ({
+      method: `${entry.className}.${method}`,
+      reason,
+    })),
   );
   const staleAuditedMethodMappings = auditedClasses.flatMap((entry) =>
     entry.staleMappedMethods.map((method) => `${entry.className}.${method}`),
@@ -838,6 +869,7 @@ export function buildMcpApiCoverage() {
     totalAuditedMethods: auditedClasses.reduce((sum, entry) => sum + entry.methodCount, 0),
     mappedAuditedMethods: auditedClasses.reduce((sum, entry) => sum + entry.mappedMethodCount, 0),
     uncoveredAuditedMethods,
+    unexposedAuditedMethods,
     staleAuditedMethodMappings,
     invalidAuditedToolReferences,
     auditedClasses,

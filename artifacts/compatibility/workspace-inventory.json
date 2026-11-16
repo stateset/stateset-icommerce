@@ -590,7 +590,7 @@
       },
       {
         "name": "mcp",
-        "count": 41
+        "count": 42
       },
       {
         "name": "channels",
@@ -610,7 +610,7 @@
       },
       {
         "name": "utils",
-        "count": 18
+        "count": 19
       },
       {
         "name": "harness",
@@ -982,6 +982,10 @@
       },
       {
         "name": "state-machine-catalog.js",
+        "count": 1
+      },
+      {
+        "name": "state-machine-operations.js",
         "count": 1
       },
       {
