@@ -353,6 +353,14 @@ finance writes carry an authenticated identity.
   A payment whose trial fails is rejected and the rest wait for the next
   window. New `X402SequencerClient.close()` stops the drain and rejects what
   is still queued.
+- A manual run (`runNow`) of a disabled scheduler job no longer strands it.
+  A failed run armed a retry whose timer then skipped the disabled job,
+  leaving it `retrying` with nothing armed, which `resumeJob` refused; a
+  successful or cancelled run likewise replaced the `paused` (or added
+  disabled `pending`) status `resumeJob` looks for. Such a run now records
+  its outcome but arms no retry, and a recurring job goes back to `paused`
+  or `pending`, so it can still be resumed. A disabled one-time job's manual
+  run settles as its outcome, without a retry.
 
 ## [1.40.0] - 2026-10-22
 
