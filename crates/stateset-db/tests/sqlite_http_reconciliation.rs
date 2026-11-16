@@ -273,3 +273,29 @@ fn resolution_rejects_invalid_responses_and_missing_evidence_before_writing() {
         record
     );
 }
+
+/// `release` drops only this request's unresolved reservation (matching
+/// tenant, key and fingerprint) and never a completed response, so a key
+/// refused with a transient client error can be retried. Twin of the Postgres
+/// `postgres_release_drops_only_the_matching_unresolved_reservation`.
+#[test]
+fn release_drops_only_the_matching_unresolved_reservation() {
+    let db = SqliteDatabase::in_memory().unwrap();
+    let repo = db.http_idempotency();
+    let record = pending(&db, "transient");
+    let cutoff = Utc::now() - Duration::days(365);
+    assert!(!repo.release(&record.tenant, "transient", &"b".repeat(64)).unwrap());
+    assert!(!repo.release("tenant:other", "transient", &record.request_fingerprint).unwrap());
+    assert!(repo.get(&record.tenant, "transient", cutoff).unwrap().is_some());
+    assert!(repo.release(&record.tenant, "transient", &record.request_fingerprint).unwrap());
+    assert!(repo.get(&record.tenant, "transient", cutoff).unwrap().is_none());
+    assert!(repo.put(&record).unwrap(), "the released key can be reserved again");
+
+    let mut completed = pending(&db, "completed");
+    completed.response_status = 201;
+    completed.created_at = Utc::now();
+    assert!(repo.complete(&completed).unwrap());
+    assert!(!repo.release(&completed.tenant, "completed", &completed.request_fingerprint).unwrap());
+    let stored = repo.get(&completed.tenant, "completed", cutoff).unwrap().unwrap();
+    assert_eq!(stored.response_status, 201, "a completed response is never released");
+}

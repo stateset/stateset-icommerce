@@ -8,6 +8,39 @@ type DbResult<T> = rusqlite::Result<T>;
 fn invalid(message: &str) -> rusqlite::Error {
     super::bins::smuggle(CommerceError::ValidationError(message.into()))
 }
+/// A serial held by an open reservation for anything other than `order_id`
+/// (another order, or another kind of reference) cannot be picked or shipped
+/// for `order_id`: doing so hands a unit promised elsewhere to the wrong
+/// customer and silently consumes the other reservation at shipment. An
+/// unconfirmed reservation whose expiry has passed no longer holds the unit
+/// (`reserve` treats it as stale), and an unreserved serial is unaffected.
+fn ensure_serial_not_reserved_elsewhere(
+    tx: &Transaction<'_>,
+    serial: &str,
+    order_id: Uuid,
+    now: &str,
+) -> DbResult<()> {
+    let holder: Option<(String, String)> = tx
+        .query_row(
+            "SELECT r.reference_type, r.reference_id FROM serial_reservations r
+             JOIN serial_numbers s ON s.id = r.serial_id
+             WHERE s.serial = ?1 AND r.released_at IS NULL
+               AND (r.confirmed_at IS NOT NULL OR r.expires_at IS NULL OR r.expires_at > ?2)
+               AND NOT (lower(r.reference_type) = 'order' AND r.reference_id = ?3)
+             LIMIT 1",
+            rusqlite::params![serial, now, order_id.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    match holder {
+        Some((reference_type, reference_id)) => {
+            Err(super::bins::smuggle(CommerceError::Conflict(format!(
+                "Serial {serial} is reserved for {reference_type} {reference_id}, not order {order_id}"
+            ))))
+        }
+        None => Ok(()),
+    }
+}
 pub(super) fn pick(tx: &Transaction<'_>, pick: &PickTask, now: &str) -> DbResult<()> {
     if pick.quantity_picked <= Decimal::ZERO {
         return Ok(());
@@ -126,6 +159,8 @@ pub(super) fn pick(tx: &Transaction<'_>, pick: &PickTask, now: &str) -> DbResult
     }
     tx.execute("INSERT INTO pick_stock_custody (pick_id, staging_location_id, quantity) VALUES (?1, ?2, ?3)", rusqlite::params![(pick.id).to_string(), staging, (pick.quantity_picked).to_string()])?;
     if let Some(serial) = &pick.serial_number {
+        // Same position as the Postgres twin; a refusal rolls back the pick.
+        ensure_serial_not_reserved_elsewhere(tx, serial, order_id, now)?;
         tx.execute("INSERT INTO serial_history (id, serial_id, event_type, reference_type, reference_id, from_status, to_status, from_location_id, to_location_id, performed_by, created_at) SELECT ?1, id, 'reserved', 'pick_task', ?2, status, 'reserved', current_location_id, ?3, ?4, ?5 FROM serial_numbers WHERE serial = ?6", rusqlite::params![(Uuid::new_v4()).to_string(), (pick.id).to_string(), staging, pick.assigned_to.as_deref(), now, serial])?;
         tx.execute("UPDATE serial_numbers SET current_location_id = ?1, status = 'reserved', updated_at = ?2 WHERE serial = ?3", rusqlite::params![staging, now, serial])?;
     }
@@ -275,6 +310,7 @@ pub(super) fn ship(
             return Err(invalid("Shipment exceeds matching picked stock in staging"));
         }
         if let Some(serial) = serial {
+            ensure_serial_not_reserved_elsewhere(tx, &serial, order_id, now)?;
             tx.execute("INSERT INTO serial_history (id, serial_id, event_type, reference_type, reference_id, from_status, to_status, from_location_id, performed_by, created_at) SELECT ?1, id, 'shipped', 'ship_task', ?2, status, 'shipped', current_location_id, ?3, ?4 FROM serial_numbers WHERE serial = ?5", rusqlite::params![(Uuid::new_v4()).to_string(), (ship_id).to_string(), performed_by, now, &serial])?;
             tx.execute("UPDATE serial_numbers SET status = 'shipped', current_location_id = NULL, sold_at = COALESCE(sold_at, ?1), updated_at = ?1 WHERE serial = ?2", rusqlite::params![now, &serial])?;
             tx.execute("UPDATE serial_reservations SET released_at = ?1, active_key = NULL WHERE serial_id = (SELECT id FROM serial_numbers WHERE serial = ?2) AND released_at IS NULL", rusqlite::params![now, serial])?;

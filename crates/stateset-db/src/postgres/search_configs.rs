@@ -296,6 +296,18 @@ impl PgSearchConfigRepository {
 
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
+        // A missing id must change nothing (as on SQLite, whose transaction
+        // rolls back): check it first, before deactivating everything else.
+        let exists: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM search_configs WHERE id = $1 FOR UPDATE")
+                .bind(id.into_uuid())
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(map_db_error)?;
+        if exists.is_none() {
+            return Err(CommerceError::NotFound);
+        }
+
         // Deactivate all configs
         sqlx::query("UPDATE search_configs SET is_active = false, updated_at = $1")
             .bind(now)

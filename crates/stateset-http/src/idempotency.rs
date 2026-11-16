@@ -28,7 +28,9 @@
 //! without a saved response returns HTTP 409 on retries and never expires:
 //! after a crash the outcome is uncertain and must be reconciled by an
 //! operator, rather than risking a second mutation. Completed responses expire
-//! normally. Store failures fail closed with HTTP 503.
+//! normally. Client errors that are not replayed (anything but 400, 404, 409
+//! and 422 — e.g. 403, 413, 415, 429) release the reservation instead, so the
+//! same key can be retried. Store failures fail closed with HTTP 503.
 //! This provides at-most-once execution, not automatic recovery of a response
 //! lost between the business commit and response persistence.
 //!
@@ -481,6 +483,23 @@ async fn durable_claim(
     .map_err(|e| e.to_string())?
 }
 
+/// Drop this request's unresolved reservation so its key can be retried.
+async fn durable_release(
+    commerce: Arc<Commerce>,
+    tenant: String,
+    key: String,
+    fingerprint: String,
+) -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || {
+        let db = commerce.database();
+        let repo =
+            db.http_idempotency().ok_or_else(|| "backend has no idempotency store".to_string())?;
+        repo.release(&tenant, &key, &fingerprint).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Complete the previously acquired reservation before populating the cache.
 async fn durable_put(
     layer: &IdempotencyLayer,
@@ -700,6 +719,28 @@ pub(crate) async fn idempotency(
         || status == StatusCode::CONFLICT
         || status == StatusCode::NOT_FOUND;
     if !cacheable {
+        // Any other client error (401, 403, 405, 413, 415, 429, ...) is a
+        // refusal before any change, and usually a transient one: replaying
+        // it forever would be wrong, and so is leaving the reservation
+        // unresolved — every retry of the key would answer 409 for good, so
+        // a rate-limited client could never retry. Release the reservation
+        // so the same key can run again once the client fixes the cause.
+        if status.is_client_error()
+            && let Some(commerce) = layer.durable.clone()
+        {
+            match durable_release(commerce, tenant, key, fingerprint).await {
+                Ok(true) => {}
+                Ok(false) => tracing::warn!(
+                    %status,
+                    "idempotency reservation was already resolved; nothing to release"
+                ),
+                Err(error) => tracing::warn!(
+                    %error,
+                    %status,
+                    "idempotency release failed; reservation retained"
+                ),
+            }
+        }
         return response;
     }
 
@@ -986,6 +1027,81 @@ mod tests {
         let response =
             app(durable_layer(&restarted), counter.clone()).oneshot(request()).await.unwrap();
         assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    /// An app whose handler answers with the status in `x-respond-with`
+    /// (default 201). Headers are outside the request fingerprint, so one key
+    /// can be retried with different outcomes.
+    fn status_app(commerce: &Arc<Commerce>, counter: Arc<AtomicU64>) -> Router {
+        Router::new()
+            .route(
+                "/api/v1/orders",
+                post(move |headers: axum::http::HeaderMap| {
+                    let counter = counter.clone();
+                    async move {
+                        let n = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                        let status = headers
+                            .get("x-respond-with")
+                            .and_then(|value| value.to_str().ok())
+                            .and_then(|value| value.parse::<u16>().ok())
+                            .and_then(|value| StatusCode::from_u16(value).ok())
+                            .unwrap_or(StatusCode::CREATED);
+                        (status, format!("attempt-{n}"))
+                    }
+                }),
+            )
+            .layer(axum::middleware::from_fn_with_state(durable_layer(commerce), idempotency))
+    }
+
+    fn status_request(key: &str, status: Option<u16>) -> Request<Body> {
+        let mut builder = Request::post("/api/v1/orders").header("idempotency-key", key);
+        if let Some(status) = status {
+            builder = builder.header("x-respond-with", status.to_string());
+        }
+        builder.body(Body::from("{}")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn transient_client_errors_release_the_durable_reservation() {
+        let commerce = Arc::new(Commerce::new(":memory:").unwrap());
+        let counter = Arc::new(AtomicU64::new(0));
+        let app = status_app(&commerce, counter.clone());
+        for (attempt, status) in [429_u16, 403, 405, 413, 415, 401].into_iter().enumerate() {
+            let response = app.clone().oneshot(status_request("transient", Some(status))).await;
+            assert_eq!(response.unwrap().status().as_u16(), status);
+            assert_eq!(
+                counter.load(Ordering::SeqCst),
+                u64::try_from(attempt).unwrap() + 1,
+                "the key was retried instead of answering 409"
+            );
+            let stored = commerce
+                .database()
+                .http_idempotency()
+                .unwrap()
+                .get("", "transient", Utc::now() - chrono::Duration::days(1))
+                .unwrap();
+            assert!(stored.is_none(), "{status} left a reservation behind: {stored:?}");
+        }
+        let created = app.clone().oneshot(status_request("transient", None)).await.unwrap();
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let replay = app.clone().oneshot(status_request("transient", None)).await.unwrap();
+        assert_eq!(replay.status(), StatusCode::CREATED);
+        assert_eq!(replay.headers()["idempotency-replayed"], "true");
+        assert_eq!(counter.load(Ordering::SeqCst), 7, "the replay did not run the handler");
+    }
+
+    #[tokio::test]
+    async fn server_errors_keep_the_durable_reservation() {
+        let commerce = Arc::new(Commerce::new(":memory:").unwrap());
+        let counter = Arc::new(AtomicU64::new(0));
+        let app = status_app(&commerce, counter.clone());
+        let failed = app.clone().oneshot(status_request("uncertain-5xx", Some(500))).await.unwrap();
+        assert_eq!(failed.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        // A 5xx may follow a committed mutation: the outcome is uncertain, so
+        // the key stays reserved for reconciliation instead of re-running.
+        let retry = app.oneshot(status_request("uncertain-5xx", None)).await.unwrap();
+        assert_eq!(retry.status(), StatusCode::CONFLICT);
         assert_eq!(counter.load(Ordering::SeqCst), 1);
     }
 

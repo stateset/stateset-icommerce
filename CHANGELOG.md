@@ -6,6 +6,44 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- Postgres checkout no longer revives a terminal order. When an order was
+  already minted for the cart (`orders.create_from_cart`), checkout moved it
+  back to `confirmed` even if it had been cancelled, refunded, shipped or
+  delivered; it now accepts only `pending` (or an already `confirmed`
+  order), refuses anything else with `InvalidOrderStatusTransition` as
+  SQLite does, and writes under the order's version.
+- Kernel `x402.settle` applies the repository's settlement rules on both
+  databases. It writes `tx_hash_key`, so the unique index from migrations
+  082/089 covers governed settles (one on-chain transaction could settle two
+  intents), refuses a hash that already settled another intent
+  (`commerce.x402.tx_hash_already_settled`) and refuses an intent past
+  `valid_until` (`commerce.x402.intent_expired`).
+- Refunding a disputed A2A escrow through the kernel (`a2a.escrow.refund`)
+  resolves its open dispute as a `full_refund` in the same transaction and
+  records an `a2a.dispute_resolved.v1` fact, on both databases. The dispute
+  used to stay open, so `payments.create_refund` refused the escrow's
+  payment forever.
+- Warehouse pick and ship refuse a serial held by an open reservation for
+  another order (or any other reference), on both databases. Such a serial
+  could be picked and shipped for the wrong order, and the shipment closed
+  the other order's reservation. Unreserved serials, serials reserved for
+  the order being fulfilled, and lapsed unconfirmed reservations work as
+  before.
+- Postgres `search_configs.set_active` with an unknown id changes nothing,
+  as on SQLite. It used to commit "deactivate every config" before
+  returning `NotFound`.
+- HTTP idempotency keys no longer stick after a transient client error. A
+  401, 403, 405, 413, 415, 429 or any other 4xx that is not replayed (only
+  400, 404, 409 and 422 are) releases the durable reservation through the
+  new `HttpIdempotencyRepository::release`, so the same key can be retried;
+  such keys used to answer 409 forever. 5xx responses still keep the
+  reservation for reconciliation.
+- The HTTP negotiation counter-offer, accept and reject endpoints keep the
+  negotiation when its transition is refused; a refused transition (400)
+  used to delete it.
+
 ## [1.41.0] - 2026-11-15
 
 1.41.0 rolls up three lines of work: the 1.40.1 security fixes, which were

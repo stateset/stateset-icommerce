@@ -37,7 +37,8 @@ use crate::kernel::plans::escrow::{
 use crate::kernel::plans::finance::{
     BILLING_CYCLE_UNVERSIONED, CART_UNVERSIONED, JOURNAL_ENTRY_UNVERSIONED,
     X402_INTENT_UNVERSIONED, charge_subscription_guard, commit_checkout_guard,
-    post_journal_entry_guard, settle_x402_guard,
+    post_journal_entry_guard, settle_x402_expiry_guard, settle_x402_guard,
+    x402_tx_hash_already_settled,
 };
 use crate::kernel::plans::inventory::{
     declares_quantity, economic_quantity_guard, reservation_changes_balance,
@@ -3171,8 +3172,11 @@ impl SqliteKernelExecutor {
             );
             attach_command_context(&mut event, command);
             append_kernel_event_tx(tx, &event)?;
+            let dispute_event_ids =
+                resolve_open_disputes_as_refunded_sqlite(tx, command, &escrow, started_at)?;
             let mut receipt =
                 succeeded_a2a_receipt(command, policy.clone(), escrow, event.id, started_at);
+            receipt.event_ids.extend(dispute_event_ids);
             append_receipt(tx, &request_hash, &mut receipt)?;
             Ok(receipt)
         })
@@ -4057,6 +4061,35 @@ impl SqliteKernelExecutor {
                 append_receipt(tx, &request_hash, &mut receipt)?;
                 return Ok(receipt);
             }
+            // The repository's `mark_settled` rules: a lapsed validity window
+            // cannot settle, and one on-chain transaction settles at most one
+            // intent (the `tx_hash_key` unique index is the backstop).
+            let already_settled: Option<String> = tx
+                .query_row(
+                    "SELECT id FROM x402_payment_intents WHERE tx_hash = ? AND id <> ? LIMIT 1",
+                    params![command.payload.tx_hash, intent.id.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let stateful_rejection = settle_x402_expiry_guard(intent.valid_until, started_at)
+                .or_else(|| {
+                    already_settled
+                        .as_deref()
+                        .map(|other| x402_tx_hash_already_settled(&command.payload.tx_hash, other))
+                });
+            if let Some(rejection) = stateful_rejection {
+                let mut receipt = rejected_receipt(
+                    command,
+                    Some(policy.clone()),
+                    rejection.code,
+                    &rejection.message,
+                    rejection.retry,
+                    "x402_payment_intent",
+                );
+                receipt.aggregate_id = Some(intent.id.to_string());
+                append_receipt(tx, &request_hash, &mut receipt)?;
+                return Ok(receipt);
+            }
             let settled_at = Utc::now();
             intent.status = X402IntentStatus::Settled;
             intent.tx_hash = Some(command.payload.tx_hash.clone());
@@ -4071,8 +4104,8 @@ impl SqliteKernelExecutor {
                 return Ok(receipt);
             }
             if tx.execute(
-                "UPDATE x402_payment_intents SET status = ?, tx_hash = ?, block_number = ?, settled_at = ?, updated_at = ? WHERE id = ? AND status = ?",
-                params![X402IntentStatus::Settled.to_string(), command.payload.tx_hash,
+                "UPDATE x402_payment_intents SET status = ?, tx_hash = ?, tx_hash_key = ?, block_number = ?, settled_at = ?, updated_at = ? WHERE id = ? AND status = ?",
+                params![X402IntentStatus::Settled.to_string(), command.payload.tx_hash, command.payload.tx_hash,
                     i64::try_from(command.payload.block_number).map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?,
                     settled_at.to_rfc3339(), settled_at.to_rfc3339(), command.payload.intent_id.to_string(),
                     X402IntentStatus::Sequenced.to_string()],
@@ -5096,6 +5129,73 @@ fn sqlite_commerce_error(error: &rusqlite::Error) -> Option<&CommerceError> {
         rusqlite::Error::ToSqlConversionFailure(source) => source.downcast_ref::<CommerceError>(),
         _ => None,
     }
+}
+
+/// Close every dispute still open against an escrow that `a2a.escrow.refund`
+/// just refunded, in the refund's transaction. Returning the whole escrow to
+/// the buyer is the outcome `a2a.dispute.resolve` records as a `full_refund`
+/// resolution, so the dispute is resolved that way (buyer gets the disputed
+/// amount, seller nothing). Left open, it would freeze the payment forever:
+/// `payments.create_refund` refuses while a dispute is open, and the dispute
+/// can no longer be resolved because its escrow is no longer `disputed`.
+/// Returns the ids of the `a2a.dispute_resolved.v1` facts it appended.
+fn resolve_open_disputes_as_refunded_sqlite(
+    tx: &rusqlite::Transaction<'_>,
+    command: &CommandEnvelope<RefundA2AEscrow>,
+    escrow: &A2AEscrow,
+    resolved_at: chrono::DateTime<Utc>,
+) -> rusqlite::Result<Vec<Uuid>> {
+    let open: Vec<(String, String)> = {
+        let mut statement = tx.prepare(
+            "SELECT id, CAST(amount_decimal AS TEXT) FROM a2a_disputes
+             WHERE escrow_id = ?
+               AND status IN ('filed', 'evidence_period', 'under_review', 'escalated')
+             ORDER BY id",
+        )?;
+        statement
+            .query_map([&escrow.id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?
+    };
+    let zero = rust_decimal::Decimal::ZERO.to_string();
+    let mut event_ids = Vec::with_capacity(open.len());
+    for (dispute_id, amount) in open {
+        tx.execute(
+            "UPDATE a2a_disputes SET status = ?, resolution_type = ?,
+                    buyer_amount_decimal = amount_decimal, seller_amount_decimal = ?,
+                    resolution_note = ?, resolved_by = ?, resolved_at = ?, updated_at = ?
+             WHERE id = ?
+               AND status IN ('filed', 'evidence_period', 'under_review', 'escalated')",
+            params![
+                A2ADisputeStatus::Resolved.to_string(),
+                A2ADisputeResolutionType::FullRefund.to_string(),
+                &zero,
+                &command.payload.reason,
+                &command.principal.id,
+                resolved_at.to_rfc3339(),
+                resolved_at.to_rfc3339(),
+                &dispute_id,
+            ],
+        )?;
+        let mut event = KernelOutboxEvent::domain(
+            "a2a.dispute_resolved.v1",
+            "a2a_dispute",
+            dispute_id.clone(),
+            serde_json::json!({
+                "dispute_id": &dispute_id,
+                "escrow_id": &escrow.id,
+                "resolution_type": A2ADisputeResolutionType::FullRefund.to_string(),
+                "buyer_amount_decimal": amount,
+                "seller_amount_decimal": &zero,
+                "resolved_by": &command.principal.id,
+                "status": A2ADisputeStatus::Resolved.to_string()
+            }),
+            Some(command.idempotency_key.clone()),
+        );
+        attach_command_context(&mut event, command);
+        append_kernel_event_tx(tx, &event)?;
+        event_ids.push(event.id);
+    }
+    Ok(event_ids)
 }
 
 /// Escrow (and its dispute id, if one was filed) that holds `payment_id` and

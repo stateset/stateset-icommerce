@@ -34,7 +34,8 @@ use crate::kernel::plans::escrow::{
 use crate::kernel::plans::finance::{
     BILLING_CYCLE_UNVERSIONED, CART_UNVERSIONED, JOURNAL_ENTRY_UNVERSIONED,
     X402_INTENT_UNVERSIONED, charge_subscription_guard, commit_checkout_guard,
-    post_journal_entry_guard, settle_x402_guard,
+    post_journal_entry_guard, settle_x402_expiry_guard, settle_x402_guard,
+    x402_tx_hash_already_settled,
 };
 use crate::kernel::plans::inventory::{
     declares_quantity, economic_quantity_guard, reservation_changes_balance,
@@ -3254,7 +3255,10 @@ impl PgKernelExecutor {
         );
         attach_command_context(&mut event, command);
         append_kernel_event_tx(tx.as_mut(), &event).await?;
+        let dispute_event_ids =
+            resolve_open_disputes_as_refunded_pg(tx.as_mut(), command, &escrow, started_at).await?;
         let mut receipt = succeeded_a2a_receipt_pg(command, policy, escrow, event.id, started_at);
+        receipt.event_ids.extend(dispute_event_ids);
         append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
         tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
         Ok(receipt)
@@ -4233,6 +4237,38 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
+        // The repository's `mark_settled` rules: a lapsed validity window
+        // cannot settle, and one on-chain transaction settles at most one
+        // intent (the `tx_hash_key` unique index is the backstop for
+        // concurrent settles of different intents with the same hash).
+        let already_settled: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM x402_payment_intents WHERE tx_hash = $1 AND id <> $2 LIMIT 1",
+        )
+        .bind(&command.payload.tx_hash)
+        .bind(intent.id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        let stateful_rejection =
+            settle_x402_expiry_guard(intent.valid_until, started_at).or_else(|| {
+                already_settled.map(|other| {
+                    x402_tx_hash_already_settled(&command.payload.tx_hash, &other.to_string())
+                })
+            });
+        if let Some(rejection) = stateful_rejection {
+            let mut receipt = rejected_receipt(
+                command,
+                Some(policy),
+                rejection.code,
+                &rejection.message,
+                rejection.retry,
+                "x402_payment_intent",
+            );
+            receipt.aggregate_id = Some(intent.id.to_string());
+            append_receipt(tx.as_mut(), &request_hash, &mut receipt).await?;
+            tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+            return Ok(receipt);
+        }
         let settled_at = Utc::now();
         intent.status = X402IntentStatus::Settled;
         intent.tx_hash = Some(command.payload.tx_hash.clone());
@@ -4250,8 +4286,8 @@ impl PgKernelExecutor {
         let block_number = i64::try_from(command.payload.block_number)
             .map_err(|e| CommerceError::ValidationError(e.to_string()))?;
         let updated = sqlx::query(
-            "UPDATE x402_payment_intents SET status = $1, tx_hash = $2, block_number = $3,
-             settled_at = $4, updated_at = $4 WHERE id = $5 AND status = $6",
+            "UPDATE x402_payment_intents SET status = $1, tx_hash = $2, tx_hash_key = $2,
+             block_number = $3, settled_at = $4, updated_at = $4 WHERE id = $5 AND status = $6",
         )
         .bind(X402IntentStatus::Settled.to_string())
         .bind(&command.payload.tx_hash)
@@ -4261,7 +4297,7 @@ impl PgKernelExecutor {
         .bind(X402IntentStatus::Sequenced.to_string())
         .execute(tx.as_mut())
         .await
-        .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+        .map_err(super::map_db_error)?;
         if updated.rows_affected() == 0 {
             return Err(CommerceError::Conflict("x402 intent was modified concurrently".into()));
         }
@@ -5122,6 +5158,65 @@ async fn lock_kernel_idempotency_pg(
     idempotency_key: &str,
 ) -> Result<()> {
     advisory_lock_pg(tx, LOCK_NS_IDEMPOTENCY, idempotency_key).await
+}
+
+/// Close every dispute still open against an escrow that `a2a.escrow.refund`
+/// just refunded, in the refund's transaction (twin of the SQLite
+/// `resolve_open_disputes_as_refunded_sqlite`). Returning the whole escrow to
+/// the buyer is the outcome `a2a.dispute.resolve` records as a `full_refund`
+/// resolution. Left open, the dispute would freeze the payment forever:
+/// `payments.create_refund` refuses while a dispute is open, and the dispute
+/// can no longer be resolved because its escrow is no longer `disputed`.
+/// Returns the ids of the `a2a.dispute_resolved.v1` facts it appended.
+async fn resolve_open_disputes_as_refunded_pg(
+    tx: &mut sqlx::PgConnection,
+    command: &CommandEnvelope<RefundA2AEscrow>,
+    escrow: &A2AEscrow,
+    resolved_at: chrono::DateTime<Utc>,
+) -> Result<Vec<Uuid>> {
+    let zero = rust_decimal::Decimal::ZERO;
+    let mut closed: Vec<(String, rust_decimal::Decimal)> = sqlx::query_as(
+        "UPDATE a2a_disputes SET status = $1, resolution_type = $2,
+                buyer_amount_decimal = amount_decimal, seller_amount_decimal = $3,
+                resolution_note = $4, resolved_by = $5, resolved_at = $6, updated_at = $6
+         WHERE escrow_id = $7
+           AND status IN ('filed', 'evidence_period', 'under_review', 'escalated')
+         RETURNING id, amount_decimal",
+    )
+    .bind(A2ADisputeStatus::Resolved.to_string())
+    .bind(A2ADisputeResolutionType::FullRefund.to_string())
+    .bind(zero)
+    .bind(&command.payload.reason)
+    .bind(&command.principal.id)
+    .bind(resolved_at)
+    .bind(&escrow.id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
+    // RETURNING order is unspecified; emit facts in the SQLite twin's order.
+    closed.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut event_ids = Vec::with_capacity(closed.len());
+    for (dispute_id, amount) in closed {
+        let mut event = KernelOutboxEvent::domain(
+            "a2a.dispute_resolved.v1",
+            "a2a_dispute",
+            dispute_id.clone(),
+            serde_json::json!({
+                "dispute_id": &dispute_id,
+                "escrow_id": &escrow.id,
+                "resolution_type": A2ADisputeResolutionType::FullRefund.to_string(),
+                "buyer_amount_decimal": amount.to_string(),
+                "seller_amount_decimal": zero.to_string(),
+                "resolved_by": &command.principal.id,
+                "status": A2ADisputeStatus::Resolved.to_string()
+            }),
+            Some(command.idempotency_key.clone()),
+        );
+        attach_command_context(&mut event, command);
+        append_kernel_event_tx(&mut *tx, &event).await?;
+        event_ids.push(event.id);
+    }
+    Ok(event_ids)
 }
 
 async fn load_a2a_escrow_pg(

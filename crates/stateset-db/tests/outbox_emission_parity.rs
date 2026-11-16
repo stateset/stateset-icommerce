@@ -77,6 +77,11 @@ const SAFE_EXCEPTIONS: &[(&str, &str, &str)] = &[
         "the HTTP response cache is infrastructure state replayed locally; it is not a commerce fact",
     ),
     (
+        "http_idempotency.rs",
+        "release",
+        "dropping an unresolved HTTP reservation after a transient client error is infrastructure state; it is not a commerce fact",
+    ),
+    (
         "shipments.rs",
         "add_item_with_version",
         "the method emits the item fact through `record_item_change_tx` in the same transaction; the helper owns the shared emission for both versioned and unversioned entry points",

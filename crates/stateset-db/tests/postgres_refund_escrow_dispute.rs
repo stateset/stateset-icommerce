@@ -18,8 +18,36 @@ fn postgres_url() -> Option<String> {
 }
 
 fn policy() -> KernelPolicy {
-    KernelPolicy::new("commerce-policy-1")
-        .allow("payments.create_refund", KernelCommandPolicy::requiring(["payments.create_refund"]))
+    [
+        "payments.create_refund",
+        "a2a.escrow.create",
+        "a2a.escrow.fund",
+        "a2a.escrow.refund",
+        "a2a.dispute.file",
+    ]
+    .into_iter()
+    .fold(KernelPolicy::new("commerce-policy-1"), |policy, command| {
+        policy.allow(command, KernelCommandPolicy::requiring([command]))
+    })
+}
+
+fn governed<T>(command_type: &str, actor: &str, payload: T) -> CommandEnvelope<T> {
+    let mut command = CommandEnvelope::preview(
+        command_type,
+        format!("{command_type}-{}", Uuid::new_v4()),
+        KernelPrincipal {
+            id: actor.into(),
+            kind: PrincipalKind::Agent,
+            tenant_id: Some("tenant-pg".into()),
+            delegated_by: Some("user-pg".into()),
+            capabilities: vec![command_type.into()],
+        },
+        payload,
+    );
+    command.store_id = Some("store-pg".into());
+    command.policy_version = Some("commerce-policy-1".into());
+    command.mode = ExecutionMode::Apply;
+    command
 }
 
 fn refund_command(payment_id: stateset_core::PaymentId) -> CommandEnvelope<CreateRefund> {
@@ -145,6 +173,116 @@ async fn postgres_refund_is_refused_for_filed_dispute_and_allowed_after_resoluti
         .execute(db.pool())
         .await
         .unwrap();
+    let receipt = db
+        .kernel_executor(policy())
+        .execute_create_refund_async(&refund_command(payment.id))
+        .await
+        .expect("receipt");
+    assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{receipt:?}");
+}
+
+/// Twin of the SQLite
+/// `sqlite_refunding_a_disputed_escrow_resolves_its_dispute_as_a_full_refund`:
+/// refunding a disputed escrow resolves its open dispute as a `full_refund`
+/// in the same transaction, so the payment is not frozen for good.
+#[tokio::test]
+async fn postgres_refunding_a_disputed_escrow_resolves_its_dispute_as_a_full_refund() {
+    use stateset_core::{
+        A2ADisputeResolutionType, A2ADisputeStatus, A2AEscrowStatus, CreateA2AEscrow,
+        FileA2ADispute, FundA2AEscrow, RefundA2AEscrow,
+    };
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
+    let payment = completed_payment(&db).await;
+    let kernel = db.kernel_executor(policy());
+    let escrow = kernel
+        .execute_create_a2a_escrow_async(&governed(
+            "a2a.escrow.create",
+            "agent:escrow",
+            CreateA2AEscrow {
+                quote_id: None,
+                payment_id: Some(payment.id.to_string()),
+                buyer_address: "did:key:buyer".into(),
+                seller_address: "did:key:seller".into(),
+                amount: dec!(10.00),
+                asset: "USDC".into(),
+                network: "set_chain".into(),
+                release_conditions: vec![],
+                expires_at: chrono::Utc::now() + chrono::Duration::days(30),
+                auto_release_after: None,
+                metadata: None,
+            },
+        ))
+        .await
+        .expect("create escrow")
+        .result
+        .expect("escrow");
+    let funded = kernel
+        .execute_fund_a2a_escrow_async(&governed(
+            "a2a.escrow.fund",
+            "agent:escrow",
+            FundA2AEscrow { escrow_id: escrow.id.clone() },
+        ))
+        .await
+        .expect("fund escrow");
+    assert_eq!(funded.status, ExecutionStatus::Succeeded, "{funded:?}");
+    let now = chrono::Utc::now();
+    let dispute = kernel
+        .execute_file_a2a_dispute_async(&governed(
+            "a2a.dispute.file",
+            "did:key:buyer",
+            FileA2ADispute {
+                escrow_id: escrow.id.clone(),
+                claimant_address: "did:key:buyer".into(),
+                reason: "never delivered".into(),
+                category: "non_delivery".into(),
+                evidence_deadline: now + chrono::Duration::days(7),
+                review_deadline: now + chrono::Duration::days(14),
+                metadata: None,
+            },
+        ))
+        .await
+        .expect("file dispute")
+        .result
+        .expect("dispute");
+
+    let refunded = kernel
+        .execute_refund_a2a_escrow_async(&governed(
+            "a2a.escrow.refund",
+            "agent:escrow",
+            RefundA2AEscrow { escrow_id: escrow.id, reason: Some("buyer refunded".into()) },
+        ))
+        .await
+        .expect("refund escrow");
+    assert_eq!(refunded.status, ExecutionStatus::Succeeded, "{refunded:?}");
+    assert_eq!(refunded.result.as_ref().expect("escrow").status, A2AEscrowStatus::Refunded);
+    assert_eq!(refunded.event_ids.len(), 2, "the escrow fact and the dispute fact");
+
+    #[allow(clippy::type_complexity)]
+    let (status, resolution, buyer, seller, resolved_by): (
+        String,
+        Option<String>,
+        Option<rust_decimal::Decimal>,
+        Option<rust_decimal::Decimal>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT status, resolution_type, buyer_amount_decimal, seller_amount_decimal, resolved_by
+         FROM a2a_disputes WHERE id = $1",
+    )
+    .bind(&dispute.id)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(status, A2ADisputeStatus::Resolved.to_string());
+    assert_eq!(resolution, Some(A2ADisputeResolutionType::FullRefund.to_string()));
+    assert_eq!(buyer, Some(dec!(10)));
+    assert_eq!(seller, Some(dec!(0)));
+    assert_eq!(resolved_by.as_deref(), Some("agent:escrow"));
+
+    // The payment is no longer frozen.
     let receipt = db
         .kernel_executor(policy())
         .execute_create_refund_async(&refund_command(payment.id))
