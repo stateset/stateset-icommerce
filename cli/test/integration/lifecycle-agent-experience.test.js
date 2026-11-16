@@ -581,6 +581,19 @@ describe('a preview of a catalogued move states its precondition', () => {
     assert.doesNotMatch(preview.notice.message, /trial|past_due|pending/);
   });
 
+  it('names the status cancel_subscription stores for each value of immediate', async () => {
+    const target = async (params) =>
+      (
+        await previewServer.executeTool('cancel_subscription', {
+          subscriptionId: 'sub-1',
+          ...params,
+        })
+      ).wouldDo.transition.to;
+    assert.equal(await target({ immediate: true }), 'expired');
+    assert.equal(await target({ immediate: false }), 'cancelled');
+    assert.equal(await target({}), 'cancelled');
+  });
+
   it('a kernel preview that would be refused carries the refusal guidance', async () => {
     await server.close?.();
     server = null;

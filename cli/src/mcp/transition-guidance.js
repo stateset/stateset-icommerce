@@ -24,6 +24,7 @@ import {
   findStateMachine,
   formatMoves,
   machineForTool,
+  moveMatchesParams,
   requestedMove,
   toolsForMove,
 } from '../state-machine-catalog.js';
@@ -128,17 +129,16 @@ function toolsInto(machine, state) {
  * catalog lists every move into a status, not the ones a particular tool makes
  * (resume_subscription resumes only a paused subscription, though trial,
  * past_due and pending also move into active), so the catalog's sources are
- * narrowed to those the tool's own mapping accepts (its `from`). A tool with no
- * mapping for `target` -- a status-parameter call asking for a move another
- * tool makes -- keeps the catalog's list.
+ * narrowed to those the tool's own mapping accepts (its `from`, for a call
+ * with these `params`). A tool with no mapping for `target` -- a
+ * status-parameter call asking for a move another tool makes -- keeps the
+ * catalog's list.
  */
-function sourcesForTool(toolName, machine, target) {
+function sourcesForTool(toolName, params, machine, target) {
   const sources = acceptedFrom(machine, target) ?? [];
-  const own = (TRANSITION_TOOLS[machine]?.[target] ?? []).some((move) => move.tool === toolName);
-  if (!own) return sources;
-  return sources.filter((from) =>
-    toolsForMove(machine, from, target).some((move) => move.tool === toolName),
-  );
+  const isOwn = (move) => move.tool === toolName && moveMatchesParams(move, params);
+  if (!(TRANSITION_TOOLS[machine]?.[target] ?? []).some(isOwn)) return sources;
+  return sources.filter((from) => toolsForMove(machine, from, target).some(isOwn));
 }
 
 /**
@@ -214,7 +214,9 @@ export function previewForMove(toolName, params) {
   const move = toolName ? requestedMove(toolName, params) : null;
   if (!move) return null;
   const sources = [
-    ...new Set(move.targets.flatMap((target) => sourcesForTool(toolName, move.machine, target))),
+    ...new Set(
+      move.targets.flatMap((target) => sourcesForTool(toolName, params, move.machine, target)),
+    ),
   ];
   const to = move.targets.length === 1 ? move.targets[0] : move.targets;
   let sentence;

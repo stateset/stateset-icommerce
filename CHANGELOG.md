@@ -366,6 +366,12 @@ finance writes carry an authenticated identity.
   `resume_subscription` advertised trial, past_due and pending although the
   engine resumes only a paused subscription; `complete_payment` (disputed)
   and `approve_purchase_order` (on hold) overstated theirs the same way.
+- A preview of `cancel_subscription` with `immediate: true` names `expired`,
+  the status the engine stores for an immediate cancellation, instead of
+  `cancelled` (still named for the default end-of-period cancellation). The
+  lifecycle catalog adds the immediate cancellation of a paused or pending
+  subscription (to `expired`), which the engine accepts and the generated
+  catalog omits, so reads and refusal guidance list it too.
 
 ## [1.40.0] - 2026-10-22
 

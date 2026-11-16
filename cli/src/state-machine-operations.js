@@ -23,6 +23,11 @@
  * @property {string[]} [from]     only from these states (default: every state the catalog allows)
  * @property {boolean} [only]      a plain status update cannot make this move; the engine
  *                                 accepts it only through `tool`
+ * @property {Record<string, unknown[]>} [when]
+ *                                 the tool makes this move only when each named parameter
+ *                                 has one of the listed values (`undefined` = not passed);
+ *                                 e.g. cancel_subscription stores `expired` only with
+ *                                 `immediate: true`
  * @property {string} [note]       what the tool needs to make this particular move
  */
 
@@ -100,7 +105,16 @@ export const TRANSITION_TOOLS = freeze({
   subscription: {
     paused: [{ tool: 'pause_subscription' }],
     active: [{ tool: 'resume_subscription', from: ['paused'] }],
-    cancelled: [{ tool: 'cancel_subscription' }],
+    // The engine's cancellation stores `expired` when it is immediate and
+    // `cancelled` (ending at the paid-through date) otherwise.
+    cancelled: [{ tool: 'cancel_subscription', when: { immediate: [false, undefined] } }],
+    expired: [
+      {
+        tool: 'cancel_subscription',
+        when: { immediate: [true] },
+        note: 'pass `immediate: true` (the default cancels at period end, as cancelled)',
+      },
+    ],
   },
   subscription_plan: {
     active: [{ tool: 'activate_subscription_plan' }],
@@ -116,13 +130,14 @@ export const TRANSITION_TOOLS = freeze({
 
 /**
  * Moves the engine's persistence layer accepts that the generated catalog does
- * not list, each citing the Rust rule it mirrors. Without them an agent told
- * "a pending payment can move to processing, failed, cancelled" would never
- * try complete_payment, which the engine accepts. A unit test fails if the
- * cited rule disappears. Folding them into the catalog generator (a Rust
- * change) would make this list empty.
+ * not list, each citing the Rust rule it mirrors (`source`: file, then
+ * function) and the code that shows it (`evidence`: regular expressions the
+ * file must match). Without them an agent told "a pending payment can move to
+ * processing, failed, cancelled" would never try complete_payment, which the
+ * engine accepts. A unit test fails if the cited rule disappears. Folding them
+ * into the catalog generator (a Rust change) would make this list empty.
  *
- * @type {Readonly<Record<string, { from: string, to: string, source: string }[]>>}
+ * @type {Readonly<Record<string, { from: string, to: string, source: string, evidence: string[] }[]>>}
  */
 export const PERSISTENCE_MOVES = freeze({
   payment: [
@@ -131,8 +146,20 @@ export const PERSISTENCE_MOVES = freeze({
       to: 'completed',
       source:
         'crates/stateset-db/src/rules/payments.rs payment_transition_allowed (single-shot capture)',
+      evidence: [
+        'from == PaymentTransactionStatus::Pending && to == PaymentTransactionStatus::Completed',
+      ],
     },
   ],
+  // An immediate cancellation stores `expired` from any non-terminal status;
+  // the catalog moves only trial, active and past_due into expired.
+  subscription: ['paused', 'pending'].map((from) => ({
+    from,
+    to: 'expired',
+    source:
+      'crates/stateset-db/src/sqlite/subscriptions.rs cancel_subscription (immediate: true; refuses only terminal statuses)',
+    evidence: ['if status\\.is_terminal\\(\\)', 'if immediate \\{ \\("expired", now\\) \\}'],
+  })),
 });
 
 /**

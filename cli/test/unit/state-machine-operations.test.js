@@ -118,6 +118,38 @@ describe('TRANSITION_TOOLS', () => {
     assert.equal(requestedMove('update_customer', { email: 'a@example.com' }), null);
     assert.equal(requestedMove('list_orders', {}), null);
   });
+
+  it('reads a target that depends on a parameter (cancel_subscription immediate)', () => {
+    // The engine stores `expired` for an immediate cancellation and
+    // `cancelled` for the default end-of-period one
+    // (crates/stateset-db/src/{sqlite,postgres}/subscriptions.rs).
+    assert.deepEqual(requestedMove('cancel_subscription', { immediate: true }), {
+      machine: 'subscription',
+      targets: ['expired'],
+    });
+    for (const params of [{ immediate: false }, {}, undefined]) {
+      assert.deepEqual(requestedMove('cancel_subscription', params), {
+        machine: 'subscription',
+        targets: ['cancelled'],
+      });
+    }
+  });
+
+  it('names the parameter a parameter-dependent move needs', () => {
+    for (const [machine, targets] of Object.entries(TRANSITION_TOOLS)) {
+      for (const [target, moves] of Object.entries(targets)) {
+        for (const move of moves.filter((m) => m.when)) {
+          const byName = ALL_DOMAIN_TOOLS.find((tool) => tool.name === move.tool);
+          for (const param of Object.keys(move.when)) {
+            assert.ok(
+              byName.inputSchema[param],
+              `${machine}.${target}: ${move.tool} has a ${param} parameter`,
+            );
+          }
+        }
+      }
+    }
+  });
 });
 
 describe('PERSISTENCE_MOVES', () => {
@@ -128,11 +160,13 @@ describe('PERSISTENCE_MOVES', () => {
         const [file, fn] = move.source.split(' ');
         const source = readFileSync(new URL(`../../../${file}`, import.meta.url), 'utf8');
         assert.match(source, new RegExp(`fn ${fn}\\b`), `${file} still defines ${fn}`);
-        assert.match(
-          source,
-          /from == PaymentTransactionStatus::Pending && to == PaymentTransactionStatus::Completed/,
-          `${fn} still accepts ${move.from} -> ${move.to}`,
-        );
+        for (const evidence of move.evidence) {
+          assert.match(
+            source,
+            new RegExp(evidence),
+            `${fn} still accepts ${move.from} -> ${move.to}`,
+          );
+        }
         // Not in the generated catalog (else this entry is redundant) ...
         const before = generated.states.find((s) => s.name === move.from);
         assert.ok(!before.next.includes(move.to), `${machineName} catalog omits the move`);

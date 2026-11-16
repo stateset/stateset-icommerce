@@ -204,6 +204,50 @@ describe('previewForMove', () => {
     );
   });
 
+  /**
+   * cancel_subscription with `immediate: true` ends the subscription now and
+   * the engine stores `expired`; only the default end-of-period cancellation
+   * stores `cancelled`. The preview reported `cancelled` for both. Either is
+   * accepted from every non-terminal status.
+   */
+  it('previews an immediate cancellation as expired and a default one as cancelled', () => {
+    const nonTerminal = ['trial', 'active', 'paused', 'past_due', 'pending'];
+
+    const immediate = previewForMove('cancel_subscription', {
+      subscriptionId: 'sub-1',
+      immediate: true,
+    });
+    assert.deepEqual(immediate.transition, {
+      machine: 'subscription',
+      to: 'expired',
+      acceptedFrom: nonTerminal,
+    });
+
+    for (const params of [
+      { subscriptionId: 'sub-1', immediate: false },
+      { subscriptionId: 'sub-1' },
+    ]) {
+      assert.deepEqual(previewForMove('cancel_subscription', params).transition, {
+        machine: 'subscription',
+        to: 'cancelled',
+        acceptedFrom: nonTerminal,
+      });
+    }
+
+    const decision = (params) =>
+      withMovePreview('cancel_subscription', params, {
+        allowed: false,
+        preview: true,
+        reason: "Preview mode: would execute 'cancel_subscription' if --apply flag is set",
+        wouldDo: { tool: 'cancel_subscription', params },
+      });
+    assert.equal(
+      decision({ subscriptionId: 'sub-1', immediate: true }).wouldDo.transition.to,
+      'expired',
+    );
+    assert.equal(decision({ subscriptionId: 'sub-1' }).wouldDo.transition.to, 'cancelled');
+  });
+
   it('extends a preview decision without touching any other decision', () => {
     const preview = withMovePreview(
       'complete_return',
