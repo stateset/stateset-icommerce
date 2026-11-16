@@ -114,6 +114,10 @@ export interface CommerceEngine {
     list: (params?: {
       status?: string;
       customerId?: string;
+      /** RFC 3339, inclusive (native `OrderFilterInput.fromDate`). */
+      fromDate?: string;
+      /** RFC 3339, inclusive (native `OrderFilterInput.toDate`). */
+      toDate?: string;
       limit?: number;
       offset?: number;
     }) => Promise<Order[]>;
@@ -157,6 +161,10 @@ export interface CommerceEngine {
     list: (params?: {
       status?: string;
       customerId?: string;
+      /** RFC 3339, inclusive (native `ReturnFilterInput.fromDate`). */
+      fromDate?: string;
+      /** RFC 3339, inclusive (native `ReturnFilterInput.toDate`). */
+      toDate?: string;
       limit?: number;
       offset?: number;
     }) => Promise<Return[]>;
@@ -319,8 +327,12 @@ export interface CommerceEngine {
       limit?: number,
     ) => Promise<{ productId: string; name: string; revenue: number; units: number }[]>;
     getConversionFunnel?: () => Promise<{ stage: string; count: number; rate: number }[]>;
-    /** Native only (`Analytics.returnMetrics`): engine-computed return rate and refund total. */
-    returnMetrics?: () => Promise<NativeReturnMetrics>;
+    /**
+     * Native only (`Analytics.returnMetrics`): engine-computed return rate and
+     * refund total. `period` takes only named windows (`AnalyticsPeriod`) and
+     * defaults to the last 30 days.
+     */
+    returnMetrics?: (query?: { period?: string }) => Promise<NativeReturnMetrics>;
     /** Native only (`Analytics.lowStockItems`). */
     lowStockItems?: (threshold?: number) => Promise<NativeLowStockItem[]>;
     /** Native only (`Analytics.inventoryHealth`). */
@@ -1697,8 +1709,71 @@ async function collectAllPages<T extends { id: string }>(
   }
 }
 
-function coverageOf(records: readonly unknown[], complete: boolean): AnalyticsCoverage {
-  return { complete, records: records.length };
+/** A requested reporting window: inclusive epoch-millisecond bounds, either one optional. */
+export interface AnalyticsWindow {
+  start?: number;
+  end?: number;
+}
+
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseWindowBound(value: string, field: 'startDate' | 'endDate'): number {
+  // A bare date means the whole (UTC) day: from its first to its last millisecond.
+  const text = DATE_ONLY.test(value)
+    ? `${value}T${field === 'startDate' ? '00:00:00.000' : '23:59:59.999'}Z`
+    : value;
+  const parsed = Date.parse(text);
+  if (Number.isNaN(parsed)) {
+    throw new Error(`Invalid analytics ${field}: ${value}`);
+  }
+  return parsed;
+}
+
+/**
+ * The window an analytics caller asked for, or `undefined` for all time.
+ * Refuses an unparseable date rather than silently reporting all time.
+ */
+export function resolveAnalyticsWindow(params?: {
+  startDate?: string;
+  endDate?: string;
+}): AnalyticsWindow | undefined {
+  const start = params?.startDate ? parseWindowBound(params.startDate, 'startDate') : undefined;
+  const end = params?.endDate ? parseWindowBound(params.endDate, 'endDate') : undefined;
+  return start === undefined && end === undefined ? undefined : { start, end };
+}
+
+/** The window as the native list filters take it (`fromDate`/`toDate`, RFC 3339, inclusive). */
+function nativeDateFilter(window?: AnalyticsWindow): { fromDate?: string; toDate?: string } {
+  return {
+    ...(window?.start !== undefined && { fromDate: new Date(window.start).toISOString() }),
+    ...(window?.end !== undefined && { toDate: new Date(window.end).toISOString() }),
+  };
+}
+
+/** Whether a record's timestamp falls in the window (all records do when there is none). */
+function isWithinWindow(timestamp: string, window?: AnalyticsWindow): boolean {
+  if (!window) return true;
+  const at = Date.parse(timestamp);
+  if (Number.isNaN(at)) return false;
+  return (
+    (window.start === undefined || at >= window.start) &&
+    (window.end === undefined || at <= window.end)
+  );
+}
+
+function coverageOf(
+  records: readonly unknown[],
+  complete: boolean,
+  window?: AnalyticsWindow,
+  unavailable: string[] = [],
+): AnalyticsCoverage {
+  const range = nativeDateFilter(window);
+  return {
+    complete,
+    records: records.length,
+    ...(window && { window: { start: range.fromDate, end: range.toDate } }),
+    ...(unavailable.length > 0 && { unavailable }),
+  };
 }
 
 // ============================================================================
@@ -1744,26 +1819,58 @@ export const ordersApi = {
       return commerce.orders.getAnalytics(params);
     }
     // The binding has no order aggregate; every figure here is derivable
-    // from the order records themselves, all of them.
-    const { records, complete } = await collectAllPages((page) => commerce.orders.list(page));
-    return summarizeOrders(records, { complete });
+    // from the order records themselves, all of them, in the requested window
+    // (the engine filters by order date; `summarizeOrders` re-applies the
+    // window in case a build ignores the filter).
+    const window = resolveAnalyticsWindow(params);
+    const { records, complete } = await collectAllPages((page) =>
+      commerce.orders.list({ ...nativeDateFilter(window), ...page }),
+    );
+    return summarizeOrders(records, { complete, window });
   },
 };
 
-/** Order analytics computed from the order records (engines without an aggregate). */
+/** The UTC days the daily breakdown spans: the window, or the 30 days to `now`; at most 366. */
+function dailyBreakdownDays(now: number, window?: AnalyticsWindow): string[] {
+  const end = window?.end ?? now;
+  const start = window?.start ?? end - 29 * DAY_MS;
+  const lastDay = Date.parse(toDateKey(new Date(end).toISOString()));
+  const firstDay = Math.max(
+    Date.parse(toDateKey(new Date(start).toISOString())),
+    lastDay - 365 * DAY_MS,
+  );
+  const days: string[] = [];
+  for (let day = firstDay; day <= lastDay; day += DAY_MS) {
+    days.push(toDateKey(new Date(day).toISOString()));
+  }
+  return days;
+}
+
+/**
+ * Order analytics computed from the order records (engines without an
+ * aggregate). With a `window`, every figure covers only the orders created in
+ * it and the daily breakdown spans it.
+ */
 export function summarizeOrders(
-  orders: Order[],
-  options: { now?: number; complete?: boolean } = {},
+  allOrders: Order[],
+  options: { now?: number; complete?: boolean; window?: AnalyticsWindow } = {},
 ): OrderAnalytics {
   const now = options.now ?? Date.now();
+  const orders = allOrders.filter((order) => isWithinWindow(order.createdAt, options.window));
   const totalRevenue = roundCurrency(orders.reduce((sum, order) => sum + order.totalAmount, 0));
   const ordersByStatus = orders.reduce<Record<string, number>>((acc, order) => {
     acc[order.status] = (acc[order.status] || 0) + 1;
     return acc;
   }, {});
-  const ordersByDay = Array.from({ length: 30 }, (_, index) => {
-    const date = toDateKey(new Date(now - (29 - index) * DAY_MS).toISOString());
-    const daily = orders.filter((order) => toDateKey(order.createdAt) === date);
+  const byDay = new Map<string, Order[]>();
+  for (const order of orders) {
+    const day = toDateKey(order.createdAt);
+    const bucket = byDay.get(day);
+    if (bucket) bucket.push(order);
+    else byDay.set(day, [order]);
+  }
+  const ordersByDay = dailyBreakdownDays(now, options.window).map((date) => {
+    const daily = byDay.get(date) ?? [];
     return {
       date,
       count: daily.length,
@@ -1776,7 +1883,7 @@ export function summarizeOrders(
     averageOrderValue: orders.length ? roundCurrency(totalRevenue / orders.length) : 0,
     ordersByStatus,
     ordersByDay,
-    coverage: coverageOf(orders, options.complete ?? true),
+    coverage: coverageOf(orders, options.complete ?? true, options.window),
   };
 }
 
@@ -1998,32 +2105,70 @@ export function toAdminReturn(record: Return): Return {
 
 /**
  * Return analytics computed from the return records themselves, for engines
- * without an aggregate. Rate and refund total come from the engine's
- * `analytics.returnMetrics` when supplied; figures nothing reports (processing
- * time, top products) are left empty rather than invented.
+ * without an aggregate. Every figure describes ONE population: the returns in
+ * `window` (all of them when there is none).
+ *
+ *  - `metrics` (the engine's `analytics.returnMetrics`) supplies the rate and
+ *    refund total; pass it only when it was computed over that same
+ *    population.
+ *  - Otherwise the rate is returns per order over `orderCount` (the orders
+ *    created in the window, as the engine computes it), and the refund total
+ *    is summed from the records' refund amounts.
+ *
+ * A figure neither source can supply reads zero and is listed in
+ * `coverage.unavailable`; figures nothing reports (processing time, top
+ * products) are left empty rather than invented.
  */
 export function summarizeReturns(
-  returns: Return[],
-  metrics?: NativeReturnMetrics,
-  options: { complete?: boolean } = {},
+  allReturns: Return[],
+  options: {
+    metrics?: NativeReturnMetrics;
+    orderCount?: number;
+    window?: AnalyticsWindow;
+    complete?: boolean;
+  } = {},
 ): ReturnAnalytics {
+  const { metrics, orderCount, window } = options;
+  const returns = allReturns.filter((entry) => isWithinWindow(entry.createdAt, window));
+  const unavailable: string[] = [];
   const tally = (key: (entry: Return) => string) =>
     returns.reduce<Record<string, number>>((acc, entry) => {
       acc[key(entry)] = (acc[key(entry)] || 0) + 1;
       return acc;
     }, {});
-  const refundTotal = metrics
-    ? Number(metrics.totalRefundedExact ?? metrics.totalRefunded)
-    : roundCurrency(returns.reduce((sum, entry) => sum + (entry.refundAmount || 0), 0));
+
+  let returnRate = 0;
+  if (metrics) {
+    returnRate = metrics.returnRatePercent / 100;
+  } else if (orderCount !== undefined) {
+    returnRate = orderCount > 0 ? Number((returns.length / orderCount).toFixed(4)) : 0;
+  } else {
+    unavailable.push('returnRate');
+  }
+
+  let refundTotal = 0;
+  const refundAmounts = returns.flatMap((entry) =>
+    entry.refundAmount === undefined ? [] : [entry.refundAmount],
+  );
+  if (metrics) {
+    refundTotal = Number(metrics.totalRefundedExact ?? metrics.totalRefunded);
+  } else if (refundAmounts.length > 0) {
+    refundTotal = roundCurrency(refundAmounts.reduce((sum, amount) => sum + amount, 0));
+  } else if (returns.length > 0) {
+    // Records without refund amounts (the native return header) and no
+    // engine total for this population: the refund total is unknown.
+    unavailable.push('refundTotal');
+  }
+
   return {
     totalReturns: returns.length,
-    returnRate: metrics ? metrics.returnRatePercent / 100 : 0,
+    returnRate,
     refundTotal,
     returnsByReason: tally((entry) => entry.reasonCategory),
     returnsByStatus: tally((entry) => entry.status),
     averageProcessingTime: 0,
     topReturnedProducts: [],
-    coverage: coverageOf(returns, options.complete ?? true),
+    coverage: coverageOf(returns, options.complete ?? true, window, unavailable),
   };
 }
 
@@ -2085,12 +2230,34 @@ export const returnsApi = {
     if (typeof commerce.returns.getAnalytics === 'function') {
       return commerce.returns.getAnalytics(params);
     }
+    const window = resolveAnalyticsWindow(params);
+    const dateFilter = nativeDateFilter(window);
+    const returns = await collectAllPages((page) =>
+      commerce.returns.list({ ...dateFilter, ...page }),
+    );
+    // The engine's metrics take only named periods (and default to the last
+    // 30 days), so they describe the same returns as the listing only for an
+    // undated request, asked for explicitly as all time.
     const metrics =
-      typeof commerce.analytics?.returnMetrics === 'function'
-        ? await commerce.analytics.returnMetrics()
+      !window && typeof commerce.analytics?.returnMetrics === 'function'
+        ? await commerce.analytics.returnMetrics({ period: 'all_time' })
         : undefined;
-    const { records, complete } = await collectAllPages((page) => commerce.returns.list(page));
-    return summarizeReturns(records.map(toAdminReturn), metrics, { complete });
+    if (metrics) {
+      return summarizeReturns(returns.records.map(toAdminReturn), {
+        metrics,
+        complete: returns.complete,
+      });
+    }
+    // For a requested window, derive the rate as the engine does: returns per
+    // order created in the same window.
+    const orders = await collectAllPages((page) =>
+      commerce.orders.list({ ...dateFilter, ...page }),
+    );
+    return summarizeReturns(returns.records.map(toAdminReturn), {
+      orderCount: orders.records.filter((order) => isWithinWindow(order.createdAt, window)).length,
+      window,
+      complete: returns.complete && orders.complete,
+    });
   },
 };
 

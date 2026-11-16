@@ -65,6 +65,13 @@ export interface AnalyticsCoverage {
   complete: boolean;
   /** How many records the figures were computed from. */
   records: number;
+  /** The requested reporting window (inclusive RFC 3339 bounds); absent for all time. */
+  window?: { start?: string; end?: string };
+  /**
+   * Figures the engine cannot report for this window. They read zero but
+   * were not measured; show them as unavailable, not as zero.
+   */
+  unavailable?: string[];
 }
 
 export interface OrderAnalytics {

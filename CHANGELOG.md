@@ -314,6 +314,15 @@ finance writes carry an authenticated identity.
     engine's default page), so a store with 600 $10 subscriptions showed
     $5,000 MRR. A scan that stops at its 50,000-record cap now says so
     (`coverage.complete: false`).
+  - Order and return analytics honour a requested `startDate`/`endDate`
+    (a bare date covers the whole UTC day); they summarized every record.
+    Undated return analytics ask the engine for all-time metrics, so the
+    return count and the refund total and rate describe the same returns;
+    the engine's default 30-day metrics were mixed with an undated count.
+    For a requested window the return rate is returns per order in that
+    window, and the refund total, which native return records do not carry,
+    is reported unavailable (`coverage.unavailable`) instead of taken from
+    another window.
 - The CLI sync client works against the real stateset-sequencer API
   (checked against its source at master e97829b):
   - `pull()`, `getHead()` and `getEntityHistory()` read the VES routes

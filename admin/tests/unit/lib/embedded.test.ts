@@ -653,6 +653,159 @@ describe('embedded commerce engine', () => {
     expect(analytics.coverage).toMatchObject({ complete: false, records: ANALYTICS_SCAN_LIMIT });
   });
 
+  function nativeOrder(id: string, createdAt: string, totalAmountExact = '10.00') {
+    return {
+      id,
+      customerId: 'cus_1',
+      status: 'delivered',
+      totalAmount: Number(totalAmountExact),
+      totalAmountExact,
+      items: [],
+      currency: 'USD',
+      createdAt,
+      updatedAt: createdAt,
+    };
+  }
+
+  function nativeReturn(id: string, createdAt: string) {
+    return { id, orderId: 'ord_1', status: 'completed', reason: 'damaged', version: 1, createdAt };
+  }
+
+  it('honours a requested window in the native order analytics', async () => {
+    vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'false');
+    const orders = [
+      nativeOrder('ord_sep', '2026-09-30T23:59:59.999Z'),
+      nativeOrder('ord_first', '2026-10-01T00:00:00.000Z'),
+      nativeOrder('ord_last', '2026-10-31T23:59:59.000Z'),
+      nativeOrder('ord_nov', '2026-11-01T00:00:00.000Z'),
+    ];
+    // Worst case: an engine build that ignores the date filter.
+    const listOrders = vi.fn(async (_filter?: Record<string, unknown>) => orders);
+    class NativeCommerce {
+      get orders() {
+        return { list: listOrders };
+      }
+    }
+    vi.doMock('@stateset/embedded', () => ({ Commerce: NativeCommerce }));
+
+    const { ordersApi } = await import('@/lib/embedded');
+
+    const october = await ordersApi.getAnalytics({ startDate: '2026-10-01', endDate: '2026-10-31' });
+    // The window goes to the engine as RFC 3339 bounds covering whole days...
+    expect(listOrders).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fromDate: '2026-10-01T00:00:00.000Z',
+        toDate: '2026-10-31T23:59:59.999Z',
+      }),
+    );
+    // ...and every figure covers that window only, boundaries included.
+    expect(october).toMatchObject({
+      totalOrders: 2,
+      totalRevenue: 20,
+      ordersByStatus: { delivered: 2 },
+      coverage: {
+        complete: true,
+        records: 2,
+        window: { start: '2026-10-01T00:00:00.000Z', end: '2026-10-31T23:59:59.999Z' },
+      },
+    });
+    expect(october.ordersByDay).toHaveLength(31);
+    expect(october.ordersByDay[0]).toEqual({ date: '2026-10-01', count: 1, revenue: 10 });
+    expect(october.ordersByDay[30]).toEqual({ date: '2026-10-31', count: 1, revenue: 10 });
+
+    await expect(ordersApi.getAnalytics({ startDate: 'not a date' })).rejects.toThrow(
+      /Invalid analytics startDate/,
+    );
+  });
+
+  it('reports undated return analytics over one all-time population', async () => {
+    vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'false');
+    // One $50 return from 60 days ago and nothing recent: the engine's
+    // default (last 30 days) metrics would report no refunds for it.
+    const old = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+    const returnMetrics = vi.fn(async (query?: { period?: string }) =>
+      query?.period === 'all_time'
+        ? { totalReturns: 1, returnRatePercent: 100, totalRefunded: 50, totalRefundedExact: '50.00' }
+        : { totalReturns: 0, returnRatePercent: 0, totalRefunded: 0, totalRefundedExact: '0' },
+    );
+    class NativeCommerce {
+      get returns() {
+        return { list: async () => [nativeReturn('ret_old', old)] };
+      }
+      get analytics() {
+        return { returnMetrics };
+      }
+    }
+    vi.doMock('@stateset/embedded', () => ({ Commerce: NativeCommerce }));
+
+    const { returnsApi } = await import('@/lib/embedded');
+
+    expect(await returnsApi.getAnalytics()).toMatchObject({
+      totalReturns: 1,
+      returnRate: 1,
+      refundTotal: 50,
+    });
+    expect(returnMetrics).toHaveBeenCalledWith({ period: 'all_time' });
+  });
+
+  it('honours a requested window in the native return analytics', async () => {
+    vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'false');
+    const returns = [
+      nativeReturn('ret_sep', '2026-09-15T12:00:00.000Z'),
+      nativeReturn('ret_oct', '2026-10-15T12:00:00.000Z'),
+      nativeReturn('ret_nov', '2026-11-02T12:00:00.000Z'),
+    ];
+    const orders = [
+      nativeOrder('ord_sep', '2026-09-10T00:00:00.000Z'),
+      ...['01', '08', '15', '22'].map((day) => nativeOrder(`ord_${day}`, `2026-10-${day}T09:00:00Z`)),
+      nativeOrder('ord_nov', '2026-11-01T00:00:00.000Z'),
+    ];
+    const listReturns = vi.fn(async (_filter?: Record<string, unknown>) => returns);
+    // The engine's metrics only take named periods; they cannot express October.
+    const returnMetrics = vi.fn(async () => ({
+      totalReturns: 3,
+      returnRatePercent: 50,
+      totalRefunded: 75,
+      totalRefundedExact: '75.00',
+    }));
+    class NativeCommerce {
+      get returns() {
+        return { list: listReturns };
+      }
+      get orders() {
+        return { list: async () => orders };
+      }
+      get analytics() {
+        return { returnMetrics };
+      }
+    }
+    vi.doMock('@stateset/embedded', () => ({ Commerce: NativeCommerce }));
+
+    const { returnsApi } = await import('@/lib/embedded');
+
+    const october = await returnsApi.getAnalytics({
+      startDate: '2026-10-01',
+      endDate: '2026-10-31',
+    });
+    expect(listReturns).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fromDate: '2026-10-01T00:00:00.000Z',
+        toDate: '2026-10-31T23:59:59.999Z',
+      }),
+    );
+    expect(returnMetrics).not.toHaveBeenCalled();
+    expect(october).toMatchObject({
+      totalReturns: 1,
+      returnsByStatus: { completed: 1 },
+      // One October return against four October orders.
+      returnRate: 0.25,
+      // Native return records carry no refund amount, so the October refund
+      // total is not measured; it is flagged, not invented.
+      refundTotal: 0,
+      coverage: { complete: true, records: 1, unavailable: ['refundTotal'] },
+    });
+  });
+
   it('rejects explicit mock mode in production', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'true');
