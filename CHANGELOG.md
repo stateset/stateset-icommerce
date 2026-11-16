@@ -331,6 +331,11 @@ finance writes carry an authenticated identity.
     price x periods per year and MRR is rounded once from it; summing
     rounded float monthly shares had reported ARR 760.32 for 760.28. The
     analytics dashboard and the returns view render the exact strings.
+- Admin demo mode (`STATESET_ADMIN_ALLOW_MOCK_DATA=true`) follows the
+  engine's lifecycle rules end to end:
+  - Orders, returns and subscriptions created in a demo session are kept, so
+    they can be confirmed, approved or paused. Creation returned a record
+    the stricter lifecycle checks then refused as not found.
 - The CLI sync client works against the real stateset-sequencer API
   (checked against its source at master e97829b):
   - `pull()`, `getHead()` and `getEntityHistory()` read the VES routes

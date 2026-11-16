@@ -912,6 +912,45 @@ describe('embedded commerce engine', () => {
     });
   });
 
+  function useMockEngine() {
+    vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'true');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.doMock('@stateset/embedded', () => {
+      throw new Error('native addon missing');
+    });
+  }
+
+  it('lets demo records created in the session take lifecycle actions', async () => {
+    useMockEngine();
+    const { ordersApi, returnsApi, subscriptionsApi } = await import('@/lib/embedded');
+
+    const order = await ordersApi.create({
+      customerId: 'cus_100',
+      items: [{ productId: 'prod_1', quantity: 2 }],
+    });
+    expect(order.status).toBe('pending');
+    expect((await ordersApi.updateStatus(order.id, 'confirmed')).status).toBe('confirmed');
+    expect((await ordersApi.get(order.id))?.status).toBe('confirmed');
+    expect((await ordersApi.list()).map((entry) => entry.id)).toContain(order.id);
+
+    const created = await returnsApi.create({
+      orderId: order.id,
+      items: [{ productId: 'prod_1', quantity: 1 }],
+      reason: 'Arrived broken',
+      reasonCategory: 'damaged',
+    });
+    expect(created.status).toBe('requested');
+    expect((await returnsApi.approve(created.id)).status).toBe('approved');
+
+    const subscription = await subscriptionsApi.create({ customerId: 'cus_100', planId: 'pro' });
+    expect((await subscriptionsApi.pause(subscription.id)).status).toBe('paused');
+    expect((await subscriptionsApi.get(subscription.id))?.status).toBe('paused');
+
+    // Unknown ids are still refused.
+    await expect(ordersApi.updateStatus('ord_missing', 'confirmed')).rejects.toThrow(/not found/);
+    await expect(subscriptionsApi.pause('sub_missing')).rejects.toThrow(/not found/);
+  });
+
   it('rejects explicit mock mode in production', async () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubEnv('STATESET_ADMIN_ALLOW_MOCK_DATA', 'true');

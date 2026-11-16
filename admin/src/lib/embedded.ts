@@ -1088,6 +1088,15 @@ function groupRevenueByPeriod(
     }));
 }
 
+/**
+ * Keep a record created in demo mode, newest first as the engine lists, so
+ * the session can list it, read it and move it through its lifecycle.
+ */
+function persistMockRecord<T>(records: T[], record: T): T {
+  records.unshift(record);
+  return record;
+}
+
 /** Apply a list call's `limit`/`offset`, as the engine's lists do. */
 function mockPage<T>(records: T[], params?: { limit?: number; offset?: number }): T[] {
   const offset = params?.offset || 0;
@@ -1312,7 +1321,8 @@ function createMockCommerceEngine(): CommerceEngine {
         return mockPage(orders, params);
       },
       get: async (id: string) => getMockOrder(id),
-      create: async (params: CreateOrderParams) => buildMockOrderFromParams(params),
+      create: async (params: CreateOrderParams) =>
+        persistMockRecord(getMockData().orders, buildMockOrderFromParams(params)),
       updateStatus: async (id: string, status: string) =>
         transitionMockOrder(id, status as Order['status']),
       cancel: async (id: string) => transitionMockOrder(id, 'cancelled'),
@@ -1416,7 +1426,8 @@ function createMockCommerceEngine(): CommerceEngine {
         return mockPage(returns, params);
       },
       get: async (id: string) => getMockReturn(id),
-      create: async (params: CreateReturnParams) => buildMockReturnFromParams(params),
+      create: async (params: CreateReturnParams) =>
+        persistMockRecord(getMockData().returns, buildMockReturnFromParams(params)),
       approve: async (id: string) => transitionMockReturn(id, 'approved'),
       reject: async (id: string, reason: string) =>
         transitionMockReturn(id, 'rejected', { notes: reason }),
@@ -1520,9 +1531,12 @@ function createMockCommerceEngine(): CommerceEngine {
       },
       get: async (id: string) => getMockSubscription(id),
       subscribe: async (input: { customerId: string; planId: string }) =>
-        buildMockSubscription(
-          { customerId: input.customerId, planId: input.planId, plan: input.planId },
-          nextMockId('sub'),
+        persistMockRecord(
+          getMockData().subscriptions,
+          buildMockSubscription(
+            { customerId: input.customerId, planId: input.planId, plan: input.planId },
+            nextMockId('sub'),
+          ),
         ),
       pause: async (id: string) => transitionMockSubscription(id, 'paused'),
       resume: async (id: string) => transitionMockSubscription(id, 'active'),
