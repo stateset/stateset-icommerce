@@ -24,6 +24,7 @@ fn policy() -> KernelPolicy {
         "a2a.escrow.fund",
         "a2a.escrow.refund",
         "a2a.dispute.file",
+        "a2a.dispute.resolve",
     ]
     .into_iter()
     .fold(KernelPolicy::new("commerce-policy-1"), |policy, command| {
@@ -181,22 +182,13 @@ async fn postgres_refund_is_refused_for_filed_dispute_and_allowed_after_resoluti
     assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{receipt:?}");
 }
 
-/// Twin of the SQLite
-/// `sqlite_refunding_a_disputed_escrow_resolves_its_dispute_as_a_full_refund`:
-/// refunding a disputed escrow resolves its open dispute as a `full_refund`
-/// in the same transaction, so the payment is not frozen for good.
-#[tokio::test]
-async fn postgres_refunding_a_disputed_escrow_resolves_its_dispute_as_a_full_refund() {
-    use stateset_core::{
-        A2ADisputeResolutionType, A2ADisputeStatus, A2AEscrowStatus, CreateA2AEscrow,
-        FileA2ADispute, FundA2AEscrow, RefundA2AEscrow,
-    };
-    let Some(url) = postgres_url() else {
-        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
-        return;
-    };
-    let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
-    let payment = completed_payment(&db).await;
+/// A funded kernel escrow holding `payment`, with a dispute filed against it.
+/// Returns `(escrow_id, dispute_id)`.
+async fn disputed_escrow(
+    db: &PostgresDatabase,
+    payment: &stateset_core::Payment,
+) -> (String, String) {
+    use stateset_core::{CreateA2AEscrow, FileA2ADispute, FundA2AEscrow};
     let kernel = db.kernel_executor(policy());
     let escrow = kernel
         .execute_create_a2a_escrow_async(&governed(
@@ -248,12 +240,32 @@ async fn postgres_refunding_a_disputed_escrow_resolves_its_dispute_as_a_full_ref
         .expect("file dispute")
         .result
         .expect("dispute");
+    (escrow.id, dispute.id)
+}
 
-    let refunded = kernel
+/// Twin of the SQLite
+/// `sqlite_refunding_a_disputed_escrow_resolves_its_dispute_as_a_full_refund`:
+/// refunding a disputed escrow resolves its open dispute as a `full_refund`
+/// in the same transaction, so the payment is not frozen for good.
+#[tokio::test]
+async fn postgres_refunding_a_disputed_escrow_resolves_its_dispute_as_a_full_refund() {
+    use stateset_core::{
+        A2ADisputeResolutionType, A2ADisputeStatus, A2AEscrowStatus, RefundA2AEscrow,
+    };
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
+    let payment = completed_payment(&db).await;
+    let (escrow_id, dispute_id) = disputed_escrow(&db, &payment).await;
+
+    let refunded = db
+        .kernel_executor(policy())
         .execute_refund_a2a_escrow_async(&governed(
             "a2a.escrow.refund",
             "agent:escrow",
-            RefundA2AEscrow { escrow_id: escrow.id, reason: Some("buyer refunded".into()) },
+            RefundA2AEscrow { escrow_id, reason: Some("buyer refunded".into()) },
         ))
         .await
         .expect("refund escrow");
@@ -272,7 +284,7 @@ async fn postgres_refunding_a_disputed_escrow_resolves_its_dispute_as_a_full_ref
         "SELECT status, resolution_type, buyer_amount_decimal, seller_amount_decimal, resolved_by
          FROM a2a_disputes WHERE id = $1",
     )
-    .bind(&dispute.id)
+    .bind(&dispute_id)
     .fetch_one(db.pool())
     .await
     .unwrap();
@@ -289,4 +301,135 @@ async fn postgres_refunding_a_disputed_escrow_resolves_its_dispute_as_a_full_ref
         .await
         .expect("receipt");
     assert_eq!(receipt.status, ExecutionStatus::Succeeded, "{receipt:?}");
+}
+
+/// Connect a one-connection pool whose backend carries `name` as its
+/// `application_name`, so the test can see when that backend waits on a lock.
+async fn tagged_db(url: &str, name: &str) -> PostgresDatabase {
+    let separator = if url.contains('?') { '&' } else { '?' };
+    PostgresDatabase::connect_with_options(
+        format!("{url}{separator}application_name={name}"),
+        1,
+        30,
+    )
+    .await
+    .expect("connect tagged pool")
+}
+
+async fn wait_for_lock(
+    db: &PostgresDatabase,
+    name: &str,
+) -> std::result::Result<(), tokio::time::error::Elapsed> {
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                                WHERE application_name = $1 AND wait_event_type = 'Lock')",
+            )
+            .bind(name)
+            .fetch_one(db.pool())
+            .await
+            .expect("poll pg_stat_activity");
+            if waiting {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+}
+
+/// `a2a.escrow.refund` and `a2a.dispute.resolve` take the escrow and dispute
+/// row locks in the same order (escrow first). Resolution used to lock the
+/// dispute first, so a refund holding the escrow and a resolution holding
+/// its dispute each waited on the other, and Postgres aborted one with a
+/// deadlock error instead of an execution receipt.
+///
+/// A gate transaction holding the escrow row lines both commands up behind
+/// it: the refund queues on the escrow first, then the resolution starts
+/// (and, before the fix, locked the dispute on its way to the escrow). When
+/// the gate commits, the refund runs first and resolves the dispute itself.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn postgres_concurrent_escrow_refund_and_dispute_resolution_do_not_deadlock() {
+    use stateset_core::{A2ADisputeResolutionType, RefundA2AEscrow, ResolveA2ADispute};
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL/DATABASE_URL not set; skipping");
+        return;
+    };
+    let db = PostgresDatabase::connect(&url).await.expect("connect + migrate");
+    let payment = completed_payment(&db).await;
+    let (escrow_id, dispute_id) = disputed_escrow(&db, &payment).await;
+    let refund_name = format!("escrow_refund_{}", Uuid::new_v4().simple());
+    let resolve_name = format!("dispute_resolve_{}", Uuid::new_v4().simple());
+    let refund_db = tagged_db(&url, &refund_name).await;
+    let resolve_db = tagged_db(&url, &resolve_name).await;
+
+    let mut gate = db.pool().begin().await.expect("begin gate");
+    sqlx::query("SELECT id FROM a2a_escrows WHERE id = $1 FOR UPDATE")
+        .bind(&escrow_id)
+        .fetch_one(gate.as_mut())
+        .await
+        .expect("gate locks the escrow");
+
+    let refund_kernel = refund_db.kernel_executor(policy());
+    let refund_command = governed(
+        "a2a.escrow.refund",
+        "agent:escrow",
+        RefundA2AEscrow { escrow_id: escrow_id.clone(), reason: Some("buyer refunded".into()) },
+    );
+    let refund = tokio::spawn(async move {
+        refund_kernel.execute_refund_a2a_escrow_async(&refund_command).await
+    });
+    let refund_waiting = wait_for_lock(&db, &refund_name).await;
+
+    let resolve_kernel = resolve_db.kernel_executor(policy());
+    let resolve_command = governed(
+        "a2a.dispute.resolve",
+        "agent:arbiter",
+        ResolveA2ADispute {
+            dispute_id: dispute_id.clone(),
+            resolution_type: A2ADisputeResolutionType::FullRefund,
+            buyer_amount: None,
+            seller_amount: None,
+            note: Some("arbiter refunds the buyer".into()),
+        },
+    );
+    let resolve = tokio::spawn(async move {
+        resolve_kernel.execute_resolve_a2a_dispute_async(&resolve_command).await
+    });
+    let resolve_waiting = wait_for_lock(&db, &resolve_name).await;
+    gate.commit().await.expect("release the gate");
+
+    let refund = tokio::time::timeout(std::time::Duration::from_secs(60), refund).await;
+    let resolve = tokio::time::timeout(std::time::Duration::from_secs(60), resolve).await;
+    refund_db.pool().close().await;
+    resolve_db.pool().close().await;
+    refund_waiting.expect("the refund queued on the gated escrow");
+    resolve_waiting.expect("the resolution queued on a lock");
+    let refund = refund
+        .expect("refund finished")
+        .expect("refund task")
+        .expect("refund returned a receipt, not a deadlock error");
+    let resolve = resolve
+        .expect("resolution finished")
+        .expect("resolution task")
+        .expect("resolution returned a receipt, not a deadlock error");
+    assert_eq!(refund.status, ExecutionStatus::Succeeded, "{refund:?}");
+    assert_eq!(resolve.status, ExecutionStatus::Rejected, "{resolve:?}");
+    assert_eq!(resolve.error_code.as_deref(), Some("commerce.a2a.dispute_not_resolvable"));
+
+    let escrow_status: String = sqlx::query_scalar("SELECT status FROM a2a_escrows WHERE id = $1")
+        .bind(&escrow_id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    let (dispute_status, resolved_by): (String, Option<String>) =
+        sqlx::query_as("SELECT status, resolved_by FROM a2a_disputes WHERE id = $1")
+            .bind(&dispute_id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(escrow_status, "refunded");
+    assert_eq!(dispute_status, "resolved");
+    assert_eq!(resolved_by.as_deref(), Some("agent:escrow"), "the refund closed the dispute");
 }

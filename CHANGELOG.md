@@ -309,7 +309,10 @@ finance writes carry an authenticated identity.
   resolves its open dispute as a `full_refund` in the same transaction and
   records an `a2a.dispute_resolved.v1` fact, on both databases. The dispute
   used to stay open, so `payments.create_refund` refused the escrow's
-  payment forever.
+  payment forever. On Postgres, `a2a.dispute.resolve` now locks the escrow
+  before the dispute, as the refund does, so a refund and a resolution of
+  the same escrow running together no longer deadlock (Postgres aborted one
+  with a database error instead of a receipt).
 - Warehouse pick and ship refuse a serial held by an open reservation for
   another order (or any other reference), on both databases. Such a serial
   could be picked and shipped for the wrong order, and the shipment closed
@@ -318,7 +321,9 @@ finance writes carry an authenticated identity.
   before.
 - Postgres `search_configs.set_active` with an unknown id changes nothing,
   as on SQLite. It used to commit "deactivate every config" before
-  returning `NotFound`.
+  returning `NotFound`. Concurrent activations take turns behind a
+  transaction-scoped advisory lock, so two activations of different
+  configs no longer deadlock (Postgres aborted one).
 - HTTP idempotency keys no longer stick after a transient client error. A
   401, 403, 405, 413, 415, 429 or any other 4xx that is not replayed (only
   400, 404, 409 and 422 are) releases the durable reservation through the

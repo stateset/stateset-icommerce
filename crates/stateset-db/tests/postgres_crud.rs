@@ -165,23 +165,16 @@ async fn postgres_core_crud_smoke() {
     db.customers().delete_async(customer.id).await.expect("delete customer");
 }
 
-/// Activating a search config that does not exist changes nothing — Postgres
-/// used to commit "deactivate every config" before discovering the id was
-/// missing. Twin of the SQLite
-/// `sqlite_search_config_set_active_missing_id_changes_nothing`.
+/// "The active search config" is one fact for the whole table, so the tests
+/// that activate configs take turns.
 #[cfg(feature = "postgres")]
-#[tokio::test]
-async fn postgres_search_config_set_active_missing_id_changes_nothing() {
-    use stateset_core::{CommerceError, CreateSearchConfig, SearchConfigId};
-    let Some(url) = postgres_url() else {
-        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping search config test");
-        return;
-    };
-    let db = PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations");
-    let configs = db.search_configs();
-    let config = configs
-        .create_async(CreateSearchConfig {
-            name: format!("Primary {}", Uuid::new_v4()),
+static SEARCH_CONFIG_ACTIVATION: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[cfg(feature = "postgres")]
+async fn create_search_config(db: &PostgresDatabase, name: &str) -> stateset_core::SearchConfig {
+    db.search_configs()
+        .create_async(stateset_core::CreateSearchConfig {
+            name: format!("{name} {}", Uuid::new_v4()),
             description: None,
             searchable_fields: vec![],
             facets: vec![],
@@ -189,10 +182,130 @@ async fn postgres_search_config_set_active_missing_id_changes_nothing() {
             boost_rules: vec![],
         })
         .await
-        .expect("create config");
+        .expect("create config")
+}
+
+/// Activating a search config that does not exist changes nothing — Postgres
+/// used to commit "deactivate every config" before discovering the id was
+/// missing. Twin of the SQLite
+/// `sqlite_search_config_set_active_missing_id_changes_nothing`.
+#[cfg(feature = "postgres")]
+#[tokio::test]
+async fn postgres_search_config_set_active_missing_id_changes_nothing() {
+    use stateset_core::{CommerceError, SearchConfigId};
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping search config test");
+        return;
+    };
+    let _turn = SEARCH_CONFIG_ACTIVATION.lock().await;
+    let db = PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations");
+    let configs = db.search_configs();
+    let config = create_search_config(&db, "Primary").await;
     configs.set_active_async(config.id).await.expect("activate config");
     let err = configs.set_active_async(SearchConfigId::new()).await.expect_err("missing id");
     assert!(matches!(err, CommerceError::NotFound), "{err:?}");
     let active = configs.get_active_async().await.expect("get active").expect("an active config");
     assert_eq!(active.id, config.id, "the refused activation deactivated nothing");
+}
+
+#[cfg(feature = "postgres")]
+async fn wait_for_lock(
+    db: &PostgresDatabase,
+    name: &str,
+) -> std::result::Result<(), tokio::time::error::Elapsed> {
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                                WHERE application_name = $1 AND wait_event_type = 'Lock')",
+            )
+            .bind(name)
+            .fetch_one(db.pool())
+            .await
+            .expect("poll pg_stat_activity");
+            if waiting {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+}
+
+/// Two concurrent activations of different configs serialize instead of
+/// deadlocking. Each used to lock its own row and then, deactivating every
+/// config, wait for the other's row, so Postgres aborted one valid
+/// activation with a deadlock error.
+///
+/// A gate holding SHARE on the table lets each call start (before the fix,
+/// take its row lock) but holds both before their bulk update, so both are
+/// in flight together when the gate commits.
+#[cfg(feature = "postgres")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn postgres_concurrent_search_config_activations_do_not_deadlock() {
+    let Some(url) = postgres_url() else {
+        eprintln!("POSTGRES_URL or DATABASE_URL not set; skipping search config test");
+        return;
+    };
+    let _turn = SEARCH_CONFIG_ACTIVATION.lock().await;
+    let db = PostgresDatabase::connect(&url).await.expect("connect to postgres and run migrations");
+    let first = create_search_config(&db, "First").await;
+    let second = create_search_config(&db, "Second").await;
+    let names = [
+        format!("activate_first_{}", Uuid::new_v4().simple()),
+        format!("activate_second_{}", Uuid::new_v4().simple()),
+    ];
+    let separator = if url.contains('?') { '&' } else { '?' };
+    let mut tagged = Vec::new();
+    for name in &names {
+        tagged.push(
+            PostgresDatabase::connect_with_options(
+                format!("{url}{separator}application_name={name}"),
+                1,
+                30,
+            )
+            .await
+            .expect("connect tagged pool"),
+        );
+    }
+
+    let mut gate = db.pool().begin().await.expect("begin gate");
+    sqlx::query("LOCK TABLE search_configs IN SHARE MODE")
+        .execute(gate.as_mut())
+        .await
+        .expect("gate blocks writes to search_configs");
+    let configs = tagged[0].search_configs();
+    let first_id = first.id;
+    let activate_first = tokio::spawn(async move { configs.set_active_async(first_id).await });
+    let first_waiting = wait_for_lock(&db, &names[0]).await;
+    let configs = tagged[1].search_configs();
+    let second_id = second.id;
+    let activate_second = tokio::spawn(async move { configs.set_active_async(second_id).await });
+    let second_waiting = wait_for_lock(&db, &names[1]).await;
+    gate.commit().await.expect("release the gate");
+
+    let activate_first =
+        tokio::time::timeout(std::time::Duration::from_secs(60), activate_first).await;
+    let activate_second =
+        tokio::time::timeout(std::time::Duration::from_secs(60), activate_second).await;
+    for pool in &tagged {
+        pool.pool().close().await;
+    }
+    first_waiting.expect("the first activation queued behind the gate");
+    second_waiting.expect("the second activation queued behind the gate");
+    activate_first
+        .expect("first activation finished")
+        .expect("first activation task")
+        .expect("first activation succeeded, not a deadlock error");
+    let activated = activate_second
+        .expect("second activation finished")
+        .expect("second activation task")
+        .expect("second activation succeeded, not a deadlock error");
+    assert!(activated.is_active);
+
+    let active: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM search_configs WHERE is_active")
+        .fetch_all(db.pool())
+        .await
+        .expect("read active configs");
+    assert_eq!(active, vec![second.id.into_uuid()], "exactly one config is active: the last one");
 }

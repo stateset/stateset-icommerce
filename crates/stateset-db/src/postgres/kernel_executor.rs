@@ -2937,9 +2937,22 @@ impl PgKernelExecutor {
         }
         let tenant_id = run.tenant_scope().0;
         let store_id = run.tenant_scope().1;
-        let Some(row) =
-            load_a2a_dispute_pg(tx.as_mut(), &input.dispute_id, tenant_id, store_id).await?
-        else {
+        // Lock the escrow before the dispute, the order `a2a.escrow.refund`
+        // (escrow, then its open disputes) and `a2a.dispute.file` use.
+        // Locking the dispute first deadlocked against a concurrent refund.
+        // A dispute never changes escrow, so its escrow id is read unlocked
+        // and rechecked once both rows are held.
+        let escrow_id =
+            load_a2a_dispute_escrow_id_pg(tx.as_mut(), &input.dispute_id, tenant_id, store_id)
+                .await?;
+        let mut escrow_row = None;
+        let mut dispute_row = None;
+        if let Some(escrow_id) = escrow_id.as_deref() {
+            escrow_row = load_a2a_escrow_pg(tx.as_mut(), escrow_id, tenant_id, store_id).await?;
+            dispute_row =
+                load_a2a_dispute_pg(tx.as_mut(), &input.dispute_id, tenant_id, store_id).await?;
+        }
+        let Some(row) = dispute_row else {
             let mut receipt = rejected_receipt(
                 command,
                 Some(policy.clone()),
@@ -2952,6 +2965,9 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         };
+        if escrow_id.as_deref() != Some(row.escrow_id.as_str()) {
+            return Err(CommerceError::Conflict("A2A dispute was modified concurrently".into()));
+        }
         let mut dispute = a2a_dispute_from_pg(row)?;
         if !matches!(
             dispute.status,
@@ -2973,9 +2989,7 @@ impl PgKernelExecutor {
             tx.commit().await.map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
             return Ok(receipt);
         }
-        let Some(escrow_row) =
-            load_a2a_escrow_pg(tx.as_mut(), &dispute.escrow_id, tenant_id, store_id).await?
-        else {
+        let Some(escrow_row) = escrow_row else {
             return Err(CommerceError::DatabaseError(
                 "scoped dispute references a missing escrow".into(),
             ));
@@ -5276,6 +5290,8 @@ async fn lock_kernel_idempotency_pg(
 /// resolution. Left open, the dispute would freeze the payment forever:
 /// `payments.create_refund` refuses while a dispute is open, and the dispute
 /// can no longer be resolved because its escrow is no longer `disputed`.
+/// The caller holds the escrow's row lock: every path that locks an escrow
+/// and its disputes takes the escrow first.
 /// Returns the ids of the `a2a.dispute_resolved.v1` facts it appended.
 async fn resolve_open_disputes_as_refunded_pg(
     tx: &mut sqlx::PgConnection,
@@ -5460,6 +5476,26 @@ fn a2a_dispute_from_pg(row: A2ADisputeRow) -> Result<A2ADispute> {
         updated_at: row.updated_at,
         resolved_at: row.resolved_at,
     })
+}
+
+/// The escrow a scoped dispute belongs to, read without a row lock so the
+/// caller can lock the escrow before the dispute. A dispute's `escrow_id` is
+/// set when it is filed and never updated.
+async fn load_a2a_dispute_escrow_id_pg(
+    tx: &mut sqlx::PgConnection,
+    dispute_id: &str,
+    tenant_id: &str,
+    store_id: &str,
+) -> Result<Option<String>> {
+    sqlx::query_scalar(
+        "SELECT escrow_id FROM a2a_disputes WHERE id = $1 AND tenant_id = $2 AND store_id = $3",
+    )
+    .bind(dispute_id)
+    .bind(tenant_id)
+    .bind(store_id)
+    .fetch_optional(tx)
+    .await
+    .map_err(|error| CommerceError::DatabaseError(error.to_string()))
 }
 
 async fn load_a2a_dispute_pg(
