@@ -8,6 +8,12 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ### Fixed
 
+- The Node binding's tool descriptors marked `x402.getCreditBalance` read-only,
+  but the engine's balance query is a get-or-create: the first query for a
+  payer, asset and network inserts an `x402_credit_accounts` row. So a
+  read-only toolkit built from the descriptors could write. It is now a write,
+  matching the CLI's `x402_credit_balance` tool; `x402.getCreditAccount` stays
+  a read. A binding test pins both behaviours.
 - The strict operator templates `kernel/examples/strict-policy.json` and
   `strict-principal.json` now grant `orders.transition` (`update_order_status`)
   and `orders.ship` (`ship_order`), neither behind approval. AGENTS.md and the

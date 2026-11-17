@@ -87,6 +87,10 @@ const READ_ONLY_OVERRIDES = {
   'carts.forCustomer': true,
   // "verify" here upgrades the agent's trust level: an admin write.
   'x402.verifyAgent': false,
+  // "get" — but a get-or-create: the first query for a payer, asset and
+  // network inserts an x402_credit_accounts row (the CLI's
+  // x402_credit_balance tool is a write for the same reason).
+  'x402.getCreditBalance': false,
   // Dequeues the job for the station.
   'printStations.nextJob': false,
 };

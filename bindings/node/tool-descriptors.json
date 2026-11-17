@@ -286,7 +286,7 @@
       }
     ],
     "toolCount": 812,
-    "readOnlyCount": 399,
+    "readOnlyCount": 398,
     "readOnlyPrefixes": [
       "calculate",
       "check",
@@ -319,6 +319,7 @@
       "customers.findOrCreate": false,
       "printStations.nextJob": false,
       "tax.customerIsExempt": true,
+      "x402.getCreditBalance": false,
       "x402.verifyAgent": false
     },
     "warnings": [
@@ -33159,8 +33160,8 @@
       "description": "Get credit balance (X402.getCreditBalance). Returns number.",
       "signature": "getCreditBalance(input: X402CreditBalanceInput): Promise<number>",
       "returnType": "Promise<number>",
-      "readOnly": true,
-      "permission": "read",
+      "readOnly": false,
+      "permission": "write",
       "positional": [
         "input"
       ],
