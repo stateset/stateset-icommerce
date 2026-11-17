@@ -207,10 +207,34 @@ use std::panic::{self, AssertUnwindSafe};
 use std::thread;
 use std::time::Duration;
 
+/// The `rusqlite` this backend links, re-exported so a caller handed a
+/// connection by [`SqliteDatabase::open_auxiliary_connection`] names exactly
+/// the crate (and so exactly the linked SQLite library) the pool uses.
+pub use rusqlite;
+
 /// SQLite database connection pool
 #[derive(Debug)]
 pub struct SqliteDatabase {
     pool: Pool<SqliteConnectionManager>,
+    auxiliary: AuxiliaryOpener,
+}
+
+/// The per-connection setup every pooled connection runs.
+type ConnectionInit = dyn Fn(&mut rusqlite::Connection) -> rusqlite::Result<()> + Send + Sync;
+
+/// Everything needed to open one more connection exactly as the pool does:
+/// the file the pool opened (for `:memory:`, its private temp file), the same
+/// flags, and the same setup closure.
+struct AuxiliaryOpener {
+    path: std::path::PathBuf,
+    flags: OpenFlags,
+    init: std::sync::Arc<ConnectionInit>,
+}
+
+impl std::fmt::Debug for AuxiliaryOpener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuxiliaryOpener").field("path", &self.path).finish_non_exhaustive()
+    }
 }
 
 /// Database health status returned by [`SqliteDatabase::health_check`].
@@ -316,7 +340,7 @@ impl SqliteDatabase {
         // RAM-backed anyway. The files are deleted when the last handle drops.
         let is_memory = config.url == ":memory:";
         let mut ephemeral = None;
-        let (manager, max_connections) = if is_memory {
+        let (path, max_connections) = if is_memory {
             // A PID/counter filename in a shared temp directory is predictable
             // and can be pre-created or symlinked by another local user. Keep
             // the whole SQLite file family in an exclusively created private
@@ -333,22 +357,16 @@ impl SqliteDatabase {
             })?;
             let path = directory.path().join("store.db");
             ephemeral = Some(std::sync::Arc::new(directory));
-            let manager = SqliteConnectionManager::file(&path).with_flags(
-                OpenFlags::SQLITE_OPEN_READ_WRITE
-                    | OpenFlags::SQLITE_OPEN_CREATE
-                    | OpenFlags::SQLITE_OPEN_FULL_MUTEX,
-            );
-            (manager, config.max_connections.max(1))
+            (path, config.max_connections.max(1))
         } else {
-            let manager = SqliteConnectionManager::file(&config.url).with_flags(
-                OpenFlags::SQLITE_OPEN_READ_WRITE
-                    | OpenFlags::SQLITE_OPEN_CREATE
-                    | OpenFlags::SQLITE_OPEN_FULL_MUTEX,
-            );
-            (manager, config.max_connections)
+            (std::path::PathBuf::from(&config.url), config.max_connections)
         };
-        let manager = manager.with_init(move |conn| {
-            // The manager keeps the directory alive for future connections.
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
+        let init = move |conn: &mut rusqlite::Connection| -> rusqlite::Result<()> {
+            // The closure (held by the pool's manager and by the auxiliary
+            // opener) keeps the directory alive for future connections.
             // Each connection also owns a guard through SQLite's safe function
             // userdata API: r2d2 drops its manager before its idle connections,
             // and Windows cannot remove a directory containing open DB files.
@@ -383,7 +401,12 @@ impl SqliteDatabase {
             // see money_agg for why SQL's float SUM() is unsafe on TEXT money.
             money_agg::register(conn)?;
             Ok(())
-        });
+        };
+        let init: std::sync::Arc<ConnectionInit> = std::sync::Arc::new(init);
+        let pool_init = std::sync::Arc::clone(&init);
+        let manager = SqliteConnectionManager::file(&path)
+            .with_flags(flags)
+            .with_init(move |conn| pool_init(conn));
 
         let pool = Pool::builder()
             .max_size(max_connections)
@@ -405,7 +428,46 @@ impl SqliteDatabase {
         migrations::run_migrations(&mut conn)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        Ok(Self { pool })
+        Ok(Self { pool, auxiliary: AuxiliaryOpener { path, flags, init } })
+    }
+
+    /// Open one more connection on this database's file, outside the pool.
+    ///
+    /// The connection is set up exactly as a pooled one (same flags, same
+    /// pragmas: WAL, `foreign_keys`, `busy_timeout`, the operator's
+    /// durability policy, the `decimal_sum` aggregate) and, crucially, it is
+    /// opened by the SAME linked SQLite library as the pool. That is the
+    /// point of it. SQLite keeps its POSIX-lock bookkeeping per library
+    /// copy, and POSIX locks belong to the process, so a second SQLite copy
+    /// in this process (`better-sqlite3`, say) that opens and closes the file
+    /// releases locks the pool still believes it holds and can checkpoint
+    /// and unlink the WAL under it. A connection from here shares the pool's
+    /// lock bookkeeping, so closing it never drops the pool's locks, and the
+    /// WAL is checkpointed and removed only when the last connection of
+    /// either kind closes.
+    ///
+    /// For a `:memory:` database this reaches the pool's private temp file,
+    /// and the connection keeps that file's directory alive for as long as
+    /// it is open, even if the pool drops first.
+    ///
+    /// The caller owns the connection: it is never returned to the pool, so
+    /// holding it costs no pooled capacity. Use it only for auxiliary tables
+    /// the engine does not own; writing commerce tables through it bypasses
+    /// every engine invariant.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CommerceError::DatabaseError`] when the file cannot be
+    /// opened or the connection setup fails.
+    pub fn open_auxiliary_connection(&self) -> Result<rusqlite::Connection, CommerceError> {
+        let AuxiliaryOpener { path, flags, init } = &self.auxiliary;
+        let mut conn = rusqlite::Connection::open_with_flags(path, *flags).map_err(|error| {
+            CommerceError::DatabaseError(format!("open auxiliary SQLite connection: {error}"))
+        })?;
+        init(&mut conn).map_err(|error| {
+            CommerceError::DatabaseError(format!("set up auxiliary SQLite connection: {error}"))
+        })?;
+        Ok(conn)
     }
 
     /// Create an in-memory database (useful for testing)
