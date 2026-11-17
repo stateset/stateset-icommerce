@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { loadSyncConfig, SyncConfig, isSyncConfigured } from '../sync/config.js';
 import { createOutbox } from '../sync/outbox.js';
 import { createSyncEngine } from '../sync/engine.js';
+import { resolveSideDb } from '../side-store.js';
 import { createSequencerClient } from '../sync/client.js';
 import { getPayloadWrapScheme } from '../sync/pqc.js';
 import { readSyncStatus } from '../sync/status.js';
@@ -39,18 +40,21 @@ function createConfiguredOutbox(db) {
 /**
  * The SQLite handle the sync outbox and engine run on.
  *
- * The outbox is a better-sqlite3-style store (`prepare`/`exec`/`transaction`).
- * The `@stateset/embedded` N-API `Commerce` does not expose one -- there is no
- * `commerce.db` on the binding -- so on a binding-backed server these tools
- * fail here with an explanation instead of a TypeError deep inside the outbox.
+ * The outbox is a better-sqlite3-style store (`prepare`/`exec`/`transaction`)
+ * whose tables live in the engine's store file. On a binding-backed server it
+ * runs on the engine's own side store (`commerce.openSideStore()`, shared per
+ * engine), never on a second SQLite library: that would drop the engine's
+ * file locks and corrupt the store. An engine object without one fails here
+ * with an explanation instead of a TypeError deep inside the outbox.
  * @param {any} commerce
  */
 function requireSyncDb(commerce) {
-  const db = commerce?.db;
-  if (!db || typeof db.prepare !== 'function') {
+  const db = resolveSideDb({ commerce });
+  if (!db) {
     throw new Error(
-      'Sync tools need a SQLite database handle (commerce.db); the @stateset/embedded ' +
-        'Commerce binding does not expose one, so the local sync outbox is unavailable here.',
+      'Sync tools need a SQLite handle on the store: a commerce.db, or an @stateset/embedded ' +
+        'Commerce new enough to provide openSideStore(). Neither is available here, so the ' +
+        'local sync outbox is unavailable.',
     );
   }
   return db;

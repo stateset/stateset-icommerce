@@ -31,7 +31,7 @@
   "unreached": [
     {
       "tool": "sync_outbox",
-      "reason": "external: sync is not configured (no sequencer); the local outbox also needs a commerce.db SQLite handle the native binding does not expose."
+      "reason": "external: sync is not configured (no sequencer)."
     },
     {
       "tool": "sync_pulled_events",

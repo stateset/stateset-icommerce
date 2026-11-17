@@ -27,7 +27,6 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import Database from 'better-sqlite3';
 import ora from 'ora';
 import fs from 'node:fs';
 import {
@@ -42,6 +41,7 @@ import {
 } from '../src/sync/config.js';
 import { createSyncEngine } from '../src/sync/engine.js';
 import { createOutbox } from '../src/sync/outbox.js';
+import { openSyncDatabase } from '../src/sync/store-db.js';
 import { syncDoctor } from '../src/commands/sync.js';
 import { createSequencerClient } from '../src/sync/client.js';
 import { getKeyManager } from '../src/sync/keys.js';
@@ -162,7 +162,7 @@ program
 
       // Initialize database with outbox schema
       spinner.text = 'Initializing outbox tables...';
-      const db = new Database(options.db);
+      const db = await openSyncDatabase(options.db);
       const outbox = createOutbox(db, { securityProfile: config.sync.securityProfile });
       outbox.initialize();
 
@@ -235,7 +235,7 @@ program
       process.exit(1);
     }
 
-    const db = new Database(options.db || config.local.dbPath);
+    const db = await openSyncDatabase(options.db || config.local.dbPath);
     const spinner = ora('Pushing events...').start();
 
     try {
@@ -305,7 +305,7 @@ program
       process.exit(1);
     }
 
-    const db = new Database(options.db || config.local.dbPath);
+    const db = await openSyncDatabase(options.db || config.local.dbPath);
     const spinner = ora('Pulling events...').start();
 
     try {
@@ -371,7 +371,7 @@ program
       process.exit(1);
     }
 
-    const db = new Database(options.db || config.local.dbPath);
+    const db = await openSyncDatabase(options.db || config.local.dbPath);
 
     try {
       const engine = createSyncEngine({ db, config });
@@ -505,7 +505,7 @@ program
       process.exit(1);
     }
 
-    const db = new Database(options.db || config.local.dbPath);
+    const db = await openSyncDatabase(options.db || config.local.dbPath);
 
     try {
       const engine = createSyncEngine({ db, config });
@@ -587,7 +587,7 @@ program
       process.exit(1);
     }
 
-    const db = new Database(options.db || config.local.dbPath);
+    const db = await openSyncDatabase(options.db || config.local.dbPath);
     const spinner = ora('Resolving conflict...').start();
 
     try {
@@ -661,7 +661,7 @@ program
       process.exit(1);
     }
 
-    const db = new Database(options.db || config.local.dbPath);
+    const db = await openSyncDatabase(options.db || config.local.dbPath);
     const spinner = ora('Checking for conflicts...').start();
 
     try {
@@ -736,7 +736,7 @@ program
       process.exit(1);
     }
 
-    const db = new Database(options.db || config.local.dbPath);
+    const db = await openSyncDatabase(options.db || config.local.dbPath);
 
     try {
       const outbox = createOutbox(db);
@@ -2105,7 +2105,7 @@ program
       process.exit(1);
     }
 
-    const db = new Database(options.db || config.local.dbPath);
+    const db = await openSyncDatabase(options.db || config.local.dbPath);
 
     try {
       const engine = createSyncEngine({ db, config });

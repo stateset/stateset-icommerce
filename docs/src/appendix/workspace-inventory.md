@@ -80,7 +80,7 @@ workspace membership because they require host runtimes or headers.
 
 | Metric | Value |
 | --- | --- |
-| Top-level source groups | 112 |
+| Top-level source groups | 113 |
 | Tool modules | 99 |
 | A2A modules | 62 |
 | JS dependencies | 14 |
@@ -94,8 +94,8 @@ workspace membership because they require host runtimes or headers.
 | `commands` | 90 |
 | `a2a` | 62 |
 | `mcp` | 42 |
+| `sync` | 30 |
 | `channels` | 29 |
-| `sync` | 29 |
 | `simulation` | 21 |
 | `adapters` | 20 |
 | `utils` | 19 |
@@ -188,6 +188,7 @@ workspace membership because they require host runtimes or headers.
 | `session-persistence.js` | 1 |
 | `session.js` | 1 |
 | `settings.js` | 1 |
+| `side-store.js` | 1 |
 | `signal` | 1 |
 | `slack` | 1 |
 | `standalone.js` | 1 |

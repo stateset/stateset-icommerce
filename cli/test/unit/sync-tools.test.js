@@ -411,12 +411,12 @@ describe('Sync Tools — sync_outbox database handle', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('explains that the binding Commerce has no commerce.db instead of a TypeError', async () => {
-    // The @stateset/embedded Commerce exposes no `db`; this is its shape here.
-    const bindingShapedCommerce = { orders: {}, customers: {} };
+  it('explains a commerce with neither commerce.db nor openSideStore instead of a TypeError', async () => {
+    // An engine object with no SQLite handle at all (an old binding).
+    const handleLessCommerce = { orders: {}, customers: {} };
     await assert.rejects(
-      findTool('sync_outbox').handler({ commerce: bindingShapedCommerce, params: {} }),
-      /Sync tools need a SQLite database handle \(commerce\.db\)/,
+      findTool('sync_outbox').handler({ commerce: handleLessCommerce, params: {} }),
+      /Sync tools need a SQLite handle on the store/,
     );
   });
 
