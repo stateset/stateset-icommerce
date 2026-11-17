@@ -144,10 +144,6 @@
     {
       "tool": "get_pick_task",
       "reason": "no seed path: releasing a wave creates pick tasks only from bin stock (location_inventory) in a pickable location, and no ungoverned tool stocks a bin."
-    },
-    {
-      "tool": "list_id_mappings",
-      "reason": "defect: the handler builds IdMapStore from commerce.db / commerce._db, which the native Commerce binding does not expose, so it always fails with 'IdMapStore requires a database handle'."
     }
   ]
 }

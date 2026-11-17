@@ -11,6 +11,8 @@ import crypto from 'node:crypto';
 
 import { canonicalJson } from '@stateset/embedded/canonical-json';
 
+import { engineSideStore } from '../side-store.js';
+
 const AWARD_EVENT = 'marketplace.award.created';
 const MARKETPLACE_ENTITY = 'marketplace.negotiation';
 const MARKETPLACE_PROTOCOL = 'stateset.marketplace.v1';
@@ -356,11 +358,24 @@ export class MemoryBridgeStore {
   }
 }
 
-/** Durable inbox/cursor state backed by a caller-owned better-sqlite3 handle. */
+/**
+ * Durable inbox/cursor state in SQLite.
+ *
+ * Give it the native engine (`@stateset/embedded` Commerce) to keep the bridge
+ * tables in the engine's store file: they then live on the engine's shared
+ * side store (`commerce.openSideStore()`), the engine's own SQLite library.
+ * A caller-owned better-sqlite3 handle also works, but only on a file the
+ * engine does not have open in this process: a second SQLite library on the
+ * engine's file drops the engine's locks when it closes and corrupts it.
+ */
 export class SqliteBridgeStore {
-  constructor(db) {
+  /** @param {any} dbOrEngine - a better-sqlite3-compatible handle, or the engine */
+  constructor(dbOrEngine) {
+    const db = typeof dbOrEngine?.prepare === 'function' ? dbOrEngine : engineSideStore(dbOrEngine);
     if (typeof db?.prepare !== 'function' || typeof db?.transaction !== 'function') {
-      throw new Error('SqliteBridgeStore requires a better-sqlite3 Database');
+      throw new Error(
+        'SqliteBridgeStore requires a better-sqlite3 Database or an engine with openSideStore()',
+      );
     }
     this.db = db;
     db.exec(`

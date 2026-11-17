@@ -2,6 +2,18 @@
  * Import Commands Module
  */
 
+import { resolveSideDb } from '../side-store.js';
+
+/**
+ * The handle the import id map (`id_map`, a side table in the store file)
+ * runs on: the engine's own side store unless the engine object exposes a
+ * `db`. Never a second SQLite library on the engine's file.
+ * @param {any} commerce
+ */
+function importIdMapDb(commerce) {
+  return resolveSideDb({ commerce }) ?? commerce?._db;
+}
+
 function parseJsonArg(value, label) {
   try {
     return JSON.parse(value);
@@ -30,7 +42,7 @@ export async function execute(action, args, { commerce, jsonOutput }) {
       const { DataImporter } = await import('../adapters/base-importer.js');
       const payload = parseJsonArg(payloadJson, 'payload');
       const adapter = await getAdapter('shopify', commerce._shopifyConfig || {});
-      const idMapStore = new IdMapStore(commerce.db || commerce._db);
+      const idMapStore = new IdMapStore(importIdMapDb(commerce));
       const importer = new DataImporter(adapter, commerce, idMapStore);
       const result = await importer.run(payload);
       recordImportStatus('shopify', result);
@@ -47,7 +59,7 @@ export async function execute(action, args, { commerce, jsonOutput }) {
       const { DataImporter } = await import('../adapters/base-importer.js');
       const payload = parseJsonArg(payloadJson, 'payload');
       const adapter = await getAdapter('shopify-shadow', commerce._shopifyConfig || {});
-      const idMapStore = new IdMapStore(commerce.db || commerce._db);
+      const idMapStore = new IdMapStore(importIdMapDb(commerce));
       const importer = new DataImporter(adapter, commerce, idMapStore);
       const result = await importer.run(payload);
       recordImportStatus('shopify-shadow', result);
@@ -72,7 +84,7 @@ export async function execute(action, args, { commerce, jsonOutput }) {
       const [platform, entityType] = args;
       if (!platform) throw new Error('Usage: import mappings <platform> [entityType]');
       const { IdMapStore } = await import('../adapters/id-map-store.js');
-      const idMapStore = new IdMapStore(commerce.db || commerce._db);
+      const idMapStore = new IdMapStore(importIdMapDb(commerce));
       const mappings = idMapStore.listByPlatform(platform, entityType || null);
       return jsonOutput ? mappings : { mappings, formatted: `ID mappings: ${mappings.length}` };
     }
@@ -87,7 +99,7 @@ export async function execute(action, args, { commerce, jsonOutput }) {
       const { IdMapStore } = await import('../adapters/id-map-store.js');
       const { DataImporter } = await import('../adapters/base-importer.js');
       const adapter = await getAdapter(platform, {});
-      const idMapStore = new IdMapStore(commerce.db || commerce._db);
+      const idMapStore = new IdMapStore(importIdMapDb(commerce));
       const importer = new DataImporter(adapter, commerce, idMapStore);
       const result = await importer.run({
         source: 'csv',
@@ -116,7 +128,7 @@ export async function execute(action, args, { commerce, jsonOutput }) {
       const { IdMapStore } = await import('../adapters/id-map-store.js');
       const { DataImporter } = await import('../adapters/base-importer.js');
       const adapter = await getAdapter(platform, {});
-      const idMapStore = new IdMapStore(commerce.db || commerce._db);
+      const idMapStore = new IdMapStore(importIdMapDb(commerce));
       const importer = new DataImporter(adapter, commerce, idMapStore);
       const result = await importer.run({
         source: 'json',
@@ -155,7 +167,7 @@ export async function execute(action, args, { commerce, jsonOutput }) {
         consumerKey: payload.consumerKey,
         consumerSecret: payload.consumerSecret,
       });
-      const idMapStore = new IdMapStore(commerce.db || commerce._db);
+      const idMapStore = new IdMapStore(importIdMapDb(commerce));
       const importer = new DataImporter(adapter, commerce, idMapStore);
       const result = await importer.run({
         source: 'api',

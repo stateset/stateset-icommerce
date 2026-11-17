@@ -6,9 +6,14 @@
  *
  * Uses a factory function pattern — call `createComplianceService(store, options)`
  * where `store` is an object with a `.db` property (better-sqlite3 instance).
- * This synchronous low-level service requires sole SQLite-library ownership:
- * never give it a file also open through the native Commerce binding in this
- * process. Use createIsolatedComplianceService for file-backed applications.
+ * This synchronous low-level service requires sole SQLite-library ownership of
+ * every file it opens: never give it a `commerceDbPath` that is also open
+ * through the native Commerce binding in this process. When the engine is
+ * open here, pass it as `options.commerce` instead: the commerce tables are
+ * then read and written through the engine's own side store
+ * (`commerce.openSideStore()`), which shares the engine's SQLite library and
+ * so cannot drop its file locks. Use createIsolatedComplianceService for
+ * file-backed applications.
  * Queries existing A2A tables and optionally the main commerce database for
  * full GDPR coverage across customers, orders, carts, payments, invoices,
  * shipments, subscriptions, and warranties.
@@ -18,6 +23,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 
 import { CB_SCHEMA } from '../a2a/circuit-breaker.js';
+import { engineSideStore } from '../side-store.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -108,6 +114,9 @@ const AGENT_CARD_TABLES = Object.freeze(['a2a_runtime_agent_cards', 'agent_cards
  * @param {Object} [options.commerceDb] - An open handle on the commerce database (not closed by
  *   this service). The isolated worker passes its store connection when the
  *   A2A and commerce tables share a database.
+ * @param {Object} [options.commerce] - The native engine (`@stateset/embedded` Commerce) open in
+ *   this process. Its shared side store serves the commerce tables, so they are never opened
+ *   through a second SQLite library; it wins over `commerceDbPath` and is never closed here.
  * @returns {Object} Compliance service methods
  */
 export function createComplianceService(store, options = {}) {
@@ -124,18 +133,24 @@ export function createComplianceService(store, options = {}) {
   db.exec(CB_SCHEMA);
 
   // Lazy-initialized commerce database handle (better-sqlite3)
-  const _commerceDbGiven = options.commerceDb || options._commerceDbOverride || null;
-  let _commerceDb = _commerceDbGiven;
-  const _commerceDbOwned = !_commerceDbGiven;
+  let _commerceDb = options.commerceDb || options._commerceDbOverride || null;
+  // Only a handle this service opened from `commerceDbPath` is closed by it.
+  let _commerceDbOwned = false;
 
   /**
-   * Get the commerce database handle, opening it lazily on first access.
-   * Returns null if no commerce DB path was provided or the file doesn't exist.
+   * Get the commerce database handle, opening it lazily on first access: a
+   * given handle, else the engine's side store, else `commerceDbPath`.
+   * Returns null if none was provided or the file doesn't exist.
    *
    * @returns {import('better-sqlite3').Database | null}
    */
   function getCommerceDb() {
     if (_commerceDb) return _commerceDb;
+    // The engine's own SQLite handle, looked up on every call: it is shared
+    // per engine and owned by the engine, so it is never cached or closed
+    // here.
+    const engineDb = options.commerce ? engineSideStore(options.commerce) : null;
+    if (engineDb) return engineDb;
     const dbPath = options.commerceDbPath;
     if (!dbPath) return null;
     if (dbPath !== ':memory:' && !existsSync(dbPath)) return null;
@@ -143,6 +158,7 @@ export function createComplianceService(store, options = {}) {
       const Database = store.db.constructor;
       _commerceDb = new Database(dbPath, { readonly: false });
       _commerceDb.pragma('journal_mode = WAL');
+      _commerceDbOwned = true;
       return _commerceDb;
     } catch {
       return null;
