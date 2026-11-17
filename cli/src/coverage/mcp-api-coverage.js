@@ -777,8 +777,16 @@ export function getBindingClassMethodNames(source, className) {
 
 export function buildMcpApiCoverage() {
   const source = readCommerceBindingSource();
+  // Only `Commerce`'s own getters are sub-APIs; other classes' getters
+  // (`SideStore.open`, `SideStoreStatement.reader`, ...) are values.
+  const commerceClass = source.match(/export declare class Commerce \{([\s\S]*?)\n\}/m);
+  if (!commerceClass) {
+    throw new Error('Unable to locate Commerce binding class "Commerce"');
+  }
   const getterNames = new Set(
-    [...source.matchAll(/get\s+([A-Za-z0-9]+)\(\):\s+[A-Za-z0-9]+/g)].map((match) => match[1]),
+    [...commerceClass[1].matchAll(/get\s+([A-Za-z0-9]+)\(\):\s+[A-Za-z0-9]+/g)].map(
+      (match) => match[1],
+    ),
   );
 
   getterNames.delete('customStates');
