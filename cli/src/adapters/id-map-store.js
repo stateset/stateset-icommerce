@@ -56,6 +56,21 @@ export class IdMapStore {
   }
 
   /**
+   * Whether the id_map table exists. Reads use this instead of `init()`: a
+   * read (`list_id_mappings` is a read tool) must not change the store, and
+   * a missing table simply holds no mappings.
+   * @returns {boolean}
+   */
+  _hasTable() {
+    if (this._initialized) return true;
+    return Boolean(
+      this.db
+        .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'id_map'")
+        .get(),
+    );
+  }
+
+  /**
    * Look up the StateSet ID for an external record.
    * @param {string} platform
    * @param {string} entityType
@@ -63,7 +78,7 @@ export class IdMapStore {
    * @returns {{ statesetId: string, importedAt: string, externalData?: string } | null}
    */
   lookup(platform, entityType, externalId) {
-    this.init();
+    if (!this._hasTable()) return null;
     const row = this.db
       .prepare(
         'SELECT stateset_id, imported_at, external_data FROM id_map WHERE platform = ? AND entity_type = ? AND external_id = ?',
@@ -111,7 +126,7 @@ export class IdMapStore {
    * @returns {Array<{ externalId: string, statesetId: string, entityType: string, importedAt: string }>}
    */
   listByPlatform(platform, entityType = null) {
-    this.init();
+    if (!this._hasTable()) return [];
     if (entityType) {
       return this.db
         .prepare(
@@ -145,7 +160,7 @@ export class IdMapStore {
    * @returns {number} Number of rows deleted
    */
   deleteByPlatform(platform) {
-    this.init();
+    if (!this._hasTable()) return 0;
     const result = this.db.prepare('DELETE FROM id_map WHERE platform = ?').run(platform);
     return result.changes;
   }
@@ -157,7 +172,7 @@ export class IdMapStore {
    * @returns {number}
    */
   count(platform, entityType = null) {
-    this.init();
+    if (!this._hasTable()) return 0;
     if (entityType) {
       const row = this.db
         .prepare('SELECT COUNT(*) as cnt FROM id_map WHERE platform = ? AND entity_type = ?')

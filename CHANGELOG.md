@@ -6,6 +6,46 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- Side-table stores no longer corrupt the engine's database. The CLI kept
+  auxiliary tables (the VES sync outbox, the import id map, the marketplace
+  bridge inbox, the commerce half of compliance exports) in the engine's store
+  file and reached them through `better-sqlite3`, which bundles its own copy of
+  SQLite. POSIX locks belong to the process while each SQLite copy keeps its
+  own lock bookkeeping, so closing that connection released the engine's locks
+  and unlinked its WAL: later engine commits were invisible to other
+  connections, another process's commits could be overwritten when the engine
+  checkpointed its orphaned WAL, and stores eventually reported "database disk
+  image is malformed". These stores now run on the engine's own SQLite through
+  the new side store whenever an engine is available:
+  - the `sync_*` tools and `sync` commands, and the `stateset-sync` binary,
+    which now opens the store through the engine (falling back to
+    `better-sqlite3` only when the native engine cannot be loaded);
+  - `createComplianceService(store, { commerce })`, which reads and erases
+    commerce tables through the engine instead of opening `commerceDbPath`;
+  - the `import` tools and commands' id map, so `list_id_mappings` and the
+    Shopify import now work on the native binding (and the id map's reads no
+    longer create its table);
+  - `new SqliteBridgeStore(commerce)`.
+
+  The A2A store (and the express checkout, agent catalog and circuit breaker
+  services that share its connection) still opens its own `better-sqlite3`
+  connection; it moves in a follow-up.
+
+### Added
+
+- `commerce.openSideStore()` in `@stateset/embedded`: a synchronous handle on
+  the engine's own database file, opened by the engine's own SQLite library,
+  for auxiliary tables the engine does not own. It speaks the subset of the
+  `better-sqlite3` API side stores use (`prepare` → `run`/`get`/`all`, `exec`,
+  `pragma`, `transaction`, `close`), works for `:memory:` engines, and is
+  closed by `commerce.close()`. `commerce.sharedSideStore()` returns one per
+  engine, which is what the CLI's stores share. The Rust engine gains
+  `Commerce::open_auxiliary_sqlite_connection()` and
+  `SqliteDatabase::open_auxiliary_connection()` underneath it, and
+  `stateset_db::sqlite` re-exports the `rusqlite` it links.
+
 ## [1.41.0] - 2026-11-15
 
 1.41.0 rolls up four lines of work: the 1.40.1 security fixes, which were

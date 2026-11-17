@@ -8,6 +8,17 @@
 
 import { z } from 'zod';
 import { applyRequired } from '../utils/apply-guard.js';
+import { resolveSideDb } from '../side-store.js';
+
+/**
+ * The handle the import id map (`id_map`, a side table in the store file)
+ * runs on: the engine's own side store unless the engine object exposes a
+ * `db`. Never a second SQLite library on the engine's file.
+ * @param {any} commerce
+ */
+function importIdMapDb(commerce) {
+  return resolveSideDb({ commerce }) ?? commerce?._db;
+}
 
 const SHADOW_ENTITIES = ['customers', 'products', 'inventory', 'orders', 'fulfillments'];
 
@@ -122,7 +133,7 @@ export const importTools = [
         const adapter = await getAdapter('shopify', commerce._shopifyConfig || {});
 
         // Create ID map store
-        const idMapStore = new IdMapStore(commerce.db || commerce._db);
+        const idMapStore = new IdMapStore(importIdMapDb(commerce));
 
         // Create importer
         const importer = new DataImporter(adapter, commerce, idMapStore);
@@ -205,7 +216,7 @@ export const importTools = [
         const { DataImporter } = await import('../adapters/base-importer.js');
 
         const adapter = await getAdapter('shopify-shadow', commerce._shopifyConfig || {});
-        const idMapStore = new IdMapStore(commerce.db || commerce._db);
+        const idMapStore = new IdMapStore(importIdMapDb(commerce));
         const importer = new DataImporter(adapter, commerce, idMapStore);
 
         const dryRun = applyWrites ? params.dryRun !== false : true;
@@ -283,7 +294,7 @@ export const importTools = [
     handler: async ({ commerce, params }) => {
       try {
         const { IdMapStore } = await import('../adapters/id-map-store.js');
-        const idMapStore = new IdMapStore(commerce.db || commerce._db);
+        const idMapStore = new IdMapStore(importIdMapDb(commerce));
 
         const mappings = idMapStore.listByPlatform(params.platform, params.entityType || null);
         return {
@@ -332,7 +343,7 @@ export const importTools = [
         const { DataImporter } = await import('../adapters/base-importer.js');
 
         const adapter = await getAdapter(params.platform, {});
-        const idMapStore = new IdMapStore(commerce.db || commerce._db);
+        const idMapStore = new IdMapStore(importIdMapDb(commerce));
         const importer = new DataImporter(adapter, commerce, idMapStore);
 
         const result = await importer.run({
@@ -387,7 +398,7 @@ export const importTools = [
         const { DataImporter } = await import('../adapters/base-importer.js');
 
         const adapter = await getAdapter(params.platform, {});
-        const idMapStore = new IdMapStore(commerce.db || commerce._db);
+        const idMapStore = new IdMapStore(importIdMapDb(commerce));
         const importer = new DataImporter(adapter, commerce, idMapStore);
 
         const result = await importer.run({
@@ -476,7 +487,7 @@ export const importTools = [
           consumerSecret: params.consumerSecret,
         });
 
-        const idMapStore = new IdMapStore(commerce.db || commerce._db);
+        const idMapStore = new IdMapStore(importIdMapDb(commerce));
         const importer = new DataImporter(adapter, commerce, idMapStore);
 
         const result = await importer.run({

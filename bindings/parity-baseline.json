@@ -207,6 +207,7 @@
         "economic_budget_status",
         "execute_kernel_command",
         "list_webhooks",
+        "open_auxiliary_sqlite_connection",
         "provision_economic_budget",
         "register_webhook",
         "subscribe_events",
@@ -1879,6 +1880,7 @@
       ],
       "commerce": [
         "list_webhooks",
+        "open_auxiliary_sqlite_connection",
         "register_webhook",
         "subscribe_events",
         "unregister_webhook"
@@ -2221,6 +2223,7 @@
         "economic_budget_status",
         "execute_kernel_command",
         "list_webhooks",
+        "open_auxiliary_sqlite_connection",
         "provision_economic_budget",
         "register_webhook",
         "subscribe_events",

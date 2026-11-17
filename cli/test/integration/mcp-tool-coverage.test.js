@@ -16,6 +16,7 @@ import {
   AUDITED_CLASS_METHOD_TOOL_COVERAGE,
   readCommerceBindingSource,
   getBindingClassMethodNames,
+  getCommerceGetterNames,
 } from '../../src/coverage/mcp-api-coverage.js';
 
 // ============================================================================
@@ -58,9 +59,7 @@ describe('MCP tool coverage', () => {
 
   describe('embedded API parity', () => {
     it('covers every live Commerce getter with an MCP tool module mapping', () => {
-      const source = readCommerceBindingSource();
-      const getterMatches = [...source.matchAll(/get\s+([A-Za-z0-9]+)\(\):\s+[A-Za-z0-9]+/g)];
-      const getterNames = new Set(getterMatches.map((match) => match[1]));
+      const getterNames = getCommerceGetterNames(readCommerceBindingSource());
 
       // Skip aliases or non-MCP runtime surfaces that are intentionally handled elsewhere.
       getterNames.delete('customStates');

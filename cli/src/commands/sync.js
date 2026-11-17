@@ -5,6 +5,7 @@
 import { loadSyncConfig, SyncConfig, isSyncConfigured } from '../sync/config.js';
 import { createOutbox, isQuarantineReasonDowngrade } from '../sync/outbox.js';
 import { createSyncEngine } from '../sync/engine.js';
+import { resolveSideDb } from '../side-store.js';
 import { createSequencerClient } from '../sync/client.js';
 import { getPayloadWrapScheme, assertEventMatchesSecurityProfile } from '../sync/pqc.js';
 import { resolveReceiveScope, matchesReceiveScope } from '../sync/receive-scope.js';
@@ -49,21 +50,23 @@ function createConfiguredOutbox(db) {
 /**
  * The SQLite handle the sync outbox and engine run on.
  *
- * The outbox is a better-sqlite3-style store (`prepare`/`exec`/`transaction`).
- * The `@stateset/embedded` N-API `Commerce` does not expose one -- there is no
- * `commerce.db` on the binding -- so a caller must pass it as `context.db`
- * (e.g. `new Database('./store.db')`, as `stateset-sync` does). Without one,
- * the command fails here with an explanation instead of a TypeError deep
- * inside the outbox.
+ * The outbox is a better-sqlite3-style store (`prepare`/`exec`/`transaction`)
+ * whose tables live in the engine's store file. An explicit `context.db` wins
+ * (a standalone file with no engine in this process); otherwise the outbox
+ * runs on the engine's own side store (`commerce.openSideStore()`, shared per
+ * engine). Never open the engine's file with a second SQLite library in a
+ * process that has the engine open: its close drops the engine's file locks
+ * and corrupts the store. Without either, the command fails here with an
+ * explanation instead of a TypeError deep inside the outbox.
  * @param {{ commerce?: any, db?: any }} context
  */
 function requireSyncDb({ commerce, db }) {
-  const handle = db ?? commerce?.db;
-  if (!handle || typeof handle.prepare !== 'function') {
+  const handle = resolveSideDb({ db, commerce });
+  if (!handle) {
     throw new Error(
-      'Sync commands need a SQLite database handle: pass `db` (a better-sqlite3 Database ' +
-        'on the store file) in the command context. The @stateset/embedded Commerce binding ' +
-        'does not expose one, so the local sync outbox is unavailable without it.',
+      'Sync commands need a SQLite handle on the store: pass `db` in the command context, ' +
+        'or a `commerce` (@stateset/embedded) new enough to provide openSideStore(). Without ' +
+        'either, the local sync outbox is unavailable.',
     );
   }
   return handle;

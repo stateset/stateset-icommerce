@@ -82,7 +82,9 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`commerce.inboundShipments`](#commerceinboundshipments) — `InboundShipments`
   - [`commerce.events`](#commerceevents) — `Events`
   - [`commerce.vector(apiKey)`](#commercevectorapikey) — `VectorSearch`
+  - [`commerce.openSideStore()`](#commerceopensidestore) — `SideStore`
   - [`commerce.events.subscribe()`](#commerceeventssubscribe) — `CommerceEventSubscription`
+  - [`commerce.openSideStore().prepare(sql)`](#commerceopensidestorepreparesql) — `SideStoreStatement`
 - [Functions](#functions)
   - [`vesStrictGenerateSigningKeypair`](#vesstrictgeneratesigningkeypair)
   - [`vesStrictSignEventHash`](#vesstrictsigneventhash)
@@ -725,6 +727,11 @@ float twins, where they still exist, are deprecated. Methods return Promises unl
   - [`ShippingRateOutput`](#shippingrateoutput)
   - [`ShippingZoneFilterInput`](#shippingzonefilterinput)
   - [`ShippingZoneOutput`](#shippingzoneoutput)
+  - [`SideStoreBindParameters`](#sidestorebindparameters)
+  - [`SideStoreRunResult`](#sidestorerunresult)
+  - [`SideStoreTransaction`](#sidestoretransaction)
+  - [`SideStoreTransactionBody`](#sidestoretransactionbody)
+  - [`SideStoreValue`](#sidestorevalue)
   - [`SkipBillingCycleInput`](#skipbillingcycleinput)
   - [`SkuBackorderSummaryOutput`](#skubackordersummaryoutput)
   - [`StockLevelOutput`](#stockleveloutput)
@@ -990,6 +997,38 @@ JavaScript-friendly Commerce instance
   customers, orders, and inventory items using OpenAI embeddings.
 
   Types: [`VectorSearch`](#commercevectorapikey)
+
+- **`openSideStore(): SideStore`**
+
+  Open a synchronous SQLite handle on this engine's own database file,
+  for auxiliary tables the engine does not own (a sync outbox, an import
+  id map, a bridge inbox). It is not a way to read or write commerce
+  data: writing engine tables through it bypasses every engine
+  invariant.
+
+  It speaks the subset of the `better-sqlite3` `Database` API side stores
+  use (`prepare` → `run`/`get`/`all`, `exec`, `pragma`, `transaction`,
+  `close`), so a store written against better-sqlite3 can take it in
+  place of a `Database`. Use it instead of opening the store file with
+  `better-sqlite3` (or any other SQLite library) in a process that also
+  has the engine open: a second SQLite copy drops the engine's file locks
+  when it closes and can corrupt the database.
+
+  Works for `:memory:` (it reaches the engine's private temp file). Each
+  call opens a new connection outside the engine's pool. `close()` on the
+  handle closes only that connection; `Commerce.close()` closes every
+  side store opened from it. Not available on a PostgreSQL backend.
+
+  Types: [`SideStore`](#commerceopensidestore)
+
+- **`sharedSideStore(): SideStore`**
+
+  This engine's shared side store: one `openSideStore()` handle per engine,
+  opened on first use and reopened if it was closed. Every caller gets the
+  same connection, so stores that share it can never wait on each other's
+  write locks. `commerce.close()` closes it; callers should not.
+
+  Types: [`SideStore`](#commerceopensidestore)
 
 ### Sub-API accessors
 
@@ -5352,6 +5391,64 @@ Vector search operations for semantic similarity search
 
   Clear all embeddings
 
+### commerce.openSideStore()
+
+Class `SideStore`.
+
+A synchronous SQLite handle on the engine's own database file, for
+auxiliary tables. Opened by `Commerce.openSideStore()`; see there.
+
+- **`get open: boolean`**
+
+  Whether the side store can still run statements: `false` after its own
+  `close()` or its engine's `Commerce.close()`.
+
+- **`get inTransaction: boolean`**
+
+  Whether a transaction is open on this side store's connection.
+
+- **`prepare(sql: string): SideStoreStatement`**
+
+  Compile one SQL statement. Throws on a syntax error, on SQL that holds
+  no statement, and on SQL that holds more than one (use `exec` for a
+  script).
+
+  Types: [`SideStoreStatement`](#commerceopensidestorepreparesql)
+
+- **`__exec(sql: string): void`**
+
+  Run a script of zero or more statements. Internal: `exec()` in
+  `index.js` calls this and returns the side store, as better-sqlite3
+  does.
+
+- **`__pragma(source: string, simple: boolean): unknown`**
+
+  Run `PRAGMA <source>`. With `simple`, the first column of the first
+  row (or `undefined`); otherwise every row. Internal: `pragma()` in
+  `index.js` validates the arguments.
+
+- **`close(): void`**
+
+  Close this side store's connection, rolling back any open transaction.
+  The engine and other side stores are unaffected, and so are the
+  engine's file locks and WAL. Idempotent.
+
+- **`exec(sql: string): this`**
+
+  Run a script of zero or more statements. Returns this side store.
+
+- **`pragma(source: string, options?: { simple?: boolean }): unknown`**
+
+  Run `PRAGMA <source>`: every row, or with `simple` the first column of the
+  first row.
+
+- **`transaction<F extends SideStoreTransactionBody>(fn: F): SideStoreTransaction<F>`**
+
+  Wrap `fn` so each call runs in a transaction on this side store's one
+  connection. Nested calls use savepoints.
+
+  Types: [`SideStoreTransaction`](#sidestoretransaction)
+
 ### commerce.events.subscribe()
 
 Class `CommerceEventSubscription`. Extends `AsyncIterable<CommerceEvent>`. Also available as `commerce.events.subscribeFiltered(eventTypes)`.
@@ -5406,6 +5503,54 @@ async-iterator surface lives in `index.js`, on top of `__start`.
   Iterate events until the stream ends. Leaving the loop calls `close()`.
 
   Types: [`CommerceEvent`](#commerceevent)
+
+### commerce.openSideStore().prepare(sql)
+
+Class `SideStoreStatement`.
+
+A statement compiled by `SideStore.prepare()`. Usable until its side store
+or engine closes.
+
+- **`get source: string`**
+
+  The SQL this statement was prepared from.
+
+- **`get reader: boolean`**
+
+  Whether the statement returns rows (`get`/`all` need one that does).
+
+- **`__run(positional: Array<unknown>, named?: Record<string, unknown> | null): SideStoreRunResult`**
+
+  Execute once. Internal: `run(...params)` in `index.js` sorts the
+  arguments into positional and named values.
+
+  Types: [`SideStoreRunResult`](#sidestorerunresult)
+
+- **`__get(positional: Array<unknown>, named?: Record<string, unknown> | null): Record<string, unknown> | undefined`**
+
+  The first row, or `undefined`. Internal: see `__run`.
+
+- **`__all(positional: Array<unknown>, named?: Record<string, unknown> | null): Array<Record<string, unknown>>`**
+
+  Every row. Internal: see `__run`.
+
+- **`run(...params: SideStoreBindParameters[]): SideStoreRunResult`**
+
+  Execute once. Reports the rows changed and the last inserted rowid.
+
+  Types: [`SideStoreBindParameters`](#sidestorebindparameters), [`SideStoreRunResult`](#sidestorerunresult)
+
+- **`get(...params: SideStoreBindParameters[]): Record<string, unknown> | undefined`**
+
+  The first row as an object keyed by column name, or `undefined`.
+
+  Types: [`SideStoreBindParameters`](#sidestorebindparameters)
+
+- **`all(...params: SideStoreBindParameters[]): Array<Record<string, unknown>>`**
+
+  Every row as an object keyed by column name.
+
+  Types: [`SideStoreBindParameters`](#sidestorebindparameters)
 
 ## Functions
 
@@ -13087,6 +13232,58 @@ One of: `'flat'`, `'weight_based'`, `'price_based'`, `'calculated'`, `'free'`.
 | `isActive` | `boolean` |  |
 | `createdAt` | `string` |  |
 | `updatedAt` | `string` |  |
+
+### SideStoreBindParameters
+
+One argument to `run`/`get`/`all`: a positional value, an array of
+positional values, or one plain object of named values (`:name`, `@name`
+and `$name` are looked up without the prefix).
+
+```ts
+type SideStoreBindParameters = SideStoreValue | ReadonlyArray<SideStoreValue> | Record<string, SideStoreValue>
+```
+
+Types: [`SideStoreValue`](#sidestorevalue)
+
+### SideStoreRunResult
+
+What `run()` reports, as better-sqlite3 does.
+
+| Field | Type | Description |
+|---|---|---|
+| `changes` | `number` | Rows inserted, updated or deleted by this statement (0 for a statement that changed nothing, even right after one that did). |
+| `lastInsertRowid` | `number` | The connection's last inserted rowid. |
+
+### SideStoreTransaction
+
+A function that runs its body in a transaction: `BEGIN` (or a savepoint
+when one is already open), `COMMIT` on return, rollback on throw. The
+`deferred`, `immediate` and `exclusive` variants choose the `BEGIN` mode.
+
+```ts
+type SideStoreTransaction<F extends SideStoreTransactionBody> = F & { readonly default: SideStoreTransaction<F> readonly deferred: SideStoreTransaction<F> readonly immediate: SideStoreTransaction<F> readonly exclusive: SideStoreTransaction<F> readonly database: SideStore }
+```
+
+Types: [`SideStore`](#commerceopensidestore)
+
+### SideStoreTransactionBody
+
+The body of a side-store transaction. It must not return a promise.
+
+```ts
+type SideStoreTransactionBody = (...args: any[]) => any
+```
+
+### SideStoreValue
+
+A value a side-store statement binds, as better-sqlite3 binds it: a number
+as REAL, a bigint as INTEGER, a string as TEXT, a Buffer or other
+ArrayBufferView as BLOB, and `null`/`undefined` as NULL. Booleans and other
+objects are refused.
+
+```ts
+type SideStoreValue = number | bigint | string | Buffer | ArrayBufferView | null | undefined
+```
 
 ### SkipBillingCycleInput
 

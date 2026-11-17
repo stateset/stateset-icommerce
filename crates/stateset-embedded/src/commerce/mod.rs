@@ -1,6 +1,8 @@
 //! Main Commerce struct - the entry point to the library
 
 mod accessors;
+#[cfg(feature = "sqlite")]
+mod auxiliary;
 mod builder;
 mod constructors;
 mod events;

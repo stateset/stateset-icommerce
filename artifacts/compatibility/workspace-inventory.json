@@ -593,11 +593,11 @@
         "count": 42
       },
       {
-        "name": "channels",
-        "count": 29
+        "name": "sync",
+        "count": 30
       },
       {
-        "name": "sync",
+        "name": "channels",
         "count": 29
       },
       {
@@ -966,6 +966,10 @@
       },
       {
         "name": "settings.js",
+        "count": 1
+      },
+      {
+        "name": "side-store.js",
         "count": 1
       },
       {
