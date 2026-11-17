@@ -96,6 +96,8 @@ test('the catalog covers every Commerce getter and skips internals', async () =>
   assert.equal(byName.get('analytics.salesSummary').readOnly, true)
   assert.equal(byName.get('customers.findOrCreate').readOnly, false)
   assert.equal(byName.get('x402.verifyAgent').readOnly, false)
+  assert.equal(byName.get('x402.getCreditBalance').readOnly, false)
+  assert.equal(byName.get('x402.getCreditAccount').readOnly, true)
   assert.equal(byName.get('orders.create').readOnly, false)
   assert.equal(byName.get('orders.cancel').readOnly, false)
   assert.equal(byName.get('maintenance.backup').readOnly, false)

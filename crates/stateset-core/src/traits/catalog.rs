@@ -281,7 +281,8 @@ pub trait SearchConfigRepository: Send + Sync {
     /// Get search configuration by ID
     fn get(&self, id: SearchConfigId) -> Result<Option<SearchConfig>>;
 
-    /// Update a search configuration
+    /// Update a search configuration. `is_active: Some(true)` activates it
+    /// as [`Self::set_active`] does, deactivating any other config.
     fn update(&self, id: SearchConfigId, input: UpdateSearchConfig) -> Result<SearchConfig>;
 
     /// List search configurations with filter

@@ -6,6 +6,49 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- The Node binding's tool descriptors marked `x402.getCreditBalance` read-only,
+  but the engine's balance query is a get-or-create: the first query for a
+  payer, asset and network inserts an `x402_credit_accounts` row. So a
+  read-only toolkit built from the descriptors could write. It is now a write,
+  matching the CLI's `x402_credit_balance` tool; `x402.getCreditAccount` stays
+  a read. A binding test pins both behaviours.
+- The strict operator templates `kernel/examples/strict-policy.json` and
+  `strict-principal.json` now grant `orders.transition` (`update_order_status`)
+  and `orders.ship` (`ship_order`), neither behind approval. AGENTS.md and the
+  strict-checkout docs point operators at these templates for a complete
+  checkout, but without the order commands a strict agent stopped at the
+  first order transition with `policy.command_not_allowed`. The golden-path
+  MCP test now runs the whole journey under the unedited templates and checks
+  them against the documented command table, so they cannot fall behind
+  again. AGENTS.md now also lists return item dispositions and says that the
+  templates hold a direct `create_refund` for approval, which an MCP tool call
+  never carries.
+- `@stateset/embedded`'s `KernelCommand` union now declares the eleven
+  storefront commands the engine dispatches (`customers.create`,
+  `carts.create`, `carts.item.add`, `carts.shipping_address.set`,
+  `carts.payment_method.set`, `carts.coupon.apply`, `carts.tax.calculate`,
+  `payments.complete`, `shipments.create`, `returns.create`,
+  `returns.tracking.add`) and `orders.ship_reserved`, each with a payload
+  interface matching its Rust definition, so TypeScript callers no longer need
+  a cast to send them. The binding test now reads the dispatch table in
+  `Commerce::execute_kernel_command` and fails when the union and the engine
+  disagree.
+- Activating a search config through `update` (`is_active: Some(true)`) now
+  deactivates every other config, as `set_active` does, on both backends, so
+  two configs can no longer be active at once. On Postgres the update takes
+  `set_active`'s path: the same advisory lock (42_420_021), the existence
+  check and the bulk deactivation, in the update's transaction, so it
+  serializes with concurrent activations. An activation of an unknown id
+  changes nothing and returns `NotFound`.
+- Postgres `inventory().list` now honours `InventoryFilter.sku` (a
+  case-insensitive substring match) and `InventoryFilter.is_active`, as SQLite
+  does. It ignored both and always listed active items only, so a SKU search
+  over HTTP returned unrelated items, `is_active: false` could never list
+  inactive items, and the portability export left inactive items out. With no
+  `is_active` filter the listing now includes inactive items on Postgres too.
+
 ## [1.41.0] - 2026-11-15
 
 1.41.0 rolls up four lines of work: the 1.40.1 security fixes, which were

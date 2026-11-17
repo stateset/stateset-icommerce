@@ -58,10 +58,16 @@ policy and principal files. This enables strict mode: only typed governed write
 commands are exposed, while read tools remain available. Identity and policy
 never come from model arguments. The governed catalog covers a complete
 checkout — customers, carts (items, shipping address, payment method, coupon,
-tax), checkout, payment create/capture, order transitions, shipments, returns
-(create, tracking, transitions) and refunds — so grant those capabilities
-(see [`kernel/examples/strict-policy.json`](kernel/examples/strict-policy.json))
-and a strict agent can sell end to end. Promotions and coupons are operator
+tax), checkout, payment create/capture, order transitions and shipping,
+shipments, returns (create, tracking, item dispositions, transitions) and
+refunds — so grant those capabilities (the templates
+[`kernel/examples/strict-policy.json`](kernel/examples/strict-policy.json) and
+[`strict-principal.json`](kernel/examples/strict-principal.json) grant all of
+them) and a strict agent can sell end to end. The template policy requires
+approval evidence for a direct refund (`create_refund`), which an MCP tool
+call never carries, so on an MCP endpoint that step is refused with
+`policy.approval_required`; completing a return still creates the return's
+refund. Promotions and coupons are operator
 configuration: strict agents redeem them (`apply_cart_discount`) but cannot
 create them; provision them outside the agent endpoint.
 

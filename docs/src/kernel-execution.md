@@ -329,6 +329,18 @@ fulfilment, return and refund — without any legacy write:
 | `approve_return` … `complete_return` | `returns.transition` | return state machine (completion creates the payment refunds) |
 | `create_refund` | `payments.create_refund` | refund create |
 
+The starting templates
+[`kernel/examples/strict-policy.json`](../../kernel/examples/strict-policy.json)
+and
+[`kernel/examples/strict-principal.json`](../../kernel/examples/strict-principal.json)
+grant every command in this table (plus `inventory.item.create` and
+`products.create` for catalogue setup); `cli/test/integration/mcp-golden-path.test.js`
+runs the journey under them unedited. Only `payments.create_refund` requires
+approval there. An MCP tool call carries no approval evidence, so on an MCP
+endpoint a direct `create_refund` is refused with `policy.approval_required`;
+completing a return still creates the return's refund, since
+`returns.transition` needs no approval.
+
 Each storefront command runs the same repository function the ungoverned API
 uses, on the kernel's transaction and inside a savepoint: a business refusal
 (missing cart, invalid coupon, unreturnable quantity, illegal capture) becomes

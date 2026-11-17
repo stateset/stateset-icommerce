@@ -17,6 +17,8 @@
     "carts.coupon.apply",
     "carts.tax.calculate",
     "payments.complete",
+    "orders.transition",
+    "orders.ship",
     "shipments.create",
     "returns.create",
     "returns.tracking.add",

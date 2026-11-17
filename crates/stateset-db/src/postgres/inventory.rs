@@ -9,8 +9,8 @@ use super::map_db_error;
 use crate::KernelOutboxEvent;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use sqlx::FromRow;
 use sqlx::postgres::PgPool;
+use sqlx::{FromRow, Postgres, QueryBuilder};
 use stateset_core::{
     AdjustInventory, BatchResult, CommerceError, CreateInventoryItem, InventoryBalance,
     InventoryFilter, InventoryItem, InventoryRepository, InventoryReservation,
@@ -1740,18 +1740,29 @@ impl PgInventoryRepository {
     }
 
     /// List inventory items (async)
+    ///
+    /// Honours the filters the SQLite backend honours, with its meaning:
+    /// `sku` is a case-insensitive substring match and `is_active` narrows
+    /// only when given (no filter lists inactive items too).
     pub async fn list_async(&self, filter: InventoryFilter) -> Result<Vec<InventoryItem>> {
         let limit = super::effective_limit(filter.limit);
         let offset = filter.offset.unwrap_or(0) as i64;
 
-        let rows = sqlx::query_as::<_, InventoryItemRow>(
-            "SELECT * FROM inventory_items WHERE is_active = TRUE ORDER BY created_at DESC LIMIT $1 OFFSET $2",
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_db_error)?;
+        let mut query = QueryBuilder::<Postgres>::new("SELECT * FROM inventory_items WHERE TRUE");
+        if let Some(sku) = &filter.sku {
+            query.push(" AND sku ILIKE ").push_bind(format!("%{sku}%"));
+        }
+        if let Some(is_active) = filter.is_active {
+            query.push(" AND is_active = ").push_bind(is_active);
+        }
+        query.push(" ORDER BY created_at DESC LIMIT ").push_bind(limit);
+        query.push(" OFFSET ").push_bind(offset);
+
+        let rows = query
+            .build_query_as::<InventoryItemRow>()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_db_error)?;
 
         Ok(rows.into_iter().map(Self::row_to_item).collect())
     }

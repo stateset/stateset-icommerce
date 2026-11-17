@@ -66,6 +66,14 @@ impl SqliteSearchConfigRepository {
             )?,
         })
     }
+
+    /// Clear every active flag inside `tx`. The caller then sets
+    /// `is_active = 1` on one config in the same IMMEDIATE transaction (which
+    /// already serializes activations), so exactly one is active at commit; an
+    /// unknown id fails the caller's read-back and rolls this back too.
+    fn deactivate_all(tx: &rusqlite::Transaction<'_>, now: &str) -> rusqlite::Result<usize> {
+        tx.execute("UPDATE search_configs SET is_active = 0, updated_at = ?", [now])
+    }
 }
 
 impl SearchConfigRepository for SqliteSearchConfigRepository {
@@ -127,6 +135,12 @@ impl SearchConfigRepository for SqliteSearchConfigRepository {
         let now_str = Utc::now().to_rfc3339();
 
         with_immediate_transaction(&self.pool, |tx| {
+            // Activating through an update takes the `set_active` path: no
+            // other config may stay active.
+            if input.is_active == Some(true) {
+                Self::deactivate_all(tx, &now_str)?;
+            }
+
             let mut sets = vec!["updated_at = ?".to_string()];
             let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(now_str.clone())];
 
@@ -249,7 +263,7 @@ impl SearchConfigRepository for SqliteSearchConfigRepository {
 
         with_immediate_transaction(&self.pool, |tx| {
             // Deactivate all configs first
-            tx.execute("UPDATE search_configs SET is_active = 0, updated_at = ?", [&now_str])?;
+            Self::deactivate_all(tx, &now_str)?;
 
             // Activate the requested config
             tx.execute(
