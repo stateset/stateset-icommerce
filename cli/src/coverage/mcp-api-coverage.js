@@ -775,19 +775,29 @@ export function getBindingClassMethodNames(source, className) {
   return new Set([...classMatch[1].matchAll(/^\s+([A-Za-z0-9]+)\(/gm)].map((match) => match[1]));
 }
 
-export function buildMcpApiCoverage() {
-  const source = readCommerceBindingSource();
-  // Only `Commerce`'s own getters are sub-APIs; other classes' getters
-  // (`SideStore.open`, `SideStoreStatement.reader`, ...) are values.
+/**
+ * The getters declared on the binding's `Commerce` class. Only these are
+ * sub-APIs; other classes' getters (`SideStore.open`,
+ * `SideStoreStatement.reader`, ...) are values.
+ *
+ * @param {string} source - the binding's index.d.ts
+ * @returns {Set<string>}
+ */
+export function getCommerceGetterNames(source) {
   const commerceClass = source.match(/export declare class Commerce \{([\s\S]*?)\n\}/m);
   if (!commerceClass) {
     throw new Error('Unable to locate Commerce binding class "Commerce"');
   }
-  const getterNames = new Set(
+  return new Set(
     [...commerceClass[1].matchAll(/get\s+([A-Za-z0-9]+)\(\):\s+[A-Za-z0-9]+/g)].map(
       (match) => match[1],
     ),
   );
+}
+
+export function buildMcpApiCoverage() {
+  const source = readCommerceBindingSource();
+  const getterNames = getCommerceGetterNames(source);
 
   getterNames.delete('customStates');
   getterNames.delete('events');
