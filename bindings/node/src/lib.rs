@@ -495,6 +495,9 @@ impl Commerce {
         // The drop closes the connection pool. It runs on a plain thread (or
         // on whichever in-flight call finishes last); this only awaits it.
         drop(self.inner.close());
+        // Side stores hold connections outside the pool; close them too, so
+        // the file is released (and its WAL checkpointed) when this resolves.
+        close_side_stores(&self.inner);
         // An error means the sender is gone, which only happens once the
         // engine itself has dropped.
         let _ = released.wait_for(|done| *done).await;
@@ -1063,6 +1066,7 @@ mod domains {
     mod serials;
     mod shipments;
     mod shipping_zones;
+    mod side_store;
     mod stock_snapshots;
     mod store_credits;
     mod subscriptions;
@@ -1137,6 +1141,7 @@ mod domains {
     pub(crate) use serials::*;
     pub(crate) use shipments::*;
     pub(crate) use shipping_zones::*;
+    pub(crate) use side_store::*;
     pub(crate) use stock_snapshots::*;
     pub(crate) use store_credits::*;
     pub(crate) use subscriptions::*;

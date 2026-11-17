@@ -80,6 +80,36 @@ The shipment integration tests use that arrangement for atomic snapshots and
 fault injection, including across engine reopen. Multiple `Commerce` handles
 use the same native SQLite library.
 
+When host code needs its own tables in the store file (an outbox, an id map,
+an inbox), open a **side store** instead: a synchronous SQLite handle on the
+engine's own file, opened by the engine's own SQLite library, so closing it
+can never drop the engine's locks or unlink its WAL. It works for `:memory:`
+too, where it reaches the engine's private temp file.
+
+```javascript
+const side = commerce.openSideStore();
+side.exec('CREATE TABLE IF NOT EXISTS id_map (external_id TEXT PRIMARY KEY, stateset_id TEXT)');
+const upsert = side.prepare(
+  'INSERT INTO id_map VALUES (@external, @internal) ON CONFLICT (external_id) DO UPDATE SET stateset_id = excluded.stateset_id',
+);
+side.transaction((rows) => rows.forEach((row) => upsert.run(row)))([
+  { external: 'gid://shop/1', internal: customer.id },
+]);
+side.prepare('SELECT * FROM id_map WHERE external_id = ?').get('gid://shop/1');
+```
+
+It speaks the subset of the `better-sqlite3` API such stores use (`prepare` →
+`run`/`get`/`all`, `exec`, `pragma`, `transaction` with savepoint nesting and
+the `deferred`/`immediate`/`exclusive` variants, `close`), binds and reads
+values as better-sqlite3 does by default, and reports SQLite failures with
+better-sqlite3's `err.code` (`SQLITE_CONSTRAINT_UNIQUE`, ...). Each call opens
+one connection outside the engine's pool; `close()` closes only that
+connection, and `commerce.close()` closes every side store opened from it.
+`commerce.sharedSideStore()` returns one side store per engine, opened on
+first use, for hosts whose stores should all share a connection.
+It is for auxiliary tables only: writing the engine's own tables through it
+bypasses every engine invariant. Not available on a PostgreSQL backend.
+
 ## Quick Start
 
 ```javascript

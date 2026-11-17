@@ -184,7 +184,171 @@ const nativeBinding = wrapNativeExports(loadNativeBinding(() => require('./nativ
   }
 }
 
+{
+  // Side stores (`commerce.openSideStore()`): the better-sqlite3-shaped
+  // surface over the native `SideStore` / `SideStoreStatement`. Argument
+  // sorting, `exec()` returning the store, `pragma()` validation and
+  // `transaction()` follow better-sqlite3 11 (lib/methods/transaction.js and
+  // src/util/binder.lzz) so a store written against it behaves the same. The
+  // native side binds and executes on the engine's own SQLite connection.
+  const storeProto = nativeBinding.SideStore.prototype
+  const statementProto = nativeBinding.SideStoreStatement.prototype
+
+  const isPlainObject = (value) => {
+    const prototype = Object.getPrototypeOf(value)
+    return prototype === Object.prototype || prototype === null
+  }
+
+  // better-sqlite3's argument rules: arrays spread into positional values, one
+  // plain object supplies named values, anything else is positional.
+  function sortArguments(args) {
+    const positional = []
+    let named = null
+    for (const arg of args) {
+      if (Array.isArray(arg)) {
+        for (const value of arg) positional.push(value)
+      } else if (arg !== null && typeof arg === 'object' && !ArrayBuffer.isView(arg) && isPlainObject(arg)) {
+        if (named !== null) throw new TypeError('You cannot specify named parameters in two different objects')
+        named = arg
+      } else {
+        positional.push(arg)
+      }
+    }
+    return [positional, named]
+  }
+
+  const method = (fn) => ({ value: fn, writable: true, configurable: true })
+
+  Object.defineProperties(statementProto, {
+    run: method(function run(...args) {
+      const [positional, named] = sortArguments(args)
+      return this.__run(positional, named)
+    }),
+    get: method(function get(...args) {
+      const [positional, named] = sortArguments(args)
+      return this.__get(positional, named)
+    }),
+    all: method(function all(...args) {
+      const [positional, named] = sortArguments(args)
+      return this.__all(positional, named)
+    }),
+  })
+
+  // One set of BEGIN/COMMIT/SAVEPOINT statements per side store.
+  const controllers = new WeakMap()
+  function controllerFor(store) {
+    let controller = controllers.get(store)
+    if (!controller) {
+      const shared = {
+        commit: store.prepare('COMMIT'),
+        rollback: store.prepare('ROLLBACK'),
+        savepoint: store.prepare('SAVEPOINT `\t_bs3.\t`'),
+        release: store.prepare('RELEASE `\t_bs3.\t`'),
+        rollbackTo: store.prepare('ROLLBACK TO `\t_bs3.\t`'),
+      }
+      controller = {
+        default: { begin: store.prepare('BEGIN'), ...shared },
+        deferred: { begin: store.prepare('BEGIN DEFERRED'), ...shared },
+        immediate: { begin: store.prepare('BEGIN IMMEDIATE'), ...shared },
+        exclusive: { begin: store.prepare('BEGIN EXCLUSIVE'), ...shared },
+      }
+      controllers.set(store, controller)
+    }
+    return controller
+  }
+
+  // A nested call runs in a savepoint; a throw rolls back to it (or the whole
+  // transaction at the outermost level) and rethrows.
+  const wrapTransaction = (fn, store, { begin, commit, rollback, savepoint, release, rollbackTo }) =>
+    function sideStoreTransaction() {
+      // Strict, so `this` reaches the body unboxed, as in better-sqlite3.
+      'use strict'
+      let before, after, undo
+      if (store.inTransaction) {
+        before = savepoint
+        after = release
+        undo = rollbackTo
+      } else {
+        before = begin
+        after = commit
+        undo = rollback
+      }
+      before.run()
+      try {
+        const result = fn.apply(this, arguments)
+        if (result && typeof result.then === 'function') {
+          throw new TypeError('Transaction function cannot return a promise')
+        }
+        after.run()
+        return result
+      } catch (error) {
+        if (store.inTransaction) {
+          undo.run()
+          if (undo !== rollback) after.run()
+        }
+        throw error
+      }
+    }
+
+  Object.defineProperties(storeProto, {
+    exec: method(function exec(sql) {
+      if (typeof sql !== 'string') throw new TypeError('Expected first argument to be a string')
+      this.__exec(sql)
+      return this
+    }),
+    pragma: method(function pragma(source, options) {
+      if (options == null) options = {}
+      if (typeof source !== 'string') throw new TypeError('Expected first argument to be a string')
+      if (typeof options !== 'object') throw new TypeError('Expected second argument to be an options object')
+      const simple = 'simple' in options ? options.simple : false
+      if (typeof simple !== 'boolean') throw new TypeError('Expected the "simple" option to be a boolean')
+      return this.__pragma(source, simple)
+    }),
+    transaction: method(function transaction(fn) {
+      if (typeof fn !== 'function') throw new TypeError('Expected first argument to be a function')
+      const controller = controllerFor(this)
+      const properties = {
+        default: { value: wrapTransaction(fn, this, controller.default) },
+        deferred: { value: wrapTransaction(fn, this, controller.deferred) },
+        immediate: { value: wrapTransaction(fn, this, controller.immediate) },
+        exclusive: { value: wrapTransaction(fn, this, controller.exclusive) },
+        database: { value: this, enumerable: true },
+      }
+      Object.defineProperties(properties.default.value, properties)
+      Object.defineProperties(properties.deferred.value, properties)
+      Object.defineProperties(properties.immediate.value, properties)
+      Object.defineProperties(properties.exclusive.value, properties)
+      return properties.default.value
+    }),
+  })
+  if (typeof Symbol.dispose === 'symbol') {
+    Object.defineProperty(storeProto, Symbol.dispose, method(function dispose() {
+      this.close()
+    }))
+  }
+
+  // One side store per engine for hosts whose stores should share a
+  // connection. Keyed by the native instance, so it stays one store however
+  // many wrapper objects a host builds around the engine (methods reached
+  // through a wrapper are bound to the native instance).
+  const sharedSideStores = new WeakMap()
+  Object.defineProperty(
+    nativeBinding.Commerce.prototype,
+    'sharedSideStore',
+    method(function sharedSideStore() {
+      let store = sharedSideStores.get(this)
+      if (!store || !store.open) {
+        store = this.openSideStore()
+        sharedSideStores.set(this, store)
+      }
+      return store
+    }),
+  )
+}
+
 module.exports.Commerce = nativeBinding.Commerce
+module.exports.SideStore = nativeBinding.SideStore
+module.exports.SideStoreStatement = nativeBinding.SideStoreStatement
 module.exports.Events = nativeBinding.Events
 module.exports.CommerceEventSubscription = nativeBinding.CommerceEventSubscription
 module.exports.Customers = nativeBinding.Customers
