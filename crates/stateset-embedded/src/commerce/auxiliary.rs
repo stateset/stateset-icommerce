@@ -103,6 +103,51 @@ mod tests {
     }
 
     #[test]
+    fn close_releases_the_file_after_concurrent_writes_grew_the_pool() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("store.db");
+        // A plain drop leaves the WAL behind in about 15% of these rounds,
+        // so 10 rounds catch a regression about 80% of the time; the
+        // deterministic check is in `stateset_db`'s `file_release` test.
+        for round in 0..10 {
+            let commerce = Commerce::new(path.to_str().expect("utf-8 path")).expect("commerce");
+            // Concurrent writers make r2d2 open more connections in the
+            // background; one may still be opening when the writers finish.
+            std::thread::scope(|scope| {
+                for writer in 0..8 {
+                    let commerce = &commerce;
+                    scope.spawn(move || {
+                        create_customer(commerce, &format!("r{round}w{writer}@example.com"));
+                    });
+                }
+            });
+            commerce.close().expect("close");
+            assert!(
+                !dir.path().join("store.db-wal").exists(),
+                "round {round}: the WAL is gone when close() returns"
+            );
+        }
+        let reopened = Commerce::new(path.to_str().expect("utf-8 path")).expect("reopen");
+        let conn = reopened.open_auxiliary_sqlite_connection().expect("auxiliary connection");
+        assert_eq!(count(&conn, "customers"), 80);
+    }
+
+    #[test]
+    fn close_reports_a_file_still_held_by_an_auxiliary_connection() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("store.db");
+        let commerce = Commerce::new(path.to_str().expect("utf-8 path")).expect("commerce");
+        let conn = commerce.open_auxiliary_sqlite_connection().expect("auxiliary connection");
+        let error = commerce
+            .close_within(std::time::Duration::from_millis(50))
+            .expect_err("the auxiliary connection still holds the file");
+        assert!(matches!(error, CommerceError::DatabaseError(_)), "{error:?}");
+        assert!(error.to_string().contains("still in use"), "{error}");
+        drop(conn);
+        assert!(!dir.path().join("store.db-wal").exists(), "the last connection removed the WAL");
+    }
+
+    #[test]
     fn memory_engine_file_outlives_the_engine_while_a_connection_is_open() {
         let commerce = Commerce::new(":memory:").expect("commerce");
         create_customer(&commerce, "kept@example.com");

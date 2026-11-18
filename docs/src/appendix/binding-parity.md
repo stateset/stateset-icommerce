@@ -15,7 +15,7 @@ inventory this builds on is [Binding API Inventory](binding-api-inventory.md).
 - **Domains** are the `Commerce` accessors that return a handle (`commerce.orders()`,
   `commerce.promotions()`, ...) plus the root `commerce` methods. Each domain's engine methods are
   the `pub fn` methods with a `self` receiver on the returned type. The engine exposes
-  70 domains and 1242 methods.
+  70 domains and 1244 methods.
 - **Traced bindings** (Node, Python, Go): an engine method is *exposed* only when an exported
   binding method (or a helper it calls) actually calls it — `commerce.promotions().get_by_code(`.
   Names do not matter, so renames (`GetLevel` → `get_stock`) are credited correctly. A class
@@ -33,16 +33,16 @@ inventory this builds on is [Binding API Inventory](binding-api-inventory.md).
 
 | Binding | Evidence | Gated | Exposed | Coverage | Parity vs Node |
 | --- | --- | --- | --- | --- | --- |
-| Node.js | traced: #[napi] methods -> engine calls | yes | 789/1234 | 63.9% | reference |
-| Python | traced: #[pymethods] methods -> engine calls | yes | 599/1234 | 48.5% | 75.2% |
-| Go | traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls | yes | 80/1234 | 6.5% | 10.1% |
-| .NET | native reach: engine calls anywhere in the Rust layer | no | 48/1234 | 3.9% | 6% |
-| Java | native reach: engine calls anywhere in the Rust layer | no | 77/1234 | 6.2% | 9.3% |
-| Kotlin | native reach: engine calls anywhere in the Rust layer | no | 61/1234 | 4.9% | 7.5% |
-| PHP | native reach: engine calls anywhere in the Rust layer | no | 178/1234 | 14.4% | 20.5% |
-| Ruby | native reach: engine calls anywhere in the Rust layer | no | 0/1234 | 0% | 0% |
-| Swift | native reach: engine calls anywhere in the Rust layer | no | 51/1234 | 4.1% | 6.5% |
-| WASM | native reach: engine calls anywhere in the Rust layer | no | 0/1234 | 0% | 0% |
+| Node.js | traced: #[napi] methods -> engine calls | yes | 790/1236 | 63.9% | reference |
+| Python | traced: #[pymethods] methods -> engine calls | yes | 599/1236 | 48.5% | 75.1% |
+| Go | traced: Go methods -> C.stateset_* -> Rust FFI -> engine calls | yes | 80/1236 | 6.5% | 10.1% |
+| .NET | native reach: engine calls anywhere in the Rust layer | no | 48/1236 | 3.9% | 5.9% |
+| Java | native reach: engine calls anywhere in the Rust layer | no | 77/1236 | 6.2% | 9.2% |
+| Kotlin | native reach: engine calls anywhere in the Rust layer | no | 61/1236 | 4.9% | 7.5% |
+| PHP | native reach: engine calls anywhere in the Rust layer | no | 178/1236 | 14.4% | 20.5% |
+| Ruby | native reach: engine calls anywhere in the Rust layer | no | 0/1236 | 0% | 0% |
+| Swift | native reach: engine calls anywhere in the Rust layer | no | 51/1236 | 4.1% | 6.5% |
+| WASM | native reach: engine calls anywhere in the Rust layer | no | 0/1236 | 0% | 0% |
 
 Coverage is exposed / (engine methods − exempt). Parity vs Node is the share of Node-exposed engine
 methods the binding also exposes.
@@ -51,9 +51,9 @@ methods the binding also exposes.
 
 | Binding | Host methods | Name-matched | Coverage | Unmatched host methods |
 | --- | --- | --- | --- | --- |
-| .NET | 245 | 220/1234 | 17.8% | 7 |
-| Swift | 71 | 71/1234 | 5.8% | 0 |
-| WASM | 148 | 134/1234 | 10.9% | 14 |
+| .NET | 245 | 220/1236 | 17.8% | 7 |
+| Swift | 71 | 71/1236 | 5.7% | 0 |
+| WASM | 148 | 134/1236 | 10.8% | 14 |
 
 ## Per-domain matrix
 
@@ -61,7 +61,7 @@ Cells are exposed / applicable engine methods.
 
 | Domain | Engine methods | Exempt | Node.js | Python | Go | .NET | Java | Kotlin | PHP | Ruby | Swift | WASM |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `commerce` | 22 | 4 | 9/18 | 4/18 | 0/18 | 0/18 | 0/18 | 0/18 | 0/18 | 0/18 | 0/18 | 0/18 |
+| `commerce` | 24 | 4 | 10/20 | 4/20 | 0/20 | 0/20 | 0/20 | 0/20 | 0/20 | 0/20 | 0/20 | 0/20 |
 | `accounts_payable` | 41 | 0 | 26/41 | 10/41 | 0/41 | 2/41 | 3/41 | 3/41 | 4/41 | 0/41 | 3/41 | 0/41 |
 | `accounts_receivable` | 28 | 0 | 15/28 | 3/28 | 0/28 | 2/28 | 3/28 | 2/28 | 3/28 | 0/28 | 2/28 | 0/28 |
 | `activity_logs` | 5 | 0 | 5/5 | 5/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 |
@@ -150,8 +150,8 @@ unless `--allow-loss` is also passed. Gated bindings: `node`, `python`, `go`
 
 | Binding | Known gaps vs Node (baseline) |
 | --- | --- |
-| python | 196 |
-| go | 709 |
+| python | 197 |
+| go | 710 |
 
 ## Exemptions
 
@@ -226,7 +226,7 @@ name-matched surfaces.
 | go | `SuppliersAPI.Get` | `purchase_orders.get_supplier` | no |
 | go | `SuppliersAPI.List` | `purchase_orders.list_suppliers` | no |
 | node | `Carts.addItemExact` | `carts.add_item` | no |
-| node | `Commerce.openSideStore` | `commerce.open_auxiliary_sqlite_connection` | no |
+| node | `Commerce.openSideStore` | `commerce.close`, `commerce.open_auxiliary_sqlite_connection` | no |
 | node | `CurrencyOperations.getBaseCurrency` | `currency.base_currency` | yes |
 | node | `CurrencyOperations.getEnabledCurrencies` | `currency.enabled_currencies` | yes |
 | node | `CycleCounts.cancel` | `warehouse.cancel_cycle_count` | no |
@@ -324,6 +324,7 @@ None found.
 | `apply_cart_promotions` | yes | yes | — |
 | `backend` | — | — | — |
 | `calculate_cart_tax` | — | — | — |
+| `close` | yes | — | — |
 | `database` | exempt | exempt | exempt |
 | `economic_budget_status` | yes | yes | — |
 | `emit_event` | — | — | — |
@@ -338,6 +339,7 @@ None found.
 | `provision_economic_budget` | yes | yes | — |
 | `register_webhook` | yes | — | — |
 | `register_webhook_strict` | — | — | — |
+| `sqlite_file_release` | — | — | — |
 | `subscribe_events` | yes | — | — |
 | `transactions` | — | — | — |
 | `try_register_webhook` | — | — | — |

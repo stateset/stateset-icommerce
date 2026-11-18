@@ -94,7 +94,10 @@ pub mod postgres;
 pub mod transactions;
 
 #[cfg(feature = "sqlite")]
-pub use sqlite::{SQLITE_SYNCHRONOUS_ENV, SqliteDatabase, SqliteDurability, SqliteStorageStatus};
+pub use sqlite::{
+    SQLITE_SYNCHRONOUS_ENV, SqliteDatabase, SqliteDurability, SqliteFileRelease,
+    SqliteStorageStatus,
+};
 
 #[cfg(feature = "postgres")]
 pub use postgres::PostgresDatabase;

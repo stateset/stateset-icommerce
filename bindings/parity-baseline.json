@@ -204,6 +204,7 @@
       ],
       "commerce": [
         "apply_cart_promotions",
+        "close",
         "economic_budget_status",
         "execute_kernel_command",
         "list_webhooks",
@@ -1879,6 +1880,7 @@
         "update_backorder"
       ],
       "commerce": [
+        "close",
         "list_webhooks",
         "open_auxiliary_sqlite_connection",
         "register_webhook",
@@ -2220,6 +2222,7 @@
       ],
       "commerce": [
         "apply_cart_promotions",
+        "close",
         "economic_budget_status",
         "execute_kernel_command",
         "list_webhooks",

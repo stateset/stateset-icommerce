@@ -217,6 +217,64 @@ pub use rusqlite;
 pub struct SqliteDatabase {
     pool: Pool<SqliteConnectionManager>,
     auxiliary: AuxiliaryOpener,
+    release: SqliteFileRelease,
+}
+
+/// Fires once every connection a [`SqliteDatabase`] opened has closed.
+///
+/// Dropping the database drops its pool handle, but r2d2 grows the pool
+/// lazily on a background thread, and a connection attempt in flight there
+/// holds the shared pool (and so every pooled connection) open until it
+/// finishes. A checked-out connection, a repository or a kernel executor
+/// taken from the database, or an auxiliary connection, holds the file open
+/// the same way. This watch fires only after the last of those connections
+/// has closed, so for a WAL database the WAL has been checkpointed and the
+/// `-wal`/`-shm` files removed: the file can be copied, moved or reopened.
+///
+/// Take it with [`SqliteDatabase::file_release`] before dropping the
+/// database. Cheap to clone.
+#[derive(Clone, Debug)]
+pub struct SqliteFileRelease(std::sync::Arc<ReleaseState>);
+
+#[derive(Debug, Default)]
+struct ReleaseState {
+    released: std::sync::Mutex<bool>,
+    changed: std::sync::Condvar,
+}
+
+impl SqliteFileRelease {
+    /// Whether every connection has closed.
+    #[must_use]
+    pub fn is_released(&self) -> bool {
+        *self.0.released.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Block until every connection has closed or `timeout` passes. Returns
+    /// whether the file was released.
+    #[must_use]
+    pub fn wait_for(&self, timeout: Duration) -> bool {
+        let released = self.0.released.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (released, _) = self
+            .0
+            .changed
+            .wait_timeout_while(released, timeout, |released| !*released)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *released
+    }
+}
+
+/// Shared by the connection setup closure and every connection it set up
+/// (as SQL function userdata, which SQLite frees only after it has closed
+/// the connection's B-trees, and so after the last connection's WAL
+/// checkpoint and removal). Its drop, when the last clone goes, marks the
+/// file released.
+struct ReleaseToken(std::sync::Arc<ReleaseState>);
+
+impl Drop for ReleaseToken {
+    fn drop(&mut self) {
+        *self.0.released.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+        self.0.changed.notify_all();
+    }
 }
 
 /// The per-connection setup every pooled connection runs.
@@ -364,7 +422,25 @@ impl SqliteDatabase {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
+        let release_state = std::sync::Arc::new(ReleaseState::default());
+        let release_token =
+            std::sync::Arc::new(ReleaseToken(std::sync::Arc::clone(&release_state)));
         let init = move |conn: &mut rusqlite::Connection| -> rusqlite::Result<()> {
+            // Every connection holds the release token until SQLite has
+            // closed it (see `ReleaseToken`), so `file_release` fires only
+            // once the pool, any connection r2d2 was still opening, and every
+            // auxiliary connection are gone, not merely the pool handle.
+            let token = std::sync::Arc::clone(&release_token);
+            conn.create_scalar_function(
+                "__stateset_file_release",
+                0,
+                rusqlite::functions::FunctionFlags::SQLITE_UTF8
+                    | rusqlite::functions::FunctionFlags::SQLITE_DIRECTONLY,
+                move |_| {
+                    let _hold_until_closed = &token;
+                    Ok(0_i32)
+                },
+            )?;
             // The closure (held by the pool's manager and by the auxiliary
             // opener) keeps the directory alive for future connections.
             // Each connection also owns a guard through SQLite's safe function
@@ -428,7 +504,18 @@ impl SqliteDatabase {
         migrations::run_migrations(&mut conn)
             .map_err(|e| CommerceError::DatabaseError(e.to_string()))?;
 
-        Ok(Self { pool, auxiliary: AuxiliaryOpener { path, flags, init } })
+        Ok(Self {
+            pool,
+            auxiliary: AuxiliaryOpener { path, flags, init },
+            release: SqliteFileRelease(release_state),
+        })
+    }
+
+    /// A watch that fires once every connection this database opened has
+    /// closed. See [`SqliteFileRelease`].
+    #[must_use]
+    pub fn file_release(&self) -> SqliteFileRelease {
+        self.release.clone()
     }
 
     /// Open one more connection on this database's file, outside the pool.
@@ -1674,6 +1761,49 @@ mod tests {
             rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
             Some("database is locked".to_string()),
         )
+    }
+
+    #[test]
+    fn file_release_waits_for_every_connection_that_outlives_the_handle() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("store.db");
+        let wal = dir.path().join("store.db-wal");
+        let db = SqliteDatabase::new(&DatabaseConfig {
+            url: path.to_str().expect("utf-8 path").to_owned(),
+            max_connections: 4,
+        })
+        .expect("db should initialize");
+        // A checked-out connection keeps r2d2's shared pool, and so every
+        // pooled connection, alive past the handle, exactly as a connection
+        // r2d2 is still opening in the background does.
+        let held = db.conn().expect("pooled connection");
+        held.execute_batch("CREATE TABLE side (x INTEGER); INSERT INTO side VALUES (1);")
+            .expect("write through the pool");
+        let auxiliary = db.open_auxiliary_connection().expect("auxiliary connection");
+        let release = db.file_release();
+        drop(db);
+
+        assert!(wal.exists(), "connections are still open");
+        assert!(
+            !release.wait_for(Duration::from_millis(50)),
+            "not released while a pooled connection is checked out"
+        );
+        drop(held);
+        assert!(
+            !release.wait_for(Duration::from_millis(50)),
+            "not released while an auxiliary connection is open"
+        );
+        let closer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(100));
+            drop(auxiliary);
+        });
+        assert!(
+            release.wait_for(Duration::from_secs(10)),
+            "released once the last connection closes"
+        );
+        assert!(release.is_released());
+        assert!(!wal.exists(), "the WAL is checkpointed and removed before the release fires");
+        closer.join().expect("closer thread");
     }
 
     #[test]
