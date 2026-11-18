@@ -19,6 +19,7 @@ import {
   resolveLifecycle,
 } from '../../src/state-machine-catalog.js';
 import {
+  MACHINE_ALIASES,
   PERSISTENCE_MOVES,
   STATUS_GATED_TOOLS,
   STATUS_PARAMETER_TOOLS,
@@ -203,17 +204,53 @@ describe('UNCATALOGUED_LIFECYCLES', () => {
       'order_payment',
       'order_fulfillment',
       'gift_card',
-      'store_credit',
       'promotion',
       'coupon',
       'inventory_reservation',
       'invoice',
       'backorder',
       'x402_intent',
-      'payment_obligation',
-      'gl_period',
+      'inbound_shipment',
     ]) {
       assert.equal(resolveLifecycle(name).kind, 'uncatalogued', name);
+    }
+  });
+});
+
+describe('MACHINE_ALIASES', () => {
+  it('names catalogued machines, and no alias shadows another name', () => {
+    const names = new Set(STATE_MACHINES.map((m) => m.name));
+    const uncatalogued = UNCATALOGUED_LIFECYCLES.flatMap((l) => [l.name, ...(l.aliases ?? [])]);
+    const aliases = Object.values(MACHINE_ALIASES).flat();
+    assert.equal(new Set(aliases).size, aliases.length, 'aliases are unique');
+    for (const [machine, list] of Object.entries(MACHINE_ALIASES)) {
+      assert.ok(names.has(machine), `${machine} is catalogued`);
+      for (const alias of list) {
+        assert.ok(!names.has(alias), `${alias} is not itself a machine`);
+        assert.ok(!uncatalogued.includes(alias), `${alias} is not an uncatalogued lifecycle`);
+        assert.equal(findStateMachine(alias)?.name, machine, alias);
+      }
+    }
+  });
+
+  it('keeps answering the names these lifecycles had before they were catalogued', () => {
+    for (const [name, machine] of [
+      ['store_credit', 'store_credit'],
+      ['payment_obligation', 'payment_obligation'],
+      ['gl_period', 'gl_period'],
+      ['accounting_period', 'gl_period'],
+      ['GlPeriodStatus', 'gl_period'],
+      ['GlJournalEntryStatus', 'journal_entry'],
+      ['bill_of_materials', 'bom'],
+      ['non_conformance_report', 'ncr'],
+      ['fulfillment_wave', 'wave'],
+      ['PickTaskStatus', 'pick_task'],
+      ['EdiStatus', 'edi_document'],
+      ['BillStatus', 'bill'],
+    ]) {
+      const resolved = resolveLifecycle(name);
+      assert.equal(resolved.kind, 'catalogued', name);
+      assert.equal(resolved.machine.name, machine, name);
     }
   });
 });

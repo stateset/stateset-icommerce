@@ -1651,6 +1651,1137 @@
           "terminal": true
         }
       ]
+    },
+    {
+      "domain": "vendor_returns",
+      "initial": "draft",
+      "name": "vendor_return",
+      "rust_type": "VendorReturnStatus",
+      "states": [
+        {
+          "name": "draft",
+          "next": [
+            "pending",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "pending",
+          "next": [
+            "processed",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "processed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "transfer_orders",
+      "initial": "draft",
+      "name": "transfer_order",
+      "rust_type": "TransferOrderStatus",
+      "states": [
+        {
+          "name": "draft",
+          "next": [
+            "in_transit",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "pending",
+          "next": [
+            "in_transit",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "in_transit",
+          "next": [
+            "partially_received",
+            "received"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "partially_received",
+          "next": [
+            "received"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "received",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "edi_documents",
+      "initial": "pending",
+      "name": "edi_document",
+      "rust_type": "EdiStatus",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "sent",
+            "acknowledged",
+            "processed",
+            "error"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "sent",
+          "next": [
+            "pending",
+            "acknowledged",
+            "processed",
+            "error"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "acknowledged",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "processed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "error",
+          "next": [
+            "pending",
+            "sent",
+            "acknowledged",
+            "processed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        }
+      ]
+    },
+    {
+      "domain": "receiving",
+      "initial": "expected",
+      "name": "receipt",
+      "rust_type": "ReceiptStatus",
+      "states": [
+        {
+          "name": "expected",
+          "next": [
+            "in_progress",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "in_progress",
+          "next": [
+            "received",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "received",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "inspecting",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "putting_away",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "receiving",
+      "initial": "pending",
+      "name": "put_away",
+      "rust_type": "PutAwayStatus",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "assigned",
+            "in_progress",
+            "completed",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "assigned",
+          "next": [
+            "in_progress",
+            "completed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "in_progress",
+          "next": [
+            "completed",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "fulfillment",
+      "initial": "draft",
+      "name": "wave",
+      "rust_type": "WaveStatus",
+      "states": [
+        {
+          "name": "draft",
+          "next": [
+            "released",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "released",
+          "next": [
+            "completed",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "in_progress",
+          "next": [
+            "completed",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "fulfillment",
+      "initial": "pending",
+      "name": "pick_task",
+      "rust_type": "PickStatus",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "assigned",
+            "in_progress",
+            "completed",
+            "short",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "assigned",
+          "next": [
+            "in_progress",
+            "completed",
+            "short",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "in_progress",
+          "next": [
+            "completed",
+            "short",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "short",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "manufacturing",
+      "initial": "draft",
+      "name": "bom",
+      "rust_type": "BomStatus",
+      "states": [
+        {
+          "name": "draft",
+          "next": [
+            "active",
+            "obsolete"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "active",
+          "next": [
+            "obsolete"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "obsolete",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "accounts_payable",
+      "initial": "draft",
+      "name": "bill",
+      "rust_type": "BillStatus",
+      "states": [
+        {
+          "name": "draft",
+          "next": [
+            "approved",
+            "cancelled",
+            "disputed"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "pending",
+          "next": [
+            "approved",
+            "cancelled",
+            "disputed"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "approved",
+          "next": [
+            "partially_paid",
+            "paid",
+            "cancelled",
+            "disputed"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "partially_paid",
+          "next": [
+            "approved",
+            "paid",
+            "disputed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "paid",
+          "next": [
+            "approved",
+            "partially_paid"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "overdue",
+          "next": [
+            "partially_paid",
+            "paid",
+            "cancelled",
+            "disputed"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "disputed",
+          "next": [
+            "draft",
+            "pending",
+            "approved",
+            "partially_paid",
+            "overdue",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        }
+      ]
+    },
+    {
+      "domain": "accounts_payable",
+      "initial": "pending",
+      "name": "bill_payment",
+      "rust_type": "PaymentStatusAP",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "cleared",
+            "voided"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "processed",
+          "next": [
+            "cleared",
+            "voided"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "cleared",
+          "next": [
+            "voided"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "voided",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "failed",
+          "next": [
+            "voided"
+          ],
+          "reentrant": false,
+          "terminal": false
+        }
+      ]
+    },
+    {
+      "domain": "accounts_payable",
+      "initial": "draft",
+      "name": "payment_run",
+      "rust_type": "PaymentRunStatus",
+      "states": [
+        {
+          "name": "draft",
+          "next": [
+            "approved",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "pending",
+          "next": [
+            "approved",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "approved",
+          "next": [
+            "completed",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "processing",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "accounts_receivable",
+      "initial": "open",
+      "name": "credit_memo",
+      "rust_type": "CreditMemoStatus",
+      "states": [
+        {
+          "name": "open",
+          "next": [
+            "partially_applied",
+            "fully_applied",
+            "voided"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "partially_applied",
+          "next": [
+            "fully_applied"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "fully_applied",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "voided",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "prepayments",
+      "initial": "open",
+      "name": "prepayment",
+      "rust_type": "PrepaymentStatus",
+      "states": [
+        {
+          "name": "open",
+          "next": [
+            "applied",
+            "refunded"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "applied",
+          "next": [
+            "open"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "refunded",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "vendor_credits",
+      "initial": "open",
+      "name": "vendor_credit",
+      "rust_type": "VendorCreditStatus",
+      "states": [
+        {
+          "name": "open",
+          "next": [
+            "applied",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "applied",
+          "next": [
+            "open"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "payment_obligations",
+      "initial": "pending",
+      "name": "payment_obligation",
+      "rust_type": "PaymentObligationStatus",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "scheduled",
+            "partially_paid",
+            "paid",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "scheduled",
+          "next": [
+            "pending",
+            "partially_paid",
+            "paid",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "partially_paid",
+          "next": [
+            "pending",
+            "paid",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "paid",
+          "next": [
+            "pending",
+            "partially_paid"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "general_ledger",
+      "initial": "future",
+      "name": "gl_period",
+      "rust_type": "PeriodStatus",
+      "states": [
+        {
+          "name": "future",
+          "next": [
+            "open"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "open",
+          "next": [
+            "closed"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "closed",
+          "next": [
+            "open",
+            "locked"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "locked",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "general_ledger",
+      "initial": "draft",
+      "name": "journal_entry",
+      "rust_type": "JournalEntryStatus",
+      "states": [
+        {
+          "name": "draft",
+          "next": [
+            "posted",
+            "voided"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "pending",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "posted",
+          "next": [
+            "voided",
+            "reversed"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "voided",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "reversed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "credit",
+      "initial": "active",
+      "name": "credit_account",
+      "rust_type": "CreditAccountStatus",
+      "states": [
+        {
+          "name": "active",
+          "next": [
+            "suspended",
+            "on_hold",
+            "closed",
+            "pending_review"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "suspended",
+          "next": [
+            "active",
+            "on_hold",
+            "closed",
+            "pending_review"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "on_hold",
+          "next": [
+            "active",
+            "suspended",
+            "closed",
+            "pending_review"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "closed",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "pending_review",
+          "next": [
+            "active",
+            "suspended",
+            "on_hold",
+            "closed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        }
+      ]
+    },
+    {
+      "domain": "credit",
+      "initial": "active",
+      "name": "credit_hold",
+      "rust_type": "CreditHoldStatus",
+      "states": [
+        {
+          "name": "active",
+          "next": [
+            "released"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "released",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "expired",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "cost_accounting",
+      "initial": "pending",
+      "name": "cost_adjustment",
+      "rust_type": "CostAdjustmentStatus",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "approved",
+            "rejected"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "approved",
+          "next": [
+            "applied",
+            "rejected"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "applied",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "rejected",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "store_credits",
+      "initial": "active",
+      "name": "store_credit",
+      "rust_type": "StoreCreditStatus",
+      "states": [
+        {
+          "name": "active",
+          "next": [
+            "depleted"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "depleted",
+          "next": [
+            "active"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "expired",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "voided",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "quality",
+      "initial": "open",
+      "name": "ncr",
+      "rust_type": "NcrStatus",
+      "states": [
+        {
+          "name": "open",
+          "next": [
+            "under_review",
+            "pending_disposition",
+            "corrective_action",
+            "preventive_action",
+            "verification",
+            "closed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "under_review",
+          "next": [
+            "open",
+            "pending_disposition",
+            "corrective_action",
+            "preventive_action",
+            "verification",
+            "closed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "pending_disposition",
+          "next": [
+            "open",
+            "under_review",
+            "corrective_action",
+            "preventive_action",
+            "verification",
+            "closed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "corrective_action",
+          "next": [
+            "open",
+            "under_review",
+            "pending_disposition",
+            "preventive_action",
+            "verification",
+            "closed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "preventive_action",
+          "next": [
+            "open",
+            "under_review",
+            "pending_disposition",
+            "corrective_action",
+            "verification",
+            "closed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "verification",
+          "next": [
+            "open",
+            "under_review",
+            "pending_disposition",
+            "corrective_action",
+            "preventive_action",
+            "closed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "closed",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "a2a",
+      "initial": "pending",
+      "name": "a2a_message",
+      "rust_type": "A2AAgentMessageStatus",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "acknowledged",
+            "failed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "delivered",
+          "next": [
+            "pending",
+            "acknowledged",
+            "failed"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "acknowledged",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "failed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "expired",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
     }
   ]
 }

@@ -6,6 +6,41 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- The state-machine catalog grows from 25 to 48 machines. The 23 new ones are
+  lifecycles whose rule the repositories enforce inline rather than through an
+  enum's `can_transition_to`: bills, bill payments and payment runs, credit
+  memos, prepayments, vendor credits, payment obligations, GL periods and
+  journal entries, credit accounts and holds, cost adjustments, transfer
+  orders, vendor returns, EDI documents, receipts and put-aways, fulfillment
+  waves and pick tasks, BOMs, store credits, NCRs and A2A agent messages. They
+  are written down as tables in `stateset_core::state_machine::repository_rules`
+  that no repository consults, so nothing the engine accepts or refuses
+  changes. `explain_state_machine`, `allowedNext` guidance and refusal hints
+  now answer for them, with the tool that makes each move, and keep the names
+  they answered to before (`accounting_period`, `bill_of_materials`, ...).
+- A conformance suite (`crates/stateset-db/tests/{sqlite,postgres}_state_machine_conformance.rs`)
+  drives the real repository operations through every catalogued move of
+  every repository-rule machine on both backends, tries every other move from
+  every state, and fails if the engine accepts or refuses anything the table
+  says otherwise, including same-status moves.
+- The generated reference (`docs/src/appendix/state-machines.md`) says which
+  machines' rules the repositories own.
+
+### Notes
+
+- The catalog now reports two moves that contradict an enum's `is_terminal`,
+  because both backends accept them: a paid payment obligation reopens when a
+  prepayment or vendor credit application is reversed. This is pinned in a
+  test, as the shipment `delivered -> returned` exception already was.
+- Lifecycles still left out of the catalog (the backends disagree, a setter
+  writes any status, or a status is never written) are unchanged and still
+  reported as known but not catalogued: invoices, gift cards, promotions,
+  coupons, reviews, warranties, inspections, inbound shipments, backorders,
+  inventory reservations, x402 intents, an order's payment and fulfillment
+  status, and others.
+
 ## [1.41.0] - 2026-11-15
 
 1.41.0 rolls up four lines of work: the 1.40.1 security fixes, which were
