@@ -6,7 +6,24 @@ This project follows Keep a Changelog and Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- `Commerce::close()` in `stateset-embedded` closes an instance and waits
+  until its SQLite file is released, so the file can be copied, moved or
+  reopened as soon as it returns; it reports an error if something taken from
+  the instance (a repository, a kernel executor, an auxiliary connection) still
+  holds the file 30 seconds later. `Commerce::sqlite_file_release()` and
+  `SqliteDatabase::file_release()` expose the underlying watch.
+
 ### Fixed
+
+- The Node binding's `Commerce.close()` could resolve while the store's
+  `-wal` file still existed, although it promises the file is released. The
+  connection pool grows lazily on a background thread under concurrent calls,
+  and a connection still being opened there kept the pool, and so the file,
+  open until that attempt finished, after the engine had dropped. About 1
+  close in 15 after a burst of concurrent writes resolved early.
+  `close()` now also waits for every connection the engine opened to close.
 
 - Side-table stores no longer corrupt the engine's database. The CLI kept
   auxiliary tables (the VES sync outbox, the import id map, the marketplace

@@ -8,7 +8,7 @@
   },
   "engine": {
     "domainCount": 70,
-    "methodCount": 1242,
+    "methodCount": 1244,
     "accessorAliases": [
       {
         "accessor": "custom_states",
@@ -24,6 +24,7 @@
           "apply_cart_promotions",
           "backend",
           "calculate_cart_tax",
+          "close",
           "database",
           "economic_budget_status",
           {
@@ -61,6 +62,12 @@
             "name": "register_webhook_strict",
             "features": [
               "events"
+            ]
+          },
+          {
+            "name": "sqlite_file_release",
+            "features": [
+              "sqlite"
             ]
           },
           {
@@ -1835,8 +1842,8 @@
       "evidence": "traced: #[napi] methods -> engine calls",
       "engineBacked": true,
       "gated": true,
-      "exposedCount": 789,
-      "applicableCount": 1234,
+      "exposedCount": 790,
+      "applicableCount": 1236,
       "coverage": 63.9,
       "notes": null,
       "domains": {
@@ -1844,6 +1851,7 @@
           "coverage": 50,
           "exposed": [
             "apply_cart_promotions",
+            "close",
             "economic_budget_status",
             "execute_kernel_command",
             "list_webhooks",
@@ -1860,6 +1868,7 @@
             "health_check",
             "metrics_snapshot",
             "register_webhook_strict",
+            "sqlite_file_release",
             "transactions",
             "try_register_webhook",
             "webhook_deliveries"
@@ -3537,12 +3546,12 @@
       "engineBacked": true,
       "gated": true,
       "exposedCount": 599,
-      "applicableCount": 1234,
+      "applicableCount": 1236,
       "coverage": 48.5,
       "notes": null,
       "domains": {
         "commerce": {
-          "coverage": 22.2,
+          "coverage": 20,
           "exposed": [
             "apply_cart_promotions",
             "economic_budget_status",
@@ -3552,6 +3561,7 @@
           "missing": [
             "backend",
             "calculate_cart_tax",
+            "close",
             "emit_event",
             "health_check",
             "list_webhooks",
@@ -3559,6 +3569,7 @@
             "open_auxiliary_sqlite_connection",
             "register_webhook",
             "register_webhook_strict",
+            "sqlite_file_release",
             "subscribe_events",
             "transactions",
             "try_register_webhook",
@@ -5237,7 +5248,7 @@
       "engineBacked": true,
       "gated": true,
       "exposedCount": 80,
-      "applicableCount": 1234,
+      "applicableCount": 1236,
       "coverage": 6.5,
       "notes": null,
       "domains": {
@@ -5248,6 +5259,7 @@
             "apply_cart_promotions",
             "backend",
             "calculate_cart_tax",
+            "close",
             "economic_budget_status",
             "emit_event",
             "execute_kernel_command",
@@ -5258,6 +5270,7 @@
             "provision_economic_budget",
             "register_webhook",
             "register_webhook_strict",
+            "sqlite_file_release",
             "subscribe_events",
             "transactions",
             "try_register_webhook",
@@ -6918,7 +6931,7 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 48,
-      "applicableCount": 1234,
+      "applicableCount": 1236,
       "coverage": 3.9,
       "notes": "host (C#) layer is not traced; known in-memory fake at the host level",
       "domains": {
@@ -7074,7 +7087,7 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 77,
-      "applicableCount": 1234,
+      "applicableCount": 1236,
       "coverage": 6.2,
       "notes": "host (Java/JNI) layer is not traced",
       "domains": {
@@ -7264,7 +7277,7 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 61,
-      "applicableCount": 1234,
+      "applicableCount": 1236,
       "coverage": 4.9,
       "notes": "host (Kotlin/JNI) layer is not traced",
       "domains": {
@@ -7433,7 +7446,7 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 178,
-      "applicableCount": 1234,
+      "applicableCount": 1236,
       "coverage": 14.4,
       "notes": "engine linkage is behind an optional cargo feature",
       "domains": {
@@ -7774,7 +7787,7 @@
       "engineBacked": false,
       "gated": false,
       "exposedCount": 0,
-      "applicableCount": 1234,
+      "applicableCount": 1236,
       "coverage": 0,
       "notes": "does not depend on stateset-embedded",
       "domains": {}
@@ -7786,7 +7799,7 @@
       "engineBacked": true,
       "gated": false,
       "exposedCount": 51,
-      "applicableCount": 1234,
+      "applicableCount": 1236,
       "coverage": 4.1,
       "notes": "host (Swift) layer is not traced; known in-memory fake at the host level",
       "domains": {
@@ -7945,7 +7958,7 @@
       "engineBacked": false,
       "gated": false,
       "exposedCount": 0,
-      "applicableCount": 1234,
+      "applicableCount": 1236,
       "coverage": 0,
       "notes": "in-memory reimplementation; does not link stateset-embedded",
       "domains": {}
@@ -7954,8 +7967,8 @@
   "parityVsReference": {
     "python": {
       "shared": 593,
-      "referenceExposed": 789,
-      "parity": 75.2,
+      "referenceExposed": 790,
+      "parity": 75.1,
       "beyondReference": [
         "accounts_payable.pay_bill",
         "cost_accounting.get_inventory_valuation",
@@ -7967,22 +7980,22 @@
     },
     "go": {
       "shared": 80,
-      "referenceExposed": 789,
+      "referenceExposed": 790,
       "parity": 10.1,
       "beyondReference": []
     },
     "dotnet": {
       "shared": 47,
-      "referenceExposed": 789,
-      "parity": 6,
+      "referenceExposed": 790,
+      "parity": 5.9,
       "beyondReference": [
         "accounts_receivable.get_customer_aging"
       ]
     },
     "java": {
       "shared": 73,
-      "referenceExposed": 789,
-      "parity": 9.3,
+      "referenceExposed": 790,
+      "parity": 9.2,
       "beyondReference": [
         "fulfillment.create_picks_for_order",
         "inventory.get_item",
@@ -7992,7 +8005,7 @@
     },
     "kotlin": {
       "shared": 59,
-      "referenceExposed": 789,
+      "referenceExposed": 790,
       "parity": 7.5,
       "beyondReference": [
         "shipments.mark_in_transit",
@@ -8001,7 +8014,7 @@
     },
     "php": {
       "shared": 162,
-      "referenceExposed": 789,
+      "referenceExposed": 790,
       "parity": 20.5,
       "beyondReference": [
         "bom.delete",
@@ -8024,19 +8037,19 @@
     },
     "ruby": {
       "shared": 0,
-      "referenceExposed": 789,
+      "referenceExposed": 790,
       "parity": 0,
       "beyondReference": []
     },
     "swift": {
       "shared": 51,
-      "referenceExposed": 789,
+      "referenceExposed": 790,
       "parity": 6.5,
       "beyondReference": []
     },
     "wasm": {
       "shared": 0,
-      "referenceExposed": 789,
+      "referenceExposed": 790,
       "parity": 0,
       "beyondReference": []
     }
@@ -8049,7 +8062,7 @@
       "engineBacked": null,
       "gated": false,
       "exposedCount": 220,
-      "applicableCount": 1234,
+      "applicableCount": 1236,
       "coverage": 17.8,
       "notes": null,
       "hostMethodCount": 245,
@@ -8468,8 +8481,8 @@
       "engineBacked": null,
       "gated": false,
       "exposedCount": 71,
-      "applicableCount": 1234,
-      "coverage": 5.8,
+      "applicableCount": 1236,
+      "coverage": 5.7,
       "notes": null,
       "hostMethodCount": 71,
       "mappedTypes": {
@@ -8660,8 +8673,8 @@
       "engineBacked": null,
       "gated": false,
       "exposedCount": 134,
-      "applicableCount": 1234,
-      "coverage": 10.9,
+      "applicableCount": 1236,
+      "coverage": 10.8,
       "notes": null,
       "hostMethodCount": 148,
       "mappedTypes": {
@@ -10131,6 +10144,7 @@
       "hostMethod": "Commerce.openSideStore",
       "domain": "commerce",
       "engineMethods": [
+        "commerce.close",
         "commerce.open_auxiliary_sqlite_connection"
       ],
       "documented": false

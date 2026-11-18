@@ -9,6 +9,7 @@ mod events;
 mod introspection;
 #[cfg(feature = "sqlite")]
 pub(crate) mod kernel;
+mod lifecycle;
 
 #[cfg(all(test, feature = "sqlite"))]
 mod tests;

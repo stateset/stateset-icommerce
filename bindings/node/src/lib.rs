@@ -155,8 +155,14 @@ where
 /// pool has closed every database file.
 pub(crate) struct EngineHandle {
     slot: std::sync::RwLock<Option<Arc<Engine>>>,
-    /// Becomes `true` once the engine has dropped and released its files.
+    /// Becomes `true` once the engine has dropped.
     released: tokio::sync::watch::Receiver<bool>,
+    /// Fires once every SQLite connection the engine opened has closed. The
+    /// engine's drop closes its pool, but a connection the pool was still
+    /// opening in the background keeps the pool, and so the file, open for a
+    /// little longer; `close()` waits for this too. `None` for a backend with
+    /// no SQLite file.
+    file_release: Option<stateset_db::sqlite::SqliteFileRelease>,
 }
 
 /// What every sub-API holds. Cheap to clone; identity is the engine.
@@ -206,8 +212,13 @@ impl Drop for Engine {
 impl EngineHandle {
     fn new(commerce: RustCommerce) -> Handle {
         let (released, receiver) = tokio::sync::watch::channel(false);
+        let file_release = commerce.sqlite_file_release();
         let engine = Engine { commerce: Some(commerce), released: Some(released) };
-        Arc::new(Self { slot: std::sync::RwLock::new(Some(Arc::new(engine))), released: receiver })
+        Arc::new(Self {
+            slot: std::sync::RwLock::new(Some(Arc::new(engine))),
+            released: receiver,
+            file_release,
+        })
     }
 
     /// The live engine, or `PRECONDITION_FAILED` once `close` has run.
@@ -501,6 +512,18 @@ impl Commerce {
         // An error means the sender is gone, which only happens once the
         // engine itself has dropped.
         let _ = released.wait_for(|done| *done).await;
+        // The drop closed the pool, but a connection the pool was still
+        // opening in the background (it grows lazily under concurrent calls)
+        // keeps the pool alive until that attempt finishes, and only then
+        // does the last connection close and remove the WAL. Wait for it,
+        // off the event loop. The wait is bounded; nothing in this binding
+        // holds a connection past the engine, so it is normally milliseconds.
+        if let Some(file_release) = self.inner.file_release.clone() {
+            let _ = tokio::task::spawn_blocking(move || {
+                file_release.wait_for(std::time::Duration::from_secs(30))
+            })
+            .await;
+        }
         Ok(())
     }
 
