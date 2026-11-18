@@ -1651,6 +1651,395 @@
           "terminal": true
         }
       ]
+    },
+    {
+      "domain": "vendor_returns",
+      "initial": "draft",
+      "name": "vendor_return",
+      "rust_type": "VendorReturnStatus",
+      "states": [
+        {
+          "name": "draft",
+          "next": [
+            "pending",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "pending",
+          "next": [
+            "processed",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "processed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "transfer_orders",
+      "initial": "draft",
+      "name": "transfer_order",
+      "rust_type": "TransferOrderStatus",
+      "states": [
+        {
+          "name": "draft",
+          "next": [
+            "in_transit",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "pending",
+          "next": [
+            "in_transit",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "in_transit",
+          "next": [
+            "partially_received",
+            "received"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "partially_received",
+          "next": [
+            "received"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "received",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "edi_documents",
+      "initial": "pending",
+      "name": "edi_document",
+      "rust_type": "EdiStatus",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "sent",
+            "acknowledged",
+            "processed",
+            "error"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "sent",
+          "next": [
+            "pending",
+            "acknowledged",
+            "processed",
+            "error"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "acknowledged",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "processed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "error",
+          "next": [
+            "pending",
+            "sent",
+            "acknowledged",
+            "processed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        }
+      ]
+    },
+    {
+      "domain": "receiving",
+      "initial": "expected",
+      "name": "receipt",
+      "rust_type": "ReceiptStatus",
+      "states": [
+        {
+          "name": "expected",
+          "next": [
+            "in_progress",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "in_progress",
+          "next": [
+            "received",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "received",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "inspecting",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "putting_away",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "receiving",
+      "initial": "pending",
+      "name": "put_away",
+      "rust_type": "PutAwayStatus",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "assigned",
+            "in_progress",
+            "completed",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "assigned",
+          "next": [
+            "in_progress",
+            "completed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "in_progress",
+          "next": [
+            "completed",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "fulfillment",
+      "initial": "draft",
+      "name": "wave",
+      "rust_type": "WaveStatus",
+      "states": [
+        {
+          "name": "draft",
+          "next": [
+            "released",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "released",
+          "next": [
+            "completed",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "in_progress",
+          "next": [
+            "completed",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "fulfillment",
+      "initial": "pending",
+      "name": "pick_task",
+      "rust_type": "PickStatus",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "assigned",
+            "in_progress",
+            "completed",
+            "short",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "assigned",
+          "next": [
+            "in_progress",
+            "completed",
+            "short",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "in_progress",
+          "next": [
+            "completed",
+            "short",
+            "cancelled"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "completed",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "short",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "manufacturing",
+      "initial": "draft",
+      "name": "bom",
+      "rust_type": "BomStatus",
+      "states": [
+        {
+          "name": "draft",
+          "next": [
+            "active",
+            "obsolete"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "active",
+          "next": [
+            "obsolete"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "obsolete",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
     }
   ]
 }

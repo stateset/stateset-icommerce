@@ -206,6 +206,32 @@ describe('explain_state_machine', () => {
     assert.deepEqual(ask({ machine: 'order' }).related, ['order_payment', 'order_fulfillment']);
   });
 
+  it('reports the lifecycles whose rule the repositories enforce', () => {
+    const all = ask({});
+    for (const name of [
+      'transfer_order',
+      'vendor_return',
+      'edi_document',
+      'receipt',
+      'put_away',
+      'wave',
+      'pick_task',
+      'bom',
+    ]) {
+      assert.ok(
+        all.machines.some((m) => m.machine === name),
+        `${name} is listed`,
+      );
+      assert.ok(!all.uncatalogued.some((l) => l.machine === name), `${name} is not uncatalogued`);
+    }
+    assert.equal(
+      ask({ machine: 'vendor_return', from: 'cancelled', to: 'cancelled' }).allowed,
+      true,
+    );
+    assert.equal(ask({ machine: 'wave', from: 'completed' }).terminal, true);
+    assert.equal(ask({ machine: 'fulfillment_wave' }).machine, 'wave');
+  });
+
   it('lists the candidates when a domain holds several lifecycles', () => {
     const payments = ask({ machine: 'payments' });
     assert.equal(payments.success, false);

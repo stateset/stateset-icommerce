@@ -8,6 +8,11 @@
  * Rust test fails when it is stale, so what this module reports is what the
  * engine will accept -- it is not a second, hand-maintained copy.
  *
+ * Two kinds of machine are catalogued: those whose enum owns its transition
+ * rule, and those whose rule the repositories enforce inline (bills, credit
+ * memos, GL periods, transfer orders, ...), written down in Rust as tables
+ * that a conformance suite proves against SQLite and Postgres.
+ *
  * Not every lifecycle is catalogued yet (gift cards, invoices, x402 intents,
  * an order's payment and fulfilment status, ...). Those are named in
  * `./state-machine-operations.js` so they are reported as "known, not yet
@@ -28,6 +33,7 @@ import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 
 import {
+  MACHINE_ALIASES,
   PERSISTENCE_MOVES,
   STATUS_GATED_TOOLS,
   STATUS_PARAMETER_TOOLS,
@@ -75,17 +81,25 @@ function normalize(value) {
 /** Spellings the engine itself accepts for the same state. */
 const STATE_ALIASES = { canceled: 'cancelled' };
 
+/** The catalogued machine `key` names: its name, Rust type, or an alias. */
+function machineNamed(key) {
+  return (
+    STATE_MACHINES.find((m) => m.name === key) ??
+    STATE_MACHINES.find((m) => normalize(m.rust_type) === key) ??
+    STATE_MACHINES.find((m) => MACHINE_ALIASES[m.name]?.includes(key))
+  );
+}
+
 /**
- * Find a machine by name (`order`), Rust type (`OrderStatus`) or, when the
- * domain has exactly one machine, by domain (`orders`).
+ * Find a machine by name (`order`), Rust type (`OrderStatus`), alias
+ * (`accounting_period`) or, when the domain has exactly one machine, by
+ * domain (`orders`).
  * @returns {Machine | undefined}
  */
 export function findStateMachine(identifier) {
   const key = normalize(identifier);
-  const byName = STATE_MACHINES.find((m) => m.name === key);
-  if (byName) return byName;
-  const byType = STATE_MACHINES.find((m) => normalize(m.rust_type) === key);
-  if (byType) return byType;
+  const named = machineNamed(key);
+  if (named) return named;
   const inDomain = STATE_MACHINES.filter((m) => m.domain === key);
   return inDomain.length === 1 ? inDomain[0] : undefined;
 }
@@ -330,9 +344,7 @@ export function resolveLifecycle(identifier) {
   const key = normalize(identifier);
   const keys = key.endsWith('_status') ? [key, key.slice(0, -'_status'.length)] : [key];
   for (const candidate of keys) {
-    const machine =
-      STATE_MACHINES.find((m) => m.name === candidate) ??
-      STATE_MACHINES.find((m) => normalize(m.rust_type) === candidate);
+    const machine = machineNamed(candidate);
     if (machine) return { kind: 'catalogued', machine };
     const lifecycle = UNCATALOGUED_LIFECYCLES.find(
       (l) =>

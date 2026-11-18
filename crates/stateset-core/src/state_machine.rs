@@ -6,9 +6,9 @@
 //! That made a simple question ("where can this order go next?") impossible to
 //! ask generically, for a person, a program or an agent.
 //!
-//! [`StateMachine`] is the common surface. It is implemented *on top of* each
-//! enum's existing `can_transition_to`, so it cannot disagree with the rule the
-//! repositories already enforce and it changes no behaviour:
+//! [`StateMachine`] is the common surface. Where an enum owns its rule, the
+//! trait is implemented *on top of* that enum's existing `can_transition_to`,
+//! so it is that rule and changes no behaviour:
 //!
 //! ```
 //! use stateset_core::{OrderStatus, StateMachine};
@@ -26,13 +26,22 @@
 //! );
 //! ```
 //!
+//! Where the rule lives in the repositories instead (each operation checks
+//! the current status inline), [`repository_rules`] writes it down as a table
+//! that no repository consults; a conformance suite drives the real
+//! operations on SQLite and Postgres through every move of every such table,
+//! so a table that stops describing the engine fails a test.
+//!
 //! [`catalog`] lists every machine as plain data (see
 //! [`StateMachineDescriptor`]) so bindings, HTTP, the CLI and MCP tools can
-//! publish the same graph without re-typing it.
+//! publish the same graph without re-typing it: the 25 machines whose enum
+//! owns the rule, then the repository-rule machines.
 
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+
+pub mod repository_rules;
 
 use crate::models::{
     A2APaymentStatus, A2AQuoteStatus, BillingCycleStatus, CartStatus, ClaimStatus, CustomerStatus,
@@ -239,15 +248,20 @@ macro_rules! state_machine {
     };
 }
 
-/// Declares every registered machine once: the trait impls and [`catalog`].
+/// Declares every machine whose rule the enum owns once: the trait impls and
+/// [`catalog`] (which appends the [`repository_rules`] machines after them).
 macro_rules! state_machines {
     ($(($ty:ident, $name:literal, $domain:literal, [$($variant:ident),+ $(,)?])),+ $(,)?) => {
         $(state_machine!($ty, $name, $domain, [$($variant),+]);)+
 
-        /// Every registered state machine, as plain data, in a stable order.
+        /// Every registered state machine, as plain data, in a stable order:
+        /// the machines whose enum owns its rule, then the machines whose
+        /// rule the repositories enforce ([`repository_rules`]).
         #[must_use]
         pub fn catalog() -> Vec<StateMachineDescriptor> {
-            vec![$(<$ty as StateMachine>::descriptor()),+]
+            let mut machines = vec![$(<$ty as StateMachine>::descriptor()),+];
+            machines.extend(repository_rules::catalog());
+            machines
         }
     };
 }
@@ -433,6 +447,7 @@ mod tests {
     use std::collections::{BTreeSet, HashSet};
 
     use super::*;
+    use crate::models::{TransferOrderStatus, VendorReturnStatus};
 
     #[test]
     fn names_are_unique() {
@@ -526,7 +541,9 @@ mod tests {
             RevenueContractStatus,
             A2APaymentStatus,
             PaymentRequestStatus,
-            A2AQuoteStatus
+            A2AQuoteStatus,
+            VendorReturnStatus,
+            TransferOrderStatus
         );
         // Known, pinned: `ShipmentStatus::is_terminal` calls Delivered terminal
         // (no further carrier movement) while the transition rule still lets
@@ -590,6 +607,14 @@ mod tests {
             ("cancelled", &[]),
             ("disputed", &[]),
         ]);
+    }
+
+    #[test]
+    fn repository_rule_machines_are_catalogued_after_the_enum_rules() {
+        let names: Vec<String> = catalog().into_iter().map(|m| m.name).collect();
+        let rules = repository_rules::machine_names();
+        assert_eq!(names.len(), 25 + rules.len());
+        assert_eq!(&names[25..], rules.as_slice());
     }
 
     #[test]

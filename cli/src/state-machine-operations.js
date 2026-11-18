@@ -126,6 +126,77 @@ export const TRANSITION_TOOLS = freeze({
     sent: [{ tool: 'send_purchase_order', from: ['approved'] }],
     cancelled: [{ tool: 'cancel_purchase_order' }],
   },
+  // Machines whose rule the repositories enforce (stateset_core
+  // repository_rules). They have no generic status update, so no move is
+  // `only` one tool's.
+  vendor_return: {
+    pending: [{ tool: 'submit_vendor_return' }],
+    processed: [{ tool: 'process_vendor_return', note: 'generates the linked vendor credit' }],
+    cancelled: [{ tool: 'cancel_vendor_return' }],
+  },
+  transfer_order: {
+    in_transit: [{ tool: 'ship_transfer_order' }],
+    partially_received: [{ tool: 'receive_transfer_order_line' }],
+    received: [
+      { tool: 'receive_transfer_order_line', note: 'receive the rest of every line' },
+      {
+        tool: 'complete_transfer_order_receiving',
+        note: 'books any unit still in transit as a shortage',
+      },
+    ],
+    cancelled: [{ tool: 'cancel_transfer_order' }],
+  },
+  edi_document: {
+    pending: [{ tool: 'set_edi_document_status' }],
+    sent: [{ tool: 'set_edi_document_status' }],
+    acknowledged: [{ tool: 'set_edi_document_status' }],
+    processed: [{ tool: 'set_edi_document_status' }],
+    error: [{ tool: 'set_edi_document_status' }],
+  },
+  receipt: {
+    in_progress: [
+      { tool: 'start_receiving', from: ['expected'] },
+      { tool: 'receive_receipt_items' },
+    ],
+    received: [{ tool: 'complete_receiving' }],
+    cancelled: [
+      {
+        tool: 'cancel_receipt',
+        note: 'refused for a purchase-order receipt once quantities are received',
+      },
+    ],
+  },
+  put_away: {
+    assigned: [{ tool: 'assign_put_away' }],
+    in_progress: [{ tool: 'start_put_away' }],
+    completed: [{ tool: 'complete_put_away' }],
+    cancelled: [{ tool: 'cancel_put_away' }],
+  },
+  wave: {
+    released: [{ tool: 'release_fulfillment_wave' }],
+    completed: [{ tool: 'complete_fulfillment_wave', note: 'every pick task must be finished' }],
+    cancelled: [{ tool: 'cancel_fulfillment_wave' }],
+  },
+  pick_task: {
+    assigned: [{ tool: 'assign_pick_task' }],
+    in_progress: [{ tool: 'start_pick_task' }],
+    cancelled: [{ tool: 'cancel_pick_task' }],
+  },
+  bom: {
+    active: [{ tool: 'activate_bom' }],
+  },
+});
+
+/**
+ * Other names an agent may use for a catalogued machine (the generated
+ * catalog knows only its name and Rust type). Kept from the names these
+ * lifecycles answered to before they were catalogued.
+ *
+ * @type {Readonly<Record<string, string[]>>} machine -> aliases (snake_case)
+ */
+export const MACHINE_ALIASES = freeze({
+  bom: ['bill_of_materials'],
+  wave: ['fulfillment_wave'],
 });
 
 /**
@@ -171,6 +242,7 @@ export const STATUS_PARAMETER_TOOLS = freeze({
   update_shipment: 'status',
   update_customer: 'status',
   update_product: 'status',
+  set_edi_document_status: 'status',
 });
 
 /**
@@ -370,13 +442,6 @@ export const UNCATALOGUED_LIFECYCLES = freeze([
     states: ['active', 'expired', 'voided', 'transferred'],
   },
   {
-    name: 'bom',
-    domain: 'manufacturing',
-    tsType: 'BomStatus',
-    aliases: ['bill_of_materials'],
-    states: ['draft', 'active', 'obsolete'],
-  },
-  {
     name: 'inspection',
     domain: 'quality',
     tsType: 'InspectionStatus',
@@ -414,39 +479,6 @@ export const UNCATALOGUED_LIFECYCLES = freeze([
     states: ['held', 'released'],
   },
   {
-    name: 'receipt',
-    domain: 'receiving',
-    tsType: 'ReceiptStatus',
-    states: [
-      'expected',
-      'in_progress',
-      'received',
-      'inspecting',
-      'putting_away',
-      'completed',
-      'cancelled',
-    ],
-  },
-  {
-    name: 'wave',
-    domain: 'fulfillment',
-    tsType: 'WaveStatus',
-    aliases: ['fulfillment_wave'],
-    states: ['draft', 'released', 'in_progress', 'completed', 'cancelled'],
-  },
-  {
-    name: 'pick_task',
-    domain: 'fulfillment',
-    tsType: 'PickTaskStatus',
-    states: ['pending', 'assigned', 'in_progress', 'completed', 'short', 'cancelled'],
-  },
-  {
-    name: 'transfer_order',
-    domain: 'transfer_orders',
-    tsType: 'TransferOrderStatus',
-    states: ['draft', 'pending', 'in_transit', 'partially_received', 'received', 'cancelled'],
-  },
-  {
     name: 'inbound_shipment',
     domain: 'inbound_shipments',
     tsType: 'InboundShipmentStatus',
@@ -469,18 +501,6 @@ export const UNCATALOGUED_LIFECYCLES = freeze([
     domain: 'vendor_credits',
     tsType: 'VendorCreditStatus',
     states: ['open', 'applied', 'cancelled'],
-  },
-  {
-    name: 'vendor_return',
-    domain: 'vendor_returns',
-    tsType: 'VendorReturnStatus',
-    states: ['draft', 'pending', 'processed', 'cancelled'],
-  },
-  {
-    name: 'edi_document',
-    domain: 'edi_documents',
-    tsType: 'EdiStatus',
-    states: ['pending', 'sent', 'acknowledged', 'processed', 'error'],
   },
   {
     name: 'depreciation_entry',

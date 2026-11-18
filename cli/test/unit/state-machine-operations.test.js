@@ -19,6 +19,7 @@ import {
   resolveLifecycle,
 } from '../../src/state-machine-catalog.js';
 import {
+  MACHINE_ALIASES,
   PERSISTENCE_MOVES,
   STATUS_GATED_TOOLS,
   STATUS_PARAMETER_TOOLS,
@@ -210,10 +211,41 @@ describe('UNCATALOGUED_LIFECYCLES', () => {
       'invoice',
       'backorder',
       'x402_intent',
+      'inbound_shipment',
       'payment_obligation',
       'gl_period',
     ]) {
       assert.equal(resolveLifecycle(name).kind, 'uncatalogued', name);
+    }
+  });
+});
+
+describe('MACHINE_ALIASES', () => {
+  it('names catalogued machines, and no alias shadows another name', () => {
+    const names = new Set(STATE_MACHINES.map((m) => m.name));
+    const uncatalogued = UNCATALOGUED_LIFECYCLES.flatMap((l) => [l.name, ...(l.aliases ?? [])]);
+    const aliases = Object.values(MACHINE_ALIASES).flat();
+    assert.equal(new Set(aliases).size, aliases.length, 'aliases are unique');
+    for (const [machine, list] of Object.entries(MACHINE_ALIASES)) {
+      assert.ok(names.has(machine), `${machine} is catalogued`);
+      for (const alias of list) {
+        assert.ok(!names.has(alias), `${alias} is not itself a machine`);
+        assert.ok(!uncatalogued.includes(alias), `${alias} is not an uncatalogued lifecycle`);
+        assert.equal(findStateMachine(alias)?.name, machine, alias);
+      }
+    }
+  });
+
+  it('keeps answering the names these lifecycles had before they were catalogued', () => {
+    for (const [name, machine] of [
+      ['bill_of_materials', 'bom'],
+      ['fulfillment_wave', 'wave'],
+      ['PickTaskStatus', 'pick_task'],
+      ['EdiStatus', 'edi_document'],
+    ]) {
+      const resolved = resolveLifecycle(name);
+      assert.equal(resolved.kind, 'catalogued', name);
+      assert.equal(resolved.machine.name, machine, name);
     }
   });
 });
