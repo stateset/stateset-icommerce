@@ -75,7 +75,10 @@ Every domain aggregate has an explicit state machine. Invalid transitions produc
 
 > The diagrams below are simplified sketches. The authoritative graphs, generated from the
 > engine's transition rules, are in [State Machines (generated)](../appendix/state-machines.md);
-> agents can ask the `explain_state_machine` tool the same question.
+> agents can ask the `explain_state_machine` tool the same question. The catalog covers both
+> lifecycles whose enum owns its rule and lifecycles whose rule the repositories enforce (bills,
+> GL periods, transfer orders, ...), the latter proven against SQLite and Postgres by a
+> conformance suite.
 
 ### Order States
 ```
