@@ -51,4 +51,17 @@ conformance!(
     wave,
     pick_task,
     bom,
+    // finance
+    bill,
+    bill_payment,
+    payment_run,
+    credit_memo,
+    prepayment,
+    vendor_credit,
+    payment_obligation,
+    gl_period,
+    journal_entry,
+    credit_account,
+    credit_hold,
+    cost_adjustment,
 );

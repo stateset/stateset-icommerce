@@ -212,8 +212,6 @@ describe('UNCATALOGUED_LIFECYCLES', () => {
       'backorder',
       'x402_intent',
       'inbound_shipment',
-      'payment_obligation',
-      'gl_period',
     ]) {
       assert.equal(resolveLifecycle(name).kind, 'uncatalogued', name);
     }
@@ -238,10 +236,16 @@ describe('MACHINE_ALIASES', () => {
 
   it('keeps answering the names these lifecycles had before they were catalogued', () => {
     for (const [name, machine] of [
+      ['payment_obligation', 'payment_obligation'],
+      ['gl_period', 'gl_period'],
+      ['accounting_period', 'gl_period'],
+      ['GlPeriodStatus', 'gl_period'],
+      ['GlJournalEntryStatus', 'journal_entry'],
       ['bill_of_materials', 'bom'],
       ['fulfillment_wave', 'wave'],
       ['PickTaskStatus', 'pick_task'],
       ['EdiStatus', 'edi_document'],
+      ['BillStatus', 'bill'],
     ]) {
       const resolved = resolveLifecycle(name);
       assert.equal(resolved.kind, 'catalogued', name);

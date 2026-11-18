@@ -43,9 +43,14 @@
 
 #![allow(dead_code)]
 
+pub(crate) mod finance;
 pub(crate) mod harness;
 pub(crate) mod supply;
 
+pub(crate) use finance::{
+    bill, bill_payment, cost_adjustment, credit_account, credit_hold, credit_memo, gl_period,
+    journal_entry, payment_obligation, payment_run, prepayment, vendor_credit,
+};
 pub(crate) use supply::{
     bom, edi_document, pick_task, put_away, receipt, transfer_order, vendor_return, wave,
 };

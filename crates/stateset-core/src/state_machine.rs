@@ -447,7 +447,9 @@ mod tests {
     use std::collections::{BTreeSet, HashSet};
 
     use super::*;
-    use crate::models::{TransferOrderStatus, VendorReturnStatus};
+    use crate::models::{
+        JournalEntryStatus, PaymentObligationStatus, TransferOrderStatus, VendorReturnStatus,
+    };
 
     #[test]
     fn names_are_unique() {
@@ -543,15 +545,24 @@ mod tests {
             PaymentRequestStatus,
             A2AQuoteStatus,
             VendorReturnStatus,
-            TransferOrderStatus
+            TransferOrderStatus,
+            PaymentObligationStatus
         );
         // Known, pinned: `ShipmentStatus::is_terminal` calls Delivered terminal
         // (no further carrier movement) while the transition rule still lets
         // a delivered parcel be Returned. The catalog reports the rule. Any
         // NEW disagreement fails here.
+        //
+        // Known, pinned: `PaymentObligationStatus::is_terminal` calls Paid
+        // terminal, but reversing a prepayment or vendor credit application
+        // reopens a paid obligation on both backends; the catalog reports
+        // what the repositories do.
         assert_eq!(
             disagreements,
-            ["shipment delivered: is_terminal()=true but next=[\"returned\"]"],
+            [
+                "shipment delivered: is_terminal()=true but next=[\"returned\"]",
+                "payment_obligation paid: is_terminal()=true but next=[\"pending\", \"partially_paid\"]",
+            ],
             "is_terminal() and the transition rule disagree"
         );
     }
@@ -607,6 +618,26 @@ mod tests {
             ("cancelled", &[]),
             ("disputed", &[]),
         ]);
+    }
+
+    /// Where a repository-rule machine's guard is a shared core helper, the
+    /// table agrees with it.
+    #[test]
+    fn repository_rules_agree_with_their_core_helpers() {
+        // `set_status` is gated by `allows_manual_transition`; every move it
+        // accepts is in the table (payments and applications add more).
+        for &from in PaymentObligationStatus::STATES {
+            for &to in PaymentObligationStatus::STATES {
+                if from.allows_manual_transition(to) {
+                    assert!(from.permits(to), "payment_obligation {from} -> {to}");
+                }
+            }
+        }
+        // Only a draft entry posts and only a posted one is voided by
+        // void_journal_entry.
+        assert!(JournalEntryStatus::Draft.permits(JournalEntryStatus::Posted));
+        assert!(JournalEntryStatus::Posted.permits(JournalEntryStatus::Voided));
+        assert!(!JournalEntryStatus::Pending.permits(JournalEntryStatus::Posted));
     }
 
     #[test]

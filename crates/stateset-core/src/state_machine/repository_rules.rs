@@ -241,4 +241,228 @@ repository_rules![
             Obsolete => [],
         }
     ),
+    // -------- finance
+    (
+        BillStatus,
+        "bill",
+        "accounts_payable",
+        initial: Draft,
+        // A part payment on a part-paid bill keeps it part paid.
+        reentrant: [PartiallyPaid],
+        {
+            Draft => [
+                Approved /* approve_bill */,
+                Cancelled /* cancel_bill */,
+                Disputed /* dispute_bill */,
+            ],
+            // No operation writes `pending` or `overdue`; the operations below
+            // accept them.
+            Pending => [Approved /* approve_bill */, Cancelled, Disputed],
+            Approved => [
+                PartiallyPaid /* create_payment, prepayment / vendor credit application */,
+                Paid /* create_payment, application */,
+                Cancelled /* cancel_bill (nothing paid) */,
+                Disputed /* dispute_bill */,
+            ],
+            PartiallyPaid => [
+                Approved /* void_payment, reversing an application */,
+                Paid /* create_payment, application */,
+                Disputed /* dispute_bill */,
+            ],
+            Paid => [
+                Approved /* voiding every payment and application */,
+                PartiallyPaid /* voiding one */,
+            ],
+            Overdue => [PartiallyPaid, Paid, Cancelled, Disputed],
+            Cancelled => [],
+            // resolve_bill_dispute returns the bill to the status it was
+            // disputed from (approved when its payments were voided meanwhile);
+            // cancel_bill cancels a disputed bill with nothing paid.
+            Disputed => [Draft, Pending, Approved, PartiallyPaid, Overdue, Cancelled],
+        }
+    ),
+    (
+        PaymentStatusAP,
+        "bill_payment",
+        "accounts_payable",
+        initial: Pending,
+        reentrant: [],
+        {
+            Pending => [Cleared /* clear_payment */, Voided /* void_payment */],
+            // No operation writes `processed` or `failed`; void_payment (and,
+            // for processed, clear_payment) accept them.
+            Processed => [Cleared /* clear_payment */, Voided /* void_payment */],
+            Cleared => [Voided /* void_payment */],
+            Voided => [],
+            Failed => [Voided /* void_payment */],
+        }
+    ),
+    (
+        PaymentRunStatus,
+        "payment_run",
+        "accounts_payable",
+        initial: Draft,
+        reentrant: [],
+        {
+            Draft => [Approved /* approve_payment_run (not by its creator) */, Cancelled /* cancel_payment_run */],
+            // No operation writes `pending` or `processing`.
+            Pending => [Approved /* approve_payment_run */, Cancelled /* cancel_payment_run */],
+            Approved => [Completed /* process_payment_run */, Cancelled /* cancel_payment_run */],
+            Processing => [],
+            Completed => [],
+            Cancelled => [],
+        }
+    ),
+    (
+        CreditMemoStatus,
+        "credit_memo",
+        "accounts_receivable",
+        initial: Open,
+        // Applying part of what is left keeps it partially applied.
+        reentrant: [PartiallyApplied],
+        {
+            Open => [
+                PartiallyApplied /* apply_credit_memo */,
+                FullyApplied /* apply_credit_memo (all of it) */,
+                Voided /* void_credit_memo (nothing applied) */,
+            ],
+            PartiallyApplied => [FullyApplied /* apply_credit_memo (the rest) */],
+            FullyApplied => [],
+            Voided => [],
+        }
+    ),
+    (
+        PrepaymentStatus,
+        "prepayment",
+        "prepayments",
+        initial: Open,
+        // Applying part of the balance keeps it open; refunding a refunded
+        // prepayment returns it unchanged.
+        reentrant: [Open, Refunded],
+        {
+            Open => [Applied /* apply (the whole balance) */, Refunded /* refund */],
+            Applied => [Open /* reverse_application */],
+            Refunded => [],
+            // No operation writes `cancelled`.
+            Cancelled => [],
+        }
+    ),
+    (
+        VendorCreditStatus,
+        "vendor_credit",
+        "vendor_credits",
+        initial: Open,
+        // Applying part of the balance keeps it open; cancelling a cancelled
+        // credit rewrites it as cancelled.
+        reentrant: [Open, Cancelled],
+        {
+            Open => [Applied /* apply (the whole balance) */, Cancelled /* cancel */],
+            Applied => [Open /* reverse_application */],
+            Cancelled => [],
+        }
+    ),
+    (
+        PaymentObligationStatus,
+        "payment_obligation",
+        "payment_obligations",
+        initial: Pending,
+        // set_status accepts the current status for every state.
+        reentrant: [Pending, Scheduled, PartiallyPaid, Paid, Cancelled],
+        {
+            Pending => [
+                Scheduled /* set_status */,
+                PartiallyPaid /* record_payment, prepayment / vendor credit application */,
+                Paid /* record_payment, application */,
+                Cancelled /* set_status */,
+            ],
+            Scheduled => [Pending /* set_status */, PartiallyPaid, Paid, Cancelled],
+            PartiallyPaid => [
+                Pending /* reversing every application */,
+                Paid /* record_payment, application */,
+                Cancelled /* set_status */,
+            ],
+            // Reversing a prepayment or vendor credit application reopens a
+            // paid obligation, although `is_terminal` calls paid terminal.
+            Paid => [Pending /* reversing every application */, PartiallyPaid /* reversing one */],
+            Cancelled => [],
+        }
+    ),
+    (
+        PeriodStatus,
+        "gl_period",
+        "general_ledger",
+        initial: Future,
+        reentrant: [],
+        {
+            Future => [Open /* open_period */],
+            Open => [Closed /* close_period, run_period_close */],
+            Closed => [Open /* reopen_period */, Locked /* lock_period */],
+            Locked => [],
+        }
+    ),
+    (
+        JournalEntryStatus,
+        "journal_entry",
+        "general_ledger",
+        initial: Draft,
+        // A reversed entry is reversed again only after its reversing entry
+        // was voided; otherwise every same-status move is refused.
+        reentrant: [],
+        {
+            Draft => [
+                Posted /* post_journal_entry */,
+                Voided /* voiding its source document */,
+            ],
+            // No operation writes `pending`.
+            Pending => [],
+            Posted => [
+                Voided /* void_journal_entry */,
+                Reversed /* reverse_journal_entry, voiding its source document */,
+            ],
+            Voided => [],
+            Reversed => [],
+        }
+    ),
+    (
+        CreditAccountStatus,
+        "credit_account",
+        "credit",
+        initial: Active,
+        // update_credit_account sets any status, the current one included,
+        // until the account is closed; a closed account only accepts closed.
+        reentrant: [Active, Suspended, OnHold, Closed, PendingReview],
+        {
+            Active => [Suspended /* suspend_credit_account, update */, OnHold, Closed, PendingReview],
+            Suspended => [Active /* reactivate_credit_account, update */, OnHold, Closed, PendingReview],
+            OnHold => [Active, Suspended, Closed, PendingReview],
+            Closed => [],
+            PendingReview => [Active, Suspended, OnHold, Closed],
+        }
+    ),
+    (
+        CreditHoldStatus,
+        "credit_hold",
+        "credit",
+        initial: Active,
+        reentrant: [],
+        {
+            Active => [Released /* release_hold */],
+            Released => [],
+            // No operation writes `expired`.
+            Expired => [],
+        }
+    ),
+    (
+        CostAdjustmentStatus,
+        "cost_adjustment",
+        "cost_accounting",
+        initial: Pending,
+        reentrant: [],
+        {
+            Pending => [Approved /* approve_adjustment */, Rejected /* reject_adjustment */],
+            Approved => [Applied /* apply_adjustment */, Rejected /* reject_adjustment */],
+            Applied => [],
+            Rejected => [],
+        }
+    ),
 ];

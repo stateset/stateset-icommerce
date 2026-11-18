@@ -47,6 +47,18 @@ Ask the same question at runtime:
 | [`wave`](#wave) | fulfillment | `WaveStatus` | repositories | `draft` | completed, cancelled |
 | [`pick_task`](#pick_task) | fulfillment | `PickStatus` | repositories | `pending` | completed, short, cancelled |
 | [`bom`](#bom) | manufacturing | `BomStatus` | repositories | `draft` | obsolete |
+| [`bill`](#bill) | accounts_payable | `BillStatus` | repositories | `draft` | cancelled |
+| [`bill_payment`](#bill_payment) | accounts_payable | `PaymentStatusAP` | repositories | `pending` | voided |
+| [`payment_run`](#payment_run) | accounts_payable | `PaymentRunStatus` | repositories | `draft` | processing, completed, cancelled |
+| [`credit_memo`](#credit_memo) | accounts_receivable | `CreditMemoStatus` | repositories | `open` | fully_applied, voided |
+| [`prepayment`](#prepayment) | prepayments | `PrepaymentStatus` | repositories | `open` | refunded, cancelled |
+| [`vendor_credit`](#vendor_credit) | vendor_credits | `VendorCreditStatus` | repositories | `open` | cancelled |
+| [`payment_obligation`](#payment_obligation) | payment_obligations | `PaymentObligationStatus` | repositories | `pending` | cancelled |
+| [`gl_period`](#gl_period) | general_ledger | `PeriodStatus` | repositories | `future` | locked |
+| [`journal_entry`](#journal_entry) | general_ledger | `JournalEntryStatus` | repositories | `draft` | pending, voided, reversed |
+| [`credit_account`](#credit_account) | credit | `CreditAccountStatus` | repositories | `active` | closed |
+| [`credit_hold`](#credit_hold) | credit | `CreditHoldStatus` | repositories | `active` | released, expired |
+| [`cost_adjustment`](#cost_adjustment) | cost_accounting | `CostAdjustmentStatus` | repositories | `pending` | applied, rejected |
 
 ## order
 
@@ -1057,3 +1069,288 @@ stateDiagram-v2
 | `draft` | active, obsolete |
 | `active` | obsolete |
 | `obsolete` | _terminal_ |
+
+## bill
+
+```mermaid
+stateDiagram-v2
+    [*] --> draft
+    draft --> approved
+    draft --> cancelled
+    draft --> disputed
+    pending --> approved
+    pending --> cancelled
+    pending --> disputed
+    approved --> partially_paid
+    approved --> paid
+    approved --> cancelled
+    approved --> disputed
+    partially_paid --> approved
+    partially_paid --> paid
+    partially_paid --> disputed
+    paid --> approved
+    paid --> partially_paid
+    overdue --> partially_paid
+    overdue --> paid
+    overdue --> cancelled
+    overdue --> disputed
+    cancelled --> [*]
+    disputed --> draft
+    disputed --> pending
+    disputed --> approved
+    disputed --> partially_paid
+    disputed --> overdue
+    disputed --> cancelled
+```
+
+| From | Allowed next |
+| --- | --- |
+| `draft` | approved, cancelled, disputed |
+| `pending` | approved, cancelled, disputed |
+| `approved` | partially_paid, paid, cancelled, disputed |
+| `partially_paid` | approved, paid, disputed |
+| `paid` | approved, partially_paid |
+| `overdue` | partially_paid, paid, cancelled, disputed |
+| `cancelled` | _terminal_ |
+| `disputed` | draft, pending, approved, partially_paid, overdue, cancelled |
+
+## bill_payment
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> cleared
+    pending --> voided
+    processed --> cleared
+    processed --> voided
+    cleared --> voided
+    voided --> [*]
+    failed --> voided
+```
+
+| From | Allowed next |
+| --- | --- |
+| `pending` | cleared, voided |
+| `processed` | cleared, voided |
+| `cleared` | voided |
+| `voided` | _terminal_ |
+| `failed` | voided |
+
+## payment_run
+
+```mermaid
+stateDiagram-v2
+    [*] --> draft
+    draft --> approved
+    draft --> cancelled
+    pending --> approved
+    pending --> cancelled
+    approved --> completed
+    approved --> cancelled
+    processing --> [*]
+    completed --> [*]
+    cancelled --> [*]
+```
+
+| From | Allowed next |
+| --- | --- |
+| `draft` | approved, cancelled |
+| `pending` | approved, cancelled |
+| `approved` | completed, cancelled |
+| `processing` | _terminal_ |
+| `completed` | _terminal_ |
+| `cancelled` | _terminal_ |
+
+## credit_memo
+
+```mermaid
+stateDiagram-v2
+    [*] --> open
+    open --> partially_applied
+    open --> fully_applied
+    open --> voided
+    partially_applied --> fully_applied
+    fully_applied --> [*]
+    voided --> [*]
+```
+
+| From | Allowed next |
+| --- | --- |
+| `open` | partially_applied, fully_applied, voided |
+| `partially_applied` | fully_applied |
+| `fully_applied` | _terminal_ |
+| `voided` | _terminal_ |
+
+## prepayment
+
+```mermaid
+stateDiagram-v2
+    [*] --> open
+    open --> applied
+    open --> refunded
+    applied --> open
+    refunded --> [*]
+    cancelled --> [*]
+```
+
+| From | Allowed next |
+| --- | --- |
+| `open` | applied, refunded |
+| `applied` | open |
+| `refunded` | _terminal_ |
+| `cancelled` | _terminal_ |
+
+## vendor_credit
+
+```mermaid
+stateDiagram-v2
+    [*] --> open
+    open --> applied
+    open --> cancelled
+    applied --> open
+    cancelled --> [*]
+```
+
+| From | Allowed next |
+| --- | --- |
+| `open` | applied, cancelled |
+| `applied` | open |
+| `cancelled` | _terminal_ |
+
+## payment_obligation
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> scheduled
+    pending --> partially_paid
+    pending --> paid
+    pending --> cancelled
+    scheduled --> pending
+    scheduled --> partially_paid
+    scheduled --> paid
+    scheduled --> cancelled
+    partially_paid --> pending
+    partially_paid --> paid
+    partially_paid --> cancelled
+    paid --> pending
+    paid --> partially_paid
+    cancelled --> [*]
+```
+
+| From | Allowed next |
+| --- | --- |
+| `pending` | scheduled, partially_paid, paid, cancelled |
+| `scheduled` | pending, partially_paid, paid, cancelled |
+| `partially_paid` | pending, paid, cancelled |
+| `paid` | pending, partially_paid |
+| `cancelled` | _terminal_ |
+
+## gl_period
+
+```mermaid
+stateDiagram-v2
+    [*] --> future
+    future --> open
+    open --> closed
+    closed --> open
+    closed --> locked
+    locked --> [*]
+```
+
+| From | Allowed next |
+| --- | --- |
+| `future` | open |
+| `open` | closed |
+| `closed` | open, locked |
+| `locked` | _terminal_ |
+
+## journal_entry
+
+```mermaid
+stateDiagram-v2
+    [*] --> draft
+    draft --> posted
+    draft --> voided
+    pending --> [*]
+    posted --> voided
+    posted --> reversed
+    voided --> [*]
+    reversed --> [*]
+```
+
+| From | Allowed next |
+| --- | --- |
+| `draft` | posted, voided |
+| `pending` | _terminal_ |
+| `posted` | voided, reversed |
+| `voided` | _terminal_ |
+| `reversed` | _terminal_ |
+
+## credit_account
+
+```mermaid
+stateDiagram-v2
+    [*] --> active
+    active --> suspended
+    active --> on_hold
+    active --> closed
+    active --> pending_review
+    suspended --> active
+    suspended --> on_hold
+    suspended --> closed
+    suspended --> pending_review
+    on_hold --> active
+    on_hold --> suspended
+    on_hold --> closed
+    on_hold --> pending_review
+    closed --> [*]
+    pending_review --> active
+    pending_review --> suspended
+    pending_review --> on_hold
+    pending_review --> closed
+```
+
+| From | Allowed next |
+| --- | --- |
+| `active` | suspended, on_hold, closed, pending_review |
+| `suspended` | active, on_hold, closed, pending_review |
+| `on_hold` | active, suspended, closed, pending_review |
+| `closed` | _terminal_ |
+| `pending_review` | active, suspended, on_hold, closed |
+
+## credit_hold
+
+```mermaid
+stateDiagram-v2
+    [*] --> active
+    active --> released
+    released --> [*]
+    expired --> [*]
+```
+
+| From | Allowed next |
+| --- | --- |
+| `active` | released |
+| `released` | _terminal_ |
+| `expired` | _terminal_ |
+
+## cost_adjustment
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> approved
+    pending --> rejected
+    approved --> applied
+    approved --> rejected
+    applied --> [*]
+    rejected --> [*]
+```
+
+| From | Allowed next |
+| --- | --- |
+| `pending` | approved, rejected |
+| `approved` | applied, rejected |
+| `applied` | _terminal_ |
+| `rejected` | _terminal_ |

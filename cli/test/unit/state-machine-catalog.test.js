@@ -122,7 +122,11 @@ describe('explain_state_machine', () => {
     assert.equal(terminal.path, null);
     assert.match(terminal.reason, /terminal/);
 
-    const unreachable = ask({ machine: 'subscription', from: 'active', to: 'pending' });
+    const unreachable = ask({
+      machine: 'subscription',
+      from: 'active',
+      to: 'pending',
+    });
     assert.equal(unreachable.allowed, false);
     assert.equal(unreachable.path, null);
     assert.match(unreachable.reason, /cannot be reached/);
@@ -161,7 +165,11 @@ describe('explain_state_machine', () => {
     assert.equal(ship.onlyVia, 'ship_order');
     assert.match(ship.reason, /only through ship_order/);
 
-    const refused = ask({ machine: 'return', from: 'approved', to: 'received' });
+    const refused = ask({
+      machine: 'return',
+      from: 'approved',
+      to: 'received',
+    });
     assert.equal(refused.allowed, false);
     assert.deepEqual(refused.path, ['approved', 'in_transit', 'received']);
     assert.equal(refused.moves[0].tools[0], 'add_return_tracking');
@@ -209,6 +217,15 @@ describe('explain_state_machine', () => {
   it('reports the lifecycles whose rule the repositories enforce', () => {
     const all = ask({});
     for (const name of [
+      'bill',
+      'bill_payment',
+      'payment_run',
+      'credit_memo',
+      'prepayment',
+      'vendor_credit',
+      'payment_obligation',
+      'gl_period',
+      'journal_entry',
       'transfer_order',
       'vendor_return',
       'edi_document',
@@ -217,6 +234,9 @@ describe('explain_state_machine', () => {
       'wave',
       'pick_task',
       'bom',
+      'credit_account',
+      'credit_hold',
+      'cost_adjustment',
     ]) {
       assert.ok(
         all.machines.some((m) => m.machine === name),
@@ -230,6 +250,36 @@ describe('explain_state_machine', () => {
     );
     assert.equal(ask({ machine: 'wave', from: 'completed' }).terminal, true);
     assert.equal(ask({ machine: 'fulfillment_wave' }).machine, 'wave');
+  });
+
+  it('answers a disputed bill, a period lock and a reopened obligation', () => {
+    // A bill in dispute returns to the status it was disputed from.
+    const disputed = ask({ machine: 'bill', from: 'disputed' });
+    assert.deepEqual(disputed.next, [
+      'draft',
+      'pending',
+      'approved',
+      'partially_paid',
+      'overdue',
+      'cancelled',
+    ]);
+    assert.deepEqual(disputed.moves.find((m) => m.status === 'approved').tools, [
+      'resolve_bill_dispute',
+    ]);
+
+    // A period is locked only after it is closed.
+    const lock = ask({
+      machine: 'accounting_period',
+      from: 'future',
+      to: 'locked',
+    });
+    assert.equal(lock.machine, 'gl_period');
+    assert.equal(lock.allowed, false);
+    assert.deepEqual(lock.path, ['future', 'open', 'closed', 'locked']);
+
+    // A paid obligation reopens when a prepayment or vendor credit
+    // application is reversed.
+    assert.deepEqual(nextStates('payment_obligation', 'paid'), ['pending', 'partially_paid']);
   });
 
   it('lists the candidates when a domain holds several lifecycles', () => {

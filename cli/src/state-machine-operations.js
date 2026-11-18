@@ -172,6 +172,64 @@ export const TRANSITION_TOOLS = freeze({
     completed: [{ tool: 'complete_put_away' }],
     cancelled: [{ tool: 'cancel_put_away' }],
   },
+  credit_memo: {
+    partially_applied: [{ tool: 'apply_credit_memo' }],
+    fully_applied: [{ tool: 'apply_credit_memo', note: 'apply the whole unapplied amount' }],
+    voided: [{ tool: 'void_credit_memo', note: 'only while nothing is applied' }],
+  },
+  prepayment: {
+    applied: [{ tool: 'apply_prepayment', note: 'apply the whole remaining balance' }],
+    open: [{ tool: 'reverse_prepayment_application' }],
+    refunded: [{ tool: 'refund_prepayment' }],
+  },
+  vendor_credit: {
+    applied: [{ tool: 'apply_vendor_credit', note: 'apply the whole remaining balance' }],
+    open: [{ tool: 'reverse_vendor_credit_application' }],
+    cancelled: [{ tool: 'cancel_vendor_credit', note: 'only with no active applications' }],
+  },
+  payment_obligation: {
+    pending: [{ tool: 'set_payment_obligation_status', from: ['scheduled'] }],
+    scheduled: [{ tool: 'set_payment_obligation_status' }],
+    partially_paid: [{ tool: 'record_payment_obligation_payment' }],
+    paid: [{ tool: 'record_payment_obligation_payment', note: 'pay the outstanding balance' }],
+    cancelled: [{ tool: 'set_payment_obligation_status' }],
+  },
+  gl_period: {
+    open: [
+      { tool: 'open_gl_period', from: ['future'] },
+      { tool: 'reopen_gl_period', from: ['closed'] },
+    ],
+    closed: [{ tool: 'close_gl_period' }, { tool: 'reclose_gl_period' }],
+    locked: [{ tool: 'lock_gl_period' }],
+  },
+  journal_entry: {
+    posted: [{ tool: 'post_journal_entry' }],
+    voided: [{ tool: 'void_journal_entry', from: ['posted'] }],
+    reversed: [{ tool: 'reverse_journal_entry' }],
+  },
+  bill: {
+    approved: [
+      { tool: 'approve_bill', from: ['draft', 'pending'] },
+      { tool: 'void_bill_payment', from: ['partially_paid', 'paid'] },
+      { tool: 'resolve_bill_dispute', from: ['disputed'] },
+    ],
+    cancelled: [{ tool: 'cancel_bill', note: 'only while nothing is paid' }],
+    disputed: [{ tool: 'dispute_bill' }],
+    draft: [{ tool: 'resolve_bill_dispute', note: 'returns the bill to its pre-dispute status' }],
+    pending: [{ tool: 'resolve_bill_dispute' }],
+    partially_paid: [
+      { tool: 'create_bill_payment', from: ['approved', 'overdue'] },
+      { tool: 'void_bill_payment', from: ['paid'] },
+      { tool: 'resolve_bill_dispute', from: ['disputed'] },
+    ],
+    paid: [{ tool: 'create_bill_payment' }],
+    overdue: [{ tool: 'resolve_bill_dispute' }],
+  },
+  payment_run: {
+    approved: [{ tool: 'approve_bill_payment_run', note: "not by the run's creator" }],
+    completed: [{ tool: 'process_bill_payment_run' }],
+    cancelled: [{ tool: 'cancel_bill_payment_run' }],
+  },
   wave: {
     released: [{ tool: 'release_fulfillment_wave' }],
     completed: [{ tool: 'complete_fulfillment_wave', note: 'every pick task must be finished' }],
@@ -185,6 +243,10 @@ export const TRANSITION_TOOLS = freeze({
   bom: {
     active: [{ tool: 'activate_bom' }],
   },
+  credit_account: {
+    suspended: [{ tool: 'suspend_credit_account' }],
+    active: [{ tool: 'reactivate_credit_account' }],
+  },
 });
 
 /**
@@ -195,8 +257,11 @@ export const TRANSITION_TOOLS = freeze({
  * @type {Readonly<Record<string, string[]>>} machine -> aliases (snake_case)
  */
 export const MACHINE_ALIASES = freeze({
+  gl_period: ['accounting_period', 'period', 'fiscal_period'],
+  journal_entry: ['gl_journal_entry'],
   bom: ['bill_of_materials'],
   wave: ['fulfillment_wave'],
+  payment_run: ['bill_payment_run'],
 });
 
 /**
@@ -243,6 +308,7 @@ export const STATUS_PARAMETER_TOOLS = freeze({
   update_customer: 'status',
   update_product: 'status',
   set_edi_document_status: 'status',
+  set_payment_obligation_status: 'status',
 });
 
 /**
@@ -390,52 +456,6 @@ export const UNCATALOGUED_LIFECYCLES = freeze([
     ],
   },
   {
-    name: 'payment_obligation',
-    domain: 'payment_obligations',
-    tsType: 'PaymentObligationStatus',
-    states: ['pending', 'scheduled', 'partially_paid', 'paid', 'cancelled'],
-  },
-  {
-    name: 'gl_period',
-    domain: 'general_ledger',
-    tsType: 'GlPeriodStatus',
-    aliases: ['accounting_period', 'period', 'fiscal_period'],
-    states: ['future', 'open', 'closed', 'locked'],
-  },
-  {
-    name: 'journal_entry',
-    domain: 'general_ledger',
-    tsType: 'GlJournalEntryStatus',
-    states: ['draft', 'pending', 'posted', 'voided', 'reversed'],
-  },
-  {
-    name: 'bill',
-    domain: 'accounts_payable',
-    tsType: 'BillStatus',
-    states: [
-      'draft',
-      'pending',
-      'approved',
-      'partially_paid',
-      'paid',
-      'overdue',
-      'cancelled',
-      'disputed',
-    ],
-  },
-  {
-    name: 'credit_memo',
-    domain: 'accounts_receivable',
-    tsType: 'CreditMemoStatus',
-    states: ['open', 'partially_applied', 'fully_applied', 'voided'],
-  },
-  {
-    name: 'credit_account',
-    domain: 'credit',
-    tsType: 'CreditAccountStatus',
-    states: ['active', 'suspended', 'on_hold', 'closed', 'pending_review'],
-  },
-  {
     name: 'warranty',
     domain: 'warranties',
     tsType: 'WarrantyStatus',
@@ -489,18 +509,6 @@ export const UNCATALOGUED_LIFECYCLES = freeze([
     domain: 'production_batches',
     tsType: 'ProductionBatchStatus',
     states: ['planned', 'in_progress', 'completed', 'cancelled'],
-  },
-  {
-    name: 'prepayment',
-    domain: 'prepayments',
-    tsType: 'PrepaymentStatus',
-    states: ['open', 'applied', 'refunded', 'cancelled'],
-  },
-  {
-    name: 'vendor_credit',
-    domain: 'vendor_credits',
-    tsType: 'VendorCreditStatus',
-    states: ['open', 'applied', 'cancelled'],
   },
   {
     name: 'depreciation_entry',
