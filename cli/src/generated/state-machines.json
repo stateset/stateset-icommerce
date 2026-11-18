@@ -2597,6 +2597,191 @@
           "terminal": true
         }
       ]
+    },
+    {
+      "domain": "store_credits",
+      "initial": "active",
+      "name": "store_credit",
+      "rust_type": "StoreCreditStatus",
+      "states": [
+        {
+          "name": "active",
+          "next": [
+            "depleted"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "depleted",
+          "next": [
+            "active"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "expired",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "voided",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "quality",
+      "initial": "open",
+      "name": "ncr",
+      "rust_type": "NcrStatus",
+      "states": [
+        {
+          "name": "open",
+          "next": [
+            "under_review",
+            "pending_disposition",
+            "corrective_action",
+            "preventive_action",
+            "verification",
+            "closed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "under_review",
+          "next": [
+            "open",
+            "pending_disposition",
+            "corrective_action",
+            "preventive_action",
+            "verification",
+            "closed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "pending_disposition",
+          "next": [
+            "open",
+            "under_review",
+            "corrective_action",
+            "preventive_action",
+            "verification",
+            "closed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "corrective_action",
+          "next": [
+            "open",
+            "under_review",
+            "pending_disposition",
+            "preventive_action",
+            "verification",
+            "closed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "preventive_action",
+          "next": [
+            "open",
+            "under_review",
+            "pending_disposition",
+            "corrective_action",
+            "verification",
+            "closed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "verification",
+          "next": [
+            "open",
+            "under_review",
+            "pending_disposition",
+            "corrective_action",
+            "preventive_action",
+            "closed",
+            "cancelled"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "closed",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        },
+        {
+          "name": "cancelled",
+          "next": [],
+          "reentrant": true,
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "domain": "a2a",
+      "initial": "pending",
+      "name": "a2a_message",
+      "rust_type": "A2AAgentMessageStatus",
+      "states": [
+        {
+          "name": "pending",
+          "next": [
+            "acknowledged",
+            "failed"
+          ],
+          "reentrant": true,
+          "terminal": false
+        },
+        {
+          "name": "delivered",
+          "next": [
+            "pending",
+            "acknowledged",
+            "failed"
+          ],
+          "reentrant": false,
+          "terminal": false
+        },
+        {
+          "name": "acknowledged",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "failed",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        },
+        {
+          "name": "expired",
+          "next": [],
+          "reentrant": false,
+          "terminal": true
+        }
+      ]
     }
   ]
 }

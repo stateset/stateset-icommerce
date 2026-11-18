@@ -234,9 +234,12 @@ describe('explain_state_machine', () => {
       'wave',
       'pick_task',
       'bom',
+      'store_credit',
+      'ncr',
       'credit_account',
       'credit_hold',
       'cost_adjustment',
+      'a2a_message',
     ]) {
       assert.ok(
         all.machines.some((m) => m.machine === name),

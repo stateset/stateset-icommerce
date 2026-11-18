@@ -59,6 +59,9 @@ Ask the same question at runtime:
 | [`credit_account`](#credit_account) | credit | `CreditAccountStatus` | repositories | `active` | closed |
 | [`credit_hold`](#credit_hold) | credit | `CreditHoldStatus` | repositories | `active` | released, expired |
 | [`cost_adjustment`](#cost_adjustment) | cost_accounting | `CostAdjustmentStatus` | repositories | `pending` | applied, rejected |
+| [`store_credit`](#store_credit) | store_credits | `StoreCreditStatus` | repositories | `active` | expired, voided |
+| [`ncr`](#ncr) | quality | `NcrStatus` | repositories | `open` | closed, cancelled |
+| [`a2a_message`](#a2a_message) | a2a | `A2AAgentMessageStatus` | repositories | `pending` | acknowledged, failed, expired |
 
 ## order
 
@@ -1354,3 +1357,106 @@ stateDiagram-v2
 | `approved` | applied, rejected |
 | `applied` | _terminal_ |
 | `rejected` | _terminal_ |
+
+## store_credit
+
+```mermaid
+stateDiagram-v2
+    [*] --> active
+    active --> depleted
+    depleted --> active
+    expired --> [*]
+    voided --> [*]
+```
+
+| From | Allowed next |
+| --- | --- |
+| `active` | depleted |
+| `depleted` | active |
+| `expired` | _terminal_ |
+| `voided` | _terminal_ |
+
+## ncr
+
+```mermaid
+stateDiagram-v2
+    [*] --> open
+    open --> under_review
+    open --> pending_disposition
+    open --> corrective_action
+    open --> preventive_action
+    open --> verification
+    open --> closed
+    open --> cancelled
+    under_review --> open
+    under_review --> pending_disposition
+    under_review --> corrective_action
+    under_review --> preventive_action
+    under_review --> verification
+    under_review --> closed
+    under_review --> cancelled
+    pending_disposition --> open
+    pending_disposition --> under_review
+    pending_disposition --> corrective_action
+    pending_disposition --> preventive_action
+    pending_disposition --> verification
+    pending_disposition --> closed
+    pending_disposition --> cancelled
+    corrective_action --> open
+    corrective_action --> under_review
+    corrective_action --> pending_disposition
+    corrective_action --> preventive_action
+    corrective_action --> verification
+    corrective_action --> closed
+    corrective_action --> cancelled
+    preventive_action --> open
+    preventive_action --> under_review
+    preventive_action --> pending_disposition
+    preventive_action --> corrective_action
+    preventive_action --> verification
+    preventive_action --> closed
+    preventive_action --> cancelled
+    verification --> open
+    verification --> under_review
+    verification --> pending_disposition
+    verification --> corrective_action
+    verification --> preventive_action
+    verification --> closed
+    verification --> cancelled
+    closed --> [*]
+    cancelled --> [*]
+```
+
+| From | Allowed next |
+| --- | --- |
+| `open` | under_review, pending_disposition, corrective_action, preventive_action, verification, closed, cancelled |
+| `under_review` | open, pending_disposition, corrective_action, preventive_action, verification, closed, cancelled |
+| `pending_disposition` | open, under_review, corrective_action, preventive_action, verification, closed, cancelled |
+| `corrective_action` | open, under_review, pending_disposition, preventive_action, verification, closed, cancelled |
+| `preventive_action` | open, under_review, pending_disposition, corrective_action, verification, closed, cancelled |
+| `verification` | open, under_review, pending_disposition, corrective_action, preventive_action, closed, cancelled |
+| `closed` | _terminal_ |
+| `cancelled` | _terminal_ |
+
+## a2a_message
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> acknowledged
+    pending --> failed
+    delivered --> pending
+    delivered --> acknowledged
+    delivered --> failed
+    acknowledged --> [*]
+    failed --> [*]
+    expired --> [*]
+```
+
+| From | Allowed next |
+| --- | --- |
+| `pending` | acknowledged, failed |
+| `delivered` | pending, acknowledged, failed |
+| `acknowledged` | _terminal_ |
+| `failed` | _terminal_ |
+| `expired` | _terminal_ |

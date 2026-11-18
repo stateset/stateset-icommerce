@@ -172,6 +172,16 @@ export const TRANSITION_TOOLS = freeze({
     completed: [{ tool: 'complete_put_away' }],
     cancelled: [{ tool: 'cancel_put_away' }],
   },
+  store_credit: {
+    depleted: [
+      { tool: 'adjust_store_credit', note: 'adjust the balance down to zero' },
+      { tool: 'apply_store_credit', from: ['active'], note: 'apply the whole balance' },
+    ],
+    active: [{ tool: 'adjust_store_credit', note: 'adjust the balance up' }],
+  },
+  ncr: {
+    closed: [{ tool: 'close_ncr', note: 'pass `disposition` unless one is recorded' }],
+  },
   credit_memo: {
     partially_applied: [{ tool: 'apply_credit_memo' }],
     fully_applied: [{ tool: 'apply_credit_memo', note: 'apply the whole unapplied amount' }],
@@ -260,8 +270,10 @@ export const MACHINE_ALIASES = freeze({
   gl_period: ['accounting_period', 'period', 'fiscal_period'],
   journal_entry: ['gl_journal_entry'],
   bom: ['bill_of_materials'],
+  ncr: ['non_conformance_report'],
   wave: ['fulfillment_wave'],
   payment_run: ['bill_payment_run'],
+  a2a_message: ['a2a_agent_message'],
 });
 
 /**
@@ -380,12 +392,6 @@ export const UNCATALOGUED_LIFECYCLES = freeze([
     states: ['active', 'depleted', 'expired', 'disabled'],
   },
   {
-    name: 'store_credit',
-    domain: 'store_credits',
-    tsType: 'StoreCreditStatus',
-    states: ['active', 'depleted', 'expired', 'voided'],
-  },
-  {
     name: 'promotion',
     domain: 'promotions',
     tsType: 'PromotionStatus',
@@ -473,22 +479,6 @@ export const UNCATALOGUED_LIFECYCLES = freeze([
       'failed',
       'partial_pass',
       'on_hold',
-      'cancelled',
-    ],
-  },
-  {
-    name: 'ncr',
-    domain: 'quality',
-    tsType: 'NcrStatus',
-    aliases: ['non_conformance_report'],
-    states: [
-      'open',
-      'under_review',
-      'pending_disposition',
-      'corrective_action',
-      'preventive_action',
-      'verification',
-      'closed',
       'cancelled',
     ],
   },

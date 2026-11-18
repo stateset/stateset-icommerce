@@ -204,7 +204,6 @@ describe('UNCATALOGUED_LIFECYCLES', () => {
       'order_payment',
       'order_fulfillment',
       'gift_card',
-      'store_credit',
       'promotion',
       'coupon',
       'inventory_reservation',
@@ -236,12 +235,14 @@ describe('MACHINE_ALIASES', () => {
 
   it('keeps answering the names these lifecycles had before they were catalogued', () => {
     for (const [name, machine] of [
+      ['store_credit', 'store_credit'],
       ['payment_obligation', 'payment_obligation'],
       ['gl_period', 'gl_period'],
       ['accounting_period', 'gl_period'],
       ['GlPeriodStatus', 'gl_period'],
       ['GlJournalEntryStatus', 'journal_entry'],
       ['bill_of_materials', 'bom'],
+      ['non_conformance_report', 'ncr'],
       ['fulfillment_wave', 'wave'],
       ['PickTaskStatus', 'pick_task'],
       ['EdiStatus', 'edi_document'],

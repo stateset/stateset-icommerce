@@ -465,4 +465,90 @@ repository_rules![
             Rejected => [],
         }
     ),
+    // -------- commerce, quality and agent messaging
+    (
+        StoreCreditStatus,
+        "store_credit",
+        "store_credits",
+        initial: Active,
+        // adjust (and apply, on an active credit) rewrite the status the new
+        // balance implies, which may be the current one.
+        reentrant: [Active, Depleted],
+        {
+            Active => [Depleted /* adjust or apply down to a zero balance */],
+            Depleted => [Active /* adjust up */],
+            // No operation writes `expired` or `voided`.
+            Expired => [],
+            Voided => [],
+        }
+    ),
+    (
+        NcrStatus,
+        "ncr",
+        "quality",
+        initial: Open,
+        // update_ncr accepts any status (closing needs a disposition) while
+        // the NCR is open, the current one included; close_ncr and cancel_ncr
+        // repeat as no-ops (update_ncr refuses a terminal NCR).
+        reentrant: [
+            Open,
+            UnderReview,
+            PendingDisposition,
+            CorrectiveAction,
+            PreventiveAction,
+            Verification,
+            Closed,
+            Cancelled,
+        ],
+        {
+            Open => [
+                UnderReview, PendingDisposition, CorrectiveAction, PreventiveAction,
+                Verification, Closed, Cancelled,
+            ],
+            UnderReview => [
+                Open, PendingDisposition, CorrectiveAction, PreventiveAction, Verification,
+                Closed, Cancelled,
+            ],
+            PendingDisposition => [
+                Open, UnderReview, CorrectiveAction, PreventiveAction, Verification, Closed,
+                Cancelled,
+            ],
+            CorrectiveAction => [
+                Open, UnderReview, PendingDisposition, PreventiveAction, Verification, Closed,
+                Cancelled,
+            ],
+            PreventiveAction => [
+                Open, UnderReview, PendingDisposition, CorrectiveAction, Verification, Closed,
+                Cancelled,
+            ],
+            Verification => [
+                Open, UnderReview, PendingDisposition, CorrectiveAction, PreventiveAction,
+                Closed, Cancelled,
+            ],
+            Closed => [],
+            Cancelled => [],
+        }
+    ),
+    (
+        A2AAgentMessageStatus,
+        "a2a_message",
+        "a2a",
+        initial: Pending,
+        // A failure with attempts left keeps the message pending for a retry.
+        reentrant: [Pending],
+        {
+            Pending => [Acknowledged /* acknowledge_message */, Failed /* fail_message, last attempt */],
+            // No operation writes `delivered`; a delivered message is still
+            // acknowledged or failed like a pending one.
+            Delivered => [
+                Pending /* fail_message, attempts left */,
+                Acknowledged /* acknowledge_message */,
+                Failed /* fail_message, last attempt */,
+            ],
+            Acknowledged => [],
+            Failed => [],
+            // No operation writes `expired`.
+            Expired => [],
+        }
+    ),
 ];

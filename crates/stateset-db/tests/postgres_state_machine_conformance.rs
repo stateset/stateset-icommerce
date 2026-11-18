@@ -72,4 +72,8 @@ conformance!(
     credit_account,
     credit_hold,
     cost_adjustment,
+    // commerce, quality and agent messaging
+    store_credit,
+    ncr,
+    a2a_message,
 );

@@ -43,10 +43,14 @@
 
 #![allow(dead_code)]
 
+pub(crate) mod agentic;
+pub(crate) mod commerce;
 pub(crate) mod finance;
 pub(crate) mod harness;
 pub(crate) mod supply;
 
+pub(crate) use agentic::a2a_message;
+pub(crate) use commerce::{ncr, store_credit};
 pub(crate) use finance::{
     bill, bill_payment, cost_adjustment, credit_account, credit_hold, credit_memo, gl_period,
     journal_entry, payment_obligation, payment_run, prepayment, vendor_credit,

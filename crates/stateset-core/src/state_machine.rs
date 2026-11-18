@@ -448,7 +448,8 @@ mod tests {
 
     use super::*;
     use crate::models::{
-        JournalEntryStatus, PaymentObligationStatus, TransferOrderStatus, VendorReturnStatus,
+        JournalEntryStatus, NcrStatus, PaymentObligationStatus, TransferOrderStatus,
+        VendorReturnStatus,
     };
 
     #[test]
@@ -546,6 +547,7 @@ mod tests {
             A2AQuoteStatus,
             VendorReturnStatus,
             TransferOrderStatus,
+            NcrStatus,
             PaymentObligationStatus
         );
         // Known, pinned: `ShipmentStatus::is_terminal` calls Delivered terminal
@@ -631,6 +633,14 @@ mod tests {
                 if from.allows_manual_transition(to) {
                     assert!(from.permits(to), "payment_obligation {from} -> {to}");
                 }
+            }
+        }
+        // `update_ncr` refuses exactly the terminal NCRs and otherwise accepts
+        // any status.
+        for &from in NcrStatus::STATES {
+            assert_eq!(from.is_terminal(), from.is_terminal_state(), "ncr {from}");
+            if !from.is_terminal() {
+                assert_eq!(from.next_states().len(), NcrStatus::STATES.len() - 1, "ncr {from}");
             }
         }
         // Only a draft entry posts and only a posted one is voided by

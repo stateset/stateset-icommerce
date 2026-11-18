@@ -589,15 +589,16 @@ export const stateMachineTool = {
   description:
     'Ask what a record can do next BEFORE trying to change its status. With no arguments, lists ' +
     'the catalogued status lifecycles (order, payment, refund, return, shipment, cart, customer, ' +
-    'product, subscription, purchase_order, ...) and the known lifecycles not catalogued yet. ' +
+    'product, subscription, purchase_order, bill, credit_memo, gl_period, transfer_order, ...) ' +
+    'and the known lifecycles not catalogued yet. ' +
     'With `machine`, returns its full transition graph and the tool that makes each move. With ' +
     '`machine` + `from`, the statuses reachable next and the tool for each. With `machine` + ' +
     '`from` + `to`, whether that move is allowed and, if not, the shortest route. Generated from ' +
     'the engine rules; read-only and touches no data. Some moves only one operation can make ' +
     '(`onlyVia`, e.g. processing -> shipped via ship_order); a plain status update is refused ' +
     'for them. For a known lifecycle that is not catalogued yet (order_payment, ' +
-    'order_fulfillment, gift_card, coupon, invoice, x402_intent, gl_period, ...) it says so and ' +
-    'lists its states without guessing its moves.',
+    'order_fulfillment, gift_card, coupon, invoice, x402_intent, inbound_shipment, ...) it says ' +
+    'so and lists its states without guessing its moves.',
   inputSchema: {
     machine: z
       .string()
@@ -605,8 +606,9 @@ export const stateMachineTool = {
       .max(64)
       .optional()
       .describe(
-        'Machine name, e.g. "order", "payment", "return", "shipment" (a Rust type such as ' +
-          '"OrderStatus" or a single-lifecycle domain also works). Omit to list all',
+        'Machine name, e.g. "order", "payment", "return", "bill", "gl_period" (a Rust type such ' +
+          'as "OrderStatus", an alias such as "accounting_period", or a single-lifecycle domain ' +
+          'also works). Omit to list all',
       ),
     from: z.string().min(1).max(64).optional().describe('Current status, e.g. "pending"'),
     to: z.string().min(1).max(64).optional().describe('Status you want to reach, e.g. "delivered"'),
