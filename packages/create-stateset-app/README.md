@@ -187,6 +187,19 @@ For memberships sold through the starter's Stripe Checkout, each single-charge, 
 
 Renewing seller memberships retain the seller, fee and merchandise base agreed at checkout. The seller statement identifies each renewal invoice. Transfers use its verified charge, and refunds reduce or reverse the seller payout. Older checkouts with ambiguous allocations appear as `needs review` in the renewal statement. Use `npm run merchant -- resolve-renewal-seller SUBSCRIPTION_ID --seller CODE --bps FEE` to preview the original seller's agreed rate, or use `--platform-owned` for a merchant-owned membership. Add `--apply` to save that decision.
 
+#### Verify a failed renewal against Stripe
+
+Use the database of the sandbox storefront that sold the membership. Enable renewal recovery and deliver `invoice.payment_failed` and `invoice.paid` to its webhook. Purchase a recurring USD membership using a successful test card. In the Stripe sandbox, change the subscription's payment method to a test card that can be attached and declines on charge. Advance its billing cycle using **Run simulation** on the enrolled subscription when available. Use the resulting failed renewal event ID from that account. [Stripe Billing sandbox guide](https://docs.stripe.com/billing/testing) · [Stripe test cards](https://docs.stripe.com/testing#declined-payments)
+
+```bash
+npm run verify:recovery
+npm run verify:recovery -- --check --event evt_EXAMPLE --db ./store.db
+```
+
+The first command previews the check. The second uses `STRIPE_TEST_KEY` (or a test-mode `STRIPE_SECRET_KEY`) to read that event and invoice. With the invoice open, expect `awaiting_payment`. Update the payment method for this subscription to a successful test card and let the configured retry run. When using a simulation, advance to the retry time. Rerun the same check after Stripe delivers `invoice.paid`. [Stripe payment retry settings](https://docs.stripe.com/billing/revenue-recovery/smart-retries)
+
+A successful check matches the captured charge to the failed amount and to the native payment and billing cycle. The report includes gross recovered, refunded, and net retained amounts in USD cents. It verifies settlement regardless of who initiated the retry. Exit code 2 reports outstanding evidence. For `missing_failure_webhook`, inspect and redeliver the failed event. For `missing_native_renewal`, check delivery of `invoice.paid` and the linked membership's reconciliation history. A terminal unpaid invoice or a mismatched amount, identity, or sandbox mode exits with code 1. The verifier uses provider reads and leaves the records intact for another check.
+
 For transactional recovery emails, configure `RESEND_API_KEY` and a verified `STATESET_RECOVERY_FROM` sender. Alternatively, configure a Klaviyo transactional flow on the `StateSet Renewal Recovery` event and use its `update_url` and `payment_url` properties. The update link opens a short-lived payment-method update session for the invoiced customer.
 
 | Integration | Operator environment | Delivered data |

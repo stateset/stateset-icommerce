@@ -25,6 +25,7 @@
     "verify:routed": "node scripts/verify-routed-checkout.js",
     "verify:affiliates": "node scripts/verify-affiliate-payouts.js",
     "verify:membership": "node scripts/verify-membership-checkout.js",
+    "verify:recovery": "node scripts/verify-stripe-recovery.js",
     "verify:providers": "node scripts/verify-payment-providers.js",
     "verify:integrations": "node scripts/verify-integrations.js",
     "verify:merchant": "node scripts/verify-merchant-platform.js",

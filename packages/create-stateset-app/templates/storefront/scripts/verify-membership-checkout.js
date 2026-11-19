@@ -19,12 +19,15 @@ import {
   subscriptionCheckoutParameters,
   membershipManagement,
 } from '../lib/membership-checkout.js';
+import { verifyStripeRecovery } from '../lib/stripe-recovery-proof.js';
 import { checkDigitalAccess, licensesForOrder } from '../lib/digital-access.js';
 import {
   membershipExpiry,
   reconcileRenewals,
   recordMembershipStatus,
   recordPaidRenewal,
+  recordRenewalFailure,
+  runRenewalRecovery,
   renewalStatement,
 } from '../lib/billing-recovery.js';
 import { readMerchantRecord, saveMerchantRecord } from '../lib/merchant-records.js';
@@ -93,6 +96,7 @@ try {
   const renewalIntent = {
     ...intent,
     id: 'pi_renewal',
+    livemode: false,
     amount_received: 2200,
     latest_charge: 'ch_later',
   };
@@ -385,6 +389,47 @@ try {
   );
   invoices.set('in_renewal', invoice('in_renewal', 'subscription_cycle', end, next, 2200));
   const renewal = invoices.get('in_renewal');
+  Object.assign(renewal, {
+    object: 'invoice',
+    livemode: false,
+    collection_method: 'charge_automatically',
+  });
+  const failure = {
+    type: 'invoice.payment_failed',
+    id: 'evt_renewal',
+    created: end,
+    livemode: false,
+    data: {
+      object: {
+        ...renewal,
+        status: 'open',
+        amount_paid: 0,
+        amount_remaining: 2200,
+        attempt_count: 1,
+        auto_advance: true,
+      },
+    },
+  };
+  invoices.set(renewal.id, failure.data.object);
+  stripe.events = { retrieve: async () => failure };
+  const verifyRecovery = () => verifyStripeRecovery(commerce, stripe, failure.id);
+  assert.equal((await verifyRecovery()).state, 'missing_failure_webhook');
+  await recordRenewalFailure(commerce, failure, stripe);
+  assert.equal((await verifyRecovery()).state, 'awaiting_payment');
+  stripe.invoices.pay = async (invoiceId, _, options) => {
+    assert.equal(invoiceId, renewal.id);
+    assert.equal(options.idempotencyKey, 'recovery-retry-in_renewal-0');
+    invoices.set(renewal.id, renewal);
+    return renewal;
+  };
+  const retried = await runRenewalRecovery({
+    commerce,
+    stripe,
+    env: { STATESET_RECOVERY_RETRY_DAYS: '[0]' },
+    apply: true,
+    now: end * 1000,
+  });
+  assert.deepEqual(retried.actions, [{ invoice: renewal.id, action: 'retry', stage: '0' }]);
   renewal.lines.data[0].pricing.price_details.price = 'price_another';
   await recordPaidRenewal(commerce, stripe, 'in_renewal');
   assert.equal((await access((end + 1) * 1000)).allowed, false);
@@ -405,12 +450,18 @@ try {
   );
   charge = {
     id: 'ch_later',
+    livemode: false,
+    status: 'succeeded',
+    paid: true,
+    captured: true,
+    disputed: false,
     payment_intent: 'pi_renewal',
     customer: sub.customer,
     currency: 'usd',
     amount_captured: 2200,
     amount_refunded: 200,
   };
+  assert.equal((await verifyRecovery()).state, 'missing_native_renewal');
   refund = {
     id: 're_later',
     payment_intent: 'pi_renewal',
@@ -428,6 +479,24 @@ try {
     recordPaidRenewal(commerce, stripe, renewal.id),
   ]);
   const [sale] = await renewalStatement(commerce);
+  const proof = await verifyRecovery();
+  assert.equal(proof.state, 'recovered');
+  assert.equal(proof.providerConfirmed, true);
+  assert.deepEqual(
+    [proof.recoveredMinor, proof.refundedMinor, proof.netRetainedMinor],
+    ['2200', '200', '2000'],
+  );
+  assert.deepEqual([proof.cycleId, proof.paymentId], [sale.cycle, sale.payment]);
+  assert.deepEqual(await verifyRecovery(), proof);
+  charge.amount_captured -= 1;
+  await assert.rejects(verifyRecovery, /captured charge/);
+  charge.amount_captured += 1;
+  failure.livemode = true;
+  await assert.rejects(verifyRecovery, /sandbox payment failure/);
+  failure.livemode = false;
+  charge.amount_refunded += 1;
+  await assert.rejects(verifyRecovery, /paid membership cycle/);
+  charge.amount_refunded -= 1;
   assert.equal(await membershipExpiry(commerce, native, (end + 1) * 1000, end * 1000, 'any'), 0);
   // Reconfiguring the catalog after purchase cannot change the agreed split.
   const sellerConfig = env.STATESET_SELLER_SKUS_JSON;
@@ -517,6 +586,7 @@ try {
   const history = await commerce.subscriptions.listBillingCycles({ subscriptionId: native.id });
   assert.equal(history.length, 2);
   assert.equal(history.find((c) => c.id === sale.cycle).status, 'refunded');
+  assert.equal((await verifyRecovery()).netRetainedMinor, '0');
   assert.equal((await commerce.payments.getRefunds(sale.payment)).length, 2);
   assert.equal((await access((end + 1) * 1000)).allowed, false);
   assert.ok((await access(Date.now() + 1000)).allowed);
@@ -658,6 +728,7 @@ try {
         'exact Stripe payments and one-time coupon',
         'one native membership after reopen and replay',
         'provider period expiry and paid renewal',
+        'failed renewal recovery matched to sandbox-shaped event, captured charge, payment, cycle and later refunds',
         'native renewal billing cycle, tax, payment and refund statement with historical replay',
         'buyer cancellation and renewal refund policy',
         'optional offer uses the verified invoice card only with buyer consent',
