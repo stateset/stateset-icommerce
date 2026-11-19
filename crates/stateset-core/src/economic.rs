@@ -990,4 +990,28 @@ mod tests {
         assert!(policy.commands.values().all(|rule| rule.requires_mandate));
         assert!(policy.commands.values().all(|rule| rule.requires_signed_authority));
     }
+
+    #[test]
+    fn settlement_without_signatures_is_not_verified() {
+        // A receipt carrying a settlement rail but no co-signatures must not be
+        // treated as final settlement. Signatures are required and verified
+        // explicitly; a receipt alone is not proof that money moved.
+        let agent = agent();
+        let execution =
+            ExecutionReceipt::succeeded(&agent.command("x402.settle", "x402-1", Value::Null), ());
+        let receipt = EconomicReceipt::from_execution(&execution)
+            .expect("economic receipt")
+            .with_settlement(EconomicSettlement {
+                rail: "x402".into(),
+                amount: AuthorityAmount::Asset(AssetAmountWire::new(Decimal::new(1250, 2), "USDC")),
+                transaction_id: "0xdeadbeef".into(),
+                status: "settled".into(),
+            });
+        // No signatures -> cannot verify.
+        assert!(!receipt.verify_signatures(&BTreeMap::new()));
+        // Even with a trusted-keys map, no signature records means failure.
+        let mut keys = BTreeMap::new();
+        keys.insert("any".into(), [0u8; 32]);
+        assert!(!receipt.verify_signatures(&keys));
+    }
 }
