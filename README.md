@@ -47,8 +47,12 @@ shop with the current storefront and the verified 1.40.1 native SDK.
 ```bash
 npm run storefront:preview -- my-preview-shop
 cd my-preview-shop
-npm run verify:storefront
+npm run setup -- --apply
+npm run dev
 ```
+
+Open the private link printed by setup and publish your first product. Run
+`npm run verify:storefront` for a separate local checkout and refund drill.
 
 The installer verifies the SDK bundle from GitHub and keeps the two npm
 archives under `vendor/stateset/` in your new shop. Keep that directory and

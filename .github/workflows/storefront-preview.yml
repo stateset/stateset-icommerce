@@ -6,6 +6,7 @@ on:
       - '.github/workflows/storefront-preview.yml'
       - 'scripts/create-storefront-preview.mjs'
       - 'scripts/ci/storefront-preview.test.mjs'
+      - 'scripts/ci/check_storefront_containers.sh'
       - 'packages/create-stateset-app/**'
       - 'package.json'
 
@@ -37,3 +38,8 @@ jobs:
           export npm_config_fetch_retries=0
           npm ci --include=optional --no-audit --no-fund
           npm run verify:storefront
+      - name: Run operator and production web images with persistent storage
+        run: |
+          docker build --target operator -t merchant-operator "$RUNNER_TEMP/relocated-store"
+          docker build --target runner -t merchant-web "$RUNNER_TEMP/relocated-store"
+          scripts/ci/check_storefront_containers.sh merchant-operator merchant-web

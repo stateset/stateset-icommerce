@@ -6,16 +6,42 @@ Requires Node.js 20.20 or newer and npm 10 or newer.
 
 ## Quick Start
 
+From this repository checkout, try the merchant preview on Linux x64 with
+glibc. The command verifies the preview SDK and creates a new shop.
+
 ```bash
-npx create-stateset-app my-store
+npm run storefront:preview -- my-store
 cd my-store
 npm run setup -- --apply
 npm run dev
 ```
 
+The published generator is also available via `npm create stateset-app@latest`. The merchant setup below requires the preview or generator 1.40.1.
+
 Open the private link printed by `setup`. Choose **Add a product**, enter its name, URL slug, SKU, USD price and available stock, and select **Publish product**. Follow the product link to see it in the storefront. Choose **Set tax and shipping** to publish your checkout rates.
 
 Setup creates or opens the configured SQLite file and issues a merchant link valid for one day. Run `npm run setup` for a read-only preview. For a sample catalog, run `npm run seed`. To enable payments, copy `.env.example` to `.env.local` if you are creating your first environment file, configure the selected processor and storefront URL, then run `npm run onboard` and restart the storefront.
+
+## Run the web storefront and merchant commands in Docker
+
+Build both images from the generated shop. The web image serves the storefront.
+The operator image carries the CLI and worker. Both run as the same unprivileged
+user and read the SQLite database at `/var/lib/stateset/store.db`.
+
+```bash
+docker build -t merchant-web .
+docker build --target operator -t merchant-operator .
+docker volume create merchant-store-data
+docker run --rm -v merchant-store-data:/var/lib/stateset merchant-operator npm run setup -- --apply
+docker run --rm -p 127.0.0.1:3000:3000 -v merchant-store-data:/var/lib/stateset merchant-web
+```
+
+Open the setup link locally to publish a product. For a deployed shop, configure
+the same public HTTPS origin and provider settings on both services. If using
+the generated environment file, set `STATESET_DB_PATH=/var/lib/stateset/store.db`
+in that file. Run `npm run merchant:worker -- --watch --apply` in the operator
+image with the same volume to process work continuously. Keep the two containers
+on a host that can share the SQLite volume.
 
 ## What You Get
 
