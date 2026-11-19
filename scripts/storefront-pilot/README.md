@@ -10,11 +10,12 @@ With Node 20.20+ and npm 10+ on Linux x64 with glibc, run these commands:
 
 ```sh
 npm ci --include=optional
+npm run setup
 npm run setup -- --apply
 npm run dev -- --hostname 127.0.0.1
 ```
 
-Or use Docker Compose with a Linux AMD64 container runtime. This path uses its own persistent database volume and binds the storefront to your computer's loopback address.
+Or use Docker Compose with a Linux AMD64 container runtime. This path uses its own persistent database volume and binds the storefront to your computer's loopback address. If port 3000 is in use, run `export PILOT_PORT=3100` in the same terminal first.
 
 ```sh
 docker compose --profile tools build

@@ -5,7 +5,9 @@ services:
       context: .
       target: runner
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${PILOT_PORT:-3000}:3000"
+    environment:
+      NEXT_PUBLIC_BASE_URL: "http://localhost:${PILOT_PORT:-3000}"
     volumes:
       - store:/var/lib/stateset
   operator:
@@ -14,6 +16,8 @@ services:
     build:
       context: .
       target: operator
+    environment:
+      NEXT_PUBLIC_BASE_URL: "http://localhost:${PILOT_PORT:-3000}"
     volumes:
       - store:/var/lib/stateset
 volumes:
