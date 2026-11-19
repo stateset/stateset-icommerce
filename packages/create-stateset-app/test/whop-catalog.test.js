@@ -144,6 +144,8 @@ test('Whop applies only reviewed eligible catalog entries and preserves later in
   const db = database();
   const plan = await importWhopCatalog(null, payload);
   const row = plan.rows[0];
+  assert.equal(plan.items[0].action, 'stage draft');
+  assert.equal(plan.items[0].name, row.name);
   assert.equal(await db.products.getBySlug(row.slug), undefined);
   assert.equal((await importWhopCatalog(db, payload)).fingerprint, plan.fingerprint);
   await assert.rejects(
@@ -162,10 +164,15 @@ test('Whop applies only reviewed eligible catalog entries and preserves later in
   stock.available = 8;
   product.status = 'active';
   const replay = await importWhopCatalog(db, payload, { apply: true });
+  assert.equal(replay.items[0].action, 'preserve');
   assert.equal(replay.existing, 1);
   assert.equal(replay.inserted, 0);
   assert.equal(stock.available, 8);
   assert.equal(product.status, 'active');
+  const interruptedDb = { ...db, inventory: { ...db.inventory, getStock: async () => undefined } };
+  const repair = await importWhopCatalog(interruptedDb, payload);
+  assert.equal(repair.items[0].action, 'restore stock record');
+  assert.notEqual(repair.fingerprint, replay.fingerprint);
   // The new row sorts before the existing row. A conflict on the latter must stop the whole import before writes.
   payload.variants.data.unshift({ ...payload.variants.data[0], id: 'plan_A', title: 'Another' });
   payload.variants.data[1].initial_price_due.amount = '20.10';

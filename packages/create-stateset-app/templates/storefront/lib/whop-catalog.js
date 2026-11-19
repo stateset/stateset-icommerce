@@ -148,7 +148,8 @@ export async function importWhopCatalog(
 ) {
   if (apply && !commerce) throw new Error('A store is required to apply a Whop catalog');
   const mapped = mapWhopCatalog(payload);
-  const existingSkus = [];
+  const existingSkus = new Set();
+  const missingStock = new Set();
   for (const row of mapped.rows) {
     if (!commerce) break;
     const [product, variant, stock] = await Promise.all([
@@ -165,11 +166,12 @@ export async function importWhopCatalog(
       decimalToUnits(variant.priceExact, 2) !== decimalToUnits(row.price, 2)
     )
       throw new Error('Existing catalog conflicts with ' + row.sku);
-    existingSkus.push(row.sku);
+    existingSkus.add(row.sku);
+    if (!stock) missingStock.add(row.sku);
   }
-  const fingerprint = digest(
-    JSON.stringify([mapped.accountId, mapped.rows, mapped.skipped, existingSkus]),
-  );
+  const reviewed = [mapped.accountId, mapped.rows, mapped.skipped, [...existingSkus]];
+  if (missingStock.size) reviewed.push([...missingStock]);
+  const fingerprint = digest(JSON.stringify(reviewed));
   if (expectedFingerprint !== undefined && expectedFingerprint !== fingerprint)
     throw new Error('Whop import preview changed; review a fresh preview');
   const result =
@@ -178,11 +180,21 @@ export async function importWhopCatalog(
       : { inserted: 0 };
   return {
     ...mapped,
+    items: mapped.rows.map((row) => {
+      let action = 'stage draft';
+      if (existingSkus.has(row.sku)) action = missingStock.has(row.sku) ? 'restore stock record' : 'preserve';
+      return {
+        slug: row.slug,
+        name: row.name,
+        action,
+        variants: [{ sku: row.sku, price: row.price, openingStock: row.stock }],
+      };
+    }),
     mode: apply ? 'apply' : 'preview',
     total: mapped.rows.length,
     inserted: result.inserted,
-    existing: existingSkus.length,
-    wouldInsert: mapped.rows.length - existingSkus.length,
+    existing: existingSkus.size,
+    wouldInsert: mapped.rows.length - existingSkus.size,
     fingerprint,
   };
 }

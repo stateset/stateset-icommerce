@@ -1,0 +1,97 @@
+{
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 10,
+      "structure": "parent",
+      "slug": "workshop-mug",
+      "title": "Workshop mug",
+      "is_public": true,
+      "is_discountable": true,
+      "enable_subscription": false,
+      "variant_attributes": [
+        {
+          "name": "Color",
+          "code": "color",
+          "values": [
+            "Red",
+            "Blue"
+          ]
+        }
+      ],
+      "variants": [
+        {
+          "id": 100,
+          "product_id": 10,
+          "title": "Red",
+          "sku": "MUG-RED",
+          "variant_attribute_values": [
+            {
+              "name": "Color",
+              "code": "color",
+              "value": "Red"
+            }
+          ],
+          "requires_shipping": true,
+          "track_stock": true,
+          "allow_backorders": false,
+          "purchase_availability": "available",
+          "inventory_availability": "in_stock",
+          "prices": [
+            {
+              "currency": "USD",
+              "price": "19.9900",
+              "retail": "30.00",
+              "subscription": null
+            }
+          ],
+          "stockrecords": [
+            {
+              "id": 1000,
+              "location_id": 7,
+              "num_in_stock": 3,
+              "num_allocated": 0,
+              "low_stock_threshold": 1
+            }
+          ]
+        },
+        {
+          "id": 101,
+          "product_id": 10,
+          "title": "Blue",
+          "sku": "MUG-BLUE",
+          "variant_attribute_values": [
+            {
+              "name": "Color",
+              "code": "color",
+              "value": "Blue"
+            }
+          ],
+          "requires_shipping": true,
+          "track_stock": true,
+          "allow_backorders": false,
+          "purchase_availability": "available",
+          "inventory_availability": "in_stock",
+          "prices": [
+            {
+              "currency": "USD",
+              "price": "24.9100",
+              "retail": "30.00",
+              "subscription": null
+            }
+          ],
+          "stockrecords": [
+            {
+              "id": 1001,
+              "location_id": 7,
+              "num_in_stock": 4,
+              "num_allocated": 0,
+              "low_stock_threshold": 1
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "accountId": "biz_PilotExample",
+  "products": {
+    "data": [
+      {
+        "id": "prod_Workshop",
+        "account": {
+          "id": "biz_PilotExample"
+        },
+        "title": "Workshop handbook",
+        "visibility": "visible"
+      }
+    ],
+    "page_info": {
+      "has_previous_page": false,
+      "has_next_page": false,
+      "end_cursor": null
+    }
+  },
+  "variants": {
+    "data": [
+      {
+        "id": "plan_Handbook",
+        "account": {
+          "id": "biz_PilotExample"
+        },
+        "product": {
+          "id": "prod_Workshop"
+        },
+        "title": "Handbook",
+        "visibility": "visible",
+        "billing_type": "one_time",
+        "billing_period": null,
+        "trial_period_days": null,
+        "expiration_days": null,
+        "split_pay_required_payments": null,
+        "release_method": "buy_now",
+        "invoice": null,
+        "adaptive_pricing_enabled": false,
+        "currency": "usd",
+        "initial_price_due": {
+          "amount": "12.10",
+          "currency": "usd"
+        },
+        "custom_fields": [],
+        "attributes": null
+      },
+      {
+        "id": "plan_Membership",
+        "account": {
+          "id": "biz_PilotExample"
+        },
+        "product": {
+          "id": "prod_Workshop"
+        },
+        "title": "Membership",
+        "visibility": "visible",
+        "billing_type": "renewal",
+        "billing_period": 30,
+        "trial_period_days": null,
+        "expiration_days": null,
+        "split_pay_required_payments": null,
+        "release_method": "buy_now",
+        "invoice": null,
+        "adaptive_pricing_enabled": false,
+        "currency": "usd",
+        "initial_price_due": {
+          "amount": "20.00",
+          "currency": "usd"
+        },
+        "custom_fields": [],
+        "attributes": null
+      }
+    ],
+    "page_info": {
+      "has_previous_page": false,
+      "has_next_page": false,
+      "end_cursor": null
+    }
+  }
+}

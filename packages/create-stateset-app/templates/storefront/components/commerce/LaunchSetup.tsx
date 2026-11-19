@@ -55,6 +55,7 @@ export function LaunchSetup({
     skipped?: { id: string; reason: string }[];
     items?: {
       slug: string;
+      name?: string;
       action: string;
       variants: { sku: string; price: string; openingStock: number }[];
     }[];
@@ -259,7 +260,7 @@ export function LaunchSetup({
           <ul className="list-disc pl-5">
             {review.items.map((item) => (
               <li key={item.variants[0]?.sku || item.slug}>
-                {item.slug} · {item.action}
+                {item.name || item.slug} · {item.action}
                 <ul className="pl-3">
                   {item.variants.map((v) => (
                     <li key={v.sku}>

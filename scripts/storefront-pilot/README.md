@@ -29,9 +29,11 @@ Open the private localhost link printed by setup. Under **Store setup**, create 
 
 | Workflow | What to check |
 | --- | --- |
-| Next Commerce catalog | Preview a saved Products List page. Check a variant's SKU, USD price and opening stock. Apply the reviewed import, select that variant in the shop, then preview the same file again. |
-| Whop catalog | Preview saved product and variant lists. Inspect the skipped offers and their reasons. Apply the review and confirm the eligible fixed-price offers are private, zero-stock drafts. |
+| Next Commerce catalog | Upload `scripts/catalog-examples/next-commerce.json` with source store code `workshop`. Preview the blue mug at USD 24.91 with four units, apply, then select that variant in the shop. Preview the same file again to see which data is preserved. |
+| Whop catalog | Upload `scripts/catalog-examples/whop.json`. The USD 12.10 handbook qualifies and the monthly membership is excluded. Apply and confirm the handbook stays a private, zero-stock draft. |
 | Checkout and refunds | Run `npm run verify:storefront` locally, or `docker compose run --rm operator npm run verify:storefront`. The exercises create disposable stores and use simulated payments. |
+
+Both sample files contain fictional catalog data. You can substitute your own saved exports using the same portal steps.
 
 The default checkout uses Base mainnet USDC and starts with a placeholder receiver address. Store setup, catalog review and the local drills work without a wallet. Configure a provider and run the launch checks before taking payments. [Merchant guide](MERCHANT-GUIDE.md)
 
