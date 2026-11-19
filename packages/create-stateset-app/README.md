@@ -199,6 +199,21 @@ For merchant-managed routing, set `STATESET_CHECKOUT_PROVIDER=routed` and config
 
 Run `npm run verify:providers` to preview the processor drill. To exercise the native adapters against test accounts, configure `STRIPE_TEST_KEY` and/or `SQUARE_SANDBOX_ACCESS_TOKEN` plus `SQUARE_SANDBOX_LOCATION`. Run `npm run verify:providers -- --provider both --db ./processor-drill.db --key launch-01 --apply`. Each selected sandbox captures USD 1.00 and refunds USD 0.25. The report includes the processor reference and native refund. Reusing the database and key polls an outstanding result. Use `--provider stripe` or `--provider square` for a single provider. Wallet presentation requires an eligible browser, device and merchant account. [Stripe test methods](https://docs.stripe.com/testing) · [Square Sandbox payments](https://developer.squareup.com/docs/devtools/sandbox/payments)
 
+### Import an existing Whop catalog
+
+A merchant with an existing Whop account can stage catalog items for a StateSet storefront. Export the account’s current `GET /api/v1/products?account_id=biz_…` and `GET /api/v1/variants?account_id=biz_…` responses. Use the account’s product and variant read permissions, pin `Api-Version-Date: 2026-11-19-1`, and omit presentment currency or country overrides. Follow each forward cursor through the final page. [Whop product listing](https://docs.whop.com/api-reference/products/list-products) · [Whop variant listing and exact prices](https://docs.whop.com/api-reference/variants/list-variants)
+
+Combine the two saved responses locally. For a multi-page listing, supply all pages for that endpoint in request order as a JSON array. The command accepts the response bodies directly and runs offline. A single-page example using `jq` follows.
+
+```bash
+jq -n --arg accountId biz_YourAccount --slurpfile products products.json --slurpfile variants variants.json \
+  '{accountId:$accountId,products:$products,variants:$variants}' > whop-catalog.json
+node scripts/import-whop-catalog.js whop-catalog.json | tee whop-preview.json
+node scripts/import-whop-catalog.js whop-catalog.json --apply --fingerprint "$(jq -r .fingerprint whop-preview.json)"
+```
+
+The preview lists each eligible public one-time, buy-now USD variant, its exact price, its local SKU, and the reason for each exclusion. Apply creates one draft product per eligible variant with zero inventory. Source account/product/variant IDs determine stable SKUs. Replays preserve local stock and activation, and conflicting titles or prices stop the import before catalog writes. Configure digital delivery for the SKU, allocate inventory and activate the product when ready. Existing buyers, community access, renewals and billing continue in Whop. Catalog imports contribute zero orders to adoption reporting.
+
 ### Merchant portal
 
 Run `npm run merchant -- portal shop --role merchant --days 7 --apply` to issue an expiring operator link. Deliver it privately. The portal supports catalog import, tax and shipping publication, read-only checks of each routed Stripe account or Square location, guided test purchases, integration installation and delivery replay. Publishing pricing applies the revision to storefront quotes and checkout. Environment rates supply the initial settings. The standalone doctor checks environment configuration. The portal additionally reads pricing published in the store. Revoke a link with `npm run merchant -- revoke-portal LINK_ID --apply`.
