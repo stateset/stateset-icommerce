@@ -1,4 +1,4 @@
-import { Commerce } from '@stateset/embedded';
+import { Commerce, type ProductOutput } from '@stateset/embedded';
 
 let commerce: Commerce | null = null;
 
@@ -9,6 +9,22 @@ export function getCommerce() {
   return commerce;
 }
 
+async function* activeProducts(pageSize: number) {
+  let afterCursor: string[] | undefined;
+  while (true) {
+    const page = await getCommerce().products.list({ status: 'active', limit: pageSize, afterCursor });
+    yield* page;
+    if (page.length < pageSize) return;
+    const last = page[page.length - 1];
+    afterCursor = [last.name, last.id];
+  }
+}
+
+async function withVariants(product: ProductOutput) {
+  const variants = await getCommerce().products.getVariants(product.id);
+  return { ...product, variants };
+}
+
 export async function getProducts(
   opts: {
     search?: string;
@@ -16,45 +32,25 @@ export async function getProducts(
     limit?: number;
   } = {},
 ) {
-  const c = getCommerce();
-  const products = await c.products.list();
-  const enriched: any[] = await Promise.all(
-    products.map(async (product) => ({
-      ...product,
-      variants: await c.products.getVariants(product.id),
-    })),
-  );
-  let filtered = enriched.slice(0, opts.limit || 20);
-
-  if (opts.search) {
-    const q = opts.search.toLowerCase();
-    filtered = filtered.filter(
-      (p: any) => p.name?.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q),
-    );
+  const limit = opts.limit || 20;
+  const query = opts.search?.toLowerCase();
+  const category = opts.category?.toLowerCase();
+  const matches: ProductOutput[] = [];
+  for await (const product of activeProducts(query || category ? 100 : limit)) {
+    if (category && product.category?.toLowerCase() !== category) continue;
+    if (query && !product.name.toLowerCase().includes(query) && !product.description.toLowerCase().includes(query)) continue;
+    matches.push(product);
+    if (matches.length === limit) break;
   }
-
-  if (opts.category) {
-    const cat = opts.category.toLowerCase();
-    filtered = filtered.filter(
-      (p: any) =>
-        p.category?.toLowerCase() === cat || p.tags?.some((t: string) => t.toLowerCase() === cat),
-    );
-  }
-
-  return { products: filtered };
+  return { products: await Promise.all(matches.map(withVariants)) };
 }
 
 export async function getProductBySlug(slug: string) {
-  const c = getCommerce();
-  const products: any[] = await Promise.all(
-    (await c.products.list()).map(async (product) => ({
-      ...product,
-      variants: await c.products.getVariants(product.id),
-    })),
-  );
-  return (
-    products.find(
-      (p: any) => p.slug === slug || p.name?.toLowerCase().replace(/\s+/g, '-') === slug,
-    ) || null
-  );
+  const product = await getCommerce().products.getBySlug(slug);
+  if (product) return product.status === 'active' ? withVariants(product) : null;
+  // Preserve name-based links from earlier storefronts with custom product slugs.
+  for await (const candidate of activeProducts(100)) {
+    if (candidate.name.toLowerCase().replace(/\s+/g, '-') === slug) return withVariants(candidate);
+  }
+  return null;
 }

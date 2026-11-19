@@ -1,5 +1,8 @@
+import { isWhopCatalogVariant } from '@/lib/whop-catalog.js';
+import { importedOneTimeProduct } from '@/lib/next-catalog.js';
 import { NextRequest, NextResponse } from 'next/server';
 import { digitalProducts } from '@/lib/digital-access.js';
+import { purchasableVariant } from '@/lib/campaigns.js';
 import { getCommerce } from '@/lib/commerce';
 import { verifyWalletRequest } from '@/lib/wallet-auth';
 import { walletMatches } from '@/lib/customer-metadata';
@@ -55,8 +58,17 @@ export async function POST(request: NextRequest) {
         { error: 'Complete checkout to start this paid membership.' },
         { status: 409 },
       );
-    const variant = await commerce.products.getVariantBySku(sku);
-    if (!variant) return NextResponse.json({ error: 'Unknown SKU' }, { status: 404 });
+    const available = await purchasableVariant(commerce, sku);
+    if (!available) return NextResponse.json({ error: 'Unknown SKU' }, { status: 404 });
+    const { product, variant } = available;
+    if (
+      (await importedOneTimeProduct(commerce, variant.productId)) ||
+      isWhopCatalogVariant(product, variant)
+    )
+      return NextResponse.json(
+        { error: 'This product supports one-time purchase only.' },
+        { status: 409 },
+      );
     let plan = await commerce.subscriptions.getPlanByCode(`monthly-${sku}`);
     if (!plan) {
       plan = await commerce.subscriptions.createPlan({

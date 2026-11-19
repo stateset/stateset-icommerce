@@ -36,7 +36,7 @@ export async function saveMerchantRecord(commerce, key, data, collection = undef
   return data;
 }
 
-export async function* merchantRecords(commerce, collection) {
+export async function* merchantRecords(commerce, collection, { includeHandle = false } = {}) {
   const seen = new Set();
   for (let offset = 0; ; offset += 100) {
     const rows = await commerce.customObjects.listObjects({
@@ -49,7 +49,11 @@ export async function* merchantRecords(commerce, collection) {
     for (const row of rows) {
       if (seen.has(row.handle)) continue;
       seen.add(row.handle);
-      yield { key: row.handle, ...JSON.parse(row.valuesJson).data };
+      yield {
+        key: row.handle,
+        ...JSON.parse(row.valuesJson).data,
+        ...(includeHandle && { handle: row.handle }),
+      };
     }
     if (rows.length < 100) break;
   }

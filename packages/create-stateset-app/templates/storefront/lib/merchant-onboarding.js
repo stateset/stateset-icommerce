@@ -41,7 +41,7 @@ export function validateCatalog(rows) {
   return rows;
 }
 
-export async function importCatalog(commerce, rows) {
+export async function importCatalog(commerce, rows, { activate = true } = {}) {
   validateCatalog(rows);
   let inserted = 0;
   for (const row of rows) {
@@ -74,7 +74,7 @@ export async function importCatalog(commerce, rows) {
         initialQuantity: row.stock,
       });
     }
-    if (product.status === 'draft') await commerce.products.activate(product.id);
+    if (activate && product.status === 'draft') await commerce.products.activate(product.id);
   }
   return { inserted, total: rows.length };
 }

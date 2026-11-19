@@ -17,10 +17,9 @@ export function ProductSearchClient({
 }: Props) {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState(initialCategory);
-  const { products, isLoading } = useProducts({ search, category });
-
-  const displayProducts =
-    search || (category && category !== initialCategory) ? products : initialProducts;
+  const filtersChanged = !!search || category !== initialCategory;
+  const { products, isLoading } = useProducts({ search, category, enabled: filtersChanged });
+  const displayProducts = filtersChanged ? products : initialProducts;
 
   return (
     <div>

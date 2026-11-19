@@ -17,15 +17,31 @@ COPY . .
 
 RUN npm run build
 
-# Production image, copy all the files and run next
-FROM base AS runner
+# Both long-running services use the same SQLite directory and process user.
+FROM base AS runtime
 WORKDIR /app
-
 ENV NODE_ENV=production
+ENV STATESET_DB_PATH=/var/lib/stateset/store.db
 
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+RUN addgroup --system --gid 1001 nodejs \
+ && adduser --system --uid 1001 --ingroup nodejs nextjs \
+ && install -d -m 0750 -o nextjs -g nodejs /var/lib/stateset
 
+# Operator commands use SDKs that the web server can bundle into compiled routes.
+FROM deps AS operator-deps
+RUN npm prune --omit=dev --offline --no-audit --no-fund
+
+FROM runtime AS operator
+# The Node 20 catalog CLI uses Python's SQLite online backup to preview a live store.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+COPY --from=operator-deps /app/node_modules ./node_modules
+COPY package.json ./
+COPY scripts ./scripts
+COPY lib ./lib
+USER nextjs
+CMD ["node", "scripts/merchant-worker.js"]
+
+FROM runtime AS runner
 COPY --from=builder /app/public ./public
 
 # Set the correct permission for prerender cache
@@ -36,8 +52,7 @@ RUN chown nextjs:nodejs .next
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Mount a volume for the database in production:
-#   docker run -v $(pwd)/store.db:/app/store.db ...
+# Mount a named volume at /var/lib/stateset for the database and its WAL files.
 
 USER nextjs
 

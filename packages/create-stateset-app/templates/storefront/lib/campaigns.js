@@ -191,11 +191,21 @@ export async function enterCampaign(
   return { token: encodeCampaign(env, { ...assignment, expires }), assignment, maxAge: lifetime };
 }
 
+export async function purchasableVariant(commerce, sku) {
+  const found = await commerce.products.getVariantBySku(sku);
+  if (!found) return null;
+  const product = await commerce.products.get(found.productId);
+  if (product?.status !== 'active') return null;
+  // The SKU lookup includes inactive variants. getVariants returns the active set.
+  const variant = (await commerce.products.getVariants(product.id)).find((entry) => entry.id === found.id);
+  return variant ? { product, variant } : null;
+}
+
 export async function catalogOffer(commerce, sku) {
   if (!sku) return null;
-  const variant = await commerce.products.getVariantBySku(sku);
-  const product = variant && (await commerce.products.get(variant.productId));
-  if (!variant || product?.status !== 'active') throw new Error('Offer is no longer available');
+  const available = await purchasableVariant(commerce, sku);
+  if (!available) throw new Error('Offer is no longer available');
+  const { product, variant } = available;
   return {
     productId: product.id,
     variantId: variant.id,

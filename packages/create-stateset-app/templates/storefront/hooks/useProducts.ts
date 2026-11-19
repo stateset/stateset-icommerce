@@ -6,9 +6,10 @@ interface UseProductsOptions {
   search?: string;
   category?: string;
   limit?: number;
+  enabled?: boolean;
 }
 
-export function useProducts({ search, category, limit = 20 }: UseProductsOptions = {}) {
+export function useProducts({ search, category, limit = 20, enabled = true }: UseProductsOptions = {}) {
   const { data, isLoading, error } = useQuery({
     queryKey: ['products', search, category, limit],
     queryFn: async () => {
@@ -21,7 +22,7 @@ export function useProducts({ search, category, limit = 20 }: UseProductsOptions
       return data;
     },
     staleTime: 60_000,
-    enabled: !!(search || category),
+    enabled,
   });
 
   return {

@@ -300,6 +300,8 @@ StateSet can become a large infrastructure company only if it answers two questi
 
 ## Related Docs
 
+- [Developer pilot enrollment and competitive decisions](./DEVELOPER_PILOT.md)
+
 - [Competitive Landscape](./COMPETITIVE_LANDSCAPE.md)
 - [Agentic Commerce Baseline](./AGENTIC_COMMERCE_BASELINE.md)
 - [Trust Foundation](src/trust-foundation.md)

@@ -35,9 +35,40 @@ npm run seed          # 10 products, stock, a demo catalog in ./store.db
 npm run dev           # http://localhost:3000
 ```
 
-That is a Next.js storefront with a real commerce engine behind it — the
-generator and the seed step are covered end to end by the
-[Storefront Golden Path](.github/workflows/storefront-golden-path.yml) CI job.
+The public generator builds a seeded demo shop. As of November 19, 2026, npm
+serves generator 1.39.0 with SDK 1.40.0. Use the merchant preview below to
+evaluate the setup portal and catalog imports. [Storefront Golden Path](.github/workflows/storefront-golden-path.yml)
+
+### Try the merchant storefront preview
+
+From this checkout on **Linux x64 with glibc**, Node 20.20+ and npm 10+, create a
+shop with the current storefront and the verified 1.40.1 native SDK.
+
+```bash
+npm run storefront:preview -- my-preview-shop
+cd my-preview-shop
+npm run setup -- --apply
+npm run dev
+```
+
+Open the private link printed by setup and publish your first product. Run
+`npm run verify:storefront` for a separate local checkout and refund drill.
+
+Already selling on Next Commerce or Whop? In the portal, open **Store setup →
+Import a product catalog** to preview your own data. The Next importer brings
+across eligible physical products, variant prices and opening stock. The Whop
+importer stages eligible one-time offers as private drafts for review.
+[Next Commerce import](packages/create-stateset-app/README.md#import-a-next-commerce-product-catalog) · [Whop import](packages/create-stateset-app/README.md#import-an-existing-whop-catalog)
+
+The installer verifies the SDK bundle from GitHub and keeps the two npm
+archives under `vendor/stateset/` in your new shop. Keep that directory and
+`package-lock.json` together when moving the shop or running `npm ci` in CI.
+The generated Dockerfile uses the same archives. The storefront checks run
+locally with simulated payments. To reuse a previously downloaded bundle,
+pass `--bundle /path/to/stateset-storefront-1.40.1-linux-x64-gnu.tar` to the
+preview command.
+
+Teams comparing StateSet with Next Commerce, Whop, or an internal implementation can run the same failed-renewal and reconciliation exercise. [Developer pilot](docs/DEVELOPER_PILOT.md)
 
 ### Give an AI agent a commerce sandbox
 

@@ -6,17 +6,42 @@ Requires Node.js 20.20 or newer and npm 10 or newer.
 
 ## Quick Start
 
+From this repository checkout, try the merchant preview on Linux x64 with
+glibc. The command verifies the preview SDK and creates a new shop.
+
 ```bash
-npx create-stateset-app my-store
+npm run storefront:preview -- my-store
 cd my-store
-cp .env.example .env.local
-npm run seed
-npm run doctor
-npm run verify:journey
+npm run setup -- --apply
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+The published generator is also available via `npm create stateset-app@latest`. The merchant setup below requires the preview or generator 1.40.1.
+
+Open the private link printed by `setup`. Choose **Add a product**, enter its name, URL slug, SKU, USD price and available stock, and select **Publish product**. Follow the product link to see it in the storefront. Choose **Set tax and shipping** to publish your checkout rates.
+
+Setup creates or opens the configured SQLite file and issues a merchant link valid for one day. Run `npm run setup` for a read-only preview. For a sample catalog, run `npm run seed`. To enable payments, copy `.env.example` to `.env.local` if you are creating your first environment file, configure the selected processor and storefront URL, then run `npm run onboard` and restart the storefront.
+
+## Run the web storefront and merchant commands in Docker
+
+Build both images from the generated shop. The web image serves the storefront.
+The operator image carries the CLI and worker. Both run as the same unprivileged
+user and read the SQLite database at `/var/lib/stateset/store.db`.
+
+```bash
+docker build -t merchant-web .
+docker build --target operator -t merchant-operator .
+docker volume create merchant-store-data
+docker run --rm -v merchant-store-data:/var/lib/stateset merchant-operator npm run setup -- --apply
+docker run --rm -p 127.0.0.1:3000:3000 -v merchant-store-data:/var/lib/stateset merchant-web
+```
+
+Open the setup link locally to publish a product. For a deployed shop, configure
+the same public HTTPS origin and provider settings on both services. If using
+the generated environment file, set `STATESET_DB_PATH=/var/lib/stateset/store.db`
+in that file. Run `npm run merchant:worker -- --watch --apply` in the operator
+image with the same volume to process work continuously. Keep the two containers
+on a host that can share the SQLite volume.
 
 ## What You Get
 
@@ -139,6 +164,21 @@ my-store/
 
 MIT
 
+## Import a Next Commerce product catalog
+
+Save a page from the Next Commerce Admin API `GET /api/admin/products/?is_public=true&is_gift_card=false` using version `2024-04-01` and the `catalogue:read` permission. Keep the JSON envelope with its `results`, `next` and `previous` fields. Import each cursor page separately under the same source store code. The importer reads local files. Next's Inventory CSV covers SKUs, locations and quantities. The Products List response also supplies product and variant identities, selling prices and purchase settings. [Next Products List](https://developers.nextcommerce.com/docs/admin-api/reference/products/productsList) · [Next inventory exports](https://docs.nextcommerce.com/docs/build-a-store/catalogue/inventory)
+
+In **Store setup → Import a product catalog**, select **Next Commerce Products List JSON**, enter a stable code for the source store and upload the saved page. Review the SKUs, exact USD prices, opening units and existing imports before selecting **Import reviewed catalog**. The same workflow runs from the generated storefront directory. The CLI previews existing stores against a private SQLite snapshot in the temporary directory, including committed WAL data. It uses Node 22.13+ or Python 3 on Node 20.
+
+```bash
+npm run onboard -- --next-catalog page-1.json --source-store my-next-store
+npm run onboard -- --next-catalog page-1.json --source-store my-next-store --reviewed FINGERPRINT_FROM_PREVIEW --apply
+```
+
+- **Supported products** are public, discountable, one-time physical goods with a positive USD selling price in whole cents up to $999,999.99. An optional USD retail price imports as the comparison price. Buyers can select each variant by title and original SKU. StateSet records the source store, product, variant, stockrecord and location IDs alongside the local identities and variant option values.
+- **Opening inventory** comes from one fulfillment location across this source store. Each variant must track stock, disable backorders, agree with its purchase availability and have zero units allocated to open orders. The importer preserves quantity and low-stock threshold. A replay preserves later sales, quantity adjustments, prices and product status.
+- **Import scope** covers product titles, slugs, variant titles and SKUs, one-time prices and opening inventory. Descriptions, media, merchandising, unit costs, UPCs, customer or order history, payments, subscriptions and tax settings require separate setup. The whole page is checked before applying. Unsupported purchase terms, custom tax codes, conflicting source revisions and existing unrelated destination SKUs or slugs stop the import. [Next product, pricing and inventory semantics](https://developers.nextcommerce.com/docs/admin-api/guides/product-management)
+
 ## Card checkout and merchant onboarding
 
 Set `STATESET_CHECKOUT_PROVIDER=stripe`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `NEXT_PUBLIC_BASE_URL`. Register `/api/checkout/stripe-webhook` for `checkout.session.completed`, `checkout.session.expired`, `refund.created`, `refund.updated` and `refund.failed`. Stripe Checkout presents cards and eligible Apple Pay and Google Pay wallets according to account settings, browser, and device. The reusable `CardCheckoutButton` accepts cart, contact and delivery details. The server prices the cart and reserves stock before opening a hosted checkout. Keep the original processor credentials available while sessions and refunds are outstanding. [Stripe wallet support](https://docs.stripe.com/payments/checkout/payment-methods)
@@ -174,6 +214,23 @@ For merchant-managed routing, set `STATESET_CHECKOUT_PROVIDER=routed` and config
 
 Run `npm run verify:providers` to preview the processor drill. To exercise the native adapters against test accounts, configure `STRIPE_TEST_KEY` and/or `SQUARE_SANDBOX_ACCESS_TOKEN` plus `SQUARE_SANDBOX_LOCATION`. Run `npm run verify:providers -- --provider both --db ./processor-drill.db --key launch-01 --apply`. Each selected sandbox captures USD 1.00 and refunds USD 0.25. The report includes the processor reference and native refund. Reusing the database and key polls an outstanding result. Use `--provider stripe` or `--provider square` for a single provider. Wallet presentation requires an eligible browser, device and merchant account. [Stripe test methods](https://docs.stripe.com/testing) · [Square Sandbox payments](https://developer.squareup.com/docs/devtools/sandbox/payments)
 
+### Import an existing Whop catalog
+
+A merchant with an existing Whop account can stage catalog items for a StateSet storefront. Export the account’s current `GET /api/v1/products?account_id=biz_…` and `GET /api/v1/variants?account_id=biz_…` responses. Use the account’s product and variant read permissions, pin `Api-Version-Date: 2026-11-19-1`, and omit presentment currency or country overrides. Follow each forward cursor through the final page. [Whop product listing](https://docs.whop.com/api-reference/products/list-products) · [Whop variant listing and exact prices](https://docs.whop.com/api-reference/variants/list-variants)
+
+Combine the two saved responses locally. For a multi-page listing, supply all pages for that endpoint in request order as a JSON array. The command accepts the response bodies directly and runs offline. A single-page example using `jq` follows.
+
+```bash
+jq -n --arg accountId biz_YourAccount --slurpfile products products.json --slurpfile variants variants.json \
+  '{accountId:$accountId,products:$products,variants:$variants}' > whop-catalog.json
+node scripts/import-whop-catalog.js whop-catalog.json | tee whop-preview.json
+node scripts/import-whop-catalog.js whop-catalog.json --apply --fingerprint "$(jq -r .fingerprint whop-preview.json)"
+```
+
+The merchant portal accepts this same bundle under **Store setup → Import a product catalog → Whop products and variants JSON**. In the generated storefront directory, the shared CLI accepts `npm run onboard -- --whop-catalog whop-catalog.json`; use `--reviewed FINGERPRINT_FROM_PREVIEW --apply` to stage the reviewed offers.
+
+The preview lists each eligible public one-time, buy-now USD variant, its exact price, its local SKU, and the reason for each exclusion. Apply creates one draft product per eligible variant with zero inventory. Source account/product/variant IDs determine stable SKUs. Replays preserve local stock and activation, and conflicting titles or prices stop the import before catalog writes. Configure digital delivery for the SKU, allocate inventory and activate the product when ready. Existing buyers, community access, renewals and billing continue in Whop. Catalog imports contribute zero orders to adoption reporting.
+
 ### Merchant portal
 
 Run `npm run merchant -- portal shop --role merchant --days 7 --apply` to issue an expiring operator link. Deliver it privately. The portal supports catalog import, tax and shipping publication, read-only checks of each routed Stripe account or Square location, guided test purchases, integration installation and delivery replay. Publishing pricing applies the revision to storefront quotes and checkout. Environment rates supply the initial settings. The standalone doctor checks environment configuration. The portal additionally reads pricing published in the store. Revoke a link with `npm run merchant -- revoke-portal LINK_ID --apply`.
@@ -187,6 +244,19 @@ Set `stateset_subscription_id` and `stateset_customer_id` in the Stripe subscrip
 For memberships sold through the starter's Stripe Checkout, each single-charge, fixed-price renewal creates a native payment and paid billing cycle. The merchant portal and `npm run merchant -- renewal-statement` show the invoice, period, tax, refunds and net cash collected. To recover missed events for an existing membership, run `npm run merchant -- reconcile-renewals NATIVE_SUBSCRIPTION_ID` to preview its paid invoices, then add `--apply` to post the invoices and their refunds locally. Replaying the same history reuses the original payment and billing cycle.
 
 Renewing seller memberships retain the seller, fee and merchandise base agreed at checkout. The seller statement identifies each renewal invoice. Transfers use its verified charge, and refunds reduce or reverse the seller payout. Older checkouts with ambiguous allocations appear as `needs review` in the renewal statement. Use `npm run merchant -- resolve-renewal-seller SUBSCRIPTION_ID --seller CODE --bps FEE` to preview the original seller's agreed rate, or use `--platform-owned` for a merchant-owned membership. Add `--apply` to save that decision.
+
+#### Verify a failed renewal against Stripe
+
+Use the database of the sandbox storefront that sold the membership. Enable renewal recovery and deliver `invoice.payment_failed` and `invoice.paid` to its webhook. Purchase a recurring USD membership using a successful test card. In the Stripe sandbox, change the subscription's payment method to a test card that can be attached and declines on charge. Advance its billing cycle using **Run simulation** on the enrolled subscription when available. Use the resulting failed renewal event ID from that account. [Stripe Billing sandbox guide](https://docs.stripe.com/billing/testing) · [Stripe test cards](https://docs.stripe.com/testing#declined-payments)
+
+```bash
+npm run verify:recovery
+npm run verify:recovery -- --check --event evt_EXAMPLE --db ./store.db
+```
+
+The first command previews the check. The second uses `STRIPE_TEST_KEY` (or a test-mode `STRIPE_SECRET_KEY`) to read that event and invoice. With the invoice open, expect `awaiting_payment`. Update the payment method for this subscription to a successful test card and let the configured retry run. When using a simulation, advance to the retry time. Rerun the same check after Stripe delivers `invoice.paid`. [Stripe payment retry settings](https://docs.stripe.com/billing/revenue-recovery/smart-retries)
+
+A successful check matches the captured charge to the failed amount and to the native payment and billing cycle. The report includes gross recovered, refunded, and net retained amounts in USD cents. It verifies settlement regardless of who initiated the retry. Exit code 2 reports outstanding evidence. For `missing_failure_webhook`, inspect and redeliver the failed event. For `missing_native_renewal`, check delivery of `invoice.paid` and the linked membership's reconciliation history. A terminal unpaid invoice or a mismatched amount, identity, or sandbox mode exits with code 1. The verifier uses provider reads and leaves the records intact for another check.
 
 For transactional recovery emails, configure `RESEND_API_KEY` and a verified `STATESET_RECOVERY_FROM` sender. Alternatively, configure a Klaviyo transactional flow on the `StateSet Renewal Recovery` event and use its `update_url` and `payment_url` properties. The update link opens a short-lived payment-method update session for the invoiced customer.
 
@@ -283,3 +353,23 @@ Configure SKU ownership with `STATESET_SELLER_SKUS_JSON`, for example `{"COFFEE"
 Settlement posts the allocation, fees, refunds, transfer and any transfer reversals to the native general ledger with unique merchant-event IDs. Each transfer is tied to the settled charge. Stripe handles bank payouts on the connected account's schedule. The bank-payout command records provider-reported amounts, arrival dates and status alongside the seller's statement. Set `STATESET_AUTOMATIC_SELLER_TRANSFERS=true` to include settlement in the scheduled merchant worker.
 
 Set `STATESET_SELLER_SIGNUP_COUNTRIES=US,CA` to open seller enrollment for those countries at `/partners`. Sellers sign a request with their wallet and complete identity and bank verification on Stripe. Their portal shows outstanding balances, account requirements, transfers, refunds and bank payout status. `STATESET_SYNC_BANK_PAYOUTS=true` polls connected-account payouts. For automatic payouts with completed reconciliation, the statement matches balance transactions to the originating orders using Stripe's destination payment and reversal references and shows any remaining difference. Manual payouts can display a status without an order breakdown.
+
+## Measure merchant adoption
+
+A running store can enroll locally under its acquisition channel. The first enrollment fixes a random store ID, the channel and the start time in the store database. Enroll during setup to measure the launch interval. An existing store can start a new observation period when the operator enrolls it.
+
+```sh
+npm run merchant -- adoption-enroll --source partner --apply
+npm run merchant -- adoption-report
+npm run --silent merchant -- adoption-report --check > merchant-adoption.json
+```
+
+The report counts primary card orders placed after enrollment. A counted sale requires a completed storefront sale event, a native captured payment for the same order and amount, and a matching live Stripe or Square settlement. The check reads the provider using the original merchant credentials. Add `--apply` to retain verified capture receipts locally. Later reports reuse those receipts, including offline runs. Failed lookups remain retryable. The report records when the storefront finished the first sale and when another order placed at least seven days later finished. A later refund preserves the historical capture. Supplemental offers, Base transfers, test purchases and renewals contribute zero to these card-checkout milestones. Counts of unresolved evidence keep a store with missing credentials or a failed lookup visible. An explicit check exits with status 2 for partial coverage and still writes the report.
+
+The JSON contains a pseudonymous store ID, acquisition channel, timestamps and aggregate counts. Data stays with the operator until they share the file. To compare submitted reports by acquisition channel, run the following command in a generated storefront.
+
+```sh
+node scripts/adoption-cohorts.js reports/*.json
+```
+
+The latest report for each enrolled store counts once. The output shows how many stores had their first verified sale within seven days and how many had repeat activity within thirty days. Each denominator includes submitted stores observed for that full window with complete card evidence. Include reports from stores with zero orders when measuring activation. These figures describe the participating stores. Reports are merchant-supplied JSON. For independent confirmation of a sale, review the underlying provider capture with the merchant’s authorization.

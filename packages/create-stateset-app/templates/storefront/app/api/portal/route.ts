@@ -1,3 +1,4 @@
+import { importExternalCatalog } from '@/lib/catalog-import.js';
 import { NextRequest, NextResponse } from 'next/server';
 import { getCommerce } from '@/lib/commerce';
 import { portalPrincipal, portalReport } from '@/lib/merchant-portal.js';
@@ -156,6 +157,18 @@ export async function POST(request: NextRequest) {
         await publishPricing(commerce, process.env, body.pricing, body.apply === true),
         { headers },
       );
+    if (body.action === 'import-catalog') {
+      if (body.apply === true && !/^[a-f0-9]{64}$/.test(body.fingerprint || ''))
+        throw new Error('Preview this catalog before importing it.');
+      return NextResponse.json(
+        await importExternalCatalog(commerce, body.format, body.catalog, {
+          sourceStore: body.sourceStore,
+          apply: body.apply === true,
+          expectedFingerprint: body.fingerprint,
+        }),
+        { headers },
+      );
+    }
     if (body.catalog) {
       const rows = validateCatalog(body.catalog);
       return NextResponse.json(

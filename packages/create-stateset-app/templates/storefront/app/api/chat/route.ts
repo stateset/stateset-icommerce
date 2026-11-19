@@ -17,7 +17,7 @@ export async function POST(req: Request) {
 
   let productContext = '';
   try {
-    const products = (await commerce.products.list()).slice(0, 20);
+    const products = await commerce.products.list({ status: 'active', limit: 20 });
     if (products?.length) {
       const list = products.map((p: any) => {
         const price = p.variants?.[0]?.price;

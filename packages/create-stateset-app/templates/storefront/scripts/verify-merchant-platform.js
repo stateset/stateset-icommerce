@@ -1,6 +1,8 @@
 // Dispose of the native store on exit. All provider operations use the local fixture.
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Commerce } from '@stateset/embedded';
@@ -19,6 +21,7 @@ import {
   startStripeCheckout,
   refundStripePayment,
 } from '../lib/stripe-checkout.js';
+import { portalPrincipal } from '../lib/merchant-portal.js';
 import { readMerchantRecord, saveMerchantRecord } from '../lib/merchant-records.js';
 import {
   sellerStatement,
@@ -230,6 +233,35 @@ async function checkWalletDrills() {
   }
 }
 try {
+  const setupDb = join(directory, 'new-store.db');
+  const setup = fileURLToPath(new URL('./setup.js', import.meta.url));
+  const setupEnv = {
+    ...process.env,
+    STATESET_DB_PATH: setupDb,
+    NEXT_PUBLIC_BASE_URL: 'http://localhost:3000',
+  };
+  const startSetup = (args = []) =>
+    execFileSync(process.execPath, [setup, ...args], {
+      cwd: directory,
+      env: setupEnv,
+      encoding: 'utf8',
+    });
+  assert.match(startSetup(), /--apply/);
+  assert.equal(existsSync(setupDb), false);
+  const invitation = startSetup(['--apply'])
+    .split('\n')
+    .find((line) => line.startsWith('http'));
+  const newStore = new Commerce(setupDb);
+  try {
+    const token = new URL(invitation).hash.slice(1);
+    const grant = await portalPrincipal(newStore, token);
+    assert.equal(grant?.role, 'merchant');
+    assert.equal(grant.subject, 'shop');
+    assert.equal(await portalPrincipal(newStore, token, Date.now() + 86400000), null);
+    assert.equal((await newStore.products.list()).length, 0);
+  } finally {
+    await newStore.close();
+  }
   const plan = await commerce.subscriptions.createPlan({
     name: 'Coffee club',
     billingInterval: 'monthly',
@@ -536,6 +568,7 @@ try {
       provider: 'fixture',
       externalProvidersVerified: false,
       checks: [
+        'new-store setup preview and expiring private merchant invitation',
         'catalog import and retry',
         'attributed purchase and bump',
         'single upsell checkout',
