@@ -10,6 +10,18 @@ import { renewalStatement } from './billing-recovery.js';
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 const roles = new Set(['affiliate', 'seller', 'merchant']);
 
+export function portalUrl(origin) {
+  const url = new URL('/portal', origin);
+  if (
+    url.username ||
+    url.password ||
+    (url.protocol !== 'https:' &&
+      !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))
+  )
+    throw new Error('Configure an HTTPS portal origin');
+  return url;
+}
+
 // Store only a digest. The operator delivers the resulting expiring link directly to the recipient.
 export async function issuePortal(
   commerce,
@@ -32,14 +44,7 @@ export async function issuePortal(
     throw new Error('Unknown ' + role);
   const expires = now + days * 86400000;
   if (!apply) return { role, subject, expires, mode: 'preview' };
-  const url = new URL('/portal', origin);
-  if (
-    url.username ||
-    url.password ||
-    (url.protocol !== 'https:' &&
-      !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))
-  )
-    throw new Error('Configure an HTTPS portal origin');
+  const url = portalUrl(origin);
   const token = randomBytes(32).toString('base64url');
   const id = digest(token);
   await firstMerchantRecord(commerce, 'portal-' + id, { id, role, subject, expires });

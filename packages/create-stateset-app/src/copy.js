@@ -23,7 +23,8 @@ export function copyTemplate(templateDir, targetDir, replacements) {
 
   for (const entry of entries) {
     const srcPath = path.join(templateDir, entry.name);
-    const destPath = path.join(targetDir, entry.name);
+    // npm excludes .gitignore files when publishing a package.
+    const destPath = path.join(targetDir, entry.name === 'gitignore' ? '.gitignore' : entry.name);
 
     if (entry.isDirectory()) {
       fs.mkdirSync(destPath, { recursive: true });

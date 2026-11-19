@@ -114,21 +114,23 @@ NEXT_PUBLIC_BASE_URL=http://localhost:3000
   fs.writeFileSync(path.join(targetDir, '.env.example'), content, 'utf8');
 }
 
-function printNextSteps(projectName, pm) {
+function printNextSteps(projectName, targetDir, pm, installed) {
   const run = pm === 'yarn' ? 'yarn' : `${pm} run`;
   print('');
   success(`  Created ${bold(projectName)} successfully!`);
   print('');
   print('  Get started:');
   print('');
-  print(`    ${cyan(`cd ${projectName}`)}`);
-  print(`    ${cyan('cp .env.example .env.local')}`);
-  print(`    ${cyan(`${run} seed`)}`);
-  print(`    ${cyan(`${run} doctor`)}`);
-  print(`    ${cyan(`${run} onboard`)}`);
+  const relative = path.relative(process.cwd(), targetDir) || '.';
+  const directory = /^[\w./-]+$/.test(relative) && !relative.startsWith('-')
+    ? relative
+    : "'" + relative.replaceAll("'", "'\\''") + "'";
+  print(`    ${cyan(`cd ${directory}`)}`);
+  if (!installed) print(`    ${cyan(`${pm} install`)}`);
+  print(`    ${cyan(`${run} setup ${pm === 'npm' ? '-- ' : ''}--apply`)}`);
   print(`    ${cyan(`${run} dev`)}`);
   print('');
-  print(`  Then open ${cyan('http://localhost:3000')}`);
+  print('  Open the private link printed by setup to add your first product and set shipping and tax.');
   print('');
   print(`  ${dim('Configure your store by editing .env.local')}`);
   print(`  ${dim(`Before launch: ${run} doctor:launch`)}`);
@@ -236,5 +238,5 @@ export async function main(argv) {
     pm,
   });
 
-  printNextSteps(projectName, pm);
+  printNextSteps(projectName, targetDir, pm, shouldInstall);
 }

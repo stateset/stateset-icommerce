@@ -16,6 +16,7 @@
     "doctor:launch": "node scripts/check-store.js --launch",
     "verify:storefront": "npm run verify:journey && npm run verify:card && npm run verify:merchant && npm run verify:routed && npm run verify:membership && npm run verify:affiliates && npm run verify:integrations",
     "verify:journey": "node scripts/verify-merchant-journey.js",
+    "setup": "node scripts/setup.js",
     "seed": "node scripts/seed.js",
     "card": "node scripts/card-operations.js",
     "verify:card": "node scripts/verify-card-checkout.js",

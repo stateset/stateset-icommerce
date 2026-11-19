@@ -31,12 +31,28 @@ describe('scaffold', () => {
     });
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.ok(fs.existsSync(path.join(dir, 'package.json')));
+    assert.match(result.stdout, /npm install/);
+    assert.match(result.stdout, /npm run setup -- --apply/);
+    assert.doesNotMatch(result.stdout, /npm run seed/);
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    assert.equal(pkg.scripts.setup, 'node scripts/setup.js');
+    assert.ok(fs.existsSync(path.join(dir, 'scripts/setup.js')));
     const layout = fs.readFileSync(path.join(dir, 'app', 'layout.tsx'), 'utf8');
     const expectedStoreName = path.basename(dir).replaceAll('-', ' ').replace(/\b\w/g, (c) =>
       c.toUpperCase(),
     );
     assert.ok(layout.includes(expectedStoreName));
+  });
+
+  it('ships the environment and SQLite exclusions through npm pack', () => {
+    const result = spawnSync(
+      'npm',
+      ['pack', '--json', '--dry-run', '--ignore-scripts', '--offline', '--cache', uniqueDir()],
+      { cwd: path.resolve(import.meta.dirname, '..'), encoding: 'utf8' },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const [manifest] = JSON.parse(result.stdout);
+    assert.ok(manifest.files.some(({ path }) => path === 'templates/storefront/gitignore'));
   });
 
   it('creates project directory with all expected files', async () => {
@@ -56,7 +72,11 @@ describe('scaffold', () => {
     assert.ok(fs.existsSync(path.join(dir, 'tsconfig.json')));
     assert.ok(fs.existsSync(path.join(dir, 'tailwind.config.ts')));
     assert.ok(fs.existsSync(path.join(dir, '.env.example')));
-    assert.ok(fs.existsSync(path.join(dir, '.gitignore')));
+    const ignored = fs.readFileSync(path.join(dir, '.gitignore'), 'utf8').split('\n');
+    for (const file of ['.env.local', '*.db', '*.db-wal', 'node_modules/']) {
+      assert.ok(ignored.includes(file));
+    }
+    assert.ok(!fs.existsSync(path.join(dir, 'gitignore')));
     assert.ok(fs.existsSync(path.join(dir, 'Dockerfile')));
     assert.ok(fs.existsSync(path.join(dir, 'scripts', 'seed.js')));
     assert.ok(fs.existsSync(path.join(dir, 'public', 'placeholder.svg')));

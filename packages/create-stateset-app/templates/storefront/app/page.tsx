@@ -1,6 +1,9 @@
 import { getProducts } from '@/lib/commerce';
 import Link from 'next/link';
 
+// Merchants can publish products after the storefront has been built.
+export const dynamic = 'force-dynamic';
+
 export default async function HomePage() {
   const { products } = await getProducts({ limit: 8 });
 

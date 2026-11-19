@@ -45,6 +45,7 @@ export function LaunchSetup({
       : [{ id: 'ground', label: 'Ground', amount: '', countries: ['US'] }],
   );
   const [pricingPreview, setPricingPreview] = useState(false);
+  const [publishedProduct, setPublishedProduct] = useState<{ name: string; slug: string }>();
   const [catalog, setCatalog] = useState<unknown[]>();
   const [catalogReady, setCatalogReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -84,6 +85,78 @@ export function LaunchSetup({
     <section className="space-y-4">
       <h2 className="text-xl font-semibold">Store setup</h2>
       {pricing.revision > 0 && <p>Checkout pricing uses published revision {pricing.revision}.</p>}
+      <details className="space-y-3 rounded border p-3">
+        <summary>Add a product</summary>
+        <form
+          className="grid gap-3 sm:grid-cols-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const form = event.currentTarget;
+            const fields = new FormData(form);
+            const product = {
+              name: String(fields.get('name')).trim(),
+              slug: String(fields.get('slug')).trim(),
+              sku: String(fields.get('sku')).trim(),
+              price: String(fields.get('price')).trim(),
+              stock: Number(fields.get('stock')),
+            };
+            void run(async () => {
+              await operation({ catalog: [product], apply: true });
+              setPublishedProduct({ name: product.name, slug: product.slug });
+              form.reset();
+              await refresh();
+              return 'Product published.';
+            });
+          }}
+        >
+          <label>
+            Product name
+            <input className={inputClass} name="name" required />
+          </label>
+          <label>
+            Product URL slug
+            <input
+              className={inputClass}
+              name="slug"
+              placeholder="coffee"
+              pattern="[a-z0-9]+(-[a-z0-9]+)*"
+              required
+            />
+          </label>
+          <label>
+            SKU
+            <input
+              className={inputClass}
+              name="sku"
+              placeholder="COFFEE"
+              maxLength={100}
+              required
+            />
+          </label>
+          <label>
+            Price (USD)
+            <input
+              className={inputClass}
+              name="price"
+              inputMode="decimal"
+              placeholder="15.00"
+              required
+            />
+          </label>
+          <label>
+            Opening stock
+            <input className={inputClass} name="stock" type="number" min="0" step="1" required />
+          </label>
+          <button className="self-end rounded border p-2" disabled={busy}>
+            Publish product
+          </button>
+        </form>
+        {publishedProduct && (
+          <a className="underline" href={'/products/' + publishedProduct.slug}>
+            View {publishedProduct.name} in the storefront
+          </a>
+        )}
+      </details>
       <details className="rounded border p-3">
         <summary>Import a product catalog</summary>
         <label className="block py-2">

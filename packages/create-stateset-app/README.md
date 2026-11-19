@@ -9,14 +9,13 @@ Requires Node.js 20.20 or newer and npm 10 or newer.
 ```bash
 npx create-stateset-app my-store
 cd my-store
-cp .env.example .env.local
-npm run seed
-npm run doctor
-npm run verify:journey
+npm run setup -- --apply
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open the private link printed by `setup`. Choose **Add a product**, enter its name, URL slug, SKU, USD price and available stock, and select **Publish product**. Follow the product link to see it in the storefront. Choose **Set tax and shipping** to publish your checkout rates.
+
+Setup creates or opens the configured SQLite file and issues a merchant link valid for one day. Run `npm run setup` for a read-only preview. For a sample catalog, run `npm run seed`. To enable payments, copy `.env.example` to `.env.local` if you are creating your first environment file, configure the selected processor and storefront URL, then run `npm run onboard` and restart the storefront.
 
 ## What You Get
 
