@@ -18,6 +18,11 @@ docker run --rm --network none --mount "$mount" "$operator_image" node scripts/m
 
 docker run --rm -i --network none --mount "$mount" "$operator_image" node --input-type=module <<'JS'
 import { Commerce } from '@stateset/embedded';
+import assert from 'node:assert/strict';
+import { withCatalogStore } from './scripts/catalog-store.js';
+await withCatalogStore(process.env.STATESET_DB_PATH, false, async (snapshot) => {
+  assert.equal((await snapshot.products.getBySlug('classic-t-shirt'))?.status, 'active');
+});
 const commerce = new Commerce(process.env.STATESET_DB_PATH);
 try {
   for (let index = 0; index < 101; index++) {

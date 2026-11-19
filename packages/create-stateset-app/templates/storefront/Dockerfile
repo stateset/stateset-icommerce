@@ -32,6 +32,8 @@ FROM deps AS operator-deps
 RUN npm prune --omit=dev --offline --no-audit --no-fund
 
 FROM runtime AS operator
+# The Node 20 catalog CLI uses Python's SQLite online backup to preview a live store.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
 COPY --from=operator-deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY scripts ./scripts
