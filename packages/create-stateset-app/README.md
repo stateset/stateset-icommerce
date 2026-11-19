@@ -340,4 +340,4 @@ The JSON contains a pseudonymous store ID, acquisition channel, timestamps and a
 node scripts/adoption-cohorts.js reports/*.json
 ```
 
-The latest report for each enrolled store counts once. The output shows how many stores had their first verified sale within seven days and how many had repeat activity within thirty days. Each denominator includes submitted stores observed for that full window with complete card evidence. Include reports from stores with zero orders when measuring activation. These figures describe the participating stores.
+The latest report for each enrolled store counts once. The output shows how many stores had their first verified sale within seven days and how many had repeat activity within thirty days. Each denominator includes submitted stores observed for that full window with complete card evidence. Include reports from stores with zero orders when measuring activation. These figures describe the participating stores. Reports are merchant-supplied JSON. For independent confirmation of a sale, review the underlying provider capture with the merchant’s authorization.

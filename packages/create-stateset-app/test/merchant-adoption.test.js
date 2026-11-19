@@ -3,7 +3,10 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { adoptionReport, enrollStore } from '../templates/storefront/lib/merchant-adoption.js';
 import { saveMerchantRecord } from '../templates/storefront/lib/merchant-records.js';
-import { groupAdoptionReports } from '../templates/storefront/scripts/adoption-cohorts.js';
+import {
+  groupAdoptionReports,
+  latestAdoptionReports,
+} from '../templates/storefront/scripts/adoption-cohorts.js';
 
 const day = 86400000,
   start = Date.UTC(2026, 0, 1);
@@ -101,7 +104,7 @@ function fixture() {
       },
     }),
   };
-  return { commerce, orders, charges, sessions, sale, check };
+  return { commerce, orders, charges, sessions, records, sale, check };
 }
 
 test('local enrollment previews, binds the original channel and survives replays', async () => {
@@ -236,10 +239,19 @@ test('cohorts deduplicate reports and honor observation windows, incomplete chec
     earlier,
     full,
     full,
-    newReport(1, { firstVerifiedSaleAt: null, repeatVerifiedSaleAt: null }),
-    newReport(2, { coverage: 'partial' }),
+    newReport(1, {
+      counts: { ...full.counts, live: 0 },
+      hoursToFirstVerifiedSale: null,
+      firstVerifiedSaleAt: null,
+      repeatVerifiedSaleAt: null,
+    }),
+    newReport(2, { counts: { ...full.counts, unchecked: 1 }, coverage: 'partial' }),
     newReport(3, { observedAt: iso(9), repeatVerifiedSaleAt: null }),
-    newReport(4, { firstVerifiedSaleAt: iso(7), repeatVerifiedSaleAt: iso(30) }),
+    newReport(4, {
+      hoursToFirstVerifiedSale: 168,
+      firstVerifiedSaleAt: iso(7),
+      repeatVerifiedSaleAt: iso(30),
+    }),
   ];
   assert.deepEqual(groupAdoptionReports(rows), [
     {
@@ -366,4 +378,52 @@ test('routed Stripe honors the original selected account and processor-reported 
   assert.equal((await adoptionReport(commerce, check)).counts.sandbox, 1);
   native.reference = 'pi_other';
   assert.equal((await adoptionReport(commerce, check)).counts.mismatch, 1);
+});
+
+test('reports enforce order placement at enrollment, canonical event identity and the private export allowlist', async () => {
+  const { commerce, records, orders, sale, check } = fixture();
+  const enrollment = await enrollStore(commerce, 'partner', true, start);
+  function extend(key, fields) {
+    const row = records.get(key);
+    row.valuesJson = JSON.stringify({ data: { ...JSON.parse(row.valuesJson).data, ...fields } });
+  }
+  extend('adoption-enrollment-v1', { email: 'private@example.com' });
+  assert.deepEqual(await enrollStore(commerce, 'partner', false, start), enrollment);
+  await sale('old', -1);
+  extend('sale-old', { at: iso(1) });
+  await sale('good', 2);
+  const original = await adoptionReport(commerce, { ...check, apply: true });
+  assert.equal(original.counts.live, 1);
+  assert.equal(original.firstVerifiedSaleAt, iso(2.25));
+  assert.doesNotMatch(JSON.stringify(original), /private/);
+  orders.get('good').createdAt = iso(-2);
+  const invalid = await adoptionReport(commerce, { now: check.now });
+  assert.equal(invalid.counts.live, 0);
+  assert.equal(invalid.counts.mismatch, 1);
+  orders.get('good').createdAt = iso(2);
+  await saveMerchantRecord(
+    commerce,
+    'fake-sale-good',
+    {
+      ...JSON.parse(records.get('sale-good').valuesJson).data,
+      key: 'sale-good',
+    },
+    'merchant-events',
+  );
+  assert.equal((await adoptionReport(commerce, check)).counts.live, 1);
+  assert.equal((await adoptionReport(commerce, check)).counts.mismatch, 1);
+  const [clean] = latestAdoptionReports([
+    { ...original, customerEmail: 'private', counts: { ...original.counts, email: 'private' } },
+  ]);
+  assert.deepEqual(clean, original);
+  for (const data of [
+    { counts: { ...original.counts, live: 0 } },
+    { coverage: 'partial' },
+    { hoursToFirstVerifiedSale: 0 },
+    { repeatVerifiedSaleAt: iso(20) },
+    { scope: 'test' },
+    { observedAt: original.observedAt + ' (private)' },
+  ]) {
+    assert.throws(() => latestAdoptionReports([{ ...original, ...data }]), /Invalid/);
+  }
 });

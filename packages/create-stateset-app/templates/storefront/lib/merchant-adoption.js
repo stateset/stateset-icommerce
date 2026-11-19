@@ -13,8 +13,22 @@ const enrollmentKey = 'adoption-enrollment-v1';
 const day = 86400000;
 const captured = new Set(['completed', 'partially_refunded', 'refunded', 'disputed']);
 
+function enrollmentFields({ installationId, source, enrolledAt }) {
+  if (
+    typeof installationId !== 'string' ||
+    typeof source !== 'string' ||
+    !/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(installationId) ||
+    !/^[a-z0-9][a-z0-9_-]{0,47}$/.test(source || '') ||
+    typeof enrolledAt !== 'string' ||
+    !Number.isFinite(Date.parse(enrolledAt)) ||
+    new Date(enrolledAt).toISOString() !== enrolledAt
+  )
+    throw new Error('Invalid storefront enrollment');
+  return { installationId, source, enrolledAt };
+}
+
 export async function enrollStore(commerce, source, apply, now = Date.now()) {
-  if (!/^[a-z0-9][a-z0-9_-]{0,47}$/.test(source || ''))
+  if (typeof source !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,47}$/.test(source || ''))
     throw new Error('Supply an acquisition channel such as partner or direct with --source');
   const existing = await readMerchantRecord(commerce, enrollmentKey);
   if (!existing && !apply) return { mode: 'preview', source };
@@ -27,7 +41,7 @@ export async function enrollStore(commerce, source, apply, now = Date.now()) {
     }));
   if (enrollment.source !== source)
     throw new Error('This store already has a different enrollment source');
-  return enrollment;
+  return enrollmentFields(enrollment);
 }
 
 function stripeCapture(intent, amount) {
@@ -131,22 +145,8 @@ async function routedEvidence(commerce, env, order, payments, binding, amount, s
   return account.sandbox ? 'sandbox' : 'live';
 }
 
-async function checkSale(commerce, event, order, options) {
-  if (
-    !order ||
-    order.id !== event.orderId ||
-    order.createdAt !== event.placedAt ||
-    order.currency !== 'USD' ||
-    event.currency !== 'USD'
-  )
-    return 'mismatch';
+async function checkSale(commerce, order, options) {
   const amount = Number(decimalToUnits(order.totalAmountExact, 2));
-  if (
-    !Number.isSafeInteger(amount) ||
-    amount <= 0 ||
-    BigInt(amount) !== decimalToUnits(event.total, 2)
-  )
-    return 'mismatch';
   const payments = (await commerce.payments.list({ orderId: order.id })).filter(
     (p) =>
       p.orderId === order.id &&
@@ -219,6 +219,30 @@ export async function adoptionReport(commerce, options = {}) {
       continue;
     }
     const order = await commerce.orders.get(event.orderId);
+    if (
+      !order ||
+      order.id !== event.orderId ||
+      order.createdAt !== event.placedAt ||
+      order.currency !== 'USD' ||
+      event.currency !== 'USD'
+    ) {
+      counts.mismatch++;
+      continue;
+    }
+    try {
+      const amount = decimalToUnits(order.totalAmountExact, 2);
+      if (
+        amount <= 0n ||
+        amount > BigInt(Number.MAX_SAFE_INTEGER) ||
+        amount !== decimalToUnits(event.total, 2)
+      ) {
+        counts.mismatch++;
+        continue;
+      }
+    } catch {
+      counts.mismatch++;
+      continue;
+    }
     if (order?.notes?.startsWith('Verified Base settlement:')) {
       counts.otherRails++;
       continue;
@@ -237,7 +261,7 @@ export async function adoptionReport(commerce, options = {}) {
           : 'mismatch';
     } else if (options.check) {
       try {
-        result = await checkSale(commerce, event, order, options);
+        result = await checkSale(commerce, order, options);
       } catch {
         // Account rotation, a missing key or provider downtime leaves this enrollment partially observed.
         result = 'unavailable';
@@ -260,7 +284,7 @@ export async function adoptionReport(commerce, options = {}) {
   const repeat = live.find((sale) => first !== undefined && sale.placed >= first + 7 * day);
   return {
     schema: 'stateset.storefront-adoption.v1',
-    ...enrollment,
+    ...enrollmentFields(enrollment),
     observedAt: new Date(now).toISOString(),
     coverage: counts.unavailable || counts.mismatch || counts.unchecked ? 'partial' : 'complete',
     scope: 'primary card checkouts placed since enrollment',

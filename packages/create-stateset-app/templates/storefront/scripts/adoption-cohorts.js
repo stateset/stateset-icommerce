@@ -4,11 +4,16 @@ import { isDeepStrictEqual } from 'node:util';
 
 const day = 86400000;
 
+function canonicalTime(value) {
+  if (typeof value !== 'string') return NaN;
+  const time = Date.parse(value);
+  return Number.isFinite(time) && new Date(time).toISOString() === value ? time : NaN;
+}
+
 // Use one latest voluntarily supplied report per enrolled store. Young cohorts and
 // incomplete provider checks have their own counts and never dilute either rate.
-export function groupAdoptionReports(reports) {
-  const stores = new Map(),
-    groups = new Map();
+export function latestAdoptionReports(reports) {
+  const stores = new Map();
   for (const report of reports) {
     const {
       schema,
@@ -17,15 +22,20 @@ export function groupAdoptionReports(reports) {
       enrolledAt,
       observedAt,
       coverage,
+      scope,
+      counts,
+      hoursToFirstVerifiedSale,
       firstVerifiedSaleAt,
       repeatVerifiedSaleAt,
     } = report;
-    const start = Date.parse(enrolledAt),
-      end = Date.parse(observedAt);
-    const first = firstVerifiedSaleAt === null ? null : Date.parse(firstVerifiedSaleAt);
-    const repeat = repeatVerifiedSaleAt === null ? null : Date.parse(repeatVerifiedSaleAt);
+    const start = canonicalTime(enrolledAt),
+      end = canonicalTime(observedAt);
+    const first = firstVerifiedSaleAt === null ? null : canonicalTime(firstVerifiedSaleAt);
+    const repeat = repeatVerifiedSaleAt === null ? null : canonicalTime(repeatVerifiedSaleAt);
     if (
       schema !== 'stateset.storefront-adoption.v1' ||
+      typeof installationId !== 'string' ||
+      typeof source !== 'string' ||
       !/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(installationId) ||
       !/^[a-z0-9][a-z0-9_-]{0,47}$/.test(source || '') ||
       !['complete', 'partial'].includes(coverage) ||
@@ -37,17 +47,55 @@ export function groupAdoptionReports(reports) {
         (!Number.isFinite(repeat) || first === null || repeat < first + 7 * day || repeat > end))
     )
       throw new Error('Invalid storefront adoption report');
+    const fields = [
+      'live',
+      'sandbox',
+      'unchecked',
+      'unavailable',
+      'mismatch',
+      'otherRails',
+      'supplemental',
+    ];
+    if (
+      scope !== 'primary card checkouts placed since enrollment' ||
+      !fields.every((field) => Number.isSafeInteger(counts?.[field]) && counts[field] >= 0) ||
+      coverage !==
+        (counts.unchecked || counts.mismatch || counts.unavailable ? 'partial' : 'complete') ||
+      (first === null) !== (counts.live === 0) ||
+      (repeat !== null && counts.live < 2) ||
+      hoursToFirstVerifiedSale !== (first === null ? null : (first - start) / 3600000)
+    ) {
+      throw new Error('Invalid storefront adoption report');
+    }
+    const row = {
+      schema,
+      installationId,
+      source,
+      enrolledAt,
+      observedAt,
+      coverage,
+      scope,
+      counts: Object.fromEntries(fields.map((key) => [key, counts[key]])),
+      firstVerifiedSaleAt,
+      hoursToFirstVerifiedSale,
+      repeatVerifiedSaleAt,
+    };
     const prior = stores.get(installationId);
     if (
       prior &&
       (prior.enrolledAt !== enrolledAt ||
         prior.source !== source ||
-        (Date.parse(prior.observedAt) === end && !isDeepStrictEqual(prior, report)))
+        (Date.parse(prior.observedAt) === end && !isDeepStrictEqual(prior, row)))
     )
       throw new Error('Conflicting reports for the same installation');
-    if (!prior || Date.parse(prior.observedAt) < end) stores.set(installationId, report);
+    if (!prior || Date.parse(prior.observedAt) < end) stores.set(installationId, row);
   }
-  for (const row of stores.values()) {
+  return [...stores.values()];
+}
+
+export function groupAdoptionReports(reports) {
+  const groups = new Map();
+  for (const row of latestAdoptionReports(reports)) {
     const key = row.source;
     const cohort = groups.get(key) || {
       source: key,

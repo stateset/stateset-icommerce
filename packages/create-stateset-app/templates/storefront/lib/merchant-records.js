@@ -49,7 +49,7 @@ export async function* merchantRecords(commerce, collection) {
     for (const row of rows) {
       if (seen.has(row.handle)) continue;
       seen.add(row.handle);
-      yield { key: row.handle, ...JSON.parse(row.valuesJson).data };
+      yield { ...JSON.parse(row.valuesJson).data, key: row.handle };
     }
     if (rows.length < 100) break;
   }
