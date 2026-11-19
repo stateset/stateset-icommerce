@@ -57,10 +57,8 @@ const service = fs.readFileSync(path.join(pluginDir, 'Service.qml'), 'utf8');
 check(/^Panel\s*\{/m.test(panel), 'Panel.qml must expose an Omarchy Panel root');
 check(/moduleName:\s*"com\.stateset\.icommerce"/.test(panel), 'Panel.qml module id is missing');
 check(/stateset-omarchy/.test(panel), 'Panel.qml must use the fixed StateSet controller');
-check(
-  /allowedCommands\.indexOf\(command\)/.test(panel),
-  'Panel.qml must allowlist controller actions',
-);
+check(/actionCommands:\s*\(\{/.test(panel), 'Panel.qml must map controller actions');
+check(/typeof controller !== "string"/.test(panel), 'Panel.qml must reject unknown actions');
 check(!/\bnpx\b/.test(panel), 'Panel.qml must not download code at runtime');
 check(/stateset-omarchy/.test(panel), 'Panel.qml must require the installed controller');
 check(/root\.launch\("attention"\)/.test(panel), 'Panel.qml must expose an attention workflow');
