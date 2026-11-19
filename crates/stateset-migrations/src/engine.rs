@@ -535,12 +535,49 @@ fn get_migrations() -> Vec<(&'static str, &'static str)> {
         ("121_prepayment_refunds", include_str!("../migrations/121_prepayment_refunds.sql")),
         ("122_bill_approval_match", include_str!("../migrations/122_bill_approval_match.sql")),
         ("123_finance_actors", include_str!("../migrations/123_finance_actors.sql")),
+        (
+            "124_refunded_billing_cycles",
+            include_str!("../migrations/124_refunded_billing_cycles.sql"),
+        ),
     ]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn existing_billing_cycles_follow_their_own_refunded_payments() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE payments (id TEXT PRIMARY KEY, status TEXT, updated_at TEXT);
+             CREATE TABLE billing_cycles (id TEXT PRIMARY KEY, payment_id TEXT, status TEXT, updated_at TEXT);
+             INSERT INTO payments (id, status) VALUES ('first','refunded'), ('renewal','partially_refunded');
+             INSERT INTO billing_cycles (id, payment_id, status) VALUES
+                ('1','first','paid'), ('2','renewal','paid'), ('3',NULL,'paid'), ('4','first','voided');",
+        )
+        .unwrap();
+        let sql = get_migrations()
+            .into_iter()
+            .find(|(name, _)| *name == "124_refunded_billing_cycles")
+            .unwrap()
+            .1;
+        conn.execute_batch(sql).unwrap();
+        let statuses = || {
+            conn.prepare("SELECT status FROM billing_cycles ORDER BY id")
+                .unwrap()
+                .query_map([], |row| row.get::<_, String>(0))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        assert_eq!(statuses(), ["refunded", "paid", "paid", "voided"]);
+        conn.execute_batch("BEGIN; UPDATE payments SET status = 'refunded' WHERE id = 'renewal';")
+            .unwrap();
+        assert_eq!(statuses(), ["refunded", "refunded", "paid", "voided"]);
+        conn.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(statuses(), ["refunded", "paid", "paid", "voided"]);
+    }
 
     fn install_legacy_dispute_schema(conn: &Connection, include_evidence: bool) {
         conn.execute_batch(

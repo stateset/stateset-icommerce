@@ -2204,6 +2204,8 @@ export interface CloseMonthReportOutput {
   periodStatus: GlPeriodStatus
 }
 export interface CreateJournalEntryInput {
+  /** Stable UUID for retry-safe external merchant events. */
+  externalEventId?: string
   entryDate: string
   entryType?: string
   description: string
@@ -4911,6 +4913,8 @@ export interface SubscriptionFilterInput {
   offset?: number
 }
 export interface SubscriptionOutput {
+  /** Order backing this externally billed membership. */
+  purchaseOrderId?: string
   id: string
   subscriptionNumber: string
   customerId: string
@@ -6928,6 +6932,7 @@ export declare class GeneralLedger {
   /** Initialize standard chart of accounts */
   initializeChartOfAccounts(): Promise<Array<GlAccountOutput>>
   /** Create a balanced draft or post it atomically using a trusted host identity. */
+  supportsExternalEventIds(): boolean
   createJournalEntry(i: CreateJournalEntryInput, actor?: string | undefined | null): Promise<JournalEntryOutput>
   reverseJournalEntry(id: string, reversalDate: string): Promise<JournalEntryOutput>
   getPeriod(id: string): Promise<GlPeriodOutput | null>
@@ -7107,6 +7112,8 @@ export declare class Orders {
   create(input: CreateOrderInput): Promise<OrderOutput>
   /** Create an order without any floating-point conversion. */
   createExact(input: CreateOrderExactInput): Promise<OrderOutput>
+  /** Reserve inventory and redeem the cart's native coupon under the same transaction. */
+  createWithCouponExact(input: CreateOrderExactInput, code: string, discount: string): Promise<OrderOutput>
   /** Update fields without bypassing native state-transition or money guards. */
   update(id: string, input: UpdateOrderInput): Promise<OrderOutput>
   get(id: string): Promise<OrderOutput | null>
@@ -7138,7 +7145,31 @@ export declare class PaymentObligations {
   /** Aggregate dashboard summary as of the given date (YYYY-MM-DD). */
   dashboard(today: string): Promise<PaymentObligationDashboardOutput>
 }
+export interface CardProcessorAccount {
+  account: string
+  provider: 'stripe' | 'square'
+  secret: string
+  location?: string
+  sandbox?: boolean
+  currencies: string[]
+  methods: PaymentMethodType[]
+  available: boolean
+  token?: string
+  customer?: string
+}
+export interface RouteCardInput {
+  paymentId: string
+  action: 'authorize' | 'capture' | 'refund' | 'selected' | 'reconcile' | 'expire'
+  accounts: CardProcessorAccount[]
+  amount?: string
+  requestKey?: string
+  reason?: string
+  account?: string
+  reference?: string
+}
 export declare class Payments {
+  /** Server-side authorization, capture or refund against operator-owned accounts. */
+  routeCard(input: RouteCardInput): Promise<{ state: string; account?: string; reference?: string; actionUrl?: string; code?: string; refundId?: string; amount?: string; currency?: string }>
   /** Atomic request-key deduplication and guarded completion for payment write-back. */
   supportsPaymentIdempotency(): boolean
   /** Immutable-key refund replay and atomic, idempotent refund completion. */
@@ -7631,6 +7662,10 @@ export declare class StoreCredits {
   getTransactions(storeCreditId: string): Promise<Array<StoreCreditTransactionOutput>>
 }
 export declare class Subscriptions {
+  /** Enroll a paid order in a membership plan once, with externally managed renewals. */
+  enrollPaidMembership(paymentId: string, planId: string): Promise<SubscriptionOutput>
+  /** Post a collected membership renewal once for the provider invoice and native payment. */
+  recordPaidRenewal(subscriptionId: string, paymentId: string, invoiceKey: string, periodStart: string, periodEnd: string, tax: string): Promise<BillingCycleOutput>
   /** Create a new subscription plan */
   createPlan(input: CreateSubscriptionPlanInput): Promise<SubscriptionPlanOutput>
   /** Get a subscription plan by ID */
@@ -7665,6 +7700,8 @@ export declare class Subscriptions {
   skipBilling(id: string, input?: SkipBillingCycleInput | undefined | null): Promise<SubscriptionOutput>
   /** List billing cycles for a subscription */
   listBillingCycles(filter?: BillingCycleFilterInput | undefined | null): Promise<Array<BillingCycleOutput>>
+  /** Record settlement for a billing cycle after the provider confirms payment. */
+  markCyclePaid(id: string): Promise<BillingCycleOutput>
   /** Get a billing cycle by ID */
   getBillingCycle(id: string): Promise<BillingCycleOutput | null>
   /** Get events for a subscription */

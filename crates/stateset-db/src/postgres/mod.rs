@@ -657,6 +657,10 @@ impl PostgresDatabase {
             "131_stock_exact_quantity",
             include_str!("migrations/131_stock_exact_quantity.sql"),
         ));
+        migrations.push((
+            "132_refunded_billing_cycles",
+            include_str!("migrations/132_refunded_billing_cycles.sql"),
+        ));
         migrations
     }
 

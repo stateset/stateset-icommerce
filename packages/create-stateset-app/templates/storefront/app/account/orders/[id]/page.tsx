@@ -4,6 +4,7 @@ import { useEffect, useState, use } from 'react';
 import { useAccount } from 'wagmi';
 import Link from 'next/link';
 import { getExplorerTxUrl, activeChain } from '@/lib/wagmi';
+import { PurchasedLicenses, type PurchasedLicense } from '@/components/commerce/PurchasedLicenses';
 import { useCustomer } from '@/contexts/CustomerContext';
 
 interface OrderItem {
@@ -29,6 +30,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
   const { id } = use(params);
   const { address } = useAccount();
   const { authenticatedFetch } = useCustomer();
+  const [licenses, setLicenses] = useState<PurchasedLicense[]>([]);
   const [order, setOrder] = useState<Order | null>(null);
   const [items, setItems] = useState<OrderItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -37,14 +39,19 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
   const txHash = order?.notes?.match(/Verified Base settlement: (0x[a-fA-F0-9]{64})/)?.[1];
 
   useEffect(() => {
+    let active = true;
     async function fetchOrder() {
       if (!id) return;
       setIsLoading(true);
+      setLicenses([]);
+      setError(null);
       try {
         const url = address ? `/api/orders/${id}?wallet=${address}` : `/api/orders/${id}`;
         const response = await authenticatedFetch(url);
         const data = await response.json();
+        if (!active) return;
         if (response.ok) {
+          setLicenses(data.licenses || []);
           setOrder(data.order);
           setItems(data.items || []);
         } else {
@@ -53,10 +60,11 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
       } catch {
         setError('Failed to load order');
       } finally {
-        setIsLoading(false);
+        if (active) setIsLoading(false);
       }
     }
     fetchOrder();
+    return () => { active = false; };
   }, [id, address, authenticatedFetch]);
 
   if (isLoading) {
@@ -86,6 +94,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
 
   return (
     <div>
+      <PurchasedLicenses licenses={licenses} />
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold">Order #{order.orderNumber || order.id.slice(0, 8)}</h2>
         <span

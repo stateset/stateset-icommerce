@@ -126,6 +126,16 @@ impl Orders {
         Ok(order)
     }
 
+    /// Reserve an externally settled order and redeem its quoted coupon atomically.
+    pub fn create_from_cart_with_coupon(
+        &self,
+        cart_id: CartId,
+        input: CreateOrder,
+        coupon: &str,
+    ) -> Result<Order> {
+        self.db.orders().create_from_cart_with_coupon(cart_id, input, coupon)
+    }
+
     /// Get an order by ID.
     pub fn get(&self, id: OrderId) -> Result<Option<Order>> {
         self.db.orders().get(id)

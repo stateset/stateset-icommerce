@@ -941,6 +941,97 @@ impl PgSubscriptionRepository {
         &self,
         input: CreateSubscription,
     ) -> Result<Subscription> {
+        self.insert_subscription_async(input, None).await
+    }
+
+    /// Create an externally billed membership after validating its payment in the same transaction.
+    pub async fn insert_paid_membership_async(
+        &self,
+        order: OrderId,
+        payment: stateset_core::PaymentId,
+        input: CreateSubscription,
+    ) -> Result<Subscription> {
+        self.insert_subscription_async(input, Some((order, payment))).await
+    }
+
+    pub async fn record_paid_renewal_async(
+        &self,
+        receipt: stateset_core::PaidMembershipRenewal,
+    ) -> Result<BillingCycle> {
+        receipt.validate()?;
+        let id = receipt.cycle_id();
+        let payment = receipt.payment_id.into_uuid();
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        let sub = Self::get_subscription_for_update_tx(&mut tx, receipt.subscription_id)
+            .await?
+            .ok_or(CommerceError::NotFound)?;
+        receipt.check_membership(&sub)?;
+        let paid = sqlx::query_as::<_,(Decimal,String,DateTime<Utc>)>(
+            "SELECT amount,status,paid_at FROM payments WHERE id=$1 AND customer_id=$2 AND currency=$3
+             AND order_id IS NULL AND invoice_id IS NULL AND status IN ('completed','partially_refunded','refunded') FOR UPDATE"
+        ).bind(payment).bind(sub.customer_id.into_uuid()).bind(sub.currency.as_str()).fetch_optional(tx.as_mut()).await.map_err(map_db_error)?
+         .ok_or_else(|| CommerceError::Conflict("Renewal needs a settled payment for the same customer and currency".into()))?;
+        let (total, payment_status, paid_at) = paid;
+        if receipt.tax > total {
+            return Err(CommerceError::ValidationError("Renewal tax exceeds the payment".into()));
+        }
+        let status = if payment_status == "refunded" { "refunded" } else { "paid" };
+        let now = Utc::now();
+        let existing = sqlx::query_as::<_,(Uuid,Uuid,Option<Uuid>,DateTime<Utc>,DateTime<Utc>,Decimal,Decimal,String)>(
+            "SELECT id,subscription_id,payment_id,period_start,period_end,tax,total,status FROM billing_cycles WHERE id=$1 OR payment_id=$2 LIMIT 1 FOR UPDATE"
+        ).bind(id).bind(payment).fetch_optional(tx.as_mut()).await.map_err(map_db_error)?;
+        if let Some((
+            cycle,
+            subscription,
+            existing_payment,
+            start,
+            end,
+            tax,
+            gross,
+            current_status,
+        )) = existing
+        {
+            if cycle != id
+                || subscription != sub.id.into_uuid()
+                || existing_payment != Some(payment)
+                || !matches!(current_status.as_str(), "paid" | "refunded")
+                || start != receipt.period_start
+                || end != receipt.period_end
+                || tax != receipt.tax
+                || gross != total
+            {
+                return Err(CommerceError::Conflict(
+                    "Renewal invoice or payment was already used for different terms".into(),
+                ));
+            }
+            if status == "refunded" {
+                sqlx::query("UPDATE billing_cycles SET status='refunded', updated_at=$2 WHERE id=$1 AND status='paid'")
+                    .bind(id).bind(now).execute(tx.as_mut()).await.map_err(map_db_error)?;
+            }
+        } else {
+            let number = sqlx::query_scalar::<_, i32>("SELECT COALESCE(MAX(cycle_number),0)+1 FROM billing_cycles WHERE subscription_id=$1")
+                .bind(sub.id.into_uuid()).fetch_one(tx.as_mut()).await.map_err(map_db_error)?;
+            sqlx::query("INSERT INTO billing_cycles
+                (id,subscription_id,cycle_number,status,period_start,period_end,billed_at,subtotal,discount,tax,total,currency,payment_id,cycle_key,created_at,updated_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,$9,$10,$11,$14,$12,$13,$13)")
+                .bind(id).bind(sub.id.into_uuid()).bind(number).bind(status).bind(receipt.period_start).bind(receipt.period_end)
+                .bind(paid_at).bind(total-receipt.tax).bind(receipt.tax).bind(total).bind(sub.currency.as_str()).bind(Self::cycle_key(sub.id, number)).bind(now).bind(payment)
+                .execute(tx.as_mut()).await.map_err(map_db_error)?;
+            sqlx::query("UPDATE subscriptions SET current_period_start=CASE WHEN $3>current_period_end THEN $2 ELSE current_period_start END,
+                current_period_end=GREATEST(current_period_end,$3),billing_cycle_count=billing_cycle_count+1,updated_at=$4 WHERE id=$1")
+                .bind(sub.id.into_uuid()).bind(receipt.period_start).bind(receipt.period_end).bind(now).execute(tx.as_mut()).await.map_err(map_db_error)?;
+            self.record_event_tx(&mut tx, sub.id, SubscriptionEventType::Renewed, "Externally paid membership renewal",
+                Some(serde_json::json!({"invoice": receipt.invoice_key, "payment": payment, "cycle_number": number})), None).await?;
+        }
+        tx.commit().await.map_err(map_db_error)?;
+        self.get_billing_cycle_async(id).await?.ok_or(CommerceError::NotFound)
+    }
+
+    async fn insert_subscription_async(
+        &self,
+        input: CreateSubscription,
+        purchased: Option<(stateset_core::OrderId, stateset_core::PaymentId)>,
+    ) -> Result<Subscription> {
         stateset_core::Validate::validate(&input)?;
         let plan = self.get_plan_async(input.plan_id).await?.ok_or(CommerceError::NotFound)?;
 
@@ -969,8 +1060,11 @@ impl PgSubscriptionRepository {
             now + Duration::days(interval_days)
         };
 
-        let next_billing_date =
-            if trial_ends_at.is_some() { trial_ends_at } else { Some(current_period_end) };
+        let next_billing_date = if purchased.is_some() {
+            None
+        } else {
+            if trial_ends_at.is_some() { trial_ends_at } else { Some(current_period_end) }
+        };
 
         let status = if trial_ends_at.is_some() {
             SubscriptionStatus::Trial
@@ -1012,10 +1106,26 @@ impl PgSubscriptionRepository {
 
         let mut created_subscription_id = None;
         for attempt in 0..Self::MAX_SUBSCRIPTION_NUMBER_RETRIES {
-            let id = SubscriptionId::new();
+            let id = purchased.map_or_else(SubscriptionId::new, |(order, _)| {
+                Subscription::purchased_id(order, input.plan_id)
+            });
             let subscription_number = generate_subscription_number();
             let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
+            if let Some((order, payment)) = purchased {
+                let paid = sqlx::query_scalar::<_,Uuid>(
+                    "SELECT p.id FROM payments p JOIN orders o ON o.id = p.order_id
+                     WHERE p.id = $1 AND o.id = $2 AND p.customer_id = $3 AND o.customer_id = $3
+                       AND p.currency = $4 AND o.currency = $4 AND p.status = 'completed' AND p.amount = o.total_amount
+                       AND o.status IN ('confirmed','processing','partially_shipped','shipped','delivered') FOR UPDATE OF o, p"
+                ).bind(payment.into_uuid()).bind(order.into_uuid()).bind(input.customer_id.into_uuid()).bind(plan.currency.as_str())
+                 .fetch_optional(tx.as_mut()).await.map_err(map_db_error)?;
+                if paid.is_none() {
+                    return Err(CommerceError::Conflict(
+                        "Membership order is not fully paid".into(),
+                    ));
+                }
+            }
             let insert_result = sqlx::query(
                 r#"
                 INSERT INTO subscriptions (
@@ -1139,6 +1249,16 @@ impl PgSubscriptionRepository {
                 Utc::now(),
             )
             .await?;
+
+            if let Some((order, payment)) = purchased {
+                sqlx::query("UPDATE billing_cycles SET status = 'paid', order_id = $1, payment_id = $2, billed_at = $3 WHERE subscription_id = $4 AND cycle_number = 1")
+                    .bind(order.into_uuid()).bind(payment.into_uuid()).bind(now).bind(id.into_uuid()).execute(tx.as_mut()).await.map_err(map_db_error)?;
+                sqlx::query("UPDATE subscriptions SET billing_cycle_count = 1 WHERE id = $1")
+                    .bind(id.into_uuid())
+                    .execute(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+            }
 
             tx.commit().await.map_err(map_db_error)?;
             created_subscription_id = Some(id);
@@ -2263,8 +2383,24 @@ impl SubscriptionRepository for PgSubscriptionRepository {
         super::block_on(self.create_subscription_async(input))
     }
 
+    fn insert_paid_membership(
+        &self,
+        order: stateset_core::OrderId,
+        payment: stateset_core::PaymentId,
+        input: CreateSubscription,
+    ) -> Result<Subscription> {
+        super::block_on(self.insert_paid_membership_async(order, payment, input))
+    }
+
     fn get_subscription(&self, id: SubscriptionId) -> Result<Option<Subscription>> {
         super::block_on(self.get_subscription_async(id))
+    }
+
+    fn record_paid_renewal(
+        &self,
+        receipt: stateset_core::PaidMembershipRenewal,
+    ) -> Result<BillingCycle> {
+        super::block_on(self.record_paid_renewal_async(receipt))
     }
 
     fn get_subscription_by_number(&self, number: &str) -> Result<Option<Subscription>> {

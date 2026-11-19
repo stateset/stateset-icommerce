@@ -4,7 +4,7 @@ import {
   finishRecordedCheckout,
 } from './checkout-finalization.js';
 import { getTaxProvider } from './tax.js';
-import { addDecimals, decimalToUnits } from './money.js';
+import { addDecimals, decimalToUnits, unitsToDecimal } from './money.js';
 import { getShippingProvider, validateShippingAddress } from './shipping.js';
 
 export class CheckoutError extends Error {
@@ -77,24 +77,10 @@ async function resolveCustomer(commerce, email, payerAddress, firstName, lastNam
   }
 }
 
-export async function executeCheckout({
-  commerce,
-  cartId,
-  email,
-  txHash,
-  payerAddress,
-  shippingAddress,
-  shippingMethodId,
-  verifySettlement,
-  taxProvider = getTaxProvider(),
-  shippingProvider = getShippingProvider(),
+export async function quoteCheckout({
+  commerce, cartId, shippingAddress, shippingMethodId, additionalLines = [], campaignCoupon = null,
+  taxProvider = getTaxProvider(), shippingProvider = getShippingProvider(),
 }) {
-  if (!cartId || !txHash || !payerAddress || !shippingAddress) {
-    throw new CheckoutError(
-      'cartId, email, txHash, walletAddress, and shippingAddress are required',
-    );
-  }
-  const normalizedEmail = normalizeCheckoutEmail(email);
   let normalizedAddress;
   try {
     normalizedAddress = validateShippingAddress(shippingAddress);
@@ -113,7 +99,7 @@ export async function executeCheckout({
     commerce.carts.getItems(cartId),
   ]);
   if (!cart) throw new CheckoutError('Cart not found', 404);
-  if (!items?.length) throw new CheckoutError('Cart is empty');
+  if (!items?.length && !additionalLines.length) throw new CheckoutError('Cart is empty');
   const pricedItems = items.map((item) => ({
     productId: item.productId,
     variantId: item.variantId,
@@ -122,6 +108,27 @@ export async function executeCheckout({
     quantity: item.quantity,
     unitPrice: item.unitPriceExact || String(item.unitPrice),
   }));
+  let coupon;
+  if (campaignCoupon && pricedItems.some(item => item.sku === campaignCoupon.sku)) {
+    const code = campaignCoupon.code.toUpperCase();
+    if (cart.status !== 'active') throw new CheckoutError('Cart is not active', 409);
+    const priced = cart.couponCode === code ? cart : await commerce.carts.applyDiscount(cartId, code);
+    const discount = decimalToUnits(priced.discountAmountExact, 2);
+    const amounts = pricedItems.map(item => decimalToUnits(item.unitPrice, 2) * BigInt(item.quantity));
+    const subtotal = amounts.reduce((sum, amount) => sum + amount, 0n);
+    if (discount <= 0n || discount > subtotal) throw new CheckoutError('Campaign coupon is ineligible for this purchase', 409);
+    // Allocate the native order discount over qualifying merchandise. Cumulative
+    // rounding assigns every cent exactly once, including across repeated SKUs.
+    let allocated = 0n, base = 0n;
+    pricedItems.forEach((item, i) => {
+      base += amounts[i];
+      const next = (base * discount + subtotal / 2n) / subtotal;
+      item.discount = unitsToDecimal(next - allocated, 2);
+      allocated = next;
+    });
+    coupon = { code, amount: unitsToDecimal(discount, 2) };
+  }
+  pricedItems.push(...additionalLines);
   let itemTotals;
   try {
     // Round each line's tax in USD cents, then sum those exact posted amounts.
@@ -149,6 +156,76 @@ export async function executeCheckout({
     shipping: shippingQuote.amount,
     total: addDecimals([itemTotals.total, shippingQuote.amount]),
   };
+  return { cart, normalizedAddress, shippingQuote, totals, coupon };
+}
+
+export function reserveCheckoutOrder(commerce, cartId, customerId, quote, notes) {
+  const { normalizedAddress, shippingQuote, totals } = quote;
+  const input = {
+    customerId,
+    cartId,
+    currency: 'USD',
+    stockPolicy: 'reject_if_insufficient',
+    shippingMethod: shippingQuote.id,
+    shippingAddress: {
+      line1: normalizedAddress.line1,
+      line2: normalizedAddress.line2,
+      city: normalizedAddress.city,
+      state: normalizedAddress.state,
+      postalCode: normalizedAddress.postalCode,
+      country: normalizedAddress.country,
+    },
+    notes,
+    items: [
+      ...totals.lines.map((item) => ({
+        productId: item.productId,
+        variantId: item.variantId,
+        sku: item.sku,
+        name: item.name,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        taxAmount: item.tax,
+      })),
+      ...(shippingQuote.amount === '0'
+        ? []
+        : [
+            {
+              sku: `SHIPPING-${shippingQuote.id.toUpperCase()}`,
+              name: shippingQuote.label,
+              quantity: 1,
+              unitPrice: shippingQuote.amount,
+              taxAmount: '0',
+            },
+          ]),
+    ],
+  };
+  if (quote.coupon) {
+    if (typeof commerce.orders.createWithCouponExact !== 'function') throw new CheckoutError('Install a native engine with transactional coupon checkout', 503);
+    return commerce.orders.createWithCouponExact(input, quote.coupon.code, quote.coupon.amount);
+  }
+  return commerce.orders.createExact(input);
+}
+
+export async function executeCheckout({
+  commerce,
+  cartId,
+  email,
+  txHash,
+  payerAddress,
+  shippingAddress,
+  shippingMethodId,
+  verifySettlement,
+  taxProvider = getTaxProvider(),
+  shippingProvider = getShippingProvider(),
+}) {
+  if (!cartId || !txHash || !payerAddress || !shippingAddress) {
+    throw new CheckoutError(
+      'cartId, email, txHash, walletAddress, and shippingAddress are required',
+    );
+  }
+  const normalizedEmail = normalizeCheckoutEmail(email);
+  const quote = await quoteCheckout({ commerce, cartId, shippingAddress, shippingMethodId, taxProvider, shippingProvider });
+  const { cart, normalizedAddress, totals } = quote;
   const settlement = await verifySettlement({ totals });
   const idempotencyKey = `base:${txHash}:${settlement.logIndex}`;
   const existingPayment = await findPaymentByIdempotencyKey(commerce, idempotencyKey);
@@ -181,44 +258,9 @@ export async function executeCheckout({
   );
   // Prices and the commerce ledger are denominated in USD. Settlement uses
   // USDC on Base at the storefront's explicit one-token-per-dollar rate.
-  const order = await commerce.orders.createExact({
-    customerId: customer.id,
-    cartId,
-    currency: 'USD',
-    stockPolicy: 'reject_if_insufficient',
-    shippingMethod: shippingQuote.id,
-    shippingAddress: {
-      line1: normalizedAddress.line1,
-      line2: normalizedAddress.line2,
-      city: normalizedAddress.city,
-      state: normalizedAddress.state,
-      postalCode: normalizedAddress.postalCode,
-      country: normalizedAddress.country,
-    },
-    notes: `Verified Base settlement: ${txHash}; Cart: ${cartId}`,
-    items: [
-      ...totals.lines.map((item) => ({
-        productId: item.productId,
-        variantId: item.variantId,
-        sku: item.sku,
-        name: item.name,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        taxAmount: item.tax,
-      })),
-      ...(shippingQuote.amount === '0'
-        ? []
-        : [
-            {
-              sku: `SHIPPING-${shippingQuote.id.toUpperCase()}`,
-              name: shippingQuote.label,
-              quantity: 1,
-              unitPrice: shippingQuote.amount,
-              taxAmount: '0',
-            },
-          ]),
-    ],
-  });
+  const notes = `Verified Base settlement: ${txHash}; Cart: ${cartId}`;
+  const order = await reserveCheckoutOrder(commerce, cartId, customer.id, quote, notes);
+  if (order.notes !== notes) throw new CheckoutError('Cart already has another checkout', 409);
   const claim = await claimPaymentForOrder({
     commerce,
     order,

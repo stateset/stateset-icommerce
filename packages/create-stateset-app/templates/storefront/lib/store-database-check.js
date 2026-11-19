@@ -14,16 +14,16 @@ export function inspectStoreDatabase(environment, { cwd = process.cwd(), launch 
   let descriptor;
   try {
     const filename = path.resolve(cwd, database);
-    if (!fs.statSync(filename).isFile()) throw new Error();
-    descriptor = fs.openSync(filename, 'r');
+    if (!fs.statSync(/* turbopackIgnore: true */ filename).isFile()) throw new Error();
+    descriptor = fs.openSync(/* turbopackIgnore: true */ filename, 'r');
     const header = Buffer.alloc(16);
     if (
       fs.readSync(descriptor, header, 0, 16, 0) !== 16 ||
       header.toString('ascii') !== 'SQLite format 3\0'
     )
       throw new Error();
-    fs.accessSync(filename, fs.constants.R_OK | fs.constants.W_OK);
-    fs.accessSync(path.dirname(filename), fs.constants.R_OK | fs.constants.W_OK);
+    fs.accessSync(/* turbopackIgnore: true */ filename, fs.constants.R_OK | fs.constants.W_OK);
+    fs.accessSync(/* turbopackIgnore: true */ path.dirname(filename), fs.constants.R_OK | fs.constants.W_OK);
     return {
       id: 'database',
       status: 'pass',

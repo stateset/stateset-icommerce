@@ -6,6 +6,9 @@
 #![allow(clippy::wildcard_imports)]
 
 use super::*;
+#[path = "card_routing.rs"]
+mod card_routing;
+use card_routing::RouteCardInput;
 
 // ============================================================================
 // Payments API
@@ -173,6 +176,15 @@ pub struct Payments {
 
 #[napi]
 impl Payments {
+    /// Route a card operation through operator-owned accounts. Network calls run outside the async runtime.
+    #[napi]
+    pub async fn route_card(&self, input: RouteCardInput) -> Result<serde_json::Value> {
+        let engine = self.commerce.get()?;
+        tokio::task::spawn_blocking(move || card_routing::run(&engine, input))
+            .await
+            .map_err(|error| wrap(ErrCode::Internal, "Card routing worker failed", error))?
+    }
+
     /// Atomic request-key deduplication and guarded completion for payment write-back.
     #[napi]
     pub fn supports_payment_idempotency(&self) -> bool {

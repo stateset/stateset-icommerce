@@ -174,6 +174,8 @@ pub struct SubscriptionFilterInput {
 pub struct SubscriptionOutput {
     pub id: String,
     pub subscription_number: String,
+    /// Order backing this externally billed membership.
+    pub purchase_order_id: Option<String>,
     pub customer_id: String,
     pub plan_id: String,
     pub plan_name: String,
@@ -219,6 +221,11 @@ impl TryFrom<stateset_core::Subscription> for SubscriptionOutput {
         Ok(Self {
             id: s.id.to_string(),
             subscription_number: s.subscription_number,
+            purchase_order_id: s
+                .metadata
+                .as_ref()
+                .and_then(|m| m["purchase_order"].as_str())
+                .map(str::to_owned),
             customer_id: s.customer_id.to_string(),
             plan_id: s.plan_id.to_string(),
             plan_name: s.plan_name,
@@ -649,6 +656,61 @@ impl Subscriptions {
         convert_output(subscription)
     }
 
+    /// Enroll a paid order in a membership plan once, with externally managed renewals.
+    #[napi]
+    pub async fn enroll_paid_membership(
+        &self,
+        payment_id: String,
+        plan_id: String,
+    ) -> Result<SubscriptionOutput> {
+        let payment =
+            payment_id.parse().map_err(|e| wrap(ErrCode::Validation, "Invalid payment ID", e))?;
+        let plan = plan_id.parse().map_err(|e| wrap(ErrCode::Validation, "Invalid plan ID", e))?;
+        let sub = self
+            .commerce
+            .get()?
+            .subscriptions()
+            .enroll_paid_membership(payment, plan)
+            .map_err(|e| wrap(ErrCode::Validation, "Unable to enroll purchase", e))?;
+        convert_output(sub)
+    }
+
+    /// Record a processor-collected payment on an externally billed membership.
+    #[napi]
+    pub async fn record_paid_renewal(
+        &self,
+        subscription_id: String,
+        payment_id: String,
+        invoice_key: String,
+        period_start: String,
+        period_end: String,
+        tax: String,
+    ) -> Result<BillingCycleOutput> {
+        let receipt = stateset_core::PaidMembershipRenewal {
+            subscription_id: subscription_id
+                .parse()
+                .map_err(|e| wrap(ErrCode::Validation, "Invalid subscription ID", e))?,
+            payment_id: payment_id
+                .parse()
+                .map_err(|e| wrap(ErrCode::Validation, "Invalid payment ID", e))?,
+            invoice_key,
+            period_start: period_start
+                .parse()
+                .map_err(|e| wrap(ErrCode::Validation, "Invalid period start", e))?,
+            period_end: period_end
+                .parse()
+                .map_err(|e| wrap(ErrCode::Validation, "Invalid period end", e))?,
+            tax: tax.parse().map_err(|e| wrap(ErrCode::Validation, "Invalid renewal tax", e))?,
+        };
+        let cycle = self
+            .commerce
+            .get()?
+            .subscriptions()
+            .record_paid_renewal(receipt)
+            .map_err(|e| wrap(ErrCode::Validation, "Unable to record renewal", e))?;
+        convert_output(cycle)
+    }
+
     /// Get a subscription by ID
     #[napi]
     pub async fn get(&self, id: String) -> Result<Option<SubscriptionOutput>> {
@@ -868,6 +930,19 @@ impl Subscriptions {
             .map_err(|e| wrap(ErrCode::Internal, "Failed to list billing cycles", e))?;
 
         convert_outputs(cycles)
+    }
+
+    /// Record settlement for a billing cycle after the provider confirms payment.
+    #[napi]
+    pub async fn mark_cycle_paid(&self, id: String) -> Result<BillingCycleOutput> {
+        let commerce = self.commerce.get()?;
+        let uuid = uuid::Uuid::parse_str(&id)
+            .map_err(|e| wrap(ErrCode::Validation, "Invalid billing cycle ID", e))?;
+        let cycle = commerce
+            .subscriptions()
+            .mark_cycle_paid(uuid)
+            .map_err(|e| wrap(ErrCode::Internal, "Failed to settle billing cycle", e))?;
+        cycle.try_into()
     }
 
     /// Get a billing cycle by ID

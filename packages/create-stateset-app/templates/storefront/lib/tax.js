@@ -57,7 +57,9 @@ function calculateCartWithRates(items, stateCode, rates, decimals = 2) {
   let subtotalUnits = 0n;
   let taxUnits = 0n;
   const lines = items.map((item) => {
-    const lineUnits = decimalToUnits(item.unitPrice, decimals) * BigInt(item.quantity);
+    const lineUnits = decimalToUnits(item.unitPrice, decimals) * BigInt(item.quantity) -
+      decimalToUnits(item.discount ?? '0', decimals);
+    if (lineUnits < 0n) throw new Error('Line discount exceeds its price');
     const lineTaxUnits = (lineUnits * rateUnits + 500000n) / 1000000n;
     subtotalUnits += lineUnits;
     taxUnits += lineTaxUnits;

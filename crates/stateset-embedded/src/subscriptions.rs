@@ -170,6 +170,79 @@ impl Subscriptions {
         Ok(subscription)
     }
 
+    /// Enroll the owner of a settled order once for this plan. The storefront maps purchased
+    /// SKUs to plans. The processor or a new purchase supplies subsequent paid periods.
+    pub fn enroll_paid_membership(
+        &self,
+        payment_id: stateset_core::PaymentId,
+        plan_id: Uuid,
+    ) -> Result<Subscription> {
+        use stateset_core::{CommerceError, OrderStatus, PaymentTransactionStatus};
+        let payment = self.db.payments().get(payment_id)?.ok_or(CommerceError::NotFound)?;
+        let order_id = payment.order_id.ok_or_else(|| {
+            CommerceError::ValidationError("Membership requires an order payment".into())
+        })?;
+        let order = self.db.orders().get(order_id)?.ok_or(CommerceError::NotFound)?;
+        let id = Subscription::purchased_id(order_id, plan_id);
+        let proof = serde_json::json!({"purchase_order": order_id, "purchase_payment": payment_id});
+        let check = |subscription: Subscription| {
+            if subscription.customer_id == order.customer_id
+                && subscription.plan_id == plan_id
+                && subscription.metadata.as_ref() == Some(&proof)
+            {
+                Ok(subscription)
+            } else {
+                Err(CommerceError::Conflict(
+                    "Membership identity is bound to a different purchase".into(),
+                ))
+            }
+        };
+        if let Some(existing) = self.get(id)? {
+            return check(existing);
+        }
+        let plan = self.get_plan(plan_id)?.ok_or(CommerceError::NotFound)?;
+        if payment.status != PaymentTransactionStatus::Completed
+            || payment.customer_id != Some(order.customer_id)
+            || payment.amount != order.total_amount
+            || payment.currency != order.currency
+            || plan.currency != order.currency
+            || matches!(
+                order.status,
+                OrderStatus::Pending | OrderStatus::Cancelled | OrderStatus::Refunded
+            )
+        {
+            return Err(CommerceError::ValidationError(
+                "Membership requires a settled order for the same customer and currency".into(),
+            ));
+        }
+        let input = CreateSubscription {
+            customer_id: order.customer_id,
+            plan_id,
+            skip_trial: Some(true),
+            start_date: Some(payment.paid_at.unwrap_or(payment.created_at)),
+            metadata: Some(proof.clone()),
+            ..Default::default()
+        };
+        match self.db.subscriptions().insert_paid_membership(order_id, payment_id, input) {
+            Ok(sub) => {
+                self.metrics.record_subscription_created(&id.to_string());
+                Ok(sub)
+            }
+            Err(error) => match self.get(id)? {
+                Some(winner) => check(winner),
+                None => Err(error),
+            },
+        }
+    }
+
+    /// Post a processor-collected renewal to the membership's billing history.
+    pub fn record_paid_renewal(
+        &self,
+        receipt: stateset_core::PaidMembershipRenewal,
+    ) -> Result<BillingCycle> {
+        self.db.subscriptions().record_paid_renewal(receipt)
+    }
+
     /// Get a subscription by ID.
     pub fn get(&self, id: SubscriptionId) -> Result<Option<Subscription>> {
         self.db.subscriptions().get_subscription(id)

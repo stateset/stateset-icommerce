@@ -335,6 +335,25 @@ impl Orders {
     /// Create an order without any floating-point conversion.
     #[napi]
     pub async fn create_exact(&self, input: CreateOrderExactInput) -> Result<OrderOutput> {
+        self.create_exact_order(input, None)
+    }
+
+    /// Reserve inventory and redeem the cart's native coupon under the same transaction.
+    #[napi]
+    pub async fn create_with_coupon_exact(
+        &self,
+        input: CreateOrderExactInput,
+        code: String,
+        discount: String,
+    ) -> Result<OrderOutput> {
+        self.create_exact_order(input, Some((code, discount)))
+    }
+
+    fn create_exact_order(
+        &self,
+        input: CreateOrderExactInput,
+        coupon: Option<(String, String)>,
+    ) -> Result<OrderOutput> {
         let commerce = self.commerce.get()?;
         let customer_id = input
             .customer_id
@@ -365,7 +384,7 @@ impl Orders {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let create = stateset_core::CreateOrder {
+        let mut create = stateset_core::CreateOrder {
             customer_id,
             items,
             currency: parse_optional_currency(input.currency)?,
@@ -376,12 +395,17 @@ impl Orders {
             billing_address,
             ..Default::default()
         };
-        let order = match input.cart_id {
-            Some(cart_id) => commerce.orders().create_from_cart(
-                cart_id.parse().map_err(|_| coded(ErrCode::Validation, "Invalid cart UUID"))?,
-                create,
-            ),
-            None => commerce.orders().create(create),
+        let cart = parse_optional_id(input.cart_id, "cart")?;
+        let order = match (cart, coupon) {
+            (Some(cart), Some((code, discount))) => {
+                create.discount_amount = Some(parse_decimal_str(&discount, "coupon discount")?);
+                commerce.orders().create_from_cart_with_coupon(cart, create, &code)
+            }
+            (None, Some(_)) => {
+                return Err(coded(ErrCode::Validation, "A coupon order requires a cart"));
+            }
+            (Some(cart), None) => commerce.orders().create_from_cart(cart, create),
+            (None, None) => commerce.orders().create(create),
         }
         .map_err(|e| wrap(ErrCode::Internal, "Failed to create order", e))?;
         convert_output(order)

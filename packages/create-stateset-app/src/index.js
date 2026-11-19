@@ -58,6 +58,34 @@ function generateEnvExample(targetDir, storeName) {
 # Database path (SQLite via @stateset/embedded)
 STATESET_DB_PATH=./store.db
 
+# Choose base for USDC, stripe for hosted cards and eligible wallets,
+# or routed for a buyer card form backed by Stripe or Square.
+STATESET_CHECKOUT_PROVIDER=base
+# STRIPE_SECRET_KEY=
+# STRIPE_WEBHOOK_SECRET=
+# NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
+# STATESET_CARD_ACCOUNTS_JSON=[{"account":"square","provider":"square","secretEnv":"SQUARE_ACCESS_TOKEN","publicKey":"sandbox-sq0idp-EXAMPLE","location":"LOCATION","sandbox":true,"currencies":["USD"]}]
+# SQUARE_ACCESS_TOKEN=
+# For the optional verify:providers sandbox drill:
+# STRIPE_TEST_KEY=
+# SQUARE_SANDBOX_ACCESS_TOKEN=
+# SQUARE_SANDBOX_LOCATION=
+# Register /api/checkout/stripe-webhook for checkout.session.completed,
+# checkout.session.expired, refund.created, refund.updated and refund.failed.
+# For renewal recovery and membership access, enable invoice.payment_failed,
+# invoice.paid and customer.subscription.updated, .deleted, .paused and .resumed.
+# STATESET_RENEWAL_RECOVERY=true
+# STATESET_RECOVERY_SECRET=
+# STATESET_RECOVERY_RETRY_DAYS=[1,3,7]
+# STATESET_CAMPAIGN_SECRET=
+# STATESET_LICENSE_SECRET=
+# STATESET_DOWNLOAD_ROOT=
+# STATESET_DIGITAL_PRODUCTS_JSON={}
+# STATESET_AFFILIATE_DEFAULT_BPS=1000
+# STATESET_AFFILIATE_PAYOUT_COUNTRIES=US,CA
+# STATESET_SELLER_SIGNUP_COUNTRIES=US,CA
+# STATESET_SYNC_BANK_PAYOUTS=true
+
 # Base JSON-RPC URL used only by the server to verify USDC settlement.
 STATESET_BASE_RPC_URL=https://mainnet.base.org
 STATESET_USDC_CONFIRMATIONS=2
@@ -97,6 +125,7 @@ function printNextSteps(projectName, pm) {
   print(`    ${cyan('cp .env.example .env.local')}`);
   print(`    ${cyan(`${run} seed`)}`);
   print(`    ${cyan(`${run} doctor`)}`);
+  print(`    ${cyan(`${run} onboard`)}`);
   print(`    ${cyan(`${run} dev`)}`);
   print('');
   print(`  Then open ${cyan('http://localhost:3000')}`);

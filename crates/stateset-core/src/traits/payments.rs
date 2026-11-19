@@ -150,6 +150,23 @@ pub trait SubscriptionRepository: Send + Sync {
 
     /// Create a subscription
     fn create_subscription(&self, input: CreateSubscription) -> Result<Subscription>;
+    /// Insert a paid enrollment with a stable identity and external billing schedule.
+    fn insert_paid_membership(
+        &self,
+        _order: OrderId,
+        _payment: PaymentId,
+        _input: CreateSubscription,
+    ) -> Result<Subscription> {
+        Err(crate::CommerceError::ValidationError(
+            "This backend does not support paid membership enrollment".into(),
+        ))
+    }
+    /// Post an externally collected payment once for its provider invoice.
+    fn record_paid_renewal(&self, _receipt: crate::PaidMembershipRenewal) -> Result<BillingCycle> {
+        Err(crate::CommerceError::ValidationError(
+            "This backend does not support externally paid renewals".into(),
+        ))
+    }
     /// Get a subscription by ID
     fn get_subscription(&self, id: SubscriptionId) -> Result<Option<Subscription>>;
     /// Get a subscription by number

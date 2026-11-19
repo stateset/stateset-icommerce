@@ -1,3 +1,5 @@
+import { cardAccounts } from './card-accounts.js';
+import { cardCheckoutEnabled, getStripeConfiguration } from './stripe-config.js';
 import { getCheckoutConfiguration } from './checkout-config.js';
 import { getTaxProvider } from './tax.js';
 import { getShippingProvider } from './shipping.js';
@@ -6,24 +8,41 @@ import { getShippingProvider } from './shipping.js';
 export function assessStoreConfiguration(environment, { launch = false } = {}) {
   const checks = [];
   const add = (id, status, message, action = null) => checks.push({ id, status, message, action });
-  try {
-    const config = getCheckoutConfiguration(environment);
-    add('payment', 'pass', 'USDC on Base is configured; provider connectivity is not checked.');
-    if (launch && !config.rpcUrl.startsWith('https:')) {
+  if (environment.STATESET_CHECKOUT_PROVIDER === 'routed') {
+    try {
+      if (!cardAccounts(environment).some(a => a.available && a.currencies.includes('USD') && a.methods.includes('credit_card'))) throw new Error('No eligible USD card route');
+      add('payment', 'pass', 'At least one account can accept USD card authorizations.');
+    } catch (error) { add('payment', 'fail', error.message, 'Configure STATESET_CARD_ACCOUNTS_JSON and its referenced credentials.'); }
+  } else if (cardCheckoutEnabled(environment)) {
+    try {
+      getStripeConfiguration(environment);
+      add('payment', 'pass', 'Stripe checkout keys are configured. Provider connectivity is not checked.');
+    } catch {
+      add('payment', 'fail', 'Stripe checkout configuration is incomplete.',
+        'Set STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET and NEXT_PUBLIC_BASE_URL.');
+    }
+  } else if (environment.STATESET_CHECKOUT_PROVIDER && environment.STATESET_CHECKOUT_PROVIDER !== 'base') {
+    add('payment', 'fail', 'Unknown checkout provider.', 'Set STATESET_CHECKOUT_PROVIDER to base, stripe or routed.');
+  } else {
+    try {
+      const config = getCheckoutConfiguration(environment);
+      add('payment', 'pass', 'USDC on Base is configured; provider connectivity is not checked.');
+      if (launch && !config.rpcUrl.startsWith('https:')) {
+        add(
+          'payment-transport',
+          'fail',
+          'The payment RPC URL must use HTTPS for launch.',
+          'Set STATESET_BASE_RPC_URL to your HTTPS Base RPC endpoint.',
+        );
+      }
+    } catch {
       add(
-        'payment-transport',
+        'payment',
         'fail',
-        'The payment RPC URL must use HTTPS for launch.',
-        'Set STATESET_BASE_RPC_URL to your HTTPS Base RPC endpoint.',
+        'Payment configuration is incomplete or invalid.',
+        'Set a non-zero NEXT_PUBLIC_STORE_WALLET_ADDRESS, an HTTP(S) STATESET_BASE_RPC_URL, and positive integer STATESET_USDC_CONFIRMATIONS.',
       );
     }
-  } catch {
-    add(
-      'payment',
-      'fail',
-      'Payment configuration is incomplete or invalid.',
-      'Set a non-zero NEXT_PUBLIC_STORE_WALLET_ADDRESS, an HTTP(S) STATESET_BASE_RPC_URL, and positive integer STATESET_USDC_CONFIRMATIONS.',
-    );
   }
   try {
     const tax = getTaxProvider(environment);

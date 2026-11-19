@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { digitalProducts } from '@/lib/digital-access.js';
 import { getCommerce } from '@/lib/commerce';
 import { verifyWalletRequest } from '@/lib/wallet-auth';
 import { walletMatches } from '@/lib/customer-metadata';
@@ -49,6 +50,11 @@ export async function POST(request: NextRequest) {
     if (!walletMatches(customer?.metadata, walletAddress)) {
       return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
     }
+    if (digitalProducts(process.env)[sku]?.membershipPlanId)
+      return NextResponse.json(
+        { error: 'Complete checkout to start this paid membership.' },
+        { status: 409 },
+      );
     const variant = await commerce.products.getVariantBySku(sku);
     if (!variant) return NextResponse.json({ error: 'Unknown SKU' }, { status: 404 });
     let plan = await commerce.subscriptions.getPlanByCode(`monthly-${sku}`);

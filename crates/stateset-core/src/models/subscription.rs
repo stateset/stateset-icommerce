@@ -736,6 +736,69 @@ pub struct SkipBillingCycle {
     pub reason: Option<String>,
 }
 
+/// Receipt for one externally collected membership period. The invoice key is
+/// provider-qualified and the native payment owns the captured amount.
+#[derive(Debug, Clone)]
+pub struct PaidMembershipRenewal {
+    pub subscription_id: SubscriptionId,
+    pub payment_id: crate::PaymentId,
+    pub invoice_key: String,
+    pub period_start: DateTime<Utc>,
+    pub period_end: DateTime<Utc>,
+    pub tax: Decimal,
+}
+
+impl PaidMembershipRenewal {
+    /// Stable identity, including after the billing cycle is voided by an operator.
+    #[must_use]
+    pub fn cycle_id(&self) -> Uuid {
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::new()
+            .chain_update(b"stateset:external-renewal:v1")
+            .chain_update(self.invoice_key.as_bytes())
+            .finalize();
+        let mut bytes = [0; 16];
+        bytes.copy_from_slice(&digest[..16]);
+        uuid::Builder::from_custom_bytes(bytes).into_uuid()
+    }
+
+    /// Check that the original purchase enrolled this customer for external billing.
+    pub fn check_membership(&self, sub: &Subscription) -> crate::Result<()> {
+        let order = sub
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("purchase_order"))
+            .and_then(serde_json::Value::as_str)
+            .and_then(|s| s.parse::<OrderId>().ok());
+        if order.is_none_or(|order| Subscription::purchased_id(order, sub.plan_id) != sub.id)
+            || sub.next_billing_date.is_some()
+        {
+            return Err(crate::CommerceError::Conflict(
+                "Membership is not externally billed".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Reject ambiguous or unbounded invoice keys and invalid financial periods.
+    pub fn validate(&self) -> crate::Result<()> {
+        if self.period_end <= self.period_start
+            || self.tax.is_sign_negative()
+            || self.tax.normalize().scale() > 4
+            || self.period_start.timestamp_subsec_nanos() % 1000 != 0
+            || self.period_end.timestamp_subsec_nanos() % 1000 != 0
+            || self.invoice_key.is_empty()
+            || self.invoice_key.len() > 180
+            || !self.invoice_key.bytes().all(|b| b.is_ascii_alphanumeric() || b":_-.".contains(&b))
+        {
+            return Err(crate::CommerceError::ValidationError(
+                "Invalid membership renewal receipt".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Create a billing cycle for a subscription.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateBillingCycle {
@@ -1142,6 +1205,22 @@ pub fn generate_plan_code(name: &str) -> String {
 }
 
 impl Subscription {
+    /// Stable membership identity for a purchased plan, shared by event and HTTP retries.
+    #[must_use]
+    pub fn purchased_id(order: OrderId, plan: Uuid) -> SubscriptionId {
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::new()
+            .chain_update(b"stateset:purchased-membership:v1")
+            .chain_update(order.as_uuid().as_bytes())
+            .chain_update(plan.as_bytes())
+            .finalize();
+        let mut bytes = [0u8; 16];
+        bytes.copy_from_slice(&digest[..16]);
+        bytes[6] = (bytes[6] & 0x0f) | 0x80;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        SubscriptionId::from(Uuid::from_bytes(bytes))
+    }
+
     /// `(subtotal, discount, total)` for one billing cycle, rounded to the
     /// currency's minor unit (banker's rounding, as the cart does) so
     /// `19.99 x 15%` yields a chargeable `3.00` discount rather than `2.9985`.

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCommerce } from '@/lib/commerce';
 import { getTaxProvider } from '@/lib/tax.js';
+import { pricingEnvironment } from '@/lib/store-pricing.js';
 
 export async function POST(request: NextRequest) {
   try {
@@ -9,7 +10,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'cartId and stateCode are required' }, { status: 400 });
     const commerce = getCommerce();
     const items = await commerce.carts.getItems(cartId);
-    const provider = getTaxProvider();
+    const provider = getTaxProvider(await pricingEnvironment(commerce));
     const configured = provider.hasJurisdiction(stateCode);
     if (!configured) {
       return NextResponse.json(

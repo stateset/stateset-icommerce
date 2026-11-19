@@ -16,9 +16,10 @@ export default function SubscriptionsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'cancel', walletAddress: address }),
       });
-      if (response.ok) {
-        refreshSubscriptions();
-      }
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Cancellation failed');
+      if (result.url) window.location.assign(result.url);
+      else refreshSubscriptions();
     } catch {
       alert('Failed to cancel subscription');
     }
@@ -55,7 +56,9 @@ export default function SubscriptionsPage() {
                   <h3 className="font-semibold text-lg">
                     {sub.planName || sub.sku || 'Subscription'}
                   </h3>
-                  <p className="text-gray-500 text-sm mt-1">${(sub.price || 0).toFixed(2)}/month</p>
+                  <p className="text-gray-500 text-sm mt-1">
+                    {sub.currency} {sub.priceExact} · {sub.billingInterval}
+                  </p>
                 </div>
                 <span
                   className={`px-3 py-1 text-sm rounded-full ${

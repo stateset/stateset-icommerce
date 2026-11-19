@@ -187,7 +187,8 @@ if [[ "${SKIP_DEPENDENCIES}" != "1" ]]; then
   '
   run_logged npm run doctor:launch
   printf 'storefront-configuration-proof mode=launch result=passed\n' | tee -a "${LOG_PATH}"
-  run_logged npm run verify:journey
+  run_logged npm run verify:storefront
+  run_logged npm run verify:providers
   run_logged npm run typecheck
   run_logged npm run build
   LEVEL="install-seed-doctor-journey-typecheck-build"

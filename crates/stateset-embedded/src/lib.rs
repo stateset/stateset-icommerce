@@ -210,6 +210,8 @@ mod serials;
 mod shipment_providers;
 mod shipments;
 mod shipping_zones;
+#[cfg(feature = "events")]
+mod square_provider;
 mod stock_snapshots;
 mod store_credits;
 mod subscriptions;
@@ -292,6 +294,8 @@ pub use payment_providers::{
     minor_units,
 };
 pub use payments::Payments;
+#[cfg(feature = "events")]
+pub use payments::{ProcessorRoute, RoutedAuthorization};
 pub use prepayments::Prepayments;
 pub use price_levels::PriceLevels;
 pub use price_schedules::PriceSchedules;
@@ -316,6 +320,8 @@ pub use shipment_providers::{
 };
 pub use shipments::Shipments;
 pub use shipping_zones::ShippingZones;
+#[cfg(feature = "events")]
+pub use square_provider::SquareProvider;
 pub use stock_snapshots::StockSnapshots;
 pub use store_credits::StoreCredits;
 pub use subscriptions::Subscriptions;

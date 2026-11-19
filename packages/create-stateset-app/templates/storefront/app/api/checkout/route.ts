@@ -9,13 +9,21 @@ import {
   verifyUsdcTransfer,
 } from '@/lib/usdc-verification.js';
 import { USDC_ADDRESS } from '@/lib/wagmi';
-import { CheckoutError, executeCheckout } from '@/lib/checkout-service.js';
+import { checkCartMembershipRail, grantPurchasedAccess } from '@/lib/digital-access.js';
+import { recordStorefrontSale } from '@/lib/merchant-integrations.js';
+import { CheckoutError, executeCheckout, normalizeCheckoutEmail } from '@/lib/checkout-service.js';
 import { getCheckoutConfiguration } from '@/lib/checkout-config.js';
+import { pricingEnvironment } from '@/lib/store-pricing.js';
+import { getShippingProvider } from '@/lib/shipping.js';
+import { getTaxProvider } from '@/lib/tax.js';
 
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
   try {
+    if (process.env.STATESET_CHECKOUT_PROVIDER && process.env.STATESET_CHECKOUT_PROVIDER !== 'base') {
+      throw new CheckoutError('USDC checkout is disabled for this store', 409);
+    }
     const {
       cartId,
       email,
@@ -35,8 +43,11 @@ export async function POST(request: NextRequest) {
     const config = getCheckoutConfiguration(process.env);
 
     const client = createPublicClient({ chain: base, transport: http(config.rpcUrl) });
+    const commerce = getCommerce();
+    await checkCartMembershipRail(commerce,process.env,cartId);
+    const pricing = await pricingEnvironment(commerce);
     const result = await executeCheckout({
-      commerce: getCommerce(),
+      commerce, taxProvider:getTaxProvider(pricing), shippingProvider:getShippingProvider(pricing),
       cartId,
       email,
       txHash,
@@ -59,6 +70,12 @@ export async function POST(request: NextRequest) {
         });
       },
     });
+    const order = await commerce.orders.get(result.orderId);
+    if (!order) throw new Error('Checkout order is unavailable');
+    const customer = await commerce.customers.get(order.customerId);
+    const [payment] = await commerce.payments.list({ orderId: order.id });
+    if (payment) await grantPurchasedAccess(commerce, process.env, order, payment);
+    await recordStorefrontSale(commerce, order, customer?.email || normalizeCheckoutEmail(email));
     return NextResponse.json(result);
   } catch (error) {
     console.error('Checkout error:', error);

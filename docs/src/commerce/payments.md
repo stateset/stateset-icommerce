@@ -150,3 +150,13 @@ const report = await toolkit.executeTool('reconcile_payment_provider', {
 ```
 
 For agent-to-agent payments, see [x402 Payment Protocol](../payments/x402.md).
+
+## Routing native card authorizations
+
+With the Rust engine's `events` feature, construct a `StripeProvider` or `SquareProvider` using operator credentials. For Square, pass the account access token, location ID and sandbox flag. Supply processor-issued payment method tokens through the account that created each token.
+
+`payments.authorize_routed(payment_id, &routes)` accepts an ordered slice of `ProcessorRoute` values. Each route names a stable merchant account, its provider, allowed currencies, allowed native payment methods, availability and a processor-specific token. The engine persists its route decision before dispatch. A definitive eligible card decline permits the next account. A timeout or pending response pins the attempt to the original account. Retries use the original upstream request identity or retrieve the known authorization. An old ambiguous request without a reference needs upstream reconciliation.
+
+Use `payments.capture_routed(payment_id, &routes)` to capture a full authorization and `payments.refund_routed(payment_id, &routes, amount, request_key, reason)` to issue an exact partial or full refund. Keep account IDs bound to the same merchant credentials across deploys. A pending refund with a known processor reference is polled by that reference.
+
+The generated storefront exposes the native router to buyers when `STATESET_CHECKOUT_PROVIDER=routed`. Its card form requests the selected provider's token and handles a Stripe authentication challenge when required. Account credentials stay on the server. The merchant worker resumes unresolved checkouts and pending routed refunds. Hosted Stripe Checkout also supports eligible Apple Pay and Google Pay wallets. The storefront guide covers account configuration, operator reconciliation, seller settlement and launch drills. [Storefront guide](https://github.com/stateset/stateset-icommerce/tree/main/packages/create-stateset-app)

@@ -13,6 +13,19 @@ pub trait OrderRepository: Send + Sync {
     /// for retryable checkout adapters.
     fn create_from_cart(&self, cart_id: CartId, input: CreateOrder) -> Result<Order>;
 
+    /// Reserve an externally paid order and claim its quoted coupon in one transaction.
+    /// The discount in the input must equal the current native cart coupon price.
+    fn create_from_cart_with_coupon(
+        &self,
+        _cart_id: CartId,
+        _input: CreateOrder,
+        _coupon: &str,
+    ) -> Result<Order> {
+        Err(crate::CommerceError::NotPermitted(
+            "This backend cannot reserve coupon orders atomically".into(),
+        ))
+    }
+
     /// Get order by ID
     fn get(&self, id: OrderId) -> Result<Option<Order>>;
 

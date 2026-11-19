@@ -31,6 +31,12 @@
 //! # Ok::<(), stateset_embedded::CommerceError>(())
 //! ```
 
+#[cfg(feature = "events")]
+#[path = "payment_routing.rs"]
+mod routing;
+#[cfg(feature = "events")]
+pub use routing::{ProcessorRoute, RoutedAuthorization};
+
 use crate::Database;
 #[cfg(feature = "events")]
 use crate::payment_providers::{PaymentProvider, ProviderCharge, ProviderDecision};
@@ -262,7 +268,11 @@ impl Payments {
                 other => return Ok(other),
             },
         };
-        let decision = provider.capture(&reference, amount, &payment.currency.to_string())?;
+        let currency = payment.currency.to_string();
+        let decision = match amount {
+            Some(amount) => provider.capture(&reference, Some(amount), &currency)?,
+            None => provider.capture_full(&reference, payment.amount, &currency)?,
+        };
         self.persist_provider_decision(id, &decision)?;
         Ok(decision)
     }

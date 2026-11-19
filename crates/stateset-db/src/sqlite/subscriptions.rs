@@ -460,6 +460,14 @@ impl SqliteSubscriptionRepository {
     // ========================================================================
 
     pub fn create_subscription(&self, input: CreateSubscription) -> Result<Subscription> {
+        self.insert_subscription(input, None)
+    }
+
+    fn insert_subscription(
+        &self,
+        input: CreateSubscription,
+        purchased: Option<(stateset_core::OrderId, stateset_core::PaymentId)>,
+    ) -> Result<Subscription> {
         stateset_core::Validate::validate(&input)?;
         // Get the plan first (uses its own connection)
         let plan = self.get_plan(input.plan_id)?.ok_or(stateset_core::CommerceError::NotFound)?;
@@ -490,8 +498,11 @@ impl SqliteSubscriptionRepository {
             now + Duration::days(interval_days)
         };
 
-        let next_billing_date =
-            if trial_ends_at.is_some() { trial_ends_at } else { Some(current_period_end) };
+        let next_billing_date = if purchased.is_some() {
+            None
+        } else {
+            if trial_ends_at.is_some() { trial_ends_at } else { Some(current_period_end) }
+        };
 
         let status = if trial_ends_at.is_some() {
             SubscriptionStatus::Trial
@@ -521,7 +532,9 @@ impl SqliteSubscriptionRepository {
 
         let mut created_subscription_id = None;
         for attempt in 0..Self::MAX_SUBSCRIPTION_NUMBER_RETRIES {
-            let id = SubscriptionId::new();
+            let id = purchased.map_or_else(SubscriptionId::new, |(order, _)| {
+                Subscription::purchased_id(order, input.plan_id)
+            });
             let subscription_number = generate_subscription_number();
 
             let mut conn = self.pool.get().map_err(|e| {
@@ -531,6 +544,21 @@ impl SqliteSubscriptionRepository {
                 stateset_core::CommerceError::DatabaseError(format!("Transaction error: {e}"))
             })?;
 
+            if let Some((order, payment)) = purchased {
+                let paid = tx.query_row(
+                    "SELECT p.amount, o.total_amount FROM payments p JOIN orders o ON o.id = p.order_id
+                     WHERE p.id = ?1 AND o.id = ?2 AND p.customer_id = ?3 AND o.customer_id = ?3
+                       AND p.currency = ?4 AND o.currency = ?4 AND p.status = 'completed'
+                       AND o.status IN ('confirmed','processing','partially_shipped','shipped','delivered')",
+                    rusqlite::params![payment.to_string(),order.to_string(),input.customer_id.to_string(),plan.currency.as_str()],
+                    |row| Ok(parse_decimal_row(&row.get::<_,String>(0)?,"payment","amount")? == parse_decimal_row(&row.get::<_,String>(1)?,"order","total_amount")?)
+                ).optional().map_err(map_db_error)?;
+                if paid != Some(true) {
+                    return Err(stateset_core::CommerceError::Conflict(
+                        "Membership order is not fully paid".into(),
+                    ));
+                }
+            }
             let insert_result = tx.execute(
                 "INSERT INTO subscriptions (
                     id, subscription_number, customer_id, plan_id, plan_name, status,
@@ -655,6 +683,16 @@ impl SqliteSubscriptionRepository {
                 Utc::now(),
             )
             .map_err(map_db_error)?;
+
+            if let Some((order, payment)) = purchased {
+                tx.execute("UPDATE billing_cycles SET status = 'paid', order_id = ?1, payment_id = ?2, billed_at = ?3 WHERE subscription_id = ?4 AND cycle_number = 1",
+                    rusqlite::params![order.to_string(), payment.to_string(), now.to_rfc3339(), id.to_string()]).map_err(map_db_error)?;
+                tx.execute(
+                    "UPDATE subscriptions SET billing_cycle_count = 1 WHERE id = ?1",
+                    [id.to_string()],
+                )
+                .map_err(map_db_error)?;
+            }
 
             tx.commit().map_err(|e| {
                 stateset_core::CommerceError::DatabaseError(format!("Commit error: {e}"))
@@ -2446,8 +2484,98 @@ impl SubscriptionRepository for SqliteSubscriptionRepository {
         Self::create_subscription(self, input)
     }
 
+    fn insert_paid_membership(
+        &self,
+        order: stateset_core::OrderId,
+        payment: stateset_core::PaymentId,
+        input: CreateSubscription,
+    ) -> Result<Subscription> {
+        Self::insert_subscription(self, input, Some((order, payment)))
+    }
+
     fn get_subscription(&self, id: SubscriptionId) -> Result<Option<Subscription>> {
         Self::get_subscription(self, id)
+    }
+
+    fn record_paid_renewal(
+        &self,
+        receipt: stateset_core::PaidMembershipRenewal,
+    ) -> Result<BillingCycle> {
+        use stateset_core::CommerceError;
+        receipt.validate()?;
+        let id = receipt.cycle_id();
+        let payment = receipt.payment_id.to_string();
+        with_immediate_transaction(&self.pool, |tx| {
+            let sub = self
+                .get_subscription_with_conn(tx, receipt.subscription_id)
+                .map_err(Self::tx_err)?
+                .ok_or_else(|| Self::tx_err(CommerceError::NotFound))?;
+            receipt.check_membership(&sub).map_err(Self::tx_err)?;
+            let paid = tx.query_row(
+                "SELECT amount, status, paid_at FROM payments WHERE id=?1 AND customer_id=?2 AND currency=?3
+                 AND order_id IS NULL AND invoice_id IS NULL AND status IN ('completed','partially_refunded','refunded')",
+                rusqlite::params![payment, sub.customer_id.to_string(), sub.currency.as_str()],
+                |row| Ok((parse_decimal_row(&row.get::<_, String>(0)?, "payment", "amount")?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+            ).optional()?.ok_or_else(|| Self::tx_err(CommerceError::Conflict("Renewal needs a settled payment for the same customer and currency".into())))?;
+            let (total, payment_status, paid_at) = paid;
+            if receipt.tax > total {
+                return Err(Self::tx_err(CommerceError::ValidationError(
+                    "Renewal tax exceeds the payment".into(),
+                )));
+            }
+            let now = Utc::now().to_rfc3339();
+            let status = if payment_status == "refunded" { "refunded" } else { "paid" };
+            let existing = tx
+                .query_row(
+                    "SELECT * FROM billing_cycles WHERE id=?1 OR payment_id=?2 LIMIT 1",
+                    rusqlite::params![id.to_string(), payment],
+                    |row| self.row_to_billing_cycle(row),
+                )
+                .optional()?;
+            if let Some(cycle) = existing {
+                if cycle.id != id
+                    || cycle.payment_id.as_ref() != Some(&payment)
+                    || !matches!(
+                        cycle.status,
+                        BillingCycleStatus::Paid | BillingCycleStatus::Refunded
+                    )
+                    || cycle.subscription_id != sub.id
+                    || cycle.period_start != receipt.period_start
+                    || cycle.period_end != receipt.period_end
+                    || cycle.tax != receipt.tax
+                    || cycle.total != total
+                {
+                    return Err(Self::tx_err(CommerceError::Conflict(
+                        "Renewal invoice or payment was already used for different terms".into(),
+                    )));
+                }
+                if status == "refunded" && cycle.status == BillingCycleStatus::Paid {
+                    tx.execute(
+                        "UPDATE billing_cycles SET status='refunded', updated_at=?2 WHERE id=?1",
+                        rusqlite::params![id.to_string(), now],
+                    )?;
+                }
+                return Ok(());
+            }
+            let sub_id = sub.id.to_string();
+            let number: i32 = tx.query_row("SELECT COALESCE(MAX(cycle_number),0)+1 FROM billing_cycles WHERE subscription_id=?1", [&sub_id], |row| row.get(0))?;
+            tx.execute("INSERT INTO billing_cycles
+                (id,subscription_id,cycle_number,status,period_start,period_end,billed_at,subtotal,discount,tax,total,currency,payment_id,cycle_key,created_at,updated_at)
+                VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'0',?9,?10,?11,?14,?12,?13,?13)",
+                rusqlite::params![id.to_string(), sub_id, number, status, receipt.period_start.to_rfc3339(), receipt.period_end.to_rfc3339(),
+                   paid_at, (total - receipt.tax).to_string(), receipt.tax.to_string(), total.to_string(), sub.currency.as_str(), Self::cycle_key(sub.id, number), now, payment])?;
+            let (start, end) = if receipt.period_end > sub.current_period_end {
+                (receipt.period_start, receipt.period_end)
+            } else {
+                (sub.current_period_start, sub.current_period_end)
+            };
+            tx.execute("UPDATE subscriptions SET current_period_start=?2,current_period_end=?3,billing_cycle_count=billing_cycle_count+1,updated_at=?4 WHERE id=?1",
+                rusqlite::params![sub_id,start.to_rfc3339(),end.to_rfc3339(),now])?;
+            self.record_event_with_conn(tx, sub.id, SubscriptionEventType::Renewed, "Externally paid membership renewal",
+                Some(serde_json::json!({"invoice": receipt.invoice_key, "payment": payment, "cycle_number": number})), None).map_err(Self::tx_err)?;
+            Ok(())
+        })?;
+        self.get_billing_cycle(id)?.ok_or(CommerceError::NotFound)
     }
 
     fn get_subscription_by_number(&self, number: &str) -> Result<Option<Subscription>> {

@@ -14,23 +14,36 @@
     "typecheck": "tsc --noEmit",
     "doctor": "node scripts/check-store.js",
     "doctor:launch": "node scripts/check-store.js --launch",
+    "verify:storefront": "npm run verify:journey && npm run verify:card && npm run verify:merchant && npm run verify:routed && npm run verify:membership && npm run verify:affiliates && npm run verify:integrations",
     "verify:journey": "node scripts/verify-merchant-journey.js",
-    "seed": "node scripts/seed.js"
+    "seed": "node scripts/seed.js",
+    "card": "node scripts/card-operations.js",
+    "verify:card": "node scripts/verify-card-checkout.js",
+    "merchant": "node scripts/merchant-operations.js",
+    "onboard": "node scripts/onboard.js",
+    "verify:routed": "node scripts/verify-routed-checkout.js",
+    "verify:affiliates": "node scripts/verify-affiliate-payouts.js",
+    "verify:membership": "node scripts/verify-membership-checkout.js",
+    "verify:providers": "node scripts/verify-payment-providers.js",
+    "verify:integrations": "node scripts/verify-integrations.js",
+    "verify:merchant": "node scripts/verify-merchant-platform.js",
+    "merchant:worker": "node scripts/merchant-worker.js"
   },
   "dependencies": {
-    "@next/env": "16.4.2",
+    "@next/env": "16.4.6",
     "@ai-sdk/anthropic": "3.0.114",
     "@ai-sdk/react": "3.0.273",
     "@stateset/embedded": "^1.40.1",
     "@tanstack/react-query": "^5.90.12",
     "ai": "6.0.270",
     "lucide-react": "^0.563.0",
-    "next": "16.4.2",
+    "next": "16.4.6",
     "react": "^19",
     "react-dom": "^19",
     "viem": "2.56.0",
     "wagmi": "3.1.0",
-    "zod": "^4.6.6"
+    "zod": "^4.6.6",
+    "stripe": "23.2.0"
   },
   "overrides": {
     "postcss-selector-parser": "^7.1.6"

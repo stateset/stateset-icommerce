@@ -111,7 +111,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
     try {
       const res = await fetch(`/api/cart?cartId=${cartId}`);
       const data = await res.json();
-      if (data.cart) setCart(computeCart(data.cart));
+      if (data.cart?.status === 'active') setCart(computeCart(data.cart));
+      else if (data.cart && localStorage.getItem('stateset_cart_id') === cartId) {
+        localStorage.removeItem('stateset_cart_id');
+        setCart(null);
+      }
     } catch {
     } finally {
       setIsLoading(false);
@@ -172,6 +176,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({ cartId, sku, quantity: 1 }),
       });
       const data = await res.json();
+      if (!res.ok || !data.cart) throw new Error(data.error || 'Cart update failed');
       if (data.cart) {
         const newCart = computeCart(data.cart);
         setCart(newCart);

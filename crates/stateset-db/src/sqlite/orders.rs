@@ -1623,6 +1623,39 @@ impl SqliteOrderRepository {
 }
 
 impl OrderRepository for SqliteOrderRepository {
+    fn create_from_cart_with_coupon(
+        &self,
+        id: CartId,
+        input: CreateOrder,
+        coupon: &str,
+    ) -> Result<Order> {
+        use super::{carts::SqliteCartRepository, promotions::SqlitePromotionRepository};
+        let promotions = SqlitePromotionRepository::new(self.pool.clone());
+        let code = coupon.to_uppercase();
+        with_immediate_transaction(&self.pool, |tx| {
+            if let Some(existing) = Self::get_by_cart_id_in_conn(tx, id.into_uuid())? {
+                return Ok(existing);
+            }
+            let mut cart = SqliteCartRepository::load_cart_in_tx(tx, id).map_err(to_sql_err)?;
+            if cart.customer_id.is_none() {
+                cart.customer_id = Some(input.customer_id);
+            }
+            let (_, promotion) = promotions
+                .validate_coupon_for_cart_with_conn(tx, &cart, &code, Utc::now())
+                .map_err(to_sql_err)?;
+            crate::cart_rules::validate_order_coupon_quote(&mut cart, &input, &code, &promotion)
+                .map_err(to_sql_err)?;
+            let order = Self::create_from_cart_in_tx(tx, id.into_uuid(), &input)?;
+            SqlitePromotionRepository::consume_cart_coupon_in_tx(
+                tx,
+                &cart,
+                Some(input.customer_id),
+                order.id,
+            )?;
+            Ok(order)
+        })
+    }
+
     fn create(&self, input: CreateOrder) -> Result<Order> {
         self.create_internal(None, false, input)
     }

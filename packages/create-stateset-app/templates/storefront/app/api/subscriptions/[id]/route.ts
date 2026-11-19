@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readMerchantRecord } from '@/lib/merchant-records.js';
+import { storefrontStripe } from '@/lib/stripe-client';
 import { getCommerce } from '@/lib/commerce';
 import { verifyWalletRequest } from '@/lib/wallet-auth';
 import { walletMatches } from '@/lib/customer-metadata';
@@ -22,6 +24,27 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
     }
 
+    const billing = await readMerchantRecord(commerce, 'billing-native-' + id);
+    if (billing) {
+      if (action !== 'cancel')
+        return NextResponse.json(
+          { error: 'This membership is managed by its billing provider.' },
+          { status: 409 },
+        );
+      const { stripe, origin } = storefrontStripe();
+      const remote = await stripe.subscriptions.retrieve(billing.providerId);
+      if (remote.customer !== billing.customer || remote.metadata?.stateset_subscription_id !== id)
+        throw new Error('Provider membership differs from this account');
+      const portal = await stripe.billingPortal.sessions.create({
+        customer: billing.customer,
+        return_url: new URL('/account/subscriptions', origin).href,
+        flow_data: {
+          type: 'subscription_cancel',
+          subscription_cancel: { subscription: billing.providerId },
+        },
+      });
+      return NextResponse.json({ url: portal.url }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     if (action === 'cancel') {
       const updated = await commerce.subscriptions.cancel(id, { immediate: false });
       return NextResponse.json({ subscription: updated });

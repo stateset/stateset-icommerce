@@ -25,6 +25,7 @@ pub(crate) fn source_document_key(
         "fixed_asset_disposal",
         "fixed_asset_proceeds",
         "refund",
+        "merchant_event",
     ];
     match (source_document_type, source_document_id) {
         (Some(kind), Some(id)) if SINGLE_ENTRY_TYPES.contains(&kind) => {

@@ -67,6 +67,50 @@ pub(crate) fn coupon_discount_amount(promotion: &stateset_core::Promotion, cart:
     round_cart_money(cap_discount(cart, raw), cart.currency)
 }
 
+/// Reconcile a pending external order with the native cart that qualified for its coupon.
+pub(crate) fn validate_order_coupon_quote(
+    cart: &mut Cart,
+    input: &stateset_core::CreateOrder,
+    coupon: &str,
+    promotion: &stateset_core::Promotion,
+) -> Result<()> {
+    if !cart.is_checkoutable_status()
+        || cart.is_expired()
+        || cart.coupon_code.as_deref() != Some(coupon)
+        || input.currency != Some(cart.currency)
+        || cart.customer_id.is_some_and(|id| id != input.customer_id)
+    {
+        return Err(CommerceError::Conflict(
+            "Cart is no longer eligible for this coupon order".into(),
+        ));
+    }
+    // Each qualifying cart line must be purchased at its quoted price. A host may
+    // append a full-price checkout add-on which does not enlarge the coupon base.
+    let mut quantities = std::collections::HashMap::new();
+    for item in &input.items {
+        *quantities.entry((&item.sku, item.product_id, item.unit_price)).or_insert(0i64) +=
+            i64::from(item.quantity);
+    }
+    for item in &cart.items {
+        let matched = item
+            .product_id
+            .and_then(|product| quantities.get_mut(&(&item.sku, product, item.unit_price)));
+        let Some(remaining) = matched else {
+            return Err(CommerceError::Conflict("Order differs from coupon cart".into()));
+        };
+        *remaining -= i64::from(item.quantity);
+        if *remaining < 0 {
+            return Err(CommerceError::Conflict("Order quantity differs from coupon cart".into()));
+        }
+    }
+    let amount = coupon_discount_amount(promotion, cart);
+    if amount <= Decimal::ZERO || Some(amount) != input.discount_amount {
+        return Err(CommerceError::Conflict("Coupon discount changed; request a new quote".into()));
+    }
+    cart.discount_amount = amount;
+    Ok(())
+}
+
 /// Carry a cart's tax across a change of its lines.
 ///
 /// The cart stores only a tax *amount* (set by `set_tax`, normally from the

@@ -6,6 +6,7 @@ import { useAccount } from 'wagmi';
 import { formatUnits, parseUnits } from 'viem';
 import { useCart } from '@/hooks/useCart';
 import { useUSDCPayment } from '@/hooks/useUSDCPayment';
+import { CardCheckoutButton } from '@/components/commerce/CardCheckoutButton';
 import { ConnectWallet } from '@/components/commerce/ConnectWallet';
 import { activeChain, USDC_DECIMALS, getExplorerTxUrl } from '@/lib/wagmi';
 import { addDecimals } from '@/lib/money.js';
@@ -79,6 +80,12 @@ export default function CheckoutPage() {
   const { address, isConnected, chain } = useAccount();
   const { paymentStatus, txHash, error, usdcBalance, sendPayment, reset } = useUSDCPayment();
 
+  const [routed, setRouted] = useState(false);
+  const [cardMode, setCardMode] = useState<boolean | null>(null);
+  useEffect(() => {
+    fetch('/api/store/status', { cache: 'no-store' }).then((res) => res.json())
+      .then((status) => { setRouted(status.provider === 'routed'); setCardMode(['stripe', 'routed'].includes(status.provider)); }).catch(() => setCardMode(null));
+  }, []);
   const [email, setEmail] = useState('');
   const [shippingAddress, setShippingAddress] = useState({
     firstName: '',
@@ -94,6 +101,7 @@ export default function CheckoutPage() {
   const [shippingMethods, setShippingMethods] = useState<ShippingMethod[]>([]);
   const [shippingMethodId, setShippingMethodId] = useState('');
   const [shippingError, setShippingError] = useState<string | null>(null);
+  const [membership, setMembership] = useState<{ amount: string; interval: string; count: number } | null>(null);
   const [shippingLoading, setShippingLoading] = useState(false);
 
   const formattedBalance =
@@ -116,6 +124,7 @@ export default function CheckoutPage() {
       shippingAddress.postalCode.trim() &&
       shippingState;
     if (!addressReady) {
+      setMembership(null);
       setShippingMethods([]);
       setShippingMethodId('');
       setShippingError(null);
@@ -131,12 +140,14 @@ export default function CheckoutPage() {
           headers: { 'Content-Type': 'application/json' },
           signal: controller.signal,
           body: JSON.stringify({
+            cartId: cart?.id,
             shippingAddress: { ...shippingAddress, state: shippingState },
             shippingMethodId: shippingMethodId || undefined,
           }),
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Shipping quote failed');
+        setMembership(data.membership || null);
         setShippingMethods(data.methods);
         setShippingMethodId(data.selected.id);
       } catch (quoteError) {
@@ -155,7 +166,7 @@ export default function CheckoutPage() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [
+  }, [cart?.id,
     shippingAddress.firstName,
     shippingAddress.lastName,
     shippingAddress.line1,
@@ -307,7 +318,7 @@ export default function CheckoutPage() {
               </div>
               <div className="flex justify-between font-bold text-lg pt-2 border-t">
                 <span>Total</span>
-                <span>${Number(checkoutTotalExact).toFixed(2)} USDC</span>
+                <span>${Number(checkoutTotalExact).toFixed(2)} USD</span>
               </div>
             </div>
           </div>
@@ -517,7 +528,14 @@ export default function CheckoutPage() {
                 ))}
               </div>
             </div>
-            <div>
+            {cardMode && membership && !shippingError && <p className="mb-3 text-sm">
+              Membership renews at USD {membership.amount} every {membership.count === 1 ? membership.interval : membership.count + ' ' + membership.interval + 's'}. One-time items and shipping apply to the first payment.
+            </p>}
+            {cardMode === true && <CardCheckoutButton routed={routed}
+              checkout={{ cartId: cart.id, email, shippingAddress: { ...shippingAddress, state: shippingState }, shippingMethodId }}
+              disabled={!email || !shippingComplete || !selectedShippingMethod || shippingLoading || !!shippingError || !cart.taxConfigured}
+            />}
+            {cardMode === false && <><div>
               <h3 className="text-sm font-medium mb-2">Connect Wallet</h3>
               <ConnectWallet />
             </div>
@@ -610,7 +628,8 @@ export default function CheckoutPage() {
             </button>
             <p className="text-xs text-gray-500 text-center">
               Payment on {activeChain.name} network
-            </p>
+            </p></>}
+            {cardMode === null && <p role="status">Checking payment availability…</p>}
           </div>
           <Link href="/cart" className="block text-center mt-4 text-gray-600 hover:text-gray-800">
             Back to Cart

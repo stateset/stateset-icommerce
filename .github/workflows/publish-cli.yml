@@ -444,8 +444,12 @@ jobs:
         run: npm test
 
       - name: Pack generator
+        id: pack
         working-directory: packages/create-stateset-app
-        run: npm pack --pack-destination "$RUNNER_TEMP"
+        run: |
+          archive=$(npm pack --silent --pack-destination "$RUNNER_TEMP")
+          test -f "$RUNNER_TEMP/$archive"
+          echo "tarball=$RUNNER_TEMP/$archive" >> "$GITHUB_OUTPUT"
 
       - name: Wait for embedded package availability
         run: |
@@ -463,31 +467,43 @@ jobs:
           echo "@stateset/embedded@${version} did not become available" >&2
           exit 1
 
-      - name: Smoke-test generated storefront
+      - name: Test the packed generator with the released SDK
         env:
+          GENERATOR_TARBALL: ${{ steps.pack.outputs.tarball }}
           SMOKE_DIR: ${{ runner.temp }}/stateset-storefront-smoke
         run: |
-          node --input-type=module -e "import { scaffold } from './packages/create-stateset-app/src/index.js'; await scaffold({ projectName: 'stateset-storefront-smoke', storeName: 'StateSet Smoke Store', targetDir: process.env.SMOKE_DIR, skipInstall: true, pm: 'npm' });"
+          version=$(node -p "require('./bindings/node/package.json').version")
+          cd "$RUNNER_TEMP"
+          npm exec --yes --package="$GENERATOR_TARBALL" -- create-stateset-app "$SMOKE_DIR" --yes --skip-install
           cd "$SMOKE_DIR"
-          npm install
+          required=$(node -p "require('./package.json').dependencies['@stateset/embedded']")
+          test "$required" = "^${version}"
+          npm install --save-exact "@stateset/embedded@${version}"
           node "$GITHUB_WORKSPACE/scripts/ci/enforce_npm_audit_allowlist.mjs" --level moderate --allowlist "$GITHUB_WORKSPACE/scripts/ci/npm-audit-allowlist.json"
+          npm run verify:storefront
           npm run typecheck
           npm run build
 
       - name: Attest package
         uses: actions/attest-build-provenance@v3
         with:
-          subject-path: ${{ runner.temp }}/create-stateset-app-*.tgz
+          subject-path: ${{ steps.pack.outputs.tarball }}
 
       - name: Publish to npm
         working-directory: packages/create-stateset-app
         env:
+          GENERATOR_TARBALL: ${{ steps.pack.outputs.tarball }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           version=$(node -p "require('./package.json').version")
-          published=$(npm view "create-stateset-app@${version}" version 2>/dev/null || true)
-          if [ "${published}" = "${version}" ]; then
-            echo "create-stateset-app@${version} already published; skipping"
+          published=$(npm view "create-stateset-app@${version}" dist.integrity 2>/dev/null || true)
+          if [ -n "$published" ]; then
+            expected="sha512-$(openssl dgst -sha512 -binary "$GENERATOR_TARBALL" | openssl base64 -A)"
+            if [ "$published" != "$expected" ]; then
+              echo "create-stateset-app@${version} on npm differs from the tested archive" >&2
+              exit 1
+            fi
+            echo "The tested create-stateset-app@${version} is already published"
           else
-            npm publish --access public --provenance
+            npm publish "$GENERATOR_TARBALL" --access public --provenance
           fi

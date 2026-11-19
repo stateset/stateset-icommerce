@@ -7,10 +7,10 @@ import { Suspense } from 'react';
 
 function ConfirmationContent() {
   const searchParams = useSearchParams();
-  const orderId = searchParams.get('orderId');
   const orderNumber = searchParams.get('orderNumber');
   const txHash = searchParams.get('txHash');
 
+  const card = searchParams.get('method') === 'card';
   const explorerUrl = txHash ? getExplorerTxUrl(txHash) : null;
 
   return (
@@ -37,7 +37,7 @@ function ConfirmationContent() {
           <p className="text-xl text-gray-700 mb-4">Order #{orderNumber}</p>
         )}
         <p className="text-gray-600 mb-8">
-          Thank you for your purchase. Your USDC payment has been received and your order is being processed.
+          Thank you for your purchase. Your payment has been received and your order is being processed.
         </p>
 
         <div className="border rounded-lg p-6 text-left mb-8">
@@ -70,7 +70,7 @@ function ConfirmationContent() {
           )}
           <div className="flex justify-between py-2">
             <span className="text-gray-600">Payment Method</span>
-            <span>USDC on {activeChain.name}</span>
+            <span>{card ? 'Card or digital wallet' : `USDC on ${activeChain.name}`}</span>
           </div>
         </div>
 

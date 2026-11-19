@@ -635,6 +635,12 @@ impl GeneralLedger {
         convert_outputs(accounts)
     }
 
+    /// Detect idempotent merchant-event support before posting through this binding.
+    #[napi]
+    pub fn supports_external_event_ids(&self) -> bool {
+        true
+    }
+
     /// Create a balanced draft or post it atomically using a trusted host identity.
     #[napi]
     pub async fn create_journal_entry(
@@ -674,13 +680,14 @@ impl GeneralLedger {
                 ));
             }
         };
+        let external_id = parse_optional_id(i.external_event_id, "external journal event")?;
         let input = stateset_core::CreateJournalEntry {
             entry_date: gl_workflow_date(&i.entry_date)?,
             entry_type: parse_optional_enum(i.entry_type, "entry type")?,
             description: i.description,
             lines,
-            source_document_type: None,
-            source_document_id: None,
+            source_document_type: external_id.map(|_| "merchant_event".into()),
+            source_document_id: external_id,
             auto_post: i.auto_post,
             fx,
         };
@@ -1141,6 +1148,8 @@ impl From<stateset_core::CloseMonthReport> for CloseMonthReportOutput {
 #[napi(object)]
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CreateJournalEntryInput {
+    /// Merchant event identifier for retry-safe journal posting.
+    pub external_event_id: Option<String>,
     pub entry_date: String,
     pub entry_type: Option<String>,
     pub description: String,

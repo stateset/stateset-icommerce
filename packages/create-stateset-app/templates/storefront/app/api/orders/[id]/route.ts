@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { licensesForOrder } from '@/lib/digital-access.js';
 import { getCommerce } from '@/lib/commerce';
 import { verifyWalletRequest } from '@/lib/wallet-auth';
 import { walletMatches } from '@/lib/customer-metadata';
@@ -18,15 +19,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       return NextResponse.json({ error: 'Order not found' }, { status: 404 });
     }
 
-    // Verify ownership if wallet provided
-    if (wallet && order.customerId) {
-      try {
-        const customer = await commerce.customers.get(order.customerId);
-        if (customer && !walletMatches(customer.metadata, wallet)) {
-          return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
-        }
-      } catch {}
+    const customer = order.customerId && await commerce.customers.get(order.customerId);
+    if (!customer || !walletMatches(customer.metadata, wallet)) {
+      return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
     }
+    const licenses = await licensesForOrder(commerce, process.env, order.id);
 
     const items = order.items || [];
 
@@ -38,7 +35,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       if (payments?.length) payment = payments[0];
     } catch {}
 
-    return NextResponse.json({ order, items, payment });
+    return NextResponse.json({ order, items, payment, licenses }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to fetch order' },

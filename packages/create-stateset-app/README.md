@@ -24,6 +24,8 @@ A production-oriented Next.js 16 starter storefront with:
 
 - **Embedded commerce engine** — products, carts, orders, inventory, subscriptions via `@stateset/embedded`
 - **USDC payments** — Base checkout with server-side receipt verification, replay protection, and crash-safe finalization
+- **Cards and wallets** — Stripe-hosted checkout, eligible Apple Pay and Google Pay, and an optional Stripe/Square card form
+- **Merchant and partner portals** — publish campaigns, configure checkout pricing, review renewal recovery, manage integrations, and trace commissions and seller payouts
 - **Inventory-safe checkout** — atomic reservations reject insufficient stock instead of overselling
 - **AI shopping assistant** — Claude-powered chat with product recommendations
 - **Full account system** — wallet-based auth, order history, subscription management
@@ -121,7 +123,7 @@ my-store/
     page.tsx                    # Homepage
     products/                   # Product listing & detail
     cart/                       # Shopping cart
-    checkout/                   # USDC checkout + confirmation
+    checkout/                   # Hosted and routed card checkout, USDC and receipts
     account/                    # Dashboard, orders, subscriptions
     api/                        # Cart, checkout, chat, tax, etc.
   components/
@@ -136,3 +138,148 @@ my-store/
 ## License
 
 MIT
+
+## Card checkout and merchant onboarding
+
+Set `STATESET_CHECKOUT_PROVIDER=stripe`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `NEXT_PUBLIC_BASE_URL`. Register `/api/checkout/stripe-webhook` for `checkout.session.completed`, `checkout.session.expired`, `refund.created`, `refund.updated` and `refund.failed`. Stripe Checkout presents cards and eligible Apple Pay and Google Pay wallets according to account settings, browser, and device. The reusable `CardCheckoutButton` accepts cart, contact and delivery details. The server prices the cart and reserves stock before opening a hosted checkout. Keep the original processor credentials available while sessions and refunds are outstanding. [Stripe wallet support](https://docs.stripe.com/payments/checkout/payment-methods)
+
+Run the onboarding command with a JSON catalog. Each row contains a name, URL slug, SKU, USD price string and initial stock. Re-importing the same catalog preserves subsequent inventory movements. Supply the exact shipping method and state rate through the shipping and tax settings above.
+
+```json
+[{"name":"Coffee","slug":"coffee","sku":"COFFEE","price":"15.00","stock":10}]
+```
+
+```bash
+npm run onboard -- --catalog products.json
+npm run onboard -- --catalog products.json --apply --provider
+npm run verify:storefront
+```
+
+The verification scripts use disposable native stores and processor fixtures. For a provider-confirmed drill, use a test store and a Stripe test-mode key. Supply an address JSON file with the fields `firstName`, `lastName`, `line1`, `city`, `state`, `postalCode` and `country`. Complete the returned hosted checkout with a Stripe test card, then finish the same named drill. It records one local test shipment and reconciles the captured charge and partial refund with the native order and payment. The shipment uses a test tracking number.
+
+```bash
+npm run onboard -- --purchase COFFEE --key launch-01 --email buyer@example.test --address address.json --shipping ground --apply
+npm run onboard -- --finish cs_test_EXAMPLE --key launch-01 --refund 0.25 --apply
+npm run card -- recover --order ORDER_ID
+npm run card -- refund --payment PAYMENT_ID --amount 0.25 --reason "Partial return" --key return-01 --apply
+```
+
+To test Apple Pay or Google Pay, start a fresh drill with `--wallet apple_pay` or `--wallet google_pay`, or choose the wallet in the merchant portal. Open the hosted checkout on an eligible device and pay with that wallet. Run `npm run onboard -- --finish cs_test_EXAMPLE --key launch-01` to read the captured Stripe charge and check which wallet funded the payment. The portal offers the same read-only check through **Verify payment only**. Finishing with `--apply` records the verified wallet and charge alongside the shipment and partial refund. Use a separate drill key and purchase for each wallet. [Stripe Charge fields](https://docs.stripe.com/api/charges/object)
+
+For merchant-managed routing, set `STATESET_CHECKOUT_PROVIDER=routed` and configure the accounts in priority order. The USD starter uses provider-hosted fields for the selected account. A definitive, retryable decline can select the next eligible account. An uncertain authorization stays with its original account until reconciled. Use the operator recovery command with `--account ACCOUNT --reference PROVIDER_PAYMENT_ID --apply` to restore a confirmed original reference. Retain the original credentials for captures and refunds. Seller-owned merchandise also requires an eligible Stripe Connect platform account.
+
+```json
+[{"account":"square","provider":"square","secretEnv":"SQUARE_ACCESS_TOKEN","publicKey":"sandbox-sq0idp-EXAMPLE","location":"LOCATION","sandbox":true,"currencies":["USD"]},{"account":"stripe","provider":"stripe","secretEnv":"STRIPE_SECRET_KEY","publicKey":"pk_test_EXAMPLE","currencies":["USD"],"methods":["credit_card"],"available":true}]
+```
+
+Run `npm run verify:providers` to preview the processor drill. To exercise the native adapters against test accounts, configure `STRIPE_TEST_KEY` and/or `SQUARE_SANDBOX_ACCESS_TOKEN` plus `SQUARE_SANDBOX_LOCATION`. Run `npm run verify:providers -- --provider both --db ./processor-drill.db --key launch-01 --apply`. Each selected sandbox captures USD 1.00 and refunds USD 0.25. The report includes the processor reference and native refund. Reusing the database and key polls an outstanding result. Use `--provider stripe` or `--provider square` for a single provider. Wallet presentation requires an eligible browser, device and merchant account. [Stripe test methods](https://docs.stripe.com/testing) · [Square Sandbox payments](https://developer.squareup.com/docs/devtools/sandbox/payments)
+
+### Merchant portal
+
+Run `npm run merchant -- portal shop --role merchant --days 7 --apply` to issue an expiring operator link. Deliver it privately. The portal supports catalog import, tax and shipping publication, read-only checks of each routed Stripe account or Square location, guided test purchases, integration installation and delivery replay. Publishing pricing applies the revision to storefront quotes and checkout. Environment rates supply the initial settings. The standalone doctor checks environment configuration. The portal additionally reads pricing published in the store. Revoke a link with `npm run merchant -- revoke-portal LINK_ID --apply`.
+
+## Renewal recovery and integrations
+
+Enable `STATESET_RENEWAL_RECOVERY=true` for a dedicated merchant Stripe Billing account and subscribe the checkout webhook to `invoice.payment_failed`. Set `STATESET_RECOVERY_SECRET` to at least 32 random bytes and enable payment method updates in Stripe's customer portal. Configure increasing retry offsets using `STATESET_RECOVERY_RETRY_DAYS`, for example `[1,3,7]`. Recovery observes Stripe's pending retry schedule before attempting its own collection. If one invoice encounters an error, the worker continues with the others and lists the affected invoice and reason. A one-shot run exits nonzero when an invoice fails. The recovery report groups failed, outstanding and recovered amounts by invoice currency in integer minor units.
+
+Set `stateset_subscription_id` and `stateset_customer_id` in the Stripe subscription metadata. The signed failure event and a provider lookup link the invoice to its native subscription after checking customer identity and currency. To link an existing subscription explicitly, run `npm run merchant -- link-billing NATIVE_SUBSCRIPTION_ID --provider-subscription STRIPE_SUBSCRIPTION_ID --apply`. The merchant portal shows the next scheduled retry and the percentage recovered for each currency. Subscribe the webhook to `invoice.paid` and `customer.subscription.updated`, `.deleted`, `.paused` and `.resumed` for membership access. Paid recurring invoice lines supply the exact provider billing period. Cancellation and pause events update access for the linked membership.
+
+For memberships sold through the starter's Stripe Checkout, each single-charge, fixed-price renewal creates a native payment and paid billing cycle. The merchant portal and `npm run merchant -- renewal-statement` show the invoice, period, tax, refunds and net cash collected. To recover missed events for an existing membership, run `npm run merchant -- reconcile-renewals NATIVE_SUBSCRIPTION_ID` to preview its paid invoices, then add `--apply` to post the invoices and their refunds locally. Replaying the same history reuses the original payment and billing cycle.
+
+Renewing seller memberships retain the seller, fee and merchandise base agreed at checkout. The seller statement identifies each renewal invoice. Transfers use its verified charge, and refunds reduce or reverse the seller payout. Older checkouts with ambiguous allocations appear as `needs review` in the renewal statement. Use `npm run merchant -- resolve-renewal-seller SUBSCRIPTION_ID --seller CODE --bps FEE` to preview the original seller's agreed rate, or use `--platform-owned` for a merchant-owned membership. Add `--apply` to save that decision.
+
+For transactional recovery emails, configure `RESEND_API_KEY` and a verified `STATESET_RECOVERY_FROM` sender. Alternatively, configure a Klaviyo transactional flow on the `StateSet Renewal Recovery` event and use its `update_url` and `payment_url` properties. The update link opens a short-lived payment-method update session for the invoiced customer.
+
+| Integration | Operator environment | Delivered data |
+| --- | --- | --- |
+| ShipStation | `SHIPSTATION_API_KEY`, `SHIPSTATION_API_SECRET` for the v1 API | Paid orders with order keys, addresses and merchandise lines |
+| Klaviyo | `KLAVIYO_PRIVATE_KEY` with `accounts:read`, `events:write`, `profiles:read`, `events:read` and access to read the included metrics | Order paid and refunded events, and recovery reminders when selected |
+| Gorgias | `GORGIAS_DOMAIN` tenant slug, `GORGIAS_EMAIL`, `GORGIAS_API_KEY` | Internal refund tickets associated with the buyer |
+
+```bash
+npm run merchant -- install shipstation --apply
+npm run merchant -- install klaviyo --apply
+npm run merchant -- install gorgias --apply
+npm run merchant -- deliveries
+npm run merchant -- deliveries --delivery DELIVERY_KEY --check --apply
+npm run merchant -- deliveries --delivery DELIVERY_KEY --apply
+npm run merchant -- recovery-report
+npm run merchant:worker -- --watch --interval 60 --apply
+```
+
+Installation verifies the configured account. Events created after installation are eligible for delivery. The worker also reconciles unfinished checkouts and releases expired reservations. Use a one-shot invocation for a scheduler, or use `--watch` for a long-running process. Commands preview by default. The delivery report includes the order or refund ID and the confirmed provider ID. Choose a delivery in the portal or supply its key on the CLI to inspect the attempt history. Adding `--check --apply` looks up the remote record and saves the result locally. For a single key the command exits successfully only when the provider confirms the delivery. Checking a previously delivered key performs a fresh lookup. A missing or replaced provider record appears for review with its original ID.
+
+ShipStation and Gorgias deliveries enter `review` when a write has an uncertain outcome. The worker searches for the original order or ticket across restarts. If the provider still shows no record, a merchant can authorize a fresh dispatch from the portal or with `npm run merchant -- deliveries --delivery DELIVERY_KEY --retry-dispatch CLAIM_ID --apply`. This applies to the specific attempt the merchant reviewed. Check the provider first because a delayed request can still create a duplicate ticket or update an existing shipping order. [ShipStation order lookup](https://www.shipstation.com/docs/api/orders/list-orders/) · [Gorgias ticket lookup](https://developers.gorgias.com/reference/list-tickets)
+
+Klaviyo first reports `accepted`. The worker changes the status to `delivered` when the Events API returns the matching profile, metric, event ID and order or refund properties. The worker spaces automatic checks over the first day. A merchant can request a fresh lookup at any time. A confirmed event establishes that Klaviyo recorded the event. Email delivery is a separate outcome. [Klaviyo Events API](https://developers.klaviyo.com/en/v2026-07-15/reference/events_api_overview)
+
+Run `npm run verify:integrations` in a generated storefront to exercise provider responses, lost connections, delayed event indexing and concurrent retries against a disposable native store.
+
+## Campaigns, affiliates and digital delivery
+
+Set `STATESET_CAMPAIGN_SECRET` to at least 32 random bytes. Define offers in `STATESET_CAMPAIGNS_JSON` using active catalog SKUs. For example:
+
+```json
+{"coffee":{"variants":[{"id":"control","weight":1,"title":"House roast","sku":"COFFEE"},{"id":"bundle","weight":1,"title":"Coffee and brewing guide","sku":"COFFEE","bumpSku":"GUIDE","upsellSku":"CUP"}]}}
+```
+
+Share `/c/coffee?utm_source=newsletter`. The landing route assigns the visitor to a weighted variant and signs the assignment in an HTTP-only cookie. Card checkout offers the selected bump and presents any follow-up offer after payment. Accepting an upsell opens its own inventory-backed order and payment review. Repeated clicks resolve to the same supplemental checkout. Reports count distinct attributed visitors and buyers. Net merchandise revenue excludes shipping and tax and allocates payment refunds proportionally. Use `--by-source` for the traffic-source breakdown.
+
+In the merchant portal, preview variants against the live catalog before publishing. Each published revision preserves the offer for previously assigned visitors. A variant may set `couponCode` to an active native coupon. The engine consumes it with the order reservation. For hosted Stripe checkout, configure `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` for the same account to let a buyer consent to saving their card for the follow-up offer. The receipt then shows its exact charge including shipping and tax. The campaign report filters cohorts by first visit date in UTC, includes subsequent refunds, and lets merchants inspect the underlying orders.
+
+```bash
+npm run merchant -- campaign-report
+npm run merchant -- affiliate partner-one --bps 1000 --campaign coffee --apply
+npm run merchant -- affiliate-balances
+npm run merchant -- export-commissions
+npm run merchant -- export-payouts --batch november-01 --apply
+npm run merchant -- confirm-payouts --batch november-01 --reference BANK_REFERENCE --apply
+```
+
+The campaign report counts unique visitors from the entry page through checkout, payment start, and purchase. Select a variant and source to drill into its orders and refunds. Enter a comparison variant or use the lowest observed variant ID within the same campaign revision, source, and visit-date cohort. The USD and percentage differences compare net merchandise revenue per tracked visitor. A missing control or zero control revenue leaves the percentage blank. Stage tracking starts when the updated storefront is deployed. Completed purchases supply evidence of earlier stages on older stores.
+
+The affiliate command generates a referral URL. Attribution uses the first visit to that campaign in the visitor's attribution window. Fees are fixed in basis points at attribution. A payout batch freezes the amount per recipient and the positive or negative contribution from each order. Repeat the same batch ID to reproduce the CSV. A refund after export appears as a deduction from a later payout. Historical aggregate exports show their original totals and any carry into a new batch.
+
+In the merchant portal, preview a batch, review its recipients and amounts, then reserve it. Select a single affiliate when different recipients use different payment methods. Choose **External payment** to pay through your bank and record the reference and time for each recipient. From the CLI, use `confirm-payouts --batch BATCH --affiliate CODE --reference BANK_REFERENCE --paid-at ISO_TIMESTAMP --apply`. Omit the affiliate flag when a single bank confirmation covers the entire batch. An affiliate’s portal shows only that recipient’s amounts and order breakdown.
+
+For **Stripe Connect transfers**, register the affiliate and complete Express onboarding. Fund the available platform balance before transferring. Set `STATESET_AFFILIATE_PAYOUT_COUNTRIES` to allow wallet-authenticated affiliates to start or resume verification at `/partners`. Operator-managed affiliates can use an onboarding link from the CLI. A merchant can reserve the Stripe batch and transfer each recipient’s commission from the portal or CLI. Retrying the same batch and recipient reconciles the existing transfer. Reconciliation retrieves provider reversals and shows the net transferred. A reversed amount returns to the available commission balance with a reference to its original batch. If an interrupted transfer is still absent after Stripe’s idempotency window, the CLI reports its transfer group and attempt number. After verifying the group in Stripe, supply the reported `--retry-missing-attempt N` on the settlement command to retry. Bank evidence is available for automatic payouts with completed reconciliation and a matching destination payment. The portal shows Stripe’s bank status and expected arrival date for each matched transaction. [Stripe transfers](https://docs.stripe.com/api/transfers/create)
+
+```bash
+npm run merchant -- onboard-affiliate partner-one --country US --email partner@example.com --apply
+npm run merchant -- export-payouts --batch november-connect --rail stripe --apply
+npm run merchant -- settle-affiliate partner-one --batch november-connect --apply
+npm run merchant -- affiliate-bank-payouts partner-one --apply
+npm run merchant -- affiliate-payouts partner-one
+```
+
+Set `STATESET_AFFILIATE_DEFAULT_BPS` to open wallet-authenticated enrollment at `/partners`. Each affiliate signs in to retrieve referral links, referred orders, refund deductions and payout batch status. Operator-created accounts can use a scoped link issued with `npm run merchant -- portal PARTNER_CODE --role affiliate --apply`.
+
+Map SKUs to protected resources in `STATESET_DIGITAL_PRODUCTS_JSON`, configure `STATESET_LICENSE_SECRET` with at least 32 random bytes, and place private downloads under `STATESET_DOWNLOAD_ROOT`, outside the public directory.
+
+```json
+{"GUIDE":{"resource":"brew-guide","file":"brew-guide.pdf","roles":["barista"],"validDays":30,"refundPolicy":"any"}}
+```
+
+The paid card return page displays the license and download. Wallet-authenticated buyers can retrieve their order's licenses from `GET /api/access/licenses`. A host checks a license via `POST /api/access` with `Authorization: Bearer LICENSE` and a JSON `resource`. The response supplies the authorized roles and expiry. `POST /api/access/download` verifies the same license before streaming the private file. Access checks consult the current native order and payment. The default refund policy revokes on any completed refund. Set `refundPolicy` to `full` to retain access after a partial refund.
+
+For a prepaid membership, set `membershipPlanId` to an active USD native plan. A settled first purchase creates the buyer’s membership and records the initial cycle against its order and payment. Retrying a receipt returns the same membership. A full refund marks every paid billing cycle linked to that payment as refunded in the same database transaction. A partial refund leaves the cycle paid and access follows the product’s refund policy. An existing, unambiguous customer subscription can supply access. Resolve ambiguous matches with `npm run merchant -- link-membership RESOURCE --order ORDER_ID --subscription SUBSCRIPTION_ID --apply`. Guest checkout uses a per-cart identity.
+
+To sell a renewing membership, use Stripe Checkout and add `"recurring": true` to that SKU’s digital policy. Set the catalog price to the native plan price. Checkout shows the regular amount and interval before payment. One membership per checkout can be combined with one-time items. The recurring price includes the tax calculated at signup. Shipping and the introductory discount apply to the first invoice. Enable Stripe’s customer portal subscription cancellation flow and subscribe the checkout webhook to `invoice.paid`, `customer.subscription.updated`, `customer.subscription.deleted`, `customer.subscription.paused`, `customer.subscription.resumed` and the refund events. The paid receipt opens cancellation for the purchased subscription. Confirmed invoice lines determine paid-through dates. A refund of a renewal revokes that period according to the purchased SKU’s `refundPolicy`. The native billing worker leaves these externally billed memberships to the processor. Run `npm run verify:membership` for the native-store lifecycle test. [Stripe subscription checkout](https://docs.stripe.com/payments/checkout/build-subscriptions)
+
+## Seller accounts and settlement
+
+The storefront uses separate charges and transfers on Stripe Connect. Register each seller under a stable code, deliver the returned Stripe Express onboarding link to that seller, and let Stripe collect verification and bank details. An expired link can be renewed by repeating the operator command. [Stripe Connect](https://docs.stripe.com/connect/separate-charges-and-transfers)
+
+```bash
+npm run merchant -- onboard-seller roaster --country US --email seller@example.test --apply
+npm run merchant -- seller-statement
+npm run merchant -- settle-sellers
+npm run merchant -- settle-sellers --apply
+npm run merchant -- bank-payouts roaster --apply
+```
+
+Configure SKU ownership with `STATESET_SELLER_SKUS_JSON`, for example `{"COFFEE":{"seller":"roaster","feeBps":1000}}`. Ownership and fee terms are frozen before checkout. The platform retains tax and shipping. A seller's statement shows gross merchandise, original fees, subsequent refund allocations and the adjusted payable. Configure `STATESET_SELLER_GL_JSON` with existing posting account UUIDs for `salesClearing`, `sellerPayable`, `platformFees` and `processorClearing`. The posting date needs an open period. Choose accounts that reclassify the merchant's original sales posting under the platform's accounting policy. The USD starter uses a one-to-one ledger exchange rate by default. Set `usdExchangeRate` explicitly if using another functional currency.
+
+Settlement posts the allocation, fees, refunds, transfer and any transfer reversals to the native general ledger with unique merchant-event IDs. Each transfer is tied to the settled charge. Stripe handles bank payouts on the connected account's schedule. The bank-payout command records provider-reported amounts, arrival dates and status alongside the seller's statement. Set `STATESET_AUTOMATIC_SELLER_TRANSFERS=true` to include settlement in the scheduled merchant worker.
+
+Set `STATESET_SELLER_SIGNUP_COUNTRIES=US,CA` to open seller enrollment for those countries at `/partners`. Sellers sign a request with their wallet and complete identity and bank verification on Stripe. Their portal shows outstanding balances, account requirements, transfers, refunds and bank payout status. `STATESET_SYNC_BANK_PAYOUTS=true` polls connected-account payouts. For automatic payouts with completed reconciliation, the statement matches balance transactions to the originating orders using Stripe's destination payment and reversal references and shows any remaining difference. Manual payouts can display a status without an order breakdown.

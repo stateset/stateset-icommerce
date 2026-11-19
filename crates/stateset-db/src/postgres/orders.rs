@@ -317,6 +317,51 @@ impl PgOrderRepository {
         Ok(())
     }
 
+    /// Redeem the native cart coupon and reserve the externally priced order in one transaction.
+    pub async fn create_from_cart_with_coupon_async(
+        &self,
+        id: Uuid,
+        input: CreateOrder,
+        coupon: &str,
+    ) -> Result<Order> {
+        use super::{carts::PgCartRepository, promotions::PgPromotionRepository};
+        let mut tx = self.pool.begin().await.map_err(map_db_error)?;
+        sqlx::query("SELECT id FROM carts WHERE id = $1 FOR UPDATE")
+            .bind(id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        let existing: Option<Uuid> = sqlx::query_scalar("SELECT id FROM orders WHERE cart_id = $1")
+            .bind(id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(map_db_error)?;
+        if let Some(existing) = existing {
+            return Self::load_order_in_tx(&mut tx, existing).await;
+        }
+        let mut cart = PgCartRepository::load_cart_in_tx(&mut tx, id).await?;
+        if cart.customer_id.is_none() {
+            cart.customer_id = Some(input.customer_id);
+        }
+        let code = coupon.to_uppercase();
+        let promotions = PgPromotionRepository::new(self.pool.clone());
+        let (_, promotion) = promotions
+            .validate_coupon_for_cart_in_tx(tx.as_mut(), &cart, &code, Utc::now())
+            .await?;
+        crate::cart_rules::validate_order_coupon_quote(&mut cart, &input, &code, &promotion)?;
+        let customer = input.customer_id;
+        let expected_notes = input.notes.clone();
+        let expected_discount = input.discount_amount;
+        let order = self.create_from_cart_in_tx(&mut tx, id, input).await?;
+        if order.notes != expected_notes || Some(order.discount_amount) != expected_discount {
+            return Err(CommerceError::Conflict("Cart already has another order".into()));
+        }
+        PgPromotionRepository::consume_cart_coupon_in_tx(&mut tx, &cart, Some(customer), order.id)
+            .await?;
+        tx.commit().await.map_err(map_db_error)?;
+        Ok(order)
+    }
+
     /// Everything `create_in_tx` would refuse, evaluated without writing: the
     /// checkout PREVIEW path calls this so a preview never succeeds where the
     /// apply would fail.
@@ -2116,6 +2161,15 @@ impl PgOrderRepository {
 }
 
 impl OrderRepository for PgOrderRepository {
+    fn create_from_cart_with_coupon(
+        &self,
+        id: CartId,
+        input: CreateOrder,
+        coupon: &str,
+    ) -> Result<Order> {
+        super::block_on(self.create_from_cart_with_coupon_async(id.into_uuid(), input, coupon))
+    }
+
     fn create(&self, input: CreateOrder) -> Result<Order> {
         super::block_on(self.create_async(input))
     }
