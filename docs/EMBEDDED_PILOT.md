@@ -2,7 +2,20 @@
 
 A developer-led team can keep its current commerce platform and evaluate StateSet for a governed order cancellation or customer refund. Enroll one independent merchant team, record its shortlist before it decides, and record its decision even if it chooses another platform or stops evaluating. Obtain explicit permission for a production evidence review. A sandbox demonstration can complete the technical evaluation. Activation requires a real customer operation completed on the existing platform after enrollment.
 
-From the standalone pilot shop, run `npm run verify:embedded-refund` to try a governed refund with the installed SDK. It creates a disposable SQLite store and verifies the receipt across two processes. The fixture demonstrates the integration before the merchant chooses a production workflow. [Developer pilot](./DEVELOPER_PILOT.md)
+## Try the published SDK
+
+An embedding team can run the refund example with the public `@stateset/embedded@1.40.0` package, Node 20.20+ and npm 10+. From this repository, copy the example into a new project. A standalone copy of the script can be used the same way.
+
+```sh
+mkdir refund-pilot
+cp packages/create-stateset-app/templates/storefront/scripts/verify-embedded-refund.js refund-pilot/verify-embedded-refund.mjs
+cd refund-pilot
+npm init -y
+npm install --save-exact --include=optional @stateset/embedded@1.40.0
+node verify-embedded-refund.mjs
+```
+
+The example records a USD 100 fixture payment in a temporary SQLite file and refuses an excessive refund. Retrying an approved USD 40 local refund after a process restart returns the original receipt and audit hash. Look for `refundCount: 1`, `refundStatus: "pending"` and `replayedAfterProcessExit: true` in the output. The fixture makes no payment-provider request. Teams using the full storefront pilot can run the same example with `npm run verify:embedded-refund`. [Developer pilot](./DEVELOPER_PILOT.md)
 
 ## Enroll the team privately
 
