@@ -199,12 +199,12 @@ export async function adoptionReport(commerce, options = {}) {
     supplemental: 0,
   };
   const live = [];
-  for await (const event of merchantRecords(commerce, 'merchant-events')) {
+  for await (const event of merchantRecords(commerce, 'merchant-events', { includeHandle: true })) {
     if (event.type !== 'sale') continue;
     const placed = Date.parse(event.placedAt),
       posted = Date.parse(event.at);
     if (
-      event.key !== 'sale-' + event.orderId ||
+      event.handle !== 'sale-' + event.orderId ||
       !Number.isFinite(placed) ||
       !Number.isFinite(posted) ||
       posted < placed
