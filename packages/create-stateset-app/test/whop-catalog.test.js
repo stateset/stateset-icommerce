@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { importWhopCatalog, mapWhopCatalog } from '../templates/storefront/lib/whop-catalog.js';
+import {
+  importWhopCatalog,
+  mapWhopCatalog,
+  isWhopCatalogVariant,
+} from '../templates/storefront/lib/whop-catalog.js';
 
 const account = { id: 'biz_WhopShop' };
 const single = (data) => ({
@@ -170,4 +174,13 @@ test('Whop applies only reviewed eligible catalog entries and preserves later in
     /Existing catalog conflicts/,
   );
   assert.equal(await db.products.getBySlug(mapWhopCatalog(payload).rows[0].slug), undefined);
+});
+
+test('previously staged Whop drafts keep one-time purchase terms on activation', () => {
+  const { rows } = mapWhopCatalog(source());
+  const product = { id: 'local-product', slug: rows[0].slug };
+  const variant = { sku: rows[0].sku, productId: product.id };
+  assert.equal(isWhopCatalogVariant(product, variant), true);
+  assert.equal(isWhopCatalogVariant({ ...product, slug: 'other' }, variant), false);
+  assert.equal(isWhopCatalogVariant(product, { ...variant, productId: 'another' }), false);
 });

@@ -1,3 +1,4 @@
+import { isWhopCatalogVariant } from '@/lib/whop-catalog.js';
 import { importedOneTimeProduct } from '@/lib/next-catalog.js';
 import { NextRequest, NextResponse } from 'next/server';
 import { digitalProducts } from '@/lib/digital-access.js';
@@ -59,8 +60,11 @@ export async function POST(request: NextRequest) {
       );
     const available = await purchasableVariant(commerce, sku);
     if (!available) return NextResponse.json({ error: 'Unknown SKU' }, { status: 404 });
-    const { variant } = available;
-    if (await importedOneTimeProduct(commerce, variant.productId))
+    const { product, variant } = available;
+    if (
+      (await importedOneTimeProduct(commerce, variant.productId)) ||
+      isWhopCatalogVariant(product, variant)
+    )
       return NextResponse.json(
         { error: 'This product supports one-time purchase only.' },
         { status: 409 },

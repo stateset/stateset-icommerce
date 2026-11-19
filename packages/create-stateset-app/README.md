@@ -168,7 +168,7 @@ MIT
 
 Save a page from the Next Commerce Admin API `GET /api/admin/products/?is_public=true&is_gift_card=false` using version `2024-04-01` and the `catalogue:read` permission. Keep the JSON envelope with its `results`, `next` and `previous` fields. Import each cursor page separately under the same source store code. The importer reads local files. Next's Inventory CSV covers SKUs, locations and quantities. The Products List response also supplies product and variant identities, selling prices and purchase settings. [Next Products List](https://developers.nextcommerce.com/docs/admin-api/reference/products/productsList) · [Next inventory exports](https://docs.nextcommerce.com/docs/build-a-store/catalogue/inventory)
 
-In **Store setup → Import a product catalog**, select **Next Commerce Products List JSON**, enter a stable code for the source store and upload the saved page. Review the SKUs, exact USD prices, opening units and existing imports before selecting **Import reviewed catalog**. The same workflow runs from the generated storefront directory.
+In **Store setup → Import a product catalog**, select **Next Commerce Products List JSON**, enter a stable code for the source store and upload the saved page. Review the SKUs, exact USD prices, opening units and existing imports before selecting **Import reviewed catalog**. The same workflow runs from the generated storefront directory. The CLI previews existing stores against a private SQLite snapshot in the temporary directory, including committed WAL data. It uses Node 22.13+ or Python 3 on Node 20.
 
 ```bash
 npm run onboard -- --next-catalog page-1.json --source-store my-next-store
@@ -226,6 +226,8 @@ jq -n --arg accountId biz_YourAccount --slurpfile products products.json --slurp
 node scripts/import-whop-catalog.js whop-catalog.json | tee whop-preview.json
 node scripts/import-whop-catalog.js whop-catalog.json --apply --fingerprint "$(jq -r .fingerprint whop-preview.json)"
 ```
+
+The merchant portal accepts this same bundle under **Store setup → Import a product catalog → Whop products and variants JSON**. In the generated storefront directory, the shared CLI accepts `npm run onboard -- --whop-catalog whop-catalog.json`; use `--reviewed FINGERPRINT_FROM_PREVIEW --apply` to stage the reviewed offers.
 
 The preview lists each eligible public one-time, buy-now USD variant, its exact price, its local SKU, and the reason for each exclusion. Apply creates one draft product per eligible variant with zero inventory. Source account/product/variant IDs determine stable SKUs. Replays preserve local stock and activation, and conflicting titles or prices stop the import before catalog writes. Configure digital delivery for the SKU, allocate inventory and activate the product when ready. Existing buyers, community access, renewals and billing continue in Whop. Catalog imports contribute zero orders to adoption reporting.
 

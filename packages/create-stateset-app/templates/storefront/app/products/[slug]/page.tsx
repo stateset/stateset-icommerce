@@ -1,6 +1,7 @@
 import type { ProductVariantOutput } from '@stateset/embedded';
 import Link from 'next/link';
 import { AddToCartButton } from '@/components/commerce/AddToCartButton';
+import { isWhopCatalogVariant } from '@/lib/whop-catalog.js';
 import { importedOneTimeProduct } from '@/lib/next-catalog.js';
 import { digitalProducts } from '@/lib/digital-access.js';
 import { CampaignBuyButton } from '@/components/commerce/CampaignBuyButton';
@@ -28,7 +29,9 @@ export default async function ProductPage({ params, searchParams }: Props) {
     : variants.find((v) => v.isDefault) || variants[0];
   if (requested && !variant) notFound();
   const sku = variant?.sku || slug.toUpperCase();
-  const imported = await importedOneTimeProduct(getCommerce(), product.id);
+  const imported =
+    isWhopCatalogVariant(product, variant) ||
+    (await importedOneTimeProduct(getCommerce(), product.id));
   const stock = imported && variant ? await getCommerce().inventory.getStock(variant.sku) : null;
   const price = variant?.price;
   const policy = digitalProducts(process.env)[sku];
@@ -58,7 +61,7 @@ export default async function ProductPage({ params, searchParams }: Props) {
               ))}
             </nav>
           )}
-          {imported && variant ? (
+          {imported && variant && !policy?.membershipPlanId ? (
             <div className="mt-6 space-y-3">
               <p className="text-2xl font-bold">USD {variant.priceExact}</p>
               {variant.compareAtPriceExact && (

@@ -52,6 +52,7 @@ export function LaunchSetup({
     request: object;
     fingerprint?: string;
     warning?: string;
+    skipped?: { id: string; reason: string }[];
     items?: {
       slug: string;
       action: string;
@@ -183,6 +184,7 @@ export function LaunchSetup({
           >
             <option value="stateset">StateSet catalog JSON</option>
             <option value="next">Next Commerce Products List JSON</option>
+            <option value="whop">Whop products and variants JSON</option>
           </select>
         </label>
         {catalogFormat === 'next' && (
@@ -204,7 +206,9 @@ export function LaunchSetup({
         <p>
           {catalogFormat === 'next'
             ? 'Upload one saved Admin API results page. Supported products use USD, one-time purchase, tracked physical stock at one location and zero allocated units.'
-            : 'Each row requires name, slug, SKU in the sku field, USD price as a string, and initial stock.'}
+            : catalogFormat === 'whop'
+              ? 'Upload the account ID with its saved Products and Variants API results. Eligible one-time USD offers are staged as drafts with zero stock.'
+              : 'Each row requires name, slug, SKU in the sku field, USD price as a string, and initial stock.'}
         </p>
         <label className="block py-2">
           Catalog JSON file
@@ -230,17 +234,31 @@ export function LaunchSetup({
                     fingerprint: result.fingerprint,
                     warning: result.warning,
                     items: result.items,
+                    skipped: result.skipped,
                   });
-                  return (result.total ?? result.rows) + ' products reviewed.';
+                  const total = result.total ?? result.rows;
+                  return total + (total === 1 ? ' product reviewed.' : ' products reviewed.');
                 });
             }}
           />
         </label>
         {review?.warning && <p>{review.warning}</p>}
+        {!!review?.skipped?.length && (
+          <details>
+            <summary>{review.skipped.length} excluded source records</summary>
+            <ul>
+              {review.skipped.map((entry) => (
+                <li key={entry.id}>
+                  {entry.id} · {entry.reason}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
         {review?.items && (
           <ul className="list-disc pl-5">
             {review.items.map((item) => (
-              <li key={item.slug}>
+              <li key={item.variants[0]?.sku || item.slug}>
                 {item.slug} · {item.action}
                 <ul className="pl-3">
                   {item.variants.map((v) => (

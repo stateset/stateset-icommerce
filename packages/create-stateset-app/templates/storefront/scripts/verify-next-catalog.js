@@ -91,6 +91,10 @@ try {
   assert.equal(mapping.sourceVariants[1].options[0].value, 'Blue');
   assert.equal((await commerce.inventory.getStock(blue.sku)).totalAvailable, '3');
   await commerce.inventory.adjust(blue.sku, -2, 'Fixture sale');
+  // A second CLI process previews committed WAL contents while this writer stays open.
+  const reviewExisting = cli();
+  assert.equal(reviewExisting.status, 0, reviewExisting.stderr);
+  assert.equal(JSON.parse(reviewExisting.stdout).items[0].action, 'preserve');
   const replay = await importNextCatalog(commerce, exportPage, { sourceStore, apply: true });
   assert.equal(replay.inserted, 0);
   assert.equal((await commerce.inventory.getStock(blue.sku)).totalAvailable, '1');

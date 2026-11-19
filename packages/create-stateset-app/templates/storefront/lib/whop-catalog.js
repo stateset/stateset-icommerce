@@ -124,6 +124,23 @@ export function mapWhopCatalog(payload) {
   return { accountId: payload.accountId, rows, mappings, skipped, warning };
 }
 
+// Imports reserve a stable 256-bit namespace for each account/product/variant tuple.
+// Matching the parent slug and the variant SKU also recognizes previously imported drafts.
+export function isWhopCatalogVariant(product, variant) {
+  return Boolean(
+    product &&
+    variant &&
+    variant.productId === product.id &&
+    /^WHOP-[a-f0-9]{64}$/.test(variant.sku) &&
+    product.slug === variant.sku.toLowerCase(),
+  );
+}
+
+/**
+ * @param {any} commerce
+ * @param {any} payload
+ * @param {{apply?: boolean, expectedFingerprint?: string}} options
+ */
 export async function importWhopCatalog(
   commerce,
   payload,

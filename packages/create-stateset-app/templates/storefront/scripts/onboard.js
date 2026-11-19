@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { importNextCatalog } from '../lib/next-catalog.js';
+import { importExternalCatalog } from '../lib/catalog-import.js';
+import { withCatalogStore } from './catalog-store.js';
 import { parseArgs } from 'node:util';
 import { Commerce } from '@stateset/embedded';
 import Stripe from 'stripe';
@@ -19,6 +20,7 @@ const { values } = parseArgs({
   options: {
     catalog: { type: 'string' },
     'next-catalog': { type: 'string' },
+    'whop-catalog': { type: 'string' },
     'source-store': { type: 'string' },
     reviewed: { type: 'string' },
     apply: { type: 'boolean' },
@@ -37,34 +39,34 @@ let commerce;
 try {
   await loadStoreEnvironment();
   const env = process.env;
-  if (values['next-catalog']) {
-    if (
-      Object.keys(values).some(
-        (k) => !['next-catalog', 'source-store', 'apply', 'reviewed'].includes(k),
-      )
-    )
-      throw new Error(
-        'Run a Next Commerce catalog import separately from other onboarding operations',
-      );
-    const file = JSON.parse(await readFile(values['next-catalog'], 'utf8'));
-    const settings = { sourceStore: values['source-store'], expectedFingerprint: values.reviewed };
-    // Validate before creating a new SQLite file, even when apply was requested.
-    await importNextCatalog(null, file, settings);
-    if (values.apply && !values.reviewed)
+  if (values['next-catalog'] || values['whop-catalog']) {
+    const format = values['next-catalog'] ? 'next' : 'whop';
+    const fileOption = format + '-catalog';
+    const allowed = [
+      fileOption,
+      'apply',
+      'reviewed',
+      ...(format === 'next' ? ['source-store'] : []),
+    ];
+    if (Object.keys(values).some((k) => !allowed.includes(k)))
+      throw new Error('Run one catalog import at a time.');
+    if (values.apply && !/^[a-f0-9]{64}$/.test(values.reviewed || ''))
       throw new Error('Preview first, then supply --reviewed FINGERPRINT with --apply');
+    const file = JSON.parse(await readFile(values[fileOption], 'utf8'));
     const db = env.STATESET_DB_PATH || './store.db';
-    if (db === ':memory:') throw new Error('Set STATESET_DB_PATH to a persistent store file');
-    if (existsSync(db) || values.apply) commerce = new Commerce(db);
-    console.log(
-      JSON.stringify(
-        await importNextCatalog(commerce, file, { ...settings, apply: values.apply }),
-        null,
-        2,
-      ),
+    const settings = { sourceStore: values['source-store'], expectedFingerprint: values.reviewed };
+    // Validate all input before opening the destination, including for an initial apply.
+    await importExternalCatalog(null, format, file, {
+      ...settings,
+      expectedFingerprint: existsSync(db) ? undefined : values.reviewed,
+    });
+    const report = await withCatalogStore(db, values.apply, (target) =>
+      importExternalCatalog(target, format, file, { ...settings, apply: values.apply }),
     );
+    console.log(JSON.stringify(report, null, 2));
   } else {
     if (values['source-store'] || values.reviewed)
-      throw new Error('Supply --next-catalog FILE for this import');
+      throw new Error('Choose --next-catalog FILE or --whop-catalog FILE for this import');
     const report = { mode: values.apply ? 'apply' : 'preview', checks: localLaunchChecks(env) };
     if (values.catalog) {
       const rows = validateCatalog(JSON.parse(await readFile(values.catalog, 'utf8')));
