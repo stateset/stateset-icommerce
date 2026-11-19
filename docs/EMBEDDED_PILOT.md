@@ -2,6 +2,8 @@
 
 A developer-led team can keep its current commerce platform and evaluate StateSet for a governed order cancellation or customer refund. Enroll one independent merchant team, record its shortlist before it decides, and record its decision even if it chooses another platform or stops evaluating. Obtain explicit permission for a production evidence review. A sandbox demonstration can complete the technical evaluation. Activation requires a real customer operation completed on the existing platform after enrollment.
 
+From the standalone pilot shop, run `npm run verify:embedded-refund` to try a governed refund with the installed SDK. It creates a disposable SQLite store and verifies the receipt across two processes. The fixture demonstrates the integration before the merchant chooses a production workflow. [Developer pilot](./DEVELOPER_PILOT.md)
+
 ## Enroll the team privately
 
 Use the private evaluation ledger described in the [pilot guide](./DEVELOPER_PILOT.md). Give this team a stable anonymous `id`, `track` of `embedded-operations`, and `workflow` of `order-cancellation` or `customer-refund`. Record the opt-in time as `enrolledAt` in UTC ISO format including milliseconds so same-day completions can be checked against the start of the evaluation. Keep the original `enrolledOn`, `source`, `alternatives` and optional `decision` fields. Enter organizations working through the same independent team only once. Keep this primary track even if the team also experiments with the storefront.

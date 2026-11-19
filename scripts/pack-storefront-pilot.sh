@@ -19,7 +19,8 @@ mkdir "$work/source"
 # Generate from committed sources in an empty directory so a merchant's local
 # configuration, store data, and npm configuration cannot enter the archive.
 git -C "$repo" archive "$revision" packages/create-stateset-app scripts/create-storefront-preview.mjs \
-  scripts/storefront-pilot LICENSE LICENSE-MIT LICENSE-APACHE | tar -x -C "$work/source"
+  scripts/storefront-pilot scripts/storefront-native-notices/linux-x64-gnu-notices.tar.gz \
+  LICENSE LICENSE-MIT LICENSE-APACHE | tar -x -C "$work/source"
 project="$work/stateset-merchant-pilot"
 node "$work/source/scripts/create-storefront-preview.mjs" "$project" --lock-only "$@"
 cp "$work/source/scripts/storefront-pilot/"{README.md,compose.yaml} "$project/"
@@ -39,7 +40,7 @@ name="stateset-merchant-pilot-linux-x64-gnu-${revision:0:12}.tar.gz"
     LICENSE-APACHE STOREFRONT-REVISION compose.yaml; do
     printf 'stateset-merchant-pilot/%s\0' "$entry"
   done
-  (cd "$work" && find stateset-merchant-pilot/vendor/stateset -maxdepth 1 -type f -print0)
+  (cd "$work" && find stateset-merchant-pilot/vendor/stateset -type f -print0)
 } | LC_ALL=C sort -zu | tar -C "$work" --mtime=@0 --owner=0 --group=0 --numeric-owner \
   --null -czf "$work/$name" -T -
 (cd "$work" && sha256sum "$name" > SHA256SUMS)

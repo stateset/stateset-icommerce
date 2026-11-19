@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { scaffold } from '../packages/create-stateset-app/src/index.js';
 
 const version = '1.40.1';
@@ -61,6 +62,18 @@ async function install() {
     const verification = execFileSync('tar', ['-xOf', bundle, 'verification.json']);
     const provenance = { archive, url, sha256: checksum, buildEvidence: JSON.parse(verification) };
     writeFileSync(path.join(targetDir, vendorDir, 'SDK-VERIFICATION.json'), JSON.stringify(provenance, null, 2) + '\n');
+    const notices = path.join(targetDir, vendorDir, 'notices');
+    const nativeNotices = path.join(notices, 'native');
+    mkdirSync(nativeNotices, { recursive: true });
+    const noticeArchive = new URL('./storefront-native-notices/linux-x64-gnu-notices.tar.gz', import.meta.url);
+    execFileSync('tar', ['-xzf', fileURLToPath(noticeArchive), '-C', nativeNotices]);
+    const inventory = JSON.parse(readFileSync(path.join(nativeNotices, 'inventory.json'), 'utf8'));
+    if (inventory.build.archiveSha256 !== provenance.buildEvidence.packages[packages[1]].sha256) {
+      throw new Error('The native notices belong to a different SDK build.');
+    }
+    for (const license of ['LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE']) {
+      copyFileSync(new URL('../' + license, import.meta.url), path.join(notices, license));
+    }
     for (const name of packages) {
       const filename = name.replace('@', '').replace('/', '-') + '-' + version + '.tgz';
       // Extract only the named npm archive. npm also records its integrity in the project lockfile.
@@ -74,7 +87,11 @@ async function install() {
     const dockerfile = readFileSync(dockerPath, 'utf8');
     const copyManifest = 'COPY package.json package-lock.json* ./';
     if (!dockerfile.includes(copyManifest)) throw new Error('Cannot locate the Docker dependency stage.');
-    writeFileSync(dockerPath, dockerfile.replace(copyManifest, copyManifest + '\nCOPY vendor/stateset/ ./vendor/stateset/'));
+    const runtime = 'FROM base AS runtime';
+    if (!dockerfile.includes(runtime)) throw new Error('Cannot locate the Docker runtime stage.');
+    writeFileSync(dockerPath, dockerfile
+      .replace(copyManifest, copyManifest + '\nCOPY vendor/stateset/ ./vendor/stateset/')
+      .replace(runtime, runtime + '\nCOPY vendor/stateset/notices/ /usr/share/doc/stateset/'));
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }

@@ -7,6 +7,7 @@ on:
       - 'scripts/create-storefront-preview.mjs'
       - 'scripts/pack-storefront-pilot.sh'
       - 'scripts/storefront-pilot/**'
+      - 'scripts/storefront-native-notices/**'
       - 'scripts/pilot-scorecard*.mjs'
       - 'scripts/ci/storefront-preview.test.mjs'
       - 'scripts/ci/check_storefront_containers.sh'
