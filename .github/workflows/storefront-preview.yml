@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/storefront-preview.yml'
       - 'scripts/create-storefront-preview.mjs'
+      - 'scripts/pilot-scorecard*.mjs'
       - 'scripts/ci/storefront-preview.test.mjs'
       - 'scripts/ci/check_storefront_containers.sh'
       - 'packages/create-stateset-app/**'
@@ -24,8 +25,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
-      - name: Test installer refusal paths
-        run: node --test scripts/ci/storefront-preview.test.mjs
+      - name: Test the preview installer and pilot scorecard
+        run: node --test scripts/ci/storefront-preview.test.mjs scripts/pilot-scorecard.test.mjs
       - name: Install the preview in a new project
         run: npm run storefront:preview -- "$RUNNER_TEMP/merchant-store"
       - name: Reinstall from the relocated project and run merchant workflows
