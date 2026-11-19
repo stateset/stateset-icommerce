@@ -62,6 +62,8 @@ locally with simulated payments. To reuse a previously downloaded bundle,
 pass `--bundle /path/to/stateset-storefront-1.40.1-linux-x64-gnu.tar` to the
 preview command.
 
+Teams comparing StateSet with Next Commerce, Whop, or an internal implementation can run the same failed-renewal and reconciliation exercise. [Developer pilot](docs/DEVELOPER_PILOT.md)
+
 ### Give an AI agent a commerce sandbox
 
 For Claude Desktop, Cursor, Windsurf, or any MCP client:
