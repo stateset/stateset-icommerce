@@ -39,6 +39,25 @@ That is a Next.js storefront with a real commerce engine behind it — the
 generator and the seed step are covered end to end by the
 [Storefront Golden Path](.github/workflows/storefront-golden-path.yml) CI job.
 
+### Try the merchant storefront preview
+
+From this checkout on **Linux x64 with glibc**, Node 20.20+ and npm 10+, create a
+shop with the current storefront and the verified 1.40.1 native SDK.
+
+```bash
+npm run storefront:preview -- my-preview-shop
+cd my-preview-shop
+npm run verify:storefront
+```
+
+The installer verifies the SDK bundle from GitHub and keeps the two npm
+archives under `vendor/stateset/` in your new shop. Keep that directory and
+`package-lock.json` together when moving the shop or running `npm ci` in CI.
+The generated Dockerfile uses the same archives. The storefront checks run
+locally with simulated payments. To reuse a previously downloaded bundle,
+pass `--bundle /path/to/stateset-storefront-1.40.1-linux-x64-gnu.tar` to the
+preview command.
+
 ### Give an AI agent a commerce sandbox
 
 For Claude Desktop, Cursor, Windsurf, or any MCP client:

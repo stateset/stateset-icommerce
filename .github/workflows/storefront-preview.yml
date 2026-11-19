@@ -1,0 +1,39 @@
+name: Merchant storefront preview
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/storefront-preview.yml'
+      - 'scripts/create-storefront-preview.mjs'
+      - 'scripts/ci/storefront-preview.test.mjs'
+      - 'packages/create-stateset-app/**'
+      - 'package.json'
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+      - name: Test installer refusal paths
+        run: node --test scripts/ci/storefront-preview.test.mjs
+      - name: Install the preview in a new project
+        run: npm run storefront:preview -- "$RUNNER_TEMP/merchant-store"
+      - name: Reinstall from the relocated project and run merchant workflows
+        run: |
+          mv "$RUNNER_TEMP/merchant-store" "$RUNNER_TEMP/relocated-store"
+          cd "$RUNNER_TEMP/relocated-store"
+          echo '@stateset:registry=http://127.0.0.1:1' > "$RUNNER_TEMP/closed-registry.npmrc"
+          export NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/closed-registry.npmrc"
+          export npm_config_cache="$RUNNER_TEMP/reinstall-cache"
+          export npm_config_fetch_retries=0
+          npm ci --include=optional --no-audit --no-fund
+          npm run verify:storefront

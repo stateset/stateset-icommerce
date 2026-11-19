@@ -7,6 +7,7 @@
     "npm": ">=10.0.0"
   },
   "scripts": {
+    "storefront:preview": "npm run check:env && node scripts/create-storefront-preview.mjs",
     "demo:marketplace": "node examples/sequencer-marketplace/demo.mjs",
     "test:marketplace-demo": "node examples/sequencer-marketplace/demo.mjs --self-test",
     "prepare": "husky",
