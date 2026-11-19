@@ -2,6 +2,12 @@
 
 A platform engineer evaluating subscription commerce can bring one workflow and compare it with Next Commerce, Whop, an internal build or another finalist. The StateSet evaluation gives the team a storefront they control and a goal they can test: recover a failed membership renewal, trace the original charge to the native payment and billing cycle, and account for a partial refund. Use sandbox data for the evaluation. A team with an agent-operated store can also demonstrate a governed write and inspect its receipt. [Storefront guide](../packages/create-stateset-app/README.md) · [Agent setup](../AGENTS.md)
 
+To hand a team a standalone shop, run `bash scripts/pack-storefront-pilot.sh /path/to/new-output-directory` from the repository on Linux x64 with glibc. The directory will contain the generated project archive and its SHA-256 checksum. A recipient can use local Node or Docker Compose. The archive includes instructions, the locked dependencies list and the verified native SDK.
+
+## What existing deployments demonstrate
+
+StateSet describes YISE Beauty using the iCommerce Engine to look up Shopify orders and manage Recharge subscription workflows. It reports over 7,600 customer inquiries handled by the agent. This is evidence for adding commerce operations to an existing stack. Track teams evaluating the standalone storefront in their own pilot cohort. [YISE Beauty customer story](https://stateset.com/customers/yisebeauty)
+
 ## Join or close a pilot
 
 Email the maintainers at **hello@stateset.io** with the subject **Merchant platform pilot**. Include the workflow, the alternatives on the shortlist, how you found StateSet, and a target decision date. A maintainer opens one private evaluation row per independent team when the evaluation begins. At the target date, ask which platform the team selected and which factor decided it. A team can report a competitor win, a decision to buy nothing, or an ongoing evaluation through the same address. Keep customer names, payment references, and credentials out of this exchange. [Maintainer contact](../CONTRIBUTING.md#questions)

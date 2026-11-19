@@ -16,11 +16,11 @@ const packages = ['@stateset/embedded', '@stateset/embedded-linux-x64-gnu'];
 
 async function install() {
   const { positionals, values } = parseArgs({
-    options: { bundle: { type: 'string' }, help: { type: 'boolean', short: 'h' } },
+    options: { bundle: { type: 'string' }, 'lock-only': { type: 'boolean' }, help: { type: 'boolean', short: 'h' } },
     allowPositionals: true,
   });
   if (values.help || positionals.length !== 1) {
-    console.log('Usage: npm run storefront:preview -- PROJECT_DIRECTORY [--bundle PATH_TO_VERIFIED_TAR]');
+    console.log('Usage: npm run storefront:preview -- PROJECT_DIRECTORY [--bundle PATH_TO_VERIFIED_TAR] [--lock-only]');
     if (!values.help) process.exitCode = 1;
     return;
   }
@@ -58,6 +58,9 @@ async function install() {
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
     const vendorDir = 'vendor/stateset';
     mkdirSync(path.join(targetDir, vendorDir), { recursive: true });
+    const verification = execFileSync('tar', ['-xOf', bundle, 'verification.json']);
+    const provenance = { archive, url, sha256: checksum, buildEvidence: JSON.parse(verification) };
+    writeFileSync(path.join(targetDir, vendorDir, 'SDK-VERIFICATION.json'), JSON.stringify(provenance, null, 2) + '\n');
     for (const name of packages) {
       const filename = name.replace('@', '').replace('/', '-') + '-' + version + '.tgz';
       // Extract only the named npm archive. npm also records its integrity in the project lockfile.
@@ -77,11 +80,15 @@ async function install() {
   }
 
   try {
-    execFileSync('npm', ['install', '--include=optional'], { cwd: targetDir, stdio: 'inherit' });
+    const args = ['install', '--include=optional'];
+    if (values['lock-only']) args.push('--package-lock-only', '--ignore-scripts');
+    execFileSync('npm', args, { cwd: targetDir, stdio: 'inherit' });
   } catch {
     throw new Error('The project and verified SDK are in ' + targetDir + '. Run npm install there to retry.');
   }
-  console.log('Storefront ready in ' + targetDir + '. Run npm run verify:storefront there to exercise the local merchant workflows.');
+  console.log('Storefront ready in ' + targetDir + '.');
+  if (values['lock-only']) console.log('Run npm ci --include=optional there to install the locked dependencies.');
+  else console.log('Run npm run verify:storefront there to exercise the local merchant workflows.');
 }
 
 install().catch((error) => {

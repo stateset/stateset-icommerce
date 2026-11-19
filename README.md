@@ -35,9 +35,9 @@ npm run seed          # 10 products, stock, a demo catalog in ./store.db
 npm run dev           # http://localhost:3000
 ```
 
-That is a Next.js storefront with a real commerce engine behind it — the
-generator and the seed step are covered end to end by the
-[Storefront Golden Path](.github/workflows/storefront-golden-path.yml) CI job.
+The public generator builds a seeded demo shop. As of November 19, 2026, npm
+serves generator 1.39.0 with SDK 1.40.0. Use the merchant preview below to
+evaluate the setup portal and catalog imports. [Storefront Golden Path](.github/workflows/storefront-golden-path.yml)
 
 ### Try the merchant storefront preview
 

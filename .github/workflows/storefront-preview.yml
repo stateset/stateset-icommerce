@@ -5,6 +5,8 @@ on:
     paths:
       - '.github/workflows/storefront-preview.yml'
       - 'scripts/create-storefront-preview.mjs'
+      - 'scripts/pack-storefront-pilot.sh'
+      - 'scripts/storefront-pilot/**'
       - 'scripts/pilot-scorecard*.mjs'
       - 'scripts/ci/storefront-preview.test.mjs'
       - 'scripts/ci/check_storefront_containers.sh'
@@ -29,6 +31,16 @@ jobs:
         run: node --test scripts/ci/storefront-preview.test.mjs scripts/pilot-scorecard.test.mjs
       - name: Install the preview in a new project
         run: npm run storefront:preview -- "$RUNNER_TEMP/merchant-store"
+      - name: Check the standalone pilot archive
+        run: |
+          bash scripts/pack-storefront-pilot.sh "$RUNNER_TEMP/pilot-download"
+          cd "$RUNNER_TEMP/pilot-download"
+          sha256sum -c SHA256SUMS
+          tar -xzf stateset-merchant-pilot-*.tar.gz
+          cd stateset-merchant-pilot
+          docker compose --profile tools config --quiet
+          npm ci --include=optional --no-audit --no-fund
+          npm run verify:storefront
       - name: Reinstall from the relocated project and run merchant workflows
         run: |
           mv "$RUNNER_TEMP/merchant-store" "$RUNNER_TEMP/relocated-store"

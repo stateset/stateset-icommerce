@@ -1,0 +1,20 @@
+services:
+  web:
+    platform: linux/amd64
+    build:
+      context: .
+      target: runner
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - store:/var/lib/stateset
+  operator:
+    profiles: [tools]
+    platform: linux/amd64
+    build:
+      context: .
+      target: operator
+    volumes:
+      - store:/var/lib/stateset
+volumes:
+  store:
