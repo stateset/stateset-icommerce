@@ -1,3 +1,4 @@
+import { adoptionReport, enrollStore } from '../lib/merchant-adoption.js';
 import { issuePortal, revokePortal } from '../lib/merchant-portal.js';
 import { linkMembership } from '../lib/digital-access.js';
 import { parseArgs } from 'node:util';
@@ -42,6 +43,7 @@ import {
 const { positionals, values } = parseArgs({
   allowPositionals: true,
   options: {
+    source: { type: 'string' },
     order: { type: 'string' },
     subscription: { type: 'string' },
     'provider-subscription': { type: 'string' },
@@ -76,6 +78,7 @@ const usage = [
   'portal ACCOUNT --role merchant|affiliate|seller [--days N] | revoke-portal LINK_ID',
   'install PROVIDER | deliveries [--delivery KEY]',
   'deliveries --delivery KEY --check --apply | deliveries --delivery KEY --retry-dispatch CLAIM_ID --apply',
+  'adoption-enroll --source CHANNEL [--apply] | adoption-report [--check [--apply]]',
   'campaign-report [--by-source] | recovery-report | recover-renewals',
   'affiliate CODE --bps RATE [--campaign CAMPAIGN] | commissions | affiliate-balances',
   'export-commissions | export-payouts --batch BATCH [--rail external|stripe] [--affiliate CODE]',
@@ -95,7 +98,17 @@ try {
   commerce = new Commerce(process.env.STATESET_DB_PATH || './store.db');
   const [command, name] = positionals;
   let result;
-  if (command === 'portal')
+  if (command === 'adoption-enroll')
+    result = await enrollStore(commerce, values.source, values.apply);
+  else if (command === 'adoption-report') {
+    result = await adoptionReport(commerce, {
+      env: process.env,
+      check: values.check,
+      apply: values.apply,
+      stripeFor: (key) => new Stripe(key, { maxNetworkRetries: 1, timeout: 12000 }),
+    });
+    if (values.check && result.coverage === 'partial') process.exitCode = 2;
+  } else if (command === 'portal')
     result = await issuePortal(
       commerce,
       process.env.NEXT_PUBLIC_BASE_URL,

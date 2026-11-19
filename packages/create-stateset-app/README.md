@@ -295,3 +295,23 @@ Configure SKU ownership with `STATESET_SELLER_SKUS_JSON`, for example `{"COFFEE"
 Settlement posts the allocation, fees, refunds, transfer and any transfer reversals to the native general ledger with unique merchant-event IDs. Each transfer is tied to the settled charge. Stripe handles bank payouts on the connected account's schedule. The bank-payout command records provider-reported amounts, arrival dates and status alongside the seller's statement. Set `STATESET_AUTOMATIC_SELLER_TRANSFERS=true` to include settlement in the scheduled merchant worker.
 
 Set `STATESET_SELLER_SIGNUP_COUNTRIES=US,CA` to open seller enrollment for those countries at `/partners`. Sellers sign a request with their wallet and complete identity and bank verification on Stripe. Their portal shows outstanding balances, account requirements, transfers, refunds and bank payout status. `STATESET_SYNC_BANK_PAYOUTS=true` polls connected-account payouts. For automatic payouts with completed reconciliation, the statement matches balance transactions to the originating orders using Stripe's destination payment and reversal references and shows any remaining difference. Manual payouts can display a status without an order breakdown.
+
+## Measure merchant adoption
+
+A running store can enroll locally under its acquisition channel. The first enrollment fixes a random store ID, the channel and the start time in the store database. Enroll during setup to measure the launch interval. An existing store can start a new observation period when the operator enrolls it.
+
+```sh
+npm run merchant -- adoption-enroll --source partner --apply
+npm run merchant -- adoption-report
+npm run --silent merchant -- adoption-report --check > merchant-adoption.json
+```
+
+The report counts primary card orders placed after enrollment. A counted sale requires a completed storefront sale event, a native captured payment for the same order and amount, and a matching live Stripe or Square settlement. The check reads the provider using the original merchant credentials. Add `--apply` to retain verified capture receipts locally. Later reports reuse those receipts, including offline runs. Failed lookups remain retryable. The report records when the storefront finished the first sale and when another order placed at least seven days later finished. A later refund preserves the historical capture. Supplemental offers, Base transfers, test purchases and renewals contribute zero to these card-checkout milestones. Counts of unresolved evidence keep a store with missing credentials or a failed lookup visible. An explicit check exits with status 2 for partial coverage and still writes the report.
+
+The JSON contains a pseudonymous store ID, acquisition channel, timestamps and aggregate counts. Data stays with the operator until they share the file. To compare submitted reports by acquisition channel, run the following command in a generated storefront.
+
+```sh
+node scripts/adoption-cohorts.js reports/*.json
+```
+
+The latest report for each enrolled store counts once. The output shows how many stores had their first verified sale within seven days and how many had repeat activity within thirty days. Each denominator includes submitted stores observed for that full window with complete card evidence. Include reports from stores with zero orders when measuring activation. These figures describe the participating stores.
