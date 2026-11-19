@@ -54,6 +54,12 @@ npm run dev
 Open the private link printed by setup and publish your first product. Run
 `npm run verify:storefront` for a separate local checkout and refund drill.
 
+Already selling on Next Commerce or Whop? In the portal, open **Store setup →
+Import a product catalog** to preview your own data. The Next importer brings
+across eligible physical products, variant prices and opening stock. The Whop
+importer stages eligible one-time offers as private drafts for review.
+[Next Commerce import](packages/create-stateset-app/README.md#import-a-next-commerce-product-catalog) · [Whop import](packages/create-stateset-app/README.md#import-an-existing-whop-catalog)
+
 The installer verifies the SDK bundle from GitHub and keeps the two npm
 archives under `vendor/stateset/` in your new shop. Keep that directory and
 `package-lock.json` together when moving the shop or running `npm ci` in CI.
