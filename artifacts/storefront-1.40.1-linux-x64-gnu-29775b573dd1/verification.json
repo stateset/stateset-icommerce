@@ -1,0 +1,204 @@
+{
+  "generatedAt": "2026-11-19T21:41:39.960840+00:00",
+  "platform": {
+    "os": "Linux",
+    "machine": "x86_64",
+    "libc": "glibc 2.31",
+    "highestRequiredGlibcSymbol": "2.29",
+    "repositoryGlibcCeiling": "2.31",
+    "node": "v22.18.0",
+    "npm": "10.9.3"
+  },
+  "source": {
+    "workspaceHead": "84c75aefa5d5ba88a2eb34d9395ca20a32c1aa05",
+    "includesWorkingTreeChanges": true,
+    "nativeCargoProfile": "release-node",
+    "published": false
+  },
+  "packages": {
+    "create-stateset-app": {
+      "archive": "create-stateset-app-1.40.1.tgz",
+      "sha256": "72848129bbd5d388badf4d8aa3fb6e0c926978b3d9e6296cee5c7713c1b02fcb",
+      "sizeBytes": 163822,
+      "version": "1.40.1"
+    },
+    "@stateset/embedded": {
+      "archive": "stateset-embedded-1.40.1.tgz",
+      "sha256": "f668f617a75e3b44520bb855d448249813e9e50d38ee97b48e4adbc5f3b5a5a2",
+      "sizeBytes": 186237,
+      "version": "1.40.1"
+    },
+    "@stateset/embedded-linux-x64-gnu": {
+      "archive": "stateset-embedded-linux-x64-gnu-1.40.1.tgz",
+      "sha256": "c63e98efc409aeb10e1575d5ae1a169448da635a83c05290c79c7273629660b9",
+      "sizeBytes": 16336016,
+      "version": "1.40.1"
+    }
+  },
+  "sdkImportsInStorefront": {
+    "imported": [
+      "@stateset/embedded",
+      "@stateset/embedded/openai",
+      "@stateset/embedded/generic",
+      "@stateset/embedded/langchain",
+      "@stateset/embedded/vercel-ai",
+      "@stateset/embedded/purchase-runtime",
+      "@stateset/embedded/canonical-json"
+    ],
+    "optionalPeers": {
+      "@stateset/embedded/agent-toolkit": "@stateset/cli"
+    }
+  },
+  "publicRegistryAtVerification": [
+    {
+      "name": "create-stateset-app",
+      "latest": "1.39.0",
+      "version1_40_1Published": false
+    },
+    {
+      "name": "@stateset/embedded",
+      "latest": "1.40.0",
+      "version1_40_1Published": false
+    },
+    {
+      "name": "@stateset/embedded-linux-x64-gnu",
+      "latest": "1.40.0",
+      "version1_40_1Published": false
+    }
+  ],
+  "cleanInstall": {
+    "emptyProjectAndCache": true,
+    "generatorDefaultInstall": true,
+    "scopedRegistry": "temporary loopback registry serving the two packaged StateSet dependencies",
+    "thirdPartyRegistry": "https://registry.npmjs.org",
+    "thirdPartyArchives": 175,
+    "lockfileSha256": "ca9e593a026633571a41f54fa455d68726e178c07f809d6569da44d4f6d62c30",
+    "bothStateSetDependencyIntegrityChecksPassed": true
+  },
+  "starterTests": {
+    "passed": 74,
+    "failed": 0,
+    "skipped": 0
+  },
+  "storefrontWorkflows": {
+    "journey": [
+      "native USD checkout with rounded fractional-cent tax and paid shipping",
+      "one customer/order/payment on replay",
+      "inventory allocation conserved",
+      "refund retry changes balance once",
+      "reopen and late checkout replay preserve refund and order state"
+    ],
+    "card": [
+      "stock reservation",
+      "immutable checkout",
+      "exact provider settlement",
+      "replay after reopen",
+      "partial refund reconciliation"
+    ],
+    "merchant": [
+      "catalog import and retry",
+      "attributed purchase and bump",
+      "single upsell checkout",
+      "access expiry and refund revocation",
+      "commission reserve and refund reversal",
+      "seller transfer and reversal",
+      "four idempotent native ledger postings",
+      "automatic membership linking, owner check, renewal and end-of-period cancellation",
+      "one governed test shipment across retries",
+      "bank payout history and outstanding seller balance after account restriction",
+      "native coupon redemption and usage limit",
+      "net revenue after promotions and refunds",
+      "upsell decline tracking",
+      "Apple Pay and Google Pay charge evidence, read-only verification, wrong-wallet rejection and replay"
+    ],
+    "routed": [
+      "native Square account selection",
+      "buyer consent on original payment",
+      "exact saved-card total including shipping and tax",
+      "one supplemental charge after retries",
+      "affiliate-only reporting and revocation",
+      "seller routing eligibility before stock reservation",
+      "merchant campaign preview and revision publication",
+      "pinned campaigns and visitor-cohort order drill-down",
+      "routed primary offers and supplemental checkout replay",
+      "scheduled partial refund reconciliation after original checkout completion",
+      "wallet-signed self-enrollment, seller verification resume and rejection of replay",
+      "published pricing changes the amount charged by the storefront"
+    ],
+    "membership": [
+      "new buyer enrollment from paid initial invoice",
+      "exact Stripe payments and one-time coupon",
+      "one native membership after reopen and replay",
+      "provider period expiry and paid renewal",
+      "native renewal billing cycle, tax, payment and refund statement with historical replay",
+      "buyer cancellation and renewal refund policy",
+      "optional offer uses the verified invoice card only with buyer consent",
+      "single seller transfer from the signup invoice charge",
+      "renewal seller split, partial refund and full transfer reversal on the renewal charge",
+      "prepaid buyer enrollment, no automatic rebill, and full refund replay"
+    ],
+    "affiliates": [
+      "order and refund allocation across raced batches",
+      "individual bank receipts and affiliate isolation",
+      "insufficient-funds retry and accepted transfer recovered after restart",
+      "destination validation and reversal reconciliation",
+      "bank payout traced to original commission orders",
+      "historical aggregate carry"
+    ],
+    "integrations": [
+      "ShipStation held order after lost response and restart",
+      "Klaviyo asynchronous event identity and paginated readback",
+      "Gorgias lost response on both sides of creation",
+      "concurrent reviewed retry, durable attempt history and merchant visibility"
+    ]
+  },
+  "simulatedRenewalTimeouts": [
+    "scripts/merchant-operations.js: both invoices processed, one failure identified, retry after restart reconciled without a second charge.",
+    "scripts/merchant-worker.js: both invoices processed, one failure identified, retry after restart reconciled without a second charge."
+  ],
+  "minimumSupportedNode": {
+    "version": "v20.20.0",
+    "storefrontWorkflowsPassed": 7
+  },
+  "typecheck": "passed",
+  "nextProductionBuild": "passed",
+  "isolatedStandaloneHttp": {
+    "httpStatus": 200,
+    "matchedSeedProduct": true,
+    "nativeLibrary": "node_modules/@stateset/embedded-linux-x64-gnu/stateset-embedded.linux-x64-gnu.node",
+    "isolatedStandalone": true
+  },
+  "browserAttempts": [
+    "First Chromium harness timed out after 120s",
+    "A fresh Chromium session completed all seven checks against the same package archives"
+  ],
+  "localMerchantAndBuyerBrowser": {
+    "productionBuild": true,
+    "browser": "Chromium",
+    "providerCalls": false,
+    "checks": [
+      "unauthenticated and revoked portal access",
+      "merchant publishes checkout shipping and campaign from forms",
+      "switch to affiliate on the same portal URL prevents merchant edits",
+      "rejected invitation clears prior login",
+      "public landing page renders published content",
+      "buyer goes from Buy now through the address, tax and shipping forms to hosted card fields over HTTPS",
+      "published shipping changes checkout total to USD 13.50 and only public Square configuration reaches the buyer"
+    ]
+  },
+  "npmAudit": "npm audit: no moderate (or higher) advisories found",
+  "providerEvidence": {
+    "externalProvidersVerified": false,
+    "accountDrillsPending": [
+      "Stripe",
+      "Square",
+      "ShipStation",
+      "Klaviyo",
+      "Gorgias"
+    ],
+    "devicePurchasesPending": [
+      "Apple Pay",
+      "Google Pay"
+    ]
+  }
+}
