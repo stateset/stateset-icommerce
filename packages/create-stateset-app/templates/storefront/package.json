@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit",
     "doctor": "node scripts/check-store.js",
     "doctor:launch": "node scripts/check-store.js --launch",
-    "verify:storefront": "npm run verify:journey && npm run verify:card && npm run verify:merchant && npm run verify:routed && npm run verify:membership && npm run verify:affiliates && npm run verify:integrations",
+    "verify:storefront": "npm run verify:journey && npm run verify:card && npm run verify:merchant && npm run verify:routed && npm run verify:membership && npm run verify:affiliates && npm run verify:integrations && npm run verify:next-catalog",
     "verify:journey": "node scripts/verify-merchant-journey.js",
     "setup": "node scripts/setup.js",
     "seed": "node scripts/seed.js",
@@ -28,6 +28,7 @@
     "verify:recovery": "node scripts/verify-stripe-recovery.js",
     "verify:providers": "node scripts/verify-payment-providers.js",
     "verify:integrations": "node scripts/verify-integrations.js",
+    "verify:next-catalog": "node scripts/verify-next-catalog.js",
     "verify:merchant": "node scripts/verify-merchant-platform.js",
     "merchant:worker": "node scripts/merchant-worker.js"
   },

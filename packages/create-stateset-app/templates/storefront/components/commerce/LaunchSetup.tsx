@@ -46,8 +46,18 @@ export function LaunchSetup({
   );
   const [pricingPreview, setPricingPreview] = useState(false);
   const [publishedProduct, setPublishedProduct] = useState<{ name: string; slug: string }>();
-  const [catalog, setCatalog] = useState<unknown[]>();
-  const [catalogReady, setCatalogReady] = useState(false);
+  const [catalogFormat, setCatalogFormat] = useState('stateset');
+  const [sourceStore, setSourceStore] = useState('');
+  const [review, setReview] = useState<{
+    request: object;
+    fingerprint?: string;
+    warning?: string;
+    items?: {
+      slug: string;
+      action: string;
+      variants: { sku: string; price: string; openingStock: number }[];
+    }[];
+  }>();
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [routes, setRoutes] = useState<
@@ -160,38 +170,102 @@ export function LaunchSetup({
       <details className="rounded border p-3">
         <summary>Import a product catalog</summary>
         <label className="block py-2">
+          Catalog format
+          <select
+            className={inputClass}
+            value={catalogFormat}
+            disabled={busy}
+            onChange={(e) => {
+              setCatalogFormat(e.target.value);
+              setReview(undefined);
+              setStatus('');
+            }}
+          >
+            <option value="stateset">StateSet catalog JSON</option>
+            <option value="next">Next Commerce Products List JSON</option>
+          </select>
+        </label>
+        {catalogFormat === 'next' && (
+          <label className="block py-2">
+            Source store code
+            <input
+              className={inputClass}
+              placeholder="my-next-store"
+              value={sourceStore}
+              disabled={busy}
+              onChange={(e) => {
+                setSourceStore(e.target.value);
+                setReview(undefined);
+                setStatus('');
+              }}
+            />
+          </label>
+        )}
+        <p>
+          {catalogFormat === 'next'
+            ? 'Upload one saved Admin API results page. Supported products use USD, one-time purchase, tracked physical stock at one location and zero allocated units.'
+            : 'Each row requires name, slug, SKU in the sku field, USD price as a string, and initial stock.'}
+        </p>
+        <label className="block py-2">
           Catalog JSON file
           <input
+            key={catalogFormat + '/' + sourceStore}
             type="file"
             accept=".json,application/json"
+            disabled={busy || (catalogFormat === 'next' && !sourceStore)}
             onChange={(event) => {
               const file = event.target.files?.[0];
-              setCatalog(undefined);
-              setCatalogReady(false);
+              setReview(undefined);
               if (file)
                 void run(async () => {
                   if (file.size > 5_000_000) throw new Error('Choose a catalog under 5 MB');
-                  const rows = JSON.parse(await file.text());
-                  const result = await operation({ catalog: rows, apply: false });
-                  setCatalog(rows);
-                  setCatalogReady(true);
-                  return result.rows + ' products ready to import.';
+                  const catalog = JSON.parse(await file.text());
+                  const request =
+                    catalogFormat === 'stateset'
+                      ? { catalog }
+                      : { action: 'import-catalog', format: catalogFormat, sourceStore, catalog };
+                  const result = await operation({ ...request, apply: false });
+                  setReview({
+                    request,
+                    fingerprint: result.fingerprint,
+                    warning: result.warning,
+                    items: result.items,
+                  });
+                  return (result.total ?? result.rows) + ' products reviewed.';
                 });
             }}
           />
         </label>
-        <p>
-          Each row requires name, slug, SKU in the <code>sku</code> field, USD price as a string,
-          and initial stock.
-        </p>
+        {review?.warning && <p>{review.warning}</p>}
+        {review?.items && (
+          <ul className="list-disc pl-5">
+            {review.items.map((item) => (
+              <li key={item.slug}>
+                {item.slug} · {item.action}
+                <ul className="pl-3">
+                  {item.variants.map((v) => (
+                    <li key={v.sku}>
+                      {v.sku} · USD {v.price} · {v.openingStock} opening units
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        )}
         <button
-          disabled={busy || !catalogReady}
+          disabled={busy || !review}
           className="underline"
           onClick={() =>
             run(async () => {
-              const result = await operation({ catalog, apply: true });
+              if (!review) throw new Error('Preview the catalog first.');
+              const result = await operation({
+                ...review.request,
+                fingerprint: review.fingerprint,
+                apply: true,
+              });
               await refresh();
-              setCatalogReady(false);
+              setReview(undefined);
               return result.inserted + ' products added from ' + result.total + ' catalog rows.';
             })
           }

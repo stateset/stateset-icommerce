@@ -164,6 +164,21 @@ my-store/
 
 MIT
 
+## Import a Next Commerce product catalog
+
+Save a page from the Next Commerce Admin API `GET /api/admin/products/?is_public=true&is_gift_card=false` using version `2024-04-01` and the `catalogue:read` permission. Keep the JSON envelope with its `results`, `next` and `previous` fields. Import each cursor page separately under the same source store code. The importer reads local files. Next's Inventory CSV covers SKUs, locations and quantities. The Products List response also supplies product and variant identities, selling prices and purchase settings. [Next Products List](https://developers.nextcommerce.com/docs/admin-api/reference/products/productsList) · [Next inventory exports](https://docs.nextcommerce.com/docs/build-a-store/catalogue/inventory)
+
+In **Store setup → Import a product catalog**, select **Next Commerce Products List JSON**, enter a stable code for the source store and upload the saved page. Review the SKUs, exact USD prices, opening units and existing imports before selecting **Import reviewed catalog**. The same workflow runs from the generated storefront directory.
+
+```bash
+npm run onboard -- --next-catalog page-1.json --source-store my-next-store
+npm run onboard -- --next-catalog page-1.json --source-store my-next-store --reviewed FINGERPRINT_FROM_PREVIEW --apply
+```
+
+- **Supported products** are public, discountable, one-time physical goods with a positive USD selling price in whole cents up to $999,999.99. An optional USD retail price imports as the comparison price. Buyers can select each variant by title and original SKU. StateSet records the source store, product, variant, stockrecord and location IDs alongside the local identities and variant option values.
+- **Opening inventory** comes from one fulfillment location across this source store. Each variant must track stock, disable backorders, agree with its purchase availability and have zero units allocated to open orders. The importer preserves quantity and low-stock threshold. A replay preserves later sales, quantity adjustments, prices and product status.
+- **Import scope** covers product titles, slugs, variant titles and SKUs, one-time prices and opening inventory. Descriptions, media, merchandising, unit costs, UPCs, customer or order history, payments, subscriptions and tax settings require separate setup. The whole page is checked before applying. Unsupported purchase terms, custom tax codes, conflicting source revisions and existing unrelated destination SKUs or slugs stop the import. [Next product, pricing and inventory semantics](https://developers.nextcommerce.com/docs/admin-api/guides/product-management)
+
 ## Card checkout and merchant onboarding
 
 Set `STATESET_CHECKOUT_PROVIDER=stripe`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `NEXT_PUBLIC_BASE_URL`. Register `/api/checkout/stripe-webhook` for `checkout.session.completed`, `checkout.session.expired`, `refund.created`, `refund.updated` and `refund.failed`. Stripe Checkout presents cards and eligible Apple Pay and Google Pay wallets according to account settings, browser, and device. The reusable `CardCheckoutButton` accepts cart, contact and delivery details. The server prices the cart and reserves stock before opening a hosted checkout. Keep the original processor credentials available while sessions and refunds are outstanding. [Stripe wallet support](https://docs.stripe.com/payments/checkout/payment-methods)
